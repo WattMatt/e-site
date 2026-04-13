@@ -32,8 +32,18 @@ export default async function SiteDetailPage({ params }: Props) {
         title={site.name}
         subtitle={`${site.address}${site.city ? `, ${site.city}` : ''}`}
         actions={
-          <div className={`text-2xl font-bold ${score.score === 100 ? 'text-emerald-400' : score.score >= 50 ? 'text-amber-400' : 'text-red-400'}`}>
-            {score.score}% compliant
+          <div className="flex items-center gap-3">
+            <a
+              href={`${process.env.NEXT_PUBLIC_SITE_URL ?? ''}/share/coc/${siteId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+            >
+              Share ↗
+            </a>
+            <div className={`text-2xl font-bold ${score.score === 100 ? 'text-emerald-400' : score.score >= 50 ? 'text-amber-400' : 'text-red-400'}`}>
+              {score.score}% compliant
+            </div>
           </div>
         }
       />

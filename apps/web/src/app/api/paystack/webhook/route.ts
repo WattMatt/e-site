@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   }
 
   const event = JSON.parse(rawBody)
-  const supabase = createServiceClient()
+  const supabase = await createServiceClient()
 
   if (event.event === 'charge.success') {
     const data = event.data
