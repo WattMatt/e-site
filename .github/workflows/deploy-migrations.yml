@@ -1,0 +1,29 @@
+name: Deploy DB Migrations
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/edge-functions/supabase/migrations/**'
+
+jobs:
+  migrate:
+    name: Push migrations to Supabase
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Run migrations
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          supabase link --project-ref $SUPABASE_PROJECT_REF
+          supabase db push
