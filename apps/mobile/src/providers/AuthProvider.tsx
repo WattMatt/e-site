@@ -68,16 +68,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  // Redirect based on auth state
+  // Redirect based on auth state + org membership
   useEffect(() => {
     if (isLoading) return
     const inAuthGroup = segments[0] === '(auth)'
+    const inOnboarding = segments[0] === 'onboarding'
+
     if (!session && !inAuthGroup) {
       router.replace('/(auth)/login')
     } else if (session && inAuthGroup) {
-      router.replace('/(tabs)/dashboard')
+      // Check org membership before sending to dashboard
+      const memberships = (profile as any)?.user_organisations ?? []
+      if (memberships.length === 0) {
+        router.replace('/onboarding')
+      } else {
+        router.replace('/(tabs)/dashboard')
+      }
+    } else if (session && !inOnboarding) {
+      const memberships = (profile as any)?.user_organisations ?? []
+      if (memberships.length === 0 && !isLoading) {
+        router.replace('/onboarding')
+      }
     }
-  }, [session, segments, isLoading])
+  }, [session, profile, segments, isLoading])
 
   const signIn = async (email: string, password: string) => {
     await authService.signIn(supabase, email, password)
