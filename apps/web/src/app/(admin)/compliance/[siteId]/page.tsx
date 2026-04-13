@@ -5,6 +5,7 @@ import { complianceService, formatDate } from '@esite/shared'
 import { PageHeader } from '@/components/layout/Header'
 import { cocStatusBadge } from '@/components/ui/Badge'
 import { Card, CardBody } from '@/components/ui/Card'
+import { CocUploadButton } from './CocUploadButton'
 
 interface Props {
   params: Promise<{ siteId: string }>
@@ -19,6 +20,7 @@ export default async function SiteDetailPage({ params }: Props) {
 
   const subs = (site.subsections as any[]) ?? []
   const score = await complianceService.getSiteComplianceScore(supabase as any, siteId)
+  const orgId = (site as any).organisation_id as string
 
   return (
     <div>
@@ -76,8 +78,9 @@ export default async function SiteDetailPage({ params }: Props) {
                       <p className="text-xs text-slate-500 mt-2">No COC uploaded yet</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 ml-4">
+                  <div className="flex items-center gap-3 ml-4">
                     {cocStatusBadge(sub.coc_status)}
+                    <CocUploadButton subsectionId={sub.id} orgId={orgId} />
                   </div>
                 </div>
               </CardBody>
