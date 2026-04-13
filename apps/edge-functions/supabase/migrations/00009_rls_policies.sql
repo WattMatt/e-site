@@ -161,7 +161,7 @@ CREATE POLICY "Org members can view project members"
     ON projects.project_members FOR SELECT
     USING (organisation_id = ANY(public.get_user_org_ids()));
 
--- drawings, rfis, procurement, diary — all org-scoped SELECT, PMs+ for writes
+-- drawings, rfis, procurement, diary — org-scoped SELECT
 DO $$
 DECLARE
     tbl TEXT;
@@ -169,7 +169,6 @@ BEGIN
     FOREACH tbl IN ARRAY ARRAY[
         'projects.drawings',
         'projects.rfis',
-        'projects.rfi_responses',
         'projects.procurement_items',
         'projects.site_diary_entries',
         'projects.contacts',
@@ -182,6 +181,25 @@ BEGIN
         );
     END LOOP;
 END $$;
+
+-- rfi_responses: no organisation_id — scope via parent RFI
+CREATE POLICY "Org members can view rfi_responses"
+    ON projects.rfi_responses FOR SELECT
+    USING (
+        rfi_id IN (
+            SELECT id FROM projects.rfis
+            WHERE organisation_id = ANY(public.get_user_org_ids())
+        )
+    );
+
+CREATE POLICY "Org members can create rfi_responses"
+    ON projects.rfi_responses FOR INSERT
+    WITH CHECK (
+        rfi_id IN (
+            SELECT id FROM projects.rfis
+            WHERE organisation_id = ANY(public.get_user_org_ids())
+        )
+    );
 
 -- ---------------------------------------------------------------------------
 -- compliance schema policies

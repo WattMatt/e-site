@@ -1,3 +1,6 @@
+# Secrets (never commit)
+.secrets/
+
 # Dependencies
 node_modules/
 .pnp
