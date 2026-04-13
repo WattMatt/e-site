@@ -1,1 +1,5 @@
 export * from './auth.service'
+export * from './project.service'
+export * from './snag.service'
+export * from './compliance.service'
+export * from './rfi.service'

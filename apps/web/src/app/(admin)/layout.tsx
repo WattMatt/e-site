@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { Sidebar } from '@/components/layout/Sidebar'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -11,9 +12,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <div className="min-h-screen bg-slate-950 flex">
-      {/* Sidebar placeholder — built in next sprint */}
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex-shrink-0" />
-      <main className="flex-1 overflow-auto">{children}</main>
+      <Sidebar />
+      <main className="flex-1 overflow-auto p-8">{children}</main>
     </div>
   )
 }
