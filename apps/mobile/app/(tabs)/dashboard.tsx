@@ -50,7 +50,7 @@ export default function DashboardTab() {
       <View style={styles.actions}>
         {[
           { label: 'Raise Snag', icon: '⚠️', route: '/snags/create' },
-          { label: 'View Projects', icon: '📁', route: '/(tabs)/projects' },
+          { label: 'Scan QR', icon: '📷', route: '/qr-scan' },
           { label: 'Compliance', icon: '✅', route: '/(tabs)/compliance' },
         ].map(({ label, icon, route }) => (
           <TouchableOpacity

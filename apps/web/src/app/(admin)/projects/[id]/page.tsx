@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, snagService, rfiService, formatDate, formatZAR } from '@esite/shared'
+import { floorPlanService } from '@esite/shared'
 import { PageHeader } from '@/components/layout/Header'
 import { Card, CardBody, KpiCard } from '@/components/ui/Card'
 import { projectStatusBadge, snagStatusBadge, priorityBadge } from '@/components/ui/Badge'
@@ -15,10 +16,11 @@ export default async function ProjectDetailPage({ params }: Props) {
   const { id } = await params
   const supabase = await createClient()
 
-  const [project, snagStats, rfis] = await Promise.all([
+  const [project, snagStats, rfis, floorPlans] = await Promise.all([
     projectService.getById(supabase as any, id).catch(() => null),
     snagService.getStats(supabase as any, id),
     rfiService.list(supabase as any, id),
+    floorPlanService.listByProject(supabase as any, id).catch(() => []),
   ])
 
   if (!project) notFound()
@@ -37,6 +39,9 @@ export default async function ProjectDetailPage({ params }: Props) {
         actions={
           <div className="flex items-center gap-3">
             {projectStatusBadge(project.status)}
+            <Link href={`/projects/${id}/floor-plans`}>
+              <Button size="sm" variant="ghost">Floor Plans {floorPlans.length > 0 ? `(${floorPlans.length})` : ''}</Button>
+            </Link>
             <Link href={`/projects/${id}/snags/new`}>
               <Button size="sm">+ Snag</Button>
             </Link>

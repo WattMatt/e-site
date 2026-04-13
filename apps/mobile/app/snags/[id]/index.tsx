@@ -5,7 +5,7 @@ import {
 } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { snagService, storageService, formatDate, formatRelative } from '@esite/shared'
+import { snagService, storageService, floorPlanService, formatDate } from '@esite/shared'
 import { useSupabase } from '../../../src/providers/SupabaseProvider'
 import { useAuth } from '../../../src/providers/AuthProvider'
 
@@ -154,6 +154,26 @@ export default function SnagDetailScreen() {
             </View>
           )}
 
+          {/* Floor plan pin */}
+          {snag.floor_plan_pin ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Floor Plan</Text>
+              <TouchableOpacity
+                style={styles.floorPlanBtn}
+                onPress={() => router.push({
+                  pathname: `/floor-plans/${(snag.floor_plan_pin as any).floorPlanId}`,
+                } as any)}
+              >
+                <Text style={styles.floorPlanBtnText}>📌  View on Floor Plan</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Floor Plan</Text>
+              <Text style={styles.unpinnedText}>Not pinned on any floor plan</Text>
+            </View>
+          )}
+
           {/* Status actions */}
           {nextStatuses.length > 0 && (
             <View style={styles.section}>
@@ -238,4 +258,7 @@ const styles = StyleSheet.create({
   lightboxImg: { width: '100%', height: '80%' },
   lightboxClose: { position: 'absolute', top: 52, right: 16, backgroundColor: '#1E293B', width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   lightboxCloseText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  floorPlanBtn: { backgroundColor: '#1E3A5F', borderWidth: 1, borderColor: '#3B82F6', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
+  floorPlanBtnText: { color: '#3B82F6', fontSize: 14, fontWeight: '600' },
+  unpinnedText: { fontSize: 13, color: '#475569', marginTop: 4 },
 })
