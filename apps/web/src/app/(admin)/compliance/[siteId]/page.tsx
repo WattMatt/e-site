@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/layout/Header'
 import { cocStatusBadge } from '@/components/ui/Badge'
 import { Card, CardBody } from '@/components/ui/Card'
 import { CocUploadButton } from './CocUploadButton'
+import { ReportButton } from '@/components/ui/ReportButton'
 
 interface Props {
   params: Promise<{ siteId: string }>
@@ -33,6 +34,7 @@ export default async function SiteDetailPage({ params }: Props) {
         subtitle={`${site.address}${site.city ? `, ${site.city}` : ''}`}
         actions={
           <div className="flex items-center gap-3">
+            <ReportButton type="compliance" entityId={siteId} label="↓ COC Report" />
             <a
               href={`${process.env.NEXT_PUBLIC_SITE_URL ?? ''}/share/coc/${siteId}`}
               target="_blank"

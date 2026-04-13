@@ -1,0 +1,44 @@
+name: Deploy Edge Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/edge-functions/supabase/functions/**'
+
+jobs:
+  deploy:
+    name: Deploy Supabase Edge Functions
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: supabase link --project-ref $SUPABASE_PROJECT_REF
+
+      - name: Deploy send-notification
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy send-notification --no-verify-jwt
+
+      - name: Deploy send-email
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy send-email --no-verify-jwt
+
+      - name: Deploy generate-report
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy generate-report

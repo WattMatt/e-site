@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, snagService, rfiService, formatDate, formatZAR } from '@esite/shared'
 import { floorPlanService } from '@esite/shared'
+import { ReportButton } from '@/components/ui/ReportButton'
 import { PageHeader } from '@/components/layout/Header'
 import { Card, CardBody, KpiCard } from '@/components/ui/Card'
 import { projectStatusBadge, snagStatusBadge, priorityBadge } from '@/components/ui/Badge'
@@ -42,6 +43,7 @@ export default async function ProjectDetailPage({ params }: Props) {
             <Link href={`/projects/${id}/floor-plans`}>
               <Button size="sm" variant="ghost">Floor Plans {floorPlans.length > 0 ? `(${floorPlans.length})` : ''}</Button>
             </Link>
+            <ReportButton type="snag-list" entityId={id} label="↓ Snag Report" />
             <Link href={`/projects/${id}/snags/new`}>
               <Button size="sm">+ Snag</Button>
             </Link>
