@@ -56,6 +56,12 @@ export function Sidebar() {
           <span>👥</span> Team
         </Link>
         <Link
+          href="/settings/billing"
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+        >
+          <span>💳</span> Billing
+        </Link>
+        <Link
           href="/settings"
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
         >
