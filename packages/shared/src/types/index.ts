@@ -1,0 +1,8 @@
+export type OrgRole = 'owner' | 'admin' | 'project_manager' | 'contractor' | 'client_viewer'
+export type ProjectRole = 'project_manager' | 'contractor' | 'client_viewer'
+export type SubscriptionTier = 'free' | 'starter' | 'professional' | 'enterprise'
+export type SnagStatus = 'open' | 'in_progress' | 'resolved' | 'pending_sign_off' | 'signed_off' | 'closed'
+export type RfiStatus = 'draft' | 'open' | 'responded' | 'closed'
+export type CocStatus = 'missing' | 'submitted' | 'under_review' | 'approved' | 'rejected'
+export type ProcurementStatus = 'draft' | 'sent' | 'quoted' | 'approved' | 'fulfilled' | 'cancelled'
+export type Priority = 'low' | 'medium' | 'high' | 'critical'

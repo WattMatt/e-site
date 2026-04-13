@@ -1,0 +1,33 @@
+{
+  "name": "e-site",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:mobile": "turbo run dev --filter=mobile",
+    "dev:web": "turbo run dev --filter=web",
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:ci": "turbo run test:ci",
+    "type-check": "turbo run type-check",
+    "db:gen-types": "cd apps/edge-functions && supabase gen types typescript --local > ../../packages/db/src/types.ts",
+    "db:migrate": "cd apps/edge-functions && supabase db push",
+    "db:reset": "cd apps/edge-functions && supabase db reset",
+    "db:seed": "cd apps/edge-functions && supabase db seed"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.5.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
