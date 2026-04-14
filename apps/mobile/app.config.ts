@@ -31,6 +31,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     'expo-camera',
     'expo-image-picker',
     ['expo-notifications', { icon: './assets/notification-icon.png' }],
+    '@powersync/react-native',
   ],
   extra: {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
