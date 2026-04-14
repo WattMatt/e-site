@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { POWERSYNC_TABLES } from '../hooks/powersyncTables'
+
+// Tables synced locally via PowerSync (matches useDb.ts)
+const POWERSYNC_TABLES = new Set(['snags', 'projects', 'snag_photos'])
 
 function routeTable(table: string): 'local' | 'remote' {
   return POWERSYNC_TABLES.has(table) ? 'local' : 'remote'
