@@ -1,0 +1,35 @@
+# supabase/powersync/sync-rules.yaml
+#
+# Deploy via: PowerSync Dashboard > Sync Rules > paste contents
+# Each bucket is partitioned by org_id from the JWT token_parameters.
+# This mirrors the Supabase RLS policies — each user only syncs their org's data.
+
+bucket_definitions:
+  org_projects:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT id, name, status, city, province, organisation_id
+        FROM projects
+        WHERE organisation_id = bucket.org_id
+
+  org_snags:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT id, title, description, status, priority,
+               project_id, organisation_id, assigned_to,
+               created_by, created_at
+        FROM snags
+        WHERE organisation_id = bucket.org_id
+
+  org_snag_photos:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT id, snag_id, storage_path, organisation_id, created_at
+        FROM projects.snag_photos
+        WHERE organisation_id = bucket.org_id
