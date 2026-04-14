@@ -1,9 +1,8 @@
 import { usePowerSync } from '@powersync/react-native'
 import { useSupabase } from '../providers/SupabaseProvider'
+import { POWERSYNC_TABLES } from './powersyncTables'
 
-// Tables in this set are synced locally via PowerSync.
-// All other tables go direct to Supabase.
-const POWERSYNC_TABLES = new Set(['snags', 'projects', 'snag_photos'])
+export { POWERSYNC_TABLES }
 
 export type LocalDb = ReturnType<typeof usePowerSync>
 export type RemoteDb = ReturnType<typeof useSupabase>

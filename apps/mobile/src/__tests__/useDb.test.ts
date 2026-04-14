@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest'
-
-// Extract the routing logic for direct testing without hook mocks
-const POWERSYNC_TABLES = new Set(['snags', 'projects', 'snag_photos'])
+import { POWERSYNC_TABLES } from '../hooks/powersyncTables'
 
 function routeTable(table: string): 'local' | 'remote' {
   return POWERSYNC_TABLES.has(table) ? 'local' : 'remote'
