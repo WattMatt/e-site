@@ -21,7 +21,7 @@ const snags = new Table(
     project_id: column.text,
     organisation_id: column.text,
     assigned_to: column.text,
-    created_by: column.text,
+    raised_by: column.text,
     created_at: column.text,
   },
   { indexes: { project_idx: ['project_id'], org_idx: ['organisation_id'] } }
@@ -30,8 +30,10 @@ const snags = new Table(
 const snag_photos = new Table(
   {
     snag_id: column.text,
-    storage_path: column.text,
-    organisation_id: column.text,
+    file_path: column.text,
+    caption: column.text,
+    photo_type: column.text,
+    uploaded_by: column.text,
     created_at: column.text,
   },
   { indexes: { snag_idx: ['snag_id'] } }

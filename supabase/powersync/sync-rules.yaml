@@ -21,7 +21,7 @@ bucket_definitions:
     data:
       - SELECT id, title, description, status, priority,
                project_id, organisation_id, assigned_to,
-               created_by, created_at
+               raised_by, created_at
         FROM snags
         WHERE organisation_id = bucket.org_id
 
@@ -30,6 +30,7 @@ bucket_definitions:
       - name: org_id
         token_parameter: org_id
     data:
-      - SELECT id, snag_id, storage_path, organisation_id, created_at
-        FROM projects.snag_photos
-        WHERE organisation_id = bucket.org_id
+      - SELECT sp.id, sp.snag_id, sp.file_path, sp.caption, sp.photo_type, sp.uploaded_by, sp.created_at
+        FROM field.snag_photos sp
+        JOIN snags s ON s.id = sp.snag_id
+        WHERE s.organisation_id = bucket.org_id
