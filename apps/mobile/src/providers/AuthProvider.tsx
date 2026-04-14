@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useRouter, useSegments } from 'expo-router'
+import { Platform } from 'react-native'
 import { Session } from '@supabase/supabase-js'
+import * as Notifications from 'expo-notifications'
 import { supabase } from '../lib/supabase'
 import { authService } from '@esite/shared'
 
@@ -61,11 +63,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await authService.getProfile(supabase, userId)
       setProfile(data as unknown as Profile)
+      // Register push token after profile loads
+      registerPushToken(userId).catch(() => {})
     } catch {
       // Profile not yet created — handle gracefully
     } finally {
       setIsLoading(false)
     }
+  }
+
+  async function registerPushToken(userId: string) {
+    const { status } = await Notifications.requestPermissionsAsync()
+    if (status !== 'granted') return
+    const token = await Notifications.getExpoPushTokenAsync()
+    if (!token.data) return
+    await supabase.from('push_tokens').upsert(
+      { user_id: userId, token: token.data, platform: Platform.OS as 'ios' | 'android', is_active: true },
+      { onConflict: 'user_id,token' }
+    )
   }
 
   // Redirect based on auth state + org membership
