@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import Link from 'next/link'
 import { NewProcurementForm } from './NewProcurementForm'
+import { ProcurementStatusButton } from './ProcurementStatusButton'
 
 const STATUS_VARIANT: Record<string, any> = {
   draft: 'ghost', sent: 'warning', quoted: 'warning',
@@ -98,6 +99,13 @@ export default async function ProcurementPage({ searchParams }: Props) {
                       )}
                       <p className="text-xs text-slate-500 mt-0.5">{formatDate(item.created_at)}</p>
                     </div>
+                  </div>
+                  <div className="px-5 pb-3">
+                    <ProcurementStatusButton
+                      id={item.id}
+                      currentStatus={item.status}
+                      quotedPrice={(item as any).quoted_price}
+                    />
                   </div>
                 </Card>
               ))}

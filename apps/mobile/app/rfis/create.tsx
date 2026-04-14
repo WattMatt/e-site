@@ -43,7 +43,7 @@ export default function CreateRfiScreen() {
     if (!projectId) { Alert.alert('Required', 'Please select a project.'); return }
     setSaving(true)
     try {
-      const rfi = await rfiService.create(client, projectId, orgId, profile!.id, {
+      const rfi = await rfiService.create(client, orgId, profile!.id, {
         projectId,
         subject: subject.trim(),
         description: description.trim() || undefined,

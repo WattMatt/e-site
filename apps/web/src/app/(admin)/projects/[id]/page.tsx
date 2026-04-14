@@ -17,10 +17,11 @@ export default async function ProjectDetailPage({ params }: Props) {
   const { id } = await params
   const supabase = await createClient()
 
-  const [project, snagStats, rfis, floorPlans] = await Promise.all([
+  const [project, snagStats, snags, rfis, floorPlans] = await Promise.all([
     projectService.getById(supabase as any, id).catch(() => null),
     snagService.getStats(supabase as any, id),
-    rfiService.list(supabase as any, id),
+    snagService.list(supabase as any, id).catch(() => []),
+    rfiService.list(supabase as any, id).catch(() => []),
     floorPlanService.listByProject(supabase as any, id).catch(() => []),
   ])
 
@@ -42,6 +43,12 @@ export default async function ProjectDetailPage({ params }: Props) {
             {projectStatusBadge(project.status)}
             <Link href={`/projects/${id}/floor-plans`}>
               <Button size="sm" variant="ghost">Floor Plans {floorPlans.length > 0 ? `(${floorPlans.length})` : ''}</Button>
+            </Link>
+            <Link href={`/projects/${id}/diary`}>
+              <Button size="sm" variant="ghost">Site Diary</Button>
+            </Link>
+            <Link href={`/projects/${id}/handover`}>
+              <Button size="sm" variant="ghost">Handover</Button>
             </Link>
             <ReportButton type="snag-list" entityId={id} label="↓ Snag Report" />
             <Link href={`/projects/${id}/snags/new`}>
@@ -90,25 +97,59 @@ export default async function ProjectDetailPage({ params }: Props) {
             </Link>
           </div>
           <div className="divide-y divide-slate-700/50">
-            {rfis.slice(0, 5).length === 0 ? (
+            {snags.length === 0 ? (
               <p className="px-6 py-8 text-slate-400 text-sm text-center">No snags yet</p>
             ) : (
-              rfis.slice(0, 5).map((rfi) => (
-                <div key={rfi.id} className="px-6 py-3 flex items-center justify-between">
+              snags.slice(0, 5).map((snag: any) => (
+                <Link
+                  key={snag.id}
+                  href={`/snags/${snag.id}`}
+                  className="px-6 py-3 flex items-center justify-between hover:bg-slate-700/30 transition-colors"
+                >
                   <div>
-                    <p className="text-sm text-white">{rfi.subject}</p>
-                    <p className="text-xs text-slate-400">{formatDate(rfi.created_at)}</p>
+                    <p className="text-sm text-white">{snag.title}</p>
+                    <p className="text-xs text-slate-400">{formatDate(snag.created_at)}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {priorityBadge(rfi.priority)}
-                    {snagStatusBadge(rfi.status)}
+                    {priorityBadge(snag.priority)}
+                    {snagStatusBadge(snag.status)}
                   </div>
-                </div>
+                </Link>
               ))
             )}
           </div>
         </Card>
       </div>
+
+      {/* Recent RFIs */}
+      {rfis.length > 0 && (
+        <Card className="mt-6">
+          <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+            <h3 className="font-semibold text-white">Recent RFIs</h3>
+            <Link href={`/rfis?projectId=${id}`} className="text-blue-400 text-sm hover:text-blue-300">
+              View all
+            </Link>
+          </div>
+          <div className="divide-y divide-slate-700/50">
+            {rfis.slice(0, 3).map((rfi) => (
+              <Link
+                key={rfi.id}
+                href={`/rfis/${rfi.id}`}
+                className="px-6 py-3 flex items-center justify-between hover:bg-slate-700/30 transition-colors"
+              >
+                <div>
+                  <p className="text-sm text-white">{rfi.subject}</p>
+                  <p className="text-xs text-slate-400">{formatDate(rfi.created_at)}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {priorityBadge(rfi.priority)}
+                  {snagStatusBadge(rfi.status)}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Members */}
       {(project.project_members as any[])?.length > 0 && (

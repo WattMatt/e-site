@@ -96,6 +96,12 @@ export default function ProjectDetailScreen() {
             <Text style={styles.actionTextGhost}>+ New RFI</Text>
           </TouchableOpacity>
         </View>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.actionBtnGhost, { marginTop: -10 }]}
+          onPress={() => router.push({ pathname: '/diary/[projectId]', params: { projectId: id } } as any)}
+        >
+          <Text style={styles.actionTextGhost}>📓 Site Diary</Text>
+        </TouchableOpacity>
 
         {/* Details */}
         <View style={styles.section}>
