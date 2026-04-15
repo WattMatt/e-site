@@ -97,7 +97,8 @@ jobs:
         run: pnpm build
 
   # -----------------------------------------------------------------------
-  # DB migration validation (Supabase CLI)
+  # DB migration validation (checks files exist + SQL is non-empty)
+  # Full lint against live DB runs in deploy-migrations workflow
   # -----------------------------------------------------------------------
   db-migrations:
     name: Validate DB Migrations
@@ -105,10 +106,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Validate migrations
-        working-directory: apps/edge-functions
-        run: supabase db lint
+      - name: Validate migration files exist
+        run: |
+          MIGRATION_DIR="supabase/migrations"
+          if [ ! -d "$MIGRATION_DIR" ]; then
+            echo "ERROR: $MIGRATION_DIR directory not found"
+            exit 1
+          fi
+          COUNT=$(find "$MIGRATION_DIR" -name "*.sql" | wc -l)
+          if [ "$COUNT" -eq 0 ]; then
+            echo "ERROR: No .sql migration files found in $MIGRATION_DIR"
+            exit 1
+          fi
+          echo "Found $COUNT migration file(s) in $MIGRATION_DIR"
+          # Check none are empty
+          find "$MIGRATION_DIR" -name "*.sql" -empty -exec echo "ERROR: Empty migration file: {}" \; -exec exit 1 \;
+          echo "All migration files are non-empty. OK."
