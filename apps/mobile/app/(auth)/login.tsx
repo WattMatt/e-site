@@ -9,11 +9,13 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   async function handleSignIn() {
+    setErrorMessage(null)
     const result = signInSchema.safeParse({ email, password })
     if (!result.success) {
-      Alert.alert('Validation error', result.error.errors[0].message)
+      setErrorMessage(result.error.errors[0].message)
       return
     }
     setIsLoading(true)
@@ -21,7 +23,7 @@ export default function LoginScreen() {
       await signIn(email, password)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Sign in failed'
-      Alert.alert('Error', msg)
+      setErrorMessage(msg)
     } finally {
       setIsLoading(false)
     }
@@ -34,6 +36,7 @@ export default function LoginScreen() {
         <Text style={styles.subtitle}>Sign in to continue</Text>
 
         <TextInput
+          testID="login-email-input"
           style={styles.input}
           placeholder="Email"
           value={email}
@@ -43,6 +46,7 @@ export default function LoginScreen() {
           autoCorrect={false}
         />
         <TextInput
+          testID="login-password-input"
           style={styles.input}
           placeholder="Password"
           value={password}
@@ -50,7 +54,11 @@ export default function LoginScreen() {
           secureTextEntry
         />
 
-        <TouchableOpacity style={styles.button} onPress={handleSignIn} disabled={isLoading}>
+        {errorMessage && (
+          <Text testID="login-error-message" style={styles.errorText}>{errorMessage}</Text>
+        )}
+
+        <TouchableOpacity testID="login-submit-button" style={styles.button} onPress={handleSignIn} disabled={isLoading}>
           <Text style={styles.buttonText}>{isLoading ? 'Signing in…' : 'Sign In'}</Text>
         </TouchableOpacity>
 
@@ -70,6 +78,12 @@ const styles = StyleSheet.create({
   inner: { flex: 1, justifyContent: 'center', padding: 24 },
   title: { fontSize: 36, fontWeight: '700', color: '#fff', marginBottom: 4 },
   subtitle: { fontSize: 16, color: '#94A3B8', marginBottom: 32 },
+  errorText: {
+    color: '#F87171',
+    fontSize: 13,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
   input: {
     backgroundColor: '#334155',
     borderRadius: 8,

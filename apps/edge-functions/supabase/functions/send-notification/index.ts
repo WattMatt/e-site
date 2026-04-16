@@ -62,6 +62,17 @@ Deno.serve(async (req) => {
       })
     }
 
+    // Persist in-app notifications (non-blocking)
+    const inAppRows = userIds.map((userId) => ({
+      user_id: userId,
+      title,
+      body,
+      data: data ?? {},
+    }))
+    await supabase.from('notifications').insert(inAppRows).catch((err: any) =>
+      console.error('Failed to persist in-app notifications:', err)
+    )
+
     // Fetch push tokens for the specified users
     const { data: tokens, error: tokenErr } = await supabase
       .from('push_tokens')

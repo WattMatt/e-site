@@ -70,9 +70,9 @@ export default function CreateSnagScreen() {
       const snag = await snagService.create(client, orgId, profile!.id, {
         projectId: params.projectId ?? '',
         title: title.trim(),
-        description: description.trim() || undefined,
-        location: location.trim() || undefined,
-        category: category || undefined,
+        description: description.trim() || '',
+        location: location.trim() || '',
+        category: category || '',
         priority,
       })
 
@@ -102,7 +102,7 @@ export default function CreateSnagScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
+    <ScrollView testID="snag-create-screen" style={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
@@ -116,6 +116,7 @@ export default function CreateSnagScreen() {
         <View style={styles.field}>
           <Text style={styles.label}>Title <Text style={styles.required}>*</Text></Text>
           <TextInput
+            testID="snag-title-input"
             style={styles.input}
             value={title}
             onChangeText={setTitle}
@@ -129,6 +130,7 @@ export default function CreateSnagScreen() {
         <View style={styles.field}>
           <Text style={styles.label}>Description</Text>
           <TextInput
+            testID="snag-description-input"
             style={[styles.input, styles.textarea]}
             value={description}
             onChangeText={setDescription}
@@ -158,6 +160,7 @@ export default function CreateSnagScreen() {
             {PRIORITIES.map(p => (
               <TouchableOpacity
                 key={p}
+                testID={`priority-${p}-button`}
                 style={[styles.pill, priority === p && { backgroundColor: PRIORITY_COLOR[p] + '33', borderColor: PRIORITY_COLOR[p] }]}
                 onPress={() => setPriority(p)}
               >
@@ -204,7 +207,7 @@ export default function CreateSnagScreen() {
           {photos.length > 0 && <Text style={styles.photoHint}>Long-press a photo to remove</Text>}
         </View>
 
-        <TouchableOpacity style={[styles.submitBtn, saving && styles.submitDisabled]} onPress={submit} disabled={saving}>
+        <TouchableOpacity testID="snag-submit-button" style={[styles.submitBtn, saving && styles.submitDisabled]} onPress={submit} disabled={saving}>
           {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Submit Snag</Text>}
         </TouchableOpacity>
       </View>

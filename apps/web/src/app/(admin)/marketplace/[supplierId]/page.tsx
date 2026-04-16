@@ -1,10 +1,9 @@
 import { notFound } from 'next/navigation'
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { supplierService, formatZAR } from '@esite/shared'
 import { PageHeader } from '@/components/layout/Header'
 import { Card, CardBody } from '@/components/ui/Card'
-import { OrderButton } from './OrderButton'
+import Link from 'next/link'
 
 interface Props { params: Promise<{ supplierId: string }> }
 
@@ -21,15 +20,25 @@ export default async function SupplierDetailPage({ params }: Props) {
   const { supplierId } = await params
   const supabase = await createClient()
 
-  const [supplier, items] = await Promise.all([
+  const [supplier, items, ratingSummary] = await Promise.all([
     supplierService.getById(supabase as any, supplierId).catch(() => null),
     supplierService.getCatalogueItems(supabase as any, supplierId).catch(() => []),
+    (supabase as any)
+      .schema('marketplace')
+      .from('supplier_rating_summary')
+      .select('*')
+      .eq('supplier_id', supplierId)
+      .single()
+      .then((r: any) => r.data ?? null)
+      .catch(() => null),
   ])
 
   if (!supplier) notFound()
 
   const grouped = groupByCategory(items)
   const contacts = (supplier as any).supplier_contacts ?? []
+
+  const stars = (score: number) => '⭐'.repeat(Math.round(score)) + '☆'.repeat(5 - Math.round(score))
 
   return (
     <div className="max-w-4xl">
@@ -46,6 +55,34 @@ export default async function SupplierDetailPage({ params }: Props) {
           ) : undefined
         }
       />
+
+      {/* Aggregate ratings */}
+      {ratingSummary && (
+        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <span className="text-3xl font-bold text-white">{ratingSummary.avg_overall}</span>
+              <span className="text-slate-400 text-sm ml-1">/ 5.0</span>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-slate-300">{ratingSummary.rating_count} review{ratingSummary.rating_count !== 1 ? 's' : ''}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            {[
+              { label: 'Delivery', score: ratingSummary.avg_delivery },
+              { label: 'Quality', score: ratingSummary.avg_quality },
+              { label: 'Communication', score: ratingSummary.avg_communication },
+              { label: 'Pricing', score: ratingSummary.avg_pricing },
+            ].map(({ label, score }) => (
+              <div key={label} className="bg-slate-900/60 rounded-lg px-3 py-2">
+                <p className="text-xs text-slate-400 mb-0.5">{label}</p>
+                <p className="font-semibold text-white">{score} <span className="text-xs text-yellow-400">★</span></p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         {/* Supplier info */}
@@ -136,11 +173,12 @@ export default async function SupplierDetailPage({ params }: Props) {
                           <div className="text-right flex-shrink-0">
                             <p className="font-bold text-white">{formatZAR(item.unit_price)}</p>
                             <p className="text-xs text-slate-400">per {item.unit}</p>
-                            <OrderButton
-                              supplierId={supplierId}
-                              supplierOrgId={(supplier as any).organisation_id}
-                              item={item}
-                            />
+                            <Link
+                              href={`/marketplace/order/new?supplierId=${supplierId}`}
+                              className="mt-2 block text-xs px-3 py-1.5 text-center rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+                            >
+                              + Order
+                            </Link>
                           </div>
                         </div>
                       </CardBody>

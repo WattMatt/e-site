@@ -12,13 +12,17 @@ type Project = {
   city: string | null
   province: string | null
   organisation_id: string
+  client_name: string | null
+  contract_value: number | null
+  start_date: string | null
+  end_date: string | null
 }
 
-export function useProjects() {
+export function useProjects(orgIdOverride?: string) {
   const { type, db } = useDb('projects')
   const supabase = useSupabase()
   const { profile } = useAuth()
-  const orgId = (profile as any)?.user_organisations?.[0]?.organisation_id ?? null
+  const orgId = orgIdOverride ?? ((profile as any)?.user_organisations?.[0]?.organisation_id ?? null)
 
   return useQuery({
     queryKey: ['projects', orgId, type],
@@ -32,11 +36,12 @@ export function useProjects() {
         )
       }
       const { data, error } = await (db as typeof supabase)
+        .schema('projects')
         .from('projects')
         .select('*')
         .eq('organisation_id', orgId)
       if (error) throw error
-      return data as Project[]
+      return data as unknown as Project[]
     },
     enabled: !!orgId,
   })

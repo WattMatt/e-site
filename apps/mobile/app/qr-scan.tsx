@@ -2,16 +2,14 @@ import { useState, useEffect } from 'react'
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Clipboard } from 'react-native'
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import { useRouter } from 'expo-router'
+import { parseSubsectionQrUrl } from '@esite/shared'
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
 function extractSnagId(raw: string): string | null {
-  // Try to find a UUID in the scanned string
   const match = raw.match(UUID_RE)
   if (!match) return null
-  // Check if it's a snag URL: /snags/{uuid}
   if (raw.includes('/snags/')) return match[0]
-  // Could be a bare UUID (e.g. from a printed QR on a snag report)
   if (raw.trim() === match[0]) return match[0]
   return null
 }
@@ -29,13 +27,21 @@ export default function QrScanScreen() {
     if (scanned) return
     setScanned(true)
 
+    // 1. Check for compliance subsection QR (highest priority — spec T-026)
+    const subsection = parseSubsectionQrUrl(data)
+    if (subsection) {
+      router.replace(`/compliance/${subsection.siteId}/${subsection.subsectionId}` as any)
+      return
+    }
+
+    // 2. Check for snag QR
     const snagId = extractSnagId(data)
     if (snagId) {
       router.replace(`/snags/${snagId}` as any)
       return
     }
 
-    // Not a snag ID — show the raw value
+    // 3. Unrecognised — show raw value
     Alert.alert(
       'QR Code Scanned',
       data,
@@ -101,7 +107,7 @@ export default function QrScanScreen() {
 
         <View style={styles.bottomHint}>
           <Text style={styles.hintText}>
-            {scanned ? 'Processing…' : 'Point camera at a snag QR code or label'}
+            {scanned ? 'Processing…' : 'Point camera at a compliance subsection or snag QR code'}
           </Text>
           {scanned && (
             <TouchableOpacity style={styles.rescanBtn} onPress={() => setScanned(false)}>

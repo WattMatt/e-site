@@ -90,6 +90,23 @@ export default function SignupPage() {
           {errors.confirmPassword && <p className="text-red-400 text-sm mt-1">{errors.confirmPassword.message}</p>}
         </div>
 
+        <div className="flex items-start gap-3 pt-1">
+          <input
+            {...register('popiaConsent')}
+            type="checkbox"
+            id="popiaConsent"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-blue-500 cursor-pointer"
+          />
+          <label htmlFor="popiaConsent" className="text-sm text-slate-400 leading-snug cursor-pointer">
+            I consent to E-Site processing my personal information in accordance with POPIA
+            (Protection of Personal Information Act). Data may be processed on servers outside
+            South Africa subject to adequate safeguards.
+          </label>
+        </div>
+        {errors.popiaConsent && (
+          <p className="text-red-400 text-sm -mt-1">{errors.popiaConsent.message}</p>
+        )}
+
         {serverError && (
           <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">
             {serverError}

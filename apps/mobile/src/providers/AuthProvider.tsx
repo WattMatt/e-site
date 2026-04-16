@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (status !== 'granted') return
     const token = await Notifications.getExpoPushTokenAsync()
     if (!token.data) return
-    await supabase.from('push_tokens').upsert(
+    await (supabase as any).from('push_tokens').upsert(
       { user_id: userId, token: token.data, platform: Platform.OS as 'ios' | 'android', is_active: true },
       { onConflict: 'user_id,token' }
     )

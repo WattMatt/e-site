@@ -46,10 +46,10 @@ export default function CreateRfiScreen() {
       const rfi = await rfiService.create(client, orgId, profile!.id, {
         projectId,
         subject: subject.trim(),
-        description: description.trim() || undefined,
+        description: description.trim() || '',
         priority,
-        category: category || undefined,
-        dueDate: dueDate || undefined,
+        category: category || '',
+        dueDate: dueDate || '',
       })
       queryClient.invalidateQueries({ queryKey: ['rfis-org', orgId] })
       queryClient.invalidateQueries({ queryKey: ['rfis', projectId] })

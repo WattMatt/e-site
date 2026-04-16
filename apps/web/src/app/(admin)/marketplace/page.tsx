@@ -6,19 +6,58 @@ import Link from 'next/link'
 
 const CATEGORIES = ['electrical', 'mechanical', 'civil', 'safety', 'general']
 
-interface Props { searchParams: Promise<{ category?: string }> }
+interface Props { searchParams: Promise<{ category?: string; search?: string }> }
 
 export default async function MarketplacePage({ searchParams }: Props) {
-  const { category } = await searchParams
+  const { category, search } = await searchParams
   const supabase = await createClient()
-  const suppliers = await supplierService.listAll(supabase as any, category ? { category } : undefined).catch(() => [])
+  const suppliers = await supplierService.listAll(supabase as any, {
+    ...(category ? { category } : {}),
+    ...(search ? { search } : {}),
+  }).catch(() => [])
 
   return (
     <div>
       <PageHeader
         title="Supplier Marketplace"
         subtitle="Browse verified electrical & construction suppliers"
+        actions={
+          <Link
+            href="/marketplace/orders"
+            className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
+          >
+            My Orders
+          </Link>
+        }
       />
+
+      {/* Search bar */}
+      <form method="GET" action="/marketplace" className="mb-4">
+        <div className="flex gap-2 max-w-md">
+          <input
+            name="search"
+            type="search"
+            defaultValue={search ?? ''}
+            placeholder="Search suppliers by name…"
+            className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
+          />
+          {category && <input type="hidden" name="category" value={category} />}
+          <button
+            type="submit"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            Search
+          </button>
+          {(search || category) && (
+            <Link
+              href="/marketplace"
+              className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors"
+            >
+              Clear
+            </Link>
+          )}
+        </div>
+      </form>
 
       {/* Category filter */}
       <div className="flex gap-2 mb-6 flex-wrap">

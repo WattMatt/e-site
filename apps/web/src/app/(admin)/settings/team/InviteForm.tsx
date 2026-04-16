@@ -1,52 +1,73 @@
 'use client'
 
-import { useState } from 'react'
+/**
+ * InviteForm — sends a Supabase auth invite email.
+ *
+ * Uses `inviteTeamMemberAction` (server action) which calls
+ * `auth.admin.inviteUserByEmail` with redirectTo = APP_URL/invite/{token}.
+ * Supabase sends the email and the invitee clicks the link to land on
+ * /invite/[token] where they set their name and password.
+ *
+ * Fix per SPEC_FEEDBACK.md [2026-04-16]: previous implementation generated
+ * manual tokens pointing to /onboarding/join?token=... which didn't match
+ * the /invite/[token] page that uses verifyOtp.
+ */
+
+import { useState, useTransition } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { inviteMemberSchema, type InviteMemberInput, orgService } from '@esite/shared'
-import { createClient } from '@/lib/supabase/client'
+import { z } from 'zod'
 import { Button } from '@/components/ui/Button'
+import { inviteTeamMemberAction } from '@/actions/onboarding.actions'
+
+const schema = z.object({
+  email: z.string().email('Valid email required'),
+  role: z.string().min(1, 'Role required'),
+})
+type FormValues = z.infer<typeof schema>
 
 const ROLES = [
   { value: 'admin', label: 'Admin' },
   { value: 'project_manager', label: 'Project Manager' },
   { value: 'contractor', label: 'Contractor' },
+  { value: 'field_worker', label: 'Field Worker' },
   { value: 'inspector', label: 'Inspector' },
-  { value: 'supplier', label: 'Supplier' },
+  { value: 'supervisor', label: 'Supervisor' },
   { value: 'client_viewer', label: 'Client (read-only)' },
 ]
 
 interface Props { orgId: string }
 
 export function InviteForm({ orgId }: Props) {
-  const [invite, setInvite] = useState<{ token: string; email: string } | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
 
   const {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitting },
-  } = useForm<InviteMemberInput>({ resolver: zodResolver(inviteMemberSchema) })
+    formState: { errors },
+  } = useForm<FormValues>({ resolver: zodResolver(schema) })
 
-  async function onSubmit(input: InviteMemberInput) {
+  function onSubmit(values: FormValues) {
     setError(null)
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    setSuccess(null)
 
-    try {
-      const inv = await orgService.invite(supabase as any, orgId, user.id, input)
-      setInvite({ token: inv.token, email: inv.email })
-      reset()
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create invite')
-    }
+    const fd = new FormData()
+    fd.append('email', values.email)
+    fd.append('role', values.role)
+
+    startTransition(async () => {
+      const result = await inviteTeamMemberAction(orgId, fd)
+      if (result?.error) {
+        setError(result.error)
+      } else {
+        setSuccess(values.email)
+        reset()
+      }
+    })
   }
-
-  const inviteUrl = invite
-    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/onboarding/join?token=${invite.token}`
-    : null
 
   return (
     <div className="space-y-4">
@@ -70,30 +91,21 @@ export function InviteForm({ orgId }: Props) {
             ))}
           </select>
         </div>
-        <Button type="submit" isLoading={isSubmitting} size="sm">Send Invite</Button>
+        <Button type="submit" isLoading={isPending} size="sm">Send Invite</Button>
       </form>
 
       {error && (
         <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-2 text-red-300 text-sm">{error}</div>
       )}
 
-      {invite && inviteUrl && (
+      {success && (
         <div className="bg-emerald-900/30 border border-emerald-700 rounded-lg p-4">
-          <p className="text-emerald-400 text-sm font-medium mb-2">
-            Invite created for {invite.email}
+          <p className="text-emerald-400 text-sm font-medium">
+            Invite email sent to {success}
           </p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 text-xs text-slate-300 bg-slate-900 rounded px-3 py-2 truncate">
-              {inviteUrl}
-            </code>
-            <button
-              onClick={() => navigator.clipboard.writeText(inviteUrl)}
-              className="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0"
-            >
-              Copy
-            </button>
-          </div>
-          <p className="text-xs text-slate-500 mt-2">Expires in 7 days. Share this link with {invite.email}.</p>
+          <p className="text-xs text-slate-500 mt-1">
+            They&apos;ll receive an email with a link to set their password and join your organisation.
+          </p>
         </div>
       )}
     </div>

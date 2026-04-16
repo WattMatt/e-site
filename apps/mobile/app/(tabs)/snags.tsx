@@ -42,7 +42,7 @@ export default function SnagsTab() {
   }
 
   return (
-    <View style={styles.container}>
+    <View testID="snags-list-screen" style={styles.container}>
       <FlatList
         data={snags ?? []}
         keyExtractor={(item) => item.id}

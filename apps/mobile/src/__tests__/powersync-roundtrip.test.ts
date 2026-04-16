@@ -54,7 +54,8 @@ describe('PowerSync round-trip (Sprint 0 exit gate)', () => {
 
   it('creates a snag in Supabase and syncs it to local SQLite', async () => {
     // 1. Write to Supabase (write path — bypasses PowerSync)
-    const { data: created, error } = await supabase
+    const { data: created, error } = await (supabase as any)
+      .schema('field')
       .from('snags')
       .insert({
         title: 'PowerSync roundtrip test',
@@ -87,7 +88,8 @@ describe('PowerSync round-trip (Sprint 0 exit gate)', () => {
     expect(createdSnagId).toBeDefined()
 
     // 1. Update via Supabase
-    await supabase
+    await (supabase as any)
+      .schema('field')
       .from('snags')
       .update({ status: 'in_progress' })
       .eq('id', createdSnagId)

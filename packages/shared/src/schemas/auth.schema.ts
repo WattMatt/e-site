@@ -14,6 +14,9 @@ export const signUpSchema = z.object({
     .regex(/[A-Z]/, 'Must contain an uppercase letter')
     .regex(/[0-9]/, 'Must contain a number'),
   confirmPassword: z.string(),
+  popiaConsent: z.boolean().refine((val) => val === true, {
+    message: 'You must accept the POPIA consent to continue',
+  }),
 }).refine((d) => d.password === d.confirmPassword, {
   message: 'Passwords do not match',
   path: ['confirmPassword'],

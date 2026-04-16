@@ -29,20 +29,21 @@ export function useSnags(projectId: string) {
         )
       }
       const { data, error } = await (db as typeof supabase)
+        .schema('field')
         .from('snags')
         .select('*')
         .eq('project_id', projectId)
       if (error) throw error
-      return data as Snag[]
+      return data as unknown as Snag[]
     },
     enabled: !!projectId,
   })
 
   const createSnag = useMutation({
     mutationFn: async (input: Omit<Snag, 'id' | 'created_at' | 'updated_at'>) => {
-      const { data, error } = await supabase.from('snags').insert(input).select()
+      const { data, error } = await supabase.schema('field').from('snags').insert(input as never).select()
       if (error) throw error
-      return data[0] as Snag
+      return data[0] as unknown as Snag
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['snags', projectId] })
@@ -53,12 +54,13 @@ export function useSnags(projectId: string) {
     mutationFn: async (input: Partial<Snag> & { id: string }) => {
       const { id, ...update } = input
       const { data, error } = await supabase
+        .schema('field')
         .from('snags')
-        .update(update)
+        .update(update as never)
         .eq('id', id)
         .select()
       if (error) throw error
-      return data[0] as Snag
+      return data[0] as unknown as Snag
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['snags', projectId] })
@@ -67,7 +69,7 @@ export function useSnags(projectId: string) {
 
   const deleteSnag = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('snags').delete().eq('id', id)
+      const { error } = await supabase.schema('field').from('snags').delete().eq('id', id as never)
       if (error) throw error
     },
     onSuccess: () => {

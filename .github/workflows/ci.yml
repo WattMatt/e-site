@@ -108,7 +108,7 @@ jobs:
 
       - name: Validate migration files exist
         run: |
-          MIGRATION_DIR="supabase/migrations"
+          MIGRATION_DIR="apps/edge-functions/supabase/migrations"
           if [ ! -d "$MIGRATION_DIR" ]; then
             echo "ERROR: $MIGRATION_DIR directory not found"
             exit 1
@@ -122,3 +122,37 @@ jobs:
           # Check none are empty
           find "$MIGRATION_DIR" -name "*.sql" -empty -exec echo "ERROR: Empty migration file: {}" \; -exec exit 1 \;
           echo "All migration files are non-empty. OK."
+
+  # -----------------------------------------------------------------------
+  # Integration tests — RLS benchmark (Sprint 0 exit gate)
+  # Requires SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY secrets.
+  # Tests skip gracefully when credentials are absent (safe for forks/PRs).
+  # -----------------------------------------------------------------------
+  integration-tests:
+    name: Integration Tests (RLS Benchmark)
+    runs-on: ubuntu-latest
+    needs: [db-migrations]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run RLS benchmark
+        working-directory: packages/db
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TEST_BENCHMARK_USER_EMAIL: ${{ secrets.TEST_BENCHMARK_USER_EMAIL }}
+          TEST_BENCHMARK_USER_PASSWORD: ${{ secrets.TEST_BENCHMARK_USER_PASSWORD }}
+        run: pnpm test:ci

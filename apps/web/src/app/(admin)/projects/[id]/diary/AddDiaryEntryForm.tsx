@@ -3,9 +3,20 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { diaryService } from '@esite/shared'
+import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
+import type { DiaryEntryType } from '@esite/shared'
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Light rain', 'Heavy rain', 'Windy', 'Hot']
+
+const ENTRY_TYPE_COLOURS: Record<DiaryEntryType, string> = {
+  progress: 'bg-blue-600 border-blue-500 text-white',
+  safety: 'bg-red-700 border-red-600 text-white',
+  quality: 'bg-purple-700 border-purple-600 text-white',
+  delay: 'bg-amber-700 border-amber-600 text-white',
+  weather: 'bg-sky-700 border-sky-600 text-white',
+  workforce: 'bg-emerald-700 border-emerald-600 text-white',
+  general: 'bg-slate-600 border-slate-500 text-white',
+}
 
 interface Props {
   projectId: string
@@ -18,7 +29,10 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
   const [isPending, startTransition] = useTransition()
   const [open, setOpen] = useState(false)
   const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [entryType, setEntryType] = useState<DiaryEntryType>('progress')
   const [progressNotes, setProgressNotes] = useState('')
+  const [safetyNotes, setSafetyNotes] = useState('')
+  const [delayNotes, setDelayNotes] = useState('')
   const [weather, setWeather] = useState('')
   const [workers, setWorkers] = useState('')
   const [delays, setDelays] = useState('')
@@ -32,12 +46,17 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
     await diaryService.create(client as any, orgId, userId, {
       projectId,
       entryDate,
+      entryType,
       progressNotes: progressNotes.trim(),
+      safetyNotes: safetyNotes.trim() || undefined,
+      delayNotes: delayNotes.trim() || undefined,
       weather: weather || undefined,
       workersOnSite: workers ? parseInt(workers, 10) : undefined,
       delays: delays.trim() || undefined,
     })
     setProgressNotes('')
+    setSafetyNotes('')
+    setDelayNotes('')
     setWeather('')
     setWorkers('')
     setDelays('')
@@ -61,6 +80,27 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
       <h3 className="text-sm font-semibold text-white">New Diary Entry</h3>
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
+
+      {/* Entry type */}
+      <div>
+        <label className="block text-xs text-slate-400 mb-1.5">Entry type</label>
+        <div className="flex flex-wrap gap-2">
+          {(Object.keys(ENTRY_TYPE_LABELS) as DiaryEntryType[]).map((type) => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => setEntryType(type)}
+              className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                entryType === type
+                  ? ENTRY_TYPE_COLOURS[type]
+                  : 'border-slate-600 text-slate-400 hover:border-slate-500'
+              }`}
+            >
+              {ENTRY_TYPE_LABELS[type]}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div>
@@ -117,16 +157,44 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
         />
       </div>
 
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5">Delays / issues</label>
-        <textarea
-          value={delays}
-          onChange={e => setDelays(e.target.value)}
-          rows={2}
-          placeholder="Any delays, blockers, or issues…"
-          className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 resize-none"
-        />
-      </div>
+      {(entryType === 'safety' || entryType === 'general') && (
+        <div>
+          <label className="block text-xs text-red-400 mb-1.5">Safety notes</label>
+          <textarea
+            value={safetyNotes}
+            onChange={e => setSafetyNotes(e.target.value)}
+            rows={2}
+            placeholder="Safety observations, near-misses, incidents…"
+            className="w-full bg-slate-700 border border-red-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500 resize-none"
+          />
+        </div>
+      )}
+
+      {(entryType === 'delay' || entryType === 'general') && (
+        <div>
+          <label className="block text-xs text-amber-400 mb-1.5">Delay notes</label>
+          <textarea
+            value={delayNotes}
+            onChange={e => setDelayNotes(e.target.value)}
+            rows={2}
+            placeholder="Cause of delay, estimated impact…"
+            className="w-full bg-slate-700 border border-amber-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 resize-none"
+          />
+        </div>
+      )}
+
+      {entryType !== 'delay' && entryType !== 'safety' && (
+        <div>
+          <label className="block text-xs text-slate-400 mb-1.5">Delays / issues</label>
+          <textarea
+            value={delays}
+            onChange={e => setDelays(e.target.value)}
+            rows={2}
+            placeholder="Any delays, blockers, or issues…"
+            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 resize-none"
+          />
+        </div>
+      )}
 
       <div className="flex gap-3">
         <button

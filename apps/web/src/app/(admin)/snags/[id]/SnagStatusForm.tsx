@@ -1,8 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { useState, useTransition } from 'react'
+import { updateSnagStatusAction, signOffSnagAction } from '@/actions/snag.actions'
 import { Button } from '@/components/ui/Button'
 
 const STATUSES = [
@@ -14,28 +13,23 @@ const STATUSES = [
   { value: 'closed', label: 'Closed', colour: 'text-slate-400 border-slate-600' },
 ]
 
-interface Props { snagId: string; currentStatus: string }
+interface Props { snagId: string; currentStatus: string; projectId: string }
 
-export function SnagStatusForm({ snagId, currentStatus }: Props) {
-  const router = useRouter()
+export function SnagStatusForm({ snagId, currentStatus, projectId }: Props) {
   const [selected, setSelected] = useState(currentStatus)
-  const [saving, setSaving] = useState(false)
+  const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
-  async function save() {
+  function save() {
     if (selected === currentStatus) return
-    setSaving(true)
     setError(null)
-    const supabase = createClient()
-    const updates: Record<string, unknown> = { status: selected }
-    if (selected === 'resolved') updates.resolved_at = new Date().toISOString()
-
-    const { error: err } = await supabase.schema('field').from('snags')
-      .update(updates).eq('id', snagId)
-
-    if (err) { setError(err.message); setSaving(false); return }
-    router.refresh()
-    setSaving(false)
+    startTransition(async () => {
+      // sign_off path: validate closeout photo first
+      const result = selected === 'signed_off'
+        ? await signOffSnagAction(snagId, projectId)
+        : await updateSnagStatusAction(snagId, selected, projectId)
+      if (result.error) setError(result.error)
+    })
   }
 
   return (
@@ -53,7 +47,7 @@ export function SnagStatusForm({ snagId, currentStatus }: Props) {
         ))}
       </div>
       {error && <p className="text-red-400 text-xs">{error}</p>}
-      <Button size="sm" onClick={save} isLoading={saving} disabled={selected === currentStatus}>
+      <Button size="sm" onClick={save} isLoading={isPending} disabled={selected === currentStatus}>
         Save Status
       </Button>
     </div>

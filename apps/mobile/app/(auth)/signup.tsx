@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform, ScrollView } from 'react-native'
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform, ScrollView, Switch } from 'react-native'
 import { Link } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { signUpSchema } from '@esite/shared'
@@ -10,11 +10,12 @@ export default function SignupScreen() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [popiaConsent, setPopiaConsent] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [success, setSuccess] = useState(false)
 
   async function handleSignUp() {
-    const result = signUpSchema.safeParse({ fullName, email, password, confirmPassword })
+    const result = signUpSchema.safeParse({ fullName, email, password, confirmPassword, popiaConsent })
     if (!result.success) {
       Alert.alert('Validation error', result.error.errors[0].message)
       return
@@ -73,6 +74,21 @@ export default function SignupScreen() {
           </View>
         ))}
 
+        <View style={styles.popiaRow}>
+          <Switch
+            value={popiaConsent}
+            onValueChange={setPopiaConsent}
+            trackColor={{ false: '#334155', true: '#3B82F6' }}
+            thumbColor="#fff"
+            style={styles.popiaSwitch}
+          />
+          <Text style={styles.popiaText}>
+            I consent to E-Site processing my personal information in accordance with POPIA
+            (Protection of Personal Information Act). Data may be processed outside South Africa
+            subject to adequate safeguards.
+          </Text>
+        </View>
+
         <TouchableOpacity style={styles.button} onPress={handleSignUp} disabled={isLoading}>
           <Text style={styles.buttonText}>{isLoading ? 'Creating account…' : 'Create Account'}</Text>
         </TouchableOpacity>
@@ -97,4 +113,7 @@ const styles = StyleSheet.create({
   button: { backgroundColor: '#3B82F6', borderRadius: 8, padding: 16, alignItems: 'center', marginTop: 24, marginBottom: 16 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   link: { color: '#94A3B8', textAlign: 'center', marginTop: 8 },
+  popiaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 20, marginBottom: 4 },
+  popiaSwitch: { marginTop: 2 },
+  popiaText: { flex: 1, fontSize: 12, color: '#64748B', lineHeight: 18 },
 })

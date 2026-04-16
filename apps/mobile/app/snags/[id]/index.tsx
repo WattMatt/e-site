@@ -59,11 +59,44 @@ export default function SnagDetailScreen() {
 
   const orgId = (profile as any)?.user_organisations?.[0]?.organisation_id ?? ''
 
+  const STATUS_LABELS: Record<string, string> = {
+    open: 'Open', in_progress: 'In Progress', resolved: 'Resolved',
+    pending_sign_off: 'Pending Sign-off', signed_off: 'Signed Off', closed: 'Closed',
+  }
+
   const updateStatus = useMutation({
     mutationFn: (status: string) => snagService.update(client, id, { status } as any),
-    onSuccess: (updated) => {
+    onSuccess: async (updated) => {
       queryClient.invalidateQueries({ queryKey: ['snag', id] })
       queryClient.invalidateQueries({ queryKey: ['snags-org', orgId] })
+
+      // Notify raised_by + assigned_to (best-effort)
+      try {
+        const { data: { session } } = await client.auth.getSession()
+        if (!session) return
+        const currentSnag = snag as any
+        const notifyIds = [currentSnag?.raised_by, currentSnag?.assigned_to]
+          .filter((uid): uid is string => Boolean(uid) && uid !== profile?.id)
+        const uniqueIds = [...new Set(notifyIds)]
+        if (uniqueIds.length === 0) return
+
+        const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL
+        await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            userIds: uniqueIds,
+            title: 'Snag status updated',
+            body: `"${currentSnag?.title}" is now ${STATUS_LABELS[(updated as any).status] ?? (updated as any).status}`,
+            data: { route: `/snags/${id}` },
+          }),
+        }).catch(() => {/* non-blocking */})
+      } catch {
+        // Never block the status update on notification failure
+      }
     },
   })
 

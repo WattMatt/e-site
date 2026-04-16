@@ -39,7 +39,7 @@ export default function ComplianceTab() {
   }
 
   return (
-    <View style={styles.container}>
+    <View testID="compliance-screen" style={styles.container}>
       <FlatList
         data={sites ?? []}
         keyExtractor={item => item.id}
@@ -64,7 +64,7 @@ export default function ComplianceTab() {
           const score = total === 0 ? 0 : Math.round((approved / total) * 100)
 
           return (
-            <View style={styles.card}>
+            <View testID="compliance-site-card" style={styles.card}>
               <View style={styles.cardTop}>
                 <View style={styles.cardInfo}>
                   <Text style={styles.siteName}>{item.name}</Text>

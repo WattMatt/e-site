@@ -76,7 +76,7 @@ export default async function SnagDetailPage({ params }: Props) {
           <Card>
             <CardBody>
               <h3 className="text-sm font-medium text-slate-400 mb-3">Update Status</h3>
-              <SnagStatusForm snagId={id} currentStatus={snag.status} />
+              <SnagStatusForm snagId={id} currentStatus={snag.status} projectId={project?.id ?? ''} />
             </CardBody>
           </Card>
         </div>

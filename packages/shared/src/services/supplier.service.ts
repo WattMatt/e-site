@@ -1,7 +1,7 @@
 import type { TypedSupabaseClient } from '@esite/db'
 
 export const supplierService = {
-  async listAll(client: TypedSupabaseClient, filters?: { category?: string }) {
+  async listAll(client: TypedSupabaseClient, filters?: { category?: string; search?: string }) {
     let query = client
       .schema('suppliers')
       .from('suppliers')
@@ -11,6 +11,13 @@ export const supplierService = {
 
     if (filters?.category) {
       query = query.contains('categories', [filters.category])
+    }
+
+    if (filters?.search) {
+      // ilike search on name and trading_name (uses pg_trgm index via migration 00023)
+      query = query.or(
+        `name.ilike.%${filters.search}%,trading_name.ilike.%${filters.search}%`
+      )
     }
 
     const { data, error } = await query
@@ -78,6 +85,7 @@ export const supplierService = {
     const items = input.items.map(item => ({
       order_id: order.id,
       catalogue_item_id: item.catalogueItemId,
+      description: '',
       quantity: item.quantity,
       unit_price: item.unitPrice,
     }))

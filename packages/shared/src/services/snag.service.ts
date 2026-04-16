@@ -131,9 +131,11 @@ export const snagService = {
       .eq('project_id', projectId)
     if (error) throw error
 
+    type SnagCounts = { open: number; in_progress: number; resolved: number; pending_sign_off: number; signed_off: number; closed: number; total: number }
     return (data ?? []).reduce(
-      (acc, snag) => {
-        acc[snag.status] = (acc[snag.status] ?? 0) + 1
+      (acc: SnagCounts, snag) => {
+        const key = snag.status as keyof Omit<SnagCounts, 'total'>
+        acc[key] = (acc[key] ?? 0) + 1
         acc.total++
         return acc
       },

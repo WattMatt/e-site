@@ -9,13 +9,16 @@
   },
   "scripts": {
     "type-check": "tsc --noEmit",
-    "gen-types": "supabase gen types typescript --local > src/types.ts"
+    "gen-types": "supabase gen types typescript --local > src/types.ts",
+    "test": "vitest run",
+    "test:ci": "vitest run --reporter=verbose"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0"
   },
   "devDependencies": {
     "typescript": "^5.5.0",
-    "supabase": "^1.190.0"
+    "supabase": "^1.190.0",
+    "vitest": "^2.1.9"
   }
 }

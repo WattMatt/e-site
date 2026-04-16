@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 interface Props {
-  type: 'snag-list' | 'compliance'
+  type: 'snag-list' | 'compliance' | 'diary-weekly'
   entityId: string
   label?: string
 }

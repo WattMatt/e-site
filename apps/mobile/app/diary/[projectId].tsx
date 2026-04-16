@@ -5,7 +5,8 @@ import {
 } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { diaryService } from '@esite/shared'
+import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
+import type { DiaryEntryType } from '@esite/shared'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
 
@@ -21,7 +22,9 @@ export default function SiteDiaryScreen() {
 
   const [showForm, setShowForm] = useState(false)
   const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [entryType, setEntryType] = useState<DiaryEntryType>('progress')
   const [progressNotes, setProgressNotes] = useState('')
+  const [safetyNotes, setSafetyNotes] = useState('')
   const [weather, setWeather] = useState('')
   const [workers, setWorkers] = useState('')
   const [delays, setDelays] = useState('')
@@ -37,7 +40,9 @@ export default function SiteDiaryScreen() {
       diaryService.create(client, orgId, profile!.id, {
         projectId,
         entryDate,
+        entryType,
         progressNotes: progressNotes.trim(),
+        safetyNotes: safetyNotes.trim() || undefined,
         weather: weather || undefined,
         workersOnSite: workers ? parseInt(workers, 10) : undefined,
         delays: delays.trim() || undefined,
@@ -45,7 +50,9 @@ export default function SiteDiaryScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['diary', projectId] })
       setShowForm(false)
+      setEntryType('progress')
       setProgressNotes('')
+      setSafetyNotes('')
       setWeather('')
       setWorkers('')
       setDelays('')
@@ -86,6 +93,24 @@ export default function SiteDiaryScreen() {
       {showForm ? (
         <ScrollView style={styles.formScroll} keyboardShouldPersistTaps="handled">
           <View style={styles.form}>
+            {/* Entry type */}
+            <View>
+              <Text style={styles.fieldLabel}>Entry type</Text>
+              <View style={styles.pills}>
+                {(Object.keys(ENTRY_TYPE_LABELS) as DiaryEntryType[]).map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={[styles.pill, entryType === type && styles.pillActive]}
+                    onPress={() => setEntryType(type)}
+                  >
+                    <Text style={[styles.pillText, entryType === type && styles.pillActiveText]}>
+                      {ENTRY_TYPE_LABELS[type]}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
             {/* Date + workers row */}
             <View style={styles.formRow}>
               <View style={styles.formHalf}>
@@ -142,6 +167,23 @@ export default function SiteDiaryScreen() {
                 textAlignVertical="top"
               />
             </View>
+
+            {/* Safety notes — shown when relevant */}
+            {(entryType === 'safety' || entryType === 'general') && (
+              <View>
+                <Text style={[styles.fieldLabel, { color: '#EF4444' }]}>Safety notes</Text>
+                <TextInput
+                  style={[styles.input, styles.textareaSm]}
+                  value={safetyNotes}
+                  onChangeText={setSafetyNotes}
+                  placeholder="Safety observations, near-misses, incidents…"
+                  placeholderTextColor="#475569"
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+              </View>
+            )}
 
             {/* Delays */}
             <View>
