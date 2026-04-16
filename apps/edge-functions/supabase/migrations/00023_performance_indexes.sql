@@ -41,11 +41,11 @@ CREATE INDEX IF NOT EXISTS idx_project_members_user
 
 -- site_diary_entries: org + date range (cross-project diary view)
 CREATE INDEX IF NOT EXISTS idx_diary_org_date
-    ON projects.site_diary_entries (organisation_id, date DESC);
+    ON projects.site_diary_entries (organisation_id, entry_date DESC);
 
 -- site_diary_entries: org + entry_type filter
 CREATE INDEX IF NOT EXISTS idx_diary_org_type
-    ON projects.site_diary_entries (organisation_id, entry_type, date DESC)
+    ON projects.site_diary_entries (organisation_id, entry_type, entry_date DESC)
     WHERE entry_type IS NOT NULL;
 
 -- procurement_items: org + status (procurement list)
