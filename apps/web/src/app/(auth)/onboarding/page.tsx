@@ -37,7 +37,7 @@ export default function OnboardingPage() {
     const fd = new FormData(e.currentTarget)
     startTransition(async () => {
       const result = await createOrganisationAction(fd)
-      if ('error' in result) { setError(result.error); return }
+      if ('error' in result) { setError(result.error ?? null); return }
       setOrgId(result.organisationId!)
       setStep('project')
     })
@@ -49,7 +49,7 @@ export default function OnboardingPage() {
     const fd = new FormData(e.currentTarget)
     startTransition(async () => {
       const result = await createFirstProjectAction(orgId, fd)
-      if ('error' in result) { setError(result.error); return }
+      if ('error' in result) { setError(result.error ?? null); return }
       setProjectId(result.projectId!)
       setStep('invite')
     })

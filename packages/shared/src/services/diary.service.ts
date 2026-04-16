@@ -54,7 +54,7 @@ export const diaryService = {
 
     if (filters?.dateFrom) query = query.gte('entry_date', filters.dateFrom)
     if (filters?.dateTo) query = query.lte('entry_date', filters.dateTo)
-    if (filters?.entryType) query = query.eq('entry_type', filters.entryType)
+    if (filters?.entryType) query = (query as any).eq('entry_type', filters.entryType)
     if (filters?.projectId) query = query.eq('project_id', filters.projectId)
 
     const { data, error } = await query

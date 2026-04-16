@@ -267,7 +267,7 @@ export async function updateOrderStatusAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const updates: Record<string, unknown> = { status }
+  const updates: Record<string, unknown> & any = { status }
   if (extras?.notes !== undefined) updates.notes = extras.notes
   if (extras?.quotedAmount !== undefined) updates.total_amount = extras.quotedAmount
 

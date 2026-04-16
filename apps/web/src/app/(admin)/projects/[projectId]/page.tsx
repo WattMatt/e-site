@@ -10,7 +10,7 @@ import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/Button'
 import { PageHeader } from '@/components/layout/Header'
-import { snagPriorityBadge, snagStatusBadge, projectStatusBadge } from '@/components/ui/Badge'
+import { priorityBadge, snagStatusBadge, projectStatusBadge } from '@/components/ui/Badge'
 import { formatDate, formatZAR } from '@esite/shared'
 
 interface Props {
@@ -199,7 +199,7 @@ export default async function ProjectDetailPage({ params }: Props) {
                     )}
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {snagPriorityBadge(snag.priority)}
+                    {priorityBadge(snag.priority)}
                     {snagStatusBadge(snag.status)}
                   </div>
                 </Link>

@@ -18,13 +18,14 @@ export default async function PortalCompliancePage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: mem } = await supabase
+  const { data: memRaw } = await supabase
     .from('user_organisations')
     .select('organisation_id')
     .eq('user_id', user!.id)
     .eq('is_active', true)
     .limit(1)
     .single()
+  const mem = memRaw as { organisation_id: string } | null
 
   const sites = mem
     ? await complianceService.listSites(supabase as any, mem.organisation_id).catch(() => [])

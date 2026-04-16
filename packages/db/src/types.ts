@@ -23,6 +23,7 @@ export type Database = {
           currency: string
           description: string | null
           id: string
+          metadata: Json
           organisation_id: string
           paid_at: string | null
           paystack_reference: string | null
@@ -37,6 +38,7 @@ export type Database = {
           currency?: string
           description?: string | null
           id?: string
+          metadata?: Json
           organisation_id: string
           paid_at?: string | null
           paystack_reference?: string | null
@@ -51,6 +53,7 @@ export type Database = {
           currency?: string
           description?: string | null
           id?: string
+          metadata?: Json
           organisation_id?: string
           paid_at?: string | null
           paystack_reference?: string | null
@@ -845,6 +848,81 @@ export type Database = {
         }
         Relationships: []
       }
+      paystack_subaccounts: {
+        Row: {
+          account_name: string | null
+          account_number: string
+          bank_code: string
+          bank_name: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          subaccount_code: string
+          supplier_id: string
+          supplier_org_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          account_name?: string | null
+          account_number: string
+          bank_code: string
+          bank_name?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          subaccount_code: string
+          supplier_id: string
+          supplier_org_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account_name?: string | null
+          account_number?: string
+          bank_code?: string
+          bank_name?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          subaccount_code?: string
+          supplier_id?: string
+          supplier_org_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      supplier_ratings: {
+        Row: {
+          comment: string | null
+          contractor_org_id: string
+          created_at: string
+          id: string
+          order_id: string
+          quality_rating: number | null
+          rating: number
+          supplier_id: string
+        }
+        Insert: {
+          comment?: string | null
+          contractor_org_id: string
+          created_at?: string
+          id?: string
+          order_id: string
+          quality_rating?: number | null
+          rating: number
+          supplier_id: string
+        }
+        Update: {
+          comment?: string | null
+          contractor_org_id?: string
+          created_at?: string
+          id?: string
+          order_id?: string
+          quality_rating?: number | null
+          rating?: number
+          supplier_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1275,12 +1353,16 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string
+          delay_notes: string | null
           delays: string | null
           entry_date: string
+          entry_type: string | null
           id: string
           organisation_id: string
           progress_notes: string
           project_id: string
+          quality_notes: string | null
+          safety_notes: string | null
           updated_at: string
           weather: string | null
           workers_on_site: number | null
@@ -1288,12 +1370,16 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by: string
+          delay_notes?: string | null
           delays?: string | null
           entry_date: string
+          entry_type?: string | null
           id?: string
           organisation_id: string
           progress_notes: string
           project_id: string
+          quality_notes?: string | null
+          safety_notes?: string | null
           updated_at?: string
           weather?: string | null
           workers_on_site?: number | null
@@ -1301,12 +1387,16 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string
+          delay_notes?: string | null
           delays?: string | null
           entry_date?: string
+          entry_type?: string | null
           id?: string
           organisation_id?: string
           progress_notes?: string
           project_id?: string
+          quality_notes?: string | null
+          safety_notes?: string | null
           updated_at?: string
           weather?: string | null
           workers_on_site?: number | null
@@ -1564,46 +1654,67 @@ export type Database = {
       }
       organisations: {
         Row: {
+          address: string | null
+          city: string | null
           created_at: string
           id: string
           logo_url: string | null
           name: string
           paystack_customer_id: string | null
+          phone: string | null
           province: string | null
           registration_no: string | null
+          registration_number: string | null
           settings: Json
           slug: string
           storage_used_bytes: number
           subscription_tier: string
+          type: string
           updated_at: string
+          vat_number: string | null
+          website: string | null
         }
         Insert: {
+          address?: string | null
+          city?: string | null
           created_at?: string
           id?: string
           logo_url?: string | null
           name: string
           paystack_customer_id?: string | null
+          phone?: string | null
           province?: string | null
           registration_no?: string | null
+          registration_number?: string | null
           settings?: Json
-          slug: string
+          slug?: string
           storage_used_bytes?: number
           subscription_tier?: string
+          type?: string
           updated_at?: string
+          vat_number?: string | null
+          website?: string | null
         }
         Update: {
+          address?: string | null
+          city?: string | null
           created_at?: string
           id?: string
           logo_url?: string | null
           name?: string
           paystack_customer_id?: string | null
+          phone?: string | null
           province?: string | null
           registration_no?: string | null
+          registration_number?: string | null
           settings?: Json
           slug?: string
           storage_used_bytes?: number
           subscription_tier?: string
+          type?: string
           updated_at?: string
+          vat_number?: string | null
+          website?: string | null
         }
         Relationships: []
       }
@@ -1616,6 +1727,7 @@ export type Database = {
           id: string
           notification_preferences: Json
           phone: string | null
+          popia_consent_at: string | null
           updated_at: string
         }
         Insert: {
@@ -1626,6 +1738,7 @@ export type Database = {
           id: string
           notification_preferences?: Json
           phone?: string | null
+          popia_consent_at?: string | null
           updated_at?: string
         }
         Update: {
@@ -1636,6 +1749,7 @@ export type Database = {
           id?: string
           notification_preferences?: Json
           phone?: string | null
+          popia_consent_at?: string | null
           updated_at?: string
         }
         Relationships: []

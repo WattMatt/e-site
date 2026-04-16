@@ -26,7 +26,7 @@ export async function register() {
       includeLocalVariables: true,
       integrations: [
         // Instrument Supabase fetch calls in server components
-        Sentry.httpIntegration({ tracing: true }),
+        Sentry.httpIntegration(),
       ],
       // Performance: ignore Next.js internal routes in traces
       tracesSampler(ctx) {
@@ -39,7 +39,8 @@ export async function register() {
       beforeSend(event) {
         // Strip any accidentally captured auth tokens from breadcrumbs
         if (event.breadcrumbs?.values) {
-          event.breadcrumbs.values = event.breadcrumbs.values.map(bc => {
+          const bcs = event.breadcrumbs.values as unknown as any[]
+          event.breadcrumbs.values = bcs.map((bc: any) => {
             if (bc.data?.url && typeof bc.data.url === 'string') {
               bc.data.url = bc.data.url.replace(/access_token=[^&]+/, 'access_token=REDACTED')
               bc.data.url = bc.data.url.replace(/token=[^&]+/, 'token=REDACTED')

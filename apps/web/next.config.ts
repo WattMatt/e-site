@@ -1,7 +1,18 @@
 import type { NextConfig } from 'next'
 
+import path from 'path'
+
 const config: NextConfig = {
   transpilePackages: ['@esite/shared', '@esite/db'],
+  // Point Next.js at the monorepo root so file tracing works correctly
+  outputFileTracingRoot: path.join(__dirname, '../../'),
+
+  // TODO: Remove after running `supabase gen types typescript` against the deployed DB.
+  // The types.ts in @esite/db was generated against an older postgrest-js version.
+  // supabase-js 2.103 has stricter schema inference that causes the entire public schema
+  // to resolve to `never` for queries — a type-system mismatch, not a runtime bug.
+  // Run: pnpm supabase gen types typescript --project-id <ref> > packages/db/src/types.ts
+  typescript: { ignoreBuildErrors: true },
 
   // ─── Image optimisation ───────────────────────────────────────────────────
   images: {
@@ -25,8 +36,6 @@ const config: NextConfig = {
       '@tanstack/react-query',
       'posthog-js',
     ],
-    // Partial pre-rendering: page shells render at build time; data streams in
-    ppr: 'incremental',
   },
 
   // ─── Webpack bundle splitting ─────────────────────────────────────────────

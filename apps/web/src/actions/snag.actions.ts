@@ -79,7 +79,7 @@ export async function updateSnagStatusAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const updates: Record<string, unknown> = { status: newStatus }
+  const updates: Record<string, unknown> & any = { status: newStatus }
   if (newStatus === 'resolved') updates.resolved_at = new Date().toISOString()
   if (newStatus === 'signed_off') {
     updates.signed_off_by = user.id

@@ -14,13 +14,14 @@ export async function POST(req: NextRequest) {
   }
 
   // Verify the supplier belongs to the current user's org
-  const { data: mem } = await supabase
+  const { data: memRaw } = await supabase
     .from('user_organisations')
     .select('organisation_id')
     .eq('user_id', user.id)
     .eq('is_active', true)
     .limit(1)
     .single()
+  const mem = memRaw as { organisation_id: string } | null
 
   if (!mem) return NextResponse.json({ error: 'No organisation found' }, { status: 403 })
 

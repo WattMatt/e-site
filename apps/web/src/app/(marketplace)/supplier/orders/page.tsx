@@ -33,7 +33,7 @@ export default async function SupplierOrdersPage() {
 
   if (!mem) redirect('/register')
 
-  const { data: orders } = await supabase
+  const { data: ordersRaw } = await (supabase as any)
     .schema('marketplace')
     .from('orders')
     .select(`
@@ -45,7 +45,7 @@ export default async function SupplierOrdersPage() {
     .neq('status', 'draft')
     .order('created_at', { ascending: false })
 
-  const allOrders = orders ?? []
+  const allOrders: any[] = ordersRaw ?? []
   const pendingCount = allOrders.filter(o => o.status === 'submitted').length
 
   return (

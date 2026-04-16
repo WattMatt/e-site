@@ -12,11 +12,11 @@ interface Props {
 
 export function ReviewCocForm({ uploadId, subsectionId, siteId, currentStatus }: Props) {
   const [notes, setNotes] = useState('')
-  const [loading, setLoading] = useState<'approve' | 'reject' | 'review' | null>(null)
+  const [loading, setLoading] = useState<'approved' | 'rejected' | 'review' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function handleAction(action: 'approve' | 'reject' | 'review') {
-    if (action !== 'review' && action === 'reject' && !notes.trim()) {
+  async function handleAction(action: 'approved' | 'rejected' | 'review') {
+    if (action !== 'review' && action === 'rejected' && !notes.trim()) {
       setError('Please add a note explaining why the COC was rejected.')
       return
     }
@@ -47,7 +47,7 @@ export function ReviewCocForm({ uploadId, subsectionId, siteId, currentStatus }:
     <div className="space-y-3">
       <div>
         <label className="block text-xs text-slate-400 mb-1">
-          Review notes {loading === 'reject' && <span className="text-red-400">*</span>}
+          Review notes {loading === 'rejected' && <span className="text-red-400">*</span>}
         </label>
         <textarea
           value={notes}
@@ -76,19 +76,19 @@ export function ReviewCocForm({ uploadId, subsectionId, siteId, currentStatus }:
         <button
           type="button"
           disabled={loading !== null}
-          onClick={() => handleAction('approve')}
+          onClick={() => handleAction('approved')}
           className="text-sm px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white transition-colors"
         >
-          {loading === 'approve' ? 'Approving…' : 'Approve ✓'}
+          {loading === 'approved' ? 'Approving…' : 'Approve ✓'}
         </button>
 
         <button
           type="button"
           disabled={loading !== null}
-          onClick={() => handleAction('reject')}
+          onClick={() => handleAction('rejected')}
           className="text-sm px-3 py-1.5 rounded-lg bg-red-900/70 hover:bg-red-800/70 disabled:opacity-50 text-red-300 transition-colors"
         >
-          {loading === 'reject' ? 'Rejecting…' : 'Reject ✗'}
+          {loading === 'rejected' ? 'Rejecting…' : 'Reject ✗'}
         </button>
       </div>
     </div>

@@ -13,13 +13,14 @@ export default async function SupplierProfilePage({ searchParams }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login?next=/supplier/profile')
 
-  const { data: mem } = await supabase
+  const { data: memRaw } = await supabase
     .from('user_organisations')
     .select('organisation_id')
     .eq('user_id', user.id)
     .eq('is_active', true)
     .limit(1)
     .single()
+  const mem = memRaw as { organisation_id: string } | null
 
   if (!mem) redirect('/register')
 
