@@ -14,6 +14,10 @@ const config: NextConfig = {
   // Run: pnpm supabase gen types typescript --project-id <ref> > packages/db/src/types.ts
   typescript: { ignoreBuildErrors: true },
 
+  // ESLint runs fine locally but can't resolve monorepo-root packages (e.g. @eslint/js)
+  // from the apps/web context on Vercel. Lint runs separately in CI.
+  eslint: { ignoreDuringBuilds: true },
+
   // ─── Image optimisation ───────────────────────────────────────────────────
   images: {
     formats: ['image/avif', 'image/webp'],
