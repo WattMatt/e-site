@@ -17,7 +17,7 @@ export async function createOrganisationAction(formData: FormData) {
   if (!name?.trim()) return { error: 'Organisation name is required' }
 
   // Use service client to bypass RLS for initial org creation (new user has no org membership yet)
-  const service = await createServiceClient()
+  const service = createServiceClient()
 
   // Create organisation
   const { data: org, error: orgErr } = await service
