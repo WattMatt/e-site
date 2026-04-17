@@ -37,7 +37,22 @@ export default async function RfisPage() {
 
   return (
     <div>
-      <PageHeader title="RFIs" subtitle={`${rfis?.length ?? 0} requests`} />
+      <PageHeader
+        title="RFIs"
+        subtitle={`${rfis?.length ?? 0} requests`}
+        actions={
+          <Link
+            href="/rfis/new"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '9px 16px', background: 'var(--c-amber)', color: '#0D0B09',
+              borderRadius: 6, fontSize: 13, fontWeight: 700, textDecoration: 'none',
+            }}
+          >
+            + New RFI
+          </Link>
+        }
+      />
 
       {!rfis?.length ? (
         <EmptyState icon="❓" title="No RFIs yet" description="Requests for information raised on projects will appear here." />

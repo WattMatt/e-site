@@ -50,7 +50,22 @@ export default async function SnagsPage({ searchParams }: Props) {
 
   return (
     <div>
-      <PageHeader title="Snags" subtitle={`${allSnags.length} total`} />
+      <PageHeader
+        title="Snags"
+        subtitle={`${allSnags.length} total`}
+        actions={
+          <Link
+            href="/snags/new"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '9px 16px', background: 'var(--c-amber)', color: '#0D0B09',
+              borderRadius: 6, fontSize: 13, fontWeight: 700, textDecoration: 'none',
+            }}
+          >
+            + New Snag
+          </Link>
+        }
+      />
 
       {/* KPI cards */}
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-6">

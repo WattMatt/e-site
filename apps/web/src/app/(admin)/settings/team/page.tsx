@@ -3,6 +3,7 @@ import { orgService } from '@esite/shared'
 import { PageHeader } from '@/components/layout/Header'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import Link from 'next/link'
 import { formatDate, formatRelative } from '@esite/shared'
 import { InviteForm } from './InviteForm'
 import { RevokeInviteButton } from './RevokeInviteButton'
@@ -19,7 +20,19 @@ export default async function TeamPage() {
     .limit(1)
     .single()
 
-  if (!membership) return null
+  if (!membership) return (
+    <div>
+      <div className="page-header"><h1 className="page-title">Team</h1></div>
+      <div style={{ padding: '40px 24px', background: 'var(--c-panel)', border: '1px solid var(--c-border)', borderRadius: 8, textAlign: 'center' }}>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
+          No organisation found. Complete onboarding to manage your team.
+        </p>
+        <Link href="/onboarding" style={{ display: 'inline-block', marginTop: 16, padding: '9px 16px', background: 'var(--c-amber)', color: '#0D0B09', borderRadius: 6, fontSize: 13, fontWeight: 700, textDecoration: 'none' }}>
+          Go to Onboarding
+        </Link>
+      </div>
+    </div>
+  )
 
   const orgId = membership.organisation_id
   const isAdmin = ['owner', 'admin'].includes(membership.role)
