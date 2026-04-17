@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -9,7 +8,6 @@ import { signUpSchema, type SignUpInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 
 export default function SignupPage() {
-  const router = useRouter()
   const supabase = createClient()
   const [serverError, setServerError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
@@ -27,107 +25,99 @@ export default function SignupPage() {
       password,
       options: { data: { full_name: fullName } },
     })
-    if (error) {
-      setServerError(error.message)
-      return
-    }
+    if (error) { setServerError(error.message); return }
     setSuccess(true)
   }
 
   if (success) {
     return (
-      <div className="bg-slate-800 rounded-xl p-8 text-center">
-        <div className="text-4xl mb-4">📧</div>
-        <h2 className="text-xl font-semibold text-white mb-2">Check your email</h2>
-        <p className="text-slate-400">We&apos;ve sent a confirmation link. Click it to activate your account.</p>
+      <div className="auth-card auth-success">
+        <div className="auth-success-icon">📬</div>
+        <h2>Check your inbox</h2>
+        <p>We sent a confirmation link to your email. Click it to activate your account.</p>
+        <div className="auth-links" style={{ marginTop: 28 }}>
+          <Link href="/login" className="auth-link">← Back to sign in</Link>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="bg-slate-800 rounded-xl p-8 shadow-2xl">
-      <h2 className="text-xl font-semibold text-white mb-6">Create account</h2>
+    <div className="auth-card">
+      <h2 className="auth-card-title">Create account</h2>
+      <p className="auth-card-sub">Get your team on E-Site in minutes</p>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Full name</label>
+      <form onSubmit={handleSubmit(onSubmit)}>
+        {serverError && <div className="auth-alert-error">{serverError}</div>}
+
+        <div className="auth-field">
+          <label className="auth-label">Full name</label>
           <input
             {...register('fullName')}
-            className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={`auth-input${errors.fullName ? ' auth-input-error' : ''}`}
             placeholder="Arno Watson"
+            autoComplete="name"
           />
-          {errors.fullName && <p className="text-red-400 text-sm mt-1">{errors.fullName.message}</p>}
+          {errors.fullName && <p className="auth-error-text">{errors.fullName.message}</p>}
         </div>
 
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Email</label>
+        <div className="auth-field">
+          <label className="auth-label">Work email</label>
           <input
             {...register('email')}
             type="email"
-            className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={`auth-input${errors.email ? ' auth-input-error' : ''}`}
             placeholder="you@company.co.za"
+            autoComplete="email"
           />
-          {errors.email && <p className="text-red-400 text-sm mt-1">{errors.email.message}</p>}
+          {errors.email && <p className="auth-error-text">{errors.email.message}</p>}
         </div>
 
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Password</label>
+        <div className="auth-field">
+          <label className="auth-label">Password</label>
           <input
             {...register('password')}
             type="password"
-            className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={`auth-input${errors.password ? ' auth-input-error' : ''}`}
+            autoComplete="new-password"
           />
-          {errors.password && <p className="text-red-400 text-sm mt-1">{errors.password.message}</p>}
+          {errors.password && <p className="auth-error-text">{errors.password.message}</p>}
         </div>
 
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Confirm password</label>
+        <div className="auth-field">
+          <label className="auth-label">Confirm password</label>
           <input
             {...register('confirmPassword')}
             type="password"
-            className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className={`auth-input${errors.confirmPassword ? ' auth-input-error' : ''}`}
+            autoComplete="new-password"
           />
-          {errors.confirmPassword && <p className="text-red-400 text-sm mt-1">{errors.confirmPassword.message}</p>}
+          {errors.confirmPassword && <p className="auth-error-text">{errors.confirmPassword.message}</p>}
         </div>
 
-        <div className="flex items-start gap-3 pt-1">
-          <input
-            {...register('popiaConsent')}
-            type="checkbox"
-            id="popiaConsent"
-            className="mt-0.5 h-4 w-4 shrink-0 accent-blue-500 cursor-pointer"
-          />
-          <label htmlFor="popiaConsent" className="text-sm text-slate-400 leading-snug cursor-pointer">
-            I consent to E-Site processing my personal information in accordance with POPIA
-            (Protection of Personal Information Act). Data may be processed on servers outside
-            South Africa subject to adequate safeguards.
+        <div className="auth-checkbox-row">
+          <input {...register('popiaConsent')} type="checkbox" id="popiaConsent" className="auth-checkbox" />
+          <label htmlFor="popiaConsent" className="auth-checkbox-label">
+            I consent to E-Site processing my personal information under POPIA.
+            Data may be processed outside South Africa subject to adequate safeguards.
           </label>
         </div>
         {errors.popiaConsent && (
-          <p className="text-red-400 text-sm -mt-1">{errors.popiaConsent.message}</p>
+          <p className="auth-error-text" style={{ marginTop: -6, marginBottom: 10 }}>
+            {errors.popiaConsent.message}
+          </p>
         )}
 
-        {serverError && (
-          <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">
-            {serverError}
-          </div>
-        )}
-
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-3 rounded-lg transition-colors"
-        >
-          {isSubmitting ? 'Creating account…' : 'Create Account'}
+        <button type="submit" disabled={isSubmitting} className="auth-btn">
+          {isSubmitting ? 'Creating account…' : 'Create account →'}
         </button>
       </form>
 
-      <p className="mt-6 text-center text-sm text-slate-400">
-        Already have an account?{' '}
-        <Link href="/login" className="text-blue-400 hover:text-blue-300">
-          Sign in
+      <div className="auth-links">
+        <Link href="/login" className="auth-link">
+          Already have an account? <span className="auth-link-accent">Sign in</span>
         </Link>
-      </p>
+      </div>
     </div>
   )
 }
