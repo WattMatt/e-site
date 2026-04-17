@@ -1,7 +1,7 @@
 'use server'
 
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
 
 export async function createOrganisationAction(formData: FormData) {
@@ -16,8 +16,11 @@ export async function createOrganisationAction(formData: FormData) {
 
   if (!name?.trim()) return { error: 'Organisation name is required' }
 
+  // Use service client to bypass RLS for initial org creation (new user has no org membership yet)
+  const service = await createServiceClient()
+
   // Create organisation
-  const { data: org, error: orgErr } = await supabase
+  const { data: org, error: orgErr } = await service
     .from('organisations')
     .insert({
       name: name.trim(),
@@ -31,7 +34,7 @@ export async function createOrganisationAction(formData: FormData) {
   if (orgErr) return { error: orgErr.message }
 
   // Link user as admin
-  const { error: memErr } = await supabase
+  const { error: memErr } = await service
     .from('user_organisations')
     .insert({
       user_id: user.id,
@@ -43,7 +46,7 @@ export async function createOrganisationAction(formData: FormData) {
   if (memErr) return { error: memErr.message }
 
   // Update profile with org
-  await supabase
+  await service
     .from('profiles')
     .update({ popia_consent_at: new Date().toISOString() })
     .eq('id', user.id)
