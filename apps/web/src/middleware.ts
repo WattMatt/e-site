@@ -1,8 +1,26 @@
 import { type NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 import { updateSession } from './lib/supabase/middleware'
 
 const PUBLIC_PATHS = ['/login', '/signup', '/reset-password', '/auth/callback', '/share']
 const ONBOARDING_PATH = '/onboarding'
+
+// Service-role client for org membership checks — bypasses RLS entirely.
+// Safe because we always verify the user session via updateSession() first.
+const serviceClient = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { persistSession: false, autoRefreshToken: false } }
+)
+
+async function hasOrg(userId: string): Promise<boolean> {
+  const { count } = await serviceClient
+    .from('user_organisations')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('is_active', true)
+  return (count ?? 0) > 0
+}
 
 export async function middleware(request: NextRequest) {
   const { supabaseResponse, user } = await updateSession(request)
@@ -27,56 +45,19 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 3. Authenticated but no org → onboarding (skip if already there)
+  // 3. Authenticated but no org → onboarding
   if (user && !isPublicPath && !isOnboarding) {
-    const res = await supabaseResponse
-    // Inline org check — avoids extra round-trip by reading the cookie-based client
-    const { createServerClient } = await import('@supabase/ssr')
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll: () => request.cookies.getAll(),
-          setAll: () => {},
-        },
-      }
-    )
-    const { count } = await supabase
-      .from('user_organisations')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-
-    if ((count ?? 0) === 0) {
+    if (!(await hasOrg(user.id))) {
       const url = request.nextUrl.clone()
       url.pathname = ONBOARDING_PATH
       return NextResponse.redirect(url)
     }
-
     return supabaseResponse
   }
 
-  // 4. Has org, on onboarding → dashboard
+  // 4. Has org + on onboarding → dashboard
   if (user && isOnboarding) {
-    const { createServerClient } = await import('@supabase/ssr')
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll: () => request.cookies.getAll(),
-          setAll: () => {},
-        },
-      }
-    )
-    const { count } = await supabase
-      .from('user_organisations')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-
-    if ((count ?? 0) > 0) {
+    if (await hasOrg(user.id)) {
       const url = request.nextUrl.clone()
       url.pathname = '/dashboard'
       return NextResponse.redirect(url)
