@@ -18,6 +18,13 @@ const config: NextConfig = {
   // from the apps/web context on Vercel. Lint runs separately in CI.
   eslint: { ignoreDuringBuilds: true },
 
+  // ─── Redirects ───────────────────────────────────────────────────────────
+  async redirects() {
+    return [
+      { source: '/', destination: '/dashboard', permanent: false },
+    ]
+  },
+
   // ─── Image optimisation ───────────────────────────────────────────────────
   images: {
     formats: ['image/avif', 'image/webp'],
