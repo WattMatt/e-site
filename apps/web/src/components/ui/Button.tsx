@@ -1,20 +1,22 @@
 import { type ButtonHTMLAttributes, type ReactNode } from 'react'
-import { clsx } from 'clsx'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 type Size = 'sm' | 'md' | 'lg'
 
-const variantClasses: Record<Variant, string> = {
-  primary: 'bg-blue-600 hover:bg-blue-700 text-white',
-  secondary: 'bg-slate-700 hover:bg-slate-600 text-white',
-  ghost: 'bg-transparent hover:bg-slate-800 text-slate-300',
-  danger: 'bg-red-700 hover:bg-red-800 text-white',
+const BASE =
+  'inline-flex items-center justify-center gap-2 font-semibold transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed'
+
+const variantStyles: Record<Variant, React.CSSProperties> = {
+  primary:   { background: 'var(--c-amber)', color: '#0D0B09', border: 'none', borderRadius: 6 },
+  secondary: { background: 'var(--c-panel)', color: 'var(--c-text-mid)', border: '1px solid var(--c-border)', borderRadius: 6 },
+  ghost:     { background: 'transparent', color: 'var(--c-text-mid)', border: 'none', borderRadius: 6 },
+  danger:    { background: 'var(--c-red-dim)', color: 'var(--c-red)', border: '1px solid #6b1e1e', borderRadius: 6 },
 }
 
-const sizeClasses: Record<Size, string> = {
-  sm: 'px-3 py-1.5 text-sm',
-  md: 'px-4 py-2 text-sm',
-  lg: 'px-6 py-3 text-base',
+const sizeStyles: Record<Size, React.CSSProperties> = {
+  sm: { padding: '6px 12px', fontSize: 12 },
+  md: { padding: '9px 16px', fontSize: 13 },
+  lg: { padding: '12px 24px', fontSize: 15 },
 }
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -30,6 +32,7 @@ export function Button({
   children,
   isLoading,
   disabled,
+  style,
   className,
   ...props
 }: ButtonProps) {
@@ -37,15 +40,11 @@ export function Button({
     <button
       {...props}
       disabled={disabled || isLoading}
-      className={clsx(
-        'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed',
-        variantClasses[variant],
-        sizeClasses[size],
-        className
-      )}
+      className={`${BASE}${className ? ` ${className}` : ''}`}
+      style={{ ...variantStyles[variant], ...sizeStyles[size], fontFamily: 'var(--font-sans)', letterSpacing: '0.01em', ...style }}
     >
       {isLoading && (
-        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+        <svg className="animate-spin" width="14" height="14" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>

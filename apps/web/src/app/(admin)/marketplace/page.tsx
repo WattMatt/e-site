@@ -1,10 +1,16 @@
 import { createClient } from '@/lib/supabase/server'
 import { supplierService } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { Card, CardBody } from '@/components/ui/Card'
 import Link from 'next/link'
 
 const CATEGORIES = ['electrical', 'mechanical', 'civil', 'safety', 'general']
+
+const CATEGORY_ICONS: Record<string, string> = {
+  electrical: '⚡',
+  mechanical: '⚙',
+  civil: '🏗',
+  safety: '🦺',
+  general: '📦',
+}
 
 interface Props { searchParams: Promise<{ category?: string; search?: string }> }
 
@@ -17,98 +23,162 @@ export default async function MarketplacePage({ searchParams }: Props) {
   }).catch(() => [])
 
   return (
-    <div>
-      <PageHeader
-        title="Supplier Marketplace"
-        subtitle="Browse verified electrical & construction suppliers"
-        actions={
-          <Link
-            href="/marketplace/orders"
-            className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
-          >
-            My Orders
-          </Link>
-        }
-      />
+    <div className="animate-fadeup">
+      {/* Page header */}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Supplier Marketplace</h1>
+          <p className="page-subtitle">Browse verified electrical & construction suppliers</p>
+        </div>
+        <Link
+          href="/marketplace/orders"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '9px 16px',
+            background: 'var(--c-panel)',
+            border: '1px solid var(--c-border)',
+            color: 'var(--c-text-mid)',
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 600,
+            textDecoration: 'none',
+            transition: 'all 0.15s',
+          }}
+        >
+          My Orders
+        </Link>
+      </div>
 
-      {/* Search bar */}
-      <form method="GET" action="/marketplace" className="mb-4">
-        <div className="flex gap-2 max-w-md">
+      {/* Search + filter row */}
+      <div className="animate-fadeup animate-fadeup-1" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        <form method="GET" action="/marketplace" style={{ display: 'flex', gap: 8, flex: '1 1 300px', maxWidth: 500 }}>
           <input
             name="search"
             type="search"
             defaultValue={search ?? ''}
             placeholder="Search suppliers by name…"
-            className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
+            className="search-input"
+            style={{ flex: 1 }}
           />
           {category && <input type="hidden" name="category" value={category} />}
-          <button
-            type="submit"
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-          >
-            Search
-          </button>
+          <button type="submit" className="search-btn">Search</button>
           {(search || category) && (
             <Link
               href="/marketplace"
-              className="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors"
+              style={{
+                padding: '9px 14px',
+                background: 'var(--c-panel)',
+                border: '1px solid var(--c-border)',
+                color: 'var(--c-text-mid)',
+                borderRadius: 6,
+                fontSize: 12,
+                textDecoration: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                whiteSpace: 'nowrap',
+              }}
             >
               Clear
             </Link>
           )}
-        </div>
-      </form>
+        </form>
+      </div>
 
-      {/* Category filter */}
-      <div className="flex gap-2 mb-6 flex-wrap">
-        <Link
-          href="/marketplace"
-          className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${!category ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
-        >
+      {/* Category pills */}
+      <div className="animate-fadeup animate-fadeup-1" style={{ display: 'flex', gap: 6, marginBottom: 24, flexWrap: 'wrap' }}>
+        <Link href="/marketplace" className={`category-pill${!category ? ' active' : ''}`}>
           All
         </Link>
         {CATEGORIES.map(c => (
           <Link
             key={c}
             href={`/marketplace?category=${c}`}
-            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors capitalize ${category === c ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+            className={`category-pill${category === c ? ' active' : ''}`}
           >
-            {c}
+            {CATEGORY_ICONS[c]} {c}
           </Link>
         ))}
       </div>
 
+      {/* Results */}
       {suppliers.length === 0 ? (
-        <div className="flex flex-col items-center py-24 text-center gap-3">
-          <div className="text-5xl">🏪</div>
-          <p className="text-white font-semibold text-lg">No suppliers found</p>
-          <p className="text-slate-400 text-sm">Verified suppliers will appear here as they join the platform.</p>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            padding: '80px 24px',
+            background: 'var(--c-panel)',
+            border: '1px solid var(--c-border)',
+            borderRadius: 8,
+            textAlign: 'center',
+            gap: 12,
+          }}
+        >
+          <div style={{
+            width: 48, height: 48,
+            background: 'var(--c-elevated)',
+            borderRadius: 8,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 22,
+          }}>🏪</div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--c-text)', marginBottom: 6 }}>No suppliers found</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.04em' }}>
+              Verified suppliers will appear here as they join the platform
+            </div>
+          </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div
+          className="animate-fadeup animate-fadeup-2"
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}
+        >
           {suppliers.map((s: any) => (
-            <Link key={s.id} href={`/marketplace/${s.id}`}>
-              <Card className="hover:border-blue-500 transition-colors cursor-pointer h-full">
-                <CardBody className="h-full flex flex-col">
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <div>
-                      <p className="font-semibold text-white">{s.name}</p>
-                      {s.trading_name && s.trading_name !== s.name && (
-                        <p className="text-xs text-slate-400">{s.trading_name}</p>
-                      )}
+            <Link key={s.id} href={`/marketplace/${s.id}`} className="supplier-card bracket-card">
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--c-text)', lineHeight: 1.2 }}>{s.name}</div>
+                  {s.trading_name && s.trading_name !== s.name && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                      {s.trading_name}
                     </div>
-                    {s.is_verified && (
-                      <span className="text-xs bg-emerald-900/40 text-emerald-400 border border-emerald-700 px-2 py-0.5 rounded-full whitespace-nowrap">Verified</span>
-                    )}
-                  </div>
-                  {s.province && <p className="text-xs text-slate-500 mb-3">{s.province}</p>}
-                  <div className="flex flex-wrap gap-1.5 mt-auto">
-                    {(s.categories ?? []).map((c: string) => (
-                      <span key={c} className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded capitalize">{c}</span>
-                    ))}
-                  </div>
-                </CardBody>
-              </Card>
+                  )}
+                </div>
+                {s.is_verified && (
+                  <span className="badge badge-green" style={{ flexShrink: 0 }}>Verified</span>
+                )}
+              </div>
+
+              {s.province && (
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginBottom: 12, letterSpacing: '0.04em' }}>
+                  📍 {s.province}
+                </div>
+              )}
+
+              <div style={{ marginTop: 'auto', display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {(s.categories ?? []).map((c: string) => (
+                  <span
+                    key={c}
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 9,
+                      fontWeight: 600,
+                      letterSpacing: '0.1em',
+                      textTransform: 'uppercase',
+                      padding: '2px 7px',
+                      borderRadius: 2,
+                      background: 'var(--c-elevated)',
+                      color: 'var(--c-text-dim)',
+                      border: '1px solid var(--c-border-mid)',
+                    }}
+                  >
+                    {CATEGORY_ICONS[c] ?? ''} {c}
+                  </span>
+                ))}
+              </div>
             </Link>
           ))}
         </div>

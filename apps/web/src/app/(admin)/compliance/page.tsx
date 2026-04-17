@@ -1,10 +1,33 @@
 import { createClient } from '@/lib/supabase/server'
 import { complianceService } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { Button } from '@/components/ui/Button'
-import { cocStatusBadge } from '@/components/ui/Badge'
 import Link from 'next/link'
+
+const STATUS_META: Record<string, { label: string; className: string }> = {
+  approved:   { label: 'APR', className: 'badge badge-green' },
+  pending:    { label: 'PND', className: 'badge badge-amber' },
+  rejected:   { label: 'REJ', className: 'badge badge-red' },
+  not_started:{ label: 'NST', className: 'badge badge-muted' },
+}
+
+function statusBadge(status: string) {
+  const meta = STATUS_META[status] ?? STATUS_META['not_started']
+  return <span className={meta.className} title={status}>{meta.label}</span>
+}
+
+function ScoreRing({ score }: { score: number }) {
+  const color =
+    score === 100 ? 'var(--c-green)' :
+    score >= 50   ? 'var(--c-amber)' :
+    'var(--c-red)'
+
+  return (
+    <div style={{ textAlign: 'right' }}>
+      <span className="compliance-score" style={{ color, fontFamily: 'var(--font-mono)' }}>
+        {score}%
+      </span>
+    </div>
+  )
+}
 
 export default async function CompliancePage() {
   const supabase = await createClient()
@@ -22,7 +45,6 @@ export default async function CompliancePage() {
     ? await complianceService.listSites(supabase as any, membership.organisation_id)
     : []
 
-  // Compute score per site
   const sitesWithScore = sites.map((site) => {
     const subs = (site.subsections as any[]) ?? []
     const total = subs.length
@@ -31,63 +53,185 @@ export default async function CompliancePage() {
     return { ...site, score, total, approved }
   })
 
+  const overallHealth = sitesWithScore.length > 0
+    ? Math.round(sitesWithScore.reduce((acc, s) => acc + s.score, 0) / sitesWithScore.length)
+    : null
+
   return (
-    <div>
-      <PageHeader
-        title="Compliance"
-        subtitle="COC status across all sites"
-        actions={
-          <Link href="/compliance/new">
-            <Button>+ New Site</Button>
-          </Link>
-        }
-      />
+    <div className="animate-fadeup">
+      {/* Page header */}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Compliance</h1>
+          <p className="page-subtitle">COC status across all sites</p>
+        </div>
+        <Link
+          href="/compliance/new"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '9px 16px',
+            background: 'var(--c-amber)',
+            color: '#0D0B09',
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 700,
+            textDecoration: 'none',
+          }}
+        >
+          + New Site
+        </Link>
+      </div>
+
+      {/* Summary bar */}
+      {sitesWithScore.length > 0 && (
+        <div
+          className="animate-fadeup animate-fadeup-1"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 20,
+            padding: '14px 20px',
+            background: 'var(--c-panel)',
+            border: '1px solid var(--c-border)',
+            borderRadius: 8,
+            marginBottom: 24,
+          }}
+        >
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 4 }}>
+              Overall Health
+            </div>
+            <div
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 22,
+                fontWeight: 700,
+                color: overallHealth === null ? 'var(--c-text-dim)' :
+                       overallHealth >= 80 ? 'var(--c-green)' :
+                       overallHealth >= 50 ? 'var(--c-amber)' : 'var(--c-red)',
+              }}
+            >
+              {overallHealth !== null ? `${overallHealth}%` : '—'}
+            </div>
+          </div>
+          <div style={{ flex: 1, height: 3, background: 'var(--c-elevated)', borderRadius: 2, overflow: 'hidden' }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${overallHealth ?? 0}%`,
+                background: overallHealth === null ? 'var(--c-border-mid)' :
+                            overallHealth >= 80 ? 'var(--c-green)' :
+                            overallHealth >= 50 ? 'var(--c-amber)' : 'var(--c-red)',
+                borderRadius: 2,
+                transition: 'width 0.4s ease',
+              }}
+            />
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', whiteSpace: 'nowrap' }}>
+            {sitesWithScore.length} {sitesWithScore.length === 1 ? 'site' : 'sites'}
+          </div>
+        </div>
+      )}
 
       {sites.length === 0 ? (
-        <EmptyState
-          icon="✓"
-          title="No sites yet"
-          description="Add your first compliance site to start tracking COC status."
-          action={<Link href="/compliance/new"><Button>Add Site</Button></Link>}
-        />
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '80px 24px',
+            background: 'var(--c-panel)',
+            border: '1px solid var(--c-border)',
+            borderRadius: 8,
+            textAlign: 'center',
+            gap: 12,
+          }}
+        >
+          <div style={{
+            width: 48,
+            height: 48,
+            background: 'var(--c-elevated)',
+            borderRadius: 8,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-amber)" strokeWidth="1.5" width="24" height="24">
+              <path d="M12 2L20 6v6c0 5-8 10-8 10S4 17 4 12V6l8-4z" />
+              <polyline points="8,12 11,15 16,9" />
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--c-text)', marginBottom: 6 }}>No compliance sites yet</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.04em' }}>
+              Add your first site to start tracking COC status
+            </div>
+          </div>
+          <Link
+            href="/compliance/new"
+            style={{
+              padding: '10px 20px',
+              background: 'var(--c-amber)',
+              color: '#0D0B09',
+              borderRadius: 6,
+              fontSize: 13,
+              fontWeight: 700,
+              textDecoration: 'none',
+              marginTop: 4,
+            }}
+          >
+            Add Site
+          </Link>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div
+          className="animate-fadeup animate-fadeup-2"
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}
+        >
           {sitesWithScore.map((site) => (
-            <Link
-              key={site.id}
-              href={`/compliance/${site.id}`}
-              className="block bg-slate-800 border border-slate-700 rounded-xl p-5 hover:border-slate-500 transition-colors"
-            >
-              <div className="flex items-start justify-between mb-3">
+            <Link key={site.id} href={`/compliance/${site.id}`} className="compliance-card bracket-card">
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div>
-                  <p className="font-semibold text-white">{site.name}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{site.address}</p>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--c-text)', lineHeight: 1.2 }}>{site.name}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 3, letterSpacing: '0.04em' }}>
+                    {site.address}
+                  </div>
                 </div>
-                {/* Score ring */}
-                <div className={`text-lg font-bold ${site.score === 100 ? 'text-emerald-400' : site.score >= 50 ? 'text-amber-400' : 'text-red-400'}`}>
-                  {site.score}%
-                </div>
+                <ScoreRing score={site.score} />
               </div>
 
-              {/* Progress bar */}
-              <div className="w-full bg-slate-700 rounded-full h-1.5 mb-3">
+              {/* Progress track */}
+              <div className="score-track">
                 <div
-                  className={`h-1.5 rounded-full transition-all ${site.score === 100 ? 'bg-emerald-500' : site.score >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
-                  style={{ width: `${site.score}%` }}
+                  className="score-fill"
+                  style={{
+                    width: `${site.score}%`,
+                    background: site.score === 100 ? 'var(--c-green)' :
+                                site.score >= 50 ? 'var(--c-amber)' : 'var(--c-red)',
+                  }}
                 />
               </div>
 
               {/* Sub-section status pills */}
-              <div className="flex flex-wrap gap-1">
-                {((site.subsections as any[]) ?? []).slice(0, 6).map((sub: any) => (
-                  <span key={sub.id} title={sub.name}>{cocStatusBadge(sub.coc_status)}</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+                {((site.subsections as any[]) ?? []).slice(0, 8).map((sub: any) => (
+                  <span key={sub.id} title={sub.name}>
+                    {statusBadge(sub.coc_status)}
+                  </span>
                 ))}
-                {((site.subsections as any[]) ?? []).length > 6 && (
-                  <span className="text-xs text-slate-500">+{((site.subsections as any[]).length - 6)} more</span>
+                {((site.subsections as any[]) ?? []).length > 8 && (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--c-text-dim)' }}>
+                    +{(site.subsections as any[]).length - 8}
+                  </span>
                 )}
               </div>
 
-              <p className="text-xs text-slate-500 mt-3">{site.approved}/{site.total} sections approved</p>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
+                {site.approved}/{site.total} sections approved
+              </div>
             </Link>
           ))}
         </div>

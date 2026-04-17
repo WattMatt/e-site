@@ -11,14 +11,21 @@ import {
 type Step = 'org' | 'project' | 'invite' | 'done'
 
 const STEPS: { key: Step; label: string }[] = [
-  { key: 'org', label: 'Organisation' },
+  { key: 'org',     label: 'Organisation' },
   { key: 'project', label: 'First Project' },
-  { key: 'invite', label: 'Invite Team' },
-  { key: 'done', label: 'Done' },
+  { key: 'invite',  label: 'Invite Team' },
+  { key: 'done',    label: 'Done' },
 ]
 
-const INPUT_CLS = 'w-full bg-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-500'
-const LABEL_CLS = 'block text-sm text-slate-400 mb-1'
+function LogoMark() {
+  return (
+    <div className="onboarding-brand-mark">
+      <svg viewBox="0 0 20 20" fill="none" width="20" height="20">
+        <path d="M10 2L17 7V18H13V12H7V18H3V7L10 2Z" fill="#0D0B09" />
+      </svg>
+    </div>
+  )
+}
 
 export default function OnboardingPage() {
   const router = useRouter()
@@ -69,61 +76,50 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <span className="text-2xl font-bold text-white">E-Site</span>
-          <p className="text-slate-400 text-sm mt-1">Let&apos;s get you set up</p>
+    <div className="onboarding-shell">
+      <div className="onboarding-container">
+        {/* Brand */}
+        <div className="onboarding-brand">
+          <LogoMark />
+          <div className="onboarding-brand-name">E-Site</div>
+          <div className="onboarding-brand-sub">Construction Management · South Africa</div>
         </div>
 
-        {/* Step indicator */}
-        <div className="flex items-center justify-center gap-2 mb-8">
+        {/* Step track */}
+        <div className="step-track">
           {STEPS.map((s, i) => (
-            <div key={s.key} className="flex items-center gap-2">
-              <div className={`flex items-center gap-1.5 text-xs font-medium ${
-                i < stepIndex ? 'text-green-400' :
-                i === stepIndex ? 'text-white' : 'text-slate-600'
-              }`}>
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border ${
-                  i < stepIndex ? 'bg-green-500/20 border-green-700 text-green-400' :
-                  i === stepIndex ? 'bg-blue-600 border-blue-500 text-white' :
-                  'bg-slate-800 border-slate-700 text-slate-600'
-                }`}>
+            <div key={s.key} style={{ display: 'flex', alignItems: 'center' }}>
+              <div className="step-node">
+                <div className={`step-circle${i < stepIndex ? ' done' : i === stepIndex ? ' current' : ''}`}>
                   {i < stepIndex ? '✓' : i + 1}
                 </div>
-                <span className="hidden sm:inline">{s.label}</span>
+                <span className={`step-label${i === stepIndex ? ' current' : ''}`}>{s.label}</span>
               </div>
               {i < STEPS.length - 1 && (
-                <div className={`w-8 h-px ${i < stepIndex ? 'bg-green-700' : 'bg-slate-700'}`} />
+                <div className={`step-connector${i < stepIndex ? ' done' : ''}`} />
               )}
             </div>
           ))}
         </div>
 
-        <div className="bg-slate-800 rounded-2xl p-8 shadow-2xl">
-          {error && (
-            <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm mb-6">
-              {error}
-            </div>
-          )}
+        {/* Card */}
+        <div className="onboarding-card animate-fadeup">
+          {error && <div className="ob-error">{error}</div>}
 
           {/* Step 1: Organisation */}
           {step === 'org' && (
-            <form onSubmit={handleOrgSubmit} className="space-y-5">
-              <div>
-                <h2 className="text-xl font-semibold text-white mb-1">Create your organisation</h2>
-                <p className="text-slate-400 text-sm">This will be your company workspace on E-Site.</p>
+            <form onSubmit={handleOrgSubmit}>
+              <div className="onboarding-card-title">Create your organisation</div>
+              <div className="onboarding-card-sub">This will be your company workspace on E-Site</div>
+
+              <div className="ob-field">
+                <label className="ob-label">Company name <span style={{ color: 'var(--c-amber)' }}>*</span></label>
+                <input name="name" required className="ob-input" placeholder="Acme Electrical (Pty) Ltd" />
               </div>
 
-              <div>
-                <label className={LABEL_CLS}>Company name *</label>
-                <input name="name" required className={INPUT_CLS} placeholder="Acme Construction (Pty) Ltd" />
-              </div>
-
-              <div>
-                <label className={LABEL_CLS}>Organisation type</label>
-                <select name="orgType" className={INPUT_CLS}>
+              <div className="ob-field">
+                <label className="ob-label">Organisation type</label>
+                <select name="orgType" className="ob-select">
                   <option value="contractor">Main Contractor</option>
                   <option value="subcontractor">Sub-Contractor</option>
                   <option value="developer">Developer</option>
@@ -132,21 +128,17 @@ export default function OnboardingPage() {
                 </select>
               </div>
 
-              <div>
-                <label className={LABEL_CLS}>CIPC registration number</label>
-                <input name="registrationNumber" className={INPUT_CLS} placeholder="2020/123456/07" />
+              <div className="ob-field">
+                <label className="ob-label">CIPC registration number</label>
+                <input name="registrationNumber" className="ob-input" placeholder="2020/123456/07" />
               </div>
 
-              <div>
-                <label className={LABEL_CLS}>VAT number (optional)</label>
-                <input name="vatNumber" className={INPUT_CLS} placeholder="4123456789" />
+              <div className="ob-field" style={{ marginBottom: 24 }}>
+                <label className="ob-label">VAT number <span style={{ color: 'var(--c-text-dim)' }}>(optional)</span></label>
+                <input name="vatNumber" className="ob-input" placeholder="4123456789" />
               </div>
 
-              <button
-                type="submit"
-                disabled={isPending}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition-colors"
-              >
+              <button type="submit" disabled={isPending} className="ob-btn-primary">
                 {isPending ? 'Creating…' : 'Continue →'}
               </button>
             </form>
@@ -154,44 +146,43 @@ export default function OnboardingPage() {
 
           {/* Step 2: First project */}
           {step === 'project' && (
-            <form onSubmit={handleProjectSubmit} className="space-y-5">
-              <div>
-                <h2 className="text-xl font-semibold text-white mb-1">Add your first project</h2>
-                <p className="text-slate-400 text-sm">You can add more projects any time from the dashboard.</p>
+            <form onSubmit={handleProjectSubmit}>
+              <div className="onboarding-card-title">Add your first project</div>
+              <div className="onboarding-card-sub">You can add more projects any time from the dashboard</div>
+
+              <div className="ob-field">
+                <label className="ob-label">Project name <span style={{ color: 'var(--c-amber)' }}>*</span></label>
+                <input name="name" required className="ob-input" placeholder="Rosebank Residential Phase 1" />
               </div>
 
-              <div>
-                <label className={LABEL_CLS}>Project name *</label>
-                <input name="name" required className={INPUT_CLS} placeholder="Rosebank Residential Phase 1" />
+              <div className="ob-field">
+                <label className="ob-label">Site address</label>
+                <input name="address" className="ob-input" placeholder="12 Builder St" />
               </div>
 
-              <div>
-                <label className={LABEL_CLS}>Site address</label>
-                <input name="address" className={INPUT_CLS} placeholder="12 Builder St" />
+              <div className="ob-field">
+                <label className="ob-label">City</label>
+                <input name="city" className="ob-input" placeholder="Johannesburg" />
               </div>
 
-              <div>
-                <label className={LABEL_CLS}>City</label>
-                <input name="city" className={INPUT_CLS} placeholder="Johannesburg" />
+              <div className="ob-field" style={{ marginBottom: 24 }}>
+                <label className="ob-label">Client name</label>
+                <input name="clientName" className="ob-input" placeholder="Smith Family Trust" />
               </div>
 
-              <div>
-                <label className={LABEL_CLS}>Client name</label>
-                <input name="clientName" className={INPUT_CLS} placeholder="Smith Family Trust" />
-              </div>
-
-              <div className="flex gap-3">
+              <div style={{ display: 'flex', gap: 10 }}>
                 <button
                   type="button"
                   onClick={() => setStep('invite')}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-3 rounded-xl transition-colors text-sm"
+                  className="ob-btn-secondary"
                 >
-                  Skip for now
+                  Skip
                 </button>
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="flex-[2] bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition-colors"
+                  className="ob-btn-primary"
+                  style={{ flex: 2 }}
                 >
                   {isPending ? 'Creating…' : 'Continue →'}
                 </button>
@@ -201,30 +192,34 @@ export default function OnboardingPage() {
 
           {/* Step 3: Invite team */}
           {step === 'invite' && (
-            <div className="space-y-5">
-              <div>
-                <h2 className="text-xl font-semibold text-white mb-1">Invite your team</h2>
-                <p className="text-slate-400 text-sm">Add project managers, site supervisors, or field workers.</p>
-              </div>
+            <div>
+              <div className="onboarding-card-title">Invite your team</div>
+              <div className="onboarding-card-sub">Add project managers, supervisors, or field workers</div>
 
-              <form onSubmit={handleInviteSubmit} className="space-y-3">
-                <div className="flex gap-2">
+              <form onSubmit={handleInviteSubmit} style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                   <input
                     name="email"
                     type="email"
-                    className={`${INPUT_CLS} flex-1`}
+                    className="ob-input"
                     placeholder="colleague@company.co.za"
+                    style={{ flex: 1 }}
                   />
-                  <select name="role" className="bg-slate-700 text-white rounded-lg px-3 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                  <select
+                    name="role"
+                    className="ob-select"
+                    style={{ width: 'auto', flexShrink: 0 }}
+                  >
                     <option value="project_manager">PM</option>
                     <option value="supervisor">Supervisor</option>
-                    <option value="field_worker">Field Worker</option>
+                    <option value="field_worker">Field</option>
                     <option value="viewer">Viewer</option>
                   </select>
                   <button
                     type="submit"
                     disabled={isPending}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold px-4 rounded-xl transition-colors text-sm whitespace-nowrap"
+                    className="ob-btn-primary"
+                    style={{ width: 'auto', padding: '10px 16px', flexShrink: 0 }}
                   >
                     {isPending ? '…' : 'Invite'}
                   </button>
@@ -232,28 +227,27 @@ export default function OnboardingPage() {
               </form>
 
               {invites.length > 0 && (
-                <div className="space-y-1.5">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
                   {invites.map(email => (
-                    <div key={email} className="flex items-center gap-2 text-sm text-slate-400 bg-slate-900/60 rounded-lg px-3 py-2">
-                      <span className="text-green-400">✓</span>
-                      <span>{email}</span>
+                    <div key={email} className="invite-chip">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12">
+                        <polyline points="2,8 6,12 14,4" />
+                      </svg>
+                      {email}
                     </div>
                   ))}
                 </div>
               )}
 
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setStep('done')}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-300 font-medium py-3 rounded-xl transition-colors text-sm"
-                >
-                  Skip for now
+              <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+                <button type="button" onClick={() => setStep('done')} className="ob-btn-secondary">
+                  Skip
                 </button>
                 <button
                   type="button"
                   onClick={() => setStep('done')}
-                  className="flex-[2] bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors"
+                  className="ob-btn-primary"
+                  style={{ flex: 2 }}
                 >
                   Continue →
                 </button>
@@ -261,43 +255,59 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* Step 4: Done + guided checklist */}
+          {/* Step 4: Done */}
           {step === 'done' && (
-            <div className="space-y-6">
-              <div className="text-center">
-                <div className="text-5xl mb-3">🎉</div>
-                <h2 className="text-xl font-semibold text-white mb-1">You&apos;re all set!</h2>
-                <p className="text-slate-400 text-sm">Here&apos;s what to do next.</p>
+            <div>
+              <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                <div style={{
+                  width: 52, height: 52,
+                  background: 'var(--c-green-dim)',
+                  border: '1px solid #1a5c3a',
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 16px',
+                }}>
+                  <svg viewBox="0 0 20 20" fill="none" stroke="var(--c-green)" strokeWidth="2.5" width="22" height="22">
+                    <polyline points="3,10 8,15 17,5" />
+                  </svg>
+                </div>
+                <div className="onboarding-card-title">You&apos;re all set!</div>
+                <div className="onboarding-card-sub" style={{ marginBottom: 0 }}>Here&apos;s what to do next</div>
               </div>
 
-              <div className="space-y-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
                 {[
                   { label: 'Set up compliance sites', href: '/compliance/new', icon: '📋', done: false },
-                  { label: 'Upload your first COC', href: '/compliance', icon: '📄', done: false },
-                  { label: 'Log a snag on site', href: '/snags', icon: '⚠️', done: false },
-                  ...(projectId ? [{ label: 'View your project', href: `/projects/${projectId}`, icon: '📁', done: true }] : []),
-                  ...(invites.length > 0 ? [{ label: `${invites.length} invite${invites.length > 1 ? 's' : ''} sent`, href: '#', icon: '👥', done: true }] : []),
+                  { label: 'Upload your first COC',   href: '/compliance',     icon: '📄', done: false },
+                  { label: 'Log a snag on site',      href: '/snags',          icon: '⚠', done: false },
+                  ...(projectId
+                    ? [{ label: 'View your project', href: `/projects/${projectId}`, icon: '📁', done: true }]
+                    : []),
+                  ...(invites.length > 0
+                    ? [{ label: `${invites.length} invite${invites.length > 1 ? 's' : ''} sent`, href: '#', icon: '👥', done: true }]
+                    : []),
                 ].map(({ label, href, icon, done }) => (
-                  <a
-                    key={label}
-                    href={href}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors ${
-                      done
-                        ? 'bg-green-950/30 border-green-900 text-green-300'
-                        : 'bg-slate-900 border-slate-700 hover:border-slate-500 text-white'
-                    }`}
-                  >
-                    <span className="text-xl">{done ? '✓' : icon}</span>
-                    <span className="text-sm font-medium">{label}</span>
+                  <a key={label} href={href} className={`checklist-item${done ? ' done' : ''}`}>
+                    <div className="checklist-icon">
+                      {done
+                        ? <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><polyline points="2,8 6,12 14,4" /></svg>
+                        : <span style={{ fontSize: 14 }}>{icon}</span>
+                      }
+                    </div>
+                    <span>{label}</span>
+                    {!done && (
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="14" height="14" style={{ marginLeft: 'auto', color: 'var(--c-text-dim)' }}>
+                        <path d="M6 4l4 4-4 4" />
+                      </svg>
+                    )}
                   </a>
                 ))}
               </div>
 
-              <button
-                onClick={() => router.push('/dashboard')}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-colors"
-              >
-                Go to Dashboard
+              <button onClick={() => router.push('/dashboard')} className="ob-btn-primary">
+                Go to Dashboard →
               </button>
             </div>
           )}

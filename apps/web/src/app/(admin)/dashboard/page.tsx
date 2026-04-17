@@ -1,8 +1,49 @@
 import { createClient } from '@/lib/supabase/server'
 import { projectService, formatZAR } from '@esite/shared'
-import { KpiCard } from '@/components/ui/Card'
-import { PageHeader } from '@/components/layout/Header'
 import Link from 'next/link'
+
+/* ── Quick action icons ─────────────────────────────────────── */
+function IconNewProject() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" width="18" height="18">
+      <path d="M3 5h6l2-3h6v15H3z" />
+      <line x1="10" y1="9" x2="10" y2="15" />
+      <line x1="7" y1="12" x2="13" y2="12" />
+    </svg>
+  )
+}
+
+function IconSnag() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" width="18" height="18">
+      <path d="M10 2L18 16H2L10 2z" />
+      <line x1="10" y1="8" x2="10" y2="12" />
+      <circle cx="10" cy="14.5" r="0.8" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function IconDiary() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" width="18" height="18">
+      <rect x="3" y="2" width="14" height="16" rx="1" />
+      <line x1="7" y1="7" x2="13" y2="7" />
+      <line x1="7" y1="10" x2="13" y2="10" />
+      <line x1="7" y1="13" x2="10" y2="13" />
+    </svg>
+  )
+}
+
+function IconMarket() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" width="18" height="18">
+      <path d="M2 7l2-4h12l2 4" />
+      <path d="M2 7h16v.5a2.5 2.5 0 01-5 0 2.5 2.5 0 01-5 0A2.5 2.5 0 012 7.5V7z" />
+      <rect x="2" y="8" width="16" height="10" rx="0.5" />
+      <rect x="7.5" y="13" width="5" height="5" />
+    </svg>
+  )
+}
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -23,7 +64,6 @@ export default async function DashboardPage() {
       ? projectService.getStats(supabase as any, orgId)
       : Promise.resolve({ activeProjects: 0, openSnags: 0, pendingCocs: 0 }),
 
-    // Active projects for deadline list
     orgId
       ? (supabase as any)
           .schema('projects')
@@ -36,7 +76,6 @@ export default async function DashboardPage() {
           .limit(5)
       : Promise.resolve({ data: [] }),
 
-    // Recent open snags
     orgId
       ? (supabase as any)
           .schema('field')
@@ -48,7 +87,6 @@ export default async function DashboardPage() {
           .limit(5)
       : Promise.resolve({ data: [] }),
 
-    // Active marketplace orders
     orgId
       ? (supabase as any)
           .schema('marketplace')
@@ -60,7 +98,6 @@ export default async function DashboardPage() {
           .limit(5)
       : Promise.resolve({ data: [] }),
 
-    // Projects due within 30 days
     orgId
       ? (supabase as any)
           .schema('projects')
@@ -72,7 +109,6 @@ export default async function DashboardPage() {
           .lte('end_date', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
       : Promise.resolve({ count: 0 }),
 
-    // Compliance: subsections with valid COC vs total
     orgId
       ? (supabase as any)
           .schema('compliance')
@@ -85,7 +121,6 @@ export default async function DashboardPage() {
   const activeOrders = ordersResult.data?.length ?? 0
   const deadlines = deadlinesResult.count ?? 0
 
-  // Compliance health %
   const allSubs = complianceResult.data ?? []
   const compliantSubs = allSubs.filter((s: any) => s.coc_status === 'approved').length
   const complianceHealth = allSubs.length > 0
@@ -93,195 +128,221 @@ export default async function DashboardPage() {
     : null
 
   const today = new Date()
-  const priorityColor = (p: string) => ({
-    critical: 'text-red-400',
-    high: 'text-orange-400',
-    medium: 'text-yellow-400',
-    low: 'text-slate-400',
-  }[p] ?? 'text-slate-400')
+  const orgName = (membership?.organisation as any)?.name ?? 'E-Site'
 
-  const orderStatusColor = (s: string) => ({
-    submitted: 'bg-blue-500/10 text-blue-400',
-    confirmed: 'bg-indigo-500/10 text-indigo-400',
-    in_transit: 'bg-amber-500/10 text-amber-400',
-    delivered: 'bg-green-500/10 text-green-400',
-    invoiced: 'bg-purple-500/10 text-purple-400',
-  }[s] ?? 'bg-slate-700 text-slate-400')
+  const priorityClass = (p: string) => ({
+    critical: 'priority-critical',
+    high: 'priority-high',
+    medium: 'priority-medium',
+    low: 'priority-low',
+  }[p] ?? 'priority-low')
 
-  const daysUntil = (dateStr: string) => {
-    const d = Math.ceil((new Date(dateStr).getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-    return d
-  }
+  const orderBadge = (s: string) => ({
+    submitted:  'badge badge-blue',
+    confirmed:  'badge badge-amber',
+    in_transit: 'badge badge-amber',
+    delivered:  'badge badge-green',
+    invoiced:   'badge badge-muted',
+  }[s] ?? 'badge badge-muted')
+
+  const daysUntil = (dateStr: string) =>
+    Math.ceil((new Date(dateStr).getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+
+  const complianceVariant =
+    complianceHealth === null ? '' :
+    complianceHealth >= 80 ? 'kpi-success' :
+    complianceHealth >= 50 ? 'kpi-warning' :
+    'kpi-danger'
 
   return (
-    <div>
-      <PageHeader
-        title="Dashboard"
-        subtitle={(membership?.organisation as any)?.name ?? 'E-Site'}
-      />
+    <div className="animate-fadeup">
+      {/* Page header */}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-subtitle">{orgName}</p>
+        </div>
+        <Link
+          href="/projects/new"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '9px 16px',
+            background: 'var(--c-amber)',
+            color: '#0D0B09',
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 700,
+            textDecoration: 'none',
+            letterSpacing: '0.01em',
+          }}
+        >
+          + New Project
+        </Link>
+      </div>
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-        <KpiCard label="Active Projects" value={stats.activeProjects} />
-        <KpiCard
-          label="Open Snags"
-          value={stats.openSnags}
-          variant={stats.openSnags > 10 ? 'danger' : stats.openSnags > 0 ? 'warning' : 'default'}
-        />
-        <KpiCard
-          label="Pending COCs"
-          value={stats.pendingCocs}
-          variant={stats.pendingCocs > 0 ? 'warning' : 'default'}
-        />
-        <KpiCard
-          label="Active Orders"
-          value={activeOrders}
-        />
-        <div className={`rounded-xl p-4 border ${
-          complianceHealth === null ? 'bg-slate-800 border-slate-700' :
-          complianceHealth >= 80 ? 'bg-green-950/40 border-green-800' :
-          complianceHealth >= 50 ? 'bg-yellow-950/40 border-yellow-800' :
-          'bg-red-950/40 border-red-800'
-        }`}>
-          <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Compliance Health</p>
-          <p className={`text-2xl font-bold ${
-            complianceHealth === null ? 'text-slate-400' :
-            complianceHealth >= 80 ? 'text-green-400' :
-            complianceHealth >= 50 ? 'text-yellow-400' :
-            'text-red-400'
-          }`}>
+      <div className="kpi-grid animate-fadeup animate-fadeup-1">
+        <div className={`kpi-card ${stats.openSnags > 10 ? 'kpi-danger' : stats.openSnags > 0 ? 'kpi-warning' : ''}`}>
+          <div className="kpi-label">Active Projects</div>
+          <div className="kpi-value">{stats.activeProjects}</div>
+        </div>
+
+        <div className={`kpi-card ${stats.openSnags > 10 ? 'kpi-danger' : stats.openSnags > 0 ? 'kpi-warning' : ''}`}>
+          <div className="kpi-label">Open Snags</div>
+          <div className="kpi-value">{stats.openSnags}</div>
+          {stats.openSnags > 0 && <div className="kpi-meta">Needs attention</div>}
+        </div>
+
+        <div className={`kpi-card ${stats.pendingCocs > 0 ? 'kpi-warning' : ''}`}>
+          <div className="kpi-label">Pending COCs</div>
+          <div className="kpi-value">{stats.pendingCocs}</div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-label">Active Orders</div>
+          <div className="kpi-value">{activeOrders}</div>
+        </div>
+
+        <div className={`kpi-card ${complianceVariant}`}>
+          <div className="kpi-label">Compliance</div>
+          <div className="kpi-value">
             {complianceHealth !== null ? `${complianceHealth}%` : '—'}
-          </p>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {allSubs.length > 0 ? `${compliantSubs} / ${allSubs.length} subsections` : 'No data'}
-          </p>
+          </div>
+          {allSubs.length > 0 && (
+            <div className="kpi-meta">{compliantSubs}/{allSubs.length} sections</div>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      {/* Two-column grid */}
+      <div
+        className="animate-fadeup animate-fadeup-2"
+        style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}
+      >
         {/* Upcoming deadlines */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-            <h2 className="text-sm font-semibold text-white">Upcoming Deadlines</h2>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Upcoming Deadlines</span>
             {deadlines > 0 && (
-              <span className="text-xs bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full font-medium">
-                {deadlines} within 30d
-              </span>
+              <span className="badge badge-amber">{deadlines} within 30d</span>
             )}
           </div>
           {(projects.data ?? []).length === 0 ? (
-            <p className="text-slate-500 text-sm px-5 py-6">No active projects with deadlines</p>
+            <div className="data-panel-empty">No active projects with deadlines</div>
           ) : (
-            <ul className="divide-y divide-slate-800">
+            <>
               {(projects.data ?? []).slice(0, 5).map((p: any) => {
                 const days = daysUntil(p.end_date)
                 return (
-                  <li key={p.id}>
-                    <Link href={`/projects/${p.id}`} className="flex items-center justify-between px-5 py-3 hover:bg-slate-800/60 transition-colors">
-                      <div>
-                        <p className="text-sm font-medium text-white leading-tight">{p.name}</p>
-                        <p className="text-xs text-slate-500">{p.client_name ?? p.city ?? '—'}</p>
+                  <Link key={p.id} href={`/projects/${p.id}`} className="data-panel-row">
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', lineHeight: 1.3 }}>{p.name}</div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                        {p.client_name ?? p.city ?? '—'}
                       </div>
-                      <span className={`text-xs font-semibold tabular-nums ${
-                        days <= 7 ? 'text-red-400' : days <= 14 ? 'text-orange-400' : 'text-slate-400'
-                      }`}>
-                        {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Due today' : `${days}d`}
-                      </span>
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          <div className="px-5 py-3 border-t border-slate-800">
-            <Link href="/projects" className="text-xs text-blue-400 hover:text-blue-300">View all projects →</Link>
-          </div>
-        </div>
-
-        {/* Recent open snags */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-            <h2 className="text-sm font-semibold text-white">Open Snags</h2>
-            <Link href="/snags" className="text-xs text-blue-400 hover:text-blue-300">View all</Link>
-          </div>
-          {(recentSnags.data ?? []).length === 0 ? (
-            <p className="text-slate-500 text-sm px-5 py-6">No open snags</p>
-          ) : (
-            <ul className="divide-y divide-slate-800">
-              {(recentSnags.data ?? []).map((s: any) => (
-                <li key={s.id}>
-                  <Link href={`/snags/${s.id}`} className="flex items-start gap-3 px-5 py-3 hover:bg-slate-800/60 transition-colors">
-                    <span className={`text-xs font-bold uppercase mt-0.5 ${priorityColor(s.priority)}`}>
-                      {s.priority?.slice(0, 4) ?? '—'}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white truncate leading-tight">{s.title}</p>
-                      <p className="text-xs text-slate-500">{(s.project as any)?.name ?? '—'}</p>
                     </div>
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
-                      s.status === 'in_progress' ? 'bg-blue-500/10 text-blue-400' : 'bg-slate-700 text-slate-400'
-                    }`}>
-                      {s.status === 'in_progress' ? 'In progress' : 'Open'}
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: days < 0 ? 'var(--c-red)' : days <= 7 ? 'var(--c-red)' : days <= 14 ? '#F08030' : 'var(--c-text-dim)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `${days}d`}
                     </span>
                   </Link>
-                </li>
-              ))}
-            </ul>
+                )
+              })}
+              <div className="data-panel-footer">
+                <Link href="/projects" className="data-panel-link">View all projects →</Link>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Open snags */}
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Open Snags</span>
+            <Link href="/snags" className="data-panel-link">View all →</Link>
+          </div>
+          {(recentSnags.data ?? []).length === 0 ? (
+            <div className="data-panel-empty">No open snags — all clear</div>
+          ) : (
+            (recentSnags.data ?? []).map((s: any) => (
+              <Link key={s.id} href={`/snags/${s.id}`} className="data-panel-row" style={{ alignItems: 'flex-start', gap: 10 }}>
+                <span
+                  className={priorityClass(s.priority)}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 3 }}
+                >
+                  {s.priority?.slice(0, 4) ?? '—'}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                    {(s.project as any)?.name ?? '—'}
+                  </div>
+                </div>
+                <span className={s.status === 'in_progress' ? 'badge badge-blue' : 'badge badge-muted'}>
+                  {s.status === 'in_progress' ? 'In progress' : 'Open'}
+                </span>
+              </Link>
+            ))
           )}
         </div>
       </div>
 
       {/* Marketplace orders */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden mb-6">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-          <h2 className="text-sm font-semibold text-white">Active Marketplace Orders</h2>
-          <Link href="/marketplace/orders" className="text-xs text-blue-400 hover:text-blue-300">View all</Link>
+      <div className="data-panel animate-fadeup animate-fadeup-3" style={{ marginBottom: 16 }}>
+        <div className="data-panel-header">
+          <span className="data-panel-title">Active Marketplace Orders</span>
+          <Link href="/marketplace/orders" className="data-panel-link">View all →</Link>
         </div>
         {(ordersResult.data ?? []).length === 0 ? (
-          <p className="text-slate-500 text-sm px-5 py-6">No active orders</p>
+          <div className="data-panel-empty">No active orders</div>
         ) : (
-          <ul className="divide-y divide-slate-800">
-            {(ordersResult.data ?? []).map((o: any) => (
-              <li key={o.id}>
-                <Link href={`/marketplace/orders/${o.id}`} className="flex items-center justify-between px-5 py-3 hover:bg-slate-800/60 transition-colors">
-                  <div>
-                    <p className="text-sm text-white font-medium leading-tight">
-                      {(o.supplier as any)?.name ?? 'Supplier'}
-                    </p>
-                    <p className="text-xs text-slate-500">{new Date(o.created_at).toLocaleDateString('en-ZA')}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {o.total_amount != null && (
-                      <span className="text-sm text-slate-300 font-medium tabular-nums">
-                        {formatZAR(o.total_amount)}
-                      </span>
-                    )}
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${orderStatusColor(o.status)}`}>
-                      {o.status.replace('_', ' ')}
-                    </span>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          (ordersResult.data ?? []).map((o: any) => (
+            <Link key={o.id} href={`/marketplace/orders/${o.id}`} className="data-panel-row">
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
+                  {(o.supplier as any)?.name ?? 'Supplier'}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                  {new Date(o.created_at).toLocaleDateString('en-ZA')}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {o.total_amount != null && (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-text)' }}>
+                    {formatZAR(o.total_amount)}
+                  </span>
+                )}
+                <span className={orderBadge(o.status)}>
+                  {o.status.replace('_', ' ')}
+                </span>
+              </div>
+            </Link>
+          ))
         )}
       </div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="quick-actions animate-fadeup animate-fadeup-4">
         {[
-          { href: '/projects/new', label: 'New Project', icon: '📁' },
-          { href: '/snags/new', label: 'Log Snag', icon: '⚠️' },
-          { href: '/diary', label: 'Site Diary', icon: '📓' },
-          { href: '/marketplace', label: 'Marketplace', icon: '🛒' },
-        ].map(({ href, label, icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className="flex items-center gap-3 px-4 py-3 bg-slate-800 rounded-xl border border-slate-700 hover:border-slate-500 transition-colors"
-          >
-            <span className="text-lg">{icon}</span>
-            <span className="text-sm font-medium text-white">{label}</span>
+          { href: '/projects/new', label: 'New Project',  Icon: IconNewProject },
+          { href: '/snags/new',    label: 'Log Snag',     Icon: IconSnag },
+          { href: '/diary',        label: 'Site Diary',   Icon: IconDiary },
+          { href: '/marketplace',  label: 'Marketplace',  Icon: IconMarket },
+        ].map(({ href, label, Icon }) => (
+          <Link key={href} href={href} className="quick-action">
+            <div className="quick-action-icon">
+              <Icon />
+            </div>
+            <span className="quick-action-label">{label}</span>
           </Link>
         ))}
       </div>

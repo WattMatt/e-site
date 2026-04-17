@@ -8,12 +8,12 @@ interface HeaderProps {
 
 export function PageHeader({ title, subtitle, actions }: HeaderProps) {
   return (
-    <div className="flex items-start justify-between mb-8">
+    <div className="page-header">
       <div>
-        <h1 className="text-2xl font-bold text-white">{title}</h1>
-        {subtitle && <p className="text-slate-400 text-sm mt-1">{subtitle}</p>}
+        <h1 className="page-title">{title}</h1>
+        {subtitle && <p className="page-subtitle">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-3">{actions}</div>}
+      {actions && <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{actions}</div>}
     </div>
   )
 }

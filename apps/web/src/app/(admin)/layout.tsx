@@ -12,13 +12,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!user) redirect('/login')
 
   return (
-    <div className="min-h-screen bg-slate-950 flex">
+    <div className="portal-shell">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-14 border-b border-slate-800 flex items-center justify-end px-6 flex-shrink-0 bg-slate-950">
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        <header className="portal-header">
           <NotificationCentre />
         </header>
-        <main className="flex-1 overflow-auto p-8">{children}</main>
+        <main className="portal-main">{children}</main>
       </div>
     </div>
   )
