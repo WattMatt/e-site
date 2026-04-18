@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { orgService } from '@esite/shared'
+import { colors, fontFamily, fontSize, fontWeight, radius, spacing } from '../../src/theme'
 
 const PROVINCES = [
   'Gauteng', 'Western Cape', 'Eastern Cape', 'KwaZulu-Natal',
@@ -84,7 +85,7 @@ export default function OnboardingScreen() {
             value={name}
             onChangeText={setName}
             placeholder="Watson Mattheus Consulting"
-            placeholderTextColor="#475569"
+            placeholderTextColor={colors.textDim}
             autoFocus
           />
           <Text style={styles.fieldLabel}>Province</Text>
@@ -116,7 +117,7 @@ export default function OnboardingScreen() {
             value={joinToken}
             onChangeText={setJoinToken}
             placeholder="Paste invite token or link…"
-            placeholderTextColor="#475569"
+            placeholderTextColor={colors.textDim}
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
@@ -131,31 +132,31 @@ export default function OnboardingScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  content: { padding: 24, paddingTop: 80, minHeight: '100%' },
-  logo: { fontSize: 36, fontWeight: '800', color: '#fff', marginBottom: 4 },
-  title: { fontSize: 18, color: '#94A3B8', marginBottom: 40 },
-  choices: { gap: 12 },
+  container: { flex: 1, backgroundColor: colors.base },
+  content: { padding: spacing.xxl, paddingTop: 80, minHeight: '100%' },
+  logo: { fontSize: fontSize.display, fontWeight: '800', color: colors.text, marginBottom: spacing.xs },
+  title: { fontSize: fontSize.lg, color: colors.textMid, marginBottom: 40 },
+  choices: { gap: spacing.md },
   choiceCard: {
     flexDirection: 'row', alignItems: 'center', gap: 14,
-    backgroundColor: '#1E293B', borderRadius: 14, padding: 18,
-    borderWidth: 1, borderColor: '#334155',
+    backgroundColor: colors.panel, borderRadius: radius.xl, padding: spacing.lg + 2,
+    borderWidth: 1, borderColor: colors.border,
   },
   choiceIcon: { fontSize: 30 },
   choiceFlex: { flex: 1 },
-  choiceTitle: { fontSize: 16, fontWeight: '600', color: '#fff' },
-  choiceDesc: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  form: { gap: 4 },
-  back: { marginBottom: 20 },
-  backText: { color: '#64748B', fontSize: 14 },
-  fieldLabel: { fontSize: 12, color: '#64748B', marginBottom: 6, marginTop: 14 },
-  input: { backgroundColor: '#1E293B', borderRadius: 10, padding: 14, fontSize: 16, color: '#fff', borderWidth: 1, borderColor: '#334155' },
-  mono: { fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 13 },
-  pillRow: { marginVertical: 8 },
-  pill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: '#1E293B', borderWidth: 1, borderColor: '#334155', marginRight: 8 },
-  pillActive: { backgroundColor: '#1d4ed8', borderColor: '#3B82F6' },
-  pillText: { color: '#64748B', fontSize: 13 },
-  pillTextActive: { color: '#fff', fontWeight: '600' },
-  button: { backgroundColor: '#3B82F6', borderRadius: 10, padding: 16, alignItems: 'center', marginTop: 24 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  choiceTitle: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: colors.text },
+  choiceDesc: { fontSize: fontSize.small, color: colors.textMid, marginTop: 2 },
+  form: { gap: spacing.xs },
+  back: { marginBottom: spacing.xl },
+  backText: { color: colors.textMid, fontSize: fontSize.bodyLg },
+  fieldLabel: { fontSize: fontSize.small, color: colors.textMid, marginBottom: 6, marginTop: 14, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: fontWeight.semibold },
+  input: { backgroundColor: colors.panel, borderRadius: radius.md, padding: spacing.lg - 2, fontSize: fontSize.md, color: colors.text, borderWidth: 1, borderColor: colors.border },
+  mono: { fontFamily: fontFamily.mono ?? (Platform.OS === 'ios' ? 'Courier' : 'monospace'), fontSize: fontSize.body },
+  pillRow: { marginVertical: spacing.sm },
+  pill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.border, marginRight: spacing.sm },
+  pillActive: { backgroundColor: colors.amberDim, borderColor: colors.amber },
+  pillText: { color: colors.textMid, fontSize: fontSize.body },
+  pillTextActive: { color: colors.amber, fontWeight: fontWeight.semibold },
+  button: { backgroundColor: colors.amber, borderRadius: radius.md, padding: spacing.lg, alignItems: 'center', marginTop: spacing.xxl },
+  buttonText: { color: colors.base, fontSize: fontSize.md, fontWeight: fontWeight.bold },
 })

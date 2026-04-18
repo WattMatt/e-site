@@ -4,7 +4,7 @@
 [api]
 enabled = true
 port = 54321
-schemas = ["public", "compliance", "field", "tenants", "suppliers", "billing", "marketplace"]
+schemas = ["public", "projects", "compliance", "field", "tenants", "suppliers", "billing", "marketplace"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 

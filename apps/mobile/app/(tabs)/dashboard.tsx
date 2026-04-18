@@ -4,6 +4,16 @@ import { useAuth } from '../../src/providers/AuthProvider'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useQuery } from '@tanstack/react-query'
 import { projectService } from '@esite/shared'
+import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
+
+const QUICK_ACTIONS = [
+  { label: 'Log Snag',    icon: '⚠️', route: '/snags/create',       bg: colors.redDim,    border: colors.redMid,    testID: 'quick-action-log-snag' },
+  { label: 'Site Diary',  icon: '📓', route: '/diary',               bg: colors.blueDim,   border: colors.blueMid,   testID: 'quick-action-diary' },
+  { label: 'Upload COC',  icon: '📄', route: '/(tabs)/compliance',   bg: colors.greenDim,  border: colors.greenMid,  testID: 'quick-action-upload-coc' },
+  { label: 'Scan QR',     icon: '📷', route: '/qr-scan',             bg: colors.elevated,  border: colors.borderMid, testID: 'quick-action-scan-qr' },
+  { label: 'Marketplace', icon: '🛒', route: '/marketplace',         bg: colors.amberDim,  border: colors.amberMid,  testID: 'quick-action-marketplace' },
+  { label: 'Compliance',  icon: '✅', route: '/(tabs)/compliance',   bg: colors.greenDim,  border: colors.greenMid,  testID: 'quick-action-compliance' },
+] as const
 
 export default function DashboardTab() {
   const { profile } = useAuth()
@@ -17,7 +27,6 @@ export default function DashboardTab() {
     enabled: !!orgId,
   })
 
-  // Recent open snags
   const { data: recentSnags } = useQuery({
     queryKey: ['dashboard-recent-snags', orgId],
     queryFn: async () => {
@@ -35,58 +44,44 @@ export default function DashboardTab() {
   })
 
   const firstName = profile?.full_name?.split(' ')[0] ?? 'there'
-
-  const priorityColor = (p: string) => ({
-    critical: '#F87171',
-    high: '#FB923C',
-    medium: '#FBBF24',
-    low: '#64748B',
-  }[p] ?? '#64748B')
+  const openSnags = stats?.openSnags ?? 0
+  const pendingCocs = stats?.pendingCocs ?? 0
 
   return (
     <ScrollView
       testID="dashboard-screen"
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#3B82F6" />}
+      refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
     >
       <Text style={styles.greeting}>Hey, {firstName} 👋</Text>
 
-      {/* KPI row */}
       <View style={styles.kpiGrid}>
         <View style={styles.kpiCard}>
           <Text style={styles.kpiValue}>{isLoading ? '…' : stats?.activeProjects ?? 0}</Text>
           <Text style={styles.kpiLabel}>Active Projects</Text>
         </View>
-        <View style={[styles.kpiCard, (stats?.openSnags ?? 0) > 0 && styles.kpiDanger]}>
-          <Text style={[styles.kpiValue, (stats?.openSnags ?? 0) > 0 && { color: '#F87171' }]}>
-            {isLoading ? '…' : stats?.openSnags ?? 0}
+        <View style={[styles.kpiCard, openSnags > 0 && { borderColor: colors.redMid }]}>
+          <Text style={[styles.kpiValue, openSnags > 0 && { color: colors.red }]}>
+            {isLoading ? '…' : openSnags}
           </Text>
           <Text style={styles.kpiLabel}>Open Snags</Text>
         </View>
-        <View style={[styles.kpiCard, (stats?.pendingCocs ?? 0) > 0 && styles.kpiWarning]}>
-          <Text style={[styles.kpiValue, (stats?.pendingCocs ?? 0) > 0 && { color: '#FBBF24' }]}>
-            {isLoading ? '…' : stats?.pendingCocs ?? 0}
+        <View style={[styles.kpiCard, pendingCocs > 0 && { borderColor: colors.amberMid }]}>
+          <Text style={[styles.kpiValue, pendingCocs > 0 && { color: colors.amber }]}>
+            {isLoading ? '…' : pendingCocs}
           </Text>
           <Text style={styles.kpiLabel}>Pending COCs</Text>
         </View>
       </View>
 
-      {/* Quick actions */}
       <Text style={styles.sectionTitle}>Quick Actions</Text>
       <View style={styles.actionsGrid}>
-        {[
-          { label: 'Log Snag', icon: '⚠️', route: '/snags/create', color: '#7f1d1d', testID: 'quick-action-log-snag' },
-          { label: 'Site Diary', icon: '📓', route: '/diary', color: '#1e3a5f', testID: 'quick-action-diary' },
-          { label: 'Upload COC', icon: '📄', route: '/(tabs)/compliance', color: '#14532d', testID: 'quick-action-upload-coc' },
-          { label: 'Scan QR', icon: '📷', route: '/qr-scan', color: '#1e1b4b', testID: 'quick-action-scan-qr' },
-          { label: 'Marketplace', icon: '🛒', route: '/marketplace', color: '#3b1f6b', testID: 'quick-action-marketplace' },
-          { label: 'Compliance', icon: '✅', route: '/(tabs)/compliance', color: '#14532d', testID: 'quick-action-compliance' },
-        ].map(({ label, icon, route, color, testID }) => (
+        {QUICK_ACTIONS.map(({ label, icon, route, bg, border, testID }) => (
           <TouchableOpacity
             key={label}
             testID={testID}
-            style={[styles.actionCard, { backgroundColor: color + '44', borderColor: color + '88' }]}
+            style={[styles.actionCard, { backgroundColor: bg, borderColor: border }]}
             onPress={() => router.push(route as any)}
             activeOpacity={0.7}
           >
@@ -96,7 +91,6 @@ export default function DashboardTab() {
         ))}
       </View>
 
-      {/* Recent snags */}
       {(recentSnags?.length ?? 0) > 0 && (
         <>
           <View style={styles.sectionRow}>
@@ -114,7 +108,7 @@ export default function DashboardTab() {
             >
               <View style={[styles.priorityDot, { backgroundColor: priorityColor(snag.priority) }]} />
               <Text style={styles.snagTitle} numberOfLines={1}>{snag.title}</Text>
-              <Text style={[styles.snagStatus, snag.status === 'in_progress' && { color: '#60A5FA' }]}>
+              <Text style={[styles.snagStatus, snag.status === 'in_progress' && { color: colors.amber }]}>
                 {snag.status === 'in_progress' ? 'In progress' : 'Open'}
               </Text>
             </TouchableOpacity>
@@ -126,41 +120,46 @@ export default function DashboardTab() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  content: { padding: 20, paddingBottom: 40 },
-  greeting: { fontSize: 24, fontWeight: '700', color: '#fff', marginBottom: 20 },
-  kpiGrid: { flexDirection: 'row', gap: 10, marginBottom: 28 },
-  kpiCard: { flex: 1, backgroundColor: '#1E293B', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#334155' },
-  kpiDanger: { borderColor: '#7f1d1d' },
-  kpiWarning: { borderColor: '#78350f' },
-  kpiValue: { fontSize: 28, fontWeight: '700', color: '#fff' },
-  kpiLabel: { fontSize: 11, color: '#64748B', marginTop: 4 },
-  sectionTitle: { fontSize: 15, fontWeight: '600', color: '#94A3B8', marginBottom: 12 },
-  sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  seeAll: { fontSize: 13, color: '#3B82F6' },
-  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 28 },
+  container: { flex: 1, backgroundColor: colors.base },
+  content: { padding: spacing.xl, paddingBottom: spacing.xxxxl },
+  greeting: { fontSize: fontSize.xl + 2, fontWeight: fontWeight.bold, color: colors.text, marginBottom: spacing.xl },
+  kpiGrid: { flexDirection: 'row', gap: spacing.sm, marginBottom: 28 },
+  kpiCard: {
+    flex: 1,
+    backgroundColor: colors.panel,
+    borderRadius: radius.lg,
+    padding: spacing.md + 2,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  kpiValue: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: colors.text },
+  kpiLabel: { fontSize: fontSize.caption, color: colors.textMid, marginTop: spacing.xs },
+  sectionTitle: { fontSize: fontSize.base, fontWeight: fontWeight.semibold, color: colors.textMid, marginBottom: spacing.md },
+  sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
+  seeAll: { fontSize: fontSize.body, color: colors.amber },
+  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: 28 },
   actionCard: {
     width: '30%',
     flexGrow: 1,
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: radius.lg,
+    padding: spacing.md + 2,
     alignItems: 'center',
     borderWidth: 1,
   },
   actionIcon: { fontSize: 26, marginBottom: 6 },
-  actionLabel: { fontSize: 11, fontWeight: '600', color: '#CBD5E1', textAlign: 'center' },
+  actionLabel: { fontSize: fontSize.caption, fontWeight: fontWeight.semibold, color: colors.text, textAlign: 'center' },
   snagCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#1E293B',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 8,
+    gap: spacing.sm,
+    backgroundColor: colors.panel,
+    borderRadius: radius.lg,
+    padding: spacing.md + 2,
+    marginBottom: spacing.sm,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.border,
   },
   priorityDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
-  snagTitle: { flex: 1, fontSize: 14, color: '#E2E8F0', fontWeight: '500' },
-  snagStatus: { fontSize: 12, color: '#64748B', fontWeight: '500' },
+  snagTitle: { flex: 1, fontSize: fontSize.bodyLg, color: colors.text, fontWeight: fontWeight.medium },
+  snagStatus: { fontSize: fontSize.small, color: colors.textMid, fontWeight: fontWeight.medium },
 })

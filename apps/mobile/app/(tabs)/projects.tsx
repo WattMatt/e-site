@@ -3,6 +3,16 @@ import { useRouter } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { useProjects } from '../../src/hooks/useProjects'
 import { formatZAR } from '@esite/shared'
+import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
+
+const PROJECT_STATUS: Record<string, { bg: string; fg: string; border: string }> = {
+  active:    { bg: colors.greenDim, fg: colors.green,   border: colors.greenMid },
+  planning:  { bg: colors.blueDim,  fg: colors.blue,    border: colors.blueMid },
+  on_hold:   { bg: colors.amberDim, fg: colors.amber,   border: colors.amberMid },
+  completed: { bg: colors.elevated, fg: colors.textMid, border: colors.borderMid },
+  cancelled: { bg: colors.redDim,   fg: colors.red,     border: colors.redMid },
+}
+const STATUS_DEFAULT = { bg: colors.elevated, fg: colors.textMid, border: colors.borderMid }
 
 export default function ProjectsTab() {
   const { profile } = useAuth()
@@ -13,7 +23,7 @@ export default function ProjectsTab() {
   if (isLoading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator color="#3B82F6" />
+        <ActivityIndicator color={colors.amber} />
       </View>
     )
   }
@@ -23,7 +33,7 @@ export default function ProjectsTab() {
       <FlatList
         data={projects ?? []}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#3B82F6" />}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
           <View style={styles.center}>
@@ -32,63 +42,57 @@ export default function ProjectsTab() {
             <Text style={styles.emptyDesc}>Projects created on the web will appear here.</Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() => router.push(`/projects/${item.id}` as any)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.cardRow}>
-              <View style={styles.cardFlex}>
-                <Text style={styles.cardTitle}>{item.name}</Text>
-                {item.city && <Text style={styles.cardSub}>{item.city}{item.province ? `, ${item.province}` : ''}</Text>}
+        renderItem={({ item }) => {
+          const status = PROJECT_STATUS[item.status] ?? STATUS_DEFAULT
+          return (
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() => router.push(`/projects/${item.id}` as any)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.cardRow}>
+                <View style={styles.cardFlex}>
+                  <Text style={styles.cardTitle}>{item.name}</Text>
+                  {item.city && <Text style={styles.cardSub}>{item.city}{item.province ? `, ${item.province}` : ''}</Text>}
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: status.bg, borderColor: status.border }]}>
+                  <Text style={[styles.statusText, { color: status.fg }]}>{item.status}</Text>
+                </View>
               </View>
-              <View style={[styles.statusBadge, STATUS_COLORS[item.status] ?? styles.statusDefault]}>
-                <Text style={styles.statusText}>{item.status}</Text>
-              </View>
-            </View>
-            {item.client_name && (
-              <Text style={styles.clientText}>Client: {item.client_name}</Text>
-            )}
-            {item.contract_value && (
-              <Text style={styles.valueText}>{formatZAR(item.contract_value)}</Text>
-            )}
-          </TouchableOpacity>
-        )}
+              {item.client_name && (
+                <Text style={styles.clientText}>Client: {item.client_name}</Text>
+              )}
+              {item.contract_value && (
+                <Text style={styles.valueText}>{formatZAR(item.contract_value)}</Text>
+              )}
+            </TouchableOpacity>
+          )
+        }}
       />
     </View>
   )
 }
 
-const STATUS_COLORS: Record<string, object> = {
-  active: { backgroundColor: '#14532d' },
-  planning: { backgroundColor: '#1e3a5f' },
-  on_hold: { backgroundColor: '#451a03' },
-  completed: { backgroundColor: '#1e293b' },
-  cancelled: { backgroundColor: '#450a0a' },
-}
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  list: { padding: 16, gap: 12 },
+  container: { flex: 1, backgroundColor: colors.base },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xxl },
+  list: { padding: spacing.lg, gap: spacing.md },
   card: {
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: colors.panel,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.border,
   },
   cardRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
-  cardFlex: { flex: 1, marginRight: 8 },
-  cardTitle: { fontSize: 15, fontWeight: '600', color: '#fff' },
-  cardSub: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  statusDefault: { backgroundColor: '#334155' },
-  statusText: { fontSize: 11, color: '#94A3B8', fontWeight: '500' },
-  clientText: { fontSize: 12, color: '#64748B', marginTop: 8 },
-  valueText: { fontSize: 13, color: '#3B82F6', fontWeight: '600', marginTop: 4 },
-  emptyIcon: { fontSize: 48, marginBottom: 12 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#fff', marginBottom: 4 },
-  emptyDesc: { fontSize: 13, color: '#64748B', textAlign: 'center' },
+  cardFlex: { flex: 1, marginRight: spacing.sm },
+  cardTitle: { fontSize: fontSize.base, fontWeight: fontWeight.semibold, color: colors.text },
+  cardSub: { fontSize: fontSize.small, color: colors.textMid, marginTop: 2 },
+  statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.md, borderWidth: 1 },
+  statusText: { fontSize: fontSize.caption, fontWeight: fontWeight.semibold, textTransform: 'uppercase', letterSpacing: 0.6 },
+  clientText: { fontSize: fontSize.small, color: colors.textMid, marginTop: spacing.sm },
+  valueText: { fontSize: fontSize.body, color: colors.amber, fontWeight: fontWeight.semibold, marginTop: spacing.xs },
+  emptyIcon: { fontSize: 48, marginBottom: spacing.md },
+  emptyTitle: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: colors.text, marginBottom: spacing.xs },
+  emptyDesc: { fontSize: fontSize.body, color: colors.textMid, textAlign: 'center' },
 })

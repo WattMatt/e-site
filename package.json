@@ -18,7 +18,8 @@
     "db:gen-types": "cd apps/edge-functions && supabase gen types typescript --local > ../../packages/db/src/types.ts",
     "db:migrate": "cd apps/edge-functions && supabase db push",
     "db:reset": "cd apps/edge-functions && supabase db reset",
-    "db:seed": "cd apps/edge-functions && supabase db seed"
+    "db:seed": "cd apps/edge-functions && supabase db seed",
+    "demo:seed": "cd apps/web && node --experimental-strip-types scripts/seed-demo.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

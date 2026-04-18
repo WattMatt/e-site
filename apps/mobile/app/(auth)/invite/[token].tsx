@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useSupabase } from '../../../src/providers/SupabaseProvider'
+import { colors, fontSize, fontWeight, radius, spacing } from '../../../src/theme'
 
 type Step = 'loading' | 'form' | 'error' | 'done'
 
@@ -94,7 +95,6 @@ export default function InviteJoinScreen() {
 
       setStep('done')
       setTimeout(() => {
-        // Field workers go straight to snags; others to dashboard
         const role = inviteData?.role ?? ''
         const isField = ['field_worker', 'supervisor'].includes(role)
         router.replace(isField ? '/(tabs)/snags' : '/(tabs)/dashboard')
@@ -109,7 +109,7 @@ export default function InviteJoinScreen() {
   if (step === 'loading') {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#3B82F6" />
+        <ActivityIndicator size="large" color={colors.amber} />
         <Text style={styles.loadingText}>Verifying your invite…</Text>
       </View>
     )
@@ -146,7 +146,7 @@ export default function InviteJoinScreen() {
         <Text style={styles.title}>Join {inviteData?.orgName}</Text>
         <Text style={styles.subtitle}>
           You&apos;ve been invited as{' '}
-          <Text style={{ color: '#fff', textTransform: 'capitalize' }}>
+          <Text style={{ color: colors.text, textTransform: 'capitalize' }}>
             {inviteData?.role?.replace('_', ' ')}
           </Text>
           . Set up your account to continue.
@@ -165,7 +165,7 @@ export default function InviteJoinScreen() {
           onChangeText={setFullName}
           style={styles.input}
           placeholder="Your full name"
-          placeholderTextColor="#475569"
+          placeholderTextColor={colors.textDim}
           autoCapitalize="words"
         />
 
@@ -207,31 +207,31 @@ export default function InviteJoinScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  content: { padding: 24, paddingTop: 60 },
-  center: { flex: 1, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  logo: { fontSize: 28, fontWeight: '700', color: '#fff', textAlign: 'center', marginBottom: 32 },
-  card: { backgroundColor: '#1E293B', borderRadius: 20, padding: 24 },
-  title: { fontSize: 20, fontWeight: '700', color: '#fff', marginBottom: 6 },
-  subtitle: { fontSize: 14, color: '#94A3B8', lineHeight: 20, marginBottom: 24 },
-  label: { fontSize: 13, color: '#94A3B8', marginBottom: 6, marginTop: 12 },
+  container: { flex: 1, backgroundColor: colors.base },
+  content: { padding: spacing.xxl, paddingTop: 60 },
+  center: { flex: 1, backgroundColor: colors.base, alignItems: 'center', justifyContent: 'center', padding: spacing.xxl },
+  logo: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: colors.text, textAlign: 'center', marginBottom: spacing.xxxl },
+  card: { backgroundColor: colors.panel, borderRadius: radius.xl, padding: spacing.xxl, borderWidth: 1, borderColor: colors.border },
+  title: { fontSize: fontSize.lg + 2, fontWeight: fontWeight.bold, color: colors.text, marginBottom: 6 },
+  subtitle: { fontSize: fontSize.bodyLg, color: colors.textMid, lineHeight: 20, marginBottom: spacing.xxl },
+  label: { fontSize: fontSize.body, color: colors.textMid, marginBottom: 6, marginTop: spacing.md },
   input: {
-    backgroundColor: '#0F172A',
-    color: '#fff',
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
+    backgroundColor: colors.elevated,
+    color: colors.text,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg - 2,
+    fontSize: fontSize.base,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.border,
   },
   inputDisabled: { opacity: 0.5 },
-  errorBox: { backgroundColor: '#450a0a', borderWidth: 1, borderColor: '#7f1d1d', borderRadius: 10, padding: 12, marginTop: 12 },
-  errorText: { color: '#fca5a5', fontSize: 13 },
-  btn: { backgroundColor: '#2563EB', borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
+  errorBox: { backgroundColor: colors.redDim, borderWidth: 1, borderColor: colors.redMid, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
+  errorText: { color: colors.red, fontSize: fontSize.body },
+  btn: { backgroundColor: colors.amber, borderRadius: radius.lg, paddingVertical: spacing.lg, alignItems: 'center', marginTop: spacing.xxl },
   btnDisabled: { opacity: 0.6 },
-  btnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  loadingText: { color: '#94A3B8', marginTop: 16, fontSize: 14 },
-  errorIcon: { fontSize: 48, marginBottom: 16 },
-  link: { color: '#3B82F6', marginTop: 16, fontSize: 15 },
+  btnText: { color: colors.base, fontWeight: fontWeight.bold, fontSize: fontSize.base },
+  loadingText: { color: colors.textMid, marginTop: spacing.lg, fontSize: fontSize.bodyLg },
+  errorIcon: { fontSize: 48, marginBottom: spacing.lg },
+  link: { color: colors.amber, marginTop: spacing.lg, fontSize: fontSize.base },
 })

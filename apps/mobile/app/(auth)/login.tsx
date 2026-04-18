@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform } from 'react-native'
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native'
 import { Link } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { signInSchema } from '@esite/shared'
+import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
 
 export default function LoginScreen() {
   const { signIn } = useAuth()
@@ -39,6 +40,7 @@ export default function LoginScreen() {
           testID="login-email-input"
           style={styles.input}
           placeholder="Email"
+          placeholderTextColor={colors.textDim}
           value={email}
           onChangeText={setEmail}
           keyboardType="email-address"
@@ -49,6 +51,7 @@ export default function LoginScreen() {
           testID="login-password-input"
           style={styles.input}
           placeholder="Password"
+          placeholderTextColor={colors.textDim}
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -74,32 +77,34 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1E293B' },
-  inner: { flex: 1, justifyContent: 'center', padding: 24 },
-  title: { fontSize: 36, fontWeight: '700', color: '#fff', marginBottom: 4 },
-  subtitle: { fontSize: 16, color: '#94A3B8', marginBottom: 32 },
+  container: { flex: 1, backgroundColor: colors.base },
+  inner: { flex: 1, justifyContent: 'center', padding: spacing.xxl },
+  title: { fontSize: fontSize.display, fontWeight: fontWeight.bold, color: colors.text, marginBottom: spacing.xs },
+  subtitle: { fontSize: fontSize.md, color: colors.textMid, marginBottom: spacing.xxxl },
   errorText: {
-    color: '#F87171',
-    fontSize: 13,
-    marginBottom: 10,
+    color: colors.red,
+    fontSize: fontSize.body,
+    marginBottom: spacing.sm,
     textAlign: 'center',
   },
   input: {
-    backgroundColor: '#334155',
-    borderRadius: 8,
-    padding: 14,
-    fontSize: 16,
-    color: '#fff',
-    marginBottom: 12,
+    backgroundColor: colors.panel,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    fontSize: fontSize.md,
+    color: colors.text,
+    marginBottom: spacing.md,
   },
   button: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 8,
-    padding: 16,
+    backgroundColor: colors.amber,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
     alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 16,
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
   },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  link: { color: '#94A3B8', textAlign: 'center', marginTop: 8 },
+  buttonText: { color: colors.base, fontSize: fontSize.md, fontWeight: fontWeight.bold },
+  link: { color: colors.textMid, textAlign: 'center', marginTop: spacing.sm },
 })

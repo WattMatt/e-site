@@ -1,49 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { projectService, formatZAR } from '@esite/shared'
 import Link from 'next/link'
-
-/* ── Quick action icons ─────────────────────────────────────── */
-function IconNewProject() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" width="18" height="18">
-      <path d="M3 5h6l2-3h6v15H3z" />
-      <line x1="10" y1="9" x2="10" y2="15" />
-      <line x1="7" y1="12" x2="13" y2="12" />
-    </svg>
-  )
-}
-
-function IconSnag() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" width="18" height="18">
-      <path d="M10 2L18 16H2L10 2z" />
-      <line x1="10" y1="8" x2="10" y2="12" />
-      <circle cx="10" cy="14.5" r="0.8" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
-
-function IconDiary() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" width="18" height="18">
-      <rect x="3" y="2" width="14" height="16" rx="1" />
-      <line x1="7" y1="7" x2="13" y2="7" />
-      <line x1="7" y1="10" x2="13" y2="10" />
-      <line x1="7" y1="13" x2="10" y2="13" />
-    </svg>
-  )
-}
-
-function IconMarket() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" width="18" height="18">
-      <path d="M2 7l2-4h12l2 4" />
-      <path d="M2 7h16v.5a2.5 2.5 0 01-5 0 2.5 2.5 0 01-5 0A2.5 2.5 0 012 7.5V7z" />
-      <rect x="2" y="8" width="16" height="10" rx="0.5" />
-      <rect x="7.5" y="13" width="5" height="5" />
-    </svg>
-  )
-}
+import { FolderPlus, AlertTriangle, BookOpen, ShoppingBag } from 'lucide-react'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -333,10 +291,10 @@ export default async function DashboardPage() {
       {/* Quick actions */}
       <div className="quick-actions animate-fadeup animate-fadeup-4">
         {[
-          { href: '/projects/new', label: 'New Project',  Icon: IconNewProject },
-          { href: '/snags/new',    label: 'Log Snag',     Icon: IconSnag },
-          { href: '/diary',        label: 'Site Diary',   Icon: IconDiary },
-          { href: '/marketplace',  label: 'Marketplace',  Icon: IconMarket },
+          { href: '/projects/new', label: 'New Project',  Icon: () => <FolderPlus    size={18} /> },
+          { href: '/snags/new',    label: 'Log Snag',     Icon: () => <AlertTriangle size={18} /> },
+          { href: '/diary',        label: 'Site Diary',   Icon: () => <BookOpen      size={18} /> },
+          { href: '/marketplace',  label: 'Marketplace',  Icon: () => <ShoppingBag   size={18} /> },
         ].map(({ href, label, Icon }) => (
           <Link key={href} href={href} className="quick-action">
             <div className="quick-action-icon">

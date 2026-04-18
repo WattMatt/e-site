@@ -4,12 +4,13 @@ import { useQuery } from '@tanstack/react-query'
 import { rfiService, formatRelative } from '@esite/shared'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
+import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: '#475569', open: '#EF4444', responded: '#3B82F6', closed: '#10B981',
-}
-const PRIORITY_COLORS: Record<string, string> = {
-  critical: '#EF4444', high: '#F97316', medium: '#EAB308', low: '#6B7280',
+const RFI_STATUS: Record<string, { bg: string; fg: string; border: string }> = {
+  draft:     { bg: colors.elevated, fg: colors.textMid, border: colors.borderMid },
+  open:      { bg: colors.redDim,   fg: colors.red,     border: colors.redMid },
+  responded: { bg: colors.blueDim,  fg: colors.blue,    border: colors.blueMid },
+  closed:    { bg: colors.greenDim, fg: colors.green,   border: colors.greenMid },
 }
 
 export default function RfiListScreen() {
@@ -18,11 +19,9 @@ export default function RfiListScreen() {
   const { profile } = useAuth()
   const orgId = (profile as any)?.user_organisations?.[0]?.organisation_id ?? ''
 
-  // Fetch RFIs across all projects in org
   const { data: rfis, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['rfis-org', orgId],
     queryFn: async () => {
-      // Get all projects for org, then fetch RFIs
       const { data: projects } = await client
         .schema('projects')
         .from('projects')
@@ -43,7 +42,7 @@ export default function RfiListScreen() {
   })
 
   if (isLoading) {
-    return <View style={styles.center}><ActivityIndicator color="#3B82F6" size="large" /></View>
+    return <View style={styles.center}><ActivityIndicator color={colors.amber} size="large" /></View>
   }
 
   return (
@@ -51,7 +50,7 @@ export default function RfiListScreen() {
       <FlatList
         data={rfis ?? []}
         keyExtractor={item => item.id}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#3B82F6" />}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
           <View style={styles.listHeader}>
@@ -68,49 +67,52 @@ export default function RfiListScreen() {
             <Text style={styles.emptySubtitle}>Raise a Request for Information on any active project.</Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() => router.push(`/rfis/${item.id}` as any)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.cardTop}>
-              <View style={[styles.priorityDot, { backgroundColor: PRIORITY_COLORS[item.priority] ?? '#6B7280' }]} />
-              <Text style={styles.cardTitle} numberOfLines={2}>{item.subject}</Text>
-              <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[item.status] + '22', borderColor: STATUS_COLORS[item.status] }]}>
-                <Text style={[styles.statusText, { color: STATUS_COLORS[item.status] }]}>{item.status}</Text>
+        renderItem={({ item }) => {
+          const status = RFI_STATUS[item.status] ?? RFI_STATUS.draft
+          return (
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() => router.push(`/rfis/${item.id}` as any)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.cardTop}>
+                <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
+                <Text style={styles.cardTitle} numberOfLines={2}>{item.subject}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: status.bg, borderColor: status.border }]}>
+                  <Text style={[styles.statusText, { color: status.fg }]}>{item.status}</Text>
+                </View>
               </View>
-            </View>
-            <View style={styles.cardMeta}>
-              <Text style={styles.metaText}>{formatRelative(item.created_at)}</Text>
-              {item.due_date && <Text style={styles.dueText}>Due {item.due_date}</Text>}
-            </View>
-          </TouchableOpacity>
-        )}
+              <View style={styles.cardMeta}>
+                <Text style={styles.metaText}>{formatRelative(item.created_at)}</Text>
+                {item.due_date && <Text style={styles.dueText}>Due {item.due_date}</Text>}
+              </View>
+            </TouchableOpacity>
+          )
+        }}
       />
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
+  container: { flex: 1, backgroundColor: colors.base },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  list: { padding: 16, gap: 10 },
-  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  screenTitle: { fontSize: 22, fontWeight: '700', color: '#fff' },
-  newBtn: { backgroundColor: '#2563EB', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
-  newBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  card: { backgroundColor: '#1E293B', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#334155' },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  list: { padding: spacing.lg, gap: spacing.sm + 2 },
+  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+  screenTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text },
+  newBtn: { backgroundColor: colors.amber, paddingHorizontal: spacing.md + 2, paddingVertical: 7, borderRadius: radius.pill },
+  newBtnText: { color: colors.base, fontSize: fontSize.body, fontWeight: fontWeight.bold },
+  card: { backgroundColor: colors.panel, borderRadius: radius.lg, padding: spacing.lg - 2, borderWidth: 1, borderColor: colors.border },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm + 2 },
   priorityDot: { width: 8, height: 8, borderRadius: 4, marginTop: 4, flexShrink: 0 },
-  cardTitle: { flex: 1, fontSize: 14, fontWeight: '600', color: '#fff', lineHeight: 18 },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, borderWidth: 1, flexShrink: 0 },
-  statusText: { fontSize: 10, fontWeight: '600' },
-  cardMeta: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
-  metaText: { fontSize: 11, color: '#475569' },
-  dueText: { fontSize: 11, color: '#F59E0B' },
-  empty: { padding: 40, alignItems: 'center', gap: 8 },
+  cardTitle: { flex: 1, fontSize: fontSize.bodyLg, fontWeight: fontWeight.semibold, color: colors.text, lineHeight: 18 },
+  statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 3, borderRadius: radius.md, borderWidth: 1, flexShrink: 0 },
+  statusText: { fontSize: fontSize.tiny, fontWeight: fontWeight.semibold, textTransform: 'uppercase', letterSpacing: 0.6 },
+  cardMeta: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm },
+  metaText: { fontSize: fontSize.caption, color: colors.textDim },
+  dueText: { fontSize: fontSize.caption, color: colors.amber },
+  empty: { padding: 40, alignItems: 'center', gap: spacing.sm },
   emptyIcon: { fontSize: 48 },
-  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
-  emptySubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center' },
+  emptyTitle: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: colors.text },
+  emptySubtitle: { fontSize: fontSize.body, color: colors.textMid, textAlign: 'center' },
 })

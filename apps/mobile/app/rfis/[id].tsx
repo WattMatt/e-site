@@ -8,12 +8,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { rfiService, formatRelative } from '@esite/shared'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
+import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: '#475569', open: '#EF4444', responded: '#3B82F6', closed: '#10B981',
-}
-const PRIORITY_COLORS: Record<string, string> = {
-  critical: '#EF4444', high: '#F97316', medium: '#EAB308', low: '#6B7280',
+const RFI_STATUS: Record<string, { bg: string; fg: string; border: string }> = {
+  draft:     { bg: colors.elevated, fg: colors.textMid, border: colors.borderMid },
+  open:      { bg: colors.redDim,   fg: colors.red,     border: colors.redMid },
+  responded: { bg: colors.blueDim,  fg: colors.blue,    border: colors.blueMid },
+  closed:    { bg: colors.greenDim, fg: colors.green,   border: colors.greenMid },
 }
 
 export default function RfiDetailScreen() {
@@ -70,7 +71,7 @@ export default function RfiDetailScreen() {
   }
 
   if (isLoading) {
-    return <View style={styles.center}><ActivityIndicator color="#3B82F6" size="large" /></View>
+    return <View style={styles.center}><ActivityIndicator color={colors.amber} size="large" /></View>
   }
 
   if (!rfi) {
@@ -84,10 +85,10 @@ export default function RfiDetailScreen() {
   const isClosed = rfi.status === 'closed'
   const canRespond = !isClosed
   const canClose = rfi.status === 'responded'
+  const status = RFI_STATUS[rfi.status] ?? RFI_STATUS.draft
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
@@ -101,30 +102,25 @@ export default function RfiDetailScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Subject + badges */}
         <View style={styles.titleRow}>
-          <View style={[styles.priorityDot, { backgroundColor: PRIORITY_COLORS[rfi.priority] ?? '#6B7280' }]} />
+          <View style={[styles.priorityDot, { backgroundColor: priorityColor(rfi.priority) }]} />
           <Text style={styles.subject}>{rfi.subject}</Text>
         </View>
 
         <View style={styles.badgeRow}>
-          <View style={[styles.statusBadge, {
-            backgroundColor: STATUS_COLORS[rfi.status] + '22',
-            borderColor: STATUS_COLORS[rfi.status],
-          }]}>
-            <Text style={[styles.statusText, { color: STATUS_COLORS[rfi.status] }]}>{rfi.status}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: status.bg, borderColor: status.border }]}>
+            <Text style={[styles.statusText, { color: status.fg }]}>{rfi.status}</Text>
           </View>
-          <View style={[styles.statusBadge, { backgroundColor: '#33415522', borderColor: '#334155' }]}>
-            <Text style={[styles.statusText, { color: '#94A3B8' }]}>{rfi.priority}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: colors.elevated, borderColor: colors.borderMid }]}>
+            <Text style={[styles.statusText, { color: colors.textMid }]}>{rfi.priority}</Text>
           </View>
           {rfi.category ? (
-            <View style={[styles.statusBadge, { backgroundColor: '#33415522', borderColor: '#334155' }]}>
-              <Text style={[styles.statusText, { color: '#94A3B8' }]}>{rfi.category.replace(/-/g, ' ')}</Text>
+            <View style={[styles.statusBadge, { backgroundColor: colors.elevated, borderColor: colors.borderMid }]}>
+              <Text style={[styles.statusText, { color: colors.textMid }]}>{rfi.category.replace(/-/g, ' ')}</Text>
             </View>
           ) : null}
         </View>
 
-        {/* Metadata */}
         <View style={styles.metaCard}>
           <MetaRow label="Raised by" value={(rfi.raised_by_profile as any)?.full_name ?? '—'} />
           <MetaRow label="Assigned to" value={(rfi.assigned_to_profile as any)?.full_name ?? 'Unassigned'} />
@@ -133,7 +129,6 @@ export default function RfiDetailScreen() {
           {rfi.closed_at ? <MetaRow label="Closed" value={formatRelative(rfi.closed_at)} /> : null}
         </View>
 
-        {/* Description */}
         {rfi.description ? (
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Description</Text>
@@ -141,7 +136,6 @@ export default function RfiDetailScreen() {
           </View>
         ) : null}
 
-        {/* Responses */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>
             Responses ({(rfi.rfi_responses as any[])?.length ?? 0})
@@ -161,7 +155,6 @@ export default function RfiDetailScreen() {
           )}
         </View>
 
-        {/* Response form */}
         {canRespond ? (
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Add Response</Text>
@@ -170,7 +163,7 @@ export default function RfiDetailScreen() {
               value={responseBody}
               onChangeText={setResponseBody}
               placeholder="Type your response…"
-              placeholderTextColor="#475569"
+              placeholderTextColor={colors.textDim}
               multiline
               numberOfLines={4}
               textAlignVertical="top"
@@ -181,13 +174,12 @@ export default function RfiDetailScreen() {
               disabled={respondMutation.isPending}
             >
               {respondMutation.isPending
-                ? <ActivityIndicator color="#fff" size="small" />
+                ? <ActivityIndicator color={colors.base} size="small" />
                 : <Text style={styles.submitText}>Submit Response</Text>}
             </TouchableOpacity>
           </View>
         ) : null}
 
-        {/* Close button */}
         {canClose ? (
           <TouchableOpacity
             style={[styles.closeBtn, closeMutation.isPending && styles.btnDisabled]}
@@ -195,7 +187,7 @@ export default function RfiDetailScreen() {
             disabled={closeMutation.isPending}
           >
             {closeMutation.isPending
-              ? <ActivityIndicator color="#10B981" size="small" />
+              ? <ActivityIndicator color={colors.green} size="small" />
               : <Text style={styles.closeBtnText}>Close RFI</Text>}
           </TouchableOpacity>
         ) : null}
@@ -216,60 +208,60 @@ function MetaRow({ label, value, highlight }: { label: string; value: string; hi
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A' },
-  errorText: { color: '#EF4444', fontSize: 14 },
+  container: { flex: 1, backgroundColor: colors.base },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.base },
+  errorText: { color: colors.red, fontSize: fontSize.bodyLg },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 56, paddingBottom: 16,
-    borderBottomWidth: 1, borderColor: '#1E293B',
+    paddingHorizontal: spacing.lg, paddingTop: 56, paddingBottom: spacing.lg,
+    borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
-  backBtn: { padding: 4 },
-  backText: { color: '#94A3B8', fontSize: 14 },
-  headerTitle: { fontSize: 16, fontWeight: '700', color: '#fff', flex: 1, textAlign: 'center', marginHorizontal: 8 },
+  backBtn: { padding: spacing.xs },
+  backText: { color: colors.textMid, fontSize: fontSize.bodyLg },
+  headerTitle: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: colors.text, flex: 1, textAlign: 'center', marginHorizontal: spacing.sm },
   scroll: { flex: 1 },
-  scrollContent: { padding: 16, gap: 16 },
-  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  scrollContent: { padding: spacing.lg, gap: spacing.lg },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm + 2 },
   priorityDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5, flexShrink: 0 },
-  subject: { flex: 1, fontSize: 18, fontWeight: '700', color: '#fff', lineHeight: 24 },
-  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1 },
-  statusText: { fontSize: 11, fontWeight: '600' },
+  subject: { flex: 1, fontSize: fontSize.lg, fontWeight: fontWeight.bold, color: colors.text, lineHeight: 24 },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  statusBadge: { paddingHorizontal: spacing.sm + 2, paddingVertical: 4, borderRadius: radius.md, borderWidth: 1 },
+  statusText: { fontSize: fontSize.caption, fontWeight: fontWeight.semibold, textTransform: 'uppercase', letterSpacing: 0.6 },
   metaCard: {
-    backgroundColor: '#1E293B', borderRadius: 12, borderWidth: 1,
-    borderColor: '#334155', overflow: 'hidden',
+    backgroundColor: colors.panel, borderRadius: radius.lg, borderWidth: 1,
+    borderColor: colors.border, overflow: 'hidden',
   },
   metaRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 14, paddingVertical: 11,
-    borderBottomWidth: 1, borderColor: '#334155',
+    paddingHorizontal: spacing.lg - 2, paddingVertical: 11,
+    borderBottomWidth: 1, borderColor: colors.border,
   },
-  metaLabel: { fontSize: 12, color: '#64748B', fontWeight: '500' },
-  metaValue: { fontSize: 13, color: '#CBD5E1', fontWeight: '500', maxWidth: '60%', textAlign: 'right' },
-  metaHighlight: { color: '#F59E0B' },
-  section: { gap: 10 },
-  sectionLabel: { fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5 },
-  descriptionText: { fontSize: 14, color: '#CBD5E1', lineHeight: 22 },
-  emptyResponses: { fontSize: 13, color: '#475569', fontStyle: 'italic' },
+  metaLabel: { fontSize: fontSize.small, color: colors.textMid, fontWeight: fontWeight.medium },
+  metaValue: { fontSize: fontSize.body, color: colors.text, fontWeight: fontWeight.medium, maxWidth: '60%', textAlign: 'right' },
+  metaHighlight: { color: colors.amber },
+  section: { gap: spacing.sm + 2 },
+  sectionLabel: { fontSize: fontSize.caption, fontWeight: fontWeight.bold, color: colors.textMid, textTransform: 'uppercase', letterSpacing: 0.6 },
+  descriptionText: { fontSize: fontSize.bodyLg, color: colors.text, lineHeight: 22 },
+  emptyResponses: { fontSize: fontSize.body, color: colors.textDim, fontStyle: 'italic' },
   responseCard: {
-    backgroundColor: '#1E293B', borderRadius: 10, padding: 12,
-    borderWidth: 1, borderColor: '#334155', gap: 6,
+    backgroundColor: colors.panel, borderRadius: radius.md, padding: spacing.md,
+    borderWidth: 1, borderColor: colors.border, gap: 6,
   },
   responseHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  responderName: { fontSize: 13, fontWeight: '700', color: '#E2E8F0' },
-  responseDate: { fontSize: 11, color: '#475569' },
-  responseBody: { fontSize: 14, color: '#CBD5E1', lineHeight: 20 },
+  responderName: { fontSize: fontSize.body, fontWeight: fontWeight.bold, color: colors.text },
+  responseDate: { fontSize: fontSize.caption, color: colors.textDim },
+  responseBody: { fontSize: fontSize.bodyLg, color: colors.text, lineHeight: 20 },
   responseInput: {
-    backgroundColor: '#1E293B', borderWidth: 1, borderColor: '#334155',
-    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 14, color: '#fff', minHeight: 100,
+    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.lg - 2, paddingVertical: spacing.md,
+    fontSize: fontSize.bodyLg, color: colors.text, minHeight: 100,
   },
-  submitBtn: { backgroundColor: '#2563EB', borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
+  submitBtn: { backgroundColor: colors.amber, borderRadius: radius.md, paddingVertical: 13, alignItems: 'center' },
   btnDisabled: { opacity: 0.5 },
-  submitText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  submitText: { color: colors.base, fontSize: fontSize.bodyLg, fontWeight: fontWeight.bold },
   closeBtn: {
-    borderRadius: 10, paddingVertical: 13, alignItems: 'center',
-    borderWidth: 1, borderColor: '#10B981', backgroundColor: '#10B98115',
+    borderRadius: radius.md, paddingVertical: 13, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.green, backgroundColor: colors.greenDim,
   },
-  closeBtnText: { color: '#10B981', fontSize: 14, fontWeight: '700' },
+  closeBtnText: { color: colors.green, fontSize: fontSize.bodyLg, fontWeight: fontWeight.bold },
 })

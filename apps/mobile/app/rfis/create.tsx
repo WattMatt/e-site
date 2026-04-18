@@ -5,13 +5,10 @@ import { useAuth } from '../../src/providers/AuthProvider'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { rfiService } from '@esite/shared'
 import { useQueryClient } from '@tanstack/react-query'
+import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
 
 const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
 const CATEGORIES = ['design', 'materials', 'site-condition', 'specification', 'health-safety', 'general']
-
-const PRIORITY_COLORS: Record<string, string> = {
-  low: '#6B7280', medium: '#EAB308', high: '#F97316', critical: '#EF4444',
-}
 
 export default function CreateRfiScreen() {
   const router = useRouter()
@@ -61,8 +58,6 @@ export default function CreateRfiScreen() {
     }
   }
 
-  const inp = { ...styles.input }
-
   return (
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.header}>
@@ -74,7 +69,6 @@ export default function CreateRfiScreen() {
       </View>
 
       <View style={styles.form}>
-        {/* Project */}
         <View style={styles.field}>
           <Text style={styles.label}>Project <Text style={styles.req}>*</Text></Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -92,7 +86,6 @@ export default function CreateRfiScreen() {
           </ScrollView>
         </View>
 
-        {/* Subject */}
         <View style={styles.field}>
           <Text style={styles.label}>Subject <Text style={styles.req}>*</Text></Text>
           <TextInput
@@ -100,12 +93,11 @@ export default function CreateRfiScreen() {
             value={subject}
             onChangeText={setSubject}
             placeholder="Describe the query…"
-            placeholderTextColor="#475569"
+            placeholderTextColor={colors.textDim}
             autoFocus
           />
         </View>
 
-        {/* Description */}
         <View style={styles.field}>
           <Text style={styles.label}>Description</Text>
           <TextInput
@@ -113,29 +105,31 @@ export default function CreateRfiScreen() {
             value={description}
             onChangeText={setDescription}
             placeholder="Provide full context, reference drawings, standards…"
-            placeholderTextColor="#475569"
+            placeholderTextColor={colors.textDim}
             multiline
             numberOfLines={4}
           />
         </View>
 
-        {/* Priority */}
         <View style={styles.field}>
           <Text style={styles.label}>Priority</Text>
           <View style={styles.pills}>
-            {PRIORITIES.map(p => (
-              <TouchableOpacity
-                key={p}
-                style={[styles.pill, priority === p && { backgroundColor: PRIORITY_COLORS[p] + '33', borderColor: PRIORITY_COLORS[p] }]}
-                onPress={() => setPriority(p)}
-              >
-                <Text style={[styles.pillText, priority === p && { color: PRIORITY_COLORS[p] }]}>{p}</Text>
-              </TouchableOpacity>
-            ))}
+            {PRIORITIES.map(p => {
+              const accent = priorityColor(p)
+              const active = priority === p
+              return (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.pill, active && { backgroundColor: colors.elevated, borderColor: accent }]}
+                  onPress={() => setPriority(p)}
+                >
+                  <Text style={[styles.pillText, active && { color: accent }]}>{p}</Text>
+                </TouchableOpacity>
+              )
+            })}
           </View>
         </View>
 
-        {/* Category */}
         <View style={styles.field}>
           <Text style={styles.label}>Category</Text>
           <View style={styles.pills}>
@@ -151,7 +145,6 @@ export default function CreateRfiScreen() {
           </View>
         </View>
 
-        {/* Due date */}
         <View style={styles.field}>
           <Text style={styles.label}>Due date (YYYY-MM-DD)</Text>
           <TextInput
@@ -159,13 +152,13 @@ export default function CreateRfiScreen() {
             value={dueDate}
             onChangeText={setDueDate}
             placeholder="2026-05-01"
-            placeholderTextColor="#475569"
+            placeholderTextColor={colors.textDim}
             keyboardType="numeric"
           />
         </View>
 
         <TouchableOpacity style={[styles.submitBtn, saving && styles.submitDisabled]} onPress={submit} disabled={saving}>
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Submit RFI</Text>}
+          {saving ? <ActivityIndicator color={colors.base} /> : <Text style={styles.submitText}>Submit RFI</Text>}
         </TouchableOpacity>
       </View>
     </ScrollView>
@@ -173,23 +166,31 @@ export default function CreateRfiScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 56, paddingBottom: 16, borderBottomWidth: 1, borderColor: '#1E293B' },
-  backBtn: { padding: 4 },
-  backText: { color: '#94A3B8', fontSize: 14 },
-  headerTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
-  form: { padding: 16, gap: 20 },
-  field: { gap: 8 },
-  label: { fontSize: 12, fontWeight: '600', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5 },
-  req: { color: '#EF4444' },
-  input: { backgroundColor: '#1E293B', borderWidth: 1, borderColor: '#334155', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, color: '#fff' },
+  container: { flex: 1, backgroundColor: colors.base },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg, paddingTop: 56, paddingBottom: spacing.lg,
+    borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  backBtn: { padding: spacing.xs },
+  backText: { color: colors.textMid, fontSize: fontSize.bodyLg },
+  headerTitle: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: colors.text },
+  form: { padding: spacing.lg, gap: spacing.xl },
+  field: { gap: spacing.sm },
+  label: { fontSize: fontSize.small, fontWeight: fontWeight.semibold, color: colors.textMid, textTransform: 'uppercase', letterSpacing: 0.6 },
+  req: { color: colors.red },
+  input: {
+    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.lg - 2, paddingVertical: spacing.md,
+    fontSize: fontSize.bodyLg, color: colors.text,
+  },
   textarea: { height: 100, textAlignVertical: 'top' },
-  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#334155', backgroundColor: '#1E293B' },
-  pillText: { fontSize: 12, color: '#64748B', fontWeight: '500' },
-  pillActive: { backgroundColor: '#1D4ED820', borderColor: '#3B82F6' },
-  pillActiveText: { color: '#3B82F6' },
-  submitBtn: { backgroundColor: '#2563EB', borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  pill: { paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel },
+  pillText: { fontSize: fontSize.small, color: colors.textMid, fontWeight: fontWeight.medium, textTransform: 'capitalize' },
+  pillActive: { backgroundColor: colors.amberDim, borderColor: colors.amberMid },
+  pillActiveText: { color: colors.amber },
+  submitBtn: { backgroundColor: colors.amber, borderRadius: radius.lg, paddingVertical: spacing.lg, alignItems: 'center', marginTop: spacing.sm },
   submitDisabled: { opacity: 0.6 },
-  submitText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  submitText: { color: colors.base, fontSize: fontSize.base, fontWeight: fontWeight.bold },
 })

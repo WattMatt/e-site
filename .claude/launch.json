@@ -1,0 +1,35 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Web (Next.js)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter=web", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "Mobile (Expo)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter=mobile", "dev"],
+      "port": 8081
+    },
+    {
+      "name": "Supabase Local (API)",
+      "runtimeExecutable": "supabase",
+      "runtimeArgs": ["start", "--workdir", "apps/edge-functions"],
+      "port": 54321
+    },
+    {
+      "name": "Supabase Studio",
+      "runtimeExecutable": "supabase",
+      "runtimeArgs": ["start", "--workdir", "apps/edge-functions"],
+      "port": 54323
+    },
+    {
+      "name": "Full Stack (Web + Mobile)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev"],
+      "port": 3000
+    }
+  ]
+}

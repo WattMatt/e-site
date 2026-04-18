@@ -4,17 +4,18 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { complianceService } from '@esite/shared'
+import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
 
-const STATUS_COLORS: Record<string, string> = {
-  approved: '#10B981',
-  submitted: '#3B82F6',
-  under_review: '#F59E0B',
-  missing: '#EF4444',
-  rejected: '#EF4444',
+const COC_DOT: Record<string, string> = {
+  approved:     colors.green,
+  submitted:    colors.blue,
+  under_review: colors.amber,
+  missing:      colors.red,
+  rejected:     colors.red,
 }
 
 function ScoreRing({ score }: { score: number }) {
-  const color = score === 100 ? '#10B981' : score >= 50 ? '#F59E0B' : '#EF4444'
+  const color = score === 100 ? colors.green : score >= 50 ? colors.amber : colors.red
   return (
     <View style={[styles.ring, { borderColor: color }]}>
       <Text style={[styles.ringText, { color }]}>{score}%</Text>
@@ -35,7 +36,7 @@ export default function ComplianceTab() {
   })
 
   if (isLoading) {
-    return <View style={styles.center}><ActivityIndicator color="#3B82F6" size="large" /></View>
+    return <View style={styles.center}><ActivityIndicator color={colors.amber} size="large" /></View>
   }
 
   return (
@@ -43,7 +44,7 @@ export default function ComplianceTab() {
       <FlatList
         data={sites ?? []}
         keyExtractor={item => item.id}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#3B82F6" />}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
           <Text style={styles.screenTitle}>Compliance</Text>
@@ -76,19 +77,18 @@ export default function ComplianceTab() {
 
               {total > 0 && (
                 <View style={styles.statsRow}>
-                  <StatPill label="Approved" count={approved} color="#10B981" />
-                  <StatPill label="Pending" count={pending} color="#F59E0B" />
-                  <StatPill label="Missing" count={missing} color="#EF4444" />
+                  <StatPill label="Approved" count={approved} tone="green" />
+                  <StatPill label="Pending"  count={pending}  tone="amber" />
+                  <StatPill label="Missing"  count={missing}  tone="red" />
                 </View>
               )}
 
-              {/* Subsection status dots */}
               {subs.length > 0 && (
                 <View style={styles.dotsRow}>
                   {subs.slice(0, 12).map((s: any) => (
                     <View
                       key={s.id}
-                      style={[styles.dot, { backgroundColor: STATUS_COLORS[s.coc_status] ?? '#334155' }]}
+                      style={[styles.dot, { backgroundColor: COC_DOT[s.coc_status] ?? colors.border }]}
                     />
                   ))}
                   {subs.length > 12 && (
@@ -106,37 +106,44 @@ export default function ComplianceTab() {
   )
 }
 
-function StatPill({ label, count, color }: { label: string; count: number; color: string }) {
+const STAT_PILL_TONE = {
+  green: { bg: colors.greenDim, fg: colors.green },
+  amber: { bg: colors.amberDim, fg: colors.amber },
+  red:   { bg: colors.redDim,   fg: colors.red },
+} as const
+
+function StatPill({ label, count, tone }: { label: string; count: number; tone: keyof typeof STAT_PILL_TONE }) {
+  const t = STAT_PILL_TONE[tone]
   return (
-    <View style={[styles.statPill, { backgroundColor: color + '22' }]}>
-      <Text style={[styles.statCount, { color }]}>{count}</Text>
-      <Text style={[styles.statLabel, { color }]}>{label}</Text>
+    <View style={[styles.statPill, { backgroundColor: t.bg }]}>
+      <Text style={[styles.statCount, { color: t.fg }]}>{count}</Text>
+      <Text style={[styles.statLabel, { color: t.fg }]}>{label}</Text>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
+  container: { flex: 1, backgroundColor: colors.base },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  list: { padding: 16, gap: 12 },
-  screenTitle: { fontSize: 22, fontWeight: '700', color: '#fff', marginBottom: 8 },
-  card: { backgroundColor: '#1E293B', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: '#334155', gap: 12 },
+  list: { padding: spacing.lg, gap: spacing.md },
+  screenTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text, marginBottom: spacing.sm },
+  card: { backgroundColor: colors.panel, borderRadius: radius.xl, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, gap: spacing.md },
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   cardInfo: { flex: 1, gap: 2 },
-  siteName: { fontSize: 15, fontWeight: '700', color: '#fff' },
-  siteAddress: { fontSize: 12, color: '#64748B' },
+  siteName: { fontSize: fontSize.base, fontWeight: fontWeight.bold, color: colors.text },
+  siteAddress: { fontSize: fontSize.small, color: colors.textMid },
   ring: { width: 52, height: 52, borderRadius: 26, borderWidth: 3, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  ringText: { fontSize: 12, fontWeight: '800' },
-  statsRow: { flexDirection: 'row', gap: 8 },
-  statPill: { flex: 1, borderRadius: 8, paddingVertical: 6, alignItems: 'center' },
-  statCount: { fontSize: 18, fontWeight: '700' },
-  statLabel: { fontSize: 10, fontWeight: '600', opacity: 0.8 },
+  ringText: { fontSize: fontSize.small, fontWeight: '800' },
+  statsRow: { flexDirection: 'row', gap: spacing.sm },
+  statPill: { flex: 1, borderRadius: radius.lg, paddingVertical: 6, alignItems: 'center' },
+  statCount: { fontSize: fontSize.lg, fontWeight: fontWeight.bold },
+  statLabel: { fontSize: fontSize.tiny, fontWeight: fontWeight.semibold, opacity: 0.8 },
   dotsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, alignItems: 'center' },
   dot: { width: 10, height: 10, borderRadius: 5 },
-  moreText: { fontSize: 11, color: '#64748B' },
-  subCount: { fontSize: 11, color: '#475569' },
-  empty: { padding: 40, alignItems: 'center', gap: 8 },
+  moreText: { fontSize: fontSize.caption, color: colors.textMid },
+  subCount: { fontSize: fontSize.caption, color: colors.textDim },
+  empty: { padding: 40, alignItems: 'center', gap: spacing.sm },
   emptyIcon: { fontSize: 48 },
-  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
-  emptySubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center' },
+  emptyTitle: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: colors.text },
+  emptySubtitle: { fontSize: fontSize.body, color: colors.textMid, textAlign: 'center' },
 })

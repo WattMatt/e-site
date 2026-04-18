@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvo
 import { Link } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { signUpSchema } from '@esite/shared'
+import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
 
 export default function SignupScreen() {
   const { signUp } = useAuth()
@@ -65,7 +66,7 @@ export default function SignupScreen() {
               value={value}
               onChangeText={onChange}
               placeholder={placeholder}
-              placeholderTextColor="#475569"
+              placeholderTextColor={colors.textDim}
               keyboardType={keyboard}
               autoCapitalize="none"
               autoCorrect={false}
@@ -78,8 +79,8 @@ export default function SignupScreen() {
           <Switch
             value={popiaConsent}
             onValueChange={setPopiaConsent}
-            trackColor={{ false: '#334155', true: '#3B82F6' }}
-            thumbColor="#fff"
+            trackColor={{ false: colors.border, true: colors.amber }}
+            thumbColor={colors.text}
             style={styles.popiaSwitch}
           />
           <Text style={styles.popiaText}>
@@ -100,20 +101,28 @@ export default function SignupScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1E293B' },
-  inner: { padding: 24, paddingTop: 60 },
-  successBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  successIcon: { fontSize: 56, marginBottom: 16 },
-  successTitle: { fontSize: 22, fontWeight: '700', color: '#fff', marginBottom: 8 },
-  successDesc: { fontSize: 14, color: '#94A3B8', textAlign: 'center', lineHeight: 22 },
-  title: { fontSize: 28, fontWeight: '700', color: '#fff', marginBottom: 4 },
-  subtitle: { fontSize: 14, color: '#94A3B8', marginBottom: 28 },
-  label: { fontSize: 12, color: '#64748B', marginBottom: 4, marginTop: 12 },
-  input: { backgroundColor: '#334155', borderRadius: 8, padding: 14, fontSize: 16, color: '#fff' },
-  button: { backgroundColor: '#3B82F6', borderRadius: 8, padding: 16, alignItems: 'center', marginTop: 24, marginBottom: 16 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  link: { color: '#94A3B8', textAlign: 'center', marginTop: 8 },
-  popiaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 20, marginBottom: 4 },
+  container: { flex: 1, backgroundColor: colors.base },
+  inner: { padding: spacing.xxl, paddingTop: 60 },
+  successBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xxxl },
+  successIcon: { fontSize: 56, marginBottom: spacing.lg },
+  successTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text, marginBottom: spacing.sm },
+  successDesc: { fontSize: fontSize.bodyLg, color: colors.textMid, textAlign: 'center', lineHeight: 22 },
+  title: { fontSize: fontSize.xxl, fontWeight: fontWeight.bold, color: colors.text, marginBottom: spacing.xs },
+  subtitle: { fontSize: fontSize.bodyLg, color: colors.textMid, marginBottom: 28 },
+  label: { fontSize: fontSize.small, color: colors.textMid, marginBottom: spacing.xs, marginTop: spacing.md },
+  input: {
+    backgroundColor: colors.panel,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    fontSize: fontSize.md,
+    color: colors.text,
+  },
+  button: { backgroundColor: colors.amber, borderRadius: radius.lg, padding: spacing.lg, alignItems: 'center', marginTop: spacing.xxl, marginBottom: spacing.lg },
+  buttonText: { color: colors.base, fontSize: fontSize.md, fontWeight: fontWeight.bold },
+  link: { color: colors.textMid, textAlign: 'center', marginTop: spacing.sm },
+  popiaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.xl, marginBottom: spacing.xs },
   popiaSwitch: { marginTop: 2 },
-  popiaText: { flex: 1, fontSize: 12, color: '#64748B', lineHeight: 18 },
+  popiaText: { flex: 1, fontSize: fontSize.small, color: colors.textMid, lineHeight: 18 },
 })

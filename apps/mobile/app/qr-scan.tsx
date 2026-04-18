@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert, Clipboard } from 'reac
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import { useRouter } from 'expo-router'
 import { parseSubsectionQrUrl } from '@esite/shared'
+import { colors, fontSize, fontWeight, radius, spacing } from '../src/theme'
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 
@@ -124,30 +125,30 @@ const CORNER = 24
 const BORDER = 3
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  center: { flex: 1, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },
-  text: { color: '#94A3B8', fontSize: 16, textAlign: 'center' },
-  btn: { backgroundColor: '#2563EB', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
-  btnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  backLink: { marginTop: 8 },
-  backText: { color: '#64748B', fontSize: 14 },
+  container: { flex: 1, backgroundColor: colors.black },
+  center: { flex: 1, backgroundColor: colors.base, alignItems: 'center', justifyContent: 'center', padding: spacing.xxl, gap: spacing.lg },
+  text: { color: colors.textMid, fontSize: fontSize.md, textAlign: 'center' },
+  btn: { backgroundColor: colors.amber, paddingHorizontal: spacing.xxl, paddingVertical: spacing.md, borderRadius: radius.md },
+  btnText: { color: colors.base, fontWeight: fontWeight.bold, fontSize: fontSize.base },
+  backLink: { marginTop: spacing.sm },
+  backText: { color: colors.textMid, fontSize: fontSize.bodyLg },
 
   overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between' },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 56, paddingBottom: 16, backgroundColor: 'rgba(0,0,0,0.55)' },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.lg, paddingTop: 56, paddingBottom: spacing.lg, backgroundColor: 'rgba(0,0,0,0.55)' },
   closeBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 },
-  closeText: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  title: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  closeText: { color: colors.text, fontSize: fontSize.lg, fontWeight: fontWeight.bold },
+  title: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: colors.text },
 
   viewfinderWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   viewfinder: { width: 240, height: 240, position: 'relative' },
-  corner: { position: 'absolute', width: CORNER, height: CORNER, borderColor: '#3B82F6', borderWidth: BORDER },
+  corner: { position: 'absolute', width: CORNER, height: CORNER, borderColor: colors.amber, borderWidth: BORDER },
   tl: { top: 0, left: 0, borderBottomWidth: 0, borderRightWidth: 0 },
   tr: { top: 0, right: 0, borderBottomWidth: 0, borderLeftWidth: 0 },
   bl: { bottom: 0, left: 0, borderTopWidth: 0, borderRightWidth: 0 },
   br: { bottom: 0, right: 0, borderTopWidth: 0, borderLeftWidth: 0 },
 
-  bottomHint: { paddingHorizontal: 24, paddingBottom: 48, paddingTop: 24, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', gap: 14 },
-  hintText: { color: '#CBD5E1', fontSize: 14, textAlign: 'center' },
-  rescanBtn: { backgroundColor: '#2563EB', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 20 },
-  rescanText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  bottomHint: { paddingHorizontal: spacing.xxl, paddingBottom: 48, paddingTop: spacing.xxl, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', gap: spacing.md + 2 },
+  hintText: { color: colors.text, fontSize: fontSize.bodyLg, textAlign: 'center' },
+  rescanBtn: { backgroundColor: colors.amber, paddingHorizontal: spacing.xxl, paddingVertical: spacing.sm + 2, borderRadius: radius.pill },
+  rescanText: { color: colors.base, fontWeight: fontWeight.bold, fontSize: fontSize.bodyLg },
 })

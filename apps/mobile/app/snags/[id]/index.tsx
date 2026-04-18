@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { snagService, storageService, floorPlanService, formatDate } from '@esite/shared'
 import { useSupabase } from '../../../src/providers/SupabaseProvider'
 import { useAuth } from '../../../src/providers/AuthProvider'
+import { colors, fontSize, fontWeight, priorityColor, radius, spacing, statusBadge } from '../../../src/theme'
 
 const STATUS_FLOW: Record<string, string[]> = {
   open: ['in_progress'],
@@ -16,15 +17,6 @@ const STATUS_FLOW: Record<string, string[]> = {
   pending_sign_off: ['signed_off'],
   signed_off: ['closed'],
   closed: [],
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  open: '#EF4444', in_progress: '#F97316', resolved: '#3B82F6',
-  pending_sign_off: '#EAB308', signed_off: '#10B981', closed: '#6B7280',
-}
-
-const PRIORITY_COLORS: Record<string, string> = {
-  critical: '#EF4444', high: '#F97316', medium: '#EAB308', low: '#6B7280',
 }
 
 export default function SnagDetailScreen() {
@@ -109,7 +101,7 @@ export default function SnagDetailScreen() {
   }
 
   if (isLoading) {
-    return <View style={styles.center}><ActivityIndicator color="#3B82F6" size="large" /></View>
+    return <View style={styles.center}><ActivityIndicator color={colors.amber} size="large" /></View>
   }
   if (!snag) {
     return <View style={styles.center}><Text style={styles.emptyText}>Snag not found</Text></View>
@@ -120,6 +112,7 @@ export default function SnagDetailScreen() {
   const project = (snag as any).project
   const nextStatuses = STATUS_FLOW[snag.status] ?? []
   const photos = photoUrls ?? []
+  const currentBadge = statusBadge(snag.status)
 
   return (
     <>
@@ -134,13 +127,13 @@ export default function SnagDetailScreen() {
         <View style={styles.content}>
           {/* Title + badges */}
           <View style={styles.titleRow}>
-            <View style={[styles.priorityDot, { backgroundColor: PRIORITY_COLORS[snag.priority] ?? '#6B7280' }]} />
+            <View style={[styles.priorityDot, { backgroundColor: priorityColor(snag.priority) }]} />
             <Text style={styles.title}>{snag.title}</Text>
           </View>
 
           <View style={styles.badgeRow}>
-            <View style={[styles.statusBadge, { backgroundColor: STATUS_COLORS[snag.status] + '22', borderColor: STATUS_COLORS[snag.status] }]}>
-              <Text style={[styles.statusText, { color: STATUS_COLORS[snag.status] }]}>{snag.status.replace(/_/g, ' ')}</Text>
+            <View style={[styles.statusBadge, { backgroundColor: currentBadge.bg, borderColor: currentBadge.border }]}>
+              <Text style={[styles.statusText, { color: currentBadge.fg }]}>{snag.status.replace(/_/g, ' ')}</Text>
             </View>
             {snag.category && (
               <View style={styles.catBadge}>
@@ -178,7 +171,7 @@ export default function SnagDetailScreen() {
                       <Image source={{ uri: p.url }} style={styles.photo} resizeMode="cover" />
                     ) : (
                       <View style={[styles.photo, styles.photoPlaceholder]}>
-                        <ActivityIndicator color="#475569" size="small" />
+                        <ActivityIndicator color={colors.textDim} size="small" />
                       </View>
                     )}
                   </TouchableOpacity>
@@ -212,20 +205,23 @@ export default function SnagDetailScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>Update Status</Text>
               <View style={styles.actionRow}>
-                {nextStatuses.map(s => (
-                  <TouchableOpacity
-                    key={s}
-                    style={[styles.actionBtn, { borderColor: STATUS_COLORS[s] }]}
-                    onPress={() => confirmStatusChange(s)}
-                    disabled={updateStatus.isPending}
-                  >
-                    {updateStatus.isPending ? (
-                      <ActivityIndicator color={STATUS_COLORS[s]} size="small" />
-                    ) : (
-                      <Text style={[styles.actionText, { color: STATUS_COLORS[s] }]}>{s.replace(/_/g, ' ')}</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
+                {nextStatuses.map(s => {
+                  const b = statusBadge(s)
+                  return (
+                    <TouchableOpacity
+                      key={s}
+                      style={[styles.actionBtn, { borderColor: b.fg }]}
+                      onPress={() => confirmStatusChange(s)}
+                      disabled={updateStatus.isPending}
+                    >
+                      {updateStatus.isPending ? (
+                        <ActivityIndicator color={b.fg} size="small" />
+                      ) : (
+                        <Text style={[styles.actionText, { color: b.fg }]}>{s.replace(/_/g, ' ')}</Text>
+                      )}
+                    </TouchableOpacity>
+                  )
+                })}
               </View>
             </View>
           )}
@@ -257,41 +253,41 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  center: { flex: 1, backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' },
-  emptyText: { color: '#64748B', fontSize: 16 },
-  header: { paddingHorizontal: 16, paddingTop: 56, paddingBottom: 12 },
-  backBtn: { padding: 4 },
-  backText: { color: '#94A3B8', fontSize: 14 },
-  content: { padding: 16, gap: 16 },
-  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  container: { flex: 1, backgroundColor: colors.base },
+  center: { flex: 1, backgroundColor: colors.base, alignItems: 'center', justifyContent: 'center' },
+  emptyText: { color: colors.textMid, fontSize: fontSize.md },
+  header: { paddingHorizontal: spacing.lg, paddingTop: 56, paddingBottom: spacing.md },
+  backBtn: { padding: spacing.xs },
+  backText: { color: colors.textMid, fontSize: fontSize.bodyLg },
+  content: { padding: spacing.lg, gap: spacing.lg },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
   priorityDot: { width: 10, height: 10, borderRadius: 5, marginTop: 4, flexShrink: 0 },
-  title: { fontSize: 20, fontWeight: '700', color: '#fff', flex: 1, lineHeight: 26 },
-  badgeRow: { flexDirection: 'row', gap: 8 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1 },
-  statusText: { fontSize: 12, fontWeight: '600' },
-  catBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, backgroundColor: '#1E293B', borderWidth: 1, borderColor: '#334155' },
-  catText: { fontSize: 12, color: '#64748B' },
-  metaCard: { backgroundColor: '#1E293B', borderRadius: 12, borderWidth: 1, borderColor: '#334155', overflow: 'hidden' },
-  metaRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#334155' },
-  metaLabel: { fontSize: 12, color: '#64748B', fontWeight: '500' },
-  metaValue: { fontSize: 12, color: '#CBD5E1', fontWeight: '500', maxWidth: '60%', textAlign: 'right' },
-  descCard: { backgroundColor: '#1E293B', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#334155', gap: 8 },
-  sectionLabel: { fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
-  descText: { fontSize: 14, color: '#CBD5E1', lineHeight: 20 },
+  title: { fontSize: fontSize.lg + 2, fontWeight: fontWeight.bold, color: colors.text, flex: 1, lineHeight: 26 },
+  badgeRow: { flexDirection: 'row', gap: spacing.sm },
+  statusBadge: { paddingHorizontal: spacing.sm + 2, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1 },
+  statusText: { fontSize: fontSize.small, fontWeight: fontWeight.semibold, textTransform: 'uppercase', letterSpacing: 0.6 },
+  catBadge: { paddingHorizontal: spacing.sm + 2, paddingVertical: 4, borderRadius: radius.pill, backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.borderMid },
+  catText: { fontSize: fontSize.small, color: colors.textMid, textTransform: 'uppercase', letterSpacing: 0.6 },
+  metaCard: { backgroundColor: colors.panel, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
+  metaRow: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: spacing.lg - 2, paddingVertical: spacing.sm + 2, borderBottomWidth: 1, borderColor: colors.border },
+  metaLabel: { fontSize: fontSize.small, color: colors.textMid, fontWeight: fontWeight.medium },
+  metaValue: { fontSize: fontSize.small, color: colors.text, fontWeight: fontWeight.medium, maxWidth: '60%', textAlign: 'right' },
+  descCard: { backgroundColor: colors.panel, borderRadius: radius.lg, padding: spacing.lg - 2, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
+  sectionLabel: { fontSize: fontSize.caption, fontWeight: fontWeight.bold, color: colors.textMid, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: spacing.sm },
+  descText: { fontSize: fontSize.bodyLg, color: colors.text, lineHeight: 20 },
   section: { gap: 2 },
-  photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  photoThumb: { width: 96, height: 96, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#334155' },
+  photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+  photoThumb: { width: 96, height: 96, borderRadius: radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   photo: { width: '100%', height: '100%' },
-  photoPlaceholder: { backgroundColor: '#1E293B', alignItems: 'center', justifyContent: 'center' },
-  actionRow: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginTop: 8 },
-  actionBtn: { flex: 1, minWidth: 120, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, alignItems: 'center' },
-  actionText: { fontSize: 13, fontWeight: '700' },
+  photoPlaceholder: { backgroundColor: colors.panel, alignItems: 'center', justifyContent: 'center' },
+  actionRow: { flexDirection: 'row', gap: spacing.sm + 2, flexWrap: 'wrap', marginTop: spacing.sm },
+  actionBtn: { flex: 1, minWidth: 120, paddingVertical: spacing.md, borderRadius: radius.md, borderWidth: 1.5, alignItems: 'center' },
+  actionText: { fontSize: fontSize.body, fontWeight: fontWeight.bold, textTransform: 'uppercase', letterSpacing: 0.6 },
   lightboxBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
   lightboxImg: { width: '100%', height: '80%' },
-  lightboxClose: { position: 'absolute', top: 52, right: 16, backgroundColor: '#1E293B', width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  lightboxCloseText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  floorPlanBtn: { backgroundColor: '#1E3A5F', borderWidth: 1, borderColor: '#3B82F6', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 8 },
-  floorPlanBtnText: { color: '#3B82F6', fontSize: 14, fontWeight: '600' },
-  unpinnedText: { fontSize: 13, color: '#475569', marginTop: 4 },
+  lightboxClose: { position: 'absolute', top: 52, right: spacing.lg, backgroundColor: colors.panel, width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  lightboxCloseText: { color: colors.text, fontSize: fontSize.md, fontWeight: fontWeight.bold },
+  floorPlanBtn: { backgroundColor: colors.amberDim, borderWidth: 1, borderColor: colors.amberMid, borderRadius: radius.md, paddingVertical: spacing.md, alignItems: 'center', marginTop: spacing.sm },
+  floorPlanBtnText: { color: colors.amber, fontSize: fontSize.bodyLg, fontWeight: fontWeight.semibold },
+  unpinnedText: { fontSize: fontSize.body, color: colors.textDim, marginTop: spacing.xs },
 })

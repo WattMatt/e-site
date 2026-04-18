@@ -5,22 +5,7 @@ import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useQuery } from '@tanstack/react-query'
 import { snagService, formatDate } from '@esite/shared'
 import { useProjects } from '../../src/hooks/useProjects'
-
-const PRIORITY_COLORS: Record<string, string> = {
-  critical: '#EF4444',
-  high: '#F97316',
-  medium: '#EAB308',
-  low: '#6B7280',
-}
-
-const STATUS_BG: Record<string, string> = {
-  open: '#450a0a',
-  in_progress: '#451a03',
-  resolved: '#1e3a5f',
-  pending_sign_off: '#3d2506',
-  signed_off: '#14532d',
-  closed: '#1e293b',
-}
+import { colors, fontSize, fontWeight, priorityColor, radius, spacing, statusBadge } from '../../src/theme'
 
 export default function SnagsTab() {
   const { profile } = useAuth()
@@ -38,7 +23,7 @@ export default function SnagsTab() {
   const defaultProjectId = projects?.[0]?.id ?? ''
 
   if (isLoading) {
-    return <View style={styles.center}><ActivityIndicator color="#3B82F6" /></View>
+    return <View style={styles.center}><ActivityIndicator color={colors.amber} /></View>
   }
 
   return (
@@ -46,7 +31,7 @@ export default function SnagsTab() {
       <FlatList
         data={snags ?? []}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#3B82F6" />}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
           <View style={styles.listHeader}>
@@ -65,49 +50,52 @@ export default function SnagsTab() {
             <Text style={styles.emptyTitle}>No snags yet</Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() => router.push(`/snags/${item.id}` as any)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.cardRow}>
-              <View style={[styles.priorityDot, { backgroundColor: PRIORITY_COLORS[item.priority] ?? '#6B7280' }]} />
-              <View style={styles.cardFlex}>
-                <Text style={styles.cardTitle}>{item.title}</Text>
-                <Text style={styles.cardSub}>
-                  {(item as any).project?.name} · {item.location ?? 'No location'}
-                </Text>
+        renderItem={({ item }) => {
+          const badge = statusBadge(item.status)
+          return (
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() => router.push(`/snags/${item.id}` as any)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.cardRow}>
+                <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
+                <View style={styles.cardFlex}>
+                  <Text style={styles.cardTitle}>{item.title}</Text>
+                  <Text style={styles.cardSub}>
+                    {(item as any).project?.name} · {item.location ?? 'No location'}
+                  </Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: badge.bg, borderColor: badge.border }]}>
+                  <Text style={[styles.statusText, { color: badge.fg }]}>{item.status.replace(/_/g, ' ')}</Text>
+                </View>
               </View>
-              <View style={[styles.statusBadge, { backgroundColor: STATUS_BG[item.status] ?? '#1e293b' }]}>
-                <Text style={styles.statusText}>{item.status.replace(/_/g, ' ')}</Text>
-              </View>
-            </View>
-            <Text style={styles.dateText}>{formatDate(item.created_at)}</Text>
-          </TouchableOpacity>
-        )}
+              <Text style={styles.dateText}>{formatDate(item.created_at)}</Text>
+            </TouchableOpacity>
+          )
+        }}
       />
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  list: { padding: 16, gap: 10 },
-  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  screenTitle: { fontSize: 22, fontWeight: '700', color: '#fff' },
-  newBtn: { backgroundColor: '#2563EB', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
-  newBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  card: { backgroundColor: '#1E293B', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#334155' },
-  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  container: { flex: 1, backgroundColor: colors.base },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xxl },
+  list: { padding: spacing.lg, gap: spacing.sm + 2 },
+  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+  screenTitle: { fontSize: fontSize.xl, fontWeight: fontWeight.bold, color: colors.text },
+  newBtn: { backgroundColor: colors.amber, paddingHorizontal: spacing.md + 2, paddingVertical: 7, borderRadius: radius.pill },
+  newBtnText: { color: colors.base, fontSize: fontSize.body, fontWeight: fontWeight.bold },
+  card: { backgroundColor: colors.panel, borderRadius: radius.lg, padding: spacing.md + 2, borderWidth: 1, borderColor: colors.border },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   priorityDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
   cardFlex: { flex: 1 },
-  cardTitle: { fontSize: 14, fontWeight: '600', color: '#fff' },
-  cardSub: { fontSize: 11, color: '#64748B', marginTop: 2 },
-  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5 },
-  statusText: { fontSize: 10, color: '#94A3B8', fontWeight: '500' },
-  dateText: { fontSize: 11, color: '#475569', marginTop: 8 },
-  emptyIcon: { fontSize: 48, marginBottom: 12 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: '#fff' },
+  cardTitle: { fontSize: fontSize.bodyLg, fontWeight: fontWeight.semibold, color: colors.text },
+  cardSub: { fontSize: fontSize.caption, color: colors.textMid, marginTop: 2 },
+  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: radius.sm, borderWidth: 1 },
+  statusText: { fontSize: fontSize.tiny, fontWeight: fontWeight.semibold, textTransform: 'uppercase', letterSpacing: 0.6 },
+  dateText: { fontSize: fontSize.caption, color: colors.textDim, marginTop: spacing.sm },
+  emptyIcon: { fontSize: 48, marginBottom: spacing.md },
+  emptyTitle: { fontSize: fontSize.md, fontWeight: fontWeight.semibold, color: colors.text },
 })

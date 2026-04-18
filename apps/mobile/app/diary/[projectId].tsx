@@ -9,6 +9,7 @@ import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
 import type { DiaryEntryType } from '@esite/shared'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
+import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Rain', 'Windy', 'Hot']
 
@@ -74,7 +75,7 @@ export default function SiteDiaryScreen() {
   }
 
   if (isLoading) {
-    return <View style={styles.center}><ActivityIndicator color="#3B82F6" size="large" /></View>
+    return <View style={styles.center}><ActivityIndicator color={colors.amber} size="large" /></View>
   }
 
   return (
@@ -120,7 +121,7 @@ export default function SiteDiaryScreen() {
                   value={entryDate}
                   onChangeText={setEntryDate}
                   placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#475569"
+                  placeholderTextColor={colors.textDim}
                   keyboardType="numeric"
                 />
               </View>
@@ -131,7 +132,7 @@ export default function SiteDiaryScreen() {
                   value={workers}
                   onChangeText={setWorkers}
                   placeholder="0"
-                  placeholderTextColor="#475569"
+                  placeholderTextColor={colors.textDim}
                   keyboardType="number-pad"
                 />
               </View>
@@ -161,7 +162,7 @@ export default function SiteDiaryScreen() {
                 value={progressNotes}
                 onChangeText={setProgressNotes}
                 placeholder="Describe work completed today…"
-                placeholderTextColor="#475569"
+                placeholderTextColor={colors.textDim}
                 multiline
                 numberOfLines={5}
                 textAlignVertical="top"
@@ -171,13 +172,13 @@ export default function SiteDiaryScreen() {
             {/* Safety notes — shown when relevant */}
             {(entryType === 'safety' || entryType === 'general') && (
               <View>
-                <Text style={[styles.fieldLabel, { color: '#EF4444' }]}>Safety notes</Text>
+                <Text style={[styles.fieldLabel, { color: colors.red }]}>Safety notes</Text>
                 <TextInput
                   style={[styles.input, styles.textareaSm]}
                   value={safetyNotes}
                   onChangeText={setSafetyNotes}
                   placeholder="Safety observations, near-misses, incidents…"
-                  placeholderTextColor="#475569"
+                  placeholderTextColor={colors.textDim}
                   multiline
                   numberOfLines={3}
                   textAlignVertical="top"
@@ -193,7 +194,7 @@ export default function SiteDiaryScreen() {
                 value={delays}
                 onChangeText={setDelays}
                 placeholder="Any blockers or delays…"
-                placeholderTextColor="#475569"
+                placeholderTextColor={colors.textDim}
                 multiline
                 numberOfLines={3}
                 textAlignVertical="top"
@@ -206,7 +207,7 @@ export default function SiteDiaryScreen() {
               disabled={createMutation.isPending}
             >
               {createMutation.isPending
-                ? <ActivityIndicator color="#fff" size="small" />
+                ? <ActivityIndicator color={colors.base} size="small" />
                 : <Text style={styles.submitText}>Save Entry</Text>}
             </TouchableOpacity>
 
@@ -255,54 +256,52 @@ export default function SiteDiaryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F172A' },
+  container: { flex: 1, backgroundColor: colors.base },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.base },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 56, paddingBottom: 16,
-    borderBottomWidth: 1, borderColor: '#1E293B',
+    paddingHorizontal: spacing.lg, paddingTop: 56, paddingBottom: spacing.lg,
+    borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
-  backBtn: { padding: 4 },
-  backText: { color: '#94A3B8', fontSize: 14 },
-  headerTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
-  addBtn: { backgroundColor: '#2563EB', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
-  addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  // Form
+  backBtn: { padding: spacing.xs },
+  backText: { color: colors.textMid, fontSize: fontSize.bodyLg },
+  headerTitle: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: colors.text },
+  addBtn: { backgroundColor: colors.amber, paddingHorizontal: spacing.md + 2, paddingVertical: 7, borderRadius: radius.pill },
+  addBtnText: { color: colors.base, fontSize: fontSize.body, fontWeight: fontWeight.bold },
   formScroll: { flex: 1 },
-  form: { padding: 16, gap: 16 },
-  formRow: { flexDirection: 'row', gap: 12 },
+  form: { padding: spacing.lg, gap: spacing.lg },
+  formRow: { flexDirection: 'row', gap: spacing.md },
   formHalf: { flex: 1, gap: 6 },
-  fieldLabel: { fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5 },
+  fieldLabel: { fontSize: fontSize.caption, fontWeight: fontWeight.bold, color: colors.textMid, textTransform: 'uppercase', letterSpacing: 0.6 },
   input: {
-    backgroundColor: '#1E293B', borderWidth: 1, borderColor: '#334155',
-    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11,
-    fontSize: 14, color: '#fff',
+    backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.lg - 2, paddingVertical: 11,
+    fontSize: fontSize.bodyLg, color: colors.text,
   },
   textarea: { height: 110, textAlignVertical: 'top' },
   textareaSm: { height: 72, textAlignVertical: 'top' },
-  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
-  pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#334155', backgroundColor: '#1E293B' },
-  pillText: { fontSize: 12, color: '#64748B', fontWeight: '500' },
-  pillActive: { backgroundColor: '#1D4ED820', borderColor: '#3B82F6' },
-  pillActiveText: { color: '#3B82F6' },
-  submitBtn: { backgroundColor: '#2563EB', borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginTop: 4 },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: 6 },
+  pill: { paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel },
+  pillText: { fontSize: fontSize.small, color: colors.textMid, fontWeight: fontWeight.medium },
+  pillActive: { backgroundColor: colors.amberDim, borderColor: colors.amberMid },
+  pillActiveText: { color: colors.amber },
+  submitBtn: { backgroundColor: colors.amber, borderRadius: radius.md, paddingVertical: spacing.lg - 2, alignItems: 'center', marginTop: spacing.xs },
   btnDisabled: { opacity: 0.5 },
-  submitText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  // List
-  list: { padding: 16, gap: 12 },
-  empty: { padding: 48, alignItems: 'center', gap: 8 },
+  submitText: { color: colors.base, fontSize: fontSize.bodyLg, fontWeight: fontWeight.bold },
+  list: { padding: spacing.lg, gap: spacing.md },
+  empty: { padding: 48, alignItems: 'center', gap: spacing.sm },
   emptyIcon: { fontSize: 48 },
-  emptyTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
-  emptySubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center' },
-  card: { backgroundColor: '#1E293B', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#334155', gap: 8 },
+  emptyTitle: { fontSize: fontSize.md, fontWeight: fontWeight.bold, color: colors.text },
+  emptySubtitle: { fontSize: fontSize.body, color: colors.textMid, textAlign: 'center' },
+  card: { backgroundColor: colors.panel, borderRadius: radius.lg, padding: spacing.lg - 2, borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  dateText: { fontSize: 13, fontWeight: '700', color: '#E2E8F0', flex: 1 },
-  cardMeta: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  weatherTag: { backgroundColor: '#1D4ED820', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, fontSize: 11, color: '#93C5FD' },
-  metaText: { fontSize: 11, color: '#64748B' },
-  progressText: { fontSize: 13, color: '#CBD5E1', lineHeight: 20 },
-  delayBox: { backgroundColor: '#451A0310', borderLeftWidth: 2, borderLeftColor: '#F59E0B', paddingLeft: 10, gap: 2 },
-  delayLabel: { fontSize: 10, fontWeight: '700', color: '#F59E0B', textTransform: 'uppercase' },
-  delayText: { fontSize: 12, color: '#FCD34D', lineHeight: 18 },
-  authorText: { fontSize: 11, color: '#475569', marginTop: 2 },
+  dateText: { fontSize: fontSize.body, fontWeight: fontWeight.bold, color: colors.text, flex: 1 },
+  cardMeta: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
+  weatherTag: { backgroundColor: colors.blueDim, borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: 3, fontSize: fontSize.caption, color: colors.blue },
+  metaText: { fontSize: fontSize.caption, color: colors.textMid },
+  progressText: { fontSize: fontSize.body, color: colors.text, lineHeight: 20 },
+  delayBox: { backgroundColor: colors.amberDim, borderLeftWidth: 2, borderLeftColor: colors.amber, paddingLeft: spacing.sm + 2, paddingVertical: 6, gap: 2, borderRadius: radius.sm },
+  delayLabel: { fontSize: fontSize.tiny, fontWeight: fontWeight.bold, color: colors.amber, textTransform: 'uppercase', letterSpacing: 0.6 },
+  delayText: { fontSize: fontSize.small, color: colors.text, lineHeight: 18 },
+  authorText: { fontSize: fontSize.caption, color: colors.textDim, marginTop: 2 },
 })
