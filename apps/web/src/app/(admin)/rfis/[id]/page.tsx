@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server'
 import { rfiService, formatDate, formatRelative } from '@esite/shared'
 import { RfiRespondForm } from './RfiRespondForm'
 import { RfiCloseButton } from './RfiCloseButton'
+import { fetchAttachments } from '@/components/attachments/fetch'
+import { AttachmentGallery } from '@/components/attachments/AttachmentGallery'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -41,6 +43,16 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
   const raisedBy = (rfi as any).raised_by_profile as any
   const assignedTo = (rfi as any).assigned_to_profile as any
   const responses = (rfi as any).rfi_responses as any[] ?? []
+  const rfiProjectId = (rfi as any).project_id as string
+
+  // Load attachments for the RFI + each response in parallel.
+  const [rfiAttachments, ...responseAttachments] = await Promise.all([
+    fetchAttachments(supabase as any, 'rfi', id),
+    ...responses.map((r: any) => fetchAttachments(supabase as any, 'rfi_response', r.id)),
+  ])
+
+  const { data: { user: viewer } } = await supabase.auth.getUser()
+  const canEdit = !!viewer
 
   const backHref = projectId ? `/projects/${projectId}` : '/rfis'
   const backLabel = projectId ? `← ${projectRow?.name ?? 'Project'}` : '← RFIs'
@@ -90,11 +102,20 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
             {rfi.category && (
               <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 10 }}>Category: {rfi.category}</p>
             )}
+            {rfiAttachments.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <AttachmentGallery
+                  attachments={rfiAttachments}
+                  canEdit={canEdit}
+                  projectId={rfiProjectId}
+                />
+              </div>
+            )}
           </div>
         </div>
 
         {/* Responses */}
-        {responses.map((r: any) => (
+        {responses.map((r: any, idx: number) => (
           <div key={r.id} className="data-panel" style={{ marginLeft: 20, borderLeft: '3px solid #1d4ed8' }}>
             <div className="data-panel-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -114,6 +135,15 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
             </div>
             <div style={{ padding: '14px 18px' }}>
               <p style={{ fontSize: 13, color: 'var(--c-text)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{r.body}</p>
+              {responseAttachments[idx] && responseAttachments[idx]!.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <AttachmentGallery
+                    attachments={responseAttachments[idx]!}
+                    canEdit={canEdit}
+                    projectId={rfiProjectId}
+                  />
+                </div>
+              )}
             </div>
           </div>
         ))}

@@ -1,15 +1,39 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/Button'
+import { AttachmentStaging } from '@/components/attachments/AttachmentStaging'
+import { commitStagedAttachments } from '@/components/attachments/commit'
+import type { StagedAttachment } from '@/components/attachments/types'
 
 export function RfiRespondForm({ rfiId }: { rfiId: string }) {
   const router = useRouter()
   const [body, setBody] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<StagedAttachment[]>([])
+  const [projectId, setProjectId] = useState<string | null>(null)
+  const [orgId, setOrgId] = useState<string | null>(null)
+
+  // Fetch the parent RFI's project + org so the attachment staging knows
+  // which floor plans to list and where to write the storage path.
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .schema('projects')
+      .from('rfis')
+      .select('project_id, organisation_id')
+      .eq('id', rfiId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setProjectId(data.project_id as string)
+          setOrgId(data.organisation_id as string)
+        }
+      })
+  }, [rfiId])
 
   async function submit() {
     if (body.trim().length < 10) { setError('Response must be at least 10 characters'); return }
@@ -17,20 +41,42 @@ export function RfiRespondForm({ rfiId }: { rfiId: string }) {
     setError(null)
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    if (!user) { setSaving(false); return }
 
-    const { error: err } = await supabase.schema('projects').from('rfi_responses')
+    const { data: response, error: err } = await supabase
+      .schema('projects')
+      .from('rfi_responses')
       .insert({ rfi_id: rfiId, body: body.trim(), responded_by: user.id })
-    if (err) { setError(err.message); setSaving(false); return }
+      .select('id')
+      .single()
+    if (err || !response) { setError(err?.message ?? 'Could not save response'); setSaving(false); return }
+
+    if (attachments.length > 0 && projectId && orgId) {
+      try {
+        await commitStagedAttachments({
+          supabase,
+          staged: attachments,
+          orgId,
+          projectId,
+          entityType: 'rfi_response',
+          entityId: response.id,
+          rfiId,
+          userId: user.id,
+        })
+      } catch (attErr) {
+        setError(attErr instanceof Error ? attErr.message : 'Attachment upload failed')
+      }
+    }
 
     await supabase.schema('projects').from('rfis').update({ status: 'responded' }).eq('id', rfiId)
     setBody('')
+    setAttachments([])
     router.refresh()
     setSaving(false)
   }
 
   return (
-    <div className="space-y-3">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <textarea
         value={body}
         onChange={e => setBody(e.target.value)}
@@ -39,10 +85,18 @@ export function RfiRespondForm({ rfiId }: { rfiId: string }) {
         className="ob-input"
         style={{ resize: 'vertical' }}
       />
+      <AttachmentStaging
+        projectId={projectId}
+        value={attachments}
+        onChange={setAttachments}
+        allowFloorPlan={!!projectId}
+      />
       {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
-      <Button size="sm" onClick={submit} isLoading={saving} disabled={!body.trim()}>
-        Submit Response
-      </Button>
+      <div>
+        <Button size="sm" onClick={submit} isLoading={saving} disabled={!body.trim()}>
+          Submit Response
+        </Button>
+      </div>
     </div>
   )
 }

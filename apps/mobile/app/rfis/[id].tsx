@@ -9,6 +9,11 @@ import { rfiService, formatRelative } from '@esite/shared'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
+import { AttachmentStaging } from '../../src/components/attachments/AttachmentStaging'
+import { AttachmentGallery } from '../../src/components/attachments/AttachmentGallery'
+import { FloorPlanAttachModal } from '../../src/components/attachments/FloorPlanAttachModal'
+import { commitStagedAttachments, fetchAttachments } from '../../src/components/attachments/commit'
+import type { StagedAttachment } from '../../src/components/attachments/types'
 
 const RFI_STATUS: Record<string, { bg: string; fg: string; border: string }> = {
   draft:     { bg: colors.elevated, fg: colors.textMid, border: colors.borderMid },
@@ -24,6 +29,10 @@ export default function RfiDetailScreen() {
   const { profile } = useAuth()
   const queryClient = useQueryClient()
   const [responseBody, setResponseBody] = useState('')
+  const [responseAttachments, setResponseAttachments] = useState<StagedAttachment[]>([])
+  const [floorPlanOpen, setFloorPlanOpen] = useState(false)
+
+  const orgId = (profile as any)?.user_organisations?.[0]?.organisation_id ?? ''
 
   const { data: rfi, isLoading } = useQuery({
     queryKey: ['rfi', id],
@@ -31,12 +40,57 @@ export default function RfiDetailScreen() {
     enabled: !!id,
   })
 
+  const { data: rfiAttachments = [] } = useQuery({
+    queryKey: ['rfi-attachments', id],
+    queryFn: () => fetchAttachments(client, 'rfi', id),
+    enabled: !!id,
+  })
+
+  const responses = (rfi?.rfi_responses as any[]) ?? []
+
+  const { data: responseAttachmentsMap = {} } = useQuery({
+    queryKey: ['rfi-response-attachments', id, responses.map((r: any) => r.id).join(',')],
+    queryFn: async () => {
+      const pairs = await Promise.all(
+        responses.map(async (r: any) => [r.id, await fetchAttachments(client, 'rfi_response', r.id)] as const),
+      )
+      return Object.fromEntries(pairs)
+    },
+    enabled: !!id && responses.length > 0,
+  })
+
+  const projectId = rfi?.project_id as string | undefined
+
   const respondMutation = useMutation({
-    mutationFn: () =>
-      rfiService.respond(client, { rfiId: id, body: responseBody.trim() }, profile!.id),
+    mutationFn: async () => {
+      const response = await rfiService.respond(
+        client, { rfiId: id, body: responseBody.trim() }, profile!.id,
+      )
+
+      if (responseAttachments.length > 0 && projectId && orgId) {
+        try {
+          await commitStagedAttachments({
+            client,
+            staged: responseAttachments,
+            orgId,
+            projectId,
+            entityType: 'rfi_response',
+            entityId: response.id,
+            rfiId: id,
+            userId: profile!.id,
+          })
+        } catch (attErr: any) {
+          console.warn('[rfi-response] attachment commit failed:', attErr?.message)
+        }
+      }
+      return response
+    },
     onSuccess: () => {
       setResponseBody('')
+      setResponseAttachments([])
       queryClient.invalidateQueries({ queryKey: ['rfi', id] })
+      queryClient.invalidateQueries({ queryKey: ['rfi-attachments', id] })
+      queryClient.invalidateQueries({ queryKey: ['rfi-response-attachments', id] })
       queryClient.invalidateQueries({ queryKey: ['rfis-org'] })
     },
     onError: (e: any) => Alert.alert('Error', e.message ?? 'Failed to submit response'),
@@ -86,6 +140,7 @@ export default function RfiDetailScreen() {
   const canRespond = !isClosed
   const canClose = rfi.status === 'responded'
   const status = RFI_STATUS[rfi.status] ?? RFI_STATUS.draft
+  const canEdit = !!profile
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -136,22 +191,45 @@ export default function RfiDetailScreen() {
           </View>
         ) : null}
 
+        {rfiAttachments.length > 0 && projectId && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Attachments</Text>
+            <AttachmentGallery
+              attachments={rfiAttachments}
+              canEdit={canEdit}
+              projectId={projectId}
+              client={client}
+              onChanged={() => queryClient.invalidateQueries({ queryKey: ['rfi-attachments', id] })}
+            />
+          </View>
+        )}
+
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>
-            Responses ({(rfi.rfi_responses as any[])?.length ?? 0})
-          </Text>
-          {(rfi.rfi_responses as any[])?.length === 0 ? (
+          <Text style={styles.sectionLabel}>Responses ({responses.length})</Text>
+          {responses.length === 0 ? (
             <Text style={styles.emptyResponses}>No responses yet.</Text>
           ) : (
-            (rfi.rfi_responses as any[]).map((r: any) => (
-              <View key={r.id} style={styles.responseCard}>
-                <View style={styles.responseHeader}>
-                  <Text style={styles.responderName}>{r.responder?.full_name ?? 'Unknown'}</Text>
-                  <Text style={styles.responseDate}>{formatRelative(r.created_at)}</Text>
+            responses.map((r: any) => {
+              const atts = (responseAttachmentsMap as any)[r.id] ?? []
+              return (
+                <View key={r.id} style={styles.responseCard}>
+                  <View style={styles.responseHeader}>
+                    <Text style={styles.responderName}>{r.responder?.full_name ?? 'Unknown'}</Text>
+                    <Text style={styles.responseDate}>{formatRelative(r.created_at)}</Text>
+                  </View>
+                  <Text style={styles.responseBody}>{r.body}</Text>
+                  {atts.length > 0 && projectId && (
+                    <AttachmentGallery
+                      attachments={atts}
+                      canEdit={canEdit}
+                      projectId={projectId}
+                      client={client}
+                      onChanged={() => queryClient.invalidateQueries({ queryKey: ['rfi-response-attachments', id] })}
+                    />
+                  )}
                 </View>
-                <Text style={styles.responseBody}>{r.body}</Text>
-              </View>
-            ))
+              )
+            })
           )}
         </View>
 
@@ -168,6 +246,15 @@ export default function RfiDetailScreen() {
               numberOfLines={4}
               textAlignVertical="top"
             />
+            {projectId && (
+              <AttachmentStaging
+                projectId={projectId}
+                value={responseAttachments}
+                onChange={setResponseAttachments}
+                allowFloorPlan
+                onRequestFloorPlan={() => setFloorPlanOpen(true)}
+              />
+            )}
             <TouchableOpacity
               style={[styles.submitBtn, respondMutation.isPending && styles.btnDisabled]}
               onPress={handleRespond}
@@ -194,6 +281,19 @@ export default function RfiDetailScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {projectId && (
+        <FloorPlanAttachModal
+          visible={floorPlanOpen}
+          projectId={projectId}
+          client={client}
+          onClose={() => setFloorPlanOpen(false)}
+          onStage={staged => {
+            setResponseAttachments(prev => [...prev, staged])
+            setFloorPlanOpen(false)
+          }}
+        />
+      )}
     </KeyboardAvoidingView>
   )
 }

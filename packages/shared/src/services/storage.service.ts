@@ -1,6 +1,6 @@
 import type { TypedSupabaseClient } from '@esite/db'
 
-type Bucket = 'snag-photos' | 'coc-documents' | 'drawings' | 'avatars'
+type Bucket = 'snag-photos' | 'coc-documents' | 'drawings' | 'avatars' | 'rfi-attachments'
 
 export const storageService = {
   /** Upload a File (web) or Blob to a bucket. Returns the storage path. */
@@ -69,5 +69,10 @@ export const storageService = {
 
   avatarPath(userId: string, filename: string) {
     return `${userId}/${filename}`
+  },
+
+  /** Path convention for the rfi-attachments bucket. Mirrors web migration 00029. */
+  rfiAttachmentPath(orgId: string, projectId: string, rfiId: string, filename: string) {
+    return `${orgId}/${projectId}/${rfiId}/${filename}`
   },
 }

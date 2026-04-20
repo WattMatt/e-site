@@ -1,11 +1,18 @@
-import { useState, useEffect } from 'react'
-import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native'
+import { useEffect, useState } from 'react'
+import {
+  View, Text, TextInput, ScrollView, TouchableOpacity,
+  StyleSheet, ActivityIndicator, Alert,
+} from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { rfiService } from '@esite/shared'
 import { useQueryClient } from '@tanstack/react-query'
 import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
+import { AttachmentStaging } from '../../src/components/attachments/AttachmentStaging'
+import { FloorPlanAttachModal } from '../../src/components/attachments/FloorPlanAttachModal'
+import { commitStagedAttachments } from '../../src/components/attachments/commit'
+import type { StagedAttachment } from '../../src/components/attachments/types'
 
 const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
 const CATEGORIES = ['design', 'materials', 'site-condition', 'specification', 'health-safety', 'general']
@@ -26,6 +33,8 @@ export default function CreateRfiScreen() {
   const [priority, setPriority] = useState<typeof PRIORITIES[number]>('medium')
   const [category, setCategory] = useState('')
   const [dueDate, setDueDate] = useState('')
+  const [attachments, setAttachments] = useState<StagedAttachment[]>([])
+  const [floorPlanOpen, setFloorPlanOpen] = useState(false)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -33,7 +42,7 @@ export default function CreateRfiScreen() {
     client.schema('projects').from('projects')
       .select('id, name').eq('organisation_id', orgId).eq('status', 'active').order('name')
       .then(({ data }) => setProjects(data ?? []))
-  }, [orgId])
+  }, [orgId, client])
 
   async function submit() {
     if (!subject.trim()) { Alert.alert('Required', 'Please enter a subject.'); return }
@@ -48,6 +57,27 @@ export default function CreateRfiScreen() {
         category: category || '',
         dueDate: dueDate || '',
       })
+
+      if (attachments.length > 0) {
+        try {
+          await commitStagedAttachments({
+            client,
+            staged: attachments,
+            orgId,
+            projectId,
+            entityType: 'rfi',
+            entityId: rfi.id,
+            rfiId: rfi.id,
+            userId: profile!.id,
+          })
+        } catch (attErr: any) {
+          Alert.alert(
+            'RFI created — attachments failed',
+            attErr?.message ?? 'You can add attachments from the RFI detail screen.',
+          )
+        }
+      }
+
       queryClient.invalidateQueries({ queryKey: ['rfis-org', orgId] })
       queryClient.invalidateQueries({ queryKey: ['rfis', projectId] })
       router.replace(`/rfis/${rfi.id}` as any)
@@ -158,10 +188,31 @@ export default function CreateRfiScreen() {
           />
         </View>
 
+        <AttachmentStaging
+          projectId={projectId || null}
+          value={attachments}
+          onChange={setAttachments}
+          allowFloorPlan={!!projectId}
+          onRequestFloorPlan={() => setFloorPlanOpen(true)}
+        />
+
         <TouchableOpacity style={[styles.submitBtn, saving && styles.submitDisabled]} onPress={submit} disabled={saving}>
           {saving ? <ActivityIndicator color={colors.base} /> : <Text style={styles.submitText}>Submit RFI</Text>}
         </TouchableOpacity>
       </View>
+
+      {projectId && (
+        <FloorPlanAttachModal
+          visible={floorPlanOpen}
+          projectId={projectId}
+          client={client}
+          onClose={() => setFloorPlanOpen(false)}
+          onStage={staged => {
+            setAttachments(prev => [...prev, staged])
+            setFloorPlanOpen(false)
+          }}
+        />
+      )}
     </ScrollView>
   )
 }

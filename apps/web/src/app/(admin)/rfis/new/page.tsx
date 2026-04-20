@@ -8,6 +8,9 @@ import { createRfiSchema, type CreateRfiInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/Button'
 import { FormField, TextInput, Select, Textarea } from '@/components/ui/FormField'
+import { AttachmentStaging } from '@/components/attachments/AttachmentStaging'
+import { commitStagedAttachments } from '@/components/attachments/commit'
+import type { StagedAttachment } from '@/components/attachments/types'
 import Link from 'next/link'
 import { Suspense } from 'react'
 
@@ -21,6 +24,7 @@ function NewRfiForm() {
   const [error, setError] = useState<string | null>(null)
   const [projects, setProjects] = useState<any[]>([])
   const [members, setMembers] = useState<any[]>([])
+  const [attachments, setAttachments] = useState<StagedAttachment[]>([])
 
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<CreateRfiInput>({
     resolver: zodResolver(createRfiSchema),
@@ -71,6 +75,26 @@ function NewRfiForm() {
         status: 'open',
       }).select().single()
       if (err) throw err
+
+      if (attachments.length > 0) {
+        try {
+          await commitStagedAttachments({
+            supabase,
+            staged: attachments,
+            orgId: mem.organisation_id,
+            projectId: input.projectId,
+            entityType: 'rfi',
+            entityId: rfi.id,
+            rfiId: rfi.id,
+            userId: user.id,
+          })
+        } catch (attErr) {
+          // The RFI itself is created — surface the attachment error but still
+          // let the user navigate to the created RFI to retry attachments.
+          setError(attErr instanceof Error ? attErr.message : 'Attachment upload failed')
+        }
+      }
+
       router.push(`/rfis/${rfi.id}`)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to create RFI')
@@ -138,6 +162,13 @@ function NewRfiForm() {
                 <TextInput {...register('dueDate')} type="date" invalid={!!errors.dueDate} />
               </FormField>
             </div>
+
+            <AttachmentStaging
+              projectId={projectId || null}
+              value={attachments}
+              onChange={setAttachments}
+              allowFloorPlan={!!projectId}
+            />
           </div>
         </div>
 

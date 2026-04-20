@@ -1786,6 +1786,68 @@ export type Database = {
           },
         ]
       }
+      rfi_annotations: {
+        Row: {
+          annotation_data: Json
+          attachment_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          organisation_id: string
+          source_floor_plan_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          annotation_data: Json
+          attachment_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          organisation_id: string
+          source_floor_plan_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          annotation_data?: Json
+          attachment_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          organisation_id?: string
+          source_floor_plan_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rfi_annotations_attachment_id_fkey"
+            columns: ["attachment_id"]
+            isOneToOne: true
+            referencedRelation: "attachments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rfi_annotations_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rfi_annotations_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rfi_annotations_source_floor_plan_id_fkey"
+            columns: ["source_floor_plan_id"]
+            isOneToOne: false
+            referencedRelation: "floor_plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_organisations: {
         Row: {
           accepted_at: string | null
