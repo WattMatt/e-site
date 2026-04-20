@@ -1,6 +1,9 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, formatZAR } from '@esite/shared'
 import Link from 'next/link'
+
+export const metadata: Metadata = { title: 'Dashboard' }
 import { FolderPlus, AlertTriangle, BookOpen, ShoppingBag } from 'lucide-react'
 
 export default async function DashboardPage() {
@@ -17,7 +20,7 @@ export default async function DashboardPage() {
 
   const orgId = membership?.organisation_id
 
-  const [stats, projects, recentSnags, ordersResult, deadlinesResult, complianceResult] = await Promise.all([
+  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, complianceResult] = await Promise.all([
     orgId
       ? projectService.getStats(supabase as any, orgId)
       : Promise.resolve({ activeProjects: 0, openSnags: 0, pendingCocs: 0 }),
@@ -38,23 +41,38 @@ export default async function DashboardPage() {
       ? (supabase as any)
           .schema('field')
           .from('snags')
-          .select('id, title, priority, status, created_at, project:projects!project_id(name)')
+          .select('id, title, priority, status, created_at, project_id')
           .eq('organisation_id', orgId)
           .in('status', ['open', 'in_progress'])
           .order('created_at', { ascending: false })
           .limit(5)
+          .then((r: any) => r)
+          .catch(() => ({ data: [] }))
       : Promise.resolve({ data: [] }),
 
     orgId
       ? (supabase as any)
           .schema('marketplace')
           .from('orders')
-          .select('id, status, total_amount, created_at, supplier:suppliers.suppliers!supplier_id(name)')
+          .select('id, status, total_amount, created_at, supplier_org_id')
           .eq('contractor_org_id', orgId)
           .not('status', 'in', '("draft","cancelled")')
           .order('created_at', { ascending: false })
           .limit(5)
+          .then((r: any) => r)
+          .catch(() => ({ data: [] }))
       : Promise.resolve({ data: [] }),
+
+    orgId
+      ? (supabase as any)
+          .schema('marketplace')
+          .from('orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('contractor_org_id', orgId)
+          .not('status', 'in', '("draft","cancelled")')
+          .then((r: any) => r)
+          .catch(() => ({ count: 0 }))
+      : Promise.resolve({ count: 0 }),
 
     orgId
       ? (supabase as any)
@@ -76,8 +94,23 @@ export default async function DashboardPage() {
       : Promise.resolve({ data: [] }),
   ])
 
-  const activeOrders = ordersResult.data?.length ?? 0
+  const activeOrders = ordersCountResult.count ?? 0
   const deadlines = deadlinesResult.count ?? 0
+
+  // Fetch supplier org names separately (avoids cross-schema FK join)
+  const ordersList = ordersResult.data ?? []
+  const supplierOrgIds = [...new Set(ordersList.map((o: any) => o.supplier_org_id).filter(Boolean))] as string[]
+  const { data: supplierOrgs } = supplierOrgIds.length
+    ? await supabase.from('organisations').select('id, name').in('id', supplierOrgIds)
+    : { data: [] }
+  const supplierOrgMap = Object.fromEntries((supplierOrgs ?? []).map((o: any) => [o.id, o.name]))
+
+  const snagsList = recentSnags.data ?? []
+  const snagProjectIds = [...new Set(snagsList.map((s: any) => s.project_id).filter(Boolean))]
+  const { data: snagProjects } = snagProjectIds.length
+    ? await (supabase as any).schema('projects').from('projects').select('id, name').in('id', snagProjectIds)
+    : { data: [] }
+  const snagProjectMap = Object.fromEntries((snagProjects ?? []).map((p: any) => [p.id, p.name]))
 
   const allSubs = complianceResult.data ?? []
   const compliantSubs = allSubs.filter((s: any) => s.coc_status === 'approved').length
@@ -120,50 +153,47 @@ export default async function DashboardPage() {
           <h1 className="page-title">Dashboard</h1>
           <p className="page-subtitle">{orgName}</p>
         </div>
-        <Link
-          href="/projects/new"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '9px 16px',
-            background: 'var(--c-amber)',
-            color: '#0D0B09',
-            borderRadius: 6,
-            fontSize: 13,
-            fontWeight: 700,
-            textDecoration: 'none',
-            letterSpacing: '0.01em',
-          }}
-        >
+        <Link href="/projects/new" className="btn-primary-amber">
           + New Project
         </Link>
       </div>
 
       {/* KPI row */}
       <div className="kpi-grid animate-fadeup animate-fadeup-1">
-        <div className={`kpi-card ${stats.openSnags > 10 ? 'kpi-danger' : stats.openSnags > 0 ? 'kpi-warning' : ''}`}>
+        <Link href="/projects" className="kpi-card" style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="kpi-label">Active Projects</div>
           <div className="kpi-value">{stats.activeProjects}</div>
-        </div>
+        </Link>
 
-        <div className={`kpi-card ${stats.openSnags > 10 ? 'kpi-danger' : stats.openSnags > 0 ? 'kpi-warning' : ''}`}>
+        <Link
+          href="/snags"
+          className={`kpi-card ${stats.openSnags > 10 ? 'kpi-danger' : stats.openSnags > 0 ? 'kpi-warning' : ''}`}
+          style={{ textDecoration: 'none', color: 'inherit' }}
+        >
           <div className="kpi-label">Open Snags</div>
           <div className="kpi-value">{stats.openSnags}</div>
           {stats.openSnags > 0 && <div className="kpi-meta">Needs attention</div>}
-        </div>
+        </Link>
 
-        <div className={`kpi-card ${stats.pendingCocs > 0 ? 'kpi-warning' : ''}`}>
+        <Link
+          href="/compliance"
+          className={`kpi-card ${stats.pendingCocs > 0 ? 'kpi-warning' : ''}`}
+          style={{ textDecoration: 'none', color: 'inherit' }}
+        >
           <div className="kpi-label">Pending COCs</div>
           <div className="kpi-value">{stats.pendingCocs}</div>
-        </div>
+        </Link>
 
-        <div className="kpi-card">
+        <Link href="/marketplace/orders" className="kpi-card" style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="kpi-label">Active Orders</div>
           <div className="kpi-value">{activeOrders}</div>
-        </div>
+        </Link>
 
-        <div className={`kpi-card ${complianceVariant}`}>
+        <Link
+          href="/compliance"
+          className={`kpi-card ${complianceVariant}`}
+          style={{ textDecoration: 'none', color: 'inherit' }}
+        >
           <div className="kpi-label">Compliance</div>
           <div className="kpi-value">
             {complianceHealth !== null ? `${complianceHealth}%` : '—'}
@@ -171,7 +201,7 @@ export default async function DashboardPage() {
           {allSubs.length > 0 && (
             <div className="kpi-meta">{compliantSubs}/{allSubs.length} sections</div>
           )}
-        </div>
+        </Link>
       </div>
 
       {/* Two-column grid */}
@@ -206,7 +236,7 @@ export default async function DashboardPage() {
                         fontFamily: 'var(--font-mono)',
                         fontSize: 12,
                         fontWeight: 700,
-                        color: days < 0 ? 'var(--c-red)' : days <= 7 ? 'var(--c-red)' : days <= 14 ? '#F08030' : 'var(--c-text-dim)',
+                        color: days <= 7 ? 'var(--c-red)' : days <= 14 ? 'var(--c-orange)' : 'var(--c-text-dim)',
                         whiteSpace: 'nowrap',
                       }}
                     >
@@ -242,7 +272,7 @@ export default async function DashboardPage() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title}</div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
-                    {(s.project as any)?.name ?? '—'}
+                    {snagProjectMap[s.project_id] ?? '—'}
                   </div>
                 </div>
                 <span className={s.status === 'in_progress' ? 'badge badge-blue' : 'badge badge-muted'}>
@@ -258,16 +288,16 @@ export default async function DashboardPage() {
       <div className="data-panel animate-fadeup animate-fadeup-3" style={{ marginBottom: 16 }}>
         <div className="data-panel-header">
           <span className="data-panel-title">Active Marketplace Orders</span>
-          <Link href="/marketplace/orders" className="data-panel-link">View all →</Link>
+          <Link href="/marketplace" className="data-panel-link">View all →</Link>
         </div>
-        {(ordersResult.data ?? []).length === 0 ? (
+        {ordersList.length === 0 ? (
           <div className="data-panel-empty">No active orders</div>
         ) : (
-          (ordersResult.data ?? []).map((o: any) => (
+          ordersList.map((o: any) => (
             <Link key={o.id} href={`/marketplace/orders/${o.id}`} className="data-panel-row">
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
-                  {(o.supplier as any)?.name ?? 'Supplier'}
+                  {supplierOrgMap[o.supplier_org_id] ?? 'Supplier'}
                 </div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
                   {new Date(o.created_at).toLocaleDateString('en-ZA')}
@@ -291,10 +321,10 @@ export default async function DashboardPage() {
       {/* Quick actions */}
       <div className="quick-actions animate-fadeup animate-fadeup-4">
         {[
-          { href: '/projects/new', label: 'New Project',  Icon: () => <FolderPlus    size={18} /> },
-          { href: '/snags/new',    label: 'Log Snag',     Icon: () => <AlertTriangle size={18} /> },
-          { href: '/diary',        label: 'Site Diary',   Icon: () => <BookOpen      size={18} /> },
-          { href: '/marketplace',  label: 'Marketplace',  Icon: () => <ShoppingBag   size={18} /> },
+          { href: '/projects/new', label: 'New Project',  Icon: () => <FolderPlus    size={18} aria-hidden="true" /> },
+          { href: '/snags/new',    label: 'Log Snag',     Icon: () => <AlertTriangle size={18} aria-hidden="true" /> },
+          { href: '/diary',        label: 'Site Diary',   Icon: () => <BookOpen      size={18} aria-hidden="true" /> },
+          { href: '/marketplace',  label: 'Marketplace',  Icon: () => <ShoppingBag   size={18} aria-hidden="true" /> },
         ].map(({ href, label, Icon }) => (
           <Link key={href} href={href} className="quick-action">
             <div className="quick-action-icon">

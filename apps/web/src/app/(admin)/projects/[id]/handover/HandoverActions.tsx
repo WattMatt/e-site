@@ -60,32 +60,60 @@ export function HandoverActions({ projectId, orgId, userId, items }: Props) {
   }
 
   return (
-    <div className="space-y-2">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       {items.map(item => (
-        <div key={item.id} className="flex items-center gap-3 group">
+        <div
+          key={item.id}
+          className="handover-row"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12,
+            padding: '8px 4px',
+            borderRadius: 6,
+          }}
+        >
           <button
+            type="button"
             onClick={() => toggle(item)}
             disabled={isPending}
-            className={`w-5 h-5 rounded border-2 flex-shrink-0 transition-colors flex items-center justify-center ${
-              item.is_complete
-                ? 'bg-green-600 border-green-600'
-                : 'border-slate-500 hover:border-green-500'
-            }`}
             aria-label={item.is_complete ? 'Mark incomplete' : 'Mark complete'}
+            style={{
+              width: 20, height: 20, flexShrink: 0,
+              borderRadius: 4,
+              border: `2px solid ${item.is_complete ? '#22c55e' : 'var(--c-border)'}`,
+              background: item.is_complete ? '#22c55e' : 'transparent',
+              cursor: isPending ? 'wait' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: 0,
+              transition: 'border-color 0.15s, background 0.15s',
+            }}
           >
             {item.is_complete && (
-              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={3}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             )}
           </button>
-          <span className={`flex-1 text-sm ${item.is_complete ? 'line-through text-slate-500' : 'text-slate-200'}`}>
+          <span
+            style={{
+              flex: 1, fontSize: 13, lineHeight: 1.5,
+              textDecoration: item.is_complete ? 'line-through' : 'none',
+              color: item.is_complete ? 'var(--c-text-dim)' : 'var(--c-text)',
+            }}
+          >
             {item.item}
           </span>
           <button
+            type="button"
             onClick={() => deleteItem(item.id)}
-            className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all text-xs px-1"
             aria-label="Remove item"
+            style={{
+              background: 'transparent', border: 'none',
+              color: 'var(--c-text-dim)', cursor: 'pointer',
+              fontSize: 14, padding: '2px 6px',
+              transition: 'color 0.15s',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-red)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
           >
             ✕
           </button>
@@ -93,34 +121,49 @@ export function HandoverActions({ projectId, orgId, userId, items }: Props) {
       ))}
 
       {adding ? (
-        <form onSubmit={addItem} className="flex gap-2 mt-3">
+        <form onSubmit={addItem} style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <input
             type="text"
             value={newItem}
             onChange={e => setNewItem(e.target.value)}
             placeholder="New checklist item…"
             autoFocus
-            className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            className="ob-input"
+            style={{ flex: 1 }}
           />
           <button
             type="submit"
             disabled={!newItem.trim() || isPending}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-4 rounded-lg transition-colors"
+            className="btn-primary-amber"
+            style={{ padding: '7px 14px' }}
           >
             Add
           </button>
           <button
             type="button"
             onClick={() => setAdding(false)}
-            className="px-3 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
+            className="btn-primary-amber"
+            style={{
+              padding: '7px 14px',
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+            }}
           >
             Cancel
           </button>
         </form>
       ) : (
         <button
+          type="button"
           onClick={() => setAdding(true)}
-          className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1.5 mt-2 transition-colors"
+          style={{
+            marginTop: 10,
+            background: 'transparent', border: 'none',
+            color: 'var(--c-amber)', fontSize: 13,
+            cursor: 'pointer', padding: '6px 4px',
+            textAlign: 'left', alignSelf: 'flex-start',
+          }}
         >
           + Add item
         </button>

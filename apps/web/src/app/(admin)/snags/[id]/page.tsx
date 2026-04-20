@@ -2,13 +2,26 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { snagService, formatDate, formatRelative } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { Card, CardBody } from '@/components/ui/Card'
-import { snagStatusBadge, priorityBadge } from '@/components/ui/Badge'
 import { SnagStatusForm } from './SnagStatusForm'
 import { SnagPhotoGrid } from './SnagPhotoGrid'
 
 interface Props { params: Promise<{ id: string }> }
+
+const priorityClass = (p: string) => ({
+  critical: 'priority-critical',
+  high:     'priority-high',
+  medium:   'priority-medium',
+  low:      'priority-low',
+}[p] ?? 'priority-low')
+
+const snagBadge = (s: string) => ({
+  open:             'badge badge-red',
+  in_progress:      'badge badge-blue',
+  pending_sign_off: 'badge badge-amber',
+  resolved:         'badge badge-green',
+  signed_off:       'badge badge-green',
+  closed:           'badge badge-muted',
+}[s] ?? 'badge badge-muted')
 
 export default async function SnagDetailPage({ params }: Props) {
   const { id } = await params
@@ -23,7 +36,6 @@ export default async function SnagDetailPage({ params }: Props) {
   const signedOffBy = (snag as any).signed_off_by_profile as any
   const photos = (snag as any).snag_photos as any[] ?? []
 
-  // Build signed URLs for photos
   const photoUrls = await Promise.all(
     photos.map(async (p: any) => {
       const { data } = await supabase.storage.from('snag-photos').createSignedUrl(p.file_path, 3600)
@@ -32,60 +44,80 @@ export default async function SnagDetailPage({ params }: Props) {
   )
 
   return (
-    <div className="max-w-4xl">
-      <div className="mb-6 flex items-center gap-2 text-sm text-slate-400">
-        <Link href="/snags" className="hover:text-white">Snags</Link>
-        <span>/</span>
-        <Link href={`/projects/${project?.id}`} className="hover:text-white">{project?.name}</Link>
+    <div className="animate-fadeup" style={{ maxWidth: 860 }}>
+      {/* Breadcrumb */}
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
+        <Link href="/snags" style={{ color: 'var(--c-text-dim)', textDecoration: 'none' }}>← Snags</Link>
+        {project && (
+          <>
+            <span>/</span>
+            <Link href={`/projects/${project.id}`} style={{ color: 'var(--c-text-dim)', textDecoration: 'none' }}>{project.name}</Link>
+          </>
+        )}
       </div>
 
-      <PageHeader
-        title={snag.title}
-        subtitle={snag.location ?? undefined}
-        actions={
-          <div className="flex items-center gap-2">
-            {priorityBadge(snag.priority)}
-            {snagStatusBadge(snag.status)}
-          </div>
-        }
-      />
+      {/* Header */}
+      <div className="page-header" style={{ alignItems: 'flex-start', marginBottom: 20 }}>
+        <div style={{ flex: 1 }}>
+          <h1 className="page-title" style={{ marginBottom: 6 }}>{snag.title}</h1>
+          {snag.location && (
+            <p className="page-subtitle">📍 {snag.location}</p>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, paddingTop: 4 }}>
+          <span className={priorityClass(snag.priority)} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            {snag.priority}
+          </span>
+          <span className={snagBadge(snag.status)}>{snag.status.replace(/_/g, ' ')}</span>
+        </div>
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main */}
-        <div className="lg:col-span-2 space-y-4">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16 }}>
+        {/* Main column */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Description */}
           {snag.description && (
-            <Card>
-              <CardBody>
-                <h3 className="text-sm font-medium text-slate-400 mb-2">Description</h3>
-                <p className="text-white text-sm leading-relaxed whitespace-pre-wrap">{snag.description}</p>
-              </CardBody>
-            </Card>
+            <div className="data-panel">
+              <div className="data-panel-header">
+                <span className="data-panel-title">Description</span>
+              </div>
+              <div style={{ padding: '14px 18px' }}>
+                <p style={{ fontSize: 13, color: 'var(--c-text)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{snag.description}</p>
+              </div>
+            </div>
           )}
 
           {/* Photos */}
           {photoUrls.length > 0 && (
-            <Card>
-              <CardBody>
-                <h3 className="text-sm font-medium text-slate-400 mb-3">Evidence Photos ({photoUrls.length})</h3>
+            <div className="data-panel">
+              <div className="data-panel-header">
+                <span className="data-panel-title">Evidence Photos</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>{photoUrls.length} photo{photoUrls.length !== 1 ? 's' : ''}</span>
+              </div>
+              <div style={{ padding: '14px 18px' }}>
                 <SnagPhotoGrid photos={photoUrls} />
-              </CardBody>
-            </Card>
+              </div>
+            </div>
           )}
 
           {/* Status update */}
-          <Card>
-            <CardBody>
-              <h3 className="text-sm font-medium text-slate-400 mb-3">Update Status</h3>
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Update Status</span>
+            </div>
+            <div style={{ padding: '14px 18px' }}>
               <SnagStatusForm snagId={id} currentStatus={snag.status} projectId={project?.id ?? ''} />
-            </CardBody>
-          </Card>
+            </div>
+          </div>
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-4">
-          <Card>
-            <CardBody className="space-y-4">
-              <h3 className="text-sm font-medium text-slate-400">Details</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Details</span>
+            </div>
+            <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
               {[
                 ['Category', snag.category],
                 ['Location', snag.location],
@@ -93,27 +125,33 @@ export default async function SnagDetailPage({ params }: Props) {
                 ['Raised by', raisedBy?.full_name],
                 ['Raised', formatRelative(snag.created_at)],
                 ['Assigned to', assignedTo?.full_name ?? 'Unassigned'],
-              ].map(([label, value]) => value ? (
+              ].filter(([, v]) => v).map(([label, value]) => (
                 <div key={label as string}>
-                  <p className="text-xs text-slate-500">{label}</p>
-                  <p className="text-sm text-white mt-0.5">{value}</p>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 2 }}>
+                    {label}
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--c-text)' }}>{value}</div>
                 </div>
-              ) : null)}
+              ))}
 
               {snag.signed_off_at && (
-                <div className="pt-3 border-t border-slate-700">
-                  <p className="text-xs text-slate-500">Signed off by</p>
-                  <p className="text-sm text-emerald-400 mt-0.5">{signedOffBy?.full_name}</p>
-                  <p className="text-xs text-slate-500">{formatDate(snag.signed_off_at)}</p>
+                <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 2 }}>
+                    Signed off by
+                  </div>
+                  <div style={{ fontSize: 13, color: '#34d399' }}>{signedOffBy?.full_name}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>{formatDate(snag.signed_off_at)}</div>
                 </div>
               )}
-            </CardBody>
-          </Card>
+            </div>
+          </div>
 
-          <Link href={`/projects/${project?.id}/snags/new`}>
-            <button className="w-full text-center text-sm text-blue-400 hover:text-blue-300 py-3 bg-slate-800 border border-slate-700 rounded-xl transition-colors">
-              + Raise another snag
-            </button>
+          <Link
+            href={`/projects/${project?.id}/snags/new`}
+            className="btn-primary-amber"
+            style={{ textAlign: 'center', textDecoration: 'none' }}
+          >
+            + Raise another snag
           </Link>
         </div>
       </div>

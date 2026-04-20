@@ -32,10 +32,11 @@ Before starting, have the following ready:
 # From repo root
 export SUPABASE_DB_URL="postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres"
 
-# Enable pg_trgm first (required by migration 00023)
+# Enable pg_trgm first (required by migration 00023; idempotent if
+# already enabled by the 00001 initial schema).
 psql "$SUPABASE_DB_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
-# Run all pending migrations (00017–00023) in one command
+# Run all pending migrations (00017–00028) in one command
 bash scripts/db/run-migrations.sh
 ```
 
@@ -50,11 +51,79 @@ bash scripts/db/run-migrations.sh
 | 00021 | `marketplace.supplier_ratings` table |
 | 00022 | `organisations.type`, `vat_number`, POPIA fields; expanded role CHECK; `marketplace.paystack_subaccounts` table |
 | 00023 | Performance indexes (GIN, partial, composite) across all schemas |
+| 00024 | Fix infinite recursion in `user_organisations` RLS policy via `get_user_org_ids_bypass()` |
+| 00025 | `public.organisation_health_scores` table + RLS + indexes (feeds `/admin/health` dashboard) |
+| 00026 | `public.email_sequence_events` table + UNIQUE idempotency + `profiles.marketing_emails_opted_out` column |
+| 00027 | Payment-recovery columns on `billing.subscriptions`; `payment_paused` status on `projects.projects` |
+| 00028 | RLS write-block on `field.snags`, `projects.site_diary_entries`, `compliance.coc_uploads` when project is `payment_paused` |
 
 **Verify migrations applied:**
 ```sql
--- Should return 23 rows
+-- Should return 28 rows (00001–00028)
 SELECT count(*) FROM supabase_migrations.schema_migrations;
+```
+
+**After migration 00025**, schedule the health-score cron (see the commented-out pg_cron block at the bottom of `00025_health_scores.sql`). Skip until `calculate-health-scores` Edge Function is deployed.
+
+**After migration 00026**, schedule the four onboarding cron jobs + the daily reengagement check (see the commented-out block in `00026_email_sequences.sql`). Skip until the Edge Functions are deployed.
+
+**Edge Function deploy** (all functions — use the bulk deploy in section 3):
+```bash
+# Required secrets (run once per environment)
+supabase secrets set RESEND_API_KEY=re_... --project-ref <ref>
+supabase secrets set RESEND_FROM="E-Site <noreply@e-site.co.za>" --project-ref <ref>
+supabase secrets set SITE_URL="https://app.e-site.co.za" --project-ref <ref>
+
+# All internal functions (including lifecycle email + payment recovery + health scoring)
+for fn in onboarding-email-d0 onboarding-email-d1 onboarding-email-d3 \
+          onboarding-email-d7 onboarding-email-d14 reengagement-check \
+          conversion-prompt payment-recovery-check calculate-health-scores \
+          compliance-complete eft-invoice send-notification send-email; do
+  supabase functions deploy $fn --project-ref <ref>
+done
+
+# Re-deploy the enhanced paystack-webhook (now handles charge.failed + recovery reset).
+supabase functions deploy paystack-webhook --project-ref <ref>
+```
+
+**After migration 00027**, schedule the payment-recovery cron (see the commented-out pg_cron block at the bottom of `00027_payment_recovery.sql`). Skip until the Edge Function is deployed.
+
+---
+
+## 1a. Supabase — Expose Non-Public Schemas (PostgREST)
+
+**Required or ALL cross-schema FK joins will fail with PGRST200.**
+
+The hosted Supabase project only exposes `public` by default. The app queries seven
+additional schemas (`field`, `projects`, `compliance`, `tenants`, `suppliers`, `billing`,
+`marketplace`). PostgREST must know about all of them to resolve cross-schema FK hints
+like `profiles!raised_by`.
+
+**Steps (Supabase dashboard):**
+
+1. Go to **Settings → API** in the Supabase dashboard for the staging project
+2. Find the **"Exposed schemas"** list
+3. Add every schema below (comma-separated, in addition to `public`):
+   ```
+   projects, compliance, field, tenants, suppliers, billing, marketplace
+   ```
+4. Click **Save**
+5. PostgREST will automatically reload its schema cache
+
+**Verify in SQL editor:**
+```sql
+-- Should list all 8 schemas
+SELECT nspname FROM pg_namespace
+WHERE nspname IN ('public','projects','compliance','field','tenants','suppliers','billing','marketplace')
+ORDER BY nspname;
+
+-- Force schema cache reload if needed
+NOTIFY pgrst, 'reload schema';
+```
+
+**Without this step**, every page that queries `field.snags`, `projects.rfis`, `compliance.coc_uploads`, etc. will crash with:
+```
+PGRST200: Could not find a relationship between 'snags' and 'profiles'
 ```
 
 ---

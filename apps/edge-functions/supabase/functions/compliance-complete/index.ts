@@ -12,7 +12,7 @@
  *
  * Request body:
  *   { siteId: string }
- *   Authorization: Bearer <service_role_key> or user JWT
+ *   Authorization: Bearer <service_role_key>
  *
  * Response:
  *   {
@@ -27,6 +27,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireServiceRole } from '../_shared/auth.ts'
 
 interface SubsectionStatus {
   id: string
@@ -72,6 +73,8 @@ Deno.serve(async (req) => {
       status: 401, headers: { 'Content-Type': 'application/json' },
     })
   }
+  const unauth = requireServiceRole(req)
+  if (unauth) return unauth
 
   let body: { siteId: string }
   try {

@@ -82,13 +82,19 @@ export default async function CertificatePackPage({ params }: Props) {
   })
 
   return (
-    <div>
+    <div className="animate-fadeup">
       {/* Screen navigation (hidden in print) */}
-      <div className="print:hidden mb-6 flex items-center justify-between">
-        <Link href={`/compliance/${siteId}`} className="text-slate-400 hover:text-white text-sm">
+      <div
+        className="print:hidden"
+        style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+      >
+        <Link
+          href={`/compliance/${siteId}`}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
           ← Back to site
         </Link>
-        <div className="flex items-center gap-3">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <PrintButton />
         </div>
       </div>

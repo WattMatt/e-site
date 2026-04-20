@@ -6,14 +6,19 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { createProjectSchema, type CreateProjectInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
-import { PageHeader } from '@/components/layout/Header'
-import { Button } from '@/components/ui/Button'
-import { Card, CardBody } from '@/components/ui/Card'
 import Link from 'next/link'
 
 const PROVINCES = [
   'Gauteng', 'Western Cape', 'Eastern Cape', 'KwaZulu-Natal',
   'Free State', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape',
+]
+
+const STATUSES: { value: CreateProjectInput['status']; label: string }[] = [
+  { value: 'planning',  label: 'Planning' },
+  { value: 'active',    label: 'Active' },
+  { value: 'on_hold',   label: 'On hold' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
 ]
 
 export default function NewProjectPage() {
@@ -24,7 +29,10 @@ export default function NewProjectPage() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<CreateProjectInput>({ resolver: zodResolver(createProjectSchema) })
+  } = useForm<CreateProjectInput>({
+    resolver: zodResolver(createProjectSchema),
+    defaultValues: { status: 'active' },
+  })
 
   async function onSubmit(input: CreateProjectInput) {
     setError(null)
@@ -65,7 +73,6 @@ export default function NewProjectPage() {
 
     if (err) { setError(err.message); return }
 
-    // Add creator as PM
     await supabase.schema('projects').from('project_members').insert({
       project_id: project.id,
       user_id: user.id,
@@ -73,87 +80,142 @@ export default function NewProjectPage() {
       role: 'project_manager',
     })
 
+    const orgId = (membership as { organisation_id: string }).organisation_id
+    void supabase.functions.invoke('conversion-prompt', {
+      body: { projectId: project.id, organisationId: orgId },
+    }).catch(() => {})
+
     router.push(`/projects/${project.id}`)
   }
 
-  const field = (label: string, name: keyof CreateProjectInput, type = 'text', required = false) => (
-    <div>
-      <label className="block text-sm text-slate-400 mb-1">
-        {label}{required && <span className="text-red-400 ml-1">*</span>}
-      </label>
-      <input
-        {...register(name)}
-        type={type}
-        className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
-      {errors[name] && <p className="text-red-400 text-xs mt-1">{errors[name]?.message as string}</p>}
-    </div>
-  )
-
   return (
-    <div className="max-w-2xl">
-      <div className="mb-6">
-        <Link href="/projects" className="text-slate-400 hover:text-white text-sm">← Projects</Link>
+    <div className="animate-fadeup" style={{ maxWidth: 720 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href="/projects"
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
+          ← Projects
+        </Link>
       </div>
-      <PageHeader title="New Project" />
 
-      <form onSubmit={handleSubmit(onSubmit)}>
-        <Card>
-          <CardBody className="space-y-4">
-            <h3 className="font-semibold text-white">Basic Info</h3>
-            {field('Project Name', 'name', 'text', true)}
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">New Project</h1>
+          <p className="page-subtitle">Create a project to start tracking snags, RFIs and compliance</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Basic Info</span>
+          </div>
+          <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
-              <label className="block text-sm text-slate-400 mb-1">Description</label>
-              <textarea
-                {...register('description')}
-                rows={3}
-                className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-              />
+              <label className="ob-label">Project Name *</label>
+              <input className="ob-input" {...register('name')} placeholder="Sandton Office Block" />
+              {errors.name && <p className="ob-error">{errors.name.message}</p>}
             </div>
-          </CardBody>
-        </Card>
+            <div>
+              <label className="ob-label">Description</label>
+              <textarea className="ob-input" rows={3} style={{ resize: 'none' }} {...register('description')} placeholder="Short project description…" />
+              {errors.description && <p className="ob-error">{errors.description.message}</p>}
+            </div>
+            <div>
+              <label className="ob-label">Status</label>
+              <select className="ob-select" {...register('status')}>
+                {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+              {errors.status && <p className="ob-error">{errors.status.message}</p>}
+            </div>
+          </div>
+        </div>
 
-        <Card className="mt-4">
-          <CardBody className="space-y-4">
-            <h3 className="font-semibold text-white">Location</h3>
-            {field('Address', 'address')}
-            <div className="grid grid-cols-2 gap-4">
-              {field('City', 'city')}
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Location</span>
+          </div>
+          <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label className="ob-label">Address</label>
+              <input className="ob-input" {...register('address')} placeholder="1 Main St" />
+              {errors.address && <p className="ob-error">{errors.address.message}</p>}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Province</label>
-                <select
-                  {...register('province')}
-                  className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
+                <label className="ob-label">City</label>
+                <input className="ob-input" {...register('city')} placeholder="Johannesburg" />
+                {errors.city && <p className="ob-error">{errors.city.message}</p>}
+              </div>
+              <div>
+                <label className="ob-label">Province</label>
+                <select className="ob-select" {...register('province')}>
                   <option value="">Select…</option>
                   {PROVINCES.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
+                {errors.province && <p className="ob-error">{errors.province.message}</p>}
               </div>
             </div>
-          </CardBody>
-        </Card>
+          </div>
+        </div>
 
-        <Card className="mt-4">
-          <CardBody className="space-y-4">
-            <h3 className="font-semibold text-white">Client & Contract</h3>
-            {field('Client Name', 'clientName')}
-            {field('Client Contact', 'clientContact')}
-            <div className="grid grid-cols-3 gap-4">
-              {field('Contract Value (R)', 'contractValue', 'number')}
-              {field('Start Date', 'startDate', 'date')}
-              {field('End Date', 'endDate', 'date')}
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Client &amp; Contract</span>
+          </div>
+          <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label className="ob-label">Client Name</label>
+              <input className="ob-input" {...register('clientName')} placeholder="ACME Properties (Pty) Ltd" />
+              {errors.clientName && <p className="ob-error">{errors.clientName.message}</p>}
             </div>
-          </CardBody>
-        </Card>
+            <div>
+              <label className="ob-label">Client Contact</label>
+              <input className="ob-input" {...register('clientContact')} placeholder="Jane Smith · jane@acme.co.za" />
+              {errors.clientContact && <p className="ob-error">{errors.clientContact.message}</p>}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div>
+                <label className="ob-label">Contract Value (R)</label>
+                <input className="ob-input" type="number" min="0" step="0.01" {...register('contractValue', { valueAsNumber: true })} placeholder="1500000" />
+                {errors.contractValue && <p className="ob-error">{errors.contractValue.message}</p>}
+              </div>
+              <div>
+                <label className="ob-label">Start Date</label>
+                <input className="ob-input" type="date" {...register('startDate')} />
+                {errors.startDate && <p className="ob-error">{errors.startDate.message}</p>}
+              </div>
+              <div>
+                <label className="ob-label">End Date</label>
+                <input className="ob-input" type="date" {...register('endDate')} />
+                {errors.endDate && <p className="ob-error">{errors.endDate.message}</p>}
+              </div>
+            </div>
+          </div>
+        </div>
 
-        {error && (
-          <div className="mt-4 bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">{error}</div>
-        )}
+        {error && <p className="ob-error" role="alert">{error}</p>}
 
-        <div className="mt-6 flex gap-3">
-          <Button type="submit" isLoading={isSubmitting}>Create Project</Button>
-          <Link href="/projects">
-            <Button variant="ghost" type="button">Cancel</Button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button type="submit" className="btn-primary-amber" style={{ flex: 1 }} disabled={isSubmitting}>
+            {isSubmitting ? 'Creating…' : 'Create Project'}
+          </button>
+          <Link
+            href="/projects"
+            className="btn-primary-amber"
+            style={{
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0 16px',
+            }}
+          >
+            Cancel
           </Link>
         </div>
       </form>

@@ -1,12 +1,20 @@
 import { createClient } from '@/lib/supabase/server'
-import { orgService } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { Card, CardBody } from '@/components/ui/Card'
-import { Badge } from '@/components/ui/Badge'
+import { orgService, formatDate, formatRelative } from '@esite/shared'
 import Link from 'next/link'
-import { formatDate, formatRelative } from '@esite/shared'
 import { InviteForm } from './InviteForm'
 import { RevokeInviteButton } from './RevokeInviteButton'
+import { CopyInviteLinkButton } from './CopyInviteLinkButton'
+
+const ROLE_BADGE: Record<string, string> = {
+  owner: 'badge badge-amber',
+  admin: 'badge badge-amber',
+  project_manager: 'badge badge-blue',
+  contractor: 'badge badge-muted',
+  field_worker: 'badge badge-muted',
+  inspector: 'badge badge-muted',
+  supervisor: 'badge badge-muted',
+  client_viewer: 'badge badge-muted',
+}
 
 export default async function TeamPage() {
   const supabase = await createClient()
@@ -20,19 +28,25 @@ export default async function TeamPage() {
     .limit(1)
     .single()
 
-  if (!membership) return (
-    <div>
-      <div className="page-header"><h1 className="page-title">Team</h1></div>
-      <div style={{ padding: '40px 24px', background: 'var(--c-panel)', border: '1px solid var(--c-border)', borderRadius: 8, textAlign: 'center' }}>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
-          No organisation found. Complete onboarding to manage your team.
-        </p>
-        <Link href="/onboarding" style={{ display: 'inline-block', marginTop: 16, padding: '9px 16px', background: 'var(--c-amber)', color: '#0D0B09', borderRadius: 6, fontSize: 13, fontWeight: 700, textDecoration: 'none' }}>
-          Go to Onboarding
-        </Link>
+  if (!membership) {
+    return (
+      <div className="animate-fadeup">
+        <div className="page-header">
+          <h1 className="page-title">Team</h1>
+        </div>
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '48px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
+              No organisation found. Complete onboarding to manage your team.
+            </p>
+            <Link href="/onboarding" className="btn-primary-amber" style={{ padding: '9px 16px', textDecoration: 'none' }}>
+              Go to Onboarding
+            </Link>
+          </div>
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   const orgId = membership.organisation_id
   const isAdmin = ['owner', 'admin'].includes(membership.role)
@@ -43,91 +57,116 @@ export default async function TeamPage() {
   ])
 
   return (
-    <div className="max-w-3xl">
-      <PageHeader
-        title="Team"
-        subtitle={(membership.organisation as any)?.name}
-      />
+    <div className="animate-fadeup" style={{ maxWidth: 760 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href="/settings"
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
+          ← Settings
+        </Link>
+      </div>
 
-      {/* Members */}
-      <Card className="mb-6">
-        <div className="px-6 py-4 border-b border-slate-700">
-          <h3 className="font-semibold text-white">Members ({members.length})</h3>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Team</h1>
+          <p className="page-subtitle">{(membership.organisation as any)?.name}</p>
         </div>
-        <div className="divide-y divide-slate-700/50">
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Members */}
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Members ({members.length})</span>
+          </div>
           {members.map((m) => {
             const profile = m.profile as any
             return (
-              <div key={m.id} className="px-6 py-4 flex items-center gap-4">
-                <div className="w-9 h-9 rounded-full bg-blue-600/30 border border-blue-600/50 flex items-center justify-center text-sm font-bold text-blue-400 flex-shrink-0">
+              <div
+                key={m.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '14px 18px',
+                  borderTop: '1px solid var(--c-border)',
+                }}
+              >
+                <div style={{
+                  width: 36, height: 36, borderRadius: '50%',
+                  background: 'var(--c-amber-dim)', border: '1px solid var(--c-amber-mid)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-amber)',
+                  flexShrink: 0,
+                }}>
                   {profile?.full_name?.[0]?.toUpperCase() ?? '?'}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-white">{profile?.full_name}</p>
-                  <p className="text-xs text-slate-400">{profile?.email}</p>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{profile?.full_name}</p>
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>{profile?.email}</p>
                 </div>
-                <Badge variant={m.role === 'owner' ? 'info' : 'ghost'}>
-                  {m.role.replace(/_/g, ' ')}
-                </Badge>
-                <span className="text-xs text-slate-500">{formatRelative(m.created_at)}</span>
+                <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                  {formatRelative(m.created_at)}
+                </span>
               </div>
             )
           })}
         </div>
-      </Card>
 
-      {/* Pending invites */}
-      {isAdmin && (
-        <Card className="mb-6">
-          <div className="px-6 py-4 border-b border-slate-700">
-            <h3 className="font-semibold text-white">Pending Invites ({pendingInvites.length})</h3>
-          </div>
-          {pendingInvites.length === 0 ? (
-            <CardBody>
-              <p className="text-slate-400 text-sm">No pending invites.</p>
-            </CardBody>
-          ) : (
-            <div className="divide-y divide-slate-700/50">
-              {pendingInvites.map((inv) => (
-                <div key={inv.id} className="px-6 py-4 flex items-center gap-4">
-                  <div className="flex-1">
-                    <p className="text-white text-sm">{inv.email}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">
+        {/* Pending invites */}
+        {isAdmin && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Pending Invites ({pendingInvites.length})</span>
+            </div>
+            {pendingInvites.length === 0 ? (
+              <div className="data-panel-empty" style={{ padding: '24px 18px' }}>
+                No pending invites.
+              </div>
+            ) : (
+              pendingInvites.map((inv) => (
+                <div
+                  key={inv.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '14px 18px',
+                    borderTop: '1px solid var(--c-border)',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <p style={{ fontSize: 13, color: 'var(--c-text)' }}>{inv.email}</p>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
                       Invited {formatRelative(inv.created_at)} · expires {formatDate(inv.expires_at)}
                     </p>
                   </div>
-                  <Badge variant="ghost">{inv.role.replace(/_/g, ' ')}</Badge>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(
-                          `${window.location.origin}/onboarding/join?token=${inv.token}`
-                        )
-                      }}
-                      className="text-xs text-blue-400 hover:text-blue-300"
-                    >
-                      Copy link
-                    </button>
+                  <span className={ROLE_BADGE[inv.role] ?? 'badge badge-muted'}>{inv.role.replace(/_/g, ' ')}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <CopyInviteLinkButton token={inv.token} />
                     <RevokeInviteButton inviteId={inv.id} />
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
-
-      {/* Invite form */}
-      {isAdmin && (
-        <Card>
-          <div className="px-6 py-4 border-b border-slate-700">
-            <h3 className="font-semibold text-white">Invite team member</h3>
+              ))
+            )}
           </div>
-          <CardBody>
-            <InviteForm orgId={orgId} />
-          </CardBody>
-        </Card>
-      )}
+        )}
+
+        {/* Invite form */}
+        {isAdmin && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Invite team member</span>
+            </div>
+            <div style={{ padding: '16px 18px' }}>
+              <InviteForm orgId={orgId} />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -1,5 +1,7 @@
 # Secrets (never commit)
 .secrets/
+# EAS / Google Play credentials — never commit
+apps/mobile/google-service-account.json
 
 # Dependencies
 node_modules/
@@ -15,6 +17,7 @@ build/
 
 # Environment variables
 .env
+.env.staging
 .env.local
 .env.*.local
 .env.development.local

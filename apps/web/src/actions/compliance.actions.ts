@@ -4,6 +4,28 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { z } from 'zod'
+
+const createSiteSchema = z.object({
+  name:      z.string().min(1, 'Name is required.').max(200),
+  address:   z.string().min(1, 'Address is required.').max(500),
+  city:      z.string().max(100).optional(),
+  province:  z.string().max(100).optional(),
+  erf_number: z.string().max(50).optional(),
+  site_type: z.enum(['residential', 'commercial', 'industrial']).default('residential'),
+})
+
+const updateSiteSchema = z.object({
+  name:    z.string().min(1, 'Name is required.').max(200),
+  address: z.string().min(1, 'Address is required.').max(500),
+})
+
+const subsectionSchema = z.object({
+  name:        z.string().min(1, 'Subsection name is required.').max(200),
+  description: z.string().max(1000).optional(),
+  sans_ref:    z.string().max(50).optional(),
+  sort_order:  z.preprocess(val => (val ? Number(val) : 0), z.number().int()),
+})
 
 // ─── Site management ──────────────────────────────────────────────────────────
 
@@ -25,14 +47,18 @@ export async function createSiteAction(formData: FormData) {
     return { error: 'You do not have permission to create sites.' }
   }
 
-  const name = (formData.get('name') as string)?.trim()
-  const address = (formData.get('address') as string)?.trim()
-  const city = (formData.get('city') as string | null)?.trim() || undefined
-  const province = (formData.get('province') as string | null)?.trim() || undefined
-  const erfNumber = (formData.get('erf_number') as string | null)?.trim() || undefined
-  const siteType = (formData.get('site_type') as string | null) || 'residential'
-
-  if (!name || !address) return { error: 'Name and address are required.' }
+  const parsed = createSiteSchema.safeParse({
+    name:       formData.get('name'),
+    address:    formData.get('address'),
+    city:       formData.get('city') ?? undefined,
+    province:   formData.get('province') ?? undefined,
+    erf_number: formData.get('erf_number') ?? undefined,
+    site_type:  formData.get('site_type') ?? undefined,
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { name, address, city, province, erf_number: erfNumber, site_type: siteType } = parsed.data
 
   const { data: site, error } = await supabase
     .schema('compliance')
@@ -64,10 +90,14 @@ export async function updateSiteAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const name = (formData.get('name') as string)?.trim()
-  const address = (formData.get('address') as string)?.trim()
-
-  if (!name || !address) return { error: 'Name and address are required.' }
+  const parsed = updateSiteSchema.safeParse({
+    name:    formData.get('name'),
+    address: formData.get('address'),
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { name, address } = parsed.data
 
   const { error } = await supabase
     .schema('compliance')
@@ -91,13 +121,16 @@ export async function createSubsectionAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const name = (formData.get('name') as string)?.trim()
-  const description = (formData.get('description') as string | null)?.trim() || undefined
-  const sansRef = (formData.get('sans_ref') as string | null)?.trim() || undefined
-  const sortOrderRaw = formData.get('sort_order')
-  const sortOrder = sortOrderRaw ? Number(sortOrderRaw) : 0
-
-  if (!name) return { error: 'Subsection name is required.' }
+  const parsed = subsectionSchema.safeParse({
+    name:        formData.get('name'),
+    description: formData.get('description') ?? undefined,
+    sans_ref:    formData.get('sans_ref') ?? undefined,
+    sort_order:  formData.get('sort_order'),
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { name, description, sans_ref: sansRef, sort_order: sortOrder } = parsed.data
 
   // Get org ID from site
   const { data: site } = await supabase
@@ -136,17 +169,21 @@ export async function updateSubsectionAction(
 ): Promise<{ error?: string }> {
   const supabase = await createClient()
 
-  const name = (formData.get('name') as string)?.trim()
-  const description = (formData.get('description') as string | null)?.trim() || null
-  const sansRef = (formData.get('sans_ref') as string | null)?.trim() || null
-  const sortOrder = Number(formData.get('sort_order') ?? 0)
-
-  if (!name) return { error: 'Name is required.' }
+  const parsed = subsectionSchema.safeParse({
+    name:        formData.get('name'),
+    description: formData.get('description') ?? undefined,
+    sans_ref:    formData.get('sans_ref') ?? undefined,
+    sort_order:  formData.get('sort_order'),
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { name, description, sans_ref: sansRef, sort_order: sortOrder } = parsed.data
 
   const { error } = await supabase
     .schema('compliance')
     .from('subsections')
-    .update({ name, description, sans_ref: sansRef, sort_order: sortOrder })
+    .update({ name, description: description ?? null, sans_ref: sansRef ?? null, sort_order: sortOrder })
     .eq('id', subsectionId)
 
   if (error) return { error: error.message }
@@ -205,7 +242,7 @@ export async function reviewCocAction(
     .update({
       status,
       reviewed_by: user.id,
-      review_notes: notes,
+      rejection_reason: notes,
       reviewed_at: new Date().toISOString(),
     })
     .eq('id', uploadId)

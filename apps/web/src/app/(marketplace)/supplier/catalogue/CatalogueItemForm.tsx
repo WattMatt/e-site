@@ -49,132 +49,168 @@ export function CatalogueItemForm({ item }: Props) {
   const isEdit = !!item
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5 max-w-lg">
-      {error && <p className="text-red-400 text-sm">{error}</p>}
-
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Item Name *</label>
-        <input
-          name="name"
-          type="text"
-          required
-          defaultValue={item?.name ?? ''}
-          placeholder="e.g. 16mm² NYY Cable"
-          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
-        />
+    <form onSubmit={handleSubmit} className="data-panel animate-fadeup animate-fadeup-1" style={{ maxWidth: 640 }}>
+      <div className="data-panel-header">
+        <span className="data-panel-title">{isEdit ? 'Edit Item' : 'New Item'}</span>
       </div>
+      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {error && (
+          <div
+            role="alert"
+            style={{
+              background: 'var(--c-red-dim)',
+              border: '1px solid rgba(127,29,29,0.6)',
+              color: '#fca5a5',
+              borderRadius: 6,
+              padding: '10px 14px',
+              fontSize: 12,
+            }}
+          >
+            {error}
+          </div>
+        )}
 
-      <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">SKU / Part No</label>
+          <label className="ob-label" htmlFor="name">Item Name *</label>
           <input
-            name="sku"
+            id="name"
+            name="name"
             type="text"
-            defaultValue={item?.sku ?? ''}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            required
+            defaultValue={item?.name ?? ''}
+            placeholder="e.g. 16mm² NYY Cable"
+            className="ob-input"
           />
         </div>
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Category *</label>
-          <select
-            name="category"
-            required
-            defaultValue={item?.category ?? ''}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
-          >
-            <option value="">Select category</option>
-            {CATEGORIES.map(c => <option key={c} value={c} className="capitalize">{c}</option>)}
-          </select>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+          <div>
+            <label className="ob-label" htmlFor="sku">SKU / Part No</label>
+            <input id="sku" name="sku" type="text" defaultValue={item?.sku ?? ''} className="ob-input" />
+          </div>
+          <div>
+            <label className="ob-label" htmlFor="category">Category *</label>
+            <select
+              id="category"
+              name="category"
+              required
+              defaultValue={item?.category ?? ''}
+              className="ob-select"
+            >
+              <option value="">Select category</option>
+              {CATEGORIES.map(c => (
+                <option key={c} value={c} style={{ textTransform: 'capitalize' }}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-      </div>
 
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Description</label>
-        <textarea
-          name="description"
-          rows={3}
-          defaultValue={item?.description ?? ''}
-          placeholder="Specifications, brand, certifications…"
-          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 resize-none"
-        />
-      </div>
-
-      <div className="grid grid-cols-3 gap-4">
         <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Unit Price (ZAR) *</label>
+          <label className="ob-label" htmlFor="description">Description</label>
+          <textarea
+            id="description"
+            name="description"
+            rows={3}
+            defaultValue={item?.description ?? ''}
+            placeholder="Specifications, brand, certifications…"
+            className="ob-input"
+            style={{ resize: 'vertical', minHeight: 72 }}
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+          <div>
+            <label className="ob-label" htmlFor="unit_price">Unit Price (ZAR) *</label>
+            <input
+              id="unit_price"
+              name="unit_price"
+              type="number"
+              required
+              min="0"
+              step="0.01"
+              defaultValue={item?.unit_price ?? ''}
+              placeholder="0.00"
+              className="ob-input"
+            />
+          </div>
+          <div>
+            <label className="ob-label" htmlFor="unit">Unit</label>
+            <select id="unit" name="unit" defaultValue={item?.unit ?? 'each'} className="ob-select">
+              {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="ob-label" htmlFor="min_order_qty">Min Order</label>
+            <input
+              id="min_order_qty"
+              name="min_order_qty"
+              type="number"
+              min="1"
+              defaultValue={item?.min_order_qty ?? 1}
+              className="ob-input"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="ob-label" htmlFor="lead_time_days">Lead Time (days)</label>
           <input
-            name="unit_price"
+            id="lead_time_days"
+            name="lead_time_days"
             type="number"
-            required
             min="0"
-            step="0.01"
-            defaultValue={item?.unit_price ?? ''}
-            placeholder="0.00"
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            defaultValue={item?.lead_time_days ?? ''}
+            placeholder="e.g. 3"
+            className="ob-input"
           />
         </div>
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Unit</label>
-          <select
-            name="unit"
-            defaultValue={item?.unit ?? 'each'}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
-          >
-            {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Min Order</label>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <input
-            name="min_order_qty"
-            type="number"
-            min="1"
-            defaultValue={item?.min_order_qty ?? 1}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
+            id="marketplace_visible"
+            name="marketplace_visible"
+            type="checkbox"
+            defaultChecked={item?.marketplace_visible ?? false}
+            style={{ width: 16, height: 16, accentColor: 'var(--c-amber)' }}
           />
+          <label htmlFor="marketplace_visible" style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
+            Visible in marketplace
+          </label>
         </div>
-      </div>
 
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Lead Time (days)</label>
-        <input
-          name="lead_time_days"
-          type="number"
-          min="0"
-          defaultValue={item?.lead_time_days ?? ''}
-          placeholder="e.g. 3"
-          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
-        />
-      </div>
-
-      <div className="flex items-center gap-3">
-        <input
-          id="marketplace_visible"
-          name="marketplace_visible"
-          type="checkbox"
-          defaultChecked={item?.marketplace_visible ?? false}
-          className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600"
-        />
-        <label htmlFor="marketplace_visible" className="text-sm text-slate-300">
-          Visible in marketplace
-        </label>
-      </div>
-
-      <div className="flex gap-3 pt-2">
-        <button
-          type="submit"
-          disabled={isPending}
-          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm"
-        >
-          {isPending ? 'Saving…' : isEdit ? 'Update Item' : 'Add Item'}
-        </button>
-        <button
-          type="button"
-          onClick={() => router.push('/supplier/catalogue')}
-          className="text-sm text-slate-400 hover:text-white px-5 py-2.5 rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
+        <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
+          <button
+            type="submit"
+            disabled={isPending}
+            className="btn-primary-amber"
+            style={{
+              padding: '10px 20px',
+              fontSize: 13,
+              fontWeight: 600,
+              opacity: isPending ? 0.5 : 1,
+              cursor: isPending ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {isPending ? 'Saving…' : isEdit ? 'Update Item' : 'Add Item'}
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push('/supplier/catalogue')}
+            style={{
+              fontSize: 13,
+              color: 'var(--c-text-mid)',
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              borderRadius: 6,
+              padding: '10px 20px',
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </form>
   )

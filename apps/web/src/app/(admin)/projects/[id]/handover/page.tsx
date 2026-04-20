@@ -2,8 +2,6 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { Card, CardBody } from '@/components/ui/Card'
 import { HandoverActions } from './HandoverActions'
 
 const DEFAULT_ITEMS = [
@@ -39,14 +37,13 @@ export default async function HandoverPage({ params }: Props) {
     supabase
       .schema('projects')
       .from('handover_checklist')
-      .select('*, completed_by_profile:profiles!completed_by(id, full_name)')
+      .select('*')
       .eq('project_id', id)
       .order('sort_order'),
   ])
 
   if (!project) notFound()
 
-  // Seed defaults if empty
   let items = rawItems ?? []
   if (items.length === 0) {
     const { data: seeded } = await supabase
@@ -60,7 +57,7 @@ export default async function HandoverPage({ params }: Props) {
           sort_order: i,
         }))
       )
-      .select('*, completed_by_profile:profiles!completed_by(id, full_name)')
+      .select('*')
     items = seeded ?? []
   }
 
@@ -68,72 +65,88 @@ export default async function HandoverPage({ params }: Props) {
   const done = items.filter((i: any) => i.is_complete).length
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
 
+  const barColor = pct === 100 ? '#22c55e' : 'var(--c-amber)'
+
   return (
-    <div>
-      <div className="mb-4">
-        <Link href={`/projects/${id}`} className="text-slate-400 hover:text-white text-sm">
+    <div className="animate-fadeup">
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href={`/projects/${id}`}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
           ← {project.name}
         </Link>
       </div>
 
-      <PageHeader
-        title="Handover Checklist"
-        subtitle={`${done} / ${total} complete`}
-      />
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Handover Checklist</h1>
+          <p className="page-subtitle">{done} / {total} complete</p>
+        </div>
+      </div>
 
-      {/* Progress bar */}
-      <div className="mb-6 bg-slate-800 rounded-full h-2">
+      <div
+        style={{
+          background: 'var(--c-elevated)', borderRadius: 999,
+          height: 6, overflow: 'hidden', marginBottom: 20,
+          border: '1px solid var(--c-border)',
+        }}
+      >
         <div
-          className="h-2 rounded-full transition-all duration-500"
           style={{
-            width: `${pct}%`,
-            backgroundColor: pct === 100 ? '#10B981' : pct >= 50 ? '#3B82F6' : '#F59E0B',
+            width: `${pct}%`, height: '100%', background: barColor,
+            transition: 'width 0.5s ease, background 0.3s ease',
           }}
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <CardBody>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)',
+          gap: 16,
+        }}
+      >
+        <div className="data-panel">
+          <div style={{ padding: '16px 18px' }}>
             <HandoverActions
               projectId={id}
               orgId={orgId}
               userId={user!.id}
               items={items as any}
             />
-          </CardBody>
-        </Card>
+          </div>
+        </div>
 
-        <div className="space-y-4">
-          <Card>
-            <CardBody>
-              <div className="text-center">
-                <p className="text-4xl font-bold text-white mb-1">{pct}%</p>
-                <p className="text-sm text-slate-400">Completion</p>
-              </div>
-              <div className="mt-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">Complete</span>
-                  <span className="text-green-400 font-medium">{done}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="data-panel">
+            <div style={{ padding: '18px', textAlign: 'center' }}>
+              <p style={{ fontSize: 36, fontWeight: 700, color: 'var(--c-text)', marginBottom: 2 }}>{pct}%</p>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Completion</p>
+              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span style={{ color: 'var(--c-text-dim)' }}>Complete</span>
+                  <span style={{ color: '#4ade80', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{done}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">Remaining</span>
-                  <span className="text-amber-400 font-medium">{total - done}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span style={{ color: 'var(--c-text-dim)' }}>Remaining</span>
+                  <span style={{ color: 'var(--c-amber)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{total - done}</span>
                 </div>
               </div>
-            </CardBody>
-          </Card>
+            </div>
+          </div>
 
           {pct === 100 && (
-            <Card>
-              <CardBody>
-                <div className="text-center">
-                  <p className="text-3xl mb-2">🎉</p>
-                  <p className="text-sm font-semibold text-green-400">All items complete!</p>
-                  <p className="text-xs text-slate-400 mt-1">Project is ready for handover.</p>
-                </div>
-              </CardBody>
-            </Card>
+            <div
+              className="data-panel"
+              style={{ background: 'rgba(34,197,94,0.08)', borderColor: 'rgba(34,197,94,0.3)' }}
+            >
+              <div style={{ padding: '18px', textAlign: 'center' }}>
+                <p style={{ fontSize: 30, marginBottom: 6 }}>🎉</p>
+                <p style={{ fontSize: 13, fontWeight: 600, color: '#4ade80' }}>All items complete!</p>
+                <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>Project is ready for handover.</p>
+              </div>
+            </div>
           )}
         </div>
       </div>

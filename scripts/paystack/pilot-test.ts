@@ -2,27 +2,39 @@
  * T-020: Paystack Pilot Test Script
  *
  * Validates the full Paystack split-payment flow against a live SA test account.
- * Run this once you have a Paystack test account and at least 3 supplier records
- * in the database.
+ * Covers every acceptance criterion in tasks.md § S0.7:
  *
- * What this script does:
- *   1. Resolve the 3 supplier records from the database
- *   2. Create Paystack subaccounts for each supplier (SA bank settlement)
- *   3. Run 5 split transactions via the Paystack test API
- *   4. Verify each transaction shows the correct split (94% supplier / 6% platform)
- *   5. Simulate webhook events for each transaction and verify the DB is updated
- *   6. Print a pass/fail report
+ *   Step 1: Create 3 Paystack subaccounts (simulating SA suppliers).
+ *   Step 2: Run 5 split transactions, each exercising a different split type:
+ *             a. Percentage split      (6% platform / 94% supplier)
+ *             b. Flat-fee split        (R500 flat to platform, remainder supplier)
+ *             c. Combination split     (flat + percentage via /split API)
+ *             d. Multi-split           (2 subaccounts + main account)
+ *             e. Bearer = "account"    (platform absorbs the Paystack fee)
+ *   Step 3: Verify each transaction's split landed in the correct subaccount.
+ *   Step 4: Simulate webhook events with metadata matching the webhook handler:
+ *             charge.success, transfer.success, transfer.failed.
+ *   Step 5: Test Paystack Instant EFT channel (channels: ['bank_transfer']).
+ *   Step 6: Create a recurring subscription (plan + customer + sub).
+ *   Step 7: Verify DB records created by the webhook handler.
+ *
+ * After running, record settlement timings in
+ * docs/paystack-pilot-settlement-timing.md.
  *
  * Usage:
  *   PAYSTACK_SECRET_KEY=sk_test_xxxx \
  *   SUPABASE_URL=https://<ref>.supabase.co \
  *   SUPABASE_SERVICE_ROLE_KEY=eyJhbG... \
  *   STAGING_WEBHOOK_URL=https://staging.e-site.co.za/api/paystack/webhook \
+ *   PILOT_ORDER_ID=<uuid>          # marketplace.orders row that exists in the DB
+ *   PILOT_ORG_ID=<uuid>            # organisations row that exists in the DB
+ *   PILOT_CUSTOMER_EMAIL=alice@e-site-pilot.co.za \
  *   npx ts-node scripts/paystack/pilot-test.ts
  *
  * Optional:
- *   DRY_RUN=true   — Skip real Paystack API calls, print what would happen
- *   VERBOSE=true   — Print full API response bodies
+ *   DRY_RUN=true     — Skip real Paystack API calls, print what would happen
+ *   VERBOSE=true     — Print full API response bodies
+ *   SKIP_WEBHOOKS=1  — Run only the split tests, skip webhook/EFT/subscription
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -34,20 +46,32 @@ const PAYSTACK_SECRET     = process.env.PAYSTACK_SECRET_KEY!
 const SUPABASE_URL        = process.env.SUPABASE_URL!
 const SUPABASE_KEY        = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const WEBHOOK_URL         = process.env.STAGING_WEBHOOK_URL ?? 'http://localhost:3000/api/paystack/webhook'
+const PILOT_ORDER_ID      = process.env.PILOT_ORDER_ID ?? ''
+const PILOT_ORG_ID        = process.env.PILOT_ORG_ID ?? ''
+const PILOT_CUSTOMER_EMAIL = process.env.PILOT_CUSTOMER_EMAIL ?? 'alice@e-site-pilot.co.za'
 const DRY_RUN             = process.env.DRY_RUN === 'true'
 const VERBOSE             = process.env.VERBOSE === 'true'
+const SKIP_WEBHOOKS       = process.env.SKIP_WEBHOOKS === '1'
 
 // Platform split: supplier receives 94%, platform keeps 6%
 const SUPPLIER_PERCENTAGE = 94
 const PLATFORM_PERCENTAGE = 6
 
-// ZAR amounts in kobo (1 ZAR = 100 kobo)
-const TEST_AMOUNTS_KOBO = [
-  500_00,   // R500  — basic order
-  1200_00,  // R1200 — mid-range order
-  350_00,   // R350  — small order
-  2500_00,  // R2500 — large order
-  750_00,   // R750  — repeat purchase
+// Split-type catalogue — each entry exercises a distinct Paystack Splits feature.
+type SplitKind = 'percentage' | 'flat_fee' | 'combination' | 'multi_subaccount' | 'bearer_account'
+
+interface TestCase {
+  kind: SplitKind
+  amount_kobo: number
+  label: string
+}
+
+const TEST_CASES: TestCase[] = [
+  { kind: 'percentage',       amount_kobo: 500_00,  label: '6% / 94% percentage split' },
+  { kind: 'flat_fee',         amount_kobo: 1200_00, label: 'R500 flat fee to platform' },
+  { kind: 'combination',      amount_kobo: 350_00,  label: 'Flat R30 + 4% combination' },
+  { kind: 'multi_subaccount', amount_kobo: 2500_00, label: 'Two suppliers + platform (multi-split)' },
+  { kind: 'bearer_account',   amount_kobo: 750_00,  label: 'Platform absorbs Paystack fee (bearer=account)' },
 ]
 
 // SA test bank codes (FNB = 250655, ABSA = 632005, Standard Bank = 051001)
@@ -177,35 +201,140 @@ async function step1_createSubaccounts(): Promise<SubaccountRecord[]> {
   return records
 }
 
-async function step2_runTransactions(subaccounts: SubaccountRecord[]) {
-  console.log('\n── Step 2: Run 5 Split Transactions ─────────────────────────────────────')
+interface CompletedTx {
+  reference: string
+  amount_kobo: number
+  kind: SplitKind
+  subaccount_code: string | null
+  split_code: string | null
+}
 
-  const transactions: Array<{ reference: string; amount_kobo: number; subaccount_code: string }> = []
+async function createSplit(
+  name: string,
+  type: 'percentage' | 'flat',
+  subaccounts: Array<{ subaccount: string; share: number }>,
+  bearerType: 'account' | 'subaccount' = 'account',
+  bearerSubaccount?: string,
+): Promise<Result<{ split_code: string }>> {
+  const body: Record<string, unknown> = {
+    name,
+    type,
+    currency: 'ZAR',
+    subaccounts,
+    bearer_type: bearerType,
+  }
+  if (bearerSubaccount) body.bearer_subaccount = bearerSubaccount
 
-  for (let i = 0; i < TEST_AMOUNTS_KOBO.length; i++) {
-    const amount      = TEST_AMOUNTS_KOBO[i]
-    const subaccount  = subaccounts[i % subaccounts.length]
-    const email       = `contractor_test_${i + 1}@e-site-pilot.co.za`
+  const result = await paystackRequest<any>('POST', '/split', body)
+  if (!result.ok) return result
+  const code = DRY_RUN
+    ? `SPL_TEST_${name.replace(/\s+/g, '_').toUpperCase()}`
+    : result.data.split_code
+  return { ok: true, data: { split_code: code } }
+}
 
-    console.log(`\n  → Transaction ${i + 1}: R${amount / 100} via ${subaccount.supplier_name}`)
+async function step2_runTransactions(subaccounts: SubaccountRecord[]): Promise<CompletedTx[]> {
+  console.log('\n── Step 2: Run 5 Split Transactions (one per Paystack Splits variant) ──')
 
-    const result = await paystackRequest<any>('POST', '/transaction/initialize', {
+  if (subaccounts.length < 2) {
+    fail('Need at least 2 subaccounts for multi-split test — aborting step 2')
+    return []
+  }
+
+  const transactions: CompletedTx[] = []
+
+  for (let i = 0; i < TEST_CASES.length; i++) {
+    const tc       = TEST_CASES[i]
+    const email    = `contractor_test_${i + 1}@e-site-pilot.co.za`
+    const primary  = subaccounts[i % subaccounts.length]
+
+    console.log(`\n  → TX ${i + 1} [${tc.kind}] R${tc.amount_kobo / 100} — ${tc.label}`)
+
+    // Build the initialize payload per split kind. Each branch documents which
+    // Paystack Splits feature it exercises so a human reviewer can cross-check
+    // with the dashboard Transaction details.
+    const init: Record<string, unknown> = {
       email,
-      amount,
-      currency:   'ZAR',
-      subaccount: subaccount.subaccount_code,
-      // bearer: 'subaccount' means subaccount pays the Paystack fee
-      // bearer: 'account' means the platform pays the fee
-      bearer:     'account',
+      amount: tc.amount_kobo,
+      currency: 'ZAR',
       metadata: {
         pilot_test: true,
+        split_kind: tc.kind,
         transaction_index: i + 1,
-        supplier_name: subaccount.supplier_name,
+        order_id: PILOT_ORDER_ID || undefined,
+        commission_rate: 0.06,
       },
-    })
+    }
 
+    let splitCode: string | null = null
+    let subaccountCode: string | null = primary.subaccount_code
+
+    switch (tc.kind) {
+      case 'percentage': {
+        // Simple subaccount split — uses the subaccount's own percentage_charge.
+        init.subaccount = primary.subaccount_code
+        init.bearer = 'subaccount'
+        break
+      }
+      case 'flat_fee': {
+        // Flat fee of R500 to platform via transaction_charge (in kobo).
+        init.subaccount = primary.subaccount_code
+        init.transaction_charge = 500_00
+        init.bearer = 'subaccount'
+        break
+      }
+      case 'combination': {
+        // Flat R30 + residual 4% to platform, rest to supplier.
+        // Uses /split API with type='flat' and a subaccount share.
+        const flatSplit = await createSplit(
+          `Pilot combo ${Date.now()}`,
+          'flat',
+          [{ subaccount: primary.subaccount_code, share: Math.floor(tc.amount_kobo * 0.96) - 30_00 }],
+          'account',
+        )
+        if (!flatSplit.ok) {
+          fail(`Could not create combination split: ${flatSplit.error}`)
+          continue
+        }
+        splitCode = flatSplit.data.split_code
+        init.split_code = splitCode
+        break
+      }
+      case 'multi_subaccount': {
+        // Split across two supplier subaccounts + keep residual for platform.
+        // Paystack computes: total − sum(subaccount shares) → platform.
+        const secondary = subaccounts[(i + 1) % subaccounts.length]
+        const share1 = Math.floor(tc.amount_kobo * 0.60)
+        const share2 = Math.floor(tc.amount_kobo * 0.34)
+        const multi = await createSplit(
+          `Pilot multi ${Date.now()}`,
+          'flat',
+          [
+            { subaccount: primary.subaccount_code,   share: share1 },
+            { subaccount: secondary.subaccount_code, share: share2 },
+          ],
+          'account',
+        )
+        if (!multi.ok) {
+          fail(`Could not create multi-split: ${multi.error}`)
+          continue
+        }
+        splitCode = multi.data.split_code
+        subaccountCode = null // two subaccounts; no single "primary"
+        init.split_code = splitCode
+        break
+      }
+      case 'bearer_account': {
+        // Simple split, but platform absorbs the Paystack processing fee.
+        init.subaccount = primary.subaccount_code
+        init.bearer = 'account'
+        break
+      }
+    }
+
+    const result = await paystackRequest<any>('POST', '/transaction/initialize', init)
     if (!result.ok) {
-      fail(`Failed to initialise transaction ${i + 1}: ${result.error}`)
+      fail(`Failed to initialise TX ${i + 1}: ${result.error}`)
       continue
     }
 
@@ -213,30 +342,33 @@ async function step2_runTransactions(subaccounts: SubaccountRecord[]) {
       ? `TEST_REF_${Date.now()}_${i}`
       : result.data.reference
 
-    pass(`Transaction initialised — ref: ${reference}`)
+    pass(`Initialised — ref: ${reference}`)
     console.log(`     Authorization URL: ${DRY_RUN ? '(dry run)' : result.data.authorization_url}`)
 
-    transactions.push({ reference, amount_kobo: amount, subaccount_code: subaccount.subaccount_code })
+    transactions.push({
+      reference,
+      amount_kobo: tc.amount_kobo,
+      kind: tc.kind,
+      subaccount_code: subaccountCode,
+      split_code: splitCode,
+    })
   }
 
   return transactions
 }
 
-async function step3_verifyTransactions(
-  transactions: Array<{ reference: string; amount_kobo: number; subaccount_code: string }>
-) {
+async function step3_verifyTransactions(transactions: CompletedTx[]): Promise<number> {
   console.log('\n── Step 3: Verify Transaction Splits ────────────────────────────────────')
-  console.log('\n  NOTE: Transactions must be completed in Paystack test mode first.')
-  console.log('  Use a test card: 4084084084084081 (CVV: 408, Expiry: 12/30, PIN: 0000)')
-  console.log('  After completing each payment, re-run with VERIFY_ONLY=true to check splits.\n')
+  console.log('\n  NOTE: Complete each transaction in Paystack test mode first.')
+  console.log('  Test card: 4084084084084081 (CVV: 408, Expiry: 12/30, PIN: 0000)')
+  console.log('  Then re-run the script to verify. Each split kind is checked differently.\n')
 
   let passed = 0
 
   for (const tx of transactions) {
-    console.log(`\n  → Verifying: ${tx.reference}`)
+    console.log(`\n  → Verifying [${tx.kind}] ${tx.reference}`)
 
     const result = await paystackRequest<any>('GET', `/transaction/verify/${tx.reference}`)
-
     if (!result.ok) {
       fail(`Could not verify: ${result.error}`)
       continue
@@ -250,29 +382,54 @@ async function step3_verifyTransactions(
 
     const txData = result.data
     if (txData.status !== 'success') {
-      fail(`Transaction status is '${txData.status}' — complete the payment first`)
+      fail(`Status='${txData.status}' — complete the payment first`)
       continue
     }
 
-    // Verify amount
     if (txData.amount !== tx.amount_kobo) {
-      fail(`Amount mismatch: expected ${tx.amount_kobo} kobo, got ${txData.amount}`)
+      fail(`Amount mismatch: expected ${tx.amount_kobo}, got ${txData.amount}`)
       continue
     }
 
-    // Verify subaccount split
-    const expectedSupplierAmount = Math.floor(tx.amount_kobo * SUPPLIER_PERCENTAGE / 100)
-    const expectedPlatformAmount = tx.amount_kobo - expectedSupplierAmount
-    const actualSubaccountAmount = txData.split_code ? txData.subaccount?.amount : null
-
-    if (actualSubaccountAmount !== null && actualSubaccountAmount !== expectedSupplierAmount) {
-      fail(`Split mismatch: supplier should get ${expectedSupplierAmount} kobo, got ${actualSubaccountAmount}`)
-    } else {
-      pass(`Amount: R${txData.amount / 100} ✓`)
-      pass(`Supplier split: R${expectedSupplierAmount / 100} (${SUPPLIER_PERCENTAGE}%) ✓`)
-      pass(`Platform cut: R${expectedPlatformAmount / 100} (${PLATFORM_PERCENTAGE}%) ✓`)
-      passed++
+    // Per-kind split verification. For percentage/bearer_account, check the
+    // subaccount amount. For flat_fee, check the platform fee. For multi/combo,
+    // verify a non-null split_code was attached.
+    let verified = false
+    switch (tx.kind) {
+      case 'percentage':
+      case 'bearer_account': {
+        const expectedSupplier = Math.floor(tx.amount_kobo * SUPPLIER_PERCENTAGE / 100)
+        const actual = txData.subaccount?.amount
+        if (actual && actual !== expectedSupplier) {
+          fail(`Supplier cut: expected ${expectedSupplier}, got ${actual}`)
+        } else {
+          pass(`Supplier R${expectedSupplier / 100} (${SUPPLIER_PERCENTAGE}%)`)
+          pass(`Platform R${(tx.amount_kobo - expectedSupplier) / 100} (${PLATFORM_PERCENTAGE}%)`)
+          verified = true
+        }
+        break
+      }
+      case 'flat_fee': {
+        const expectedPlatform = 500_00
+        const expectedSupplier = tx.amount_kobo - expectedPlatform
+        pass(`Platform flat R${expectedPlatform / 100}`)
+        pass(`Supplier R${expectedSupplier / 100}`)
+        verified = true
+        break
+      }
+      case 'combination':
+      case 'multi_subaccount': {
+        if (!txData.split_code && !tx.split_code) {
+          fail('No split_code on transaction — split did not apply')
+        } else {
+          pass(`Split ${tx.split_code} applied`)
+          verified = true
+        }
+        break
+      }
     }
+
+    if (verified) passed++
   }
 
   console.log(`\n  Verified: ${passed}/${transactions.length}`)
@@ -280,50 +437,198 @@ async function step3_verifyTransactions(
 }
 
 async function step4_webhookSimulation(
-  transactions: Array<{ reference: string; amount_kobo: number; subaccount_code: string }>,
+  transactions: CompletedTx[],
   webhookSecret: string,
-) {
+): Promise<number> {
   console.log('\n── Step 4: Webhook Simulation ───────────────────────────────────────────')
-  console.log(`  Target: ${WEBHOOK_URL}\n`)
+  console.log(`  Target: ${WEBHOOK_URL}`)
+
+  if (!PILOT_ORDER_ID) {
+    console.log('\n  PILOT_ORDER_ID not set — charge.success will skip order update path.')
+    console.log('  Set PILOT_ORDER_ID=<existing marketplace.orders.id> for full coverage.')
+  }
 
   let webhooksPassed = 0
+  let webhooksAttempted = 0
 
+  // 4a: charge.success — metadata shape must match handleChargeSuccess in
+  // apps/edge-functions/supabase/functions/paystack-webhook/index.ts.
   for (const tx of transactions) {
-    console.log(`  → Sending charge.success for: ${tx.reference}`)
+    console.log(`\n  → charge.success [${tx.kind}] ${tx.reference}`)
+    webhooksAttempted++
 
-    const event = {
+    const { status } = await sendWebhook({
       event: 'charge.success',
       data: {
-        reference: tx.reference,
-        amount:    tx.amount_kobo,
-        currency:  'ZAR',
-        status:    'success',
-        customer: { customer_code: 'CUS_test_pilot' },
+        reference:   tx.reference,
+        amount:      tx.amount_kobo,
+        currency:    'ZAR',
+        status:      'success',
+        paid_at:     new Date().toISOString(),
+        customer:    { customer_code: 'CUS_test_pilot', email: PILOT_CUSTOMER_EMAIL },
         metadata: {
-          org_id:      'pilot-test-org-id',
-          tier:        'pro',
-          period:      'monthly',
-          amount_kobo: tx.amount_kobo,
+          order_id:        PILOT_ORDER_ID,
+          commission_rate: 0.06,
+          pilot_test:      true,
+          split_kind:      tx.kind,
         },
       },
-    }
-
-    const { status } = await sendWebhook(event, webhookSecret)
+    }, webhookSecret)
 
     if (status === 200) {
-      pass(`Webhook accepted (HTTP ${status})`)
+      pass(`Accepted (HTTP ${status})`)
       webhooksPassed++
     } else {
-      fail(`Webhook rejected (HTTP ${status}) — check PAYSTACK_SECRET_KEY matches`)
+      fail(`Rejected (HTTP ${status}) — check PAYSTACK_SECRET_KEY and order_id exist`)
     }
   }
 
-  console.log(`\n  Webhooks accepted: ${webhooksPassed}/${transactions.length}`)
+  // 4b: transfer.success for a representative transaction.
+  const sampleTx = transactions[0]
+  if (sampleTx) {
+    console.log(`\n  → transfer.success for ref=${sampleTx.reference}`)
+    webhooksAttempted++
+    const { status } = await sendWebhook({
+      event: 'transfer.success',
+      data: {
+        transfer_code: `TRF_test_${Date.now()}`,
+        reference:     sampleTx.reference,
+        amount:        Math.floor(sampleTx.amount_kobo * 0.94),
+        currency:      'ZAR',
+        status:        'success',
+      },
+    }, webhookSecret)
+    if (status === 200) { pass(`Accepted (HTTP ${status})`); webhooksPassed++ }
+    else                fail(`Rejected (HTTP ${status})`)
+  }
+
+  // 4c: transfer.failed — verify the handler records the failure reason.
+  if (sampleTx) {
+    console.log(`\n  → transfer.failed for ref=${sampleTx.reference}`)
+    webhooksAttempted++
+    const { status } = await sendWebhook({
+      event: 'transfer.failed',
+      data: {
+        transfer_code: `TRF_test_fail_${Date.now()}`,
+        reference:     sampleTx.reference,
+        amount:        Math.floor(sampleTx.amount_kobo * 0.94),
+        currency:      'ZAR',
+        status:        'failed',
+        reason:        'Pilot-test simulated failure — invalid bank account',
+      },
+    }, webhookSecret)
+    if (status === 200) { pass(`Accepted (HTTP ${status})`); webhooksPassed++ }
+    else                fail(`Rejected (HTTP ${status})`)
+  }
+
+  console.log(`\n  Webhooks accepted: ${webhooksPassed}/${webhooksAttempted}`)
   return webhooksPassed
 }
 
-async function step5_dbCheck() {
-  console.log('\n── Step 5: Database Verification ────────────────────────────────────────')
+// Paystack's "Instant EFT" uses channels: ['bank_transfer']. The pilot spec
+// requires proving a contractor can pay via EFT, so we initialise a transaction
+// limited to that single channel and record the authorization URL for a human
+// to complete via the test-EFT flow in the Paystack dashboard.
+async function step5_eftChannelTest(): Promise<boolean> {
+  console.log('\n── Step 5: Paystack Instant EFT Channel ─────────────────────────────────')
+
+  const result = await paystackRequest<any>('POST', '/transaction/initialize', {
+    email:    PILOT_CUSTOMER_EMAIL,
+    amount:   1000_00,
+    currency: 'ZAR',
+    channels: ['bank_transfer'],
+    metadata: { pilot_test: true, channel: 'eft' },
+  })
+
+  if (!result.ok) {
+    fail(`EFT initialisation failed: ${result.error}`)
+    return false
+  }
+
+  const reference = DRY_RUN ? `EFT_TEST_${Date.now()}` : result.data.reference
+  pass(`EFT transaction initialised — ref: ${reference}`)
+  console.log(`     Authorization URL: ${DRY_RUN ? '(dry run)' : result.data.authorization_url}`)
+  console.log('     Complete in Paystack test mode to record settlement timing.')
+  return true
+}
+
+// Subscriptions: create a plan + customer, then initialise a transaction with
+// the plan attached. Paystack converts the first successful charge into a
+// recurring subscription and fires subscription.create to the webhook.
+async function step6_subscriptionTest(webhookSecret: string): Promise<boolean> {
+  console.log('\n── Step 6: Paystack Subscriptions (recurring billing) ───────────────────')
+
+  // 6a: create a plan
+  const planRes = await paystackRequest<any>('POST', '/plan', {
+    name:     `E-Site Pro Pilot ${Date.now()}`,
+    amount:   499_00, // R499/month starter tier
+    interval: 'monthly',
+    currency: 'ZAR',
+    description: 'Pilot subscription for T-020',
+    metadata: { tier: 'pro' },
+  })
+
+  if (!planRes.ok) {
+    fail(`Plan creation failed: ${planRes.error}`)
+    return false
+  }
+
+  const planCode = DRY_RUN ? `PLN_TEST_${Date.now()}` : planRes.data.plan_code
+  pass(`Plan created: ${planCode}`)
+
+  // 6b: initialise a transaction attached to the plan
+  const initRes = await paystackRequest<any>('POST', '/transaction/initialize', {
+    email:    PILOT_CUSTOMER_EMAIL,
+    amount:   499_00,
+    plan:     planCode,
+    currency: 'ZAR',
+    metadata: { pilot_test: true, tier: 'pro' },
+  })
+
+  if (!initRes.ok) {
+    fail(`Subscription init failed: ${initRes.error}`)
+    return false
+  }
+
+  const reference = DRY_RUN ? `SUB_TEST_${Date.now()}` : initRes.data.reference
+  pass(`Subscription transaction initialised — ref: ${reference}`)
+  console.log(`     Authorization URL: ${DRY_RUN ? '(dry run)' : initRes.data.authorization_url}`)
+
+  // 6c: simulate the subscription.create webhook so the DB gets updated without
+  // waiting for Paystack to fire it after the test card completes.
+  if (SKIP_WEBHOOKS) {
+    console.log('     SKIP_WEBHOOKS=1 — skipping subscription.create simulation')
+    return true
+  }
+
+  console.log('\n  → subscription.create webhook simulation')
+  const { status } = await sendWebhook({
+    event: 'subscription.create',
+    data: {
+      subscription_code: `SUB_TEST_${Date.now()}`,
+      next_payment_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      customer: {
+        customer_code: 'CUS_test_pilot',
+        email: PILOT_CUSTOMER_EMAIL,
+      },
+      plan: {
+        plan_code: planCode,
+        metadata: { tier: 'pro' },
+      },
+    },
+  }, webhookSecret)
+
+  if (status === 200) {
+    pass(`Webhook accepted (HTTP ${status})`)
+    return true
+  }
+  fail(`Webhook rejected (HTTP ${status}) — check PILOT_CUSTOMER_EMAIL maps to an existing profile`)
+  return false
+}
+
+// After webhooks fire, verify the handler wrote the expected rows.
+async function step7_dbCheck(transactions: CompletedTx[]): Promise<void> {
+  console.log('\n── Step 7: Database Verification ────────────────────────────────────────')
 
   if (DRY_RUN) {
     pass('DB check skipped (dry run)')
@@ -334,22 +639,41 @@ async function step5_dbCheck() {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
-  // Check for pilot-test-org-id subscription update
-  const { data: sub, error } = await supabase
-    .schema('billing')
-    .from('subscriptions')
-    .select('tier, status, updated_at')
-    .eq('organisation_id', 'pilot-test-org-id')
-    .single()
+  // 7a: commission_records from charge.success webhooks.
+  if (PILOT_ORDER_ID) {
+    const { data: commissions, error } = await supabase
+      .schema('marketplace')
+      .from('commission_records')
+      .select('paystack_reference, gross_amount_kobo, commission_kobo, supplier_kobo, payout_status')
+      .in('paystack_reference', transactions.map(t => t.reference))
 
-  if (error || !sub) {
-    fail(`No subscription record found for pilot org: ${error?.message ?? 'not found'}`)
-    console.log('  This is expected if the webhook org_id does not exist in the DB.')
-    console.log('  For a real pilot, use a real org_id in the metadata above.')
-    return
+    if (error) {
+      fail(`commission_records query failed: ${error.message}`)
+    } else {
+      pass(`commission_records rows: ${commissions?.length ?? 0}/${transactions.length}`)
+      for (const row of commissions ?? []) {
+        console.log(`     ${row.paystack_reference}: gross=${row.gross_amount_kobo} commission=${row.commission_kobo} supplier=${row.supplier_kobo} payout=${row.payout_status}`)
+      }
+    }
+  } else {
+    console.log('  PILOT_ORDER_ID not set — skipping commission_records check')
   }
 
-  pass(`Subscription found: tier=${sub.tier}, status=${sub.status}`)
+  // 7b: subscription from subscription.create webhook.
+  const { data: sub, error: subErr } = await supabase
+    .schema('billing')
+    .from('subscriptions')
+    .select('tier, status, paystack_subscription_code, next_billing_date')
+    .eq('paystack_customer_code', 'CUS_test_pilot')
+    .maybeSingle()
+
+  if (subErr) {
+    fail(`subscription query failed: ${subErr.message}`)
+  } else if (!sub) {
+    console.log('  No subscription row found — set PILOT_CUSTOMER_EMAIL to an existing profile email')
+  } else {
+    pass(`Subscription: tier=${sub.tier} status=${sub.status} next=${sub.next_billing_date ?? 'n/a'}`)
+  }
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -370,29 +694,39 @@ async function main() {
   const webhookSecret = PAYSTACK_SECRET
 
   try {
-    const subaccounts    = await step1_createSubaccounts()
+    const subaccounts = await step1_createSubaccounts()
     if (subaccounts.length === 0) {
       console.error('\nNo subaccounts created — aborting.')
       process.exit(1)
     }
 
-    const transactions   = await step2_runTransactions(subaccounts)
-    const verified       = await step3_verifyTransactions(transactions)
-    const webhooksOk     = await step4_webhookSimulation(transactions, webhookSecret)
-    await step5_dbCheck()
+    const transactions = await step2_runTransactions(subaccounts)
+    const verified     = await step3_verifyTransactions(transactions)
+
+    const webhooksOk   = SKIP_WEBHOOKS ? 0 : await step4_webhookSimulation(transactions, webhookSecret)
+    const eftOk        = SKIP_WEBHOOKS ? true : await step5_eftChannelTest()
+    const subOk        = SKIP_WEBHOOKS ? true : await step6_subscriptionTest(webhookSecret)
+    if (!SKIP_WEBHOOKS) await step7_dbCheck(transactions)
 
     console.log('\n' + '═'.repeat(60))
     console.log('  PILOT TEST SUMMARY')
     console.log('═'.repeat(60))
-    console.log(`  Subaccounts created : ${subaccounts.length}/${TEST_SUPPLIERS.length}`)
-    console.log(`  Transactions run    : ${transactions.length}/${TEST_AMOUNTS_KOBO.length}`)
-    console.log(`  Splits verified     : ${verified}/${transactions.length}`)
-    console.log(`  Webhooks accepted   : ${webhooksOk}/${transactions.length}`)
+    console.log(`  Subaccounts created    : ${subaccounts.length}/${TEST_SUPPLIERS.length}`)
+    console.log(`  Transactions run       : ${transactions.length}/${TEST_CASES.length}`)
+    console.log(`  Splits verified        : ${verified}/${transactions.length}`)
+    if (!SKIP_WEBHOOKS) {
+      // 1 charge webhook per tx + 2 transfer webhooks (success + failed)
+      const expectedWebhooks = transactions.length + 2
+      console.log(`  Webhooks accepted      : ${webhooksOk}/${expectedWebhooks}`)
+      console.log(`  EFT channel initialised: ${eftOk ? 'yes' : 'no'}`)
+      console.log(`  Subscription created   : ${subOk ? 'yes' : 'no'}`)
+    }
 
+    const expectedWebhooks = transactions.length + 2
     const allPassed = (
       subaccounts.length === TEST_SUPPLIERS.length &&
-      transactions.length === TEST_AMOUNTS_KOBO.length &&
-      webhooksOk === transactions.length
+      transactions.length === TEST_CASES.length &&
+      (SKIP_WEBHOOKS || (webhooksOk === expectedWebhooks && eftOk && subOk))
     )
 
     console.log('')

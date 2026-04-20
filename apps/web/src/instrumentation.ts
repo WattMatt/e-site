@@ -13,34 +13,54 @@
  * Docs: https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 
+const REQUIRED_ENV = [
+  'NEXT_PUBLIC_SUPABASE_URL',
+  'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+] as const
+
+function validateEnv() {
+  const missing = REQUIRED_ENV.filter(k => !process.env[k])
+  if (missing.length > 0) {
+    throw new Error(
+      `[E-Site] Missing required environment variables:\n${missing.map(k => `  - ${k}`).join('\n')}\nSet these in Vercel dashboard or .env.local and restart.`
+    )
+  }
+}
+
 export async function register() {
+  // Only initialise Sentry when a DSN is explicitly configured.
+  // Skipping this when DSN is absent (local dev) prevents a startup hang
+  // caused by the @sentry/nextjs dynamic import in dev mode.
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
+  if (!dsn) {
+    if (process.env.NEXT_RUNTIME === 'nodejs') validateEnv()
+    return
+  }
+
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    const Sentry = await import('@sentry/nextjs')
+    validateEnv()
+    // webpackIgnore: true — prevents webpack from bundling @sentry/nextjs at
+    // compile time. Without this, webpack tries to statically analyse the entire
+    // Sentry package tree, which causes instrumentation compilation to hang.
+    const Sentry = await import(/* webpackIgnore: true */ '@sentry/nextjs')
     Sentry.init({
-      dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+      dsn,
       environment: process.env.NODE_ENV ?? 'production',
       tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
-      // Capture 100% of errors, only sample traces
       sampleRate: 1.0,
-      // Attach request data to server-side errors
       includeLocalVariables: true,
-      integrations: [
-        // Instrument Supabase fetch calls in server components
-        Sentry.httpIntegration(),
-      ],
-      // Performance: ignore Next.js internal routes in traces
+      integrations: [Sentry.httpIntegration()],
       tracesSampler(ctx) {
         const name = ctx.name ?? ''
         if (name.includes('/_next/') || name.includes('/favicon')) return 0
-        if (name.includes('/api/health')) return 0  // skip health check noise
+        if (name.includes('/api/health')) return 0
         return process.env.NODE_ENV === 'production' ? 0.1 : 1.0
       },
-      // Before sending an event, scrub sensitive fields
       beforeSend(event) {
-        // Strip any accidentally captured auth tokens from breadcrumbs
         if (event.breadcrumbs?.values) {
           const bcs = event.breadcrumbs.values as unknown as any[]
-          event.breadcrumbs.values = bcs.map((bc: any) => {
+          ;(event.breadcrumbs as any).values = bcs.map((bc: any) => {
             if (bc.data?.url && typeof bc.data.url === 'string') {
               bc.data.url = bc.data.url.replace(/access_token=[^&]+/, 'access_token=REDACTED')
               bc.data.url = bc.data.url.replace(/token=[^&]+/, 'token=REDACTED')
@@ -54,12 +74,8 @@ export async function register() {
   }
 
   if (process.env.NEXT_RUNTIME === 'edge') {
-    const Sentry = await import('@sentry/nextjs')
-    Sentry.init({
-      dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-      environment: process.env.NODE_ENV ?? 'production',
-      tracesSampleRate: 0.05,
-    })
+    const Sentry = await import(/* webpackIgnore: true */ '@sentry/nextjs')
+    Sentry.init({ dsn, environment: process.env.NODE_ENV ?? 'production', tracesSampleRate: 0.05 })
   }
 }
 
@@ -72,7 +88,7 @@ export const onRequestError = async (
   request: { path: string; method: string },
   context: { routerKind: string; routePath: string; renderSource: string }
 ) => {
-  const Sentry = await import('@sentry/nextjs')
+  const Sentry = await import(/* webpackIgnore: true */ '@sentry/nextjs')
   Sentry.captureException(err, {
     tags: {
       path: request.path,

@@ -1,6 +1,7 @@
 'use client'
 
 import { Component, type ReactNode } from 'react'
+import { ErrorState } from '@/components/ui/ErrorState'
 
 interface Props { children: ReactNode; fallback?: ReactNode }
 interface State { hasError: boolean; error?: Error }
@@ -23,20 +24,28 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return this.props.fallback ?? (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-8">
-          <div className="max-w-md text-center">
-            <p className="text-6xl mb-4">⚠️</p>
-            <h1 className="text-xl font-bold text-white mb-3">Something went wrong</h1>
-            <p className="text-slate-400 text-sm mb-6">
-              An unexpected error occurred. Our team has been notified.
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
-            >
-              Reload page
-            </button>
-          </div>
+        <div
+          style={{
+            minHeight: '100vh',
+            background: 'var(--c-base)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <ErrorState
+            title="Something went wrong"
+            description="An unexpected error occurred. Our team has been notified."
+            detail={this.state.error?.message}
+            action={
+              <button
+                onClick={() => window.location.reload()}
+                className="btn-primary-amber"
+              >
+                Reload page
+              </button>
+            }
+          />
         </div>
       )
     }

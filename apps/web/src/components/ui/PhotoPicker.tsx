@@ -45,7 +45,12 @@ export function PhotoPicker({
   return (
     <div>
       <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-label={`${label}. Click or drag and drop files.`}
+        aria-disabled={disabled}
         onClick={() => !disabled && inputRef.current?.click()}
+        onKeyDown={e => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); inputRef.current?.click() } }}
         onDragOver={e => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={e => {
@@ -53,25 +58,44 @@ export function PhotoPicker({
           setDragging(false)
           if (!disabled) processFiles(e.dataTransfer.files)
         }}
-        className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
-          disabled ? 'opacity-50 cursor-not-allowed border-slate-700' :
-          dragging ? 'border-blue-500 bg-blue-950/20' :
-          'border-slate-600 hover:border-slate-400 hover:bg-slate-800/40'
-        }`}
+        style={{
+          border: `2px dashed ${
+            disabled
+              ? 'var(--c-border)'
+              : dragging
+                ? 'var(--c-amber)'
+                : 'var(--c-border-mid)'
+          }`,
+          background: disabled
+            ? 'transparent'
+            : dragging
+              ? 'var(--c-amber-dim)'
+              : 'var(--c-panel)',
+          borderRadius: 10,
+          padding: 24,
+          textAlign: 'center',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.5 : 1,
+          transition: 'border-color 0.15s, background 0.15s',
+        }}
       >
-        <div className="text-3xl mb-2">📷</div>
-        <p className="text-sm font-medium text-white">{label}</p>
-        <p className="text-xs text-slate-400 mt-1">
+        <div style={{ fontSize: 28, marginBottom: 8 }}>📷</div>
+        <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{label}</p>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 4, letterSpacing: '0.04em' }}>
           Click or drag & drop · Max {maxSizeMB}MB per file
         </p>
       </div>
-      {error && <p className="text-red-400 text-xs mt-1.5">{error}</p>}
+      {error && (
+        <p style={{ color: '#fca5a5', fontSize: 11, marginTop: 6, fontFamily: 'var(--font-mono)' }}>
+          {error}
+        </p>
+      )}
       <input
         ref={inputRef}
         type="file"
         accept={accept}
         multiple={multiple}
-        className="hidden"
+        style={{ display: 'none' }}
         disabled={disabled}
         onChange={e => processFiles(e.target.files)}
       />

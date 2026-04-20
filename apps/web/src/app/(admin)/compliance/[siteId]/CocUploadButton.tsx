@@ -25,21 +25,18 @@ export function CocUploadButton({ subsectionId, orgId }: { subsectionId: string;
     const timestamp = Date.now()
     const filePath = `${orgId}/${subsectionId}/${timestamp}.${ext}`
 
-    // Upload to storage
     const { error: storageErr } = await supabase.storage
       .from('coc-documents')
       .upload(filePath, file, { contentType: file.type, upsert: false })
 
     if (storageErr) { setError(storageErr.message); setUploading(false); return }
 
-    // Get current version count
     const { count } = await supabase
       .schema('compliance')
       .from('coc_uploads')
       .select('id', { count: 'exact', head: true })
       .eq('subsection_id', subsectionId)
 
-    // Insert record
     const { error: dbErr } = await supabase
       .schema('compliance')
       .from('coc_uploads')
@@ -62,15 +59,23 @@ export function CocUploadButton({ subsectionId, orgId }: { subsectionId: string;
 
   return (
     <div>
-      <input ref={inputRef} type="file" accept=".pdf,.doc,.docx,.jpg,.png" className="hidden" onChange={handleFile} />
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,.doc,.docx,.jpg,.png"
+        style={{ display: 'none' }}
+        onChange={handleFile}
+      />
       <button
+        type="button"
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
-        className="text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors"
+        className="btn-primary-amber"
+        style={{ fontSize: 12, padding: '6px 12px' }}
       >
         {uploading ? 'Uploading…' : 'Upload COC'}
       </button>
-      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+      {error && <p className="ob-error" role="alert" style={{ marginTop: 4 }}>{error}</p>}
     </div>
   )
 }

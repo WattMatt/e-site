@@ -19,11 +19,21 @@ export function ToggleVisibilityButton({ itemId, visible }: { itemId: string; vi
       onClick={toggle}
       disabled={isPending}
       title={currentVisible ? 'Hide from marketplace' : 'Show in marketplace'}
-      className={`text-xs px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${
-        currentVisible
-          ? 'bg-emerald-900/40 text-emerald-400 border border-emerald-700/40 hover:bg-red-900/30 hover:text-red-400 hover:border-red-700/40'
-          : 'bg-slate-700 text-slate-400 border border-slate-600 hover:bg-emerald-900/30 hover:text-emerald-400 hover:border-emerald-700/40'
-      }`}
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        padding: '5px 10px',
+        borderRadius: 4,
+        background: currentVisible ? '#14532d' : 'var(--c-elevated)',
+        color: currentVisible ? '#4ade80' : 'var(--c-text-dim)',
+        border: `1px solid ${currentVisible ? '#166534' : 'var(--c-border)'}`,
+        cursor: isPending ? 'not-allowed' : 'pointer',
+        opacity: isPending ? 0.5 : 1,
+        transition: 'all 0.15s',
+      }}
     >
       {isPending ? '…' : currentVisible ? 'Visible' : 'Hidden'}
     </button>

@@ -12,13 +12,13 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const STATUS_BADGE: Record<string, string> = {
-  draft: 'bg-slate-700 text-slate-300',
-  submitted: 'bg-blue-900/30 text-blue-400 border border-blue-700/40',
-  confirmed: 'bg-amber-900/30 text-amber-400',
-  in_transit: 'bg-purple-900/30 text-purple-400',
-  delivered: 'bg-emerald-900/30 text-emerald-400',
-  invoiced: 'bg-cyan-900/30 text-cyan-400',
-  cancelled: 'bg-red-900/30 text-red-400',
+  draft: 'badge badge-muted',
+  submitted: 'badge badge-blue',
+  confirmed: 'badge badge-amber',
+  in_transit: 'badge badge-amber',
+  delivered: 'badge badge-green',
+  invoiced: 'badge badge-blue',
+  cancelled: 'badge badge-red',
 }
 
 // Status transitions available to the supplier
@@ -45,7 +45,7 @@ export default async function SupplierOrderDetailPage({ params }: Props) {
 
   if (!mem) redirect('/register')
 
-  const { data: order } = await supabase
+  const { data: rawOrder } = await (supabase as any)
     .schema('marketplace')
     .from('orders')
     .select(`
@@ -54,14 +54,25 @@ export default async function SupplierOrderDetailPage({ params }: Props) {
         id, quantity, unit_price, line_total, description, unit,
         catalogue_item:marketplace.catalogue_items(id, name, sku, unit)
       ),
-      contractor:public.organisations!contractor_org_id(id, name),
-      creator:public.profiles!created_by(id, full_name, email)
+      contractor_org_id, created_by
     `)
     .eq('id', orderId)
     .eq('supplier_org_id', mem.organisation_id)
     .single()
 
-  if (!order) notFound()
+  if (!rawOrder) notFound()
+
+  // Fetch contractor org and creator profile separately (avoids cross-schema FK hints)
+  const [{ data: contractorOrg }, { data: creatorProfile }] = await Promise.all([
+    rawOrder.contractor_org_id
+      ? supabase.from('organisations').select('id, name').eq('id', rawOrder.contractor_org_id).single()
+      : Promise.resolve({ data: null }),
+    rawOrder.created_by
+      ? supabase.from('profiles').select('id, full_name, email').eq('id', rawOrder.created_by).single()
+      : Promise.resolve({ data: null }),
+  ])
+
+  const order = { ...rawOrder, contractor: contractorOrg, creator: creatorProfile }
 
   const items = (order.order_items ?? []) as any[]
   const subtotal = items.reduce((sum: number, i: any) => sum + (i.line_total ?? i.quantity * i.unit_price), 0)
@@ -70,68 +81,134 @@ export default async function SupplierOrderDetailPage({ params }: Props) {
   const creator = (order as any).creator
 
   return (
-    <div className="max-w-2xl">
-      <div className="mb-6">
-        <Link href="/supplier/orders" className="text-slate-400 hover:text-white text-sm">← Orders</Link>
+    <div className="animate-fadeup" style={{ maxWidth: 760 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href="/supplier/orders"
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--c-text-dim)',
+            textDecoration: 'none',
+            letterSpacing: '0.06em',
+          }}
+        >
+          ← Orders
+        </Link>
       </div>
 
-      <div className="flex items-start justify-between mb-6">
+      <div className="page-header">
         <div>
-          <h1 className="text-xl font-bold text-white">Order #{orderId.slice(0, 8).toUpperCase()}</h1>
-          <p className="text-sm text-slate-400 mt-0.5">{formatDate(order.created_at)}</p>
+          <h1 className="page-title">Order #{orderId.slice(0, 8).toUpperCase()}</h1>
+          <p className="page-subtitle">{formatDate(order.created_at)}</p>
         </div>
-        <span className={`text-sm px-3 py-1 rounded-full font-medium ${STATUS_BADGE[order.status] ?? STATUS_BADGE.draft}`}>
+        <span className={STATUS_BADGE[order.status] ?? STATUS_BADGE.draft}>
           {STATUS_LABEL[order.status] ?? order.status}
         </span>
       </div>
 
       {/* Contractor info */}
-      <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 mb-4">
-        <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">From</p>
-        <p className="text-white font-medium">{contractor?.name ?? 'Unknown contractor'}</p>
-        {creator && <p className="text-xs text-slate-400 mt-0.5">{creator.full_name} · {creator.email}</p>}
-        {order.notes && (
-          <div className="mt-3 pt-3 border-t border-slate-700">
-            <p className="text-xs text-slate-400 mb-1">Notes</p>
-            <p className="text-sm text-slate-200 whitespace-pre-wrap">{order.notes}</p>
-          </div>
-        )}
+      <div className="data-panel animate-fadeup animate-fadeup-1" style={{ marginBottom: 14 }}>
+        <div className="data-panel-header">
+          <span className="data-panel-title">From</span>
+        </div>
+        <div style={{ padding: '14px 18px' }}>
+          <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--c-text)' }}>
+            {contractor?.name ?? 'Unknown contractor'}
+          </p>
+          {creator && (
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>
+              {creator.full_name} · {creator.email}
+            </p>
+          )}
+          {order.notes && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--c-border)' }}>
+              <p
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--c-text-dim)',
+                  marginBottom: 4,
+                }}
+              >
+                Notes
+              </p>
+              <p style={{ fontSize: 13, color: 'var(--c-text-mid)', whiteSpace: 'pre-wrap' }}>
+                {order.notes}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Order items */}
-      <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden mb-4">
-        <div className="px-4 py-3 border-b border-slate-700">
-          <p className="text-sm font-semibold text-white">Items ({items.length})</p>
+      <div className="data-panel animate-fadeup animate-fadeup-1" style={{ marginBottom: 14 }}>
+        <div className="data-panel-header">
+          <span className="data-panel-title">Items ({items.length})</span>
         </div>
-        <div className="divide-y divide-slate-700">
-          {items.map((item: any) => {
-            const ci = item.catalogue_item
-            return (
-              <div key={item.id} className="px-4 py-3 flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm text-white">{ci?.name ?? item.description ?? 'Item'}</p>
-                  {ci?.sku && <p className="text-xs text-slate-500 font-mono">{ci.sku}</p>}
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {item.quantity} × {formatZAR(item.unit_price)} / {item.unit ?? ci?.unit ?? 'each'}
+        {items.map((item: any) => {
+          const ci = item.catalogue_item
+          return (
+            <div key={item.id} className="data-panel-row" style={{ alignItems: 'flex-start' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 13, color: 'var(--c-text)' }}>
+                  {ci?.name ?? item.description ?? 'Item'}
+                </p>
+                {ci?.sku && (
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                    {ci.sku}
                   </p>
-                </div>
-                <p className="font-semibold text-white text-sm flex-shrink-0">
-                  {formatZAR(item.line_total ?? item.quantity * item.unit_price)}
+                )}
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>
+                  {item.quantity} × {formatZAR(item.unit_price)} / {item.unit ?? ci?.unit ?? 'each'}
                 </p>
               </div>
-            )
-          })}
-        </div>
-        <div className="px-4 py-3 border-t border-slate-700 flex justify-between">
-          <p className="text-sm text-slate-300 font-medium">Subtotal</p>
-          <p className="text-sm font-bold text-white">{formatZAR(order.total_amount ?? subtotal)}</p>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-text)', flexShrink: 0 }}>
+                {formatZAR(item.line_total ?? item.quantity * item.unit_price)}
+              </p>
+            </div>
+          )
+        })}
+        <div
+          style={{
+            padding: '14px 18px',
+            borderTop: '1px solid var(--c-border)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <p style={{ fontSize: 13, color: 'var(--c-text-mid)', fontWeight: 600 }}>Subtotal</p>
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 700, color: 'var(--c-amber)' }}>
+            {formatZAR(order.total_amount ?? subtotal)}
+          </p>
         </div>
       </div>
 
       {/* Commission note */}
       {order.total_amount && (
-        <div className="bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 mb-4 text-xs text-slate-400">
-          6% E-Site commission deducted at payment. You receive approx. {formatZAR((order.total_amount ?? subtotal) * 0.94)} on settlement.
+        <div
+          className="animate-fadeup animate-fadeup-2"
+          style={{
+            background: 'var(--c-elevated)',
+            border: '1px solid var(--c-border)',
+            borderRadius: 6,
+            padding: '12px 16px',
+            marginBottom: 14,
+            fontSize: 11,
+            color: 'var(--c-text-dim)',
+            fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.02em',
+          }}
+        >
+          6% E-Site commission deducted at payment. You receive approx.{' '}
+          <span style={{ color: 'var(--c-text)', fontWeight: 600 }}>
+            {formatZAR((order.total_amount ?? subtotal) * 0.94)}
+          </span>{' '}
+          on settlement.
         </div>
       )}
 

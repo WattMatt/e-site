@@ -37,7 +37,6 @@ export default async function RateSupplierPage({ params, searchParams }: Props) 
     redirect(`/marketplace/orders/${orderId}`)
   }
 
-  // Check if already rated
   const { data: existing } = await (supabase as any)
     .schema('marketplace')
     .from('supplier_ratings')
@@ -48,27 +47,56 @@ export default async function RateSupplierPage({ params, searchParams }: Props) 
 
   if (existing) {
     return (
-      <div className="max-w-lg">
-        <Link href={`/marketplace/${supplierId}`} className="text-slate-400 hover:text-white text-sm">
-          ← {(supplier as any).name}
-        </Link>
-        <div className="mt-8 text-center py-12 bg-slate-900 border border-slate-800 rounded-2xl">
-          <div className="text-4xl mb-3">⭐</div>
-          <p className="text-white font-semibold">You&apos;ve already rated this order</p>
-          <p className="text-slate-400 text-sm mt-1">Thank you for your feedback!</p>
+      <div className="animate-fadeup" style={{ maxWidth: 560 }}>
+        <div style={{ marginBottom: 16 }}>
+          <Link
+            href={`/marketplace/${supplierId}`}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+          >
+            ← {(supplier as any).name}
+          </Link>
+        </div>
+        <div className="data-panel">
+          <div
+            style={{
+              padding: '48px 24px',
+              textAlign: 'center',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <div style={{ fontSize: 32 }}>⭐</div>
+            <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--c-text)' }}>
+              You&apos;ve already rated this order
+            </p>
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
+              Thank you for your feedback!
+            </p>
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="max-w-lg">
-      <Link href={`/marketplace/${supplierId}`} className="text-slate-400 hover:text-white text-sm">
-        ← {(supplier as any).name}
-      </Link>
+    <div className="animate-fadeup" style={{ maxWidth: 560 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href={`/marketplace/${supplierId}`}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
+          ← {(supplier as any).name}
+        </Link>
+      </div>
 
-      <h1 className="text-xl font-bold text-white mt-6 mb-1">Rate Supplier</h1>
-      <p className="text-sm text-slate-400 mb-8">{(supplier as any).name}</p>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Rate Supplier</h1>
+          <p className="page-subtitle">{(supplier as any).name}</p>
+        </div>
+      </div>
 
       <RateSupplierForm supplierId={supplierId} orderId={orderId} />
     </div>

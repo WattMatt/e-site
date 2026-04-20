@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import './globals.css'
 import { AnalyticsProvider } from '@/components/providers/AnalyticsProvider'
 import { ErrorBoundary } from '@/components/providers/ErrorBoundary'
+import { SentryBoot } from '@/components/providers/SentryBoot'
 
 const syne = Syne({
   subsets: ['latin'],
@@ -18,7 +19,10 @@ const mono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'E-Site',
+  title: {
+    template: '%s — E-Site',
+    default: 'E-Site — Construction Management',
+  },
   description: 'Construction management for SA electrical contractors',
 }
 
@@ -27,6 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className={`${syne.variable} ${mono.variable}`}>
         <ErrorBoundary>
+          <SentryBoot />
           <Suspense fallback={null}>
             <AnalyticsProvider>
               {children}

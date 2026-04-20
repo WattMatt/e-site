@@ -4,35 +4,81 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { z } from 'zod'
 
 const SA_PROVINCES = [
   'Gauteng', 'Western Cape', 'KwaZulu-Natal', 'Eastern Cape',
   'Limpopo', 'Mpumalanga', 'North West', 'Free State', 'Northern Cape',
-]
+] as const
+
+const registerSupplierSchema = z.object({
+  email:           z.string().email('Valid email required.'),
+  password:        z.string().min(8, 'Password must be at least 8 characters.'),
+  company_name:    z.string().min(1, 'Company name is required.').max(200),
+  trading_name:    z.string().max(200).optional(),
+  registration_no: z.string().max(50).optional(),
+  vat_number:      z.string().max(20).optional(),
+  province:        z.enum(SA_PROVINCES, { message: 'Please select a province.' }),
+  address:         z.string().max(500).optional(),
+  categories:      z.array(z.string()).min(1, 'Select at least one category.'),
+  popia_consent:   z.literal('on', { errorMap: () => ({ message: 'POPIA consent is required to register.' }) }),
+})
+
+const updateProfileSchema = z.object({
+  name:            z.string().min(1, 'Company name is required.').max(200),
+  trading_name:    z.string().max(200).nullish(),
+  registration_no: z.string().max(50).nullish(),
+  vat_number:      z.string().max(20).nullish(),
+  province:        z.string().max(100).nullish(),
+  address:         z.string().max(500).nullish(),
+  website:         z.string().url('Valid URL required.').max(500).nullish().or(z.literal('')),
+  categories:      z.array(z.string()),
+})
+
+const catalogueItemSchema = z.object({
+  name:                z.string().min(1, 'Name is required.').max(200),
+  sku:                 z.string().max(50).nullish(),
+  description:         z.string().max(1000).nullish(),
+  category:            z.string().min(1, 'Category is required.').max(100),
+  unit:                z.string().max(50).default('each'),
+  unit_price:          z.preprocess(val => parseFloat(val as string), z.number().positive('Unit price must be positive.')),
+  min_order_qty:       z.preprocess(val => parseInt(val as string, 10) || 1, z.number().int().min(1)),
+  lead_time_days:      z.preprocess(val => (val && val !== '' ? parseInt(val as string, 10) : null), z.number().int().nullable()),
+  marketplace_visible: z.preprocess(val => val === 'on', z.boolean()),
+})
+
+const placeOrderScalarSchema = z.object({
+  supplier_id:      z.string().uuid('Invalid supplier.'),
+  supplier_org_id:  z.string().uuid().nullish(),
+  project_id:       z.string().uuid().nullish(),
+  notes:            z.string().max(2000).optional(),
+  required_by:      z.string().optional(),
+  delivery_address: z.string().max(500).optional(),
+})
 
 export async function registerSupplierAction(formData: FormData): Promise<{ error?: string }> {
   const supabase = await createClient()
 
-  const email = (formData.get('email') as string)?.trim()
-  const password = formData.get('password') as string
-  const companyName = (formData.get('company_name') as string)?.trim()
-  const tradingName = (formData.get('trading_name') as string | null)?.trim() || undefined
-  const registrationNo = (formData.get('registration_no') as string | null)?.trim() || undefined
-  const vatNumber = (formData.get('vat_number') as string | null)?.trim() || undefined
-  const province = formData.get('province') as string
-  const address = (formData.get('address') as string | null)?.trim() || undefined
-  const categoriesRaw = formData.getAll('categories') as string[]
-  const popiaConsent = formData.get('popia_consent') === 'on'
-
-  if (!email || !password || !companyName) {
-    return { error: 'Email, password and company name are required.' }
+  const parsed = registerSupplierSchema.safeParse({
+    email:           formData.get('email'),
+    password:        formData.get('password'),
+    company_name:    formData.get('company_name'),
+    trading_name:    formData.get('trading_name') ?? undefined,
+    registration_no: formData.get('registration_no') ?? undefined,
+    vat_number:      formData.get('vat_number') ?? undefined,
+    province:        formData.get('province'),
+    address:         formData.get('address') ?? undefined,
+    categories:      formData.getAll('categories'),
+    popia_consent:   formData.get('popia_consent'),
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
   }
-  if (!popiaConsent) {
-    return { error: 'POPIA consent is required to register.' }
-  }
-  if (categoriesRaw.length === 0) {
-    return { error: 'Select at least one category.' }
-  }
+  const {
+    email, password, company_name: companyName,
+    trading_name: tradingName, registration_no: registrationNo,
+    vat_number: vatNumber, province, address, categories: categoriesRaw,
+  } = parsed.data
 
   // Sign up in Supabase Auth
   const { data: authData, error: signUpErr } = await supabase.auth.signUp({
@@ -55,7 +101,7 @@ export async function registerSupplierAction(formData: FormData): Promise<{ erro
     .from('organisations')
     .insert({
       name: companyName,
-      industry: 'construction',
+      type: 'supplier',
     })
     .select('id')
     .single()
@@ -107,29 +153,33 @@ export async function updateSupplierProfileAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const name = (formData.get('name') as string)?.trim()
-  const tradingName = (formData.get('trading_name') as string | null)?.trim() || null
-  const registrationNo = (formData.get('registration_no') as string | null)?.trim() || null
-  const vatNumber = (formData.get('vat_number') as string | null)?.trim() || null
-  const province = (formData.get('province') as string | null)?.trim() || null
-  const address = (formData.get('address') as string | null)?.trim() || null
-  const website = (formData.get('website') as string | null)?.trim() || null
-  const categoriesRaw = formData.getAll('categories') as string[]
-
-  if (!name) return { error: 'Company name is required.' }
+  const parsed = updateProfileSchema.safeParse({
+    name:            formData.get('name'),
+    trading_name:    formData.get('trading_name') || null,
+    registration_no: formData.get('registration_no') || null,
+    vat_number:      formData.get('vat_number') || null,
+    province:        formData.get('province') || null,
+    address:         formData.get('address') || null,
+    website:         formData.get('website') || null,
+    categories:      formData.getAll('categories'),
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { name, trading_name, registration_no, vat_number, province, address, website, categories } = parsed.data
 
   const { error } = await supabase
     .schema('suppliers')
     .from('suppliers')
     .update({
       name,
-      trading_name: tradingName,
-      registration_no: registrationNo,
-      vat_number: vatNumber,
-      province,
-      address,
-      website,
-      categories: categoriesRaw,
+      trading_name:    trading_name ?? null,
+      registration_no: registration_no ?? null,
+      vat_number:      vat_number ?? null,
+      province:        province ?? null,
+      address:         address ?? null,
+      website:         website || null,
+      categories,
     })
     .eq('id', supplierId)
 
@@ -163,19 +213,21 @@ export async function createCatalogueItemAction(formData: FormData): Promise<{ e
     .single()
   if (!supplier) return { error: 'No supplier profile found. Complete your profile first.' }
 
-  const name = (formData.get('name') as string)?.trim()
-  const sku = (formData.get('sku') as string | null)?.trim() || null
-  const description = (formData.get('description') as string | null)?.trim() || null
-  const category = formData.get('category') as string
-  const unit = (formData.get('unit') as string)?.trim() || 'each'
-  const unitPrice = parseFloat(formData.get('unit_price') as string)
-  const minOrderQty = parseInt(formData.get('min_order_qty') as string, 10) || 1
-  const leadTimeDays = formData.get('lead_time_days') ? parseInt(formData.get('lead_time_days') as string, 10) : null
-  const marketplaceVisible = formData.get('marketplace_visible') === 'on'
-
-  if (!name || !category || isNaN(unitPrice)) {
-    return { error: 'Name, category and unit price are required.' }
+  const itemParsed = catalogueItemSchema.safeParse({
+    name:                formData.get('name'),
+    sku:                 formData.get('sku') || null,
+    description:         formData.get('description') || null,
+    category:            formData.get('category'),
+    unit:                formData.get('unit'),
+    unit_price:          formData.get('unit_price'),
+    min_order_qty:       formData.get('min_order_qty'),
+    lead_time_days:      formData.get('lead_time_days'),
+    marketplace_visible: formData.get('marketplace_visible'),
+  })
+  if (!itemParsed.success) {
+    return { error: itemParsed.error.issues[0]?.message ?? 'Invalid input.' }
   }
+  const { name, sku, description, category, unit, unit_price: unitPrice, min_order_qty: minOrderQty, lead_time_days: leadTimeDays, marketplace_visible: marketplaceVisible } = itemParsed.data
 
   const { data, error } = await supabase
     .schema('marketplace')
@@ -184,8 +236,8 @@ export async function createCatalogueItemAction(formData: FormData): Promise<{ e
       supplier_id: supplier.id,
       supplier_org_id: mem.organisation_id,
       name,
-      sku,
-      description,
+      sku:         sku ?? null,
+      description: description ?? null,
       category,
       unit,
       unit_price: unitPrice,
@@ -208,19 +260,21 @@ export async function updateCatalogueItemAction(
 ): Promise<{ error?: string }> {
   const supabase = await createClient()
 
-  const name = (formData.get('name') as string)?.trim()
-  const sku = (formData.get('sku') as string | null)?.trim() || null
-  const description = (formData.get('description') as string | null)?.trim() || null
-  const category = formData.get('category') as string
-  const unit = (formData.get('unit') as string)?.trim() || 'each'
-  const unitPrice = parseFloat(formData.get('unit_price') as string)
-  const minOrderQty = parseInt(formData.get('min_order_qty') as string, 10) || 1
-  const leadTimeDays = formData.get('lead_time_days') ? parseInt(formData.get('lead_time_days') as string, 10) : null
-  const marketplaceVisible = formData.get('marketplace_visible') === 'on'
-
-  if (!name || !category || isNaN(unitPrice)) {
-    return { error: 'Name, category and unit price are required.' }
+  const itemParsed = catalogueItemSchema.safeParse({
+    name:                formData.get('name'),
+    sku:                 formData.get('sku') || null,
+    description:         formData.get('description') || null,
+    category:            formData.get('category'),
+    unit:                formData.get('unit'),
+    unit_price:          formData.get('unit_price'),
+    min_order_qty:       formData.get('min_order_qty'),
+    lead_time_days:      formData.get('lead_time_days'),
+    marketplace_visible: formData.get('marketplace_visible'),
+  })
+  if (!itemParsed.success) {
+    return { error: itemParsed.error.issues[0]?.message ?? 'Invalid input.' }
   }
+  const { name, sku, description, category, unit, unit_price: unitPrice, min_order_qty: minOrderQty, lead_time_days: leadTimeDays, marketplace_visible: marketplaceVisible } = itemParsed.data
 
   const { error } = await supabase
     .schema('marketplace')
@@ -332,19 +386,25 @@ export async function placeOrderAction(formData: FormData): Promise<{ error?: st
     .single()
   if (!mem) return { error: 'No organisation found' }
 
-  const supplierId = formData.get('supplier_id') as string
-  const supplierOrgId = (formData.get('supplier_org_id') as string | null) || null
-  const projectId = (formData.get('project_id') as string | null) || null
-  const notes = (formData.get('notes') as string | null)?.trim() || null
-  const requiredBy = (formData.get('required_by') as string | null) || null
-  const deliveryAddress = (formData.get('delivery_address') as string | null)?.trim() || null
+  const orderParsed = placeOrderScalarSchema.safeParse({
+    supplier_id:      formData.get('supplier_id'),
+    supplier_org_id:  formData.get('supplier_org_id') || null,
+    project_id:       formData.get('project_id') || null,
+    notes:            formData.get('notes') ?? undefined,
+    required_by:      formData.get('required_by') ?? undefined,
+    delivery_address: formData.get('delivery_address') ?? undefined,
+  })
+  if (!orderParsed.success) {
+    return { error: orderParsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { supplier_id: supplierId, supplier_org_id: supplierOrgId, project_id: projectId, notes, required_by: requiredBy, delivery_address: deliveryAddress } = orderParsed.data
 
   const itemIdsRaw = formData.getAll('item_id') as string[]
   const itemQtysRaw = formData.getAll('item_qty') as string[]
   const itemPricesRaw = formData.getAll('item_price') as string[]
 
-  if (!supplierId || itemIdsRaw.length === 0) {
-    return { error: 'Supplier and at least one item are required.' }
+  if (itemIdsRaw.length === 0) {
+    return { error: 'At least one item is required.' }
   }
 
   // Create order
@@ -353,9 +413,9 @@ export async function placeOrderAction(formData: FormData): Promise<{ error?: st
     .from('orders')
     .insert({
       contractor_org_id: mem.organisation_id,
-      supplier_org_id: supplierOrgId,
+      supplier_org_id: supplierOrgId ?? null,
       supplier_id: supplierId,
-      project_id: projectId,
+      project_id: projectId ?? null,
       created_by: user.id,
       notes: [notes, deliveryAddress ? `Delivery: ${deliveryAddress}` : null, requiredBy ? `Required by: ${requiredBy}` : null]
         .filter(Boolean).join('\n') || null,

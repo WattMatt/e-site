@@ -35,38 +35,36 @@ export function OrgSettingsForm({ orgId, name, registrationNumber, vatNumber, ph
     setSaving(false)
   }
 
-  const inp = 'w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
-
   return (
-    <form onSubmit={save} className="space-y-4">
+    <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div>
-        <label className="block text-xs text-slate-400 mb-1">Organisation name *</label>
-        <input className={inp} value={orgName} onChange={e => setOrgName(e.target.value)} />
+        <label className="ob-label">Organisation name *</label>
+        <input className="ob-input" value={orgName} onChange={e => setOrgName(e.target.value)} />
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">Registration No.</label>
-          <input className={inp} value={regNo} onChange={e => setRegNo(e.target.value)} placeholder="2024/000000/07" />
+          <label className="ob-label">Registration No.</label>
+          <input className="ob-input" value={regNo} onChange={e => setRegNo(e.target.value)} placeholder="2024/000000/07" />
         </div>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">VAT No.</label>
-          <input className={inp} value={vat} onChange={e => setVat(e.target.value)} placeholder="4000000000" />
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">Phone</label>
-          <input className={inp} value={ph} onChange={e => setPh(e.target.value)} placeholder="+27 11 000 0000" type="tel" />
-        </div>
-        <div>
-          <label className="block text-xs text-slate-400 mb-1">Website</label>
-          <input className={inp} value={web} onChange={e => setWeb(e.target.value)} placeholder="https://..." type="url" />
+          <label className="ob-label">VAT No.</label>
+          <input className="ob-input" value={vat} onChange={e => setVat(e.target.value)} placeholder="4000000000" />
         </div>
       </div>
-      {error && <p className="text-red-400 text-xs">{error}</p>}
-      <div className="flex items-center gap-3">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div>
+          <label className="ob-label">Phone</label>
+          <input className="ob-input" value={ph} onChange={e => setPh(e.target.value)} placeholder="+27 11 000 0000" type="tel" />
+        </div>
+        <div>
+          <label className="ob-label">Website</label>
+          <input className="ob-input" value={web} onChange={e => setWeb(e.target.value)} placeholder="https://..." type="url" />
+        </div>
+      </div>
+      {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <Button type="submit" size="sm" isLoading={saving}>Save</Button>
-        {saved && <span className="text-emerald-400 text-xs">Saved!</span>}
+        {saved && <span style={{ color: '#34d399', fontSize: 12 }}>Saved!</span>}
       </div>
     </form>
   )

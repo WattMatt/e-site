@@ -1,21 +1,23 @@
 import type { TypedSupabaseClient } from '@esite/db'
 import type { CreateSnagInput, UpdateSnagInput } from '../schemas/snag.schema'
+import { fetchProfileMap, fetchProjectMap } from './_utils'
 
 export const snagService = {
   async list(client: TypedSupabaseClient, projectId: string) {
     const { data, error } = await client
       .schema('field')
       .from('snags')
-      .select(`
-        *,
-        snag_photos(id, file_path, caption, photo_type, sort_order),
-        raised_by_profile:profiles!raised_by(id, full_name, avatar_url),
-        assigned_to_profile:profiles!assigned_to(id, full_name, avatar_url)
-      `)
+      .select('*, snag_photos(id, file_path, caption, photo_type, sort_order)')
       .eq('project_id', projectId)
       .order('created_at', { ascending: false })
     if (error) throw error
-    return data
+    const snags = data ?? []
+    const profiles = await fetchProfileMap(client, snags.flatMap(s => [s.raised_by, s.assigned_to]))
+    return snags.map(s => ({
+      ...s,
+      raised_by_profile: s.raised_by ? (profiles[s.raised_by] ?? null) : null,
+      assigned_to_profile: s.assigned_to ? (profiles[s.assigned_to] ?? null) : null,
+    }))
   },
 
   async listByOrg(client: TypedSupabaseClient, orgId: string, filters?: {
@@ -26,13 +28,7 @@ export const snagService = {
     let query = client
       .schema('field')
       .from('snags')
-      .select(`
-        *,
-        snag_photos(id, file_path, sort_order),
-        raised_by_profile:profiles!raised_by(id, full_name, avatar_url),
-        assigned_to_profile:profiles!assigned_to(id, full_name, avatar_url),
-        project:projects!project_id(id, name)
-      `)
+      .select('*, snag_photos(id, file_path, sort_order)')
       .eq('organisation_id', orgId)
       .order('created_at', { ascending: false })
 
@@ -42,25 +38,39 @@ export const snagService = {
 
     const { data, error } = await query
     if (error) throw error
-    return data
+    const snags = data ?? []
+    const [profiles, projects] = await Promise.all([
+      fetchProfileMap(client, snags.flatMap(s => [s.raised_by, s.assigned_to])),
+      fetchProjectMap(client, snags.map(s => s.project_id)),
+    ])
+    return snags.map(s => ({
+      ...s,
+      raised_by_profile: s.raised_by ? (profiles[s.raised_by] ?? null) : null,
+      assigned_to_profile: s.assigned_to ? (profiles[s.assigned_to] ?? null) : null,
+      project: s.project_id ? (projects[s.project_id] ?? null) : null,
+    }))
   },
 
   async getById(client: TypedSupabaseClient, id: string) {
     const { data, error } = await client
       .schema('field')
       .from('snags')
-      .select(`
-        *,
-        snag_photos(*),
-        raised_by_profile:profiles!raised_by(id, full_name, email, avatar_url),
-        assigned_to_profile:profiles!assigned_to(id, full_name, email, avatar_url),
-        signed_off_by_profile:profiles!signed_off_by(id, full_name),
-        project:projects!project_id(id, name, organisation_id)
-      `)
+      .select('*, snag_photos(*)')
       .eq('id', id)
       .single()
     if (error) throw error
-    return data
+    const s = data
+    const [profiles, projects] = await Promise.all([
+      fetchProfileMap(client, [s.raised_by, s.assigned_to, s.signed_off_by]),
+      fetchProjectMap(client, [s.project_id]),
+    ])
+    return {
+      ...s,
+      raised_by_profile: s.raised_by ? (profiles[s.raised_by] ?? null) : null,
+      assigned_to_profile: s.assigned_to ? (profiles[s.assigned_to] ?? null) : null,
+      signed_off_by_profile: s.signed_off_by ? (profiles[s.signed_off_by] ?? null) : null,
+      project: s.project_id ? (projects[s.project_id] ?? null) : null,
+    }
   },
 
   async create(client: TypedSupabaseClient, orgId: string, userId: string, input: CreateSnagInput) {

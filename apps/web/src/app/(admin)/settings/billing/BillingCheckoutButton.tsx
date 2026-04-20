@@ -51,7 +51,11 @@ export function BillingCheckoutButton({ tier, period, label, variant = 'primary'
       >
         {label}
       </Button>
-      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+      {error && (
+        <p style={{ color: '#fca5a5', fontSize: 11, marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+          {error}
+        </p>
+      )}
     </div>
   )
 }

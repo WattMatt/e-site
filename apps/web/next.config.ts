@@ -110,6 +110,29 @@ const config: NextConfig = {
             key: 'Permissions-Policy',
             value: 'camera=self, microphone=(), geolocation=self',
           },
+          // T-056: HSTS — browsers enforce HTTPS for 1 year (add to HSTS preload list post-launch)
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=31536000; includeSubDomains',
+          },
+          // T-056: CSP — unsafe-inline required by Next.js inline hydration scripts.
+          // Connect-src covers Supabase realtime, PostHog ingest, Sentry DSN, Paystack.
+          {
+            key: 'Content-Security-Policy',
+            value: [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://app.posthog.com https://js.sentry-cdn.com",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https://*.supabase.co https://avatars.githubusercontent.com",
+              "font-src 'self' data:",
+              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.powersync.co wss://*.powersync.co https://app.posthog.com https://ingest.sentry.io https://api.paystack.co",
+              "frame-src 'none'",
+              "object-src 'none'",
+              "base-uri 'self'",
+              "form-action 'self'",
+              "upgrade-insecure-requests",
+            ].join('; '),
+          },
         ],
       },
       // Hashed assets are immutable — aggressive cache

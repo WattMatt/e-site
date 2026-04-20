@@ -18,6 +18,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Button } from '@/components/ui/Button'
+import { FormField, TextInput, Select } from '@/components/ui/FormField'
 import { inviteTeamMemberAction } from '@/actions/onboarding.actions'
 
 const schema = z.object({
@@ -70,40 +71,62 @@ export function InviteForm({ orgId }: Props) {
   }
 
   return (
-    <div className="space-y-4">
-      <form onSubmit={handleSubmit(onSubmit)} className="flex gap-3">
-        <div className="flex-1">
-          <input
-            {...register('email')}
-            type="email"
-            placeholder="colleague@company.co.za"
-            className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          {errors.email && <p className="text-red-400 text-xs mt-1">{errors.email.message}</p>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+        <div style={{ flex: 1 }}>
+          <FormField label="Email" error={errors.email?.message} htmlFor="invite-email">
+            <TextInput
+              id="invite-email"
+              {...register('email')}
+              type="email"
+              placeholder="colleague@company.co.za"
+              invalid={Boolean(errors.email)}
+            />
+          </FormField>
         </div>
-        <div>
-          <select
-            {...register('role')}
-            className="bg-slate-700 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {ROLES.map((r) => (
-              <option key={r.value} value={r.value}>{r.label}</option>
-            ))}
-          </select>
+        <div style={{ width: 180 }}>
+          <FormField label="Role" htmlFor="invite-role">
+            <Select id="invite-role" {...register('role')}>
+              {ROLES.map((r) => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
+            </Select>
+          </FormField>
         </div>
         <Button type="submit" isLoading={isPending} size="sm">Send Invite</Button>
       </form>
 
       {error && (
-        <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-2 text-red-300 text-sm">{error}</div>
+        <div
+          role="alert"
+          style={{
+            background: 'var(--c-red-dim)',
+            color: 'var(--c-red)',
+            border: '1px solid rgba(232,85,85,0.3)',
+            borderRadius: 6,
+            padding: '10px 14px',
+            fontSize: 13,
+          }}
+        >
+          {error}
+        </div>
       )}
 
       {success && (
-        <div className="bg-emerald-900/30 border border-emerald-700 rounded-lg p-4">
-          <p className="text-emerald-400 text-sm font-medium">
+        <div
+          role="status"
+          style={{
+            background: 'var(--c-green-dim)',
+            color: 'var(--c-green)',
+            border: '1px solid rgba(61,184,130,0.3)',
+            borderRadius: 6,
+            padding: '14px 16px',
+          }}
+        >
+          <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>
             Invite email sent to {success}
           </p>
-          <p className="text-xs text-slate-500 mt-1">
+          <p style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 4, marginBottom: 0 }}>
             They&apos;ll receive an email with a link to set their password and join your organisation.
           </p>
         </div>

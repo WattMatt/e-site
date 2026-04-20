@@ -1,6 +1,9 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { supplierService } from '@esite/shared'
 import Link from 'next/link'
+
+export const metadata: Metadata = { title: 'Marketplace' }
 
 const CATEGORIES = ['electrical', 'mechanical', 'civil', 'safety', 'general']
 

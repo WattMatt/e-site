@@ -4,12 +4,12 @@ import { clsx } from 'clsx'
 type Variant = 'default' | 'success' | 'warning' | 'danger' | 'info' | 'ghost'
 
 const variants: Record<Variant, string> = {
-  default: 'bg-slate-700 text-slate-300',
-  success: 'bg-emerald-900/50 text-emerald-400 border border-emerald-800',
-  warning: 'bg-amber-900/50 text-amber-400 border border-amber-800',
-  danger: 'bg-red-900/50 text-red-400 border border-red-800',
-  info: 'bg-blue-900/50 text-blue-400 border border-blue-800',
-  ghost: 'bg-transparent text-slate-400 border border-slate-700',
+  default: 'badge badge-muted',
+  success: 'badge badge-green',
+  warning: 'badge badge-amber',
+  danger: 'badge badge-red',
+  info: 'badge badge-blue',
+  ghost: 'badge badge-muted',
 }
 
 interface BadgeProps {
@@ -19,14 +19,9 @@ interface BadgeProps {
 }
 
 export function Badge({ children, variant = 'default', className }: BadgeProps) {
-  return (
-    <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-xs font-medium', variants[variant], className)}>
-      {children}
-    </span>
-  )
+  return <span className={clsx(variants[variant], className)}>{children}</span>
 }
 
-// Domain-specific badge factories
 export function snagStatusBadge(status: string) {
   const map: Record<string, Variant> = {
     open: 'danger',

@@ -3,23 +3,47 @@
 import { redirect } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { rateLimit } from '@/lib/rate-limit'
+import { z } from 'zod'
+
+const createOrgSchema = z.object({
+  name:               z.string().min(1, 'Organisation name is required.').max(200),
+  orgType:            z.string().optional(),
+  registrationNumber: z.string().max(50).optional(),
+  vatNumber:          z.string().max(20).optional(),
+})
+
+const createProjectSchema = z.object({
+  name:       z.string().min(1, 'Project name is required.').max(200),
+  address:    z.string().max(500).optional(),
+  city:       z.string().max(100).optional(),
+  clientName: z.string().max(200).optional(),
+})
+
+const inviteSchema = z.object({
+  email: z.string().email('Valid email address required.'),
+  role:  z.string().optional(),
+})
 
 export async function createOrganisationAction(formData: FormData) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const name = formData.get('name') as string
-  const orgType = formData.get('orgType') as string
-  const registrationNumber = formData.get('registrationNumber') as string
-  const vatNumber = formData.get('vatNumber') as string
-
-  if (!name?.trim()) return { error: 'Organisation name is required' }
+  const parsed = createOrgSchema.safeParse({
+    name:               formData.get('name'),
+    orgType:            formData.get('orgType') ?? undefined,
+    registrationNumber: formData.get('registrationNumber') ?? undefined,
+    vatNumber:          formData.get('vatNumber') ?? undefined,
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { name, orgType, registrationNumber, vatNumber } = parsed.data
 
   // Use service client to bypass RLS for initial org creation (new user has no org membership yet)
   const service = createServiceClient()
 
-  // Create organisation
   const { data: org, error: orgErr } = await service
     .from('organisations')
     .insert({
@@ -33,7 +57,6 @@ export async function createOrganisationAction(formData: FormData) {
 
   if (orgErr) return { error: orgErr.message }
 
-  // Link user as admin
   const { error: memErr } = await service
     .from('user_organisations')
     .insert({
@@ -45,7 +68,6 @@ export async function createOrganisationAction(formData: FormData) {
 
   if (memErr) return { error: memErr.message }
 
-  // Update profile with org
   await service
     .from('profiles')
     .update({ popia_consent_at: new Date().toISOString() })
@@ -64,12 +86,16 @@ export async function createFirstProjectAction(orgId: string, formData: FormData
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const name = formData.get('name') as string
-  const address = formData.get('address') as string
-  const city = formData.get('city') as string
-  const clientName = formData.get('clientName') as string
-
-  if (!name?.trim()) return { error: 'Project name is required' }
+  const parsed = createProjectSchema.safeParse({
+    name:       formData.get('name'),
+    address:    formData.get('address') ?? undefined,
+    city:       formData.get('city') ?? undefined,
+    clientName: formData.get('clientName') ?? undefined,
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { name, address, city, clientName } = parsed.data
 
   const { data: project, error } = await (supabase as any)
     .schema('projects')
@@ -88,7 +114,6 @@ export async function createFirstProjectAction(orgId: string, formData: FormData
 
   if (error) return { error: error.message }
 
-  // Auto-add as project manager
   await (supabase as any)
     .schema('projects')
     .from('project_members')
@@ -108,12 +133,19 @@ export async function inviteTeamMemberAction(orgId: string, formData: FormData) 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const email = formData.get('email') as string
-  const role = formData.get('role') as string
+  if (!rateLimit(`invite:${user.id}`, 10, 60 * 60_000)) {
+    return { error: 'Too many invites. Please wait before sending more.' }
+  }
 
-  if (!email?.trim()) return { error: 'Email is required' }
+  const parsed = inviteSchema.safeParse({
+    email: formData.get('email'),
+    role:  formData.get('role') ?? undefined,
+  })
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { email, role } = parsed.data
 
-  // Use Supabase admin invite
   const { error } = await supabase.auth.admin.inviteUserByEmail(email.trim(), {
     data: {
       invited_to_org: orgId,

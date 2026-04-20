@@ -81,15 +81,16 @@ export default function InviteJoinScreen() {
       if (inviteData?.orgId) {
         const { data: { user } } = await supabase.auth.getUser()
         if (user) {
-          await supabase
-            .from('user_organisations')
-            .upsert({
-              user_id: user.id,
-              organisation_id: inviteData.orgId,
-              role: inviteData.role,
-              is_active: true,
-            }, { onConflict: 'user_id,organisation_id' } as any)
-            .catch(() => {})
+          try {
+            await supabase
+              .from('user_organisations')
+              .upsert({
+                user_id: user.id,
+                organisation_id: inviteData.orgId,
+                role: inviteData.role,
+                is_active: true,
+              }, { onConflict: 'user_id,organisation_id' } as any)
+          } catch {}
         }
       }
 

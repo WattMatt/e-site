@@ -1,4 +1,5 @@
 import type { TypedSupabaseClient } from '@esite/db'
+import { fetchProfileMap } from './_utils'
 
 export const complianceService = {
   async listSites(client: TypedSupabaseClient, orgId: string) {
@@ -24,15 +25,27 @@ export const complianceService = {
         *,
         subsections(
           id, name, description, sans_ref, coc_status, sort_order,
-          coc_uploads(id, status, file_path, version, created_at,
-            uploaded_by_profile:profiles!uploaded_by(id, full_name)
-          )
+          coc_uploads(id, status, file_path, version, created_at, uploaded_by)
         )
       `)
       .eq('id', siteId)
       .single()
     if (error) throw error
-    return data
+    const site = data as any
+    const uploaderIds = (site.subsections ?? []).flatMap((sub: any) =>
+      (sub.coc_uploads ?? []).map((u: any) => u.uploaded_by)
+    )
+    const profiles = await fetchProfileMap(client, uploaderIds)
+    return {
+      ...site,
+      subsections: (site.subsections ?? []).map((sub: any) => ({
+        ...sub,
+        coc_uploads: (sub.coc_uploads ?? []).map((u: any) => ({
+          ...u,
+          uploaded_by_profile: u.uploaded_by ? (profiles[u.uploaded_by] ?? null) : null,
+        })),
+      })),
+    }
   },
 
   async createSite(client: TypedSupabaseClient, orgId: string, userId: string, input: {

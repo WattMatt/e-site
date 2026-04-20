@@ -1,19 +1,15 @@
 import type { TypedSupabaseClient } from '@esite/db'
+import { fetchProfileMap, fetchSupplierMap } from './_utils'
 
 export const procurementService = {
   async listByOrg(client: TypedSupabaseClient, orgId: string, filters?: {
     status?: string
     projectId?: string
   }) {
-    let query = client
+    let query = (client as any)
       .schema('projects')
       .from('procurement_items')
-      .select(`
-        *,
-        project:projects!project_id(id, name),
-        created_by_profile:profiles!created_by(id, full_name),
-        supplier:suppliers.suppliers!supplier_id(id, name)
-      `)
+      .select('*, project:projects!project_id(id, name)')
       .eq('organisation_id', orgId)
       .order('created_at', { ascending: false })
 
@@ -22,22 +18,36 @@ export const procurementService = {
 
     const { data, error } = await query
     if (error) throw error
-    return data ?? []
+    const items = data ?? []
+    const [profiles, suppliers] = await Promise.all([
+      fetchProfileMap(client, items.map((i: any) => i.created_by)),
+      fetchSupplierMap(client, items.map((i: any) => i.supplier_id)),
+    ])
+    return items.map((i: any) => ({
+      ...i,
+      created_by_profile: i.created_by ? (profiles[i.created_by] ?? null) : null,
+      supplier: i.supplier_id ? (suppliers[i.supplier_id] ?? null) : null,
+    }))
   },
 
   async listByProject(client: TypedSupabaseClient, projectId: string) {
-    const { data, error } = await client
+    const { data, error } = await (client as any)
       .schema('projects')
       .from('procurement_items')
-      .select(`
-        *,
-        created_by_profile:profiles!created_by(id, full_name),
-        supplier:suppliers.suppliers!supplier_id(id, name)
-      `)
+      .select('*')
       .eq('project_id', projectId)
       .order('required_by', { ascending: true, nullsFirst: false })
     if (error) throw error
-    return data ?? []
+    const items = data ?? []
+    const [profiles, suppliers] = await Promise.all([
+      fetchProfileMap(client, items.map((i: any) => i.created_by)),
+      fetchSupplierMap(client, items.map((i: any) => i.supplier_id)),
+    ])
+    return items.map((i: any) => ({
+      ...i,
+      created_by_profile: i.created_by ? (profiles[i.created_by] ?? null) : null,
+      supplier: i.supplier_id ? (suppliers[i.supplier_id] ?? null) : null,
+    }))
   },
 
   async create(client: TypedSupabaseClient, orgId: string, userId: string, input: {

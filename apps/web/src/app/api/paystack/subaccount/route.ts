@@ -1,17 +1,26 @@
+import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getPaystackService } from '@esite/db'
+
+const bodySchema = z.object({
+  supplierId: z.string().uuid(),
+  bankCode: z.string().min(1).max(10),
+  accountNumber: z.string().regex(/^\d{10}$/, 'Account number must be 10 digits'),
+  businessName: z.string().min(1).max(100),
+  primaryContactEmail: z.string().email().optional(),
+})
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
-  const { supplierId, bankCode, accountNumber, businessName, primaryContactEmail } = await req.json()
-
-  if (!supplierId || !bankCode || !accountNumber || !businessName) {
-    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+  const parsed = bodySchema.safeParse(await req.json())
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.errors[0]?.message ?? 'Invalid request body' }, { status: 400 })
   }
+  const { supplierId, bankCode, accountNumber, businessName, primaryContactEmail } = parsed.data
 
   // Verify the supplier belongs to the current user's org
   const { data: memRaw } = await supabase

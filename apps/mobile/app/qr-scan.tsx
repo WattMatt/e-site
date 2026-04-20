@@ -79,7 +79,7 @@ export default function QrScanScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <View testID="qr-scan-screen" style={styles.container}>
       <CameraView
         style={StyleSheet.absoluteFillObject}
         facing="back"

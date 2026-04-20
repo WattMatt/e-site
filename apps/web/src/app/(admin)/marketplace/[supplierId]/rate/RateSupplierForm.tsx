@@ -18,7 +18,7 @@ const CRITERIA = [
 function StarPicker({ name, value, onChange }: { name: string; value: number; onChange: (v: number) => void }) {
   const [hovered, setHovered] = useState(0)
   return (
-    <div className="flex items-center gap-1">
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
       {[1, 2, 3, 4, 5].map(star => (
         <button
           key={star}
@@ -26,14 +26,25 @@ function StarPicker({ name, value, onChange }: { name: string; value: number; on
           onClick={() => onChange(star)}
           onMouseEnter={() => setHovered(star)}
           onMouseLeave={() => setHovered(0)}
-          className="text-2xl leading-none transition-transform hover:scale-110"
+          style={{
+            fontSize: 22,
+            lineHeight: 1,
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 2,
+            color: star <= (hovered || value) ? 'var(--c-amber)' : 'var(--c-text-dim)',
+            transition: 'transform 0.1s',
+          }}
         >
-          {star <= (hovered || value) ? '⭐' : '☆'}
+          {star <= (hovered || value) ? '★' : '☆'}
         </button>
       ))}
       <input type="hidden" name={name} value={value} />
       {value > 0 && (
-        <span className="text-sm text-slate-400 ml-1">{['', 'Poor', 'Fair', 'Good', 'Great', 'Excellent'][value]}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', marginLeft: 6 }}>
+          {['', 'Poor', 'Fair', 'Good', 'Great', 'Excellent'][value]}
+        </span>
       )}
     </div>
   )
@@ -58,34 +69,50 @@ export function RateSupplierForm({ supplierId, orderId }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <input type="hidden" name="supplierId" value={supplierId} />
       <input type="hidden" name="orderId" value={orderId} />
 
       {CRITERIA.map(({ key, label, description }) => (
-        <div key={key} className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <p className="text-sm font-semibold text-white mb-0.5">{label}</p>
-          <p className="text-xs text-slate-400 mb-3">{description}</p>
-          <StarPicker
-            name={key}
-            value={scores[key]}
-            onChange={v => setScores(prev => ({ ...prev, [key]: v }))}
-          />
+        <div key={key} className="data-panel">
+          <div style={{ padding: '14px 18px' }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{label}</p>
+            <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginBottom: 10 }}>{description}</p>
+            <StarPicker
+              name={key}
+              value={scores[key]}
+              onChange={v => setScores(prev => ({ ...prev, [key]: v }))}
+            />
+          </div>
         </div>
       ))}
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-        <label className="block text-sm font-semibold text-white mb-2">Comment (optional)</label>
-        <textarea
-          name="comment"
-          rows={3}
-          className="w-full bg-slate-800 text-white rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none placeholder:text-slate-500"
-          placeholder="Share your experience with this supplier…"
-        />
+      <div className="data-panel">
+        <div style={{ padding: '14px 18px' }}>
+          <label className="ob-label" htmlFor="comment">Comment (optional)</label>
+          <textarea
+            id="comment"
+            name="comment"
+            rows={3}
+            className="ob-input"
+            style={{ resize: 'vertical', minHeight: 72 }}
+            placeholder="Share your experience with this supplier…"
+          />
+        </div>
       </div>
 
       {error && (
-        <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">
+        <div
+          role="alert"
+          style={{
+            background: 'var(--c-red-dim)',
+            border: '1px solid rgba(127,29,29,0.6)',
+            color: '#fca5a5',
+            borderRadius: 6,
+            padding: '10px 14px',
+            fontSize: 12,
+          }}
+        >
           {error}
         </div>
       )}
@@ -93,7 +120,14 @@ export function RateSupplierForm({ supplierId, orderId }: Props) {
       <button
         type="submit"
         disabled={isPending || !allFilled}
-        className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-colors"
+        className="btn-primary-amber"
+        style={{
+          padding: '12px 18px',
+          fontSize: 13,
+          fontWeight: 700,
+          opacity: (isPending || !allFilled) ? 0.5 : 1,
+          cursor: (isPending || !allFilled) ? 'not-allowed' : 'pointer',
+        }}
       >
         {isPending ? 'Submitting…' : 'Submit Rating'}
       </button>

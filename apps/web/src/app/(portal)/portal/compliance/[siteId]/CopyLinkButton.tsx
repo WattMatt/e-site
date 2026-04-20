@@ -13,10 +13,20 @@ export function CopyLinkButton({ url }: { url: string }) {
 
   return (
     <button
+      type="button"
       onClick={copy}
-      className="text-xs px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors flex-shrink-0"
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        color: copied ? '#4ade80' : 'var(--c-amber)',
+        background: 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        letterSpacing: '0.04em',
+        flexShrink: 0,
+      }}
     >
-      {copied ? 'Copied!' : 'Copy'}
+      {copied ? '✓ Copied' : 'Copy link'}
     </button>
   )
 }

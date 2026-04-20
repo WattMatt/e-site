@@ -4,17 +4,16 @@ import { complianceService, formatDate } from '@esite/shared'
 
 interface Props { params: Promise<{ siteId: string }> }
 
-const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  approved: { label: 'Approved', color: '#10B981', bg: '#064E3B' },
-  submitted: { label: 'Submitted', color: '#3B82F6', bg: '#1E3A5F' },
-  under_review: { label: 'Under Review', color: '#F59E0B', bg: '#451A03' },
-  rejected: { label: 'Rejected', color: '#EF4444', bg: '#450A0A' },
-  missing: { label: 'Missing', color: '#6B7280', bg: '#1E293B' },
+const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
+  approved: { label: 'Approved', cls: 'badge badge-green' },
+  submitted: { label: 'Submitted', cls: 'badge badge-blue' },
+  under_review: { label: 'Under Review', cls: 'badge badge-amber' },
+  rejected: { label: 'Rejected', cls: 'badge badge-red' },
+  missing: { label: 'Missing', cls: 'badge badge-muted' },
 }
 
 export default async function ShareCocPage({ params }: Props) {
   const { siteId } = await params
-  // Use service client so this works without a session
   const supabase = await createServiceClient()
 
   const [site, score] = await Promise.all([
@@ -28,71 +27,138 @@ export default async function ShareCocPage({ params }: Props) {
   const sortedSubs = subs.sort((a: any, b: any) => a.sort_order - b.sort_order)
   const generatedAt = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' })
 
+  const scoreColor = !score
+    ? 'var(--c-text)'
+    : score.score === 100
+      ? '#4ade80'
+      : score.score >= 50
+        ? 'var(--c-amber)'
+        : 'var(--c-red)'
+
   return (
-    <div className="min-h-screen bg-slate-950 flex items-start justify-center py-12 px-4">
-      <div className="w-full max-w-xl">
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'var(--c-base)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'flex-start',
+        padding: '48px 16px',
+      }}
+    >
+      <div style={{ width: '100%', maxWidth: 640 }}>
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 bg-slate-800 rounded-full px-4 py-2 mb-6">
-            <span className="text-white font-bold text-sm">E-Site</span>
-            <span className="text-slate-500 text-xs">COC Status Report</span>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              borderRadius: 999,
+              padding: '8px 16px',
+              marginBottom: 24,
+            }}
+          >
+            <span style={{ color: 'var(--c-amber)', fontWeight: 700, fontSize: 13, letterSpacing: '0.04em' }}>
+              E-Site
+            </span>
+            <span style={{ color: 'var(--c-text-dim)', fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>
+              COC Status Report
+            </span>
           </div>
-          <h1 className="text-2xl font-bold text-white mb-2">{site.name}</h1>
-          <p className="text-slate-400 text-sm">
+          <h1 className="page-title" style={{ marginBottom: 4 }}>{site.name}</h1>
+          <p className="page-subtitle">
             {(site as any).address}{(site as any).city ? `, ${(site as any).city}` : ''}
           </p>
-          <p className="text-slate-600 text-xs mt-2">Generated {generatedAt}</p>
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 8, letterSpacing: '0.06em' }}>
+            Generated {generatedAt}
+          </p>
         </div>
 
         {/* Score */}
         {score && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6 text-center">
-            <div
-              className="text-5xl font-black mb-2"
-              style={{ color: score.score === 100 ? '#10B981' : score.score >= 50 ? '#F59E0B' : '#EF4444' }}
-            >
+          <div
+            className="data-panel animate-fadeup"
+            style={{ padding: 24, marginBottom: 16, textAlign: 'center' }}
+          >
+            <div style={{ fontSize: 48, fontWeight: 900, color: scoreColor, lineHeight: 1, marginBottom: 6 }}>
               {score.score}%
             </div>
-            <p className="text-slate-400 text-sm font-medium">Compliance Score</p>
-            <div className="flex justify-center gap-6 mt-4 text-sm">
-              <span className="text-emerald-400">{score.approved} approved</span>
-              <span className="text-amber-400">{score.pending} pending</span>
-              <span className="text-red-400">{score.missing} missing</span>
+            <p style={{ fontSize: 13, color: 'var(--c-text-mid)', fontWeight: 500, marginBottom: 14 }}>
+              Compliance Score
+            </p>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'center',
+                gap: 20,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11,
+                letterSpacing: '0.04em',
+              }}
+            >
+              <span style={{ color: '#4ade80' }}>{score.approved} approved</span>
+              <span style={{ color: 'var(--c-amber)' }}>{score.pending} pending</span>
+              <span style={{ color: 'var(--c-red)' }}>{score.missing} missing</span>
             </div>
           </div>
         )}
 
         {/* Subsections */}
-        <div className="space-y-2 mb-8">
-          {sortedSubs.map((sub: any) => {
+        <div className="data-panel" style={{ marginBottom: 32 }}>
+          {sortedSubs.map((sub: any, idx: number) => {
             const cfg = STATUS_CONFIG[sub.coc_status] ?? STATUS_CONFIG.missing
             const uploads = sub.coc_uploads ?? []
             const latest = uploads[uploads.length - 1]
             return (
               <div
                 key={sub.id}
-                className="rounded-xl border px-4 py-3 flex items-center justify-between gap-3"
-                style={{ backgroundColor: cfg.bg + '55', borderColor: cfg.color + '33' }}
+                style={{
+                  padding: '14px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  borderTop: idx > 0 ? '1px solid var(--c-border)' : 'none',
+                }}
               >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{sub.name}</p>
-                  {sub.sans_ref && <p className="text-xs text-slate-500">{sub.sans_ref}</p>}
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sub.name}
+                  </p>
+                  {sub.sans_ref && (
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2, letterSpacing: '0.04em' }}>
+                      {sub.sans_ref}
+                    </p>
+                  )}
                   {latest && (
-                    <p className="text-xs text-slate-500 mt-0.5">Last updated {formatDate(latest.created_at)}</p>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                      Last updated {formatDate(latest.created_at)}
+                    </p>
                   )}
                 </div>
-                <span className="text-xs font-semibold flex-shrink-0 px-2 py-1 rounded-lg" style={{ color: cfg.color, backgroundColor: cfg.bg }}>
-                  {cfg.label}
-                </span>
+                <span className={cfg.cls}>{cfg.label}</span>
               </div>
             )
           })}
         </div>
 
         {/* Footer */}
-        <div className="text-center text-xs text-slate-600 border-t border-slate-800 pt-6">
+        <div
+          style={{
+            textAlign: 'center',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            color: 'var(--c-text-dim)',
+            borderTop: '1px solid var(--c-border)',
+            paddingTop: 20,
+            letterSpacing: '0.04em',
+          }}
+        >
           <p>This report was generated by E-Site — Construction Management Platform</p>
-          <p className="mt-1">For verification, contact the issuing contractor directly.</p>
+          <p style={{ marginTop: 4 }}>For verification, contact the issuing contractor directly.</p>
         </div>
       </div>
     </div>

@@ -52,11 +52,12 @@ export default function ProjectDetailScreen() {
 
   return (
     <ScrollView
+      testID="project-detail-screen"
       style={styles.container}
       refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetchStats} tintColor={colors.amber} />}
     >
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity testID="back-button" onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
       </View>
@@ -89,6 +90,7 @@ export default function ProjectDetailScreen() {
           </TouchableOpacity>
         </View>
         <TouchableOpacity
+          testID="project-diary-link"
           style={[styles.actionBtn, styles.actionBtnGhost, { marginTop: -10 }]}
           onPress={() => router.push({ pathname: '/diary/[projectId]', params: { projectId: id } } as any)}
         >

@@ -59,11 +59,23 @@ export function PaystackOnboardingCard({ supplierId, subaccount }: Props) {
 
   if (subaccount?.is_active) {
     return (
-      <div className="bg-emerald-900/20 border border-emerald-700/40 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-emerald-400 mb-2">✓ Paystack Bank Account Linked</h3>
-        <p className="text-sm text-slate-300">{subaccount.account_name}</p>
-        <p className="text-xs text-slate-400 mt-0.5">{subaccount.bank_name} · Subaccount: {subaccount.subaccount_code}</p>
-        <p className="text-xs text-slate-500 mt-2">
+      <div
+        className="animate-fadeup animate-fadeup-2"
+        style={{
+          background: '#14532d',
+          border: '1px solid #166534',
+          borderRadius: 6,
+          padding: 20,
+        }}
+      >
+        <h3 style={{ fontSize: 13, fontWeight: 700, color: '#4ade80', marginBottom: 8, letterSpacing: '0.02em' }}>
+          ✓ Paystack Bank Account Linked
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--c-text)' }}>{subaccount.account_name}</p>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>
+          {subaccount.bank_name} · Subaccount: {subaccount.subaccount_code}
+        </p>
+        <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 10 }}>
           Payments will be split automatically. Settlement typically 24–48 hours after payment.
         </p>
       </div>
@@ -71,68 +83,116 @@ export function PaystackOnboardingCard({ supplierId, subaccount }: Props) {
   }
 
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-      <h3 className="text-sm font-semibold text-white mb-1">Link Bank Account (Paystack)</h3>
-      <p className="text-xs text-slate-400 mb-4">
-        Required to receive marketplace payments. E-Site deducts 6% commission; you receive the remainder directly.
-      </p>
+    <div
+      className="data-panel animate-fadeup animate-fadeup-2"
+      style={{ borderColor: 'var(--c-amber-mid)' }}
+    >
+      <div style={{ padding: 20 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--c-text)', marginBottom: 4 }}>
+          Link Bank Account (Paystack)
+        </h3>
+        <p style={{ fontSize: 12, color: 'var(--c-text-dim)', marginBottom: 16 }}>
+          Required to receive marketplace payments. E-Site deducts 6% commission; you receive the remainder directly.
+        </p>
 
-      {success && <p className="text-emerald-400 text-sm mb-3">Bank account linked successfully!</p>}
-      {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+        {success && (
+          <div
+            role="status"
+            style={{
+              background: '#14532d',
+              border: '1px solid #166534',
+              color: '#4ade80',
+              borderRadius: 6,
+              padding: '10px 14px',
+              fontSize: 12,
+              marginBottom: 12,
+            }}
+          >
+            Bank account linked successfully!
+          </div>
+        )}
+        {error && (
+          <div
+            role="alert"
+            style={{
+              background: 'var(--c-red-dim)',
+              border: '1px solid rgba(127,29,29,0.6)',
+              color: '#fca5a5',
+              borderRadius: 6,
+              padding: '10px 14px',
+              fontSize: 12,
+              marginBottom: 12,
+            }}
+          >
+            {error}
+          </div>
+        )}
 
-      {!showForm ? (
-        <button
-          onClick={() => setShowForm(true)}
-          className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-        >
-          + Link Bank Account
-        </button>
-      ) : (
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Business Name (as on bank account) *</label>
-              <input name="business_name" type="text" required
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+        {!showForm ? (
+          <button
+            onClick={() => setShowForm(true)}
+            className="btn-primary-amber"
+            style={{ fontSize: 13, padding: '9px 16px', fontWeight: 600 }}
+          >
+            + Link Bank Account
+          </button>
+        ) : (
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
+              <div style={{ gridColumn: 'span 2' }}>
+                <label className="ob-label" htmlFor="business_name">Business Name (as on bank account) *</label>
+                <input id="business_name" name="business_name" type="text" required className="ob-input" />
+              </div>
+              <div>
+                <label className="ob-label" htmlFor="bank_code">Bank *</label>
+                <select id="bank_code" name="bank_code" required className="ob-select">
+                  <option value="">Select bank</option>
+                  {SA_BANKS.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="ob-label" htmlFor="account_number">Account Number *</label>
+                <input id="account_number" name="account_number" type="text" required placeholder="1234567890" className="ob-input" />
+              </div>
+              <div style={{ gridColumn: 'span 2' }}>
+                <label className="ob-label" htmlFor="contact_email">Contact Email *</label>
+                <input id="contact_email" name="contact_email" type="email" required className="ob-input" />
+              </div>
             </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Bank *</label>
-              <select name="bank_code" required
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-                <option value="">Select bank</option>
-                {SA_BANKS.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
-              </select>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                type="submit"
+                disabled={isPending}
+                className="btn-primary-amber"
+                style={{
+                  fontSize: 13,
+                  padding: '9px 16px',
+                  fontWeight: 600,
+                  opacity: isPending ? 0.5 : 1,
+                  cursor: isPending ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isPending ? 'Linking…' : 'Link Account'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                style={{
+                  fontSize: 13,
+                  color: 'var(--c-text-mid)',
+                  background: 'var(--c-panel)',
+                  border: '1px solid var(--c-border)',
+                  borderRadius: 6,
+                  padding: '9px 16px',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
             </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Account Number *</label>
-              <input name="account_number" type="text" required
-                placeholder="1234567890"
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500" />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Contact Email *</label>
-              <input name="contact_email" type="email" required
-                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-            </div>
-          </div>
-          <div className="flex gap-3">
-            <button
-              type="submit"
-              disabled={isPending}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-            >
-              {isPending ? 'Linking…' : 'Link Account'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowForm(false)}
-              className="text-sm text-slate-400 hover:text-white px-4 py-2 rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
+          </form>
+        )}
+      </div>
     </div>
   )
 }

@@ -79,20 +79,24 @@ export default function SiteDiaryScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView testID="diary-screen" style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Site Diary</Text>
-        <TouchableOpacity onPress={() => setShowForm(!showForm)} style={styles.addBtn}>
+        <TouchableOpacity
+          testID={showForm ? 'diary-cancel-button' : 'diary-add-button'}
+          onPress={() => setShowForm(!showForm)}
+          style={styles.addBtn}
+        >
           <Text style={styles.addBtnText}>{showForm ? 'Cancel' : '+ Add'}</Text>
         </TouchableOpacity>
       </View>
 
       {showForm ? (
-        <ScrollView style={styles.formScroll} keyboardShouldPersistTaps="handled">
+        <ScrollView testID="diary-entry-form" style={styles.formScroll} keyboardShouldPersistTaps="handled">
           <View style={styles.form}>
             {/* Entry type */}
             <View>
@@ -128,6 +132,7 @@ export default function SiteDiaryScreen() {
               <View style={styles.formHalf}>
                 <Text style={styles.fieldLabel}>Workers on site</Text>
                 <TextInput
+                  testID="diary-workers-input"
                   style={styles.input}
                   value={workers}
                   onChangeText={setWorkers}
@@ -158,6 +163,7 @@ export default function SiteDiaryScreen() {
             <View>
               <Text style={styles.fieldLabel}>Progress notes *</Text>
               <TextInput
+                testID="diary-progress-input"
                 style={[styles.input, styles.textarea]}
                 value={progressNotes}
                 onChangeText={setProgressNotes}
@@ -202,6 +208,7 @@ export default function SiteDiaryScreen() {
             </View>
 
             <TouchableOpacity
+              testID="diary-save-button"
               style={[styles.submitBtn, createMutation.isPending && styles.btnDisabled]}
               onPress={handleSubmit}
               disabled={createMutation.isPending}
@@ -219,15 +226,19 @@ export default function SiteDiaryScreen() {
           data={entries ?? []}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.list}
+          removeClippedSubviews
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          initialNumToRender={10}
           ListEmptyComponent={
-            <View style={styles.empty}>
+            <View testID="diary-empty-state" style={styles.empty}>
               <Text style={styles.emptyIcon}>📓</Text>
               <Text style={styles.emptyTitle}>No entries yet</Text>
               <Text style={styles.emptySubtitle}>Tap "+ Add" to log today's site work.</Text>
             </View>
           }
           renderItem={({ item }) => (
-            <View style={styles.card}>
+            <View testID="diary-entry-card" style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.dateText}>{formatEntryDate((item as any).entry_date)}</Text>
                 <View style={styles.cardMeta}>

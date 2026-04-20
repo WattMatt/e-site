@@ -48,15 +48,32 @@ export function ReportButton({ type, entityId, label = 'Download Report' }: Prop
   }
 
   return (
-    <div>
+    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
       <button
+        type="button"
         onClick={generateReport}
         disabled={loading}
-        className="text-sm px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-300 transition-colors"
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          padding: '7px 14px',
+          borderRadius: 6,
+          background: 'var(--c-panel)',
+          border: '1px solid var(--c-border)',
+          color: 'var(--c-text-mid)',
+          cursor: loading ? 'default' : 'pointer',
+          opacity: loading ? 0.55 : 1,
+          transition: 'border-color 0.15s, background 0.15s, color 0.15s',
+        }}
       >
         {loading ? 'Generating…' : label}
       </button>
-      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+      {error && (
+        <p style={{ margin: 0, fontSize: 11, color: 'var(--c-red)' }} role="alert">{error}</p>
+      )}
     </div>
   )
 }

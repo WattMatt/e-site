@@ -69,7 +69,7 @@ export default function OnboardingPage() {
     const email = fd.get('email') as string
     startTransition(async () => {
       const result = await inviteTeamMemberAction(orgId, fd)
-      if ('error' in result) { setError(result.error); return }
+      if ('error' in result) { setError(result.error ?? null); return }
       setInvites(prev => [...prev, email])
       ;(e.target as HTMLFormElement).reset()
     })

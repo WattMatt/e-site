@@ -1,6 +1,9 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { complianceService } from '@esite/shared'
 import Link from 'next/link'
+
+export const metadata: Metadata = { title: 'Compliance' }
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
   approved:   { label: 'APR', className: 'badge badge-green' },

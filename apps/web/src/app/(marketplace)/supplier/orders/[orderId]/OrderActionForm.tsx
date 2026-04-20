@@ -50,56 +50,94 @@ export function OrderActionForm({
   }
 
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
-      <h3 className="text-sm font-semibold text-white">Respond to Order</h3>
-
-      {error && <p className="text-red-400 text-sm">{error}</p>}
-
-      {isQuoteStage && (
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">
-            Quoted Amount (ZAR)
-          </label>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={quotedAmount}
-            onChange={e => setQuotedAmount(e.target.value)}
-            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-          />
-          <p className="text-xs text-slate-500 mt-1">Update if your price differs from the listed price.</p>
-        </div>
-      )}
-
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">
-          Notes / ETA (optional)
-        </label>
-        <textarea
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          rows={3}
-          placeholder="Add notes, delivery ETA, special conditions…"
-          className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 resize-none"
-        />
+    <div className="data-panel animate-fadeup animate-fadeup-2">
+      <div className="data-panel-header">
+        <span className="data-panel-title">Respond to Order</span>
       </div>
-
-      <div className="flex flex-wrap gap-2">
-        {availableTransitions.map(status => (
-          <button
-            key={status}
-            onClick={() => act(status)}
-            disabled={isPending}
-            className={`text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 ${
-              status === 'cancelled'
-                ? 'bg-red-900/30 text-red-400 border border-red-700/40 hover:bg-red-900/50'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
+      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {error && (
+          <div
+            role="alert"
+            style={{
+              background: 'var(--c-red-dim)',
+              border: '1px solid rgba(127,29,29,0.6)',
+              color: '#fca5a5',
+              borderRadius: 6,
+              padding: '10px 14px',
+              fontSize: 12,
+            }}
           >
-            {isPending ? '…' : STATUS_LABEL[status] ?? status}
-          </button>
-        ))}
+            {error}
+          </div>
+        )}
+
+        {isQuoteStage && (
+          <div>
+            <label className="ob-label" htmlFor="quoted_amount">Quoted Amount (ZAR)</label>
+            <input
+              id="quoted_amount"
+              type="number"
+              min="0"
+              step="0.01"
+              value={quotedAmount}
+              onChange={e => setQuotedAmount(e.target.value)}
+              className="ob-input"
+            />
+            <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>
+              Update if your price differs from the listed price.
+            </p>
+          </div>
+        )}
+
+        <div>
+          <label className="ob-label" htmlFor="notes">Notes / ETA (optional)</label>
+          <textarea
+            id="notes"
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            rows={3}
+            placeholder="Add notes, delivery ETA, special conditions…"
+            className="ob-input"
+            style={{ resize: 'vertical', minHeight: 72 }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {availableTransitions.map(status => {
+            const isCancel = status === 'cancelled'
+            return (
+              <button
+                key={status}
+                onClick={() => act(status)}
+                disabled={isPending}
+                className={isCancel ? undefined : 'btn-primary-amber'}
+                style={
+                  isCancel
+                    ? {
+                        fontSize: 13,
+                        fontWeight: 600,
+                        padding: '9px 16px',
+                        borderRadius: 6,
+                        background: 'var(--c-red-dim)',
+                        color: '#fca5a5',
+                        border: '1px solid rgba(127,29,29,0.6)',
+                        cursor: isPending ? 'not-allowed' : 'pointer',
+                        opacity: isPending ? 0.5 : 1,
+                      }
+                    : {
+                        fontSize: 13,
+                        fontWeight: 600,
+                        padding: '9px 16px',
+                        cursor: isPending ? 'not-allowed' : 'pointer',
+                        opacity: isPending ? 0.5 : 1,
+                      }
+                }
+              >
+                {isPending ? '…' : STATUS_LABEL[status] ?? status}
+              </button>
+            )
+          })}
+        </div>
       </div>
     </div>
   )

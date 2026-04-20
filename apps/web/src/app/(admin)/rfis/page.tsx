@@ -1,12 +1,31 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { PageHeader } from '@/components/layout/Header'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { priorityBadge } from '@/components/ui/Badge'
-import { Badge } from '@/components/ui/Badge'
 import { formatDate } from '@esite/shared'
+import { MessageSquare } from 'lucide-react'
 import Link from 'next/link'
 
-export default async function RfisPage() {
+export const metadata: Metadata = { title: 'RFIs' }
+
+interface Props {
+  searchParams: Promise<{ projectId?: string }>
+}
+
+const priorityClass = (p: string) => ({
+  critical: 'priority-critical',
+  high:     'priority-high',
+  medium:   'priority-medium',
+  low:      'priority-low',
+}[p] ?? 'priority-low')
+
+const statusBadge = (s: string) => ({
+  draft:     'badge badge-muted',
+  open:      'badge badge-red',
+  responded: 'badge badge-amber',
+  closed:    'badge badge-green',
+}[s] ?? 'badge badge-muted')
+
+export default async function RfisPage({ searchParams }: Props) {
+  const { projectId } = await searchParams
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -18,80 +37,103 @@ export default async function RfisPage() {
     .limit(1)
     .single()
 
-  const { data: rfis } = membership
-    ? await supabase
+  let q: any = membership
+    ? supabase
         .schema('projects')
         .from('rfis')
-        .select(`
-          *,
-          raised_by_profile:profiles!raised_by(id, full_name),
-          project:projects!project_id(id, name)
-        `)
+        .select('*, project:projects!project_id(id, name)')
         .eq('organisation_id', membership.organisation_id)
         .order('created_at', { ascending: false })
-    : { data: [] }
+    : null
 
-  const RFI_STATUS_VARIANT: Record<string, any> = {
-    draft: 'ghost', open: 'danger', responded: 'warning', closed: 'success'
-  }
+  if (q && projectId) q = q.eq('project_id', projectId)
+
+  const rawRfis: any[] = q ? ((await q).data ?? []) : []
+
+  const { data: profileRows } = rawRfis.length
+    ? await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', [...new Set(rawRfis.map((r: any) => r.raised_by).filter(Boolean))] as string[])
+    : { data: [] }
+  const profileMap = Object.fromEntries((profileRows ?? []).map((p: any) => [p.id, p]))
+  const rfis = rawRfis.map((r: any) => ({
+    ...r,
+    raised_by_profile: r.raised_by ? (profileMap[r.raised_by] ?? null) : null,
+  }))
+
+  const projectName = rfis[0]?.project?.name ?? null
 
   return (
-    <div>
-      <PageHeader
-        title="RFIs"
-        subtitle={`${rfis?.length ?? 0} requests`}
-        actions={
+    <div className="animate-fadeup">
+      {projectId && (
+        <div style={{ marginBottom: 16 }}>
           <Link
-            href="/rfis/new"
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '9px 16px', background: 'var(--c-amber)', color: '#0D0B09',
-              borderRadius: 6, fontSize: 13, fontWeight: 700, textDecoration: 'none',
-            }}
+            href={`/projects/${projectId}`}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
           >
-            + New RFI
+            ← {projectName ?? 'Project'}
           </Link>
-        }
-      />
+        </div>
+      )}
 
-      {!rfis?.length ? (
-        <EmptyState icon="❓" title="No RFIs yet" description="Requests for information raised on projects will appear here." />
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">RFIs</h1>
+          <p className="page-subtitle">
+            {rfis.length} request{rfis.length !== 1 ? 's' : ''}
+            {projectId && projectName ? ` · ${projectName}` : ''}
+          </p>
+        </div>
+        <Link href={projectId ? `/rfis/new?projectId=${projectId}` : '/rfis/new'} className="btn-primary-amber">
+          + New RFI
+        </Link>
+      </div>
+
+      {rfis.length === 0 ? (
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '64px 18px' }}>
+            <MessageSquare size={28} style={{ margin: '0 auto 12px', opacity: 0.25, display: 'block' }} />
+            No RFIs yet — requests for information raised on projects will appear here.
+          </div>
+        </div>
       ) : (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-700">
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Subject</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Project</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Priority</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Status</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Raised</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Due</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rfis.map((rfi) => (
-                <tr key={rfi.id} className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors">
-                  <td className="px-4 py-3">
-                    <Link href={`/rfis/${rfi.id}`} className="text-white hover:text-blue-400 font-medium">
-                      {rfi.subject}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Link href={`/projects/${(rfi as any).project?.id}`} className="text-slate-300 hover:text-blue-400 text-xs">
-                      {(rfi as any).project?.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">{priorityBadge(rfi.priority)}</td>
-                  <td className="px-4 py-3">
-                    <Badge variant={RFI_STATUS_VARIANT[rfi.status]}>{rfi.status}</Badge>
-                  </td>
-                  <td className="px-4 py-3 text-slate-400">{formatDate(rfi.created_at)}</td>
-                  <td className="px-4 py-3 text-slate-400">{rfi.due_date ? formatDate(rfi.due_date) : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">
+              {projectId ? `${projectName ?? 'Project'} RFIs` : 'All RFIs'}
+            </span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+              {rfis.length} total
+            </span>
+          </div>
+          {rfis.map((rfi: any) => (
+            <Link
+              key={rfi.id}
+              href={`/rfis/${rfi.id}${projectId ? `?projectId=${projectId}` : ''}`}
+              className="data-panel-row"
+              style={{ gap: 12 }}
+            >
+              <span
+                className={priorityClass(rfi.priority)}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', flexShrink: 0, width: 32 }}
+              >
+                {rfi.priority?.slice(0, 4) ?? '—'}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {rfi.subject}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                  {!projectId && rfi.project?.name ? `${rfi.project.name} · ` : ''}
+                  {rfi.raised_by_profile ? `${rfi.raised_by_profile.full_name} · ` : ''}
+                  {formatDate(rfi.created_at)}
+                  {rfi.due_date ? ` · due ${formatDate(rfi.due_date)}` : ''}
+                </div>
+              </div>
+              <span className={statusBadge(rfi.status)}>{rfi.status}</span>
+            </Link>
+          ))}
         </div>
       )}
     </div>

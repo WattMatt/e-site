@@ -6,13 +6,29 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { createSnagSchema, type CreateSnagInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
-import { PageHeader } from '@/components/layout/Header'
-import { Button } from '@/components/ui/Button'
-import { Card, CardBody } from '@/components/ui/Card'
 import Link from 'next/link'
 
 const CATEGORIES = ['general', 'electrical', 'mechanical', 'civil', 'safety', 'quality', 'documentation']
 const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
+
+const priorityStyle = (p: string, selected: boolean): React.CSSProperties => {
+  const palette: Record<string, { fg: string; bg: string; border: string }> = {
+    low:      { fg: 'var(--c-text-dim)', bg: 'var(--c-panel)',         border: 'var(--c-border)' },
+    medium:   { fg: '#60a5fa',           bg: 'rgba(37,99,235,0.15)',   border: '#1d4ed8' },
+    high:     { fg: 'var(--c-amber)',    bg: 'var(--c-amber-dim)',     border: 'var(--c-amber-mid)' },
+    critical: { fg: 'var(--c-red)',      bg: 'var(--c-red-dim)',       border: '#6b1e1e' },
+  }
+  const c = palette[p] ?? palette.low
+  return {
+    flex: 1, padding: '9px 12px', borderRadius: 6, textAlign: 'center',
+    fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600,
+    letterSpacing: '0.08em', textTransform: 'uppercase',
+    cursor: 'pointer', transition: 'all 0.12s',
+    border: `1px solid ${selected ? c.border : 'var(--c-border)'}`,
+    background: selected ? c.bg : 'var(--c-panel)',
+    color: selected ? c.fg : 'var(--c-text-dim)',
+  }
+}
 
 interface Props { params: Promise<{ id: string }> }
 
@@ -24,10 +40,12 @@ export default function NewSnagPage({ params }: Props) {
   const [photoFiles, setPhotoFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
 
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<CreateSnagInput>({
+  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<CreateSnagInput>({
     resolver: zodResolver(createSnagSchema),
     defaultValues: { projectId, priority: 'medium', category: 'general' },
   })
+
+  const currentPriority = watch('priority') ?? 'medium'
 
   useEffect(() => {
     const supabase = createClient()
@@ -53,7 +71,6 @@ export default function NewSnagPage({ params }: Props) {
     const orgId = membership.organisation_id
 
     try {
-      // Create snag
       const { data: snag, error: snagErr } = await supabase.schema('field').from('snags').insert({
         project_id: input.projectId,
         organisation_id: orgId,
@@ -67,7 +84,6 @@ export default function NewSnagPage({ params }: Props) {
       }).select().single()
       if (snagErr) throw snagErr
 
-      // Upload photos
       if (photoFiles.length > 0) {
         await Promise.all(photoFiles.map(async (file, i) => {
           const ext = file.name.split('.').pop() ?? 'jpg'
@@ -94,100 +110,161 @@ export default function NewSnagPage({ params }: Props) {
   }
 
   return (
-    <div className="max-w-2xl">
-      <div className="mb-6">
-        <Link href={`/projects/${projectId}`} className="text-slate-400 hover:text-white text-sm">← Project</Link>
+    <div className="animate-fadeup" style={{ maxWidth: 720 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href={`/projects/${projectId}`}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
+          ← Project
+        </Link>
       </div>
-      <PageHeader title="Raise Snag" />
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        <Card>
-          <CardBody className="space-y-4">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Raise Snag</h1>
+          <p className="page-subtitle">Log an issue to track, assign and sign off</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Issue</span>
+          </div>
+          <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
-              <label className="block text-sm text-slate-400 mb-1">Title <span className="text-red-400">*</span></label>
-              <input {...register('title')} autoFocus
-                className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Describe the issue…" />
-              {errors.title && <p className="text-red-400 text-xs mt-1">{errors.title.message}</p>}
+              <label className="ob-label">Title *</label>
+              <input className="ob-input" {...register('title')} autoFocus placeholder="Describe the issue…" />
+              {errors.title && <p className="ob-error">{errors.title.message}</p>}
             </div>
-
             <div>
-              <label className="block text-sm text-slate-400 mb-1">Description</label>
-              <textarea {...register('description')} rows={3} className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+              <label className="ob-label">Description</label>
+              <textarea className="ob-input" rows={3} style={{ resize: 'none' }} {...register('description')} placeholder="Details, context, what should be done…" />
+              {errors.description && <p className="ob-error">{errors.description.message}</p>}
             </div>
-
-            <div className="grid grid-cols-2 gap-4">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Location</label>
-                <input {...register('location')} className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. DB Room, Level 2" />
+                <label className="ob-label">Location</label>
+                <input className="ob-input" {...register('location')} placeholder="e.g. DB Room, Level 2" />
+                {errors.location && <p className="ob-error">{errors.location.message}</p>}
               </div>
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Category</label>
-                <select {...register('category')} className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <label className="ob-label">Category</label>
+                <select className="ob-select" {...register('category')}>
                   {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
+                {errors.category && <p className="ob-error">{errors.category.message}</p>}
               </div>
             </div>
+          </div>
+        </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Priority</label>
-                <div className="flex gap-2">
-                  {PRIORITIES.map(p => {
-                    const colours: Record<string, string> = { low: 'border-slate-600 text-slate-400', medium: 'border-blue-600 text-blue-400', high: 'border-amber-600 text-amber-400', critical: 'border-red-600 text-red-400' }
-                    return (
-                      <label key={p} className="flex-1 cursor-pointer">
-                        <input {...register('priority')} type="radio" value={p} className="sr-only" />
-                        <div className={`text-center text-xs py-2 rounded border ${colours[p]} hover:bg-slate-700 transition-colors`}>{p}</div>
-                      </label>
-                    )
-                  })}
-                </div>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Priority &amp; Assignment</span>
+          </div>
+          <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label className="ob-label">Priority</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {PRIORITIES.map(p => (
+                  <label key={p} style={priorityStyle(p, currentPriority === p)}>
+                    <input {...register('priority')} type="radio" value={p} style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }} />
+                    {p}
+                  </label>
+                ))}
               </div>
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Assign to</label>
-                <select {...register('assignedTo')} className="w-full bg-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">Unassigned</option>
-                  {members.map((m: any) => (
-                    <option key={m.user_id} value={m.user_id}>{(m.profile as any)?.full_name}</option>
-                  ))}
-                </select>
-              </div>
+              {errors.priority && <p className="ob-error">{errors.priority.message}</p>}
             </div>
-          </CardBody>
-        </Card>
+            <div>
+              <label className="ob-label">Assign to</label>
+              <select className="ob-select" {...register('assignedTo')}>
+                <option value="">Unassigned</option>
+                {members.map((m: any) => (
+                  <option key={m.user_id} value={m.user_id}>{(m.profile as any)?.full_name}</option>
+                ))}
+              </select>
+              {errors.assignedTo && <p className="ob-error">{errors.assignedTo.message}</p>}
+            </div>
+          </div>
+        </div>
 
-        {/* Photo upload */}
-        <Card>
-          <CardBody>
-            <label className="block text-sm font-medium text-white mb-3">Evidence Photos</label>
-            <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-600 hover:border-blue-500 rounded-xl p-8 cursor-pointer transition-colors">
-              <input type="file" accept="image/*" multiple className="sr-only"
-                onChange={e => setPhotoFiles(Array.from(e.target.files ?? []))} />
-              <span className="text-2xl">📷</span>
-              <span className="text-slate-400 text-sm">Click to select photos</span>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Evidence Photos</span>
+            {photoFiles.length > 0 && (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                {photoFiles.length} selected
+              </span>
+            )}
+          </div>
+          <div style={{ padding: '16px 18px' }}>
+            <label
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                padding: '28px 18px', border: '1px dashed var(--c-border)', borderRadius: 8,
+                background: 'var(--c-base)', cursor: 'pointer', transition: 'border-color 0.15s',
+              }}
+            >
+              <input
+                type="file" accept="image/*" multiple style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
+                onChange={e => setPhotoFiles(Array.from(e.target.files ?? []))}
+              />
+              <span style={{ fontSize: 20 }} aria-hidden="true">📷</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
+                Click to select photos
+              </span>
             </label>
             {photoFiles.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {photoFiles.map((f, i) => (
-                  <div key={i} className="relative">
-                    <img src={URL.createObjectURL(f)} alt="" className="w-20 h-20 object-cover rounded-lg border border-slate-700" />
-                    <button type="button" onClick={() => setPhotoFiles(fs => fs.filter((_, j) => j !== i))}
-                      className="absolute -top-1 -right-1 w-5 h-5 bg-red-600 rounded-full text-white text-xs flex items-center justify-center">×</button>
+                  <div key={i} style={{ position: 'relative' }}>
+                    <img
+                      src={URL.createObjectURL(f)}
+                      alt=""
+                      style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--c-border)' }}
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Remove ${f.name}`}
+                      onClick={() => setPhotoFiles(fs => fs.filter((_, j) => j !== i))}
+                      style={{
+                        position: 'absolute', top: -4, right: -4, width: 20, height: 20,
+                        background: 'var(--c-red)', color: '#fff', border: 'none', borderRadius: '50%',
+                        fontSize: 11, lineHeight: 1, cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >×</button>
                   </div>
                 ))}
               </div>
             )}
-          </CardBody>
-        </Card>
+          </div>
+        </div>
 
-        {error && <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">{error}</div>}
+        {error && <p className="ob-error" role="alert">{error}</p>}
 
-        <div className="flex gap-3">
-          <Button type="submit" isLoading={isSubmitting || uploading}>
-            {uploading ? 'Uploading photos…' : 'Raise Snag'}
-          </Button>
-          <Link href={`/projects/${projectId}`}><Button variant="ghost" type="button">Cancel</Button></Link>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button type="submit" className="btn-primary-amber" style={{ flex: 1 }} disabled={isSubmitting || uploading}>
+            {uploading ? 'Uploading photos…' : isSubmitting ? 'Saving…' : 'Raise Snag'}
+          </button>
+          <Link
+            href={`/projects/${projectId}`}
+            className="btn-primary-amber"
+            style={{
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0 16px',
+            }}
+          >
+            Cancel
+          </Link>
         </div>
       </form>
     </div>

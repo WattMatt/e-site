@@ -1,10 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { orgService } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
-import { Suspense } from 'react'
 
 function JoinContent() {
   const router = useRouter()
@@ -40,41 +39,59 @@ function JoinContent() {
 
   if (state === 'loading') {
     return (
-      <div className="text-center">
-        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-slate-400">Checking invite…</p>
+      <div className="auth-card" style={{ textAlign: 'center' }}>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
+          Checking invite…
+        </p>
       </div>
     )
   }
 
   if (state === 'error') {
     return (
-      <div className="bg-slate-800 rounded-xl p-8 border border-slate-700 text-center">
-        <div className="text-4xl mb-4">❌</div>
-        <h2 className="text-lg font-semibold text-white mb-2">Invalid invite</h2>
-        <p className="text-slate-400 text-sm">{error}</p>
-        <button onClick={() => router.push('/login')} className="mt-6 text-blue-400 hover:text-blue-300 text-sm">
-          Go to login
-        </button>
+      <div className="auth-card auth-success">
+        <div className="auth-success-icon">❌</div>
+        <h2>Invalid invite</h2>
+        <p>{error}</p>
+        <div className="auth-links" style={{ marginTop: 28 }}>
+          <button
+            onClick={() => router.push('/login')}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--c-amber)',
+              fontSize: 12,
+              fontFamily: 'var(--font-mono)',
+              letterSpacing: '0.04em',
+              cursor: 'pointer',
+            }}
+          >
+            ← Go to login
+          </button>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="bg-slate-800 rounded-xl p-8 border border-slate-700">
-      <div className="text-center mb-6">
-        <div className="text-4xl mb-3">🎉</div>
-        <h2 className="text-xl font-bold text-white">You've been invited</h2>
-        <p className="text-slate-400 text-sm mt-1">
-          Join <span className="text-white font-medium">{invite?.organisation?.name}</span> as{' '}
-          <span className="text-blue-400">{invite?.role?.replace(/_/g, ' ')}</span>
+    <div className="auth-card">
+      <div style={{ textAlign: 'center', marginBottom: 20 }}>
+        <div style={{ fontSize: 36, marginBottom: 10 }}>🎉</div>
+        <h2 className="auth-card-title" style={{ marginBottom: 4 }}>You&apos;ve been invited</h2>
+        <p className="auth-card-sub">
+          Join{' '}
+          <span style={{ color: 'var(--c-text)', fontWeight: 600 }}>{invite?.organisation?.name}</span>{' '}
+          as{' '}
+          <span style={{ color: 'var(--c-amber)', textTransform: 'capitalize' }}>
+            {invite?.role?.replace(/_/g, ' ')}
+          </span>
         </p>
       </div>
 
       <button
         onClick={accept}
         disabled={state === 'joining'}
-        className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-3 rounded-lg transition-colors"
+        className="auth-btn"
       >
         {state === 'joining' ? 'Joining…' : `Accept & Join ${invite?.organisation?.name}`}
       </button>
@@ -84,12 +101,29 @@ function JoinContent() {
 
 export default function JoinOrgPage() {
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white">E-Site</h1>
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'var(--c-base)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+      }}
+    >
+      <div style={{ width: '100%', maxWidth: 440 }}>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--c-amber)', letterSpacing: '0.02em' }}>
+            E-Site
+          </h1>
         </div>
-        <Suspense fallback={<div className="text-slate-400 text-center">Loading…</div>}>
+        <Suspense
+          fallback={
+            <p style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
+              Loading…
+            </p>
+          }
+        >
           <JoinContent />
         </Suspense>
       </div>

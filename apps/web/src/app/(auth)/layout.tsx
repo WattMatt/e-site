@@ -16,8 +16,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <div className="auth-logo">
             <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
               <rect width="40" height="40" rx="8" fill="#F59E0B" />
-              <path d="M8 32V16l12-8 12 8v16" stroke="#1C1917" strokeWidth="2.5" strokeLinejoin="round" />
-              <rect x="15" y="22" width="10" height="10" fill="#1C1917" />
+              <path d="M8 32V16l12-8 12 8v16" stroke="#0B0B12" strokeWidth="2.5" strokeLinejoin="round" />
+              <rect x="15" y="22" width="10" height="10" fill="#0B0B12" />
             </svg>
             <span className="auth-logo-text">E-Site</span>
           </div>
@@ -52,8 +52,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <div className="auth-mobile-logo">
             <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
               <rect width="40" height="40" rx="8" fill="#F59E0B" />
-              <path d="M8 32V16l12-8 12 8v16" stroke="#1C1917" strokeWidth="2.5" strokeLinejoin="round" />
-              <rect x="15" y="22" width="10" height="10" fill="#1C1917" />
+              <path d="M8 32V16l12-8 12 8v16" stroke="#0B0B12" strokeWidth="2.5" strokeLinejoin="round" />
+              <rect x="15" y="22" width="10" height="10" fill="#0B0B12" />
             </svg>
             <span>E-Site</span>
           </div>
@@ -70,7 +70,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           min-height: 100vh;
           display: grid;
           grid-template-columns: 1fr;
-          background: #0C0A09;
+          background: #0B0B12;
           font-family: 'Instrument Sans', sans-serif;
           position: relative;
           overflow: hidden;
@@ -96,8 +96,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           top: 0;
           height: 100vh;
           z-index: 1;
-          background: #111110;
-          border-right: 1px solid #1C1917;
+          background: #1C1C2A;
+          border-right: 1px solid #2C2C40;
         }
         @media (min-width: 1024px) {
           .auth-brand { display: flex; flex-direction: column; }
@@ -119,7 +119,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         .auth-logo-text {
           font-size: 22px;
           font-weight: 700;
-          color: #FAFAF9;
+          color: #EDE8DF;
           letter-spacing: -0.04em;
         }
 
@@ -127,14 +127,14 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         .auth-tagline h1 {
           font-size: 30px;
           font-weight: 700;
-          color: #FAFAF9;
+          color: #EDE8DF;
           line-height: 1.2;
           letter-spacing: -0.04em;
           margin: 0 0 14px;
         }
         .auth-tagline p {
           font-size: 14px;
-          color: #78716C;
+          color: #9098B0;
           line-height: 1.65;
           margin: 0;
         }
@@ -152,7 +152,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           align-items: center;
           gap: 12px;
           font-size: 13px;
-          color: #A8A29E;
+          color: #9098B0;
           font-weight: 500;
         }
         .feat-icon {
@@ -165,7 +165,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
         .auth-legal {
           font-size: 11px;
-          color: #3C3735;
+          color: #5C6478;
           margin: 0;
           font-family: 'DM Mono', monospace;
         }
@@ -192,28 +192,28 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           margin-bottom: 40px;
           font-size: 18px;
           font-weight: 700;
-          color: #FAFAF9;
+          color: #EDE8DF;
           letter-spacing: -0.04em;
         }
         @media (min-width: 1024px) { .auth-mobile-logo { display: none; } }
 
         /* ── Card ── */
         .auth-card {
-          background: #111110;
-          border: 1px solid #1C1917;
+          background: #1C1C2A;
+          border: 1px solid #2C2C40;
           border-radius: 14px;
           padding: 32px;
         }
         .auth-card-title {
           font-size: 22px;
           font-weight: 700;
-          color: #FAFAF9;
+          color: #EDE8DF;
           letter-spacing: -0.04em;
           margin: 0 0 4px;
         }
         .auth-card-sub {
           font-size: 13px;
-          color: #78716C;
+          color: #9098B0;
           margin: 0 0 28px;
         }
 
@@ -223,7 +223,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           display: block;
           font-size: 11px;
           font-weight: 500;
-          color: #78716C;
+          color: #9098B0;
           text-transform: uppercase;
           letter-spacing: 0.08em;
           margin-bottom: 6px;
@@ -231,17 +231,17 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         }
         .auth-input {
           width: 100%;
-          background: #0C0A09;
-          border: 1px solid #292524;
+          background: #0B0B12;
+          border: 1px solid #3A3A52;
           border-radius: 8px;
           padding: 10px 14px;
           font-size: 14px;
-          color: #FAFAF9;
+          color: #EDE8DF;
           font-family: 'Instrument Sans', sans-serif;
           transition: border-color 0.15s, box-shadow 0.15s;
           outline: none;
         }
-        .auth-input::placeholder { color: #44403C; }
+        .auth-input::placeholder { color: #5C6478; }
         .auth-input:focus {
           border-color: #F59E0B;
           box-shadow: 0 0 0 3px rgba(245,158,11,0.1);
@@ -251,19 +251,19 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
         .auth-select {
           appearance: none;
-          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' fill='none'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2357534E' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' fill='none'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%239098B0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
           background-repeat: no-repeat;
           background-position: right 14px center;
           padding-right: 36px;
           cursor: pointer;
         }
-        .auth-select option { background: #1C1917; }
+        .auth-select option { background: #2C2C40; }
 
         /* ── Button ── */
         .auth-btn {
           width: 100%;
           background: #F59E0B;
-          color: #1C1917;
+          color: #0B0B12;
           font-size: 14px;
           font-weight: 700;
           font-family: 'Instrument Sans', sans-serif;
@@ -300,7 +300,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         }
         .auth-link {
           font-size: 13px;
-          color: #57534E;
+          color: #9098B0;
           text-decoration: none;
           transition: color 0.15s;
         }
@@ -324,7 +324,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         }
         .auth-checkbox-label {
           font-size: 12px;
-          color: #57534E;
+          color: #9098B0;
           line-height: 1.6;
           cursor: pointer;
         }
@@ -341,13 +341,13 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         .auth-success h2 {
           font-size: 20px;
           font-weight: 700;
-          color: #FAFAF9;
+          color: #EDE8DF;
           letter-spacing: -0.03em;
           margin: 0 0 8px;
         }
         .auth-success p {
           font-size: 13px;
-          color: #78716C;
+          color: #9098B0;
           margin: 0;
           line-height: 1.6;
         }

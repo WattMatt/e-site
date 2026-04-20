@@ -51,9 +51,15 @@ export function ProcurementStatusButton({ id, currentStatus, quotedPrice }: Prop
 
   if (showQuoteInput) {
     return (
-      <div className="flex flex-col gap-2 mt-2 p-3 bg-slate-800 rounded-lg border border-slate-600">
-        <p className="text-xs text-slate-400 font-medium">Enter quoted price (ZAR)</p>
-        <div className="flex gap-2">
+      <div style={{
+        marginTop: 10, padding: '12px 14px', borderRadius: 6,
+        background: 'var(--c-elevated)', border: '1px solid var(--c-border)',
+        display: 'flex', flexDirection: 'column', gap: 8,
+      }}>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--c-text-dim)', textTransform: 'uppercase' }}>
+          Enter quoted price (ZAR)
+        </p>
+        <div style={{ display: 'flex', gap: 8 }}>
           <input
             type="number"
             step="0.01"
@@ -61,27 +67,34 @@ export function ProcurementStatusButton({ id, currentStatus, quotedPrice }: Prop
             value={quoteValue}
             onChange={e => setQuoteValue(e.target.value)}
             placeholder="0.00"
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            className="ob-input"
+            style={{ flex: 1 }}
           />
           <input
             type="text"
             value={poNumber}
             onChange={e => setPoNumber(e.target.value)}
             placeholder="PO # (optional)"
-            className="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            className="ob-input"
+            style={{ flex: 1 }}
           />
         </div>
-        <div className="flex gap-2">
+        <div style={{ display: 'flex', gap: 8 }}>
           <button
             onClick={() => advance('quoted')}
             disabled={!quoteValue || isPending}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold py-1.5 rounded transition-colors"
+            className="btn-primary-amber"
+            style={{ flex: 1, fontSize: 11, opacity: (!quoteValue || isPending) ? 0.5 : 1 }}
           >
             Confirm Quote
           </button>
           <button
             onClick={() => setShowQuoteInput(false)}
-            className="px-3 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs py-1.5 rounded transition-colors"
+            style={{
+              padding: '7px 14px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+              border: '1px solid var(--c-border)', background: 'var(--c-panel)',
+              color: 'var(--c-text-dim)', cursor: 'pointer',
+            }}
           >
             Cancel
           </button>
@@ -91,17 +104,21 @@ export function ProcurementStatusButton({ id, currentStatus, quotedPrice }: Prop
   }
 
   return (
-    <div className="flex gap-1.5 flex-wrap mt-2">
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
       {nextStatuses.map(s => (
         <button
           key={s}
           onClick={() => advance(s)}
           disabled={isPending}
-          className={`px-2.5 py-1 text-xs font-semibold rounded-full border transition-colors disabled:opacity-50 ${
-            s === 'cancelled'
-              ? 'border-red-700 text-red-400 hover:bg-red-900/30'
-              : 'border-blue-600 text-blue-400 hover:bg-blue-900/30'
-          }`}
+          style={{
+            fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 20,
+            fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
+            border: `1px solid ${s === 'cancelled' ? '#7f1d1d' : 'var(--c-amber-mid)'}`,
+            background: s === 'cancelled' ? 'var(--c-red-dim)' : 'var(--c-amber-dim)',
+            color: s === 'cancelled' ? 'var(--c-red)' : 'var(--c-amber)',
+            cursor: isPending ? 'not-allowed' : 'pointer',
+            opacity: isPending ? 0.5 : 1,
+          }}
         >
           {STATUS_LABELS[s] ?? s}
         </button>

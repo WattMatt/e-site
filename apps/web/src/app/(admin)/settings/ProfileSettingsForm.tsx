@@ -25,27 +25,25 @@ export function ProfileSettingsForm({ userId, fullName, phone, email }: {
     setSaving(false)
   }
 
-  const inp = 'w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
-
   return (
-    <form onSubmit={save} className="space-y-4">
+    <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div>
-        <label className="block text-xs text-slate-400 mb-1">Email</label>
-        <input className={`${inp} opacity-60 cursor-not-allowed`} value={email} disabled />
-        <p className="text-xs text-slate-500 mt-1">Contact support to change your email.</p>
+        <label className="ob-label">Email</label>
+        <input className="ob-input" style={{ opacity: 0.6, cursor: 'not-allowed' }} value={email} disabled />
+        <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>Contact support to change your email.</p>
       </div>
       <div>
-        <label className="block text-xs text-slate-400 mb-1">Full name</label>
-        <input className={inp} value={name} onChange={e => setName(e.target.value)} placeholder="Your name" />
+        <label className="ob-label">Full name</label>
+        <input className="ob-input" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" />
       </div>
       <div>
-        <label className="block text-xs text-slate-400 mb-1">Phone</label>
-        <input className={inp} value={ph} onChange={e => setPh(e.target.value)} placeholder="+27 82 000 0000" type="tel" />
+        <label className="ob-label">Phone</label>
+        <input className="ob-input" value={ph} onChange={e => setPh(e.target.value)} placeholder="+27 82 000 0000" type="tel" />
       </div>
-      {error && <p className="text-red-400 text-xs">{error}</p>}
-      <div className="flex items-center gap-3">
+      {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <Button type="submit" size="sm" isLoading={saving}>Save</Button>
-        {saved && <span className="text-emerald-400 text-xs">Saved!</span>}
+        {saved && <span style={{ color: '#34d399', fontSize: 12 }}>Saved!</span>}
       </div>
     </form>
   )

@@ -63,8 +63,9 @@ export function FloorPlanUploadButton({
   if (!showForm) {
     return (
       <button
+        type="button"
         onClick={() => setShowForm(true)}
-        className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+        className="btn-primary-amber"
       >
         + Upload Floor Plan
       </button>
@@ -72,41 +73,63 @@ export function FloorPlanUploadButton({
   }
 
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-3 max-w-sm">
-      <p className="text-sm font-medium text-white">Upload Floor Plan</p>
-      <input
-        type="text"
-        value={name}
-        onChange={e => setName(e.target.value)}
-        placeholder="Name (e.g. Ground Floor Layout)"
-        className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
-      <input
-        type="text"
-        value={level}
-        onChange={e => setLevel(e.target.value)}
-        placeholder="Level (e.g. Ground, Level 1)"
-        className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
+    <div
+      style={{
+        background: 'var(--c-panel)', border: '1px solid var(--c-border)',
+        borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10,
+        maxWidth: 340, width: '100%',
+      }}
+    >
+      <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--c-text-mid)' }}>
+        Upload Floor Plan
+      </p>
+      <div>
+        <label className="ob-label">Name</label>
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="e.g. Ground Floor Layout"
+          className="ob-input"
+        />
+      </div>
+      <div>
+        <label className="ob-label">Level</label>
+        <input
+          type="text"
+          value={level}
+          onChange={e => setLevel(e.target.value)}
+          placeholder="e.g. Ground, Level 1"
+          className="ob-input"
+        />
+      </div>
       <input
         ref={inputRef}
         type="file"
         accept=".pdf,.png,.jpg,.jpeg,.dwg,.svg"
-        className="hidden"
+        style={{ display: 'none' }}
         onChange={handleUpload}
       />
-      {error && <p className="text-red-400 text-xs">{error}</p>}
-      <div className="flex gap-2">
+      {error && <p className="ob-error" role="alert">{error}</p>}
+      <div style={{ display: 'flex', gap: 8 }}>
         <button
+          type="button"
           onClick={() => inputRef.current?.click()}
           disabled={uploading}
-          className="flex-1 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+          className="btn-primary-amber"
+          style={{ flex: 1 }}
         >
           {uploading ? 'Uploading…' : 'Choose File'}
         </button>
         <button
+          type="button"
           onClick={() => setShowForm(false)}
-          className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm transition-colors"
+          className="btn-primary-amber"
+          style={{
+            background: 'var(--c-panel)',
+            border: '1px solid var(--c-border)',
+            color: 'var(--c-text-mid)',
+          }}
         >
           Cancel
         </button>

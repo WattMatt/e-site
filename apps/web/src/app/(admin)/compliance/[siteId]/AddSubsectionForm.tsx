@@ -29,8 +29,30 @@ export function AddSubsectionForm({ siteId }: Props) {
   if (!open) {
     return (
       <button
+        type="button"
         onClick={() => setOpen(true)}
-        className="text-sm px-3 py-1.5 rounded-lg border border-dashed border-slate-600 text-slate-400 hover:border-slate-400 hover:text-slate-200 transition-colors"
+        style={{
+          fontSize: 12,
+          padding: '6px 12px',
+          borderRadius: 6,
+          border: '1px dashed var(--c-border)',
+          background: 'transparent',
+          color: 'var(--c-text-dim)',
+          cursor: 'pointer',
+          fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.04em',
+          transition: 'border-color 0.15s, color 0.15s',
+        }}
+        onMouseEnter={e => {
+          const el = e.currentTarget as HTMLButtonElement
+          el.style.borderColor = 'var(--c-amber)'
+          el.style.color = 'var(--c-amber)'
+        }}
+        onMouseLeave={e => {
+          const el = e.currentTarget as HTMLButtonElement
+          el.style.borderColor = 'var(--c-border)'
+          el.style.color = 'var(--c-text-dim)'
+        }}
       >
         + Add subsection
       </button>
@@ -38,71 +60,82 @@ export function AddSubsectionForm({ siteId }: Props) {
   }
 
   return (
-    <div className="bg-slate-800 border border-slate-600 rounded-xl p-4">
-      <p className="text-sm font-medium text-white mb-4">New subsection</p>
-      <form ref={formRef} action={handleSubmit} className="space-y-3">
-        {/* Name */}
+    <div
+      style={{
+        background: 'var(--c-panel)', border: '1px solid var(--c-border)',
+        borderRadius: 8, padding: 16, width: '100%', maxWidth: 520,
+      }}
+    >
+      <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--c-text-mid)', marginBottom: 14 }}>
+        New subsection
+      </p>
+      <form ref={formRef} action={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div>
-          <label className="block text-xs text-slate-400 mb-1">
-            Name <span className="text-red-400">*</span>
+          <label className="ob-label">
+            Name <span style={{ color: 'var(--c-red)' }}>*</span>
           </label>
           <input
             name="name"
             type="text"
             required
             placeholder="e.g. Main Distribution Board"
-            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            className="ob-input"
           />
         </div>
 
-        {/* SANS ref + sort order */}
-        <div className="grid grid-cols-2 gap-3">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">SANS reference</label>
+            <label className="ob-label">SANS reference</label>
             <input
               name="sans_ref"
               type="text"
               placeholder="e.g. SANS 10142-1"
-              className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+              className="ob-input"
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Sort order</label>
+            <label className="ob-label">Sort order</label>
             <input
               name="sort_order"
               type="number"
               min="0"
               defaultValue="0"
-              className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+              className="ob-input"
             />
           </div>
         </div>
 
-        {/* Description */}
         <div>
-          <label className="block text-xs text-slate-400 mb-1">Description</label>
+          <label className="ob-label">Description</label>
           <input
             name="description"
             type="text"
             placeholder="Optional notes"
-            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            className="ob-input"
           />
         </div>
 
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="ob-error" role="alert">{error}</p>}
 
-        <div className="flex gap-2 pt-1">
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           <button
             type="submit"
             disabled={loading}
-            className="text-sm px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors"
+            className="btn-primary-amber"
+            style={{ padding: '7px 14px' }}
           >
             {loading ? 'Adding…' : 'Add subsection'}
           </button>
           <button
             type="button"
             onClick={() => { setOpen(false); setError(null) }}
-            className="text-sm px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+            className="btn-primary-amber"
+            style={{
+              padding: '7px 14px',
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+            }}
           >
             Cancel
           </button>

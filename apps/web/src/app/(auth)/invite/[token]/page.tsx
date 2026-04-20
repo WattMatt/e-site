@@ -24,10 +24,8 @@ export default function InviteJoinPage() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
-  // Exchange the token for invite metadata via Supabase
   useEffect(() => {
     async function loadInvite() {
-      // Supabase invite tokens are exchanged via verifyOtp
       const { data, error } = await supabase.auth.verifyOtp({
         token_hash: token,
         type: 'invite',
@@ -42,7 +40,6 @@ export default function InviteJoinPage() {
       const user = data.user
       const meta = user.user_metadata ?? {}
 
-      // Fetch org name
       const orgId = meta.invited_to_org
       let orgName = 'your organisation'
       if (orgId) {
@@ -78,32 +75,30 @@ export default function InviteJoinPage() {
     setErrorMsg('')
 
     startTransition(async () => {
-      // Update profile name and password
       const { error: pwErr } = await supabase.auth.updateUser({
         password,
         data: { full_name: fullName.trim() },
       })
       if (pwErr) { setErrorMsg(pwErr.message); return }
 
-      // Link to org if not already done
       if (inviteData?.orgId) {
         const { data: { user } } = await supabase.auth.getUser()
         if (user) {
-          await supabase
-            .from('user_organisations')
-            .upsert({
-              user_id: user.id,
-              organisation_id: inviteData.orgId,
-              role: inviteData.role,
-              is_active: true,
-            }, { onConflict: 'user_id,organisation_id' })
-            .catch(() => {})
+          try {
+            await supabase
+              .from('user_organisations')
+              .upsert({
+                user_id: user.id,
+                organisation_id: inviteData.orgId,
+                role: inviteData.role,
+                is_active: true,
+              }, { onConflict: 'user_id,organisation_id' })
+          } catch {}
         }
       }
 
       setStep('done')
 
-      // Redirect based on role
       const role = inviteData?.role ?? ''
       const isFieldWorker = ['field_worker', 'supervisor'].includes(role)
       setTimeout(() => {
@@ -114,102 +109,102 @@ export default function InviteJoinPage() {
 
   if (step === 'loading') {
     return (
-      <div className="text-center py-12">
-        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-        <p className="text-slate-400 text-sm">Verifying your invite…</p>
+      <div className="auth-card" style={{ textAlign: 'center' }}>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
+          Verifying your invite…
+        </p>
       </div>
     )
   }
 
   if (step === 'error') {
     return (
-      <div className="bg-slate-800 rounded-xl p-8 text-center">
-        <div className="text-4xl mb-4">❌</div>
-        <h2 className="text-xl font-semibold text-white mb-2">Invalid invite</h2>
-        <p className="text-slate-400 text-sm mb-4">{errorMsg}</p>
-        <a href="/login" className="text-blue-400 hover:text-blue-300 text-sm">Go to sign in →</a>
+      <div className="auth-card auth-success">
+        <div className="auth-success-icon">❌</div>
+        <h2>Invalid invite</h2>
+        <p>{errorMsg}</p>
+        <div className="auth-links" style={{ marginTop: 28 }}>
+          <a href="/login" className="auth-link">← Go to sign in</a>
+        </div>
       </div>
     )
   }
 
   if (step === 'done') {
     return (
-      <div className="bg-slate-800 rounded-xl p-8 text-center">
-        <div className="text-4xl mb-4">✅</div>
-        <h2 className="text-xl font-semibold text-white mb-2">Welcome aboard!</h2>
-        <p className="text-slate-400 text-sm">Redirecting you now…</p>
+      <div className="auth-card auth-success">
+        <div className="auth-success-icon">✅</div>
+        <h2>Welcome aboard!</h2>
+        <p>Redirecting you now…</p>
       </div>
     )
   }
 
   return (
-    <div className="bg-slate-800 rounded-xl p-8 shadow-2xl">
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold text-white mb-1">Join {inviteData?.orgName}</h2>
-        <p className="text-slate-400 text-sm">
-          You&apos;ve been invited as <span className="text-white capitalize">{inviteData?.role?.replace('_', ' ')}</span>.
-          Set up your account to get started.
-        </p>
-      </div>
+    <div className="auth-card">
+      <h2 className="auth-card-title">Join {inviteData?.orgName}</h2>
+      <p className="auth-card-sub">
+        You&apos;ve been invited as{' '}
+        <span style={{ color: 'var(--c-amber)', textTransform: 'capitalize' }}>
+          {inviteData?.role?.replace('_', ' ')}
+        </span>
+        . Set up your account to get started.
+      </p>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Email</label>
+      <form onSubmit={handleSubmit}>
+        {errorMsg && <div className="auth-alert-error">{errorMsg}</div>}
+
+        <div className="auth-field">
+          <label className="auth-label">Email</label>
           <input
             type="email"
             value={inviteData?.email ?? ''}
             disabled
-            className="w-full bg-slate-900 text-slate-400 rounded-lg px-4 py-3 cursor-not-allowed"
+            className="auth-input"
+            style={{ opacity: 0.6, cursor: 'not-allowed' }}
           />
         </div>
 
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Full name *</label>
+        <div className="auth-field">
+          <label className="auth-label">Full name</label>
           <input
             value={fullName}
             onChange={e => setFullName(e.target.value)}
             required
-            className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="auth-input"
             placeholder="Your full name"
+            autoComplete="name"
           />
         </div>
 
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Password *</label>
+        <div className="auth-field">
+          <label className="auth-label">Password</label>
           <input
             type="password"
             value={password}
             onChange={e => setPassword(e.target.value)}
             required
             minLength={8}
-            className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="auth-input"
+            autoComplete="new-password"
           />
         </div>
 
-        <div>
-          <label className="block text-sm text-slate-400 mb-1">Confirm password *</label>
+        <div className="auth-field">
+          <label className="auth-label">Confirm password</label>
           <input
             type="password"
             value={confirmPassword}
             onChange={e => setConfirmPassword(e.target.value)}
             required
             minLength={8}
-            className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="auth-input"
+            autoComplete="new-password"
           />
         </div>
 
-        {errorMsg && (
-          <div className="bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">
-            {errorMsg}
-          </div>
-        )}
-
-        <button
-          type="submit"
-          disabled={isPending}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-3 rounded-lg transition-colors"
-        >
-          {isPending ? 'Setting up account…' : 'Create Account & Join'}
+        <button type="submit" disabled={isPending} className="auth-btn">
+          {isPending ? 'Setting up account…' : 'Create Account & Join →'}
         </button>
       </form>
     </div>

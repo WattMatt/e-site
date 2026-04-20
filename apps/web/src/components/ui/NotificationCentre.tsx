@@ -5,25 +5,24 @@ import { createClient } from '@/lib/supabase/client'
 import { formatRelative } from '@esite/shared'
 import { Bell } from 'lucide-react'
 
-interface Notification {
+interface AppNotification {
   id: string
   title: string
-  body: string
-  data: Record<string, string>
+  body: string | null
   is_read: boolean
   created_at: string
+  action_url: string | null
 }
 
 export function NotificationCentre() {
   const [open, setOpen] = useState(false)
-  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [isPending, startTransition] = useTransition()
 
   const unreadCount = notifications.filter(n => !n.is_read).length
 
   useEffect(() => {
     fetchNotifications()
-    // Subscribe to realtime inserts
     const supabase = createClient()
     const channel = supabase
       .channel('notifications')
@@ -44,7 +43,7 @@ export function NotificationCentre() {
       .select('*')
       .order('created_at', { ascending: false })
       .limit(30)
-    setNotifications((data as Notification[]) ?? [])
+    setNotifications((data as AppNotification[]) ?? [])
   }
 
   async function markAllRead() {
@@ -64,24 +63,53 @@ export function NotificationCentre() {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n))
   }
 
-  function handleNotificationClick(n: Notification) {
+  function handleNotificationClick(n: AppNotification) {
     markRead(n.id)
-    if (n.data?.route) {
-      window.location.href = n.data.route
+    if (n.action_url) {
+      window.location.href = n.action_url
     }
     setOpen(false)
   }
 
   return (
-    <div className="relative">
+    <div style={{ position: 'relative' }}>
       <button
         onClick={() => setOpen(!open)}
-        className="relative p-2 text-slate-400 hover:text-white transition-colors rounded-lg hover:bg-slate-800"
-        title="Notifications"
+        aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        style={{
+          position: 'relative',
+          padding: 8,
+          color: 'var(--c-text-mid)',
+          background: 'transparent',
+          border: 'none',
+          borderRadius: 6,
+          cursor: 'pointer',
+          transition: 'color 0.15s, background 0.15s',
+        }}
       >
-        <Bell size={20} />
+        <Bell size={20} aria-hidden="true" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full text-xs text-white flex items-center justify-center font-bold leading-none">
+          <span
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              top: 4,
+              right: 4,
+              width: 16,
+              height: 16,
+              background: 'var(--c-red)',
+              borderRadius: '50%',
+              fontSize: 10,
+              color: 'var(--c-base)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 700,
+              lineHeight: 1,
+            }}
+          >
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
@@ -89,38 +117,106 @@ export function NotificationCentre() {
 
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-10 w-80 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
-              <h3 className="text-sm font-semibold text-white">Notifications</h3>
+          <div
+            aria-hidden="true"
+            onClick={() => setOpen(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 30 }}
+          />
+          <div
+            role="dialog"
+            aria-label="Notifications"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 40,
+              width: 320,
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              borderRadius: 8,
+              boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
+              zIndex: 40,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                borderBottom: '1px solid var(--c-border)',
+              }}
+            >
+              <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-text)' }}>
+                Notifications
+              </h3>
               {unreadCount > 0 && (
                 <button
                   onClick={markAllRead}
                   disabled={isPending}
-                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    color: 'var(--c-amber)',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    letterSpacing: '0.04em',
+                    opacity: isPending ? 0.5 : 1,
+                  }}
                 >
                   Mark all read
                 </button>
               )}
             </div>
-            <div className="max-h-96 overflow-y-auto">
+            <div style={{ maxHeight: 384, overflowY: 'auto' }}>
               {notifications.length === 0 ? (
-                <div className="py-8 text-center">
-                  <p className="text-slate-400 text-sm">No notifications</p>
+                <div style={{ padding: '32px 16px', textAlign: 'center' }}>
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.04em' }}>
+                    No notifications
+                  </p>
                 </div>
               ) : (
-                notifications.map(n => (
+                notifications.map((n, idx) => (
                   <button
                     key={n.id}
                     onClick={() => handleNotificationClick(n)}
-                    className={`w-full text-left px-4 py-3 border-b border-slate-800 hover:bg-slate-800 transition-colors ${!n.is_read ? 'bg-blue-950/20' : ''}`}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '12px 16px',
+                      background: n.is_read ? 'transparent' : 'var(--c-amber-dim)',
+                      border: 'none',
+                      borderTop: idx > 0 ? '1px solid var(--c-border)' : 'none',
+                      cursor: 'pointer',
+                      color: 'inherit',
+                    }}
                   >
-                    <div className="flex items-start gap-2">
-                      {!n.is_read && <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-2 flex-shrink-0" />}
-                      <div className={!n.is_read ? '' : 'pl-3.5'}>
-                        <p className="text-sm font-medium text-white leading-tight">{n.title}</p>
-                        <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{n.body}</p>
-                        <p className="text-xs text-slate-600 mt-1">{formatRelative(n.created_at)}</p>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      {!n.is_read && (
+                        <div
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            background: 'var(--c-amber)',
+                            marginTop: 6,
+                            flexShrink: 0,
+                          }}
+                        />
+                      )}
+                      <div style={{ paddingLeft: n.is_read ? 14 : 0, flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', lineHeight: 1.3 }}>
+                          {n.title}
+                        </p>
+                        {n.body && (
+                          <p style={{ fontSize: 11, color: 'var(--c-text-mid)', marginTop: 3, lineHeight: 1.5 }}>
+                            {n.body}
+                          </p>
+                        )}
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 4, letterSpacing: '0.04em' }}>
+                          {formatRelative(n.created_at)}
+                        </p>
                       </div>
                     </div>
                   </button>

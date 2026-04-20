@@ -6,6 +6,7 @@
  *
  * Events handled:
  *   charge.success           → mark order paid, create commission record
+ *   charge.failed            → increment subscription failure counter, email day-0 notice
  *   transfer.success         → mark payout complete
  *   transfer.failed          → mark payout failed, log reason
  *   subscription.create      → create/activate subscription record
@@ -13,33 +14,38 @@
  *   invoice.create           → record pending invoice
  *   invoice.update           → update invoice status (paid / failed)
  *
- * Spec § 7.5, § 8.1, § 13.3  |  CLAUDE.md §3.2, §10 point 9
+ * Spec § 7.5, § 8.1, § 13.3, § 18  |  CLAUDE.md §3.2, §10 point 9
  * Paystack docs: https://paystack.com/docs/payments/webhooks/
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { sendSequenceEmail, getSiteUrl, unsubscribeUrlFor } from '../_shared/email-sequence.ts'
+import { paymentDay0Failed } from '../_shared/email-templates/payment-day0-failed.ts'
 
 // ─── HMAC SHA-512 verification ────────────────────────────────────────────────
 
 async function verifyPaystackSignature(body: string, signature: string, secret: string): Promise<boolean> {
   const encoder = new TextEncoder()
-  const keyData = encoder.encode(secret)
-  const msgData = encoder.encode(body)
 
   const key = await crypto.subtle.importKey(
     'raw',
-    keyData,
+    encoder.encode(secret),
     { name: 'HMAC', hash: 'SHA-512' },
     false,
-    ['sign'],
+    ['verify'],
   )
 
-  const sigBuffer = await crypto.subtle.sign('HMAC', key, msgData)
-  const computed = Array.from(new Uint8Array(sigBuffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+  // Decode the hex signature to bytes then use crypto.subtle.verify() which is
+  // timing-safe — avoids the string-comparison timing leak in the original.
+  if (signature.length % 2 !== 0) return false
+  const sigBytes = new Uint8Array(signature.length / 2)
+  for (let i = 0; i < signature.length; i += 2) {
+    const byte = parseInt(signature.slice(i, i + 2), 16)
+    if (isNaN(byte)) return false
+    sigBytes[i / 2] = byte
+  }
 
-  return computed === signature
+  return crypto.subtle.verify('HMAC', key, sigBytes, encoder.encode(body))
 }
 
 // ─── Event handlers ───────────────────────────────────────────────────────────
@@ -282,11 +288,20 @@ async function handleInvoiceUpdate(
 
   // Update subscription status
   if (status === 'paid') {
+    // Reset the recovery counter so a future failure starts from day 0.
     await supabase
       .schema('billing')
       .from('subscriptions')
-      .update({ status: 'active' })
+      .update({ status: 'active', payment_failure_count: 0, last_payment_failure_at: null })
       .eq('paystack_subscription_code', subscriptionCode)
+
+    // Restore any projects that were paused by the recovery flow.
+    await supabase
+      .schema('projects')
+      .from('projects')
+      .update({ status: 'active' })
+      .eq('organisation_id', sub.organisation_id)
+      .eq('status', 'payment_paused')
   } else {
     await supabase
       .schema('billing')
@@ -296,6 +311,115 @@ async function handleInvoiceUpdate(
   }
 
   console.log(`invoice.update ref=${reference} status=${status} subscriptionCode=${subscriptionCode}`)
+}
+
+async function handleChargeFailed(
+  supabase: ReturnType<typeof createClient>,
+  data: Record<string, unknown>,
+): Promise<void> {
+  // Paystack delivers charge.failed for both one-off orders and subscription
+  // renewals. Only the subscription case is the payment-recovery signal — a
+  // failed one-off order is already surfaced via the existing order flow.
+  const customer = (data.customer as Record<string, unknown>) ?? {}
+  const customerEmail = customer.email as string | undefined
+  const customerCode = customer.customer_code as string | undefined
+  const amountKobo = (data.amount as number) ?? 0
+  const reference = (data.reference as string) ?? ''
+
+  if (!customerCode && !customerEmail) {
+    console.warn(`charge.failed ref=${reference}: no customer identifier, skipping`)
+    return
+  }
+
+  // Find the subscription via paystack_customer_code first, fall back to email.
+  let subQuery = (supabase as any)
+    .schema('billing')
+    .from('subscriptions')
+    .select('id, organisation_id, payment_failure_count, status, paystack_customer_code')
+  if (customerCode) {
+    subQuery = subQuery.eq('paystack_customer_code', customerCode)
+  } else if (customerEmail) {
+    // customer_code wasn't supplied — try to resolve via profile email → org → subscription
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, user_organisations(organisation_id)')
+      .eq('email', customerEmail)
+      .maybeSingle()
+    const orgId = (profile?.user_organisations as any[] | undefined)?.[0]?.organisation_id
+    if (!orgId) {
+      console.warn(`charge.failed ref=${reference}: no org for email=${customerEmail}`)
+      return
+    }
+    subQuery = subQuery.eq('organisation_id', orgId)
+  }
+
+  const { data: sub, error: subErr } = await subQuery.maybeSingle()
+  if (subErr || !sub) {
+    console.warn(`charge.failed ref=${reference}: subscription not found (${subErr?.message ?? 'no row'})`)
+    return
+  }
+
+  if ((sub as any).status === 'cancelled') {
+    console.log(`charge.failed ref=${reference}: subscription already cancelled, skipping`)
+    return
+  }
+
+  // Increment counter + stamp the failure timestamp. Moves status to
+  // 'past_due' if currently 'active' — graduation to 'grace_period' / 'paused'
+  // happens later via the payment-recovery-check cron.
+  const nextCount = ((sub as any).payment_failure_count ?? 0) + 1
+  const nextStatus = (sub as any).status === 'active' ? 'past_due' : (sub as any).status
+
+  await (supabase as any)
+    .schema('billing')
+    .from('subscriptions')
+    .update({
+      payment_failure_count:   nextCount,
+      last_payment_failure_at: new Date().toISOString(),
+      status:                  nextStatus,
+    })
+    .eq('id', (sub as any).id)
+
+  // Send the Day-0 "payment failed" email. Idempotent via email_sequence_events
+  // UNIQUE — if charge.failed fires multiple times within the recovery window
+  // for the same sub, we only email the first time.
+  const { data: ownerProfile } = await (supabase as any)
+    .from('user_organisations')
+    .select('user_id, profile:profiles!user_id(id, full_name, email)')
+    .eq('organisation_id', (sub as any).organisation_id)
+    .eq('role', 'org_admin')
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle()
+
+  const owner = ownerProfile?.profile as { id: string; full_name: string | null; email: string | null } | null
+  if (!owner?.id || !owner.email) {
+    console.warn(`charge.failed ref=${reference}: no org admin to email`)
+    return
+  }
+
+  const amountZAR = `R${(amountKobo / 100).toFixed(2)}`
+  const { subject, html } = paymentDay0Failed({
+    firstName: owner.full_name?.split(' ')[0] ?? '',
+    amountZAR,
+    siteUrl: getSiteUrl(),
+    unsubscribeUrl: unsubscribeUrlFor(owner.id),
+  })
+
+  const result = await sendSequenceEmail(supabase as any, {
+    userId:         owner.id,
+    toEmail:        owner.email,
+    organisationId: (sub as any).organisation_id,
+    sequence:       'payment_recovery',
+    step:           'day0_failed',
+    subject,
+    html,
+    metadata: { reference, failure_count: nextCount },
+  })
+
+  console.log(
+    `charge.failed ref=${reference} sub=${(sub as any).id} count=${nextCount} status=${nextStatus} email=${result.status}`,
+  )
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
@@ -347,6 +471,9 @@ Deno.serve(async (req) => {
       case 'charge.success':
         await handleChargeSuccess(supabase, event.data)
         break
+      case 'charge.failed':
+        await handleChargeFailed(supabase, event.data)
+        break
       case 'transfer.success':
         await handleTransferSuccess(supabase, event.data)
         break
@@ -365,8 +492,13 @@ Deno.serve(async (req) => {
         // No action needed — wait for invoice.update to confirm payment
         break
       case 'invoice.update':
-      case 'invoice.payment_failed':
         await handleInvoiceUpdate(supabase, event.data)
+        break
+      case 'invoice.payment_failed':
+        // Subscription renewal charge failed: record the invoice AND kick off
+        // the payment-recovery timeline in the same tick.
+        await handleInvoiceUpdate(supabase, event.data)
+        await handleChargeFailed(supabase, event.data)
         break
       default:
         console.log(`Unhandled event: ${event.event}`)

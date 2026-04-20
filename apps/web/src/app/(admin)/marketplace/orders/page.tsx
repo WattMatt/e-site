@@ -1,16 +1,15 @@
 import { createClient } from '@/lib/supabase/server'
-import { PageHeader } from '@/components/layout/Header'
 import { formatDate, formatZAR } from '@esite/shared'
 import Link from 'next/link'
 
 const STATUS_BADGE: Record<string, string> = {
-  draft: 'bg-slate-700 text-slate-300',
-  submitted: 'bg-blue-900/30 text-blue-400',
-  confirmed: 'bg-amber-900/30 text-amber-400',
-  in_transit: 'bg-purple-900/30 text-purple-400',
-  delivered: 'bg-emerald-900/30 text-emerald-400',
-  invoiced: 'bg-cyan-900/30 text-cyan-400',
-  cancelled: 'bg-red-900/30 text-red-400',
+  draft:      'badge badge-muted',
+  submitted:  'badge badge-blue',
+  confirmed:  'badge badge-amber',
+  in_transit: 'badge badge-amber',
+  delivered:  'badge badge-green',
+  invoiced:   'badge badge-blue',
+  cancelled:  'badge badge-red',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -31,7 +30,7 @@ export default async function ContractorOrdersPage() {
     .single()
 
   const { data: orders } = mem
-    ? await supabase
+    ? await (supabase as any)
         .schema('marketplace')
         .from('orders')
         .select(`
@@ -46,60 +45,54 @@ export default async function ContractorOrdersPage() {
   const allOrders = orders ?? []
 
   return (
-    <div>
-      <PageHeader
-        title="My Orders"
-        subtitle={`${allOrders.length} orders`}
-        actions={
-          <Link
-            href="/marketplace"
-            className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
-          >
-            Browse Marketplace
-          </Link>
-        }
-      />
+    <div className="animate-fadeup">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">My Orders</h1>
+          <p className="page-subtitle">{allOrders.length} order{allOrders.length !== 1 ? 's' : ''}</p>
+        </div>
+        <Link href="/marketplace" className="filter-tab">Browse Marketplace</Link>
+      </div>
 
       {allOrders.length === 0 ? (
-        <div className="flex flex-col items-center py-24 gap-3 text-center">
-          <div className="text-5xl">🛒</div>
-          <p className="text-white font-semibold">No orders yet</p>
-          <p className="text-slate-400 text-sm">Browse the marketplace to place your first order.</p>
-          <Link
-            href="/marketplace"
-            className="mt-2 text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-          >
-            Browse Marketplace
-          </Link>
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '48px 18px' }}>
+            No orders yet —{' '}
+            <Link href="/marketplace" style={{ color: 'var(--c-amber)', textDecoration: 'none' }}>
+              browse the marketplace
+            </Link>{' '}
+            to place your first order.
+          </div>
         </div>
       ) : (
-        <div className="space-y-3">
-          {allOrders.map((order) => {
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Orders</span>
+          </div>
+          {allOrders.map((order: any) => {
             const items = (order.order_items ?? []) as any[]
             const supplier = (order as any).supplier
             return (
-              <Link
-                key={order.id}
-                href={`/marketplace/orders/${order.id}`}
-                className="flex items-start justify-between gap-4 p-4 bg-slate-800 border border-slate-700 rounded-xl hover:border-slate-500 transition-colors"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[order.status] ?? ''}`}>
-                      {STATUS_LABEL[order.status] ?? order.status}
-                    </span>
-                    {supplier && <span className="text-sm text-white">{supplier.name}</span>}
+              <Link key={order.id} href={`/marketplace/orders/${order.id}`} className="data-panel-row">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
+                    {supplier?.name ?? 'Supplier'}
                   </div>
-                  <p className="text-xs text-slate-400">
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
                     {items.length} item{items.length !== 1 ? 's' : ''}
                     {items[0] && ` · ${(items[0].catalogue_item as any)?.name ?? items[0].description ?? 'Item'}`}
-                  </p>
+                    {` · ${formatDate(order.created_at)}`}
+                  </div>
                 </div>
-                <div className="text-right flex-shrink-0">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                   {order.total_amount && (
-                    <p className="font-bold text-white text-sm">{formatZAR(order.total_amount)}</p>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-text)' }}>
+                      {formatZAR(order.total_amount)}
+                    </span>
                   )}
-                  <p className="text-xs text-slate-400">{formatDate(order.created_at)}</p>
+                  <span className={STATUS_BADGE[order.status] ?? 'badge badge-muted'}>
+                    {STATUS_LABEL[order.status] ?? order.status}
+                  </span>
                 </div>
               </Link>
             )

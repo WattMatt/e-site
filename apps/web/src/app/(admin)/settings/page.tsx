@@ -1,8 +1,9 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { PageHeader } from '@/components/layout/Header'
-import { Card, CardBody } from '@/components/ui/Card'
 import { OrgSettingsForm } from './OrgSettingsForm'
 import { ProfileSettingsForm } from './ProfileSettingsForm'
+
+export const metadata: Metadata = { title: 'Settings' }
 
 export default async function SettingsPage() {
   const supabase = await createClient()
@@ -21,33 +22,35 @@ export default async function SettingsPage() {
   const isAdmin = ['owner', 'admin'].includes(role)
 
   return (
-    <div className="max-w-2xl">
-      <PageHeader title="Settings" />
+    <div className="animate-fadeup" style={{ maxWidth: 640 }}>
+      <div className="page-header">
+        <h1 className="page-title">Settings</h1>
+      </div>
 
-      <div className="space-y-6">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* Profile */}
-        <Card>
-          <div className="px-6 py-4 border-b border-slate-700">
-            <h2 className="font-semibold text-white">Your Profile</h2>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Your Profile</span>
           </div>
-          <CardBody>
+          <div style={{ padding: '16px 18px' }}>
             <ProfileSettingsForm
               userId={user!.id}
               fullName={profile?.full_name ?? ''}
               phone={profile?.phone ?? ''}
               email={user!.email ?? ''}
             />
-          </CardBody>
-        </Card>
+          </div>
+        </div>
 
         {/* Organisation */}
         {isAdmin && org && (
-          <Card>
-            <div className="px-6 py-4 border-b border-slate-700">
-              <h2 className="font-semibold text-white">Organisation</h2>
-              <p className="text-xs text-slate-400 mt-0.5">Visible to all members</p>
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Organisation</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>Visible to all members</span>
             </div>
-            <CardBody>
+            <div style={{ padding: '16px 18px' }}>
               <OrgSettingsForm
                 orgId={org.id}
                 name={org.name}
@@ -56,24 +59,30 @@ export default async function SettingsPage() {
                 phone={org.phone ?? ''}
                 website={org.website ?? ''}
               />
-            </CardBody>
-          </Card>
+            </div>
+          </div>
         )}
 
         {/* Danger zone */}
-        <Card className="border-red-900/40">
-          <div className="px-6 py-4 border-b border-red-900/40">
-            <h2 className="font-semibold text-red-400">Danger Zone</h2>
+        <div className="data-panel" style={{ borderColor: '#6b1e1e' }}>
+          <div className="data-panel-header" style={{ borderColor: '#6b1e1e' }}>
+            <span className="data-panel-title" style={{ color: 'var(--c-red)' }}>Danger Zone</span>
           </div>
-          <CardBody>
-            <p className="text-sm text-slate-400 mb-4">
+          <div style={{ padding: '16px 18px' }}>
+            <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 14 }}>
               Deleting your account is permanent and cannot be undone. All your data will be removed.
             </p>
-            <button className="text-sm text-red-400 hover:text-red-300 border border-red-800 hover:border-red-600 px-3 py-1.5 rounded-lg transition-colors">
+            <button
+              style={{
+                fontSize: 12, color: 'var(--c-red)', background: 'var(--c-red-dim)',
+                border: '1px solid #6b1e1e', borderRadius: 6, padding: '7px 14px',
+                cursor: 'pointer', transition: 'all 0.12s',
+              }}
+            >
               Delete Account
             </button>
-          </CardBody>
-        </Card>
+          </div>
+        </div>
       </div>
     </div>
   )

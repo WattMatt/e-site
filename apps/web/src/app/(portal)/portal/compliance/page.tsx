@@ -3,11 +3,22 @@ import { complianceService } from '@esite/shared'
 import Link from 'next/link'
 
 function ScoreRing({ score }: { score: number }) {
-  const color = score === 100 ? '#10B981' : score >= 50 ? '#F59E0B' : '#EF4444'
+  const color = score === 100 ? '#4ade80' : score >= 50 ? 'var(--c-amber)' : 'var(--c-red)'
   return (
     <div
-      className="w-14 h-14 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-      style={{ border: `3px solid ${color}`, color }}
+      style={{
+        width: 56,
+        height: 56,
+        borderRadius: '50%',
+        border: `3px solid ${color}`,
+        color,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 13,
+        fontWeight: 700,
+        flexShrink: 0,
+      }}
     >
       {score}%
     </div>
@@ -32,18 +43,26 @@ export default async function PortalCompliancePage() {
     : []
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold text-white mb-2">Compliance Status</h1>
-      <p className="text-slate-400 text-sm mb-8">Read-only view of your project COC compliance.</p>
+    <div className="animate-fadeup">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Compliance Status</h1>
+          <p className="page-subtitle">Read-only view of your project COC compliance</p>
+        </div>
+      </div>
 
       {sites.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="text-5xl mb-4">📋</div>
-          <p className="text-white font-semibold">No sites found</p>
-          <p className="text-slate-400 text-sm mt-2">Your contractor will share compliance status here.</p>
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '60px 24px', textAlign: 'center' }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+            <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--c-text)' }}>No sites found</p>
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', marginTop: 6, letterSpacing: '0.04em' }}>
+              Your contractor will share compliance status here.
+            </p>
+          </div>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {sites.map((site: any) => {
             const subs = site.subsections ?? []
             const total = subs.length
@@ -56,22 +75,39 @@ export default async function PortalCompliancePage() {
               <Link
                 key={site.id}
                 href={`/portal/compliance/${site.id}`}
-                className="block bg-slate-900 border border-slate-800 hover:border-slate-600 rounded-xl p-5 transition-colors"
+                className="data-panel"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 16,
+                  padding: '18px 20px',
+                  textDecoration: 'none',
+                  color: 'inherit',
+                }}
               >
-                <div className="flex items-start gap-4">
-                  <ScoreRing score={score} />
-                  <div className="flex-1">
-                    <p className="font-semibold text-white text-base">{site.name}</p>
-                    <p className="text-sm text-slate-400 mt-0.5">{site.address}{site.city ? `, ${site.city}` : ''}</p>
-                    <div className="flex gap-4 mt-3 text-xs">
-                      <span className="text-emerald-400">{approved} approved</span>
-                      <span className="text-amber-400">{pending} pending</span>
-                      <span className="text-red-400">{missing} missing</span>
-                      <span className="text-slate-500">{total} total</span>
-                    </div>
+                <ScoreRing score={score} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--c-text)' }}>{site.name}</p>
+                  <p style={{ fontSize: 12, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                    {site.address}{site.city ? `, ${site.city}` : ''}
+                  </p>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 14,
+                      marginTop: 10,
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 11,
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    <span style={{ color: '#4ade80' }}>{approved} approved</span>
+                    <span style={{ color: 'var(--c-amber)' }}>{pending} pending</span>
+                    <span style={{ color: 'var(--c-red)' }}>{missing} missing</span>
+                    <span style={{ color: 'var(--c-text-dim)' }}>{total} total</span>
                   </div>
-                  <span className="text-slate-600 text-lg">›</span>
                 </div>
+                <span style={{ color: 'var(--c-text-dim)', fontSize: 18 }}>›</span>
               </Link>
             )
           })}

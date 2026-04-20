@@ -19,9 +19,19 @@ export function RevokeInviteButton({ inviteId }: { inviteId: string }) {
 
   return (
     <button
+      type="button"
       onClick={revoke}
       disabled={revoking}
-      className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        color: 'var(--c-red)',
+        background: 'transparent',
+        border: 'none',
+        cursor: revoking ? 'wait' : 'pointer',
+        opacity: revoking ? 0.5 : 1,
+        letterSpacing: '0.04em',
+      }}
     >
       {revoking ? 'Revoking…' : 'Revoke'}
     </button>

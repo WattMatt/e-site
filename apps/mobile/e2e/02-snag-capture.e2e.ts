@@ -60,7 +60,7 @@ describe('Snag capture', () => {
 
   it('works offline — snag queued and persists after airplane mode', async () => {
     // Enable airplane mode
-    await device.setStatusBar({ dataNetworkType: 'airplane' })
+    await device.setStatusBar({ dataNetwork: 'hide' })
 
     // Navigate to create snag
     await element(by.id('tab-dashboard')).tap()
@@ -80,7 +80,7 @@ describe('Snag capture', () => {
     await detoxExpect(element(by.text('Offline snag — queued'))).toBeVisible()
 
     // Restore network — PowerSync should sync it
-    await device.setStatusBar({ dataNetworkType: 'lte' })
+    await device.setStatusBar({ dataNetwork: 'lte' })
     // Allow time for sync
     await new Promise(r => setTimeout(r, 5_000))
 

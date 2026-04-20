@@ -88,124 +88,192 @@ export function PlaceOrderForm({ supplierId, supplierOrgId, catalogueItems, proj
       data.append('item_qty', c.qty.toString())
       data.append('item_price', c.unitPrice.toString())
     })
-    startTransition(() => placeOrderAction(data))
+    startTransition(() => { void placeOrderAction(data) })
+  }
+
+  const qtyBtnStyle: React.CSSProperties = {
+    width: 24, height: 24, borderRadius: 4,
+    background: 'var(--c-elevated)', border: '1px solid var(--c-border-mid)',
+    color: 'var(--c-text)', fontSize: 12, fontFamily: 'var(--font-mono)',
+    cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {error && (
+        <div
+          role="alert"
+          style={{
+            background: 'var(--c-red-dim)',
+            border: '1px solid rgba(127,29,29,0.6)',
+            color: '#fca5a5',
+            borderRadius: 6,
+            padding: '10px 14px',
+            fontSize: 12,
+          }}
+        >
+          {error}
+        </div>
+      )}
 
-      {/* Item search + add */}
-      <div>
-        <h3 className="text-sm font-semibold text-white mb-3">Select Items</h3>
-        <input
-          type="text"
-          value={searchTerm}
-          onChange={e => setSearchTerm(e.target.value)}
-          placeholder="Search catalogue…"
-          className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 mb-3"
-        />
-        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-          {filteredItems.length === 0 && (
-            <p className="text-slate-400 text-sm text-center py-4">No items found.</p>
-          )}
-          {filteredItems.map(item => {
-            const inCart = cart.find(c => c.itemId === item.id)
-            return (
-              <div key={item.id} className="flex items-center justify-between gap-3 p-3 bg-slate-800 border border-slate-700 rounded-lg">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white truncate">{item.name}</p>
-                  <p className="text-xs text-slate-400">{formatZAR(item.unit_price)} / {item.unit}</p>
-                </div>
-                {inCart ? (
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => updateQty(item.id, inCart.qty - 1)}
-                      className="w-6 h-6 rounded bg-slate-600 text-white text-xs hover:bg-slate-500">−</button>
-                    <span className="text-sm text-white w-8 text-center">{inCart.qty}</span>
-                    <button type="button" onClick={() => updateQty(item.id, inCart.qty + 1)}
-                      className="w-6 h-6 rounded bg-slate-600 text-white text-xs hover:bg-slate-500">+</button>
+      {/* Item search + list */}
+      <div className="data-panel">
+        <div className="data-panel-header">
+          <span className="data-panel-title">Select Items</span>
+        </div>
+        <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            placeholder="Search catalogue…"
+            className="ob-input"
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
+            {filteredItems.length === 0 && (
+              <p style={{ fontSize: 12, color: 'var(--c-text-dim)', textAlign: 'center', padding: '16px 0' }}>
+                No items found.
+              </p>
+            )}
+            {filteredItems.map(item => {
+              const inCart = cart.find(c => c.itemId === item.id)
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                    padding: '10px 12px',
+                    background: 'var(--c-elevated)',
+                    border: '1px solid var(--c-border)',
+                    borderRadius: 6,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 13, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.name}
+                    </p>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                      {formatZAR(item.unit_price)} / {item.unit}
+                    </p>
                   </div>
-                ) : (
-                  <button type="button" onClick={() => addToCart(item)}
-                    className="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
-                    Add
-                  </button>
-                )}
-              </div>
-            )
-          })}
+                  {inCart ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button type="button" onClick={() => updateQty(item.id, inCart.qty - 1)} style={qtyBtnStyle}>−</button>
+                      <span style={{ fontSize: 12, color: 'var(--c-text)', width: 28, textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
+                        {inCart.qty}
+                      </span>
+                      <button type="button" onClick={() => updateQty(item.id, inCart.qty + 1)} style={qtyBtnStyle}>+</button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => addToCart(item)}
+                      className="btn-primary-amber"
+                      style={{ fontSize: 11, padding: '5px 12px' }}
+                    >
+                      Add
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
       </div>
 
       {/* Cart summary */}
       {cart.length > 0 && (
-        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-          <h3 className="text-sm font-semibold text-white mb-2">Order ({cart.length} items)</h3>
-          <div className="space-y-1">
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Order ({cart.length} items)</span>
+          </div>
+          <div style={{ padding: '12px 18px' }}>
             {cart.map(c => (
-              <div key={c.itemId} className="flex justify-between text-sm text-slate-300">
+              <div key={c.itemId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--c-text-mid)', padding: '3px 0' }}>
                 <span>{c.qty}× {c.itemName}</span>
-                <span>{formatZAR(c.qty * c.unitPrice)}</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{formatZAR(c.qty * c.unitPrice)}</span>
               </div>
             ))}
-          </div>
-          <div className="border-t border-slate-700 mt-2 pt-2 flex justify-between font-bold text-white text-sm">
-            <span>Total</span>
-            <span>{formatZAR(total)}</span>
+            <div
+              style={{
+                borderTop: '1px solid var(--c-border)',
+                marginTop: 8, paddingTop: 8,
+                display: 'flex', justifyContent: 'space-between',
+                fontSize: 13, fontWeight: 700,
+              }}
+            >
+              <span style={{ color: 'var(--c-text)' }}>Total</span>
+              <span style={{ color: 'var(--c-amber)', fontFamily: 'var(--font-mono)' }}>{formatZAR(total)}</span>
+            </div>
           </div>
         </div>
       )}
 
       {/* Order details */}
-      <div className="space-y-4">
-        {projects.length > 0 && (
+      <div className="data-panel">
+        <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {projects.length > 0 && (
+            <div>
+              <label className="ob-label" htmlFor="project">Project (optional)</label>
+              <select
+                id="project"
+                value={projectId}
+                onChange={e => setProjectId(e.target.value)}
+                className="ob-select"
+              >
+                <option value="">No project</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          )}
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Project (optional)</label>
-            <select
-              value={projectId}
-              onChange={e => setProjectId(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
-            >
-              <option value="">No project</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label className="ob-label" htmlFor="required-by">Required by (optional)</label>
+            <input
+              id="required-by"
+              type="date"
+              value={requiredBy}
+              onChange={e => setRequiredBy(e.target.value)}
+              className="ob-input"
+            />
           </div>
-        )}
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Required By (optional)</label>
-          <input
-            type="date"
-            value={requiredBy}
-            onChange={e => setRequiredBy(e.target.value)}
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
-          />
-        </div>
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Delivery Address</label>
-          <input
-            type="text"
-            value={deliveryAddress}
-            onChange={e => setDeliveryAddress(e.target.value)}
-            placeholder="Site address or delivery location"
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
-          />
-        </div>
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5 font-semibold uppercase tracking-wide">Notes / Special Instructions</label>
-          <textarea
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            rows={3}
-            placeholder="Specifications, packaging requirements, instructions…"
-            className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 resize-none"
-          />
+          <div>
+            <label className="ob-label" htmlFor="delivery-address">Delivery address</label>
+            <input
+              id="delivery-address"
+              type="text"
+              value={deliveryAddress}
+              onChange={e => setDeliveryAddress(e.target.value)}
+              placeholder="Site address or delivery location"
+              className="ob-input"
+            />
+          </div>
+          <div>
+            <label className="ob-label" htmlFor="notes">Notes / special instructions</label>
+            <textarea
+              id="notes"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={3}
+              placeholder="Specifications, packaging requirements, instructions…"
+              className="ob-input"
+              style={{ resize: 'vertical', minHeight: 72 }}
+            />
+          </div>
         </div>
       </div>
 
       <button
         type="submit"
         disabled={isPending || cart.length === 0}
-        className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-colors text-sm"
+        className="btn-primary-amber"
+        style={{
+          padding: '12px 18px',
+          fontSize: 13,
+          fontWeight: 700,
+          opacity: (isPending || cart.length === 0) ? 0.5 : 1,
+          cursor: (isPending || cart.length === 0) ? 'not-allowed' : 'pointer',
+        }}
       >
         {isPending ? 'Placing order…' : `Place Order${cart.length > 0 ? ` · ${formatZAR(total)}` : ''}`}
       </button>

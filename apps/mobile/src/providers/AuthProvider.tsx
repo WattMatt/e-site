@@ -75,7 +75,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function registerPushToken(userId: string) {
     const { status } = await Notifications.requestPermissionsAsync()
     if (status !== 'granted') return
-    const token = await Notifications.getExpoPushTokenAsync()
+    // projectId is required for standalone builds; reads from EAS env var injected at build time
+    const projectId = process.env.EXPO_PUBLIC_EAS_PROJECT_ID
+    const token = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined)
     if (!token.data) return
     await (supabase as any).from('push_tokens').upsert(
       { user_id: userId, token: token.data, platform: Platform.OS as 'ios' | 'android', is_active: true },

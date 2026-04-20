@@ -2,12 +2,12 @@ import { RegisterSupplierForm } from './RegisterSupplierForm'
 
 export default function SupplierRegisterPage() {
   return (
-    <div className="max-w-lg mx-auto">
-      <div className="text-center mb-8">
-        <h1 className="text-2xl font-bold text-white">Join the E-Site Marketplace</h1>
-        <p className="text-slate-400 mt-2 text-sm">
-          Reach verified electrical contractors across South Africa.
-        </p>
+    <div className="animate-fadeup" style={{ maxWidth: 560, margin: '0 auto' }}>
+      <div className="page-header" style={{ textAlign: 'center', flexDirection: 'column', alignItems: 'center', marginBottom: 28 }}>
+        <div>
+          <h1 className="page-title">Join the E-Site Marketplace</h1>
+          <p className="page-subtitle">Reach verified electrical contractors across South Africa.</p>
+        </div>
       </div>
       <RegisterSupplierForm />
     </div>

@@ -5,6 +5,7 @@ import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useQuery } from '@tanstack/react-query'
 import { projectService } from '@esite/shared'
 import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
+import { SkeletonKpiCard } from '../../src/components/Skeleton'
 
 const QUICK_ACTIONS = [
   { label: 'Log Snag',    icon: '⚠️', route: '/snags/create',       bg: colors.redDim,    border: colors.redMid,    testID: 'quick-action-log-snag' },
@@ -57,22 +58,32 @@ export default function DashboardTab() {
       <Text style={styles.greeting}>Hey, {firstName} 👋</Text>
 
       <View style={styles.kpiGrid}>
-        <View style={styles.kpiCard}>
-          <Text style={styles.kpiValue}>{isLoading ? '…' : stats?.activeProjects ?? 0}</Text>
-          <Text style={styles.kpiLabel}>Active Projects</Text>
-        </View>
-        <View style={[styles.kpiCard, openSnags > 0 && { borderColor: colors.redMid }]}>
-          <Text style={[styles.kpiValue, openSnags > 0 && { color: colors.red }]}>
-            {isLoading ? '…' : openSnags}
-          </Text>
-          <Text style={styles.kpiLabel}>Open Snags</Text>
-        </View>
-        <View style={[styles.kpiCard, pendingCocs > 0 && { borderColor: colors.amberMid }]}>
-          <Text style={[styles.kpiValue, pendingCocs > 0 && { color: colors.amber }]}>
-            {isLoading ? '…' : pendingCocs}
-          </Text>
-          <Text style={styles.kpiLabel}>Pending COCs</Text>
-        </View>
+        {isLoading && !stats ? (
+          <>
+            <SkeletonKpiCard />
+            <SkeletonKpiCard />
+            <SkeletonKpiCard />
+          </>
+        ) : (
+          <>
+            <View style={styles.kpiCard}>
+              <Text style={styles.kpiValue}>{stats?.activeProjects ?? 0}</Text>
+              <Text style={styles.kpiLabel}>Active Projects</Text>
+            </View>
+            <View style={[styles.kpiCard, openSnags > 0 && { borderColor: colors.redMid }]}>
+              <Text style={[styles.kpiValue, openSnags > 0 && { color: colors.red }]}>
+                {openSnags}
+              </Text>
+              <Text style={styles.kpiLabel}>Open Snags</Text>
+            </View>
+            <View style={[styles.kpiCard, pendingCocs > 0 && { borderColor: colors.amberMid }]}>
+              <Text style={[styles.kpiValue, pendingCocs > 0 && { color: colors.amber }]}>
+                {pendingCocs}
+              </Text>
+              <Text style={styles.kpiLabel}>Pending COCs</Text>
+            </View>
+          </>
+        )}
       </View>
 
       <Text style={styles.sectionTitle}>Quick Actions</Text>

@@ -1,9 +1,10 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { Card, CardBody } from '@/components/ui/Card'
 import { ReportButton } from '@/components/ui/ReportButton'
+
+export const metadata: Metadata = { title: 'Weekly Summary' }
 
 interface Props {
   searchParams: Promise<{ week?: string }>
@@ -27,14 +28,14 @@ function nextWeek(weekStart: string) {
   return d.toISOString().slice(0, 10)
 }
 
-const ENTRY_TYPE_COLOURS: Record<string, string> = {
-  progress: 'bg-blue-900/30 text-blue-400',
-  safety: 'bg-red-900/30 text-red-400',
-  quality: 'bg-purple-900/30 text-purple-400',
-  delay: 'bg-amber-900/30 text-amber-400',
-  weather: 'bg-sky-900/30 text-sky-400',
-  workforce: 'bg-emerald-900/30 text-emerald-400',
-  general: 'bg-slate-700 text-slate-300',
+const ENTRY_TYPE_STYLES: Record<string, { color: string; bg: string }> = {
+  progress:  { color: '#60a5fa',        bg: 'rgba(37,99,235,0.15)' },
+  safety:    { color: '#f87171',        bg: 'rgba(127,29,29,0.25)' },
+  quality:   { color: '#c084fc',        bg: 'rgba(88,28,135,0.2)' },
+  delay:     { color: 'var(--c-amber)', bg: 'var(--c-amber-dim)' },
+  weather:   { color: '#38bdf8',        bg: 'rgba(7,89,133,0.2)' },
+  workforce: { color: '#34d399',        bg: 'rgba(5,150,105,0.15)' },
+  general:   { color: 'var(--c-text-mid)', bg: 'var(--c-elevated)' },
 }
 
 export default async function WeeklyDiaryPage({ searchParams }: Props) {
@@ -58,88 +59,88 @@ export default async function WeeklyDiaryPage({ searchParams }: Props) {
   const isCurrentWeek = weekStart === diaryService.getWeekBounds().weekStart
 
   return (
-    <div>
-      <div className="mb-4 flex items-center gap-2 text-sm text-slate-400">
-        <Link href="/diary" className="hover:text-white">Diary</Link>
+    <div className="animate-fadeup">
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
+        <Link href="/diary" style={{ color: 'var(--c-text-dim)', textDecoration: 'none' }}>← Diary</Link>
         <span>/</span>
         <span>Weekly Summary</span>
       </div>
 
-      <PageHeader
-        title="Weekly Summary"
-        subtitle={formatWeekLabel(weekStart, weekEnd)}
-        actions={
-          <div className="flex items-center gap-2">
-            <ReportButton type="diary-weekly" entityId={`${weekStart}:${weekEnd}`} label="↓ Export PDF" />
-            <Link
-              href={`/diary/weekly?week=${prevWeek(weekStart)}`}
-              className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
-            >
-              ← Prev week
-            </Link>
-            {!isCurrentWeek && (
-              <Link
-                href={`/diary/weekly?week=${nextWeek(weekStart)}`}
-                className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
-              >
-                Next week →
-              </Link>
-            )}
-          </div>
-        }
-      />
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Weekly Summary</h1>
+          <p className="page-subtitle">{formatWeekLabel(weekStart, weekEnd)}</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <ReportButton type="diary-weekly" entityId={`${weekStart}:${weekEnd}`} label="↓ Export PDF" />
+          <Link href={`/diary/weekly?week=${prevWeek(weekStart)}`} className="filter-tab">← Prev week</Link>
+          {!isCurrentWeek && (
+            <Link href={`/diary/weekly?week=${nextWeek(weekStart)}`} className="filter-tab">Next week →</Link>
+          )}
+        </div>
+      </div>
 
       {!summary || summary.totalEntries === 0 ? (
-        <div className="flex flex-col items-center py-24 gap-3 text-center">
-          <div className="text-5xl">📭</div>
-          <p className="text-white font-semibold">No entries this week</p>
-          <p className="text-slate-400 text-sm">
-            {formatWeekLabel(weekStart, weekEnd)}
-          </p>
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '48px 18px' }}>
+            📭 No entries for {formatWeekLabel(weekStart, weekEnd)}
+          </div>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* KPI strip */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
-              { label: 'Total entries', value: summary.totalEntries, colour: 'text-white' },
-              { label: 'Days active', value: `${summary.daysWithEntries}/7`, colour: 'text-blue-400' },
-              { label: 'Avg workers / day', value: summary.avgWorkersPerDay, colour: 'text-emerald-400' },
-              { label: 'Delay entries', value: summary.delayCount, colour: summary.delayCount > 0 ? 'text-amber-400' : 'text-slate-400' },
-            ].map(({ label, value, colour }) => (
-              <div key={label} className="bg-slate-800 border border-slate-700 rounded-xl p-4 text-center">
-                <p className={`text-2xl font-bold ${colour}`}>{value}</p>
-                <p className="text-xs text-slate-400 mt-1">{label}</p>
-              </div>
-            ))}
+          <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+            <div className="kpi-card">
+              <div className="kpi-label">Total entries</div>
+              <div className="kpi-value">{summary.totalEntries}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Days active</div>
+              <div className="kpi-value">{summary.daysWithEntries}/7</div>
+            </div>
+            <div className="kpi-card kpi-success">
+              <div className="kpi-label">Avg workers / day</div>
+              <div className="kpi-value">{summary.avgWorkersPerDay}</div>
+            </div>
+            <div className={`kpi-card ${summary.delayCount > 0 ? 'kpi-warning' : ''}`}>
+              <div className="kpi-label">Delay entries</div>
+              <div className="kpi-value">{summary.delayCount}</div>
+            </div>
           </div>
 
           {/* Safety callout */}
           {summary.safetyIncidentCount > 0 && (
-            <div className="bg-red-900/20 border border-red-700/40 rounded-xl px-4 py-3 text-sm text-red-400">
+            <div
+              role="alert"
+              style={{
+                padding: '12px 16px', borderRadius: 8,
+                background: 'rgba(127,29,29,0.22)', border: '1px solid #6b1e1e',
+                color: 'var(--c-red)', fontSize: 13, fontWeight: 500,
+              }}
+            >
               {summary.safetyIncidentCount} safety-related {summary.safetyIncidentCount === 1 ? 'entry' : 'entries'} this week — review required.
             </div>
           )}
 
           {/* Project breakdown */}
           {summary.projectBreakdown.length > 0 && (
-            <Card>
-              <CardBody>
-                <h3 className="text-sm font-semibold text-slate-300 mb-3">By Project</h3>
-                <div className="space-y-2">
-                  {summary.projectBreakdown
-                    .sort((a, b) => b.entryCount - a.entryCount)
-                    .map((proj) => (
-                      <div key={proj.projectName} className="flex items-center justify-between">
-                        <span className="text-sm text-white">{proj.projectName}</span>
-                        <span className="text-sm text-slate-400">
-                          {proj.entryCount} {proj.entryCount === 1 ? 'entry' : 'entries'}
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              </CardBody>
-            </Card>
+            <div className="data-panel">
+              <div className="data-panel-header">
+                <span className="data-panel-title">By Project</span>
+              </div>
+              <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {summary.projectBreakdown
+                  .sort((a, b) => b.entryCount - a.entryCount)
+                  .map((proj) => (
+                    <div key={proj.projectName} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13, color: 'var(--c-text)' }}>{proj.projectName}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
+                        {proj.entryCount} {proj.entryCount === 1 ? 'entry' : 'entries'}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </div>
           )}
 
           {/* Entries grouped by day */}
@@ -153,63 +154,67 @@ export default async function WeeklyDiaryPage({ searchParams }: Props) {
             const sortedDays = [...byDay.keys()].sort((a, b) => b.localeCompare(a))
 
             return (
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-slate-300">Entries</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-text-dim)', margin: 0 }}>
+                  Entries
+                </h2>
                 {sortedDays.map((date) => (
                   <div key={date}>
-                    <p className="text-xs text-slate-400 uppercase tracking-wider mb-2">
-                      {new Date(date).toLocaleDateString('en-ZA', {
-                        weekday: 'long', day: 'numeric', month: 'long',
-                      })}
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 8 }}>
+                      {new Date(date).toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long' })}
                     </p>
-                    <div className="space-y-2 pl-3 border-l border-slate-700">
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 12, borderLeft: '1px solid var(--c-border)' }}>
                       {byDay.get(date)!.map((entry: any) => {
                         const entryType: string = entry.entry_type ?? 'progress'
-                        const typeColour = ENTRY_TYPE_COLOURS[entryType] ?? ENTRY_TYPE_COLOURS.general
+                        const typeStyle = ENTRY_TYPE_STYLES[entryType] ?? ENTRY_TYPE_STYLES.general
                         const typeLabel = ENTRY_TYPE_LABELS[entryType as keyof typeof ENTRY_TYPE_LABELS] ?? entryType
                         const project = entry.project
 
                         return (
-                          <Card key={entry.id}>
-                            <div className="px-4 py-3">
-                              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeColour}`}>
-                                  {typeLabel}
+                          <div key={entry.id} className="data-panel" style={{ padding: '12px 14px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                              <span style={{
+                                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+                                fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase',
+                                color: typeStyle.color, background: typeStyle.bg,
+                              }}>
+                                {typeLabel}
+                              </span>
+                              {project && (
+                                <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>{project.name}</span>
+                              )}
+                              {entry.workers_on_site != null && (
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                                  {entry.workers_on_site} workers
                                 </span>
-                                {project && (
-                                  <span className="text-xs text-slate-400">{project.name}</span>
-                                )}
-                                {entry.workers_on_site != null && (
-                                  <span className="text-xs text-slate-500">
-                                    {entry.workers_on_site} workers
-                                  </span>
-                                )}
-                                {entry.weather && (
-                                  <span className="text-xs text-slate-500">{entry.weather}</span>
-                                )}
-                              </div>
-                              {entry.progress_notes && (
-                                <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
-                                  {entry.progress_notes}
-                                </p>
                               )}
-                              {entry.safety_notes && (
-                                <div className="mt-2 pt-2 border-t border-slate-700">
-                                  <p className="text-xs text-red-400 uppercase tracking-wider mb-1">Safety</p>
-                                  <p className="text-sm text-slate-300">{entry.safety_notes}</p>
-                                </div>
+                              {entry.weather && (
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                                  {entry.weather}
+                                </span>
                               )}
-                              {(entry.delays || entry.delay_notes) && (
-                                <div className="mt-2 pt-2 border-t border-slate-700">
-                                  <p className="text-xs text-amber-400 uppercase tracking-wider mb-1">Delays</p>
-                                  <p className="text-sm text-slate-300">{entry.delay_notes ?? entry.delays}</p>
-                                </div>
-                              )}
-                              <p className="text-xs text-slate-600 mt-2">
-                                {entry.author?.full_name ?? 'Unknown'}
-                              </p>
                             </div>
-                          </Card>
+                            {entry.progress_notes && (
+                              <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                                {entry.progress_notes}
+                              </p>
+                            )}
+                            {entry.safety_notes && (
+                              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--c-border)' }}>
+                                <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#f87171', marginBottom: 4 }}>Safety</p>
+                                <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{entry.safety_notes}</p>
+                              </div>
+                            )}
+                            {(entry.delays || entry.delay_notes) && (
+                              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--c-border)' }}>
+                                <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-amber)', marginBottom: 4 }}>Delays</p>
+                                <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{entry.delay_notes ?? entry.delays}</p>
+                              </div>
+                            )}
+                            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 8 }}>
+                              {entry.author?.full_name ?? 'Unknown'}
+                            </p>
+                          </div>
                         )
                       })}
                     </div>

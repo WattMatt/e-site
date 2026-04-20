@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
@@ -22,6 +23,31 @@ export default function SnagsTab() {
   const { data: projects } = useProjects(orgId)
   const defaultProjectId = projects?.[0]?.id ?? ''
 
+  const renderItem = useCallback(({ item }: { item: NonNullable<typeof snags>[number] }) => {
+    const badge = statusBadge(item.status)
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => router.push(`/snags/${item.id}` as any)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardRow}>
+          <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
+          <View style={styles.cardFlex}>
+            <Text style={styles.cardTitle}>{item.title}</Text>
+            <Text style={styles.cardSub}>
+              {(item as any).project?.name} · {item.location ?? 'No location'}
+            </Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: badge.bg, borderColor: badge.border }]}>
+            <Text style={[styles.statusText, { color: badge.fg }]}>{item.status.replace(/_/g, ' ')}</Text>
+          </View>
+        </View>
+        <Text style={styles.dateText}>{formatDate(item.created_at)}</Text>
+      </TouchableOpacity>
+    )
+  }, [router])
+
   if (isLoading) {
     return <View style={styles.center}><ActivityIndicator color={colors.amber} /></View>
   }
@@ -31,8 +57,13 @@ export default function SnagsTab() {
       <FlatList
         data={snags ?? []}
         keyExtractor={(item) => item.id}
+        renderItem={renderItem}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
         contentContainerStyle={styles.list}
+        removeClippedSubviews
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        initialNumToRender={10}
         ListHeaderComponent={
           <View style={styles.listHeader}>
             <Text style={styles.screenTitle}>Snags</Text>
@@ -50,30 +81,6 @@ export default function SnagsTab() {
             <Text style={styles.emptyTitle}>No snags yet</Text>
           </View>
         }
-        renderItem={({ item }) => {
-          const badge = statusBadge(item.status)
-          return (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => router.push(`/snags/${item.id}` as any)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.cardRow}>
-                <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
-                <View style={styles.cardFlex}>
-                  <Text style={styles.cardTitle}>{item.title}</Text>
-                  <Text style={styles.cardSub}>
-                    {(item as any).project?.name} · {item.location ?? 'No location'}
-                  </Text>
-                </View>
-                <View style={[styles.statusBadge, { backgroundColor: badge.bg, borderColor: badge.border }]}>
-                  <Text style={[styles.statusText, { color: badge.fg }]}>{item.status.replace(/_/g, ' ')}</Text>
-                </View>
-              </View>
-              <Text style={styles.dateText}>{formatDate(item.created_at)}</Text>
-            </TouchableOpacity>
-          )
-        }}
       />
     </View>
   )

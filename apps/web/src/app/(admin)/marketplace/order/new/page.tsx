@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { supplierService, projectService, formatZAR } from '@esite/shared'
+import { supplierService, projectService } from '@esite/shared'
 import { PlaceOrderForm } from './PlaceOrderForm'
 
 interface Props {
@@ -32,15 +32,22 @@ export default async function NewOrderPage({ searchParams }: Props) {
   if (!supplier) notFound()
 
   return (
-    <div className="max-w-2xl">
-      <div className="mb-6">
-        <Link href={`/marketplace/${supplierId}`} className="text-slate-400 hover:text-white text-sm">
+    <div className="animate-fadeup" style={{ maxWidth: 720 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href={`/marketplace/${supplierId}`}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
           ← {supplier.name}
         </Link>
       </div>
 
-      <h1 className="text-xl font-bold text-white mb-1">Place Order</h1>
-      <p className="text-sm text-slate-400 mb-6">{supplier.name}</p>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Place Order</h1>
+          <p className="page-subtitle">{supplier.name}</p>
+        </div>
+      </div>
 
       <PlaceOrderForm
         supplierId={supplierId}

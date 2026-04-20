@@ -43,6 +43,20 @@ Deno.serve(async (req) => {
     })
   }
 
+  // Only service_role callers may trigger push notifications.
+  try {
+    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]))
+    if (payload.role !== 'service_role') {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403, headers: { 'Content-Type': 'application/json' },
+      })
+    }
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid token' }), {
+      status: 401, headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!

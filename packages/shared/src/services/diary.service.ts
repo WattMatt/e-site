@@ -1,4 +1,5 @@
 import type { TypedSupabaseClient } from '@esite/db'
+import { fetchProfileMap } from './_utils'
 
 export type DiaryEntryType =
   | 'progress'
@@ -24,11 +25,16 @@ export const diaryService = {
     const { data, error } = await client
       .schema('projects')
       .from('site_diary_entries')
-      .select('*, author:profiles!created_by(id, full_name)')
+      .select('*')
       .eq('project_id', projectId)
       .order('entry_date', { ascending: false })
     if (error) throw error
-    return data ?? []
+    const entries = data ?? []
+    const profiles = await fetchProfileMap(client, entries.map((e: any) => e.created_by))
+    return entries.map((e: any) => ({
+      ...e,
+      author: e.created_by ? (profiles[e.created_by] ?? null) : null,
+    }))
   },
 
   async listByOrg(
@@ -46,7 +52,6 @@ export const diaryService = {
       .from('site_diary_entries')
       .select(`
         *,
-        author:profiles!created_by(id, full_name),
         project:projects!project_id(id, name)
       `)
       .eq('organisation_id', orgId)
@@ -59,7 +64,12 @@ export const diaryService = {
 
     const { data, error } = await query
     if (error) throw error
-    return data ?? []
+    const entries = data ?? []
+    const profiles = await fetchProfileMap(client, entries.map((e: any) => e.created_by))
+    return entries.map((e: any) => ({
+      ...e,
+      author: e.created_by ? (profiles[e.created_by] ?? null) : null,
+    }))
   },
 
   /** Returns Mon–Sun for the ISO week containing `date` (defaults to today). */

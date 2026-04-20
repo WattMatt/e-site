@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { SupplierProfileForm } from './SupplierProfileForm'
 import { PaystackOnboardingCard } from './PaystackOnboardingCard'
@@ -50,39 +51,67 @@ export default async function SupplierProfilePage({ searchParams }: Props) {
   const isPaystackLinked = !!paystackSub?.is_active
 
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="animate-fadeup" style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 20 }}>
       {registered && (
-        <div className="bg-emerald-900/20 border border-emerald-700/40 rounded-xl px-4 py-3 text-sm text-emerald-400">
+        <div
+          role="status"
+          style={{
+            background: '#14532d',
+            border: '1px solid #166534',
+            color: '#4ade80',
+            borderRadius: 6,
+            padding: '12px 16px',
+            fontSize: 13,
+          }}
+        >
           Welcome! Your supplier account has been created. Complete your profile to appear in the marketplace.
         </div>
       )}
 
       {/* Profile completeness banner */}
       {(!isProfileComplete || !isPaystackLinked) && (
-        <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl px-4 py-3">
-          <p className="text-sm text-amber-400 font-medium mb-1">Your marketplace profile is incomplete</p>
-          <div className="flex gap-4 text-xs text-slate-400">
-            <span className={isProfileComplete ? 'text-emerald-400' : 'text-slate-500'}>
+        <div
+          style={{
+            background: 'var(--c-amber-dim)',
+            border: '1px solid var(--c-amber-mid)',
+            borderRadius: 6,
+            padding: '12px 16px',
+          }}
+        >
+          <p style={{ fontSize: 13, color: 'var(--c-amber)', fontWeight: 600, marginBottom: 6 }}>
+            Your marketplace profile is incomplete
+          </p>
+          <div style={{ display: 'flex', gap: 16, fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.04em' }}>
+            <span style={{ color: isProfileComplete ? '#4ade80' : 'var(--c-text-dim)' }}>
               {isProfileComplete ? '✓' : '○'} Company profile
             </span>
-            <span className={isPaystackLinked ? 'text-emerald-400' : 'text-slate-500'}>
+            <span style={{ color: isPaystackLinked ? '#4ade80' : 'var(--c-text-dim)' }}>
               {isPaystackLinked ? '✓' : '○'} Paystack bank account
             </span>
           </div>
         </div>
       )}
 
-      <div>
-        <h1 className="text-xl font-bold text-white mb-1">Supplier Profile</h1>
-        <p className="text-sm text-slate-400">
-          {supplier?.is_verified ? '✓ Verified supplier' : 'Pending verification'}
-        </p>
+      <div className="page-header" style={{ marginBottom: 0 }}>
+        <div>
+          <h1 className="page-title">Supplier Profile</h1>
+          <p className="page-subtitle">
+            {supplier?.is_verified ? '✓ Verified supplier' : 'Pending verification'}
+          </p>
+        </div>
       </div>
 
       {supplier ? (
         <SupplierProfileForm supplier={supplier as any} />
       ) : (
-        <p className="text-slate-400 text-sm">No supplier profile found. <a href="/register" className="text-blue-400 hover:underline">Register as a supplier</a>.</p>
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '32px 18px' }}>
+            No supplier profile found.{' '}
+            <Link href="/register" style={{ color: 'var(--c-amber)', textDecoration: 'none' }}>
+              Register as a supplier
+            </Link>.
+          </div>
+        </div>
       )}
 
       {/* Paystack bank account linking */}

@@ -45,7 +45,6 @@ export function OrderButton({ supplierId, supplierOrgId, item }: Props) {
       .single()
     if (!mem) { setError('No organisation'); setPlacing(false); return }
 
-    // Create order + item directly via supabase
     const { data: order, error: orderErr } = await supabase
       .schema('marketplace')
       .from('orders')
@@ -67,6 +66,7 @@ export function OrderButton({ supplierId, supplierOrgId, item }: Props) {
       .insert({
         order_id: order.id,
         catalogue_item_id: item.id,
+        description: item.name,
         quantity: qty,
         unit_price: item.unit_price,
       })
@@ -82,8 +82,10 @@ export function OrderButton({ supplierId, supplierOrgId, item }: Props) {
   if (!showForm) {
     return (
       <button
+        type="button"
         onClick={() => setShowForm(true)}
-        className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+        className="btn-primary-amber"
+        style={{ marginTop: 8, fontSize: 11, padding: '5px 12px' }}
       >
         + Order
       </button>
@@ -91,23 +93,42 @@ export function OrderButton({ supplierId, supplierOrgId, item }: Props) {
   }
 
   return (
-    <div className="mt-2 flex items-center gap-2">
+    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
       <input
         type="number"
         min={item.min_order_qty}
         value={qty}
         onChange={e => setQty(Number(e.target.value))}
-        className="w-16 bg-slate-600 text-white rounded px-2 py-1 text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+        className="ob-input"
+        style={{ width: 64, padding: '4px 6px', fontSize: 12, textAlign: 'center' }}
       />
       <button
+        type="button"
         onClick={placeOrder}
         disabled={placing}
-        className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors"
+        className="btn-primary-amber"
+        style={{ fontSize: 11, padding: '5px 10px', opacity: placing ? 0.5 : 1 }}
       >
         {placing ? '…' : 'Place'}
       </button>
-      <button onClick={() => setShowForm(false)} className="text-xs text-slate-500 hover:text-slate-300">✕</button>
-      {error && <p className="text-red-400 text-xs">{error}</p>}
+      <button
+        type="button"
+        onClick={() => setShowForm(false)}
+        style={{
+          fontSize: 12,
+          color: 'var(--c-text-dim)',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+        }}
+      >
+        ✕
+      </button>
+      {error && (
+        <p role="alert" style={{ color: 'var(--c-red)', fontSize: 11, width: '100%', textAlign: 'right' }}>
+          {error}
+        </p>
+      )}
     </div>
   )
 }

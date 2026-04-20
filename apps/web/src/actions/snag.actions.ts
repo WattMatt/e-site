@@ -1,8 +1,12 @@
 'use server'
 
+import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+
+const uuidSchema = z.string().uuid()
+const snagStatusSchema = z.enum(['open', 'in_progress', 'resolved', 'pending_sign_off', 'signed_off', 'closed'])
 
 /**
  * signOffSnagAction — validates closeout photo before allowing sign-off.
@@ -15,6 +19,9 @@ export async function signOffSnagAction(
   snagId: string,
   projectId: string,
 ): Promise<{ error?: string }> {
+  const idParse = z.tuple([uuidSchema, uuidSchema]).safeParse([snagId, projectId])
+  if (!idParse.success) return { error: 'Invalid parameters' }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
@@ -58,6 +65,7 @@ export async function signOffSnagAction(
   revalidatePath(`/snags/${snagId}`)
   revalidatePath(`/projects/${projectId}`)
   revalidatePath('/snags')
+
   return {}
 }
 
@@ -75,13 +83,17 @@ export async function updateSnagStatusAction(
   newStatus: string,
   projectId: string,
 ): Promise<{ error?: string }> {
+  const parse = z.tuple([uuidSchema, snagStatusSchema, uuidSchema]).safeParse([snagId, newStatus, projectId])
+  if (!parse.success) return { error: 'Invalid parameters' }
+  const [validSnagId, validStatus, validProjectId] = parse.data
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  const updates: Record<string, unknown> & any = { status: newStatus }
-  if (newStatus === 'resolved') updates.resolved_at = new Date().toISOString()
-  if (newStatus === 'signed_off') {
+  const updates: Record<string, unknown> & any = { status: validStatus }
+  if (validStatus === 'resolved') updates.resolved_at = new Date().toISOString()
+  if (validStatus === 'signed_off') {
     updates.signed_off_by = user.id
     updates.signed_off_at = new Date().toISOString()
   }
@@ -90,19 +102,19 @@ export async function updateSnagStatusAction(
     .schema('field')
     .from('snags')
     .update(updates)
-    .eq('id', snagId)
+    .eq('id', validSnagId)
     .select('title, raised_by, assigned_to, organisation_id')
     .single()
 
   if (error) return { error: error.message }
 
   // Track funnel events
-  if (newStatus === 'resolved' || newStatus === 'signed_off') {
+  if (validStatus === 'resolved' || validStatus === 'signed_off') {
     await trackServer(user.id, ANALYTICS_EVENTS.SNAG_RESOLVED, {
-      snag_id: snagId,
-      project_id: projectId,
+      snag_id: validSnagId,
+      project_id: validProjectId,
       org_id: snag.organisation_id,
-      new_status: newStatus,
+      new_status: validStatus,
     })
   }
 
@@ -127,8 +139,8 @@ export async function updateSnagStatusAction(
           body: JSON.stringify({
             userIds: uniqueIds,
             title: `Snag status updated`,
-            body: `"${snag.title}" is now ${STATUS_LABELS[newStatus] ?? newStatus}`,
-            data: { route: `/snags/${snagId}` },
+            body: `"${snag.title}" is now ${STATUS_LABELS[validStatus] ?? validStatus}`,
+            data: { route: `/snags/${validSnagId}` },
           }),
         }).catch(() => {/* non-blocking */})
       }
@@ -137,8 +149,8 @@ export async function updateSnagStatusAction(
     // Notification failure must not block the status update
   }
 
-  revalidatePath(`/snags/${snagId}`)
-  revalidatePath(`/projects/${projectId}`)
+  revalidatePath(`/snags/${validSnagId}`)
+  revalidatePath(`/projects/${validProjectId}`)
   revalidatePath('/snags')
   return {}
 }

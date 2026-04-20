@@ -47,6 +47,20 @@ function baseTemplate(content: string) {
   <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${SITE_URL}" style="color:#3B82F6">app.e-site.co.za</a></div></div></body></html>`
 }
 
+// Decode JWT role claim without re-verifying — Supabase gateway already verified the signature.
+function getJwtRole(authHeader: string | null): string | null {
+  if (!authHeader?.startsWith('Bearer ')) return null
+  try {
+    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]))
+    return typeof payload.role === 'string' ? payload.role : null
+  } catch {
+    return null
+  }
+}
+
+// Email types that the public anon client is permitted to trigger (POPIA DSR form).
+const PUBLIC_TYPES = new Set(['data-subject-request'])
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
@@ -59,6 +73,15 @@ Deno.serve(async (req) => {
 
   try {
     const { type, payload } = await req.json() as { type: string; payload: Record<string, any> }
+
+    // Require service_role for internal notification types.
+    // Public types (POPIA DSR) may be called from the server-side anon client.
+    const role = getJwtRole(req.headers.get('Authorization'))
+    if (!PUBLIC_TYPES.has(type) && role !== 'service_role') {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403, headers: { 'Content-Type': 'application/json' },
+      })
+    }
 
     if (type === 'invite') {
       const { to, orgName, inviterName, role, token } = payload
@@ -107,6 +130,22 @@ Deno.serve(async (req) => {
           <p><strong>Defect:</strong> ${snagTitle}<br>
           <strong>Priority:</strong> <span style="color:${color};font-weight:700">${priority}</span></p>
           <a class="btn" href="${link}">View Snag</a>
+        `),
+      })
+    }
+
+    else if (type === 'data-subject-request') {
+      const { to, subject, requester, requestTypeLabel, description, receivedAt } = payload
+      await sendEmail({
+        to,
+        subject,
+        html: baseTemplate(`
+          <h2>POPIA data subject request</h2>
+          <p><strong>Type:</strong> ${requestTypeLabel}</p>
+          <p><strong>From:</strong> ${requester.name} &lt;${requester.email}&gt;</p>
+          <p><strong>Received:</strong> ${receivedAt}</p>
+          <p style="white-space:pre-wrap;border-left:3px solid #334155;padding-left:12px;font-style:italic">${String(description).replace(/</g, '&lt;')}</p>
+          <p style="font-size:12px;color:#64748B">POPIA §23 / §24 — respond within 30 days. Log this request per the Information Officer procedure.</p>
         `),
       })
     }

@@ -1,38 +1,43 @@
 import type { TypedSupabaseClient } from '@esite/db'
 import type { CreateProjectInput, UpdateProjectInput } from '../schemas/project.schema'
+import { fetchProfileMap } from './_utils'
 
 export const projectService = {
   async list(client: TypedSupabaseClient, orgId: string) {
     const { data, error } = await client
       .schema('projects')
       .from('projects')
-      .select(`
-        *,
-        site_manager:profiles!site_manager_id(id, full_name, avatar_url),
-        _count:project_members(count)
-      `)
+      .select('*, _count:project_members(count)')
       .eq('organisation_id', orgId)
       .order('created_at', { ascending: false })
     if (error) throw error
-    return data
+    const projects = data ?? []
+    const profiles = await fetchProfileMap(client, projects.map(p => (p as any).site_manager_id))
+    return projects.map(p => ({
+      ...p,
+      site_manager: (p as any).site_manager_id ? (profiles[(p as any).site_manager_id] ?? null) : null,
+    }))
   },
 
   async getById(client: TypedSupabaseClient, id: string) {
     const { data, error } = await client
       .schema('projects')
       .from('projects')
-      .select(`
-        *,
-        site_manager:profiles!site_manager_id(id, full_name, avatar_url),
-        project_members(
-          id, role, is_active,
-          profile:profiles(id, full_name, email, avatar_url)
-        )
-      `)
+      .select('*, project_members(id, role, is_active, user_id)')
       .eq('id', id)
       .single()
     if (error) throw error
-    return data
+    const project = data as any
+    const memberUserIds = (project.project_members ?? []).map((m: any) => m.user_id)
+    const profiles = await fetchProfileMap(client, [project.site_manager_id, ...memberUserIds])
+    return {
+      ...project,
+      site_manager: project.site_manager_id ? (profiles[project.site_manager_id] ?? null) : null,
+      project_members: (project.project_members ?? []).map((m: any) => ({
+        ...m,
+        profile: m.user_id ? (profiles[m.user_id] ?? null) : null,
+      })),
+    }
   },
 
   async create(client: TypedSupabaseClient, orgId: string, userId: string, input: CreateProjectInput) {
@@ -57,7 +62,6 @@ export const projectService = {
       .select()
       .single()
     if (error) throw error
-    // Auto-add creator as project_manager
     await client
       .schema('projects')
       .from('project_members')

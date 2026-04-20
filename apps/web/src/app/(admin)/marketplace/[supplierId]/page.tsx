@@ -1,9 +1,8 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { supplierService, formatZAR } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { Card, CardBody } from '@/components/ui/Card'
 import Link from 'next/link'
+import { OrderButton } from './OrderButton'
 
 interface Props { params: Promise<{ supplierId: string }> }
 
@@ -38,57 +37,78 @@ export default async function SupplierDetailPage({ params }: Props) {
   const grouped = groupByCategory(items)
   const contacts = (supplier as any).supplier_contacts ?? []
 
-  const stars = (score: number) => '⭐'.repeat(Math.round(score)) + '☆'.repeat(5 - Math.round(score))
-
   return (
-    <div className="max-w-4xl">
-      <div className="mb-6">
-        <Link href="/marketplace" className="text-slate-400 hover:text-white text-sm">← Marketplace</Link>
+    <div className="animate-fadeup" style={{ maxWidth: 900 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href="/marketplace"
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
+          ← Marketplace
+        </Link>
       </div>
 
-      <PageHeader
-        title={supplier.name}
-        subtitle={supplier.trading_name && supplier.trading_name !== supplier.name ? supplier.trading_name : undefined}
-        actions={
-          supplier.is_verified ? (
-            <span className="text-xs bg-emerald-900/40 text-emerald-400 border border-emerald-700 px-3 py-1 rounded-full">✓ Verified Supplier</span>
-          ) : undefined
-        }
-      />
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">{supplier.name}</h1>
+          {supplier.trading_name && supplier.trading_name !== supplier.name && (
+            <p className="page-subtitle">{supplier.trading_name}</p>
+          )}
+        </div>
+        {supplier.is_verified && (
+          <span className="badge badge-green">✓ Verified Supplier</span>
+        )}
+      </div>
 
       {/* Aggregate ratings */}
       {ratingSummary && (
-        <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 mb-6">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <span className="text-3xl font-bold text-white">{ratingSummary.avg_overall}</span>
-              <span className="text-slate-400 text-sm ml-1">/ 5.0</span>
-            </div>
-            <div className="text-right">
-              <p className="text-sm text-slate-300">{ratingSummary.rating_count} review{ratingSummary.rating_count !== 1 ? 's' : ''}</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-            {[
-              { label: 'Delivery', score: ratingSummary.avg_delivery },
-              { label: 'Quality', score: ratingSummary.avg_quality },
-              { label: 'Communication', score: ratingSummary.avg_communication },
-              { label: 'Pricing', score: ratingSummary.avg_pricing },
-            ].map(({ label, score }) => (
-              <div key={label} className="bg-slate-900/60 rounded-lg px-3 py-2">
-                <p className="text-xs text-slate-400 mb-0.5">{label}</p>
-                <p className="font-semibold text-white">{score} <span className="text-xs text-yellow-400">★</span></p>
+        <div className="data-panel animate-fadeup animate-fadeup-1" style={{ marginBottom: 16 }}>
+          <div style={{ padding: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div>
+                <span style={{ fontSize: 32, fontWeight: 700, color: 'var(--c-amber)' }}>{ratingSummary.avg_overall}</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', marginLeft: 6 }}>/ 5.0</span>
               </div>
-            ))}
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
+                {ratingSummary.rating_count} review{ratingSummary.rating_count !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+              {[
+                { label: 'Delivery', score: ratingSummary.avg_delivery },
+                { label: 'Quality', score: ratingSummary.avg_quality },
+                { label: 'Communication', score: ratingSummary.avg_communication },
+                { label: 'Pricing', score: ratingSummary.avg_pricing },
+              ].map(({ label, score }) => (
+                <div
+                  key={label}
+                  style={{
+                    background: 'var(--c-elevated)',
+                    border: '1px solid var(--c-border)',
+                    borderRadius: 6,
+                    padding: '8px 12px',
+                  }}
+                >
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 2 }}>
+                    {label}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--c-text)' }}>
+                    {score} <span style={{ color: 'var(--c-amber)', fontSize: 11 }}>★</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      <div style={{ display: 'grid', gridTemplateColumns: contacts.length > 0 ? '1fr 2fr' : '1fr', gap: 14, marginBottom: 24 }}>
         {/* Supplier info */}
-        <Card>
-          <CardBody className="space-y-3">
-            <h3 className="font-semibold text-white">Details</h3>
+        <div className="data-panel animate-fadeup animate-fadeup-1">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Details</span>
+          </div>
+          <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             {[
               ['Province', (supplier as any).province],
               ['Registration', (supplier as any).registration_no],
@@ -97,98 +117,160 @@ export default async function SupplierDetailPage({ params }: Props) {
             ].map(([label, value]) =>
               value ? (
                 <div key={label as string}>
-                  <p className="text-xs text-slate-400">{label}</p>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 2 }}>
+                    {label}
+                  </div>
                   {label === 'Website' ? (
-                    <a href={value as string} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-400 hover:underline">{value}</a>
+                    <a
+                      href={value as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'none' }}
+                    >
+                      {value}
+                    </a>
                   ) : (
-                    <p className="text-sm text-white">{value}</p>
+                    <div style={{ fontSize: 13, color: 'var(--c-text)' }}>{value}</div>
                   )}
                 </div>
               ) : null
             )}
             {(supplier as any).categories?.length > 0 && (
               <div>
-                <p className="text-xs text-slate-400 mb-1">Categories</p>
-                <div className="flex flex-wrap gap-1">
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 6 }}>
+                  Categories
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {(supplier as any).categories.map((c: string) => (
-                    <span key={c} className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded capitalize">{c}</span>
+                    <span
+                      key={c}
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 9,
+                        fontWeight: 600,
+                        letterSpacing: '0.1em',
+                        textTransform: 'uppercase',
+                        padding: '2px 7px',
+                        borderRadius: 2,
+                        background: 'var(--c-elevated)',
+                        color: 'var(--c-text-dim)',
+                        border: '1px solid var(--c-border-mid)',
+                      }}
+                    >
+                      {c}
+                    </span>
                   ))}
                 </div>
               </div>
             )}
-          </CardBody>
-        </Card>
+          </div>
+        </div>
 
         {/* Contacts */}
         {contacts.length > 0 && (
-          <Card className="lg:col-span-2">
-            <CardBody>
-              <h3 className="font-semibold text-white mb-3">Contacts</h3>
-              <div className="space-y-3">
-                {contacts.map((c: any) => (
-                  <div key={c.id} className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">
-                      {c.full_name?.[0] ?? '?'}
-                    </div>
-                    <div>
-                      <p className="text-sm text-white font-medium">{c.full_name}</p>
-                      <p className="text-xs text-slate-400">{c.role} · {c.email}</p>
-                      {c.phone && <p className="text-xs text-slate-500">{c.phone}</p>}
-                    </div>
+          <div className="data-panel animate-fadeup animate-fadeup-1">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Contacts</span>
+            </div>
+            <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {contacts.map((c: any) => (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: '50%',
+                    background: 'var(--c-amber-dim)', border: '1px solid var(--c-amber-mid)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--c-amber)',
+                    flexShrink: 0,
+                  }}>
+                    {c.full_name?.[0] ?? '?'}
                   </div>
-                ))}
-              </div>
-            </CardBody>
-          </Card>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{c.full_name}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                      {c.role} · {c.email}
+                    </div>
+                    {c.phone && (
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                        {c.phone}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
       {/* Catalogue */}
       {items.length === 0 ? (
-        <p className="text-slate-400 text-sm py-8 text-center">No catalogue items available for this supplier.</p>
+        <div className="data-panel animate-fadeup animate-fadeup-2">
+          <div className="data-panel-empty" style={{ padding: '48px 18px' }}>
+            No catalogue items available for this supplier.
+          </div>
+        </div>
       ) : (
-        <>
-          <h2 className="text-lg font-semibold text-white mb-4">Catalogue ({items.length} items)</h2>
-          <div className="space-y-6">
+        <div className="animate-fadeup animate-fadeup-2">
+          <h2 style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 12 }}>
+            Catalogue ({items.length} items)
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {Object.entries(grouped).map(([category, catItems]) => (
               <div key={category}>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 capitalize">{category}</h3>
-                <div className="space-y-2">
+                <h3 style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-text-mid)', marginBottom: 8 }}>
+                  {category}
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {catItems.map((item: any) => (
-                    <Card key={item.id}>
-                      <CardBody>
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium text-white text-sm">{item.name}</p>
-                              {item.sku && <span className="text-xs text-slate-500 font-mono">{item.sku}</span>}
-                            </div>
-                            {item.description && <p className="text-xs text-slate-400 mt-1">{item.description}</p>}
-                            <div className="flex gap-4 mt-2 text-xs text-slate-500">
-                              <span>Unit: {item.unit}</span>
-                              {item.min_order_qty > 1 && <span>Min order: {item.min_order_qty}</span>}
-                              {item.lead_time_days && <span>Lead time: {item.lead_time_days}d</span>}
-                            </div>
+                    <div key={item.id} className="data-panel">
+                      <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{item.name}</p>
+                            {item.sku && (
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                                {item.sku}
+                              </span>
+                            )}
                           </div>
-                          <div className="text-right flex-shrink-0">
-                            <p className="font-bold text-white">{formatZAR(item.unit_price)}</p>
-                            <p className="text-xs text-slate-400">per {item.unit}</p>
-                            <Link
-                              href={`/marketplace/order/new?supplierId=${supplierId}`}
-                              className="mt-2 block text-xs px-3 py-1.5 text-center rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors"
-                            >
-                              + Order
-                            </Link>
+                          {item.description && (
+                            <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>
+                              {item.description}
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', gap: 16, marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                            <span>Unit: {item.unit}</span>
+                            {item.min_order_qty > 1 && <span>Min: {item.min_order_qty}</span>}
+                            {item.lead_time_days && <span>Lead: {item.lead_time_days}d</span>}
                           </div>
                         </div>
-                      </CardBody>
-                    </Card>
+                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                          <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--c-text)' }}>
+                            {formatZAR(item.unit_price)}
+                          </p>
+                          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                            per {item.unit}
+                          </p>
+                          <OrderButton
+                            supplierId={supplierId}
+                            supplierOrgId={(supplier as any).organisation_id ?? undefined}
+                            item={{
+                              id: item.id,
+                              name: item.name,
+                              unit: item.unit,
+                              unit_price: item.unit_price,
+                              min_order_qty: item.min_order_qty ?? 1,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
             ))}
           </div>
-        </>
+        </div>
       )}
     </div>
   )

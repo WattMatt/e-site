@@ -1,8 +1,9 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+
+export const metadata: Metadata = { title: 'Site Diary' }
 import { diaryService, ENTRY_TYPE_LABELS, formatDate } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { Card } from '@/components/ui/Card'
 import type { DiaryEntryType } from '@esite/shared'
 
 interface Props {
@@ -14,14 +15,14 @@ interface Props {
   }>
 }
 
-const ENTRY_TYPE_COLOURS: Record<string, string> = {
-  progress: 'bg-blue-900/30 text-blue-400',
-  safety: 'bg-red-900/30 text-red-400',
-  quality: 'bg-purple-900/30 text-purple-400',
-  delay: 'bg-amber-900/30 text-amber-400',
-  weather: 'bg-sky-900/30 text-sky-400',
-  workforce: 'bg-emerald-900/30 text-emerald-400',
-  general: 'bg-slate-700 text-slate-300',
+const ENTRY_TYPE_STYLES: Record<string, { color: string; bg: string }> = {
+  progress:  { color: '#60a5fa', bg: 'rgba(37,99,235,0.15)' },
+  safety:    { color: '#f87171', bg: 'rgba(127,29,29,0.25)' },
+  quality:   { color: '#c084fc', bg: 'rgba(88,28,135,0.2)' },
+  delay:     { color: 'var(--c-amber)', bg: 'var(--c-amber-dim)' },
+  weather:   { color: '#38bdf8', bg: 'rgba(7,89,133,0.2)' },
+  workforce: { color: '#34d399', bg: 'rgba(5,150,105,0.15)' },
+  general:   { color: 'var(--c-text-mid)', bg: 'var(--c-elevated)' },
 }
 
 export default async function DiaryListPage({ searchParams }: Props) {
@@ -58,173 +59,131 @@ export default async function DiaryListPage({ searchParams }: Props) {
   const hasFilter = params.dateFrom || params.dateTo || params.type || params.project
 
   return (
-    <div>
-      <PageHeader
-        title="Site Diary"
-        subtitle={`${entries.length} entries${hasFilter ? ' (filtered)' : ''}`}
-        actions={
-          <Link
-            href="/diary/weekly"
-            className="text-sm px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg transition-colors"
-          >
-            Weekly Summary
-          </Link>
-        }
-      />
+    <div className="animate-fadeup">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Site Diary</h1>
+          <p className="page-subtitle">{entries.length} entries{hasFilter ? ' (filtered)' : ''}</p>
+        </div>
+        <Link href="/diary/weekly" className="filter-tab">Weekly Summary</Link>
+      </div>
 
       {/* Filters */}
-      <form method="get" className="flex flex-wrap gap-3 mb-6">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-400">From</label>
-          <input
-            type="date"
-            name="dateFrom"
-            defaultValue={params.dateFrom ?? ''}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-          />
+      <form method="get" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20, alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label className="ob-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>From</label>
+          <input type="date" name="dateFrom" defaultValue={params.dateFrom ?? ''} className="ob-input" style={{ width: 'auto', padding: '6px 10px' }} />
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-400">To</label>
-          <input
-            type="date"
-            name="dateTo"
-            defaultValue={params.dateTo ?? ''}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-          />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label className="ob-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>To</label>
+          <input type="date" name="dateTo" defaultValue={params.dateTo ?? ''} className="ob-input" style={{ width: 'auto', padding: '6px 10px' }} />
         </div>
-        <select
-          name="type"
-          defaultValue={params.type ?? ''}
-          className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-        >
+        <select name="type" defaultValue={params.type ?? ''} className="ob-select" style={{ width: 'auto', padding: '6px 10px' }}>
           <option value="">All types</option>
           {Object.entries(ENTRY_TYPE_LABELS).map(([v, l]) => (
             <option key={v} value={v}>{l}</option>
           ))}
         </select>
         {projectMap.size > 0 && (
-          <select
-            name="project"
-            defaultValue={params.project ?? ''}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
-          >
+          <select name="project" defaultValue={params.project ?? ''} className="ob-select" style={{ width: 'auto', padding: '6px 10px' }}>
             <option value="">All projects</option>
             {[...projectMap.entries()].map(([id, name]) => (
               <option key={id} value={id}>{name}</option>
             ))}
           </select>
         )}
-        <button
-          type="submit"
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
-        >
-          Filter
-        </button>
-        {hasFilter && (
-          <Link
-            href="/diary"
-            className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
-          >
-            Clear
-          </Link>
-        )}
-        {/* Quick link to this week */}
-        <Link
-          href={`/diary?dateFrom=${weekStart}&dateTo=${weekEnd}`}
-          className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
-        >
-          This week
-        </Link>
+        <button type="submit" className="btn-primary-amber" style={{ padding: '7px 14px', fontSize: 12 }}>Filter</button>
+        {hasFilter && <Link href="/diary" className="filter-tab">Clear</Link>}
+        <Link href={`/diary?dateFrom=${weekStart}&dateTo=${weekEnd}`} className="filter-tab">This week</Link>
       </form>
 
       {entries.length === 0 ? (
-        <div className="flex flex-col items-center py-24 gap-3 text-center">
-          <div className="text-5xl">📓</div>
-          <p className="text-white font-semibold">No diary entries found</p>
-          <p className="text-slate-400 text-sm">
-            {hasFilter
-              ? 'Try adjusting your filters.'
-              : 'Diary entries are added from project pages.'}
-          </p>
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '48px 18px' }}>
+            📓 No diary entries {hasFilter ? 'match these filters' : 'yet — add them from project pages'}
+          </div>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {entries.map((entry: any) => {
             const project = entry.project
             const entryType: string = entry.entry_type ?? 'progress'
-            const typeColour = ENTRY_TYPE_COLOURS[entryType] ?? ENTRY_TYPE_COLOURS.general
+            const typeStyle = ENTRY_TYPE_STYLES[entryType] ?? ENTRY_TYPE_STYLES.general
             const typeLabel = ENTRY_TYPE_LABELS[entryType as DiaryEntryType] ?? entryType
 
             return (
-              <Card key={entry.id}>
-                <div className="px-5 py-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeColour}`}>
-                          {typeLabel}
-                        </span>
-                        {project && (
-                          <Link
-                            href={`/projects/${project.id}/diary`}
-                            className="text-xs text-slate-400 hover:text-white transition-colors"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {project.name}
-                          </Link>
-                        )}
-                      </div>
-                      <p className="text-base font-semibold text-white">
-                        {new Date(entry.entry_date).toLocaleDateString('en-ZA', {
-                          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-                        })}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        by {entry.author?.full_name ?? 'Unknown'} · {formatDate(entry.created_at)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      {entry.weather && (
-                        <span className="bg-slate-700 px-2.5 py-1 rounded-full text-xs text-slate-300">
-                          {entry.weather}
-                        </span>
-                      )}
-                      {entry.workers_on_site != null && (
-                        <span className="text-xs text-slate-400">
-                          {entry.workers_on_site} workers
-                        </span>
-                      )}
-                    </div>
+              <div key={entry.id} className="data-panel">
+                <div className="data-panel-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+                      fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase',
+                      color: typeStyle.color, background: typeStyle.bg,
+                    }}>
+                      {typeLabel}
+                    </span>
+                    {project && (
+                      <Link
+                        href={`/projects/${project.id}/diary`}
+                        style={{ fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', fontFamily: 'var(--font-mono)' }}
+                      >
+                        {project.name}
+                      </Link>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                    {entry.weather && (
+                      <span style={{ fontSize: 11, color: 'var(--c-text-mid)', background: 'var(--c-elevated)', border: '1px solid var(--c-border)', borderRadius: 20, padding: '2px 8px' }}>
+                        {entry.weather}
+                      </span>
+                    )}
+                    {entry.workers_on_site != null && (
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                        {entry.workers_on_site} workers
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ padding: '14px 18px' }}>
+                  <div style={{ marginBottom: 10 }}>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--c-text)', marginBottom: 2 }}>
+                      {new Date(entry.entry_date).toLocaleDateString('en-ZA', {
+                        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+                      })}
+                    </p>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                      by {entry.author?.full_name ?? 'Unknown'} · {formatDate(entry.created_at)}
+                    </p>
                   </div>
 
-                  <div className="mt-3 space-y-2">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {entry.progress_notes && (
                       <div>
-                        <p className="text-xs text-slate-400 uppercase tracking-wider mb-1">Progress</p>
-                        <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed line-clamp-3">
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#60a5fa', marginBottom: 4 }}>Progress</p>
+                        <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
                           {entry.progress_notes}
                         </p>
                       </div>
                     )}
                     {entry.safety_notes && (
-                      <div className="pt-2 border-t border-slate-700">
-                        <p className="text-xs text-red-400 uppercase tracking-wider mb-1">Safety</p>
-                        <p className="text-sm text-slate-300 whitespace-pre-wrap line-clamp-2">
+                      <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#f87171', marginBottom: 4 }}>Safety</p>
+                        <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
                           {entry.safety_notes}
                         </p>
                       </div>
                     )}
                     {(entry.delays || entry.delay_notes) && (
-                      <div className="pt-2 border-t border-slate-700">
-                        <p className="text-xs text-amber-400 uppercase tracking-wider mb-1">Delays</p>
-                        <p className="text-sm text-slate-300 whitespace-pre-wrap line-clamp-2">
+                      <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-amber)', marginBottom: 4 }}>Delays</p>
+                        <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
                           {entry.delay_notes ?? entry.delays}
                         </p>
                       </div>
                     )}
                   </div>
                 </div>
-              </Card>
+              </div>
             )
           })}
         </div>

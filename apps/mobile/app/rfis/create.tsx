@@ -59,7 +59,7 @@ export default function CreateRfiScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
+    <ScrollView testID="rfi-create-screen" style={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
@@ -89,6 +89,7 @@ export default function CreateRfiScreen() {
         <View style={styles.field}>
           <Text style={styles.label}>Subject <Text style={styles.req}>*</Text></Text>
           <TextInput
+            testID="rfi-subject-input"
             style={styles.input}
             value={subject}
             onChangeText={setSubject}

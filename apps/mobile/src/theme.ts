@@ -65,7 +65,6 @@ export const radius = {
 
 // System fallbacks — swap to 'Syne' / 'JetBrains Mono' once expo-font is wired.
 export const fontFamily = {
-  sans: undefined as string | undefined,
   mono: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
 } as const
 
@@ -89,16 +88,6 @@ export const fontWeight = {
   medium: '500',
   semibold: '600',
   bold: '700',
-} as const
-
-// Mono UPPERCASE caption used across web for KPI labels, badges, metadata.
-export const monoLabel = {
-  fontFamily: fontFamily.mono,
-  fontSize: fontSize.micro,
-  fontWeight: fontWeight.semibold,
-  letterSpacing: 1.2,
-  textTransform: 'uppercase',
-  color: colors.textDim,
 } as const
 
 // ─── Semantic helpers ────────────────────────────────────────────

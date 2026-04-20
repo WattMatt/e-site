@@ -9,11 +9,27 @@ export default async function NewCatalogueItemPage() {
   if (!user) redirect('/login?next=/supplier/catalogue/new')
 
   return (
-    <div>
-      <div className="mb-6">
-        <Link href="/supplier/catalogue" className="text-slate-400 hover:text-white text-sm">← Catalogue</Link>
+    <div className="animate-fadeup">
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href="/supplier/catalogue"
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--c-text-dim)',
+            textDecoration: 'none',
+            letterSpacing: '0.06em',
+          }}
+        >
+          ← Catalogue
+        </Link>
       </div>
-      <h1 className="text-xl font-bold text-white mb-6">Add Catalogue Item</h1>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Add Catalogue Item</h1>
+          <p className="page-subtitle">Publish a new item to the E-Site marketplace.</p>
+        </div>
+      </div>
       <CatalogueItemForm />
     </div>
   )

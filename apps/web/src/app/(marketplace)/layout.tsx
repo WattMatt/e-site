@@ -6,38 +6,114 @@ export default async function MarketplaceLayout({ children }: { children: React.
   const { data: { user } } = await supabase.auth.getUser()
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      <header className="border-b border-slate-800 bg-slate-900 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="text-lg font-bold text-white">E-Site</Link>
-          <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded">Supplier Portal</span>
+    <div style={{ minHeight: '100vh', background: 'var(--c-base)', color: 'var(--c-text)' }}>
+      {/* Scoped hover rule for nav links (globals.css is intentionally not edited here). */}
+      <style>{`.marketplace-nav-link:hover { color: var(--c-text) !important; }`}</style>
+      <header
+        style={{
+          borderBottom: '1px solid var(--c-border)',
+          background: 'var(--c-base)',
+          padding: '14px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Link
+            href="/"
+            style={{
+              fontSize: 16,
+              fontWeight: 700,
+              color: 'var(--c-text)',
+              textDecoration: 'none',
+              letterSpacing: '-0.01em',
+            }}
+          >
+            E-Site
+          </Link>
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              padding: '3px 8px',
+              borderRadius: 2,
+              background: 'var(--c-amber-dim)',
+              border: '1px solid var(--c-amber-mid)',
+              color: 'var(--c-amber)',
+            }}
+          >
+            Supplier Portal
+          </span>
         </div>
-        <nav className="flex items-center gap-4">
+        <nav style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           {user ? (
             <>
-              <Link href="/supplier/profile" className="text-sm text-slate-400 hover:text-white transition-colors">Profile</Link>
-              <Link href="/supplier/catalogue" className="text-sm text-slate-400 hover:text-white transition-colors">Catalogue</Link>
-              <Link href="/supplier/orders" className="text-sm text-slate-400 hover:text-white transition-colors">Orders</Link>
-              <span className="text-slate-700">|</span>
-              <span className="text-sm text-slate-400">{user.email}</span>
+              <Link
+                href="/supplier/profile"
+                className="marketplace-nav-link"
+                style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none', transition: 'color 0.15s' }}
+              >
+                Profile
+              </Link>
+              <Link
+                href="/supplier/catalogue"
+                className="marketplace-nav-link"
+                style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none', transition: 'color 0.15s' }}
+              >
+                Catalogue
+              </Link>
+              <Link
+                href="/supplier/orders"
+                className="marketplace-nav-link"
+                style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none', transition: 'color 0.15s' }}
+              >
+                Orders
+              </Link>
+              <span style={{ color: 'var(--c-border-mid)' }}>|</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
+                {user.email}
+              </span>
               <form action="/auth/signout" method="post">
-                <button type="submit" className="text-sm text-slate-400 hover:text-white transition-colors">Sign out</button>
+                <button
+                  type="submit"
+                  className="marketplace-nav-link"
+                  style={{
+                    fontSize: 13,
+                    color: 'var(--c-text-dim)',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                    transition: 'color 0.15s',
+                  }}
+                >
+                  Sign out
+                </button>
               </form>
             </>
           ) : (
             <>
-              <Link href="/login" className="text-sm text-slate-400 hover:text-white transition-colors">Log in</Link>
               <Link
-                href="/register"
-                className="text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors"
+                href="/login"
+                className="marketplace-nav-link"
+                style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none', transition: 'color 0.15s' }}
               >
+                Log in
+              </Link>
+              <Link href="/register" className="btn-primary-amber" style={{ fontSize: 13, padding: '7px 14px' }}>
                 Register
               </Link>
             </>
           )}
         </nav>
       </header>
-      <main className="max-w-5xl mx-auto px-6 py-8">
+      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 24px' }}>
         {children}
       </main>
     </div>

@@ -17,9 +17,23 @@ export function ConfirmDeliveryButton({ orderId }: { orderId: string }) {
 
   return (
     <button
+      type="button"
       onClick={confirm}
       disabled={isPending}
-      className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-colors text-sm"
+      style={{
+        width: '100%',
+        padding: '12px 18px',
+        background: '#14532d',
+        border: '1px solid #166534',
+        color: '#4ade80',
+        borderRadius: 6,
+        fontFamily: 'var(--font-sans)',
+        fontSize: 13,
+        fontWeight: 700,
+        letterSpacing: '0.02em',
+        cursor: isPending ? 'wait' : 'pointer',
+        opacity: isPending ? 0.5 : 1,
+      }}
     >
       {isPending ? 'Confirming…' : '✓ Confirm Delivery Received'}
     </button>

@@ -2,7 +2,8 @@
 # =============================================================================
 # run-migrations.sh — Apply pending Supabase migrations in order
 #
-# Applies migrations 00017–00023 (Sprint 2–6) to a target Supabase project.
+# Applies migrations 00017–00028 (Sprint 2–7 + health scoring + email
+# sequences + payment recovery + payment_paused write-block) to a target Supabase project.
 # Idempotent: every migration uses IF NOT EXISTS / DO $$ guards so it is safe
 # to re-run against a DB that already has some of them applied.
 #
@@ -41,6 +42,11 @@ PENDING_MIGRATIONS=(
   "00021_supplier_ratings.sql"
   "00022_schema_patches.sql"
   "00023_performance_indexes.sql"
+  "00024_fix_rls_recursion.sql"
+  "00025_health_scores.sql"
+  "00026_email_sequences.sql"
+  "00027_payment_recovery.sql"
+  "00028_payment_paused_write_block.sql"
 )
 
 # ─── Validation ──────────────────────────────────────────────────────────────

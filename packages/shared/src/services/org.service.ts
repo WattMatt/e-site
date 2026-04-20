@@ -50,7 +50,7 @@ export const orgService = {
       .from('user_organisations')
       .select(`
         id, role, is_active, created_at,
-        profile:profiles(id, full_name, email, avatar_url)
+        profile:profiles!user_organisations_user_id_fkey(id, full_name, email, avatar_url)
       `)
       .eq('organisation_id', orgId)
       .eq('is_active', true)

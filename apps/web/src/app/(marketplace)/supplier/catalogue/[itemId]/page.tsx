@@ -21,11 +21,27 @@ export default async function EditCatalogueItemPage({ params }: Props) {
   if (!item) notFound()
 
   return (
-    <div>
-      <div className="mb-6">
-        <Link href="/supplier/catalogue" className="text-slate-400 hover:text-white text-sm">← Catalogue</Link>
+    <div className="animate-fadeup">
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href="/supplier/catalogue"
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--c-text-dim)',
+            textDecoration: 'none',
+            letterSpacing: '0.06em',
+          }}
+        >
+          ← Catalogue
+        </Link>
       </div>
-      <h1 className="text-xl font-bold text-white mb-6">Edit: {item.name}</h1>
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Edit: {item.name}</h1>
+          <p className="page-subtitle">Update pricing, availability, and item details.</p>
+        </div>
+      </div>
       <CatalogueItemForm item={item as any} />
     </div>
   )

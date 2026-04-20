@@ -2,8 +2,6 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, floorPlanService } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { Card, CardBody } from '@/components/ui/Card'
 import { FloorPlanUploadButton } from './FloorPlanUploadButton'
 
 interface Props { params: Promise<{ id: string }> }
@@ -26,7 +24,6 @@ export default async function FloorPlansPage({ params }: Props) {
 
   const orgId = (project as any).organisation_id as string
 
-  // Get signed URLs for image previews (only image files)
   const plansWithUrls = await Promise.all(
     plans.map(async (plan) => {
       const isImage = /\.(png|jpe?g|webp|svg)$/i.test(plan.file_path)
@@ -37,47 +34,69 @@ export default async function FloorPlansPage({ params }: Props) {
   )
 
   return (
-    <div>
-      <div className="mb-6">
-        <Link href={`/projects/${projectId}`} className="text-slate-400 hover:text-white text-sm">← {project.name}</Link>
+    <div className="animate-fadeup">
+      <div style={{ marginBottom: 16 }}>
+        <Link
+          href={`/projects/${projectId}`}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
+        >
+          ← {project.name}
+        </Link>
       </div>
 
-      <PageHeader
-        title="Floor Plans"
-        subtitle={project.name}
-        actions={<FloorPlanUploadButton projectId={projectId} orgId={orgId} />}
-      />
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Floor Plans</h1>
+          <p className="page-subtitle">{project.name} · {plansWithUrls.length} plan{plansWithUrls.length !== 1 ? 's' : ''}</p>
+        </div>
+        <FloorPlanUploadButton projectId={projectId} orgId={orgId} />
+      </div>
 
       {plansWithUrls.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="text-5xl mb-4">🗺️</div>
-          <p className="text-white font-semibold text-lg mb-2">No floor plans yet</p>
-          <p className="text-slate-400 text-sm">Upload a drawing to start placing snags on the plan.</p>
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '48px 18px' }}>
+            🗺️ No floor plans yet — upload a drawing to start placing snags on the plan
+          </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
           {plansWithUrls.map((plan) => (
-            <Card key={plan.id} className="overflow-hidden">
-              {/* Preview */}
-              <div className="h-40 bg-slate-900 flex items-center justify-center overflow-hidden">
+            <div key={plan.id} className="data-panel" style={{ overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: 160, background: 'var(--c-base)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  borderBottom: '1px solid var(--c-border)', overflow: 'hidden',
+                }}
+              >
                 {plan.previewUrl ? (
                   <img
                     src={plan.previewUrl}
                     alt={plan.name}
-                    className="w-full h-full object-contain"
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
                   />
                 ) : (
-                  <div className="text-4xl">📄</div>
+                  <span style={{ fontSize: 40 }} aria-hidden="true">📄</span>
                 )}
               </div>
-              <CardBody>
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-medium text-white text-sm">{plan.name}</p>
-                    {plan.level && <p className="text-xs text-slate-400 mt-0.5">{plan.level}</p>}
-                    <div className="flex gap-3 mt-2">
-                      {plan.scale && <span className="text-xs text-slate-500">Scale: {plan.scale}</span>}
-                      {plan.file_size_bytes && <span className="text-xs text-slate-500">{formatBytes(plan.file_size_bytes)}</span>}
+              <div style={{ padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {plan.name}
+                    </p>
+                    {plan.level && (
+                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2, letterSpacing: '0.04em' }}>
+                        {plan.level}
+                      </p>
+                    )}
+                    <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+                      {plan.scale && (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>Scale: {plan.scale}</span>
+                      )}
+                      {plan.file_size_bytes && (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>{formatBytes(plan.file_size_bytes)}</span>
+                      )}
                     </div>
                   </div>
                   {plan.previewUrl && (
@@ -85,15 +104,19 @@ export default async function FloorPlansPage({ params }: Props) {
                       href={plan.previewUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                      style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em',
+                        color: 'var(--c-amber)', textDecoration: 'none', whiteSpace: 'nowrap',
+                        padding: '4px 8px', borderRadius: 4, border: '1px solid var(--c-border)',
+                        background: 'var(--c-panel)',
+                      }}
                     >
                       Open ↗
                     </a>
                   )}
                 </div>
-                <p className="text-xs text-blue-400 mt-3">ID: <span className="font-mono text-slate-500 text-[10px]">{plan.id}</span></p>
-              </CardBody>
-            </Card>
+              </div>
+            </div>
           ))}
         </div>
       )}

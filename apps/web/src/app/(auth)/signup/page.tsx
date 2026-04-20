@@ -20,12 +20,23 @@ export default function SignupPage() {
 
   async function onSubmit({ fullName, email, password }: SignUpInput) {
     setServerError(null)
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { full_name: fullName } },
     })
     if (error) { setServerError(error.message); return }
+
+    // Fire the Day-0 onboarding email. Non-blocking — we still show the
+    // "check your inbox" success state even if the Edge Function hiccups.
+    // The d0 email is idempotent on the server side, so a retry on next
+    // signup attempt won't double-send.
+    if (data.user?.id) {
+      void supabase.functions.invoke('onboarding-email-d0', {
+        body: { userId: data.user.id, email, firstName: fullName.split(' ')[0] },
+      }).catch(() => { /* swallow — the welcome is a nice-to-have */ })
+    }
+
     setSuccess(true)
   }
 

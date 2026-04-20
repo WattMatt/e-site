@@ -36,9 +36,10 @@ export function RfiRespondForm({ rfiId }: { rfiId: string }) {
         onChange={e => setBody(e.target.value)}
         rows={4}
         placeholder="Type your response…"
-        className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+        className="ob-input"
+        style={{ resize: 'vertical' }}
       />
-      {error && <p className="text-red-400 text-xs">{error}</p>}
+      {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
       <Button size="sm" onClick={submit} isLoading={saving} disabled={!body.trim()}>
         Submit Response
       </Button>

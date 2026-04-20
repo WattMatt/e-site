@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useQuery } from '@tanstack/react-query'
@@ -21,41 +22,53 @@ export default function RfiListScreen() {
 
   const { data: rfis, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['rfis-org', orgId],
-    queryFn: async () => {
-      const { data: projects } = await client
-        .schema('projects')
-        .from('projects')
-        .select('id')
-        .eq('organisation_id', orgId)
-        .eq('status', 'active')
-
-      if (!projects?.length) return []
-
-      const allRfis = await Promise.all(
-        projects.map(p => rfiService.list(client, p.id).catch(() => []))
-      )
-      return allRfis.flat().sort((a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )
-    },
+    queryFn: () => rfiService.listByOrg(client, orgId),
     enabled: !!orgId,
   })
+
+  const renderItem = useCallback(({ item }: { item: NonNullable<typeof rfis>[number] }) => {
+    const status = RFI_STATUS[item.status] ?? RFI_STATUS.draft
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => router.push(`/rfis/${item.id}` as any)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardTop}>
+          <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
+          <Text style={styles.cardTitle} numberOfLines={2}>{item.subject}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: status.bg, borderColor: status.border }]}>
+            <Text style={[styles.statusText, { color: status.fg }]}>{item.status}</Text>
+          </View>
+        </View>
+        <View style={styles.cardMeta}>
+          <Text style={styles.metaText}>{formatRelative(item.created_at)}</Text>
+          {item.due_date && <Text style={styles.dueText}>Due {item.due_date}</Text>}
+        </View>
+      </TouchableOpacity>
+    )
+  }, [router])
 
   if (isLoading) {
     return <View style={styles.center}><ActivityIndicator color={colors.amber} size="large" /></View>
   }
 
   return (
-    <View style={styles.container}>
+    <View testID="rfis-screen" style={styles.container}>
       <FlatList
         data={rfis ?? []}
         keyExtractor={item => item.id}
+        renderItem={renderItem}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
         contentContainerStyle={styles.list}
+        removeClippedSubviews
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        initialNumToRender={10}
         ListHeaderComponent={
           <View style={styles.listHeader}>
             <Text style={styles.screenTitle}>RFIs</Text>
-            <TouchableOpacity style={styles.newBtn} onPress={() => router.push('/rfis/create' as any)}>
+            <TouchableOpacity testID="rfi-new-button" style={styles.newBtn} onPress={() => router.push('/rfis/create' as any)}>
               <Text style={styles.newBtnText}>+ New</Text>
             </TouchableOpacity>
           </View>
@@ -67,28 +80,6 @@ export default function RfiListScreen() {
             <Text style={styles.emptySubtitle}>Raise a Request for Information on any active project.</Text>
           </View>
         }
-        renderItem={({ item }) => {
-          const status = RFI_STATUS[item.status] ?? RFI_STATUS.draft
-          return (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => router.push(`/rfis/${item.id}` as any)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.cardTop}>
-                <View style={[styles.priorityDot, { backgroundColor: priorityColor(item.priority) }]} />
-                <Text style={styles.cardTitle} numberOfLines={2}>{item.subject}</Text>
-                <View style={[styles.statusBadge, { backgroundColor: status.bg, borderColor: status.border }]}>
-                  <Text style={[styles.statusText, { color: status.fg }]}>{item.status}</Text>
-                </View>
-              </View>
-              <View style={styles.cardMeta}>
-                <Text style={styles.metaText}>{formatRelative(item.created_at)}</Text>
-                {item.due_date && <Text style={styles.dueText}>Due {item.due_date}</Text>}
-              </View>
-            </TouchableOpacity>
-          )
-        }}
       />
     </View>
   )

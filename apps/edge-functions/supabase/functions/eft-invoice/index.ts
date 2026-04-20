@@ -16,6 +16,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireServiceRole } from '../_shared/auth.ts'
 
 const PAYSTACK_SECRET = Deno.env.get('PAYSTACK_SECRET_KEY') ?? ''
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize'
@@ -42,6 +43,8 @@ Deno.serve(async (req) => {
       status: 401, headers: { 'Content-Type': 'application/json' },
     })
   }
+  const unauth = requireServiceRole(req)
+  if (unauth) return unauth
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,

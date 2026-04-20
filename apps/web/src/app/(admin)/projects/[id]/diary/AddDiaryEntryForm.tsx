@@ -8,14 +8,14 @@ import type { DiaryEntryType } from '@esite/shared'
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Light rain', 'Heavy rain', 'Windy', 'Hot']
 
-const ENTRY_TYPE_COLOURS: Record<DiaryEntryType, string> = {
-  progress: 'bg-blue-600 border-blue-500 text-white',
-  safety: 'bg-red-700 border-red-600 text-white',
-  quality: 'bg-purple-700 border-purple-600 text-white',
-  delay: 'bg-amber-700 border-amber-600 text-white',
-  weather: 'bg-sky-700 border-sky-600 text-white',
-  workforce: 'bg-emerald-700 border-emerald-600 text-white',
-  general: 'bg-slate-600 border-slate-500 text-white',
+const ENTRY_TYPE_STYLES: Record<DiaryEntryType, { color: string; bg: string; border: string }> = {
+  progress:  { color: '#60a5fa', bg: 'rgba(37,99,235,0.15)', border: '#1d4ed8' },
+  safety:    { color: '#f87171', bg: 'rgba(127,29,29,0.25)', border: '#7f1d1d' },
+  quality:   { color: '#c084fc', bg: 'rgba(88,28,135,0.2)', border: '#6b21a8' },
+  delay:     { color: 'var(--c-amber)', bg: 'var(--c-amber-dim)', border: 'var(--c-amber-mid)' },
+  weather:   { color: '#38bdf8', bg: 'rgba(7,89,133,0.2)', border: '#0369a1' },
+  workforce: { color: '#34d399', bg: 'rgba(5,150,105,0.15)', border: '#065f46' },
+  general:   { color: 'var(--c-text-mid)', bg: 'var(--c-elevated)', border: 'var(--c-border)' },
 }
 
 interface Props {
@@ -66,151 +66,181 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
 
   if (!open) {
     return (
-      <button
-        onClick={() => setOpen(true)}
-        className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-      >
+      <button onClick={() => setOpen(true)} className="btn-primary-amber">
         + Add Entry
       </button>
     )
   }
 
   return (
-    <form onSubmit={submit} className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
-      <h3 className="text-sm font-semibold text-white">New Diary Entry</h3>
-
-      {error && <p className="text-red-400 text-sm">{error}</p>}
-
-      {/* Entry type */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5">Entry type</label>
-        <div className="flex flex-wrap gap-2">
-          {(Object.keys(ENTRY_TYPE_LABELS) as DiaryEntryType[]).map((type) => (
-            <button
-              key={type}
-              type="button"
-              onClick={() => setEntryType(type)}
-              className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-                entryType === type
-                  ? ENTRY_TYPE_COLOURS[type]
-                  : 'border-slate-600 text-slate-400 hover:border-slate-500'
-              }`}
-            >
-              {ENTRY_TYPE_LABELS[type]}
-            </button>
-          ))}
-        </div>
+    <form onSubmit={submit} className="data-panel" style={{ marginTop: 16 }}>
+      <div className="data-panel-header">
+        <span className="data-panel-title">New Diary Entry</span>
       </div>
+      <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
 
-      <div className="grid grid-cols-2 gap-4">
+        {/* Entry type */}
         <div>
-          <label className="block text-xs text-slate-400 mb-1.5">Date *</label>
-          <input
-            type="date"
-            value={entryDate}
-            onChange={e => setEntryDate(e.target.value)}
-            required
-            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-          />
+          <label className="ob-label">Entry type</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+            {(Object.keys(ENTRY_TYPE_LABELS) as DiaryEntryType[]).map((type) => {
+              const s = ENTRY_TYPE_STYLES[type]
+              const isSelected = entryType === type
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setEntryType(type)}
+                  style={{
+                    fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 20,
+                    fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+                    border: `1px solid ${isSelected ? s.border : 'var(--c-border)'}`,
+                    background: isSelected ? s.bg : 'var(--c-panel)',
+                    color: isSelected ? s.color : 'var(--c-text-dim)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {ENTRY_TYPE_LABELS[type]}
+                </button>
+              )
+            })}
+          </div>
         </div>
+
+        {/* Date + workers */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div>
+            <label className="ob-label">Date *</label>
+            <input
+              type="date"
+              value={entryDate}
+              onChange={e => setEntryDate(e.target.value)}
+              required
+              className="ob-input"
+              style={{ marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <label className="ob-label">Workers on site</label>
+            <input
+              type="number"
+              min="0"
+              value={workers}
+              onChange={e => setWorkers(e.target.value)}
+              placeholder="0"
+              className="ob-input"
+              style={{ marginTop: 4 }}
+            />
+          </div>
+        </div>
+
+        {/* Weather */}
         <div>
-          <label className="block text-xs text-slate-400 mb-1.5">Workers on site</label>
-          <input
-            type="number"
-            min="0"
-            value={workers}
-            onChange={e => setWorkers(e.target.value)}
-            placeholder="0"
-            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
-          />
+          <label className="ob-label">Weather</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+            {WEATHER_OPTIONS.map(w => (
+              <button
+                key={w}
+                type="button"
+                onClick={() => setWeather(w === weather ? '' : w)}
+                style={{
+                  fontSize: 11, padding: '4px 12px', borderRadius: 20,
+                  fontFamily: 'var(--font-mono)',
+                  border: `1px solid ${weather === w ? 'var(--c-amber-mid)' : 'var(--c-border)'}`,
+                  background: weather === w ? 'var(--c-amber-dim)' : 'var(--c-panel)',
+                  color: weather === w ? 'var(--c-amber)' : 'var(--c-text-dim)',
+                  cursor: 'pointer',
+                }}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5">Weather</label>
-        <div className="flex flex-wrap gap-2">
-          {WEATHER_OPTIONS.map(w => (
-            <button
-              key={w}
-              type="button"
-              onClick={() => setWeather(w === weather ? '' : w)}
-              className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-                weather === w
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'border-slate-600 text-slate-400 hover:border-slate-500'
-              }`}
-            >
-              {w}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5">Progress notes *</label>
-        <textarea
-          value={progressNotes}
-          onChange={e => setProgressNotes(e.target.value)}
-          rows={4}
-          placeholder="Describe work completed today…"
-          className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 resize-none"
-        />
-      </div>
-
-      {(entryType === 'safety' || entryType === 'general') && (
+        {/* Progress notes */}
         <div>
-          <label className="block text-xs text-red-400 mb-1.5">Safety notes</label>
+          <label className="ob-label">Progress notes *</label>
           <textarea
-            value={safetyNotes}
-            onChange={e => setSafetyNotes(e.target.value)}
-            rows={2}
-            placeholder="Safety observations, near-misses, incidents…"
-            className="w-full bg-slate-700 border border-red-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-red-500 resize-none"
+            value={progressNotes}
+            onChange={e => setProgressNotes(e.target.value)}
+            rows={4}
+            placeholder="Describe work completed today…"
+            className="ob-input"
+            style={{ marginTop: 4, resize: 'vertical' }}
           />
         </div>
-      )}
 
-      {(entryType === 'delay' || entryType === 'general') && (
-        <div>
-          <label className="block text-xs text-amber-400 mb-1.5">Delay notes</label>
-          <textarea
-            value={delayNotes}
-            onChange={e => setDelayNotes(e.target.value)}
-            rows={2}
-            placeholder="Cause of delay, estimated impact…"
-            className="w-full bg-slate-700 border border-amber-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 resize-none"
-          />
+        {/* Safety notes */}
+        {(entryType === 'safety' || entryType === 'general') && (
+          <div>
+            <label className="ob-label" style={{ color: '#f87171' }}>Safety notes</label>
+            <textarea
+              value={safetyNotes}
+              onChange={e => setSafetyNotes(e.target.value)}
+              rows={2}
+              placeholder="Safety observations, near-misses, incidents…"
+              className="ob-input"
+              style={{ marginTop: 4, resize: 'vertical', borderColor: '#7f1d1d' }}
+            />
+          </div>
+        )}
+
+        {/* Delay notes */}
+        {(entryType === 'delay' || entryType === 'general') && (
+          <div>
+            <label className="ob-label" style={{ color: 'var(--c-amber)' }}>Delay notes</label>
+            <textarea
+              value={delayNotes}
+              onChange={e => setDelayNotes(e.target.value)}
+              rows={2}
+              placeholder="Cause of delay, estimated impact…"
+              className="ob-input"
+              style={{ marginTop: 4, resize: 'vertical', borderColor: 'var(--c-amber-mid)' }}
+            />
+          </div>
+        )}
+
+        {/* Generic delays */}
+        {entryType !== 'delay' && entryType !== 'safety' && (
+          <div>
+            <label className="ob-label">Delays / issues</label>
+            <textarea
+              value={delays}
+              onChange={e => setDelays(e.target.value)}
+              rows={2}
+              placeholder="Any delays, blockers, or issues…"
+              className="ob-input"
+              style={{ marginTop: 4, resize: 'vertical' }}
+            />
+          </div>
+        )}
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            type="submit"
+            disabled={isPending}
+            className="btn-primary-amber"
+            style={{ flex: 1, opacity: isPending ? 0.6 : 1 }}
+          >
+            {isPending ? 'Saving…' : 'Save Entry'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            style={{
+              padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+              border: '1px solid var(--c-border)',
+              background: 'var(--c-panel)',
+              color: 'var(--c-text-dim)',
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
         </div>
-      )}
-
-      {entryType !== 'delay' && entryType !== 'safety' && (
-        <div>
-          <label className="block text-xs text-slate-400 mb-1.5">Delays / issues</label>
-          <textarea
-            value={delays}
-            onChange={e => setDelays(e.target.value)}
-            rows={2}
-            placeholder="Any delays, blockers, or issues…"
-            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 resize-none"
-          />
-        </div>
-      )}
-
-      <div className="flex gap-3">
-        <button
-          type="submit"
-          disabled={isPending}
-          className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold py-2 rounded-lg transition-colors"
-        >
-          {isPending ? 'Saving…' : 'Save Entry'}
-        </button>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="px-4 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm py-2 rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
       </div>
     </form>
   )

@@ -2,34 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Design Tokens ─────────────────────────────────────────── */
+/* ─── Accessibility ─────────────────────────────────────────── */
+.skip-link {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
+.skip-link:focus {
+  position: fixed;
+  z-index: 9999;
+  top: 1rem;
+  left: 1rem;
+  width: auto;
+  height: auto;
+  padding: 0.5rem 1rem;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  background: var(--c-panel);
+  color: var(--c-text);
+  border-radius: 8px;
+  border: 1px solid var(--c-border-hi);
+  font-size: 13px;
+}
+
+/* ─── Design Tokens ──────────────────────────────────────────── */
 :root {
   /* Surfaces */
-  --c-base:       #0D0B09;
-  --c-surface:    #161310;
-  --c-panel:      #1D1A16;
-  --c-elevated:   #252118;
+  --c-base:       #0B0B12;
+  --c-surface:    #13131E;
+  --c-panel:      #1C1C2A;
+  --c-elevated:   #25253A;
 
   /* Borders */
-  --c-border:     #2A2520;
-  --c-border-mid: #382E25;
-  --c-border-hi:  #4A3E30;
+  --c-border:     #2C2C40;
+  --c-border-mid: #3A3A52;
+  --c-border-hi:  #505070;
 
   /* Text */
   --c-text:       #EDE8DF;
-  --c-text-mid:   #9A8F80;
-  --c-text-dim:   #544D43;
+  --c-text-mid:   #9098B0;
+  --c-text-dim:   #5C6478;
 
   /* Accents */
   --c-amber:      #E8923A;
-  --c-amber-dim:  #3D2108;
-  --c-amber-mid:  #7A3D10;
+  --c-amber-dim:  #2E1A08;
+  --c-amber-mid:  #6B3510;
+  --c-warning:    #D97706;
   --c-green:      #3DB882;
-  --c-green-dim:  #0D3322;
+  --c-green-dim:  #0A2E1C;
   --c-red:        #E85555;
-  --c-red-dim:    #381212;
+  --c-red-dim:    #2E0E0E;
   --c-blue:       #5B9CF6;
-  --c-blue-dim:   #0F254A;
+  --c-blue-dim:   #0C2040;
+  --c-orange:     #F08030;
 
   /* Typography */
   --font-sans: var(--font-syne), 'Syne', system-ui, sans-serif;
@@ -223,6 +256,63 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+
+.sidebar-nav-item--as-button {
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+/* ─── Buttons ───────────────────────────────────────────────── */
+.btn-primary-amber {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  background: var(--c-amber);
+  color: #0A0808;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  letter-spacing: 0.01em;
+  border: none;
+  cursor: pointer;
+}
+.btn-primary-amber:hover { opacity: 0.88; }
+
+/* ─── Filter Tabs ────────────────────────────────────────────── */
+.filter-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-mid);
+  background: var(--c-panel);
+  border: 1px solid var(--c-border);
+  text-decoration: none;
+  transition: all 0.12s;
+  white-space: nowrap;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+}
+
+.filter-tab:hover {
+  color: var(--c-text);
+  border-color: var(--c-border-hi);
+  background: var(--c-elevated);
+}
+
+.filter-tab.active {
+  color: var(--c-amber);
+  background: var(--c-amber-dim);
+  border-color: var(--c-amber-mid);
 }
 
 /* ─── Portal Header ─────────────────────────────────────────── */
@@ -584,7 +674,7 @@ body {
 
 .search-btn {
   background: var(--c-amber);
-  color: #0D0B09;
+  color: #0A0808;
   border: none;
   border-radius: 6px;
   padding: 9px 18px;
@@ -781,7 +871,7 @@ body {
 .ob-btn-primary {
   width: 100%;
   background: var(--c-amber);
-  color: #0D0B09;
+  color: #0A0808;
   border: none;
   border-radius: 6px;
   padding: 12px 20px;
@@ -898,3 +988,13 @@ body {
 .animate-fadeup-3 { animation-delay: 0.15s; }
 .animate-fadeup-4 { animation-delay: 0.20s; }
 .animate-fadeup-5 { animation-delay: 0.25s; }
+
+/* Loading-state placeholders — used by components/ui/Skeleton.tsx. */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1;    }
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}

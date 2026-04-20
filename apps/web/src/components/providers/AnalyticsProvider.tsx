@@ -16,9 +16,11 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
     if (!PH_KEY || initialized) return
     posthog.init(PH_KEY, {
       api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? 'https://eu.posthog.com',
-      capture_pageview: false, // We'll capture manually
+      capture_pageview: false,
       capture_pageleave: true,
-      autocapture: true,
+      autocapture: false,                    // POPIA — no auto DOM capture
+      persistence: 'localStorage+cookie',
+      session_recording: { maskAllInputs: true },
     })
     initialized = true
   }, [])

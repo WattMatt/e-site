@@ -22,8 +22,16 @@ export function RfiCloseButton({ rfiId }: { rfiId: string }) {
   }
 
   return (
-    <button onClick={close} disabled={closing}
-      className="text-sm text-slate-500 hover:text-slate-300 disabled:opacity-50 transition-colors">
+    <button
+      onClick={close}
+      disabled={closing}
+      style={{
+        fontSize: 12, color: 'var(--c-text-dim)', background: 'var(--c-panel)',
+        border: '1px solid var(--c-border)', borderRadius: 6, padding: '6px 14px',
+        cursor: closing ? 'not-allowed' : 'pointer', opacity: closing ? 0.5 : 1,
+        transition: 'all 0.12s',
+      }}
+    >
       {closing ? 'Closing…' : 'Close RFI'}
     </button>
   )

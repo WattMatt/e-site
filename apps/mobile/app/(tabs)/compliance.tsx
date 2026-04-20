@@ -1,5 +1,5 @@
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
-import { useRouter } from 'expo-router'
+import { useCallback } from 'react'
+import { View, Text, FlatList, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
@@ -26,7 +26,6 @@ function ScoreRing({ score }: { score: number }) {
 export default function ComplianceTab() {
   const { profile } = useAuth()
   const client = useSupabase()
-  const router = useRouter()
   const orgId = (profile as any)?.user_organisations?.[0]?.organisation_id ?? ''
 
   const { data: sites, isLoading, refetch, isRefetching } = useQuery({
@@ -34,6 +33,52 @@ export default function ComplianceTab() {
     queryFn: () => complianceService.listSites(client, orgId),
     enabled: !!orgId,
   })
+
+  const renderItem = useCallback(({ item }: { item: NonNullable<typeof sites>[number] }) => {
+    const subs = (item as any).subsections ?? []
+    const total = subs.length
+    const approved = subs.filter((s: any) => s.coc_status === 'approved').length
+    const pending = subs.filter((s: any) => ['submitted', 'under_review'].includes(s.coc_status)).length
+    const missing = total - approved - pending
+    const score = total === 0 ? 0 : Math.round((approved / total) * 100)
+
+    return (
+      <View testID="compliance-site-card" style={styles.card}>
+        <View style={styles.cardTop}>
+          <View style={styles.cardInfo}>
+            <Text style={styles.siteName}>{item.name}</Text>
+            <Text style={styles.siteAddress}>{item.address}</Text>
+            {(item as any).city && <Text style={styles.siteAddress}>{(item as any).city}</Text>}
+          </View>
+          <ScoreRing score={score} />
+        </View>
+
+        {total > 0 && (
+          <View style={styles.statsRow}>
+            <StatPill label="Approved" count={approved} tone="green" />
+            <StatPill label="Pending"  count={pending}  tone="amber" />
+            <StatPill label="Missing"  count={missing}  tone="red" />
+          </View>
+        )}
+
+        {subs.length > 0 && (
+          <View style={styles.dotsRow}>
+            {subs.slice(0, 12).map((s: any) => (
+              <View
+                key={s.id}
+                style={[styles.dot, { backgroundColor: COC_DOT[s.coc_status] ?? colors.border }]}
+              />
+            ))}
+            {subs.length > 12 && (
+              <Text style={styles.moreText}>+{subs.length - 12}</Text>
+            )}
+          </View>
+        )}
+
+        <Text style={styles.subCount}>{total} subsection{total !== 1 ? 's' : ''}</Text>
+      </View>
+    )
+  }, [])
 
   if (isLoading) {
     return <View style={styles.center}><ActivityIndicator color={colors.amber} size="large" /></View>
@@ -44,8 +89,13 @@ export default function ComplianceTab() {
       <FlatList
         data={sites ?? []}
         keyExtractor={item => item.id}
+        renderItem={renderItem}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
         contentContainerStyle={styles.list}
+        removeClippedSubviews
+        maxToRenderPerBatch={5}
+        windowSize={5}
+        initialNumToRender={5}
         ListHeaderComponent={
           <Text style={styles.screenTitle}>Compliance</Text>
         }
@@ -56,51 +106,6 @@ export default function ComplianceTab() {
             <Text style={styles.emptySubtitle}>Create a site from the web dashboard to track COC compliance.</Text>
           </View>
         }
-        renderItem={({ item }) => {
-          const subs = (item as any).subsections ?? []
-          const total = subs.length
-          const approved = subs.filter((s: any) => s.coc_status === 'approved').length
-          const pending = subs.filter((s: any) => ['submitted', 'under_review'].includes(s.coc_status)).length
-          const missing = total - approved - pending
-          const score = total === 0 ? 0 : Math.round((approved / total) * 100)
-
-          return (
-            <View testID="compliance-site-card" style={styles.card}>
-              <View style={styles.cardTop}>
-                <View style={styles.cardInfo}>
-                  <Text style={styles.siteName}>{item.name}</Text>
-                  <Text style={styles.siteAddress}>{item.address}</Text>
-                  {(item as any).city && <Text style={styles.siteAddress}>{(item as any).city}</Text>}
-                </View>
-                <ScoreRing score={score} />
-              </View>
-
-              {total > 0 && (
-                <View style={styles.statsRow}>
-                  <StatPill label="Approved" count={approved} tone="green" />
-                  <StatPill label="Pending"  count={pending}  tone="amber" />
-                  <StatPill label="Missing"  count={missing}  tone="red" />
-                </View>
-              )}
-
-              {subs.length > 0 && (
-                <View style={styles.dotsRow}>
-                  {subs.slice(0, 12).map((s: any) => (
-                    <View
-                      key={s.id}
-                      style={[styles.dot, { backgroundColor: COC_DOT[s.coc_status] ?? colors.border }]}
-                    />
-                  ))}
-                  {subs.length > 12 && (
-                    <Text style={styles.moreText}>+{subs.length - 12}</Text>
-                  )}
-                </View>
-              )}
-
-              <Text style={styles.subCount}>{total} subsection{total !== 1 ? 's' : ''}</Text>
-            </View>
-          )
-        }}
       />
     </View>
   )

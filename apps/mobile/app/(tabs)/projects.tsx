@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
@@ -20,6 +21,34 @@ export default function ProjectsTab() {
   const { data: projects, isLoading, refetch, isRefetching } = useProjects(orgId)
   const router = useRouter()
 
+  const renderItem = useCallback(({ item }: { item: NonNullable<typeof projects>[number] }) => {
+    const status = PROJECT_STATUS[item.status] ?? STATUS_DEFAULT
+    return (
+      <TouchableOpacity
+        testID="project-card"
+        style={styles.card}
+        onPress={() => router.push(`/projects/${item.id}` as any)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardRow}>
+          <View style={styles.cardFlex}>
+            <Text style={styles.cardTitle}>{item.name}</Text>
+            {item.city && <Text style={styles.cardSub}>{item.city}{item.province ? `, ${item.province}` : ''}</Text>}
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: status.bg, borderColor: status.border }]}>
+            <Text style={[styles.statusText, { color: status.fg }]}>{item.status}</Text>
+          </View>
+        </View>
+        {item.client_name && (
+          <Text style={styles.clientText}>Client: {item.client_name}</Text>
+        )}
+        {item.contract_value && (
+          <Text style={styles.valueText}>{formatZAR(item.contract_value)}</Text>
+        )}
+      </TouchableOpacity>
+    )
+  }, [router])
+
   if (isLoading) {
     return (
       <View style={styles.center}>
@@ -29,12 +58,17 @@ export default function ProjectsTab() {
   }
 
   return (
-    <View style={styles.container}>
+    <View testID="projects-screen" style={styles.container}>
       <FlatList
         data={projects ?? []}
         keyExtractor={(item) => item.id}
+        renderItem={renderItem}
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.amber} />}
         contentContainerStyle={styles.list}
+        removeClippedSubviews
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        initialNumToRender={10}
         ListEmptyComponent={
           <View style={styles.center}>
             <Text style={styles.emptyIcon}>📁</Text>
@@ -42,32 +76,6 @@ export default function ProjectsTab() {
             <Text style={styles.emptyDesc}>Projects created on the web will appear here.</Text>
           </View>
         }
-        renderItem={({ item }) => {
-          const status = PROJECT_STATUS[item.status] ?? STATUS_DEFAULT
-          return (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => router.push(`/projects/${item.id}` as any)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.cardRow}>
-                <View style={styles.cardFlex}>
-                  <Text style={styles.cardTitle}>{item.name}</Text>
-                  {item.city && <Text style={styles.cardSub}>{item.city}{item.province ? `, ${item.province}` : ''}</Text>}
-                </View>
-                <View style={[styles.statusBadge, { backgroundColor: status.bg, borderColor: status.border }]}>
-                  <Text style={[styles.statusText, { color: status.fg }]}>{item.status}</Text>
-                </View>
-              </View>
-              {item.client_name && (
-                <Text style={styles.clientText}>Client: {item.client_name}</Text>
-              )}
-              {item.contract_value && (
-                <Text style={styles.valueText}>{formatZAR(item.contract_value)}</Text>
-              )}
-            </TouchableOpacity>
-          )
-        }}
       />
     </View>
   )

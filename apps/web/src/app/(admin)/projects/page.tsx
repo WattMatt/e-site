@@ -1,11 +1,17 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
-import { PageHeader } from '@/components/layout/Header'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { Button } from '@/components/ui/Button'
-import { projectStatusBadge } from '@/components/ui/Badge'
-import { formatDate, formatZAR } from '@esite/shared'
+import { projectService, formatDate, formatZAR } from '@esite/shared'
+import { FolderOpen } from 'lucide-react'
 import Link from 'next/link'
+
+export const metadata: Metadata = { title: 'Projects' }
+
+const statusBadge = (s: string) => ({
+  active:    'badge badge-green',
+  completed: 'badge badge-blue',
+  on_hold:   'badge badge-amber',
+  cancelled: 'badge badge-muted',
+}[s] ?? 'badge badge-muted')
 
 export default async function ProjectsPage() {
   const supabase = await createClient()
@@ -24,64 +30,50 @@ export default async function ProjectsPage() {
     : []
 
   return (
-    <div>
-      <PageHeader
-        title="Projects"
-        subtitle={`${projects.length} project${projects.length !== 1 ? 's' : ''}`}
-        actions={
-          <Link href="/projects/new">
-            <Button>+ New Project</Button>
-          </Link>
-        }
-      />
+    <div className="animate-fadeup">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">Projects</h1>
+          <p className="page-subtitle">{projects.length} project{projects.length !== 1 ? 's' : ''}</p>
+        </div>
+        <Link href="/projects/new" className="btn-primary-amber">+ New Project</Link>
+      </div>
 
       {projects.length === 0 ? (
-        <EmptyState
-          icon="📁"
-          title="No projects yet"
-          description="Create your first project to start tracking snags, RFIs, and compliance."
-          action={
-            <Link href="/projects/new">
-              <Button>Create Project</Button>
-            </Link>
-          }
-        />
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '64px 18px' }}>
+            <FolderOpen size={28} style={{ margin: '0 auto 12px', opacity: 0.25, display: 'block' }} />
+            No projects yet — create your first to start tracking snags, RFIs and compliance.
+          </div>
+        </div>
       ) : (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-700">
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Name</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Status</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Client</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Value</th>
-                <th className="text-left px-4 py-3 text-slate-400 font-medium">Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map((project) => (
-                <tr
-                  key={project.id}
-                  className="border-b border-slate-700/50 hover:bg-slate-700/30 transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <Link href={`/projects/${project.id}`} className="text-white hover:text-blue-400 font-medium">
-                      {project.name}
-                    </Link>
-                    {project.city && (
-                      <p className="text-slate-500 text-xs">{project.city}{project.province ? `, ${project.province}` : ''}</p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">{projectStatusBadge(project.status)}</td>
-                  <td className="px-4 py-3 text-slate-300">{project.client_name ?? '—'}</td>
-                  <td className="px-4 py-3 text-slate-300">
-                    {project.contract_value ? formatZAR(project.contract_value) : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-slate-400">{formatDate(project.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">All Projects</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+              {projects.length} total
+            </span>
+          </div>
+          {projects.map((project) => (
+            <Link key={project.id} href={`/projects/${project.id}`} className="data-panel-row">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{project.name}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                  {project.client_name ?? '—'}
+                  {project.city ? ` · ${project.city}${project.province ? `, ${project.province}` : ''}` : ''}
+                  {` · ${formatDate(project.created_at)}`}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                {project.contract_value != null && (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--c-text-mid)' }}>
+                    {formatZAR(project.contract_value)}
+                  </span>
+                )}
+                <span className={statusBadge(project.status)}>{project.status.replace('_', ' ')}</span>
+              </div>
+            </Link>
+          ))}
         </div>
       )}
     </div>

@@ -1,6 +1,13 @@
+import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { PLANS, type PlanTier } from '@esite/shared'
+import { PLANS } from '@esite/shared'
+import { rateLimit } from '@/lib/rate-limit'
+
+const bodySchema = z.object({
+  tier: z.enum(['starter', 'professional', 'enterprise']),
+  period: z.enum(['monthly', 'annual']),
+})
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 
@@ -13,10 +20,18 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { tier, period } = await req.json() as { tier: PlanTier; period: 'monthly' | 'annual' }
+  if (!rateLimit(`checkout:${user.id}`, 5, 60_000)) {
+    return NextResponse.json({ error: 'Too many requests. Please try again shortly.' }, { status: 429 })
+  }
+
+  const parsed = bodySchema.safeParse(await req.json())
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  }
+  const { tier, period } = parsed.data
 
   const plan = PLANS[tier]
-  if (!plan || tier === 'free') {
+  if (!plan) {
     return NextResponse.json({ error: 'Invalid plan' }, { status: 400 })
   }
 

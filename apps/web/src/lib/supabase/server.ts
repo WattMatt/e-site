@@ -1,9 +1,15 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
-import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { createClient as createSupabaseClient, type SupabaseClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import type { Database } from '@esite/db'
 
-export async function createClient() {
+// @supabase/ssr@0.5.x returns SupabaseClient<DB, SchemaName, Schema> (3 args) but
+// supabase-js@2.50+ expanded SupabaseClient to 5 type params. Passing Schema as the
+// 3rd positional arg corrupts the type chain and makes every query return `never`.
+// Casting to SupabaseClient<Database> (1 arg, all defaults) lets TS resolve the full
+// generic chain correctly: SchemaNameOrClientOptions→'public', SchemaName→'public',
+// Schema→Database['public'], ClientOptions→{PostgrestVersion:"14.5"}.
+export async function createClient(): Promise<SupabaseClient<Database>> {
   const cookieStore = await cookies()
 
   return createServerClient<Database>(
@@ -25,7 +31,7 @@ export async function createClient() {
         },
       },
     }
-  )
+  ) as unknown as SupabaseClient<Database>
 }
 
 // True service-role client — uses @supabase/supabase-js directly so the service
