@@ -1,7 +1,14 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import { InDevelopmentNotice, isMarketplaceEnabled } from '@/components/marketplace/InDevelopmentNotice'
 
 export default async function MarketplaceLayout({ children }: { children: React.ReactNode }) {
+  // Phase 1 gate — supplier portal is part of the marketplace feature set
+  // and is held back until Phase 2 along with the contractor-facing flows.
+  if (!isMarketplaceEnabled()) {
+    return <InDevelopmentNotice backHref="/login" backLabel="Back to sign in" />
+  }
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 

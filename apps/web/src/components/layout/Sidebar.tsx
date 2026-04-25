@@ -11,6 +11,33 @@ import {
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
 
+// Phase 1 launch gate. When false, the Marketplace nav item still renders
+// (so users see what's coming) but with an "In Development" badge — clicking
+// lands on the placeholder page from the (admin)/marketplace/layout.tsx gate.
+const MARKETPLACE_ENABLED = process.env.NEXT_PUBLIC_PHASE_2_MARKETPLACE === 'true'
+
+function InDevBadge() {
+  return (
+    <span
+      style={{
+        marginLeft: 'auto',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        padding: '2px 6px',
+        borderRadius: 2,
+        background: 'var(--c-amber-dim)',
+        color: 'var(--c-amber)',
+        border: '1px solid var(--c-amber-mid)',
+      }}
+    >
+      In Dev
+    </span>
+  )
+}
+
 function LogoMark() {
   return (
     <div className="sidebar-logo-mark">
@@ -109,6 +136,7 @@ function SidebarContent() {
             >
               <ShoppingBag {...IC} />
               Marketplace
+              {!MARKETPLACE_ENABLED && <InDevBadge />}
             </Link>
           </>
         ) : (
@@ -116,6 +144,7 @@ function SidebarContent() {
             <span className="sidebar-section-label">Workspace</span>
             {GLOBAL_NAV.map(({ href, label, Icon }) => {
               const active = pathname === href || pathname.startsWith(href + '/')
+              const isMarketplace = href === '/marketplace'
               return (
                 <Link
                   key={href}
@@ -125,6 +154,7 @@ function SidebarContent() {
                 >
                   <Icon {...IC} />
                   {label}
+                  {isMarketplace && !MARKETPLACE_ENABLED && <InDevBadge />}
                 </Link>
               )
             })}

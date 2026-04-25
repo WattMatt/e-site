@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, formatZAR, getSlaSummary, SLA_DEFAULTS } from '@esite/shared'
+import { isMarketplaceEnabled } from '@/components/marketplace/InDevelopmentNotice'
 import Link from 'next/link'
 
 export const metadata: Metadata = { title: 'Dashboard' }
@@ -192,10 +193,12 @@ export default async function DashboardPage() {
           <div className="kpi-value">{stats.pendingCocs}</div>
         </Link>
 
-        <Link href="/marketplace/orders" className="kpi-card" style={{ textDecoration: 'none', color: 'inherit' }}>
-          <div className="kpi-label">Active Orders</div>
-          <div className="kpi-value">{activeOrders}</div>
-        </Link>
+        {isMarketplaceEnabled() && (
+          <Link href="/marketplace/orders" className="kpi-card" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <div className="kpi-label">Active Orders</div>
+            <div className="kpi-value">{activeOrders}</div>
+          </Link>
+        )}
 
         <Link
           href="/compliance"
@@ -430,39 +433,41 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Marketplace orders */}
-      <div className="data-panel animate-fadeup animate-fadeup-3" style={{ marginBottom: 16 }}>
-        <div className="data-panel-header">
-          <span className="data-panel-title">Active Marketplace Orders</span>
-          <Link href="/marketplace" className="data-panel-link">View all →</Link>
-        </div>
-        {ordersList.length === 0 ? (
-          <div className="data-panel-empty">No active orders</div>
-        ) : (
-          ordersList.map((o: any) => (
-            <Link key={o.id} href={`/marketplace/orders/${o.id}`} className="data-panel-row">
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
-                  {supplierOrgMap[o.supplier_org_id] ?? 'Supplier'}
+      {/* Marketplace orders — hidden in Phase 1 */}
+      {isMarketplaceEnabled() && (
+        <div className="data-panel animate-fadeup animate-fadeup-3" style={{ marginBottom: 16 }}>
+          <div className="data-panel-header">
+            <span className="data-panel-title">Active Marketplace Orders</span>
+            <Link href="/marketplace" className="data-panel-link">View all →</Link>
+          </div>
+          {ordersList.length === 0 ? (
+            <div className="data-panel-empty">No active orders</div>
+          ) : (
+            ordersList.map((o: any) => (
+              <Link key={o.id} href={`/marketplace/orders/${o.id}`} className="data-panel-row">
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
+                    {supplierOrgMap[o.supplier_org_id] ?? 'Supplier'}
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                    {new Date(o.created_at).toLocaleDateString('en-ZA')}
+                  </div>
                 </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
-                  {new Date(o.created_at).toLocaleDateString('en-ZA')}
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                {o.total_amount != null && (
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-text)' }}>
-                    {formatZAR(o.total_amount)}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {o.total_amount != null && (
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-text)' }}>
+                      {formatZAR(o.total_amount)}
+                    </span>
+                  )}
+                  <span className={orderBadge(o.status)}>
+                    {o.status.replace('_', ' ')}
                   </span>
-                )}
-                <span className={orderBadge(o.status)}>
-                  {o.status.replace('_', ' ')}
-                </span>
-              </div>
-            </Link>
-          ))
-        )}
-      </div>
+                </div>
+              </Link>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Quick actions */}
       <div className="quick-actions animate-fadeup animate-fadeup-4">
@@ -470,7 +475,9 @@ export default async function DashboardPage() {
           { href: '/projects/new', label: 'New Project',  Icon: () => <FolderPlus    size={18} aria-hidden="true" /> },
           { href: '/snags/new',    label: 'Log Snag',     Icon: () => <AlertTriangle size={18} aria-hidden="true" /> },
           { href: '/diary',        label: 'Site Diary',   Icon: () => <BookOpen      size={18} aria-hidden="true" /> },
-          { href: '/marketplace',  label: 'Marketplace',  Icon: () => <ShoppingBag   size={18} aria-hidden="true" /> },
+          ...(isMarketplaceEnabled()
+            ? [{ href: '/marketplace',  label: 'Marketplace',  Icon: () => <ShoppingBag   size={18} aria-hidden="true" /> }]
+            : []),
         ].map(({ href, label, Icon }) => (
           <Link key={href} href={href} className="quick-action">
             <div className="quick-action-icon">
