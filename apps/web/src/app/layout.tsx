@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
 import { Syne, JetBrains_Mono } from 'next/font/google'
-import { Suspense } from 'react'
 import './globals.css'
 import { AnalyticsProvider } from '@/components/providers/AnalyticsProvider'
 import { ErrorBoundary } from '@/components/providers/ErrorBoundary'
@@ -32,11 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${syne.variable} ${mono.variable}`}>
         <ErrorBoundary>
           <SentryBoot />
-          <Suspense fallback={null}>
-            <AnalyticsProvider>
-              {children}
-            </AnalyticsProvider>
-          </Suspense>
+          <AnalyticsProvider>
+            {children}
+          </AnalyticsProvider>
         </ErrorBoundary>
       </body>
     </html>
