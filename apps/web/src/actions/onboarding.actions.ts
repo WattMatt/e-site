@@ -73,6 +73,21 @@ export async function createOrganisationAction(formData: FormData) {
     .update({ popia_consent_at: new Date().toISOString() })
     .eq('id', user.id)
 
+  // Seed a free-tier subscription so the org has a billing row from
+  // inception. Spec §8.3: first project free, R499/mo thereafter (Starter).
+  // The free tier's `limits.projects=1` enforces the gate when they try a
+  // second project — see createProjectAction.
+  await (service as any)
+    .schema('billing')
+    .from('subscriptions')
+    .insert({
+      organisation_id: org.id,
+      tier: 'free',
+      billing_period: 'monthly',
+      status: 'active',
+      amount_kobo: 0,
+    })
+
   await trackServer(user.id, ANALYTICS_EVENTS.ONBOARDING_STARTED, {
     org_id: org.id,
     org_type: orgType,
