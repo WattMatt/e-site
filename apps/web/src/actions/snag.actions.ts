@@ -140,6 +140,9 @@ export async function updateSnagStatusAction(
             userIds: uniqueIds,
             title: `Snag status updated`,
             body: `"${snag.title}" is now ${STATUS_LABELS[validStatus] ?? validStatus}`,
+            type: 'snag_status_changed',
+            entityType: 'snag',
+            entityId: validSnagId,
             data: { route: `/snags/${validSnagId}` },
           }),
         }).catch(() => {/* non-blocking */})

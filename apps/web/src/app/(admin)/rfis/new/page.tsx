@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { createRfiSchema, type CreateRfiInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { createRfiAction } from '@/actions/rfi.actions'
 import { Button } from '@/components/ui/Button'
 import { FormField, TextInput, Select, Textarea } from '@/components/ui/FormField'
 import { AttachmentStaging } from '@/components/attachments/AttachmentStaging'
@@ -55,50 +56,46 @@ function NewRfiForm() {
 
   async function onSubmit(input: CreateRfiInput) {
     setError(null)
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: mem } = await supabase.from('user_organisations').select('organisation_id').eq('user_id', user.id).eq('is_active', true).limit(1).single()
-    if (!mem) return
 
-    try {
-      const { data: rfi, error: err } = await supabase.schema('projects').from('rfis').insert({
-        project_id: input.projectId,
-        organisation_id: mem.organisation_id,
-        raised_by: user.id,
-        subject: input.subject,
-        description: input.description,
-        priority: input.priority,
-        category: input.category,
-        due_date: input.dueDate || null,
-        assigned_to: input.assignedTo || null,
-        status: 'open',
-      }).select().single()
-      if (err) throw err
+    // Server action handles insert + assignee notification dispatch.
+    const result = await createRfiAction(input)
+    if (result.error || !result.rfiId) {
+      setError(result.error ?? 'Failed to create RFI')
+      return
+    }
 
-      if (attachments.length > 0) {
-        try {
+    // Attachments stay client-side — they need browser File access.
+    if (attachments.length > 0) {
+      try {
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        const { data: mem } = await supabase
+          .from('user_organisations')
+          .select('organisation_id')
+          .eq('user_id', user!.id)
+          .eq('is_active', true)
+          .limit(1)
+          .single()
+        if (mem) {
           await commitStagedAttachments({
             supabase,
             staged: attachments,
             orgId: mem.organisation_id,
             projectId: input.projectId,
             entityType: 'rfi',
-            entityId: rfi.id,
-            rfiId: rfi.id,
-            userId: user.id,
+            entityId: result.rfiId,
+            rfiId: result.rfiId,
+            userId: user!.id,
           })
-        } catch (attErr) {
-          // The RFI itself is created — surface the attachment error but still
-          // let the user navigate to the created RFI to retry attachments.
-          setError(attErr instanceof Error ? attErr.message : 'Attachment upload failed')
         }
+      } catch (attErr) {
+        // RFI is created — surface attachment error but still navigate so
+        // the user can retry attachments from the detail screen.
+        setError(attErr instanceof Error ? attErr.message : 'Attachment upload failed')
       }
-
-      router.push(`/rfis/${rfi.id}`)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to create RFI')
     }
+
+    router.push(`/rfis/${result.rfiId}`)
   }
 
   return (

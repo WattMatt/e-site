@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { respondToRfiAction } from '@/actions/rfi.actions'
 import { Button } from '@/components/ui/Button'
 import { AttachmentStaging } from '@/components/attachments/AttachmentStaging'
 import { commitStagedAttachments } from '@/components/attachments/commit'
@@ -39,36 +40,35 @@ export function RfiRespondForm({ rfiId }: { rfiId: string }) {
     if (body.trim().length < 10) { setError('Response must be at least 10 characters'); return }
     setSaving(true)
     setError(null)
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setSaving(false); return }
 
-    const { data: response, error: err } = await supabase
-      .schema('projects')
-      .from('rfi_responses')
-      .insert({ rfi_id: rfiId, body: body.trim(), responded_by: user.id })
-      .select('id')
-      .single()
-    if (err || !response) { setError(err?.message ?? 'Could not save response'); setSaving(false); return }
+    // Server action handles the insert + status flip + raiser/assignee
+    // notification; attachments stay client-side because they need the
+    // browser File flow.
+    const result = await respondToRfiAction({ rfiId, body: body.trim() })
+    if (result.error || !result.responseId) {
+      setError(result.error ?? 'Could not save response')
+      setSaving(false)
+      return
+    }
 
     if (attachments.length > 0 && projectId && orgId) {
       try {
+        const supabase = createClient()
         await commitStagedAttachments({
           supabase,
           staged: attachments,
           orgId,
           projectId,
           entityType: 'rfi_response',
-          entityId: response.id,
+          entityId: result.responseId,
           rfiId,
-          userId: user.id,
+          userId: (await supabase.auth.getUser()).data.user!.id,
         })
       } catch (attErr) {
         setError(attErr instanceof Error ? attErr.message : 'Attachment upload failed')
       }
     }
 
-    await supabase.schema('projects').from('rfis').update({ status: 'responded' }).eq('id', rfiId)
     setBody('')
     setAttachments([])
     router.refresh()

@@ -41,6 +41,9 @@ export const ANALYTICS_EVENTS = {
   PROJECT_CREATED:          'project_created',
   SNAG_LOGGED:              'snag_logged',
   SNAG_RESOLVED:            'snag_resolved',
+  RFI_CREATED:              'rfi_created',
+  RFI_RESPONDED:            'rfi_responded',
+  RFI_CLOSED:               'rfi_closed',
 
   // Supplier funnel
   SUPPLIER_REGISTERED:      'supplier_registered',

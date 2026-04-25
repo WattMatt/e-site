@@ -63,11 +63,14 @@ Deno.serve(async (req) => {
   )
 
   try {
-    const { userIds, title, body, data } = await req.json() as {
+    const { userIds, title, body, data, type, entityType, entityId } = await req.json() as {
       userIds: string[]
       title: string
       body: string
       data?: Record<string, unknown>
+      type?: string         // notification.type (NOT NULL in schema). Defaults to 'general'.
+      entityType?: string   // optional entity_type column
+      entityId?: string     // optional entity_id column (uuid)
     }
 
     if (!userIds?.length || !title || !body) {
@@ -76,16 +79,25 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Persist in-app notifications (non-blocking)
+    // Persist in-app notifications (non-blocking — log + continue on error).
+    // Schema: public.notifications has `type` NOT NULL, plus optional
+    // `action_url`, `entity_type`, `entity_id` columns. We pull `route` out of
+    // `data` for action_url so existing in-app UIs can link directly.
+    const actionUrl = (data && typeof data === 'object' && 'route' in data && typeof data.route === 'string')
+      ? data.route as string
+      : null
     const inAppRows = userIds.map((userId) => ({
       user_id: userId,
+      type: type ?? 'general',
       title,
       body,
       data: data ?? {},
+      action_url: actionUrl,
+      entity_type: entityType ?? null,
+      entity_id: entityId ?? null,
     }))
-    await supabase.from('notifications').insert(inAppRows).catch((err: any) =>
-      console.error('Failed to persist in-app notifications:', err)
-    )
+    const { error: inAppErr } = await supabase.from('notifications').insert(inAppRows)
+    if (inAppErr) console.error('Failed to persist in-app notifications:', inAppErr)
 
     // Fetch push tokens for the specified users
     const { data: tokens, error: tokenErr } = await supabase
