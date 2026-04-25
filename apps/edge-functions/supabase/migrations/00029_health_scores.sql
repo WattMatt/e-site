@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00025: Organisation health scores
+-- Migration 00029: Organisation health scores
 -- ---------------------------------------------------------------------------
 -- Spec: spec-v2.md §17, strategic-analysis-52-customer-health-scoring-v2.md,
 --       build-action-plan.md Session 3.

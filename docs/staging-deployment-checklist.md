@@ -59,13 +59,13 @@ bash scripts/db/run-migrations.sh
 
 **Verify migrations applied:**
 ```sql
--- Should return 28 rows (00001–00028)
+-- Should return 33 rows (00001–00033)
 SELECT count(*) FROM supabase_migrations.schema_migrations;
 ```
 
-**After migration 00025**, schedule the health-score cron (see the commented-out pg_cron block at the bottom of `00025_health_scores.sql`). Skip until `calculate-health-scores` Edge Function is deployed.
+**After migration 00029**, schedule the health-score cron (see the commented-out pg_cron block at the bottom of `00029_health_scores.sql`). Skip until `calculate-health-scores` Edge Function is deployed.
 
-**After migration 00026**, schedule the four onboarding cron jobs + the daily reengagement check (see the commented-out block in `00026_email_sequences.sql`). Skip until the Edge Functions are deployed.
+**After migration 00030**, schedule the four onboarding cron jobs + the daily reengagement check (see the commented-out block in `00030_email_sequences.sql`). Skip until the Edge Functions are deployed.
 
 **Edge Function deploy** (all functions — use the bulk deploy in section 3):
 ```bash
@@ -86,7 +86,7 @@ done
 supabase functions deploy paystack-webhook --project-ref <ref>
 ```
 
-**After migration 00027**, schedule the payment-recovery cron (see the commented-out pg_cron block at the bottom of `00027_payment_recovery.sql`). Skip until the Edge Function is deployed.
+**After migration 00031**, schedule the payment-recovery cron (see the commented-out pg_cron block at the bottom of `00031_payment_recovery.sql`). Skip until the Edge Function is deployed.
 
 ---
 

@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00027: Payment recovery tracking (T-064 / Session 5)
+-- Migration 00031: Payment recovery tracking (T-064 / Session 5)
 -- ---------------------------------------------------------------------------
 -- Spec: spec-v2.md §18, strategic-analysis-51-churn-analysis-framework-v2.md §5,
 --       build-action-plan.md Session 5.

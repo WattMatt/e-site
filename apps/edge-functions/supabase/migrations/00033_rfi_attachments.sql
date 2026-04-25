@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration: 00029_rfi_attachments.sql
+-- Migration: 00033_rfi_attachments.sql
 -- Description: RFI attachments storage bucket + floor-plan annotation metadata.
 --              Existing public.attachments table already supports entity_type
 --              values 'rfi' and 'rfi_response' — this migration adds:

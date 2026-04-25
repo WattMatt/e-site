@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00026: Email sequence tracking (T-063 / build-action-plan Session 4)
+-- Migration 00030: Email sequence tracking (T-063 / build-action-plan Session 4)
 -- ---------------------------------------------------------------------------
 -- Spec: spec-v2.md §18, strategic-analysis-50-customer-communication-automation-v2.md.
 --

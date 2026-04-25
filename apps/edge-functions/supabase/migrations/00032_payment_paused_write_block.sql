@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00028: payment_paused write-block RLS (T-064 follow-up)
+-- Migration 00032: payment_paused write-block RLS (T-064 follow-up)
 -- ---------------------------------------------------------------------------
 -- The PaymentStatusBanner added in Session 5 warns the user; these policies
 -- enforce the restriction at the database level — denying INSERT and UPDATE on
@@ -42,8 +42,10 @@ CREATE POLICY "Org members can update snags"
     );
 
 -- ── projects.site_diary_entries ──────────────────────────────────────────────
--- Only a SELECT policy existed before; add INSERT and UPDATE with the guard.
+-- Replace the INSERT/UPDATE policies (00027 added them without the guard) with
+-- payment_paused-aware versions.
 
+DROP POLICY IF EXISTS "Org members can create diary entries" ON projects.site_diary_entries;
 CREATE POLICY "Org members can create diary entries"
     ON projects.site_diary_entries FOR INSERT
     WITH CHECK (
@@ -55,6 +57,7 @@ CREATE POLICY "Org members can create diary entries"
         )
     );
 
+DROP POLICY IF EXISTS "Org members can update diary entries" ON projects.site_diary_entries;
 CREATE POLICY "Org members can update diary entries"
     ON projects.site_diary_entries FOR UPDATE
     USING (
