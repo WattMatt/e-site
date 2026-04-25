@@ -18,6 +18,9 @@
     "preview": {
       "distribution": "internal",
       "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_WEB_URL": "https://esite-lilac.vercel.app"
+      },
       "ios": {
         "simulator": false
       },
@@ -29,6 +32,9 @@
       "autoIncrement": true,
       "channel": "production",
       "distribution": "store",
+      "env": {
+        "EXPO_PUBLIC_WEB_URL": "https://e-site.co.za"
+      },
       "ios": {
         "credentialsSource": "remote"
       },

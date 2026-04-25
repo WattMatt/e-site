@@ -72,8 +72,8 @@ export default function SnagDetailScreen() {
         const uniqueIds = [...new Set(notifyIds)]
         if (uniqueIds.length === 0) return
 
-        const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL
-        await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
+        const webUrl = process.env.EXPO_PUBLIC_WEB_URL ?? 'https://esite-lilac.vercel.app'
+        await fetch(`${webUrl}/api/notifications/dispatch`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -83,7 +83,10 @@ export default function SnagDetailScreen() {
             userIds: uniqueIds,
             title: 'Snag status updated',
             body: `"${currentSnag?.title}" is now ${STATUS_LABELS[(updated as any).status] ?? (updated as any).status}`,
-            data: { route: `/snags/${id}` },
+            type: 'snag_status_changed',
+            entityType: 'snag',
+            entityId: id,
+            route: `/snags/${id}`,
           }),
         }).catch(() => {/* non-blocking */})
       } catch {

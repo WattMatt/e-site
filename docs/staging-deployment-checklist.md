@@ -238,6 +238,17 @@ eas build --platform android --profile preview
 eas update --branch staging --message "T-059 staging build"
 ```
 
+**Required EXPO_PUBLIC env vars** (already set in `eas.json` → `build.preview.env` / `build.production.env`; verify they are not stripped by EAS):
+
+| Var | Preview (staging) | Production |
+|---|---|---|
+| `EXPO_PUBLIC_SUPABASE_URL` | staging Supabase URL | prod Supabase URL |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | staging anon key | prod anon key |
+| `EXPO_PUBLIC_POWERSYNC_URL` | staging PowerSync | prod PowerSync |
+| `EXPO_PUBLIC_WEB_URL` | `https://esite-lilac.vercel.app` | `https://e-site.co.za` |
+
+`EXPO_PUBLIC_WEB_URL` is required — it's where the mobile app sends authenticated notification dispatches. Without it the app falls back to the staging URL even in production builds.
+
 **iOS**: Testers install via TestFlight or direct IPA link  
 **Android**: Testers install via `.apk` from EAS dashboard
 
@@ -296,6 +307,8 @@ Run these manually after deployment. Each links to the expected behaviour.
 - [ ] Dashboard loads with KPI tiles
 - [ ] Offline: create snag with no network → syncs when connection restored
 - [ ] Push notification received after snag status update
+- [ ] Notification dispatch proxy reachable: change a snag's status on mobile → row appears in `public.notifications` with `type='snag_status_changed'` for the recipient. (Mobile calls `${EXPO_PUBLIC_WEB_URL}/api/notifications/dispatch`, not the Edge Function directly.)
+- [ ] **Auth boundary probe** (one-time): with a real bearer token, `curl -X POST $WEB_URL/api/notifications/dispatch -H "Authorization: Bearer <jwt>" -d '{"userIds":["<uid-from-different-org>"], ...}'` → expect HTTP 403. This verifies the cross-org check actually fires.
 
 ### Health & Observability
 - [ ] `/api/health` returns `{ healthy: true }` with all components ok
