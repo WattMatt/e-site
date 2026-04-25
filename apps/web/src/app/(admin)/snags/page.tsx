@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { snagService, formatDate } from '@esite/shared'
+import { snagService, formatDate, SLA_DEFAULTS } from '@esite/shared'
 import { AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 
@@ -35,11 +35,12 @@ const statusBadge = (s: string) => ({
 }[s] ?? 'badge badge-muted')
 
 interface Props {
-  searchParams: Promise<{ status?: string; priority?: string }>
+  searchParams: Promise<{ status?: string; priority?: string; filter?: string }>
 }
 
 export default async function SnagsPage({ searchParams }: Props) {
-  const { status, priority } = await searchParams
+  const { status, priority, filter } = await searchParams
+  const isAging = filter === 'aging'
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -54,7 +55,11 @@ export default async function SnagsPage({ searchParams }: Props) {
   const [allSnags, snags] = membership
     ? await Promise.all([
         snagService.listByOrg(supabase as any, membership.organisation_id),
-        snagService.listByOrg(supabase as any, membership.organisation_id, { status, priority }),
+        snagService.listByOrg(supabase as any, membership.organisation_id, {
+          status,
+          priority,
+          agingDays: isAging ? SLA_DEFAULTS.AGING_SNAG_DAYS : undefined,
+        }),
       ])
     : [[], []]
 
@@ -72,6 +77,25 @@ export default async function SnagsPage({ searchParams }: Props) {
         </div>
         <Link href="/snags/new" className="btn-primary-amber">+ New Snag</Link>
       </div>
+
+      {isAging && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          padding: '10px 14px', marginBottom: 16,
+          backgroundColor: 'var(--c-amber-dim)', border: '1px solid var(--c-amber-mid)',
+          borderRadius: 8,
+        }}>
+          <div style={{ fontSize: 13, color: 'var(--c-amber)' }}>
+            Showing snags open longer than {SLA_DEFAULTS.AGING_SNAG_DAYS} days. {snags.length} match.
+          </div>
+          <Link
+            href="/snags"
+            style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline' }}
+          >
+            Clear filter
+          </Link>
+        </div>
+      )}
 
       {/* Status KPI row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 20 }}>

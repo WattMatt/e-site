@@ -24,6 +24,8 @@ export const snagService = {
     status?: string
     priority?: string
     assignedTo?: string
+    /** "aging" filter: status in (open, in_progress) AND created_at < N days ago. */
+    agingDays?: number
   }) {
     let query = client
       .schema('field')
@@ -35,6 +37,10 @@ export const snagService = {
     if (filters?.status) query = query.eq('status', filters.status)
     if (filters?.priority) query = query.eq('priority', filters.priority)
     if (filters?.assignedTo) query = query.eq('assigned_to', filters.assignedTo)
+    if (filters?.agingDays != null) {
+      const cutoff = new Date(Date.now() - filters.agingDays * 86_400_000).toISOString()
+      query = query.in('status', ['open', 'in_progress']).lt('created_at', cutoff)
+    }
 
     const { data, error } = await query
     if (error) throw error

@@ -1,13 +1,13 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { formatDate } from '@esite/shared'
+import { formatDate, SLA_DEFAULTS } from '@esite/shared'
 import { MessageSquare } from 'lucide-react'
 import Link from 'next/link'
 
 export const metadata: Metadata = { title: 'RFIs' }
 
 interface Props {
-  searchParams: Promise<{ projectId?: string }>
+  searchParams: Promise<{ projectId?: string; filter?: string }>
 }
 
 const priorityClass = (p: string) => ({
@@ -25,7 +25,8 @@ const statusBadge = (s: string) => ({
 }[s] ?? 'badge badge-muted')
 
 export default async function RfisPage({ searchParams }: Props) {
-  const { projectId } = await searchParams
+  const { projectId, filter } = await searchParams
+  const isStale = filter === 'stale'
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -47,6 +48,11 @@ export default async function RfisPage({ searchParams }: Props) {
     : null
 
   if (q && projectId) q = q.eq('project_id', projectId)
+  if (q && isStale) {
+    const cutoffIso = new Date(Date.now() - SLA_DEFAULTS.STALE_RFI_DAYS * 86_400_000).toISOString()
+    const today = new Date().toISOString().slice(0, 10)
+    q = q.in('status', ['draft', 'open']).or(`due_date.lt.${today},created_at.lt.${cutoffIso}`)
+  }
 
   const rawRfis: any[] = q ? ((await q).data ?? []) : []
 
@@ -89,6 +95,22 @@ export default async function RfisPage({ searchParams }: Props) {
           + New RFI
         </Link>
       </div>
+
+      {isStale && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          padding: '10px 14px', marginBottom: 16,
+          backgroundColor: 'var(--c-amber-dim)', border: '1px solid var(--c-amber-mid)',
+          borderRadius: 8,
+        }}>
+          <div style={{ fontSize: 13, color: 'var(--c-amber)' }}>
+            Showing RFIs overdue or open longer than {SLA_DEFAULTS.STALE_RFI_DAYS} days. {rfis.length} match.
+          </div>
+          <Link href="/rfis" style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline' }}>
+            Clear filter
+          </Link>
+        </div>
+      )}
 
       {rfis.length === 0 ? (
         <div className="data-panel">

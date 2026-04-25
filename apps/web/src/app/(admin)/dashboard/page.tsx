@@ -1,10 +1,10 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, formatZAR } from '@esite/shared'
+import { projectService, formatZAR, getSlaSummary, SLA_DEFAULTS } from '@esite/shared'
 import Link from 'next/link'
 
 export const metadata: Metadata = { title: 'Dashboard' }
-import { FolderPlus, AlertTriangle, BookOpen, ShoppingBag } from 'lucide-react'
+import { FolderPlus, AlertTriangle, BookOpen, ShoppingBag, Clock, FileWarning, MessageSquareWarning } from 'lucide-react'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -20,7 +20,7 @@ export default async function DashboardPage() {
 
   const orgId = membership?.organisation_id
 
-  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, complianceResult] = await Promise.all([
+  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, complianceResult, sla] = await Promise.all([
     orgId
       ? projectService.getStats(supabase as any, orgId)
       : Promise.resolve({ activeProjects: 0, openSnags: 0, pendingCocs: 0 }),
@@ -92,6 +92,14 @@ export default async function DashboardPage() {
           .select('coc_status')
           .eq('organisation_id', orgId)
       : Promise.resolve({ data: [] }),
+
+    orgId
+      ? getSlaSummary(supabase as any, orgId)
+      : Promise.resolve({
+          agingSnags: { count: 0, top: [] },
+          pendingCocs: { count: 0, top: [] },
+          staleRfis: { count: 0, top: [] },
+        }),
   ])
 
   const activeOrders = ordersCountResult.count ?? 0
@@ -203,6 +211,144 @@ export default async function DashboardPage() {
           )}
         </Link>
       </div>
+
+      {/* Operational SLA — surfaces stuck/aging work the org needs to act on */}
+      {(sla.agingSnags.count > 0 || sla.pendingCocs.count > 0 || sla.staleRfis.count > 0) && (
+        <div className="animate-fadeup animate-fadeup-2" style={{ marginBottom: 16 }}>
+          <div style={{
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+            marginBottom: 10,
+          }}>
+            <h2 style={{
+              fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+              letterSpacing: '0.08em', textTransform: 'uppercase', margin: 0,
+            }}>
+              Action required
+            </h2>
+            <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>
+              snags &gt;{SLA_DEFAULTS.AGING_SNAG_DAYS}d · rfis &gt;{SLA_DEFAULTS.STALE_RFI_DAYS}d / overdue
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            {/* Aging snags */}
+            <Link
+              href="/snags?filter=aging"
+              className="data-panel"
+              style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <Clock size={16} color={sla.agingSnags.count > 0 ? 'var(--c-amber)' : 'var(--c-text-dim)'} />
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>
+                  Aging snags
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 600, color: 'var(--c-text)' }}>
+                  {sla.agingSnags.count}
+                </span>
+              </div>
+              {sla.agingSnags.top.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+                  No snags have been open longer than {SLA_DEFAULTS.AGING_SNAG_DAYS} days.
+                </p>
+              ) : (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {sla.agingSnags.top.map(s => (
+                    <li key={s.id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {s.title}
+                      </span>
+                      <span style={{ color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                        {s.days_open}d
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Link>
+
+            {/* Pending COCs */}
+            <Link
+              href="/compliance?filter=pending"
+              className="data-panel"
+              style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <FileWarning size={16} color={sla.pendingCocs.count > 0 ? 'var(--c-amber)' : 'var(--c-text-dim)'} />
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>
+                  Pending COCs
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 600, color: 'var(--c-text)' }}>
+                  {sla.pendingCocs.count}
+                </span>
+              </div>
+              {sla.pendingCocs.top.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+                  No COCs awaiting review.
+                </p>
+              ) : (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {sla.pendingCocs.top.map(c => (
+                    <li key={c.id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.name}
+                      </span>
+                      <span style={{ color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                        {c.coc_status === 'submitted' ? 'new' : 'review'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Link>
+
+            {/* Stale RFIs */}
+            <Link
+              href="/rfis?filter=stale"
+              className="data-panel"
+              style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <MessageSquareWarning size={16} color={sla.staleRfis.count > 0 ? 'var(--c-amber)' : 'var(--c-text-dim)'} />
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>
+                  Stale RFIs
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 600, color: 'var(--c-text)' }}>
+                  {sla.staleRfis.count}
+                </span>
+              </div>
+              {sla.staleRfis.top.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+                  No RFIs are overdue or stale.
+                </p>
+              ) : (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {sla.staleRfis.top.map(r => (
+                    <li key={r.id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {r.subject}
+                      </span>
+                      <span style={{
+                        color: r.is_overdue ? 'var(--c-red)' : 'var(--c-text-dim)',
+                        fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap',
+                      }}>
+                        {r.is_overdue ? 'overdue' : `${r.days_open}d`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Two-column grid */}
       <div

@@ -32,7 +32,13 @@ function ScoreRing({ score }: { score: number }) {
   )
 }
 
-export default async function CompliancePage() {
+interface Props {
+  searchParams: Promise<{ filter?: string }>
+}
+
+export default async function CompliancePage({ searchParams }: Props) {
+  const { filter } = await searchParams
+  const isPending = filter === 'pending'
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -52,9 +58,15 @@ export default async function CompliancePage() {
     const subs = (site.subsections as any[]) ?? []
     const total = subs.length
     const approved = subs.filter((s) => s.coc_status === 'approved').length
+    const pending = subs.filter((s) => s.coc_status === 'submitted' || s.coc_status === 'under_review').length
     const score = total > 0 ? Math.round((approved / total) * 100) : 0
-    return { ...site, score, total, approved }
+    return { ...site, score, total, approved, pending }
   })
+
+  const visibleSites = isPending
+    ? sitesWithScore.filter((s) => s.pending > 0)
+    : sitesWithScore
+  const totalPending = sitesWithScore.reduce((acc, s) => acc + s.pending, 0)
 
   const overallHealth = sitesWithScore.length > 0
     ? Math.round(sitesWithScore.reduce((acc, s) => acc + s.score, 0) / sitesWithScore.length)
@@ -86,6 +98,22 @@ export default async function CompliancePage() {
           + New Site
         </Link>
       </div>
+
+      {isPending && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          padding: '10px 14px', marginBottom: 16,
+          backgroundColor: 'var(--c-amber-dim)', border: '1px solid var(--c-amber-mid)',
+          borderRadius: 8,
+        }}>
+          <div style={{ fontSize: 13, color: 'var(--c-amber)' }}>
+            Showing sites with COCs awaiting review. {totalPending} subsection{totalPending !== 1 ? 's' : ''} pending across {visibleSites.length} site{visibleSites.length !== 1 ? 's' : ''}.
+          </div>
+          <Link href="/compliance" style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline' }}>
+            Show all sites
+          </Link>
+        </div>
+      )}
 
       {/* Summary bar */}
       {sitesWithScore.length > 0 && (
@@ -194,7 +222,7 @@ export default async function CompliancePage() {
           className="animate-fadeup animate-fadeup-2"
           style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}
         >
-          {sitesWithScore.map((site) => (
+          {visibleSites.map((site) => (
             <Link key={site.id} href={`/compliance/${site.id}`} className="compliance-card bracket-card">
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
                 <div>
