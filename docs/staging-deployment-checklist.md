@@ -52,14 +52,20 @@ bash scripts/db/run-migrations.sh
 | 00022 | `organisations.type`, `vat_number`, POPIA fields; expanded role CHECK; `marketplace.paystack_subaccounts` table |
 | 00023 | Performance indexes (GIN, partial, composite) across all schemas |
 | 00024 | Fix infinite recursion in `user_organisations` RLS policy via `get_user_org_ids_bypass()` |
-| 00025 | `public.organisation_health_scores` table + RLS + indexes (feeds `/admin/health` dashboard) |
-| 00026 | `public.email_sequence_events` table + UNIQUE idempotency + `profiles.marketing_emails_opted_out` column |
-| 00027 | Payment-recovery columns on `billing.subscriptions`; `payment_paused` status on `projects.projects` |
-| 00028 | RLS write-block on `field.snags`, `projects.site_diary_entries`, `compliance.coc_uploads` when project is `payment_paused` |
+| 00025 | RLS plumbing: GRANT USAGE + table privileges on all custom schemas to `anon`/`authenticated`/`service_role` |
+| 00026 | RLS plumbing: drop recursive `user_organisations` SELECT policies, replace with `user_id = auth.uid()` |
+| 00027 | RLS plumbing: harden `get_user_org_ids()` with SECURITY DEFINER; add INSERT/UPDATE policies on `project_members`, `rfis`, `site_diary_entries`, `snag_photos`, `drawings` |
+| 00028 | RLS plumbing: `NOTIFY pgrst, 'reload schema'` to force PostgREST cross-schema FK re-introspection |
+| 00029 | `public.organisation_health_scores` table + RLS + indexes (feeds `/admin/health` dashboard) |
+| 00030 | `public.email_sequence_events` table + UNIQUE idempotency + `profiles.marketing_emails_opted_out` column |
+| 00031 | Payment-recovery columns on `billing.subscriptions`; `payment_paused` status on `projects.projects` |
+| 00032 | RLS write-block on `field.snags`, `projects.site_diary_entries`, `compliance.coc_uploads` when project is `payment_paused` |
+| 00033 | RFI attachments: `rfi-attachments` storage bucket + `public.rfi_annotations` JSONB scene-graph + UPDATE/DELETE RLS on `public.attachments` |
+| 00034 | Client_viewer project-scoped RLS: `public.user_is_client_viewer()` helper + rewritten SELECT policies on 11 tables (scopes client_viewers to assigned projects via `project_members`); RESTRICTIVE policies block client_viewer entirely from `compliance.*` and `marketplace.*` |
 
 **Verify migrations applied:**
 ```sql
--- Should return 33 rows (00001–00033)
+-- Should return 34 rows (00001–00034)
 SELECT count(*) FROM supabase_migrations.schema_migrations;
 ```
 
