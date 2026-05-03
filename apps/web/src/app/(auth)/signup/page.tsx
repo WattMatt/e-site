@@ -7,6 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { signUpSchema, type SignUpInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter'
+import { CaptchaTurnstile, CAPTCHA_ENABLED } from '@/components/CaptchaTurnstile'
 import type { PasswordEvaluation } from '@/lib/password-strength'
 
 const MIN_ACCEPTABLE_SCORE = 2  // zxcvbn 2 = "fair" — blocks "weak" and "very weak"
@@ -16,6 +17,7 @@ export default function SignupPage() {
   const [serverError, setServerError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [pwEval, setPwEval] = useState<PasswordEvaluation | null>(null)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
 
   const {
     register,
@@ -33,6 +35,10 @@ export default function SignupPage() {
         : 'This password is too weak. Aim for a longer phrase or mix of words.')
       return
     }
+    if (CAPTCHA_ENABLED && !captchaToken) {
+      setServerError('Please complete the verification challenge.')
+      return
+    }
     const emailRedirectTo = `${window.location.origin}/auth/callback?next=/onboarding`
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -40,6 +46,7 @@ export default function SignupPage() {
       options: {
         data: { full_name: fullName },
         emailRedirectTo,
+        ...(captchaToken ? { captchaToken } : {}),
       },
     })
     if (error) { setServerError(error.message); return }
@@ -140,6 +147,8 @@ export default function SignupPage() {
             {errors.popiaConsent.message}
           </p>
         )}
+
+        <CaptchaTurnstile onToken={setCaptchaToken} onExpire={() => setCaptchaToken(null)} />
 
         <button type="submit" disabled={isSubmitting} className="auth-btn">
           {isSubmitting ? 'Creating account…' : 'Create account →'}

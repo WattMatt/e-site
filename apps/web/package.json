@@ -16,6 +16,7 @@
     "@esite/db": "workspace:*",
     "@esite/shared": "workspace:*",
     "@hookform/resolvers": "^3.9.0",
+    "@marsidev/react-turnstile": "^1.5.1",
     "@opentelemetry/redis-common": "^0.38.3",
     "@sentry/nextjs": "^8.0.0",
     "@supabase/ssr": "^0.5.0",

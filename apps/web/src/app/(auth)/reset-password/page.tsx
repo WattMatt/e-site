@@ -7,11 +7,13 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { resetPasswordSchema, type ResetPasswordInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { recordAuthEventAction } from '@/actions/auth-event.actions'
+import { CaptchaTurnstile, CAPTCHA_ENABLED } from '@/components/CaptchaTurnstile'
 
 export default function ResetPasswordPage() {
   const supabase = createClient()
   const [serverError, setServerError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
 
   const {
     register,
@@ -21,8 +23,15 @@ export default function ResetPasswordPage() {
 
   async function onSubmit({ email }: ResetPasswordInput) {
     setServerError(null)
+    if (CAPTCHA_ENABLED && !captchaToken) {
+      setServerError('Please complete the verification challenge.')
+      return
+    }
     const redirectTo = `${window.location.origin}/auth/callback?next=/reset-password/confirm`
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo })
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+      ...(captchaToken ? { captchaToken } : {}),
+    })
     if (error) {
       setServerError(error.message)
       return
@@ -67,6 +76,8 @@ export default function ResetPasswordPage() {
           />
           {errors.email && <p className="auth-error-text">{errors.email.message}</p>}
         </div>
+
+        <CaptchaTurnstile onToken={setCaptchaToken} onExpire={() => setCaptchaToken(null)} />
 
         <button type="submit" disabled={isSubmitting} className="auth-btn">
           {isSubmitting ? 'Sending…' : 'Send reset link →'}
