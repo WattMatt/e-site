@@ -8,6 +8,7 @@ import {
   Image as KonvaImage,
   Line,
   Rect,
+  Ellipse as KonvaEllipse,
   Arrow,
   Text as KonvaText,
   Group,
@@ -27,27 +28,45 @@ import {
 type ToolMode =
   | 'select'
   | 'pen'
+  | 'highlight'
   | 'arrow'
   | 'rect'
+  | 'ellipse'
+  | 'polygon'
   | 'text'
   | 'pin'
   | 'measure'
   | 'calibrate'
 
-type ShapeBase = { id: string; color: string }
+// pageIndex is 1-based (matches pdfjs page numbering). Defaults to 1 for
+// backward compat with v1 scene graphs that didn't carry pageIndex.
+type ShapeBase = { id: string; color: string; pageIndex?: number }
 type PenShape = ShapeBase & { type: 'pen'; points: number[]; strokeWidth: number }
+type HighlightShape = ShapeBase & { type: 'highlight'; points: number[]; strokeWidth: number }
 type ArrowShape = ShapeBase & { type: 'arrow'; points: [number, number, number, number]; strokeWidth: number }
 type RectShape = ShapeBase & { type: 'rect'; x: number; y: number; width: number; height: number; strokeWidth: number }
+type EllipseShape = ShapeBase & { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number; strokeWidth: number }
+type PolygonShape = ShapeBase & { type: 'polygon'; points: number[]; strokeWidth: number; closed: true }
 type TextShape = ShapeBase & { type: 'text'; x: number; y: number; text: string; fontSize: number }
 type PinShape = ShapeBase & { type: 'pin'; x: number; y: number; label: string }
 type MeasureShape = ShapeBase & { type: 'measure'; points: [number, number, number, number]; strokeWidth: number }
 
-type AnyShape = PenShape | ArrowShape | RectShape | TextShape | PinShape | MeasureShape
+type AnyShape =
+  | PenShape
+  | HighlightShape
+  | ArrowShape
+  | RectShape
+  | EllipseShape
+  | PolygonShape
+  | TextShape
+  | PinShape
+  | MeasureShape
 
 export type SceneGraph = {
   version: 1
-  canvas: { w: number; h: number }
+  canvas: { w: number; h: number }   // current-page dimensions (kept for back-compat)
   shapes: AnyShape[]
+  pageCount?: number                  // total pages of the source PDF (1 for non-PDF rasters)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -68,8 +87,11 @@ const STROKE_WIDTHS = [
 const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean; title: string }> = [
   { value: 'select', label: '↖', title: 'Select / pan' },
   { value: 'pen', label: '✎', title: 'Pen — freehand' },
+  { value: 'highlight', label: '▰', title: 'Highlighter (semi-transparent)' },
   { value: 'arrow', label: '→', title: 'Arrow' },
   { value: 'rect', label: '▭', title: 'Rectangle' },
+  { value: 'ellipse', label: '◯', title: 'Ellipse' },
+  { value: 'polygon', label: '⬠', title: 'Polygon (click vertices, double-click to close)' },
   { value: 'text', label: 'T', title: 'Text' },
   { value: 'pin', label: '◉', title: 'Pin (numbered)' },
   { value: 'measure', label: '⤢', needsCalibration: true, title: 'Measure (requires calibration)' },
@@ -137,14 +159,54 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerRfiId, setPickerRfiId] = useState<string>('')
+  // Polygon in-progress vertices (image-space). Cleared on commit / cancel.
+  const [polyPoints, setPolyPoints] = useState<number[]>([])
 
-  // Load image (or PDF rasterised page 1 to a canvas via pdfjs-dist).
+  // Reset polygon-in-progress when leaving the polygon tool.
+  useEffect(() => {
+    if (tool !== 'polygon' && polyPoints.length > 0) setPolyPoints([])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool])
+
+  function closePolygon() {
+    // Need at least 3 vertices (6 array entries) to form a polygon.
+    if (polyPoints.length < 6) {
+      setPolyPoints([])
+      return
+    }
+    commit({
+      id: makeId(),
+      type: 'polygon',
+      points: polyPoints,
+      color,
+      strokeWidth,
+      closed: true,
+    })
+    setPolyPoints([])
+  }
+
+  // Load image (or PDF page rasterised to a canvas via pdfjs-dist).
+  // Multi-page PDFs: hold the pdfjs document ref + page count, rasterise
+  // pages on demand. Per-page bitmaps are cached in pageImagesRef so
+  // navigating back doesn't re-render.
   const [img, setImg] = useState<Backing | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageCount, setPageCount] = useState(1)
+  // PDFDocumentProxy from pdfjs — kept as ref to avoid re-render on assignment.
+  const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
+  const pageImagesRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
+
+  // 1) Initial load: detect raster vs PDF, set up pdfjs doc OR Image element.
+  //    Resets state when the source URL changes (re-edit-of-different-plan flow).
   useEffect(() => {
     if (!plan.signedUrl) return
     let cancelled = false
     setLoadError(null)
+    setImg(null)
+    setCurrentPage(1)
+    pdfDocRef.current = null
+    pageImagesRef.current = new Map()
 
     if (plan.isPdf) {
       ;(async () => {
@@ -156,27 +218,15 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
           const loadingTask = pdfjsLib.getDocument(plan.signedUrl!)
           const pdf = await loadingTask.promise
           if (cancelled) return
-          const page = await pdf.getPage(1)
-          // scale=2 → ~2x raster vs PDF point grid; readable for A1/A3 drawings.
-          const viewport = page.getViewport({ scale: 2 })
-          const canvas = document.createElement('canvas')
-          canvas.width = Math.floor(viewport.width)
-          canvas.height = Math.floor(viewport.height)
-          const ctx = canvas.getContext('2d')
-          if (!ctx) throw new Error('2d context unavailable')
-          await page.render({
-            canvasContext: ctx,
-            viewport,
-            canvas,
-          } as Parameters<typeof page.render>[0]).promise
-          if (cancelled) return
-          setImg(canvas)
+          pdfDocRef.current = pdf as unknown as { getPage: (n: number) => Promise<unknown>; numPages: number }
+          setPageCount(pdf.numPages)
         } catch (err) {
           if (cancelled) return
-          setLoadError(err instanceof Error ? err.message : 'PDF render failed')
+          setLoadError(err instanceof Error ? err.message : 'PDF load failed')
         }
       })()
     } else {
+      setPageCount(1)
       const i = new window.Image()
       i.crossOrigin = 'anonymous'
       i.onload = () => {
@@ -192,6 +242,46 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
       cancelled = true
     }
   }, [plan.signedUrl, plan.isPdf])
+
+  // 2) Render the current PDF page when it changes (or pdf doc finishes loading).
+  //    Skipped for non-PDF rasters which use the single Image element above.
+  useEffect(() => {
+    if (!plan.isPdf) return
+    if (!pdfDocRef.current) return
+    let cancelled = false
+
+    const cached = pageImagesRef.current.get(currentPage)
+    if (cached) {
+      setImg(cached)
+      return
+    }
+
+    ;(async () => {
+      try {
+        const page = (await pdfDocRef.current!.getPage(currentPage)) as {
+          getViewport: (opts: { scale: number }) => { width: number; height: number }
+          render: (opts: unknown) => { promise: Promise<void> }
+        }
+        const viewport = page.getViewport({ scale: 2 })
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.floor(viewport.width)
+        canvas.height = Math.floor(viewport.height)
+        const ctx = canvas.getContext('2d')
+        if (!ctx) throw new Error('2d context unavailable')
+        await page.render({ canvasContext: ctx, viewport, canvas }).promise
+        if (cancelled) return
+        pageImagesRef.current.set(currentPage, canvas)
+        setImg(canvas)
+      } catch (err) {
+        if (cancelled) return
+        setLoadError(err instanceof Error ? err.message : 'PDF page render failed')
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [plan.isPdf, currentPage, pageCount])
 
   const [imgW, imgH] = backingSize(img)
   const naturalW = plan.width_px || imgW || 800
@@ -220,10 +310,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
     return () => ro.disconnect()
   }, [])
 
-  // Reset auto-fit when source changes.
+  // Reset auto-fit when source OR current page changes.
   useEffect(() => {
     initFitDone.current = false
-  }, [plan.signedUrl, plan.isPdf])
+  }, [plan.signedUrl, plan.isPdf, currentPage])
 
   const fitToView = useCallback(() => {
     if (!img) return
@@ -279,7 +369,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
 
   function commit(next: AnyShape) {
     pushHistory(shapes)
-    setShapes((s) => [...s, next])
+    // Tag the shape with the current page so multi-page PDFs preserve which
+    // page each shape belongs to.
+    const tagged = next.pageIndex == null ? { ...next, pageIndex: currentPage } : next
+    setShapes((s) => [...s, tagged])
     setCurrent(null)
   }
 
@@ -306,12 +399,19 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
   }
 
   // ── Pointer handlers ──────────────────────────────────────────────────
+  // Mouse + touch handlers (Konva 10's onPointerDown isn't reliable across
+  // synthesized inputs — observed in Chrome MCP automation tests). The
+  // wrapped native event is sometimes a PointerEvent (browser-coalesced),
+  // so when available we read `evt.pressure` for stylus pressure
+  // modulation on the pen tool. Fallback 0.5 for plain MouseEvent keeps
+  // mouse strokes at their user-chosen width.
   function onPointerDown(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
     const stage = e.target.getStage()
     if (!stage) return
     const pos = stage.getRelativePointerPosition()
     if (!pos) return
     const { x, y } = pos
+    const pressure = (e.evt as PointerEvent).pressure ?? 0.5
 
     if (tool === 'calibrate') {
       setCalibPoints((p) => {
@@ -338,7 +438,15 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
     }
 
     if (tool === 'pen') {
-      setCurrent({ id: makeId(), type: 'pen', points: [x, y], color, strokeWidth })
+      // Pressure scales linearly: 0 → 0.5×, 0.5 (mouse default) → 1.0×, 1 → 1.5×.
+      const sw = Math.max(0.5, strokeWidth * (0.5 + pressure))
+      setCurrent({ id: makeId(), type: 'pen', points: [x, y], color, strokeWidth: sw })
+      return
+    }
+
+    if (tool === 'highlight') {
+      // Thicker than the user-chosen width; renders semi-transparent.
+      setCurrent({ id: makeId(), type: 'highlight', points: [x, y], color, strokeWidth: strokeWidth * 4 })
       return
     }
 
@@ -349,6 +457,18 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
 
     if (tool === 'rect') {
       setCurrent({ id: makeId(), type: 'rect', x, y, width: 0, height: 0, color, strokeWidth })
+      return
+    }
+
+    if (tool === 'ellipse') {
+      // Anchor centre at first click; radii grow with drag.
+      setCurrent({ id: makeId(), type: 'ellipse', cx: x, cy: y, rx: 0, ry: 0, color, strokeWidth })
+      return
+    }
+
+    if (tool === 'polygon') {
+      // Click adds a vertex. Double-click (handled separately) closes.
+      setPolyPoints((pts) => [...pts, x, y])
       return
     }
 
@@ -371,12 +491,15 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
       if (!c) return c
       switch (c.type) {
         case 'pen':
+        case 'highlight':
           return { ...c, points: [...c.points, x, y] }
         case 'arrow':
         case 'measure':
           return { ...c, points: [c.points[0], c.points[1], x, y] }
         case 'rect':
           return { ...c, width: x - c.x, height: y - c.y }
+        case 'ellipse':
+          return { ...c, rx: Math.abs(x - c.cx), ry: Math.abs(y - c.cy) }
         default:
           return c
       }
@@ -388,11 +511,15 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
     const c = current
 
     // Discard zero-size shapes
-    if (c.type === 'pen' && c.points.length < 4) {
+    if ((c.type === 'pen' || c.type === 'highlight') && c.points.length < 4) {
       setCurrent(null)
       return
     }
     if (c.type === 'rect' && (Math.abs(c.width) < 4 || Math.abs(c.height) < 4)) {
+      setCurrent(null)
+      return
+    }
+    if (c.type === 'ellipse' && (c.rx < 4 || c.ry < 4)) {
       setCurrent(null)
       return
     }
@@ -477,6 +604,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
     const scene: SceneGraph = {
       version: 1,
       canvas: { w: naturalW, h: naturalH },
+      pageCount,
       shapes,
     }
     // Capture the full drawing at native resolution regardless of zoom/pan.
@@ -578,6 +706,19 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
             lineJoin="round"
           />
         )
+      case 'highlight':
+        return (
+          <Line
+            key={s.id}
+            points={s.points}
+            stroke={s.color}
+            strokeWidth={s.strokeWidth}
+            opacity={0.35}
+            tension={0.2}
+            lineCap="round"
+            lineJoin="round"
+          />
+        )
       case 'arrow':
         return (
           <Arrow
@@ -600,6 +741,29 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
             height={s.height}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
+          />
+        )
+      case 'ellipse':
+        return (
+          <KonvaEllipse
+            key={s.id}
+            x={s.cx}
+            y={s.cy}
+            radiusX={s.rx}
+            radiusY={s.ry}
+            stroke={s.color}
+            strokeWidth={s.strokeWidth}
+          />
+        )
+      case 'polygon':
+        return (
+          <Line
+            key={s.id}
+            points={s.points}
+            stroke={s.color}
+            strokeWidth={s.strokeWidth}
+            closed
+            lineJoin="round"
           />
         )
       case 'text':
@@ -715,6 +879,40 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
           <ToolbarButton onClick={redo} disabled={redoStack.length === 0} title="Redo">↷</ToolbarButton>
           <ToolbarButton onClick={clearAll} disabled={shapes.length === 0} title="Clear all">⌫</ToolbarButton>
         </ToolbarGroup>
+        {pageCount > 1 && (
+          <>
+            <ToolbarSeparator />
+            <ToolbarGroup>
+              <ToolbarButton
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                title="Previous page"
+              >
+                ◂
+              </ToolbarButton>
+              <span
+                style={{
+                  minWidth: 70,
+                  textAlign: 'center',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 10,
+                  color: 'var(--c-text-mid)',
+                  letterSpacing: '0.04em',
+                }}
+                aria-live="polite"
+              >
+                Page {currentPage} / {pageCount}
+              </span>
+              <ToolbarButton
+                onClick={() => setCurrentPage((p) => Math.min(pageCount, p + 1))}
+                disabled={currentPage >= pageCount}
+                title="Next page"
+              >
+                ▸
+              </ToolbarButton>
+            </ToolbarGroup>
+          </>
+        )}
         <div style={{ flex: 1 }} />
         <ToolbarGroup>
           <ToolbarButton onClick={startCalibration} title="Calibrate this drawing for the measure tool">Calibrate</ToolbarButton>
@@ -823,8 +1021,12 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
             onTouchStart={onPointerDown}
             onTouchMove={onPointerMove}
             onTouchEnd={onPointerUp}
-            onDblClick={tool === 'select' ? fitToView : undefined}
-            onDblTap={tool === 'select' ? fitToView : undefined}
+            onDblClick={
+              tool === 'select' ? fitToView : tool === 'polygon' ? closePolygon : undefined
+            }
+            onDblTap={
+              tool === 'select' ? fitToView : tool === 'polygon' ? closePolygon : undefined
+            }
             style={{
               cursor: tool === 'select' ? 'grab' : 'crosshair',
               background: 'white',
@@ -839,7 +1041,9 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
               ))}
             </Layer>
             <Layer>
-              {shapes.map(renderShape)}
+              {/* Filter shapes to the current page; pageIndex defaults to 1
+                  for shapes from v1 scene graphs that didn't carry it. */}
+              {shapes.filter((s) => (s.pageIndex ?? 1) === currentPage).map(renderShape)}
               {current && renderShape(current)}
               {tool === 'calibrate' &&
                 calibPoints.map((p, i) => (
@@ -853,6 +1057,22 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
                   dash={[6, 4]}
                 />
               )}
+              {/* Polygon in-progress: vertices + connecting line. Double-click to close. */}
+              {tool === 'polygon' && polyPoints.length >= 2 && (
+                <Line points={polyPoints} stroke={color} strokeWidth={strokeWidth} dash={[6, 4]} />
+              )}
+              {tool === 'polygon' &&
+                Array.from({ length: polyPoints.length / 2 }).map((_, i) => (
+                  <Circle
+                    key={`poly-vtx-${i}`}
+                    x={polyPoints[i * 2]}
+                    y={polyPoints[i * 2 + 1]}
+                    radius={4}
+                    fill={color}
+                    stroke="white"
+                    strokeWidth={1}
+                  />
+                ))}
             </Layer>
           </Stage>
         )}
