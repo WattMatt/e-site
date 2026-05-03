@@ -20,10 +20,14 @@ export default function SignupPage() {
 
   async function onSubmit({ fullName, email, password }: SignUpInput) {
     setServerError(null)
+    const emailRedirectTo = `${window.location.origin}/auth/callback?next=/onboarding`
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: {
+        data: { full_name: fullName },
+        emailRedirectTo,
+      },
     })
     if (error) { setServerError(error.message); return }
 
@@ -109,8 +113,12 @@ export default function SignupPage() {
         <div className="auth-checkbox-row">
           <input {...register('popiaConsent')} type="checkbox" id="popiaConsent" className="auth-checkbox" />
           <label htmlFor="popiaConsent" className="auth-checkbox-label">
-            I consent to E-Site processing my personal information under POPIA.
-            Data may be processed outside South Africa subject to adequate safeguards.
+            I agree to E-Site&apos;s{' '}
+            <Link href="/terms" className="auth-link-accent" target="_blank" rel="noopener">Terms of Service</Link>,{' '}
+            <Link href="/privacy" className="auth-link-accent" target="_blank" rel="noopener">Privacy Policy</Link>, and{' '}
+            <Link href="/acceptable-use" className="auth-link-accent" target="_blank" rel="noopener">Acceptable Use Policy</Link>,
+            and consent to processing of my personal information under POPIA. Data may be processed outside
+            South Africa subject to adequate safeguards.
           </label>
         </div>
         {errors.popiaConsent && (
