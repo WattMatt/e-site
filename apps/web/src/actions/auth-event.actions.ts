@@ -19,6 +19,7 @@ const SAFE_EVENTS: ReadonlySet<AuthEventType> = new Set([
   'logout',
   'password_changed',
   'password_reset_requested',
+  'magic_link_requested',
 ])
 
 export async function recordAuthEventAction(
@@ -31,11 +32,12 @@ export async function recordAuthEventAction(
   const ip = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = headersList.get('user-agent') ?? null
 
-  // password_reset_requested is anonymous (no session yet); the others
-  // require an authenticated user. We pull userId from the session when
-  // we have one and fall back to null otherwise.
+  // password_reset_requested + magic_link_requested are anonymous (no
+  // session yet); the others require an authenticated user. Pull userId
+  // from the session when we have one, else fall back to null.
   let userId: string | null = null
-  if (eventType !== 'password_reset_requested') {
+  const isAnonymous = eventType === 'password_reset_requested' || eventType === 'magic_link_requested'
+  if (!isAnonymous) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     userId = user?.id ?? null

@@ -5,6 +5,7 @@ export type AuthEventType =
   | 'logout'
   | 'password_changed'
   | 'password_reset_requested'
+  | 'magic_link_requested'
   | 'lockout'
   | 'mfa_enrolled'
   | 'mfa_unenrolled'
