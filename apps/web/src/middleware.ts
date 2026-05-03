@@ -4,6 +4,7 @@ import { updateSession } from './lib/supabase/middleware'
 
 const PUBLIC_PATHS = ['/login', '/signup', '/reset-password', '/auth/callback', '/share', '/account-deleted']
 const ONBOARDING_PATH = '/onboarding'
+const VERIFY_EMAIL_PATH = '/verify-email'
 
 // Service-role client for org membership checks — bypasses RLS entirely.
 // Safe because we always verify the user session via updateSession() first.
@@ -28,9 +29,12 @@ export async function middleware(request: NextRequest) {
 
   const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
   const isOnboarding = pathname.startsWith(ONBOARDING_PATH)
+  const isVerifyEmail = pathname.startsWith(VERIFY_EMAIL_PATH)
+  const isAuthCallback = pathname.startsWith('/auth/')
 
-  // 1. No session → login
-  if (!user && !isPublicPath) {
+  // 1. No session → login (verify-email needs an authenticated session even
+  //    though the email isn't confirmed yet, so it's NOT a public path).
+  if (!user && !isPublicPath && !isVerifyEmail) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     url.searchParams.set('next', pathname)
@@ -38,15 +42,30 @@ export async function middleware(request: NextRequest) {
   }
 
   // 2. Has session on auth page → dashboard
-  if (user && isPublicPath && !pathname.startsWith('/auth/callback')) {
+  if (user && isPublicPath && !isAuthCallback) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     url.searchParams.delete('next')
     return NextResponse.redirect(url)
   }
 
-  // 3. Authenticated but no org → onboarding
-  if (user && !isPublicPath && !isOnboarding) {
+  // 3. Authenticated + email NOT confirmed → /verify-email (skip auth/* so
+  //    the confirmation callback can finish setting email_confirmed_at).
+  if (user && !user.email_confirmed_at && !isVerifyEmail && !isAuthCallback) {
+    const url = request.nextUrl.clone()
+    url.pathname = VERIFY_EMAIL_PATH
+    return NextResponse.redirect(url)
+  }
+
+  // 4. On /verify-email but already confirmed → forward to onboarding/dashboard.
+  if (user && isVerifyEmail && user.email_confirmed_at) {
+    const url = request.nextUrl.clone()
+    url.pathname = (await hasOrg(user.id)) ? '/dashboard' : ONBOARDING_PATH
+    return NextResponse.redirect(url)
+  }
+
+  // 5. Authenticated but no org → onboarding
+  if (user && !isPublicPath && !isVerifyEmail && !isOnboarding) {
     if (!(await hasOrg(user.id))) {
       const url = request.nextUrl.clone()
       url.pathname = ONBOARDING_PATH
@@ -55,7 +74,7 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse
   }
 
-  // 4. Has org + on onboarding → dashboard
+  // 6. Has org + on onboarding → dashboard
   if (user && isOnboarding) {
     if (await hasOrg(user.id)) {
       const url = request.nextUrl.clone()
