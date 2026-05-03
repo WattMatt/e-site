@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { updateSession } from './lib/supabase/middleware'
 
-const PUBLIC_PATHS = ['/login', '/signup', '/reset-password', '/auth/callback', '/share']
+const PUBLIC_PATHS = ['/login', '/signup', '/reset-password', '/auth/callback', '/share', '/account-deleted']
 const ONBOARDING_PATH = '/onboarding'
 
 // Service-role client for org membership checks — bypasses RLS entirely.

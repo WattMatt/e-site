@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { OrgSettingsForm } from './OrgSettingsForm'
 import { ProfileSettingsForm } from './ProfileSettingsForm'
@@ -72,15 +73,17 @@ export default async function SettingsPage() {
             <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 14 }}>
               Deleting your account is permanent and cannot be undone. All your data will be removed.
             </p>
-            <button
+            <Link
+              href="/settings/account"
               style={{
+                display: 'inline-block',
                 fontSize: 12, color: 'var(--c-red)', background: 'var(--c-red-dim)',
                 border: '1px solid #6b1e1e', borderRadius: 6, padding: '7px 14px',
-                cursor: 'pointer', transition: 'all 0.12s',
+                textDecoration: 'none', cursor: 'pointer', transition: 'all 0.12s',
               }}
             >
-              Delete Account
-            </button>
+              Delete Account →
+            </Link>
           </div>
         </div>
       </div>
