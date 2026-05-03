@@ -9,6 +9,7 @@ import { signInSchema, type SignInInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { recordAuthEventAction } from '@/actions/auth-event.actions'
 import { CaptchaTurnstile, CAPTCHA_ENABLED } from '@/components/CaptchaTurnstile'
+import { GoogleSignInButton } from '@/components/GoogleSignInButton'
 
 const magicLinkSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -87,6 +88,8 @@ export default function LoginPage() {
     <div className="auth-card">
       <h2 className="auth-card-title">Welcome back</h2>
       <p className="auth-card-sub">Sign in to your E-Site workspace</p>
+
+      <GoogleSignInButton />
 
       <div role="tablist" aria-label="Sign-in method" style={{ display: 'flex', gap: 4, marginBottom: 18 }}>
         <button

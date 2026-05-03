@@ -8,6 +8,7 @@ import { signUpSchema, type SignUpInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter'
 import { CaptchaTurnstile, CAPTCHA_ENABLED } from '@/components/CaptchaTurnstile'
+import { GoogleSignInButton } from '@/components/GoogleSignInButton'
 import type { PasswordEvaluation } from '@/lib/password-strength'
 
 const MIN_ACCEPTABLE_SCORE = 2  // zxcvbn 2 = "fair" — blocks "weak" and "very weak"
@@ -81,6 +82,8 @@ export default function SignupPage() {
     <div className="auth-card">
       <h2 className="auth-card-title">Create account</h2>
       <p className="auth-card-sub">Get your team on E-Site in minutes</p>
+
+      <GoogleSignInButton next="/onboarding" />
 
       <form onSubmit={handleSubmit(onSubmit)}>
         {serverError && <div className="auth-alert-error">{serverError}</div>}
