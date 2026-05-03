@@ -6,6 +6,7 @@ import { RfiRespondForm } from './RfiRespondForm'
 import { RfiCloseButton } from './RfiCloseButton'
 import { fetchAttachments } from '@/components/attachments/fetch'
 import { AttachmentGallery } from '@/components/attachments/AttachmentGallery'
+import { ExportMarkupButton } from '@/components/markup/ExportMarkupButton'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -187,27 +188,30 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
                       <span style={{ fontSize: 28 }} aria-hidden="true">🗺️</span>
                     )}
                   </div>
-                  <div style={{ padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                       {formatRelative(a.createdAt)}
                     </span>
-                    {a.sourceFloorPlanId && rfiProjectId && canEdit ? (
-                      <Link
-                        href={`/projects/${rfiProjectId}/floor-plans/${a.sourceFloorPlanId}?annotation=${a.id}`}
-                        style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 10,
-                          letterSpacing: '0.06em',
-                          color: 'var(--c-amber)',
-                          textDecoration: 'none',
-                          padding: '4px 8px',
-                          borderRadius: 4,
-                          border: '1px solid var(--c-border)',
-                        }}
-                      >
-                        Edit ↗
-                      </Link>
-                    ) : null}
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <ExportMarkupButton annotationId={a.id} />
+                      {a.sourceFloorPlanId && rfiProjectId && canEdit ? (
+                        <Link
+                          href={`/projects/${rfiProjectId}/floor-plans/${a.sourceFloorPlanId}?annotation=${a.id}`}
+                          style={{
+                            fontFamily: 'var(--font-mono)',
+                            fontSize: 10,
+                            letterSpacing: '0.06em',
+                            color: 'var(--c-amber)',
+                            textDecoration: 'none',
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            border: '1px solid var(--c-border)',
+                          }}
+                        >
+                          Edit ↗
+                        </Link>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               ))}
