@@ -1,8 +1,10 @@
 # Auth punch-list — acceptance checklist
 
 **Source:** [auth-punch-list-kickoff.md](../../Obsidian%20Vault/Projects/E-Site/auth-punch-list-kickoff.md) (Session 19 / 20)
-**Branch:** `feat/powersync`
-**Status:** all 13 items code-shipped; Arno-side prep + manual test pass remain.
+**Branch:** `feat/powersync` (tip `e86e720`)
+**Status:** all 13 items code-shipped + post-review fixes landed; Arno-side prep + manual test pass remain.
+
+> **Post-review fixes** (`e86e720`): `superpowers:code-reviewer` flagged four block-merge issues — broken MFA-gate JWT-claim read, `signInWithPassword` re-auth mutating current session, MFA unenroll without re-auth, sign-out actions un-rate-limited and skipping audit. All addressed before sign-off. The middleware now decodes the access-token JWT for `aal`/`amr`; `verifyPasswordIsolated` (lib/auth-reauth.ts) authenticates without touching cookies; `unenrollAction` requires password; sign-out actions are rate-limited and write `logout` events. **Re-test the affected flows (#1, #6, #7, #10) on staging using the latest tip.**
 
 This is the single review surface for verifying the punch list landed correctly. Each section maps an item → commit → Arno-side prep → manual test plan → sign-off box.
 
