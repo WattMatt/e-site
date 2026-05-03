@@ -104,6 +104,66 @@ function makeId() {
   return Math.random().toString(36).slice(2, 11)
 }
 
+// ─── IndexedDB draft persistence ──────────────────────────────────────────
+// Auto-save every 5s of inactivity to a tiny local store so a crash, a tab
+// close, or temporary offline state doesn't lose markup-in-progress. Drafts
+// are scoped per (planId, annotationId-or-'new'). Cleared on successful Save.
+const DRAFT_DB = 'esite-markup-drafts'
+const DRAFT_STORE = 'drafts'
+
+function openDraftDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DRAFT_DB, 1)
+    req.onupgradeneeded = () => req.result.createObjectStore(DRAFT_STORE)
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+type DraftRecord = { shapes: AnyShape[]; savedAt: string }
+
+async function getDraft(key: string): Promise<DraftRecord | null> {
+  try {
+    const db = await openDraftDB()
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DRAFT_STORE, 'readonly')
+      const req = tx.objectStore(DRAFT_STORE).get(key)
+      req.onsuccess = () => resolve((req.result as DraftRecord | undefined) ?? null)
+      req.onerror = () => reject(req.error)
+    })
+  } catch {
+    return null
+  }
+}
+
+async function setDraftRecord(key: string, value: DraftRecord): Promise<void> {
+  try {
+    const db = await openDraftDB()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(DRAFT_STORE, 'readwrite')
+      tx.objectStore(DRAFT_STORE).put(value, key)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch {
+    /* IDB unavailable (private mode, quota): degrade silently. */
+  }
+}
+
+async function clearDraftRecord(key: string): Promise<void> {
+  try {
+    const db = await openDraftDB()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(DRAFT_STORE, 'readwrite')
+      tx.objectStore(DRAFT_STORE).delete(key)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch {
+    /* swallow */
+  }
+}
+
 function pxDist(a: [number, number], b: [number, number]) {
   return Math.hypot(b[0] - a[0], b[1] - a[1])
 }
@@ -161,6 +221,52 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
   const [pickerRfiId, setPickerRfiId] = useState<string>('')
   // Polygon in-progress vertices (image-space). Cleared on commit / cancel.
   const [polyPoints, setPolyPoints] = useState<number[]>([])
+
+  // ── IndexedDB draft auto-save ────────────────────────────────────────
+  // Key by plan + (annotation id when re-editing | 'new'). 5s-debounced.
+  const draftKey = `${plan.id}|${editing?.id ?? 'new'}`
+  const [draftPrompt, setDraftPrompt] = useState<DraftRecord | null>(null)
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // On mount: only check drafts for NEW markups; re-edit comes in via prop.
+  useEffect(() => {
+    if (editing) return
+    let cancelled = false
+    getDraft(draftKey).then((d) => {
+      if (cancelled) return
+      if (d && d.shapes.length > 0) setDraftPrompt(d)
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Debounced auto-save when shapes change. Skipped while a restore prompt
+  // is showing (so the user's choice isn't pre-empted by an empty save).
+  useEffect(() => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+    if (draftPrompt) return
+    if (shapes.length === 0) return // don't overwrite an existing draft with nothing
+    draftTimerRef.current = setTimeout(() => {
+      void setDraftRecord(draftKey, { shapes, savedAt: new Date().toISOString() })
+    }, 5000)
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+    }
+  }, [shapes, draftKey, draftPrompt])
+
+  function restoreDraft() {
+    if (!draftPrompt) return
+    pushHistory(shapes)
+    setShapes(draftPrompt.shapes)
+    setDraftPrompt(null)
+  }
+
+  function discardDraft() {
+    void clearDraftRecord(draftKey)
+    setDraftPrompt(null)
+  }
 
   // Reset polygon-in-progress when leaving the polygon tool.
   useEffect(() => {
@@ -653,6 +759,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
           setSaveError(res.error)
           return
         }
+        // Server save committed — drop the local draft.
+        void clearDraftRecord(draftKey)
         router.push(`/rfis/${editing.rfiId}?projectId=${projectId}`)
       } finally {
         setSaving(false)
@@ -684,6 +792,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
         setSaveError(res.error)
         return
       }
+      // Server save committed — drop the local draft.
+      void clearDraftRecord(draftKey)
       setPickerOpen(false)
       router.push(`/rfis/${pickerRfiId}?projectId=${projectId}`)
     } finally {
@@ -972,6 +1082,31 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
             style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}
           >
             Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Restore-draft prompt (only on NEW markups; auto-saved every 5s) */}
+      {draftPrompt && (
+        <div
+          className="data-panel"
+          role="alert"
+          style={{ padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}
+        >
+          <span style={{ fontSize: 13, color: 'var(--c-text)' }}>
+            🗂 Unsaved markup from {new Date(draftPrompt.savedAt).toLocaleString()} ({draftPrompt.shapes.length} shape{draftPrompt.shapes.length !== 1 ? 's' : ''})
+          </span>
+          <div style={{ flex: 1 }} />
+          <button type="button" onClick={restoreDraft} className="btn-primary-amber">
+            Restore
+          </button>
+          <button
+            type="button"
+            onClick={discardDraft}
+            className="btn-primary-amber"
+            style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}
+          >
+            Discard
           </button>
         </div>
       )}
