@@ -5,6 +5,7 @@ import { updateSession } from './lib/supabase/middleware'
 const PUBLIC_PATHS = ['/login', '/signup', '/reset-password', '/auth/callback', '/share', '/account-deleted']
 const ONBOARDING_PATH = '/onboarding'
 const VERIFY_EMAIL_PATH = '/verify-email'
+const VERIFY_MFA_PATH = '/verify-mfa'
 
 // Service-role client for org membership checks — bypasses RLS entirely.
 // Safe because we always verify the user session via updateSession() first.
@@ -23,6 +24,22 @@ async function hasOrg(userId: string): Promise<boolean> {
   return (count ?? 0) > 0
 }
 
+/**
+ * True when the user has at least one verified MFA factor but the
+ * current session JWT was minted at aal1. Reads the factors list off
+ * `user.factors` (Supabase populates it on getUser()) and the AAL off
+ * the user.amr ('amr' is the auth-method-reference array per RFC 8176;
+ * Supabase populates it with `[{ method: 'password', timestamp: ... }]`
+ * for aal1 sessions and adds `{ method: 'totp', ... }` after MFA verify).
+ */
+function needsMfaChallenge(user: { factors?: { status: string }[] | null; amr?: { method: string }[] | null }): boolean {
+  const hasVerifiedFactor = (user.factors ?? []).some((f) => f.status === 'verified')
+  if (!hasVerifiedFactor) return false
+  const amr = user.amr ?? []
+  const hasTotpAmr = amr.some((entry) => entry.method === 'totp')
+  return !hasTotpAmr
+}
+
 export async function middleware(request: NextRequest) {
   const { supabaseResponse, user } = await updateSession(request)
   const { pathname } = request.nextUrl
@@ -30,11 +47,12 @@ export async function middleware(request: NextRequest) {
   const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
   const isOnboarding = pathname.startsWith(ONBOARDING_PATH)
   const isVerifyEmail = pathname.startsWith(VERIFY_EMAIL_PATH)
+  const isVerifyMfa = pathname.startsWith(VERIFY_MFA_PATH)
   const isAuthCallback = pathname.startsWith('/auth/')
 
-  // 1. No session → login (verify-email needs an authenticated session even
-  //    though the email isn't confirmed yet, so it's NOT a public path).
-  if (!user && !isPublicPath && !isVerifyEmail) {
+  // 1. No session → login (verify-email + verify-mfa need an authenticated
+  //    session even though it isn't fully elevated yet — neither is public).
+  if (!user && !isPublicPath && !isVerifyEmail && !isVerifyMfa) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     url.searchParams.set('next', pathname)
@@ -64,8 +82,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
+  // 4b. MFA gate — if the session is at aal1 and the user has an aal2-eligible
+  //     factor enrolled, redirect to /verify-mfa. The aal claim ships in the
+  //     JWT amr/aal field; with @supabase/ssr we read it from the cookie via
+  //     getSession() (skipped here for perf — middleware already calls
+  //     getUser() above; we use the user.factors hint to short-circuit).
+  if (user && needsMfaChallenge(user) && !isVerifyMfa && !isAuthCallback) {
+    const url = request.nextUrl.clone()
+    url.pathname = VERIFY_MFA_PATH
+    url.searchParams.set('next', pathname)
+    return NextResponse.redirect(url)
+  }
+
   // 5. Authenticated but no org → onboarding
-  if (user && !isPublicPath && !isVerifyEmail && !isOnboarding) {
+  if (user && !isPublicPath && !isVerifyEmail && !isVerifyMfa && !isOnboarding) {
     if (!(await hasOrg(user.id))) {
       const url = request.nextUrl.clone()
       url.pathname = ONBOARDING_PATH

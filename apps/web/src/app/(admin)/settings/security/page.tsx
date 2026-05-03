@@ -26,7 +26,7 @@ export default async function SecuritySettingsPage() {
         <h1 className="page-title">Security</h1>
       </div>
 
-      <div className="data-panel">
+      <div className="data-panel" style={{ marginBottom: 16 }}>
         <div className="data-panel-header">
           <span className="data-panel-title">Active Sessions</span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
@@ -41,6 +41,29 @@ export default async function SecuritySettingsPage() {
           {error
             ? <p style={{ fontSize: 12, color: 'var(--c-red)' }}>{error}</p>
             : <SessionList sessions={sessions ?? []} />}
+        </div>
+      </div>
+
+      <div className="data-panel">
+        <div className="data-panel-header">
+          <span className="data-panel-title">Two-Factor Authentication</span>
+        </div>
+        <div style={{ padding: '16px 18px' }}>
+          <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+            Add a TOTP authenticator (Google Authenticator, 1Password, Authy, etc.)
+            so a stolen password alone can&apos;t access your account.
+          </p>
+          <Link
+            href="/settings/security/mfa"
+            style={{
+              display: 'inline-block',
+              fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+              border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+              textDecoration: 'none',
+            }}
+          >
+            Manage two-factor authentication →
+          </Link>
         </div>
       </div>
     </div>
