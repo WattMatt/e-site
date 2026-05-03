@@ -37,6 +37,11 @@ const schema = z.object({
   password:     z.string().min(1, 'Please enter your password.'),
 })
 
+const changeEmailSchema = z.object({
+  newEmail: z.string().email('Please enter a valid email address.'),
+  password: z.string().min(1, 'Please enter your password.'),
+})
+
 export async function deleteAccountAction(formData: FormData): Promise<{
   ok:    boolean
   error?: string
@@ -135,5 +140,62 @@ export async function deleteAccountAction(formData: FormData): Promise<{
   }
 
   await supabase.auth.signOut()
+  return { ok: true }
+}
+
+/**
+ * Change the user's email address. Supabase sends a confirmation link to
+ * the NEW email — the change doesn't take effect until that link is
+ * clicked. Returns ok=true once the confirmation email is dispatched.
+ */
+export async function changeEmailAction(formData: FormData): Promise<{
+  ok:    boolean
+  error?: string
+}> {
+  const headersList = await headers()
+  const ip = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ua = headersList.get('user-agent') ?? null
+
+  if (!rateLimit(`email-change:${ip}`, 5, 600_000)) {
+    return { ok: false, error: 'Too many email-change attempts. Please try again later.' }
+  }
+
+  const parsed = changeEmailSchema.safeParse({
+    newEmail: formData.get('newEmail'),
+    password: formData.get('password'),
+  })
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || !user.email) return { ok: false, error: 'Not authenticated.' }
+
+  const newEmail = parsed.data.newEmail.trim().toLowerCase()
+  if (newEmail === user.email.toLowerCase()) {
+    return { ok: false, error: 'New email matches your current email.' }
+  }
+
+  const { error: pwErr } = await supabase.auth.signInWithPassword({
+    email:    user.email,
+    password: parsed.data.password,
+  })
+  if (pwErr) return { ok: false, error: 'Incorrect password.' }
+
+  const { error: updErr } = await supabase.auth.updateUser({ email: newEmail })
+  if (updErr) {
+    return { ok: false, error: updErr.message }
+  }
+
+  const service = createServiceClient()
+  await logAuthEvent(service, {
+    userId:    user.id,
+    eventType: 'account_email_changed',
+    ipAddress: ip === 'unknown' ? null : ip,
+    userAgent: ua,
+    metadata:  { from_email: user.email, to_email: newEmail },
+  })
+
   return { ok: true }
 }

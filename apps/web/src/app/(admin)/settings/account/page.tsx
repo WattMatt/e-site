@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { DeleteAccountForm } from './DeleteAccountForm'
+import { EmailChangeForm } from './EmailChangeForm'
 
 export const metadata: Metadata = { title: 'Account · Settings' }
 
@@ -21,6 +22,19 @@ export default async function AccountSettingsPage() {
           ← Settings
         </Link>
         <h1 className="page-title">Account</h1>
+      </div>
+
+      <div className="data-panel" style={{ marginBottom: 16 }}>
+        <div className="data-panel-header">
+          <span className="data-panel-title">Email Address</span>
+        </div>
+        <div style={{ padding: '16px 18px' }}>
+          <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 14 }}>
+            Change the email you use to sign in. We&apos;ll send a confirmation link
+            to the new address — the change takes effect once you click it.
+          </p>
+          <EmailChangeForm currentEmail={user.email} />
+        </div>
       </div>
 
       <div className="data-panel" style={{ borderColor: '#6b1e1e' }}>
