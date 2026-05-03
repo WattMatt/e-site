@@ -303,11 +303,44 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
   const pageImagesRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
 
-  // 1) Initial load: detect raster vs PDF, set up pdfjs doc OR Image element.
-  //    Resets state when the source URL changes (re-edit-of-different-plan flow).
+  // Page-render helper: rasterise a 1-based PDF page to a backing canvas,
+  // memoise in pageImagesRef, and setImg. Called from both the initial
+  // load (page 1) and explicit page changes.
+  type PdfPage = {
+    getViewport: (opts: { scale: number }) => { width: number; height: number }
+    render: (opts: unknown) => { promise: Promise<void> }
+  }
+  const renderPdfPage = useCallback(
+    async (pageNum: number, signal: { cancelled: boolean }) => {
+      const cached = pageImagesRef.current.get(pageNum)
+      if (cached) {
+        if (!signal.cancelled) setImg(cached)
+        return
+      }
+      const doc = pdfDocRef.current
+      if (!doc) return
+      const page = (await doc.getPage(pageNum)) as PdfPage
+      if (signal.cancelled) return
+      const viewport = page.getViewport({ scale: 2 })
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.floor(viewport.width)
+      canvas.height = Math.floor(viewport.height)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('2d context unavailable')
+      await page.render({ canvasContext: ctx, viewport, canvas }).promise
+      if (signal.cancelled) return
+      pageImagesRef.current.set(pageNum, canvas)
+      setImg(canvas)
+    },
+    [],
+  )
+
+  // 1) Initial load: detect raster vs PDF, load pdfjs doc, render page 1
+  //    inline (so single-page PDFs don't hang waiting for an effect that
+  //    only re-fires when pageCount changes from 1).
   useEffect(() => {
     if (!plan.signedUrl) return
-    let cancelled = false
+    const signal = { cancelled: false }
     setLoadError(null)
     setImg(null)
     setCurrentPage(1)
@@ -323,11 +356,16 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
           }
           const loadingTask = pdfjsLib.getDocument(plan.signedUrl!)
           const pdf = await loadingTask.promise
-          if (cancelled) return
-          pdfDocRef.current = pdf as unknown as { getPage: (n: number) => Promise<unknown>; numPages: number }
+          if (signal.cancelled) return
+          pdfDocRef.current = pdf as unknown as {
+            getPage: (n: number) => Promise<unknown>
+            numPages: number
+          }
           setPageCount(pdf.numPages)
+          // Inline page-1 render — avoids the dep-trigger gap.
+          await renderPdfPage(1, signal)
         } catch (err) {
-          if (cancelled) return
+          if (signal.cancelled) return
           setLoadError(err instanceof Error ? err.message : 'PDF load failed')
         }
       })()
@@ -336,58 +374,35 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
       const i = new window.Image()
       i.crossOrigin = 'anonymous'
       i.onload = () => {
-        if (!cancelled) setImg(i)
+        if (!signal.cancelled) setImg(i)
       }
       i.onerror = () => {
-        if (!cancelled) setLoadError('Image failed to load')
+        if (!signal.cancelled) setLoadError('Image failed to load')
       }
       i.src = plan.signedUrl
     }
 
     return () => {
-      cancelled = true
+      signal.cancelled = true
     }
-  }, [plan.signedUrl, plan.isPdf])
+  }, [plan.signedUrl, plan.isPdf, renderPdfPage])
 
-  // 2) Render the current PDF page when it changes (or pdf doc finishes loading).
-  //    Skipped for non-PDF rasters which use the single Image element above.
+  // 2) Re-render when the user navigates to a different PDF page.
+  //    Page 1 on initial mount is handled by the load effect above; the
+  //    pdfDocRef.current null-check skips this run until the doc is ready.
+  //    Once loaded, navigating BACK to page 1 hits the cache via renderPdfPage.
   useEffect(() => {
     if (!plan.isPdf) return
     if (!pdfDocRef.current) return
-    let cancelled = false
-
-    const cached = pageImagesRef.current.get(currentPage)
-    if (cached) {
-      setImg(cached)
-      return
-    }
-
-    ;(async () => {
-      try {
-        const page = (await pdfDocRef.current!.getPage(currentPage)) as {
-          getViewport: (opts: { scale: number }) => { width: number; height: number }
-          render: (opts: unknown) => { promise: Promise<void> }
-        }
-        const viewport = page.getViewport({ scale: 2 })
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.floor(viewport.width)
-        canvas.height = Math.floor(viewport.height)
-        const ctx = canvas.getContext('2d')
-        if (!ctx) throw new Error('2d context unavailable')
-        await page.render({ canvasContext: ctx, viewport, canvas }).promise
-        if (cancelled) return
-        pageImagesRef.current.set(currentPage, canvas)
-        setImg(canvas)
-      } catch (err) {
-        if (cancelled) return
-        setLoadError(err instanceof Error ? err.message : 'PDF page render failed')
-      }
-    })()
-
+    const signal = { cancelled: false }
+    renderPdfPage(currentPage, signal).catch((err) => {
+      if (signal.cancelled) return
+      setLoadError(err instanceof Error ? err.message : 'PDF page render failed')
+    })
     return () => {
-      cancelled = true
+      signal.cancelled = true
     }
-  }, [plan.isPdf, currentPage, pageCount])
+  }, [plan.isPdf, currentPage, renderPdfPage])
 
   const [imgW, imgH] = backingSize(img)
   const naturalW = plan.width_px || imgW || 800
