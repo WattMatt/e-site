@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { signInSchema, type SignInInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { recordAuthEventAction } from '@/actions/auth-event.actions'
 
 export default function LoginPage() {
   const supabase = createClient()
@@ -24,6 +25,7 @@ export default function LoginPage() {
       setServerError(error.message)
       return
     }
+    void recordAuthEventAction('login').catch(() => { /* audit best-effort */ })
     const next = new URLSearchParams(window.location.search).get('next') ?? '/dashboard'
     window.location.href = next
   }

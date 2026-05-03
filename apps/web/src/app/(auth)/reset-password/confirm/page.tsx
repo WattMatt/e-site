@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { updatePasswordSchema, type UpdatePasswordInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { recordAuthEventAction } from '@/actions/auth-event.actions'
 
 type Status = 'checking' | 'ready' | 'invalid' | 'updated'
 
@@ -36,6 +37,8 @@ export default function ResetPasswordConfirmPage() {
       setServerError(error.message)
       return
     }
+    void recordAuthEventAction('password_changed', { via: 'reset_link' })
+      .catch(() => { /* audit best-effort */ })
     await supabase.auth.signOut()
     setStatus('updated')
   }

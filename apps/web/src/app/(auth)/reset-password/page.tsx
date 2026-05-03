@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { resetPasswordSchema, type ResetPasswordInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { recordAuthEventAction } from '@/actions/auth-event.actions'
 
 export default function ResetPasswordPage() {
   const supabase = createClient()
@@ -26,6 +27,11 @@ export default function ResetPasswordPage() {
       setServerError(error.message)
       return
     }
+    // Anonymous event — we don't reveal whether the email exists, so
+    // metadata stores only a hash-friendly truncation for ops triage.
+    void recordAuthEventAction('password_reset_requested', {
+      email_domain: email.split('@')[1] ?? null,
+    }).catch(() => { /* audit best-effort */ })
     setSuccess(true)
   }
 
