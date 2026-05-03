@@ -61,7 +61,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         action: 'VIEW',
         autoVerify: true,
-        data: [{ scheme: 'esite', host: 'login-callback' }],
+        data: [
+          { scheme: 'esite', host: 'login-callback' },
+          { scheme: 'esite', host: 'reset-password-confirm' },
+        ],
         category: ['BROWSABLE', 'DEFAULT'],
       },
     ],
