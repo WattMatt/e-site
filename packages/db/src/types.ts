@@ -77,8 +77,11 @@ export type Database = {
           cancelled_at: string | null
           created_at: string
           id: string
+          last_payment_failure_at: string | null
           next_billing_date: string | null
           organisation_id: string
+          paused_at: string | null
+          payment_failure_count: number
           paystack_customer_code: string | null
           paystack_plan_code: string | null
           paystack_subscription_code: string | null
@@ -93,8 +96,11 @@ export type Database = {
           cancelled_at?: string | null
           created_at?: string
           id?: string
+          last_payment_failure_at?: string | null
           next_billing_date?: string | null
           organisation_id: string
+          paused_at?: string | null
+          payment_failure_count?: number
           paystack_customer_code?: string | null
           paystack_plan_code?: string | null
           paystack_subscription_code?: string | null
@@ -109,8 +115,11 @@ export type Database = {
           cancelled_at?: string | null
           created_at?: string
           id?: string
+          last_payment_failure_at?: string | null
           next_billing_date?: string | null
           organisation_id?: string
+          paused_at?: string | null
+          payment_failure_count?: number
           paystack_customer_code?: string | null
           paystack_plan_code?: string | null
           paystack_subscription_code?: string | null
@@ -169,6 +178,7 @@ export type Database = {
           id: string
           organisation_id: string
           rejection_reason: string | null
+          review_notes: string | null
           reviewed_at: string | null
           reviewed_by: string | null
           status: string
@@ -184,6 +194,7 @@ export type Database = {
           id?: string
           organisation_id: string
           rejection_reason?: string | null
+          review_notes?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           status?: string
@@ -199,6 +210,7 @@ export type Database = {
           id?: string
           organisation_id?: string
           rejection_reason?: string | null
+          review_notes?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           status?: string
@@ -734,6 +746,128 @@ export type Database = {
         }
         Relationships: []
       }
+      commission_payouts: {
+        Row: {
+          amount_kobo: number
+          commission_record_ids: string[]
+          completed_at: string | null
+          created_at: string
+          failure_reason: string | null
+          id: string
+          initiated_at: string
+          paystack_recipient_code: string | null
+          paystack_transfer_code: string | null
+          status: string
+          supplier_id: string
+          supplier_subaccount_code: string
+          updated_at: string
+        }
+        Insert: {
+          amount_kobo: number
+          commission_record_ids?: string[]
+          completed_at?: string | null
+          created_at?: string
+          failure_reason?: string | null
+          id?: string
+          initiated_at?: string
+          paystack_recipient_code?: string | null
+          paystack_transfer_code?: string | null
+          status?: string
+          supplier_id: string
+          supplier_subaccount_code: string
+          updated_at?: string
+        }
+        Update: {
+          amount_kobo?: number
+          commission_record_ids?: string[]
+          completed_at?: string | null
+          created_at?: string
+          failure_reason?: string | null
+          id?: string
+          initiated_at?: string
+          paystack_recipient_code?: string | null
+          paystack_transfer_code?: string | null
+          status?: string
+          supplier_id?: string
+          supplier_subaccount_code?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      commission_records: {
+        Row: {
+          commission_kobo: number
+          commission_rate: number
+          contractor_org_id: string
+          created_at: string
+          gross_amount_kobo: number
+          id: string
+          order_id: string
+          payout_completed_at: string | null
+          payout_failed_at: string | null
+          payout_failure_reason: string | null
+          payout_initiated_at: string | null
+          payout_reference: string | null
+          payout_status: string
+          paystack_reference: string
+          paystack_split_code: string | null
+          supplier_kobo: number
+          supplier_org_id: string | null
+          supplier_subaccount_code: string | null
+          updated_at: string
+        }
+        Insert: {
+          commission_kobo: number
+          commission_rate: number
+          contractor_org_id: string
+          created_at?: string
+          gross_amount_kobo: number
+          id?: string
+          order_id: string
+          payout_completed_at?: string | null
+          payout_failed_at?: string | null
+          payout_failure_reason?: string | null
+          payout_initiated_at?: string | null
+          payout_reference?: string | null
+          payout_status?: string
+          paystack_reference: string
+          paystack_split_code?: string | null
+          supplier_kobo: number
+          supplier_org_id?: string | null
+          supplier_subaccount_code?: string | null
+          updated_at?: string
+        }
+        Update: {
+          commission_kobo?: number
+          commission_rate?: number
+          contractor_org_id?: string
+          created_at?: string
+          gross_amount_kobo?: number
+          id?: string
+          order_id?: string
+          payout_completed_at?: string | null
+          payout_failed_at?: string | null
+          payout_failure_reason?: string | null
+          payout_initiated_at?: string | null
+          payout_reference?: string | null
+          payout_status?: string
+          paystack_reference?: string
+          paystack_split_code?: string | null
+          supplier_kobo?: number
+          supplier_org_id?: string | null
+          supplier_subaccount_code?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commission_records_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       order_items: {
         Row: {
           catalogue_item_id: string | null
@@ -850,39 +984,48 @@ export type Database = {
       }
       paystack_subaccounts: {
         Row: {
-          account_name: string | null
           account_number: string
-          bank_code: string
-          bank_name: string | null
+          business_name: string
           created_at: string
           id: string
-          is_active: boolean
+          is_verified: boolean
+          metadata: Json
+          paystack_id: number | null
+          percentage_charge: number
+          settlement_bank: string
+          split_code: string | null
           subaccount_code: string
           supplier_id: string
           supplier_org_id: string | null
           updated_at: string
         }
         Insert: {
-          account_name?: string | null
           account_number: string
-          bank_code: string
-          bank_name?: string | null
+          business_name: string
           created_at?: string
           id?: string
-          is_active?: boolean
+          is_verified?: boolean
+          metadata?: Json
+          paystack_id?: number | null
+          percentage_charge?: number
+          settlement_bank: string
+          split_code?: string | null
           subaccount_code: string
           supplier_id: string
           supplier_org_id?: string | null
           updated_at?: string
         }
         Update: {
-          account_name?: string | null
           account_number?: string
-          bank_code?: string
-          bank_name?: string | null
+          business_name?: string
           created_at?: string
           id?: string
-          is_active?: boolean
+          is_verified?: boolean
+          metadata?: Json
+          paystack_id?: number | null
+          percentage_charge?: number
+          settlement_bank?: string
+          split_code?: string | null
           subaccount_code?: string
           supplier_id?: string
           supplier_org_id?: string | null
@@ -893,42 +1036,70 @@ export type Database = {
       supplier_ratings: {
         Row: {
           comment: string | null
+          communication_score: number
           contractor_org_id: string
           created_at: string
+          delivery_score: number
           id: string
           order_id: string
-          quality_rating: number | null
-          rating: number
+          pricing_score: number
+          quality_score: number
+          rated_by: string
           supplier_id: string
         }
         Insert: {
           comment?: string | null
+          communication_score: number
           contractor_org_id: string
           created_at?: string
+          delivery_score: number
           id?: string
           order_id: string
-          quality_rating?: number | null
-          rating: number
+          pricing_score: number
+          quality_score: number
+          rated_by: string
           supplier_id: string
         }
         Update: {
           comment?: string | null
+          communication_score?: number
           contractor_org_id?: string
           created_at?: string
+          delivery_score?: number
           id?: string
           order_id?: string
-          quality_rating?: number | null
-          rating?: number
+          pricing_score?: number
+          quality_score?: number
+          rated_by?: string
           supplier_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "supplier_ratings_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+    }
+    Views: {
+      supplier_rating_summary: {
+        Row: {
+          avg_communication: number | null
+          avg_delivery: number | null
+          avg_overall: number | null
+          avg_pricing: number | null
+          avg_quality: number | null
+          rating_count: number | null
+          supplier_id: string | null
         }
         Relationships: []
       }
     }
-    Views: {
-      [_ in never]: never
-    }
     Functions: {
-      [_ in never]: never
+      refresh_supplier_rating_summary: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
@@ -1356,7 +1527,7 @@ export type Database = {
           delay_notes: string | null
           delays: string | null
           entry_date: string
-          entry_type: string | null
+          entry_type: Database["public"]["Enums"]["diary_entry_type"]
           id: string
           organisation_id: string
           progress_notes: string
@@ -1373,7 +1544,7 @@ export type Database = {
           delay_notes?: string | null
           delays?: string | null
           entry_date: string
-          entry_type?: string | null
+          entry_type?: Database["public"]["Enums"]["diary_entry_type"]
           id?: string
           organisation_id: string
           progress_notes: string
@@ -1390,7 +1561,7 @@ export type Database = {
           delay_notes?: string | null
           delays?: string | null
           entry_date?: string
-          entry_type?: string | null
+          entry_type?: Database["public"]["Enums"]["diary_entry_type"]
           id?: string
           organisation_id?: string
           progress_notes?: string
@@ -1541,11 +1712,65 @@ export type Database = {
           },
         ]
       }
+      email_sequence_events: {
+        Row: {
+          clicked_at: string | null
+          id: string
+          metadata: Json
+          opened_at: string | null
+          organisation_id: string | null
+          resend_message_id: string | null
+          sent_at: string
+          sequence_name: string
+          step_name: string
+          subject: string
+          to_email: string
+          user_id: string
+        }
+        Insert: {
+          clicked_at?: string | null
+          id?: string
+          metadata?: Json
+          opened_at?: string | null
+          organisation_id?: string | null
+          resend_message_id?: string | null
+          sent_at?: string
+          sequence_name: string
+          step_name: string
+          subject: string
+          to_email: string
+          user_id: string
+        }
+        Update: {
+          clicked_at?: string | null
+          id?: string
+          metadata?: Json
+          opened_at?: string | null
+          organisation_id?: string | null
+          resend_message_id?: string | null
+          sent_at?: string
+          sequence_name?: string
+          step_name?: string
+          subject?: string
+          to_email?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_sequence_events_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "organisations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           action_url: string | null
-          body: string | null
+          body: string
           created_at: string
+          data: Json
           entity_id: string | null
           entity_type: string | null
           id: string
@@ -1558,8 +1783,9 @@ export type Database = {
         }
         Insert: {
           action_url?: string | null
-          body?: string | null
+          body?: string
           created_at?: string
+          data?: Json
           entity_id?: string | null
           entity_type?: string | null
           id?: string
@@ -1572,8 +1798,9 @@ export type Database = {
         }
         Update: {
           action_url?: string | null
-          body?: string | null
+          body?: string
           created_at?: string
+          data?: Json
           entity_id?: string | null
           entity_type?: string | null
           id?: string
@@ -1652,6 +1879,47 @@ export type Database = {
           },
         ]
       }
+      organisation_health_scores: {
+        Row: {
+          calculated_at: string
+          id: string
+          organisation_id: string
+          score: number
+          signals: Json
+          tier: string
+          trend_30d: number | null
+          trend_7d: number | null
+        }
+        Insert: {
+          calculated_at?: string
+          id?: string
+          organisation_id: string
+          score: number
+          signals?: Json
+          tier: string
+          trend_30d?: number | null
+          trend_7d?: number | null
+        }
+        Update: {
+          calculated_at?: string
+          id?: string
+          organisation_id?: string
+          score?: number
+          signals?: Json
+          tier?: string
+          trend_30d?: number | null
+          trend_7d?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organisation_health_scores_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "organisations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organisations: {
         Row: {
           address: string | null
@@ -1687,7 +1955,7 @@ export type Database = {
           registration_no?: string | null
           registration_number?: string | null
           settings?: Json
-          slug?: string
+          slug: string
           storage_used_bytes?: number
           subscription_tier?: string
           type?: string
@@ -1725,6 +1993,7 @@ export type Database = {
           email: string
           full_name: string
           id: string
+          marketing_emails_opted_out: boolean
           notification_preferences: Json
           phone: string | null
           popia_consent_at: string | null
@@ -1736,6 +2005,7 @@ export type Database = {
           email: string
           full_name: string
           id: string
+          marketing_emails_opted_out?: boolean
           notification_preferences?: Json
           phone?: string | null
           popia_consent_at?: string | null
@@ -1747,6 +2017,7 @@ export type Database = {
           email?: string
           full_name?: string
           id?: string
+          marketing_emails_opted_out?: boolean
           notification_preferences?: Json
           phone?: string | null
           popia_consent_at?: string | null
@@ -1758,6 +2029,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          is_active: boolean
           platform: string
           token: string
           user_id: string
@@ -1765,6 +2037,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          is_active?: boolean
           platform: string
           token: string
           user_id: string
@@ -1772,6 +2045,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          is_active?: boolean
           platform?: string
           token?: string
           user_id?: string
@@ -1839,13 +2113,6 @@ export type Database = {
             referencedRelation: "organisations"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "rfi_annotations_source_floor_plan_id_fkey"
-            columns: ["source_floor_plan_id"]
-            isOneToOne: false
-            referencedRelation: "floor_plans"
-            referencedColumns: ["id"]
-          },
         ]
       }
       user_organisations: {
@@ -1908,12 +2175,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      custom_jwt_claims: { Args: { event: Json }; Returns: Json }
       get_user_org_ids: { Args: never; Returns: string[] }
+      get_user_org_ids_bypass: { Args: never; Returns: string[] }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      user_is_client_viewer: { Args: { org_id: string }; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      diary_entry_type:
+        | "progress"
+        | "safety"
+        | "quality"
+        | "delay"
+        | "weather"
+        | "workforce"
+        | "general"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -2113,6 +2390,8 @@ export type Database = {
       }
       floor_plans: {
         Row: {
+          calibrated_at: string | null
+          calibrated_by: string | null
           created_at: string
           file_path: string
           file_size_bytes: number | null
@@ -2122,6 +2401,7 @@ export type Database = {
           level: string | null
           name: string
           organisation_id: string
+          pixels_per_meter: number | null
           project_id: string
           scale: string | null
           updated_at: string
@@ -2129,6 +2409,8 @@ export type Database = {
           width_px: number | null
         }
         Insert: {
+          calibrated_at?: string | null
+          calibrated_by?: string | null
           created_at?: string
           file_path: string
           file_size_bytes?: number | null
@@ -2138,6 +2420,7 @@ export type Database = {
           level?: string | null
           name: string
           organisation_id: string
+          pixels_per_meter?: number | null
           project_id: string
           scale?: string | null
           updated_at?: string
@@ -2145,6 +2428,8 @@ export type Database = {
           width_px?: number | null
         }
         Update: {
+          calibrated_at?: string | null
+          calibrated_by?: string | null
           created_at?: string
           file_path?: string
           file_size_bytes?: number | null
@@ -2154,6 +2439,7 @@ export type Database = {
           level?: string | null
           name?: string
           organisation_id?: string
+          pixels_per_meter?: number | null
           project_id?: string
           scale?: string | null
           updated_at?: string
@@ -2312,7 +2598,17 @@ export const Constants = {
     Enums: {},
   },
   public: {
-    Enums: {},
+    Enums: {
+      diary_entry_type: [
+        "progress",
+        "safety",
+        "quality",
+        "delay",
+        "weather",
+        "workforce",
+        "general",
+      ],
+    },
   },
   suppliers: {
     Enums: {},

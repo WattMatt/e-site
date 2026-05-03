@@ -47,6 +47,9 @@ const config: NextConfig = {
       '@tanstack/react-query',
       'posthog-js',
     ],
+    // Markup PNG payloads (base64) can exceed the 1 MB default — drawings
+    // are typically ~5 MB raster after the canvas flattens at pixelRatio 2.
+    serverActions: { bodySizeLimit: '10mb' },
   },
 
   // ─── Webpack bundle splitting ─────────────────────────────────────────────

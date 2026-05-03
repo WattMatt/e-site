@@ -51,6 +51,36 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
     ...responses.map((r: any) => fetchAttachments(supabase as any, 'rfi_response', r.id)),
   ])
 
+  // Drawing markups attached to this RFI (for re-edit).
+  const { data: annotationsRaw } = await (supabase as any)
+    .from('rfi_annotations')
+    .select('id, source_floor_plan_id, attachment_id, created_at, attachments:attachment_id(file_path)')
+    .eq('rfi_id', id)
+    .order('created_at', { ascending: false })
+  const annotations: Array<{
+    id: string
+    sourceFloorPlanId: string | null
+    createdAt: string
+    thumbnailUrl: string | null
+  }> = await Promise.all(
+    ((annotationsRaw ?? []) as any[]).map(async (a) => {
+      const filePath = a.attachments?.file_path as string | undefined
+      let thumbnailUrl: string | null = null
+      if (filePath) {
+        const { data } = await supabase.storage
+          .from('rfi-attachments')
+          .createSignedUrl(filePath, 3600)
+        thumbnailUrl = data?.signedUrl ?? null
+      }
+      return {
+        id: a.id,
+        sourceFloorPlanId: a.source_floor_plan_id,
+        createdAt: a.created_at,
+        thumbnailUrl,
+      }
+    }),
+  )
+
   const { data: { user: viewer } } = await supabase.auth.getUser()
   const canEdit = !!viewer
 
@@ -113,6 +143,77 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
             )}
           </div>
         </div>
+
+        {/* Drawing markups */}
+        {annotations.length > 0 && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Drawing markups</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                {annotations.length}
+              </span>
+            </div>
+            <div style={{ padding: '14px 18px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+              {annotations.map((a) => (
+                <div
+                  key={a.id}
+                  style={{
+                    border: '1px solid var(--c-border)',
+                    borderRadius: 6,
+                    overflow: 'hidden',
+                    background: 'var(--c-base)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
+                >
+                  <div
+                    style={{
+                      height: 140,
+                      background: 'white',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      overflow: 'hidden',
+                      borderBottom: '1px solid var(--c-border)',
+                    }}
+                  >
+                    {a.thumbnailUrl ? (
+                      <img
+                        src={a.thumbnailUrl}
+                        alt="Markup"
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 28 }} aria-hidden="true">🗺️</span>
+                    )}
+                  </div>
+                  <div style={{ padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                      {formatRelative(a.createdAt)}
+                    </span>
+                    {a.sourceFloorPlanId && rfiProjectId && canEdit ? (
+                      <Link
+                        href={`/projects/${rfiProjectId}/floor-plans/${a.sourceFloorPlanId}?annotation=${a.id}`}
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 10,
+                          letterSpacing: '0.06em',
+                          color: 'var(--c-amber)',
+                          textDecoration: 'none',
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--c-border)',
+                        }}
+                      >
+                        Edit ↗
+                      </Link>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Responses */}
         {responses.map((r: any, idx: number) => (
