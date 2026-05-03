@@ -6,20 +6,33 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { signUpSchema, type SignUpInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter'
+import type { PasswordEvaluation } from '@/lib/password-strength'
+
+const MIN_ACCEPTABLE_SCORE = 2  // zxcvbn 2 = "fair" — blocks "weak" and "very weak"
 
 export default function SignupPage() {
   const supabase = createClient()
   const [serverError, setServerError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [pwEval, setPwEval] = useState<PasswordEvaluation | null>(null)
 
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<SignUpInput>({ resolver: zodResolver(signUpSchema) })
+  const password = watch('password') ?? ''
 
   async function onSubmit({ fullName, email, password }: SignUpInput) {
     setServerError(null)
+    if (pwEval && (pwEval.pwned || pwEval.score < MIN_ACCEPTABLE_SCORE)) {
+      setServerError(pwEval.pwned
+        ? 'This password has appeared in known breaches — choose a different one.'
+        : 'This password is too weak. Aim for a longer phrase or mix of words.')
+      return
+    }
     const emailRedirectTo = `${window.location.origin}/auth/callback?next=/onboarding`
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -97,6 +110,7 @@ export default function SignupPage() {
             autoComplete="new-password"
           />
           {errors.password && <p className="auth-error-text">{errors.password.message}</p>}
+          <PasswordStrengthMeter password={password} onChange={setPwEval} />
         </div>
 
         <div className="auth-field">

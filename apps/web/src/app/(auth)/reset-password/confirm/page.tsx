@@ -7,6 +7,10 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { updatePasswordSchema, type UpdatePasswordInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { recordAuthEventAction } from '@/actions/auth-event.actions'
+import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter'
+import type { PasswordEvaluation } from '@/lib/password-strength'
+
+const MIN_ACCEPTABLE_SCORE = 2
 
 type Status = 'checking' | 'ready' | 'invalid' | 'updated'
 
@@ -15,11 +19,15 @@ export default function ResetPasswordConfirmPage() {
   const [status, setStatus] = useState<Status>('checking')
   const [serverError, setServerError] = useState<string | null>(null)
 
+  const [pwEval, setPwEval] = useState<PasswordEvaluation | null>(null)
+
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<UpdatePasswordInput>({ resolver: zodResolver(updatePasswordSchema) })
+  const password = watch('password') ?? ''
 
   useEffect(() => {
     let cancelled = false
@@ -32,6 +40,12 @@ export default function ResetPasswordConfirmPage() {
 
   async function onSubmit({ password }: UpdatePasswordInput) {
     setServerError(null)
+    if (pwEval && (pwEval.pwned || pwEval.score < MIN_ACCEPTABLE_SCORE)) {
+      setServerError(pwEval.pwned
+        ? 'This password has appeared in known breaches — choose a different one.'
+        : 'This password is too weak. Aim for a longer phrase or mix of words.')
+      return
+    }
     const { error } = await supabase.auth.updateUser({ password })
     if (error) {
       setServerError(error.message)
@@ -101,6 +115,7 @@ export default function ResetPasswordConfirmPage() {
             autoComplete="new-password"
           />
           {errors.password && <p className="auth-error-text">{errors.password.message}</p>}
+          <PasswordStrengthMeter password={password} onChange={setPwEval} />
         </div>
 
         <div className="auth-field">
