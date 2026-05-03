@@ -27,6 +27,7 @@
 import { headers } from 'next/headers'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
+import { verifyPasswordIsolated } from '@/lib/auth-reauth'
 import { logAuthEvent } from '@esite/shared'
 import { z } from 'zod'
 
@@ -70,8 +71,13 @@ export async function deleteAccountAction(formData: FormData): Promise<{
     return { ok: false, error: "Confirmation email doesn't match your account email." }
   }
 
-  // Cheap read-only guards run before the password round-trip. Sole-owner
-  // and active-paid-sub block deletion irrespective of password — fail fast.
+  // Password re-auth FIRST (without mutating the current session). Running
+  // ownership/billing checks before this would expose enumeration oracles
+  // ("you own X orgs") to anyone who knows your email.
+  if (!await verifyPasswordIsolated(user.email, parsed.data.password)) {
+    return { ok: false, error: 'Incorrect password.' }
+  }
+
   const { data: ownerships } = await supabase
     .from('user_organisations')
     .select('organisation_id')
@@ -114,12 +120,6 @@ export async function deleteAccountAction(formData: FormData): Promise<{
       }
     }
   }
-
-  const { error: pwErr } = await supabase.auth.signInWithPassword({
-    email:    user.email,
-    password: parsed.data.password,
-  })
-  if (pwErr) return { ok: false, error: 'Incorrect password.' }
 
   const service = createServiceClient()
   await logAuthEvent(service, {
@@ -177,11 +177,9 @@ export async function changeEmailAction(formData: FormData): Promise<{
     return { ok: false, error: 'New email matches your current email.' }
   }
 
-  const { error: pwErr } = await supabase.auth.signInWithPassword({
-    email:    user.email,
-    password: parsed.data.password,
-  })
-  if (pwErr) return { ok: false, error: 'Incorrect password.' }
+  if (!await verifyPasswordIsolated(user.email, parsed.data.password)) {
+    return { ok: false, error: 'Incorrect password.' }
+  }
 
   const { error: updErr } = await supabase.auth.updateUser({ email: newEmail })
   if (updErr) {

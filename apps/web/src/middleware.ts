@@ -24,24 +24,28 @@ async function hasOrg(userId: string): Promise<boolean> {
   return (count ?? 0) > 0
 }
 
-/**
- * True when the user has at least one verified MFA factor but the
- * current session JWT was minted at aal1. Reads the factors list off
- * `user.factors` (Supabase populates it on getUser()) and the AAL off
- * the user.amr ('amr' is the auth-method-reference array per RFC 8176;
- * Supabase populates it with `[{ method: 'password', timestamp: ... }]`
- * for aal1 sessions and adds `{ method: 'totp', ... }` after MFA verify).
- */
-function needsMfaChallenge(user: { factors?: { status: string }[] | null; amr?: { method: string }[] | null }): boolean {
-  const hasVerifiedFactor = (user.factors ?? []).some((f) => f.status === 'verified')
-  if (!hasVerifiedFactor) return false
-  const amr = user.amr ?? []
-  const hasTotpAmr = amr.some((entry) => entry.method === 'totp')
-  return !hasTotpAmr
+async function hasVerifiedMfaFactor(userId: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users/${userId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+          apikey:        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        },
+        cache: 'no-store',
+      },
+    )
+    if (!res.ok) return false
+    const body = await res.json() as { factors?: { status: string }[] }
+    return (body.factors ?? []).some((f) => f.status === 'verified')
+  } catch {
+    return false
+  }
 }
 
 export async function middleware(request: NextRequest) {
-  const { supabaseResponse, user } = await updateSession(request)
+  const { supabaseResponse, user, aal } = await updateSession(request)
   const { pathname } = request.nextUrl
 
   const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
@@ -82,16 +86,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 4b. MFA gate — if the session is at aal1 and the user has an aal2-eligible
-  //     factor enrolled, redirect to /verify-mfa. The aal claim ships in the
-  //     JWT amr/aal field; with @supabase/ssr we read it from the cookie via
-  //     getSession() (skipped here for perf — middleware already calls
-  //     getUser() above; we use the user.factors hint to short-circuit).
-  if (user && needsMfaChallenge(user) && !isVerifyMfa && !isAuthCallback) {
-    const url = request.nextUrl.clone()
-    url.pathname = VERIFY_MFA_PATH
-    url.searchParams.set('next', pathname)
-    return NextResponse.redirect(url)
+  // 4b. MFA gate — when the session JWT is at aal1 and the user has any
+  //     verified MFA factor, redirect to /verify-mfa. AAL is read off the
+  //     access-token JWT (populated by updateSession); we then check
+  //     listFactors via service-role to confirm a verified factor exists.
+  //     listFactors is a single round-trip and only fires for aal1 sessions.
+  if (user && aal === 'aal1' && !isVerifyMfa && !isAuthCallback) {
+    if (await hasVerifiedMfaFactor(user.id)) {
+      const url = request.nextUrl.clone()
+      url.pathname = VERIFY_MFA_PATH
+      url.searchParams.set('next', pathname)
+      return NextResponse.redirect(url)
+    }
   }
 
   // 5. Authenticated but no org → onboarding

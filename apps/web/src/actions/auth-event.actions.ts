@@ -12,6 +12,7 @@
 
 import { headers } from 'next/headers'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { rateLimit } from '@/lib/rate-limit'
 import { logAuthEvent, type AuthEventType } from '@esite/shared'
 
 const SAFE_EVENTS: ReadonlySet<AuthEventType> = new Set([
@@ -31,6 +32,11 @@ export async function recordAuthEventAction(
   const headersList = await headers()
   const ip = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = headersList.get('user-agent') ?? null
+
+  // Cap per-IP write volume so a malicious client can't spam audit rows
+  // (their own user_id only — server still ties userId to the session —
+  // but we don't want the table flooded either way).
+  if (!rateLimit(`auth-event:${ip ?? 'unknown'}`, 30, 60_000)) return
 
   // password_reset_requested + magic_link_requested are anonymous (no
   // session yet); the others require an authenticated user. Pull userId

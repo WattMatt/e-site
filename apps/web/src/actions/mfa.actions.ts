@@ -14,6 +14,7 @@
 
 import { headers } from 'next/headers'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { verifyPasswordIsolated } from '@/lib/auth-reauth'
 import { logAuthEvent } from '@esite/shared'
 import { z } from 'zod'
 
@@ -84,15 +85,22 @@ export async function verifyEnrollAction(formData: FormData): Promise<{
   return { ok: true }
 }
 
-export async function unenrollAction(factorId: string): Promise<{
+export async function unenrollAction(factorId: string, password: string): Promise<{
   ok:    boolean
   error?: string
 }> {
   if (!/^[0-9a-f-]{36}$/i.test(factorId)) return { ok: false, error: 'Invalid factor id.' }
+  if (!password) return { ok: false, error: 'Password required.' }
 
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { ok: false, error: 'Not authenticated.' }
+  if (!user || !user.email) return { ok: false, error: 'Not authenticated.' }
+
+  // Re-verify password before disabling MFA — otherwise a stolen browser
+  // cookie alone is enough to remove the second factor.
+  if (!await verifyPasswordIsolated(user.email, password)) {
+    return { ok: false, error: 'Incorrect password.' }
+  }
 
   const { error } = await supabase.auth.mfa.unenroll({ factorId })
   if (error) return { ok: false, error: error.message }

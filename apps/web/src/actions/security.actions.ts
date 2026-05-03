@@ -16,7 +16,10 @@
  * scenarios.
  */
 
-import { createClient } from '@/lib/supabase/server'
+import { headers } from 'next/headers'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { rateLimit } from '@/lib/rate-limit'
+import { logAuthEvent } from '@esite/shared'
 
 export interface ActiveSession {
   id:           string
@@ -71,15 +74,36 @@ export async function getActiveSessionsAction(): Promise<{
 }
 
 export async function signOutOthersAction(): Promise<{ ok: boolean; error?: string }> {
-  const supabase = await createClient()
-  const { error } = await supabase.auth.signOut({ scope: 'others' })
-  if (error) return { ok: false, error: error.message }
-  return { ok: true }
+  return signOutWithScope('others')
 }
 
 export async function signOutEverywhereAction(): Promise<{ ok: boolean; error?: string }> {
+  return signOutWithScope('global')
+}
+
+async function signOutWithScope(scope: 'others' | 'global'): Promise<{ ok: boolean; error?: string }> {
+  const headersList = await headers()
+  const ip = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ua = headersList.get('user-agent') ?? null
+
+  if (!rateLimit(`signout-${scope}:${ip}`, 5, 600_000)) {
+    return { ok: false, error: 'Too many sign-out attempts. Please try again in a few minutes.' }
+  }
+
   const supabase = await createClient()
-  const { error } = await supabase.auth.signOut({ scope: 'global' })
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated.' }
+
+  // Audit BEFORE the signOut so we still have the user id in scope.
+  await logAuthEvent(createServiceClient(), {
+    userId:    user.id,
+    eventType: 'logout',
+    ipAddress: ip === 'unknown' ? null : ip,
+    userAgent: ua,
+    metadata:  { scope },
+  })
+
+  const { error } = await supabase.auth.signOut({ scope })
   if (error) return { ok: false, error: error.message }
   return { ok: true }
 }

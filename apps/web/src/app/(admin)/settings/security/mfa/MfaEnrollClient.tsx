@@ -59,10 +59,11 @@ export function MfaEnrollClient({ verifiedFactors }: { verifiedFactors: Verified
   }
 
   function unenroll(factorId: string) {
-    if (!confirm('Disable two-factor authentication? Your account will be less protected.')) return
+    const pw = prompt('Enter your password to disable two-factor authentication:')
+    if (!pw) return
     setError(null)
     startTransition(async () => {
-      const r = await unenrollAction(factorId)
+      const r = await unenrollAction(factorId, pw)
       if (r.ok) router.refresh()
       else setError(r.error ?? 'Could not disable two-factor authentication.')
     })
@@ -106,12 +107,13 @@ export function MfaEnrollClient({ verifiedFactors }: { verifiedFactors: Verified
           1. Open your authenticator app and scan the QR code below.
         </p>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-          {/* Supabase returns the QR as `data:image/svg+xml;utf-8,<svg ...>` */}
-          {state.qrCode.startsWith('data:') ? (
+          {state.qrCode.startsWith('data:image/svg+xml') ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={state.qrCode} alt="TOTP QR code" width={180} height={180} style={{ background: '#fff', padding: 8, borderRadius: 6 }} />
           ) : (
-            <div dangerouslySetInnerHTML={{ __html: state.qrCode }} style={{ background: '#fff', padding: 8, borderRadius: 6 }} />
+            <p style={{ fontSize: 12, color: 'var(--c-red)' }}>
+              QR code unavailable. Use the manual code below.
+            </p>
           )}
         </div>
         <details style={{ marginBottom: 14 }}>
