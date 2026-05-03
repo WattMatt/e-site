@@ -64,6 +64,29 @@ export default async function SettingsPage() {
           </div>
         )}
 
+        {/* Security */}
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Security</span>
+          </div>
+          <div style={{ padding: '16px 18px' }}>
+            <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+              Active sessions, sign-out-everywhere, and (soon) two-factor auth.
+            </p>
+            <Link
+              href="/settings/security"
+              style={{
+                display: 'inline-block',
+                fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                textDecoration: 'none',
+              }}
+            >
+              Manage security →
+            </Link>
+          </div>
+        </div>
+
         {/* Danger zone */}
         <div className="data-panel" style={{ borderColor: '#6b1e1e' }}>
           <div className="data-panel-header" style={{ borderColor: '#6b1e1e' }}>
