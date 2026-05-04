@@ -2,7 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // DOM lib for Web Crypto (CryptoKey, BufferSource) used by encryption.ts.
+    // Web Crypto is available natively in both Node 18+ and Deno; the DOM lib
+    // is the cleanest way to get its types in TS.
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
