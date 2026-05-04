@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { resetPasswordSchema, type ResetPasswordInput } from '@esite/shared'
@@ -29,6 +29,7 @@ type Step = 'email' | 'code'
 export default function ResetPasswordPage() {
   const supabase = createClient()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [step, setStep] = useState<Step>('email')
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
@@ -39,8 +40,38 @@ export default function ResetPasswordPage() {
   const {
     register,
     handleSubmit,
+    setValue,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<ResetPasswordInput>({ resolver: zodResolver(resetPasswordSchema) })
+
+  // Surface auth/callback errors (e.g. otp_expired from a scanner-burnt link)
+  // by pre-loading the form into "code-entry" mode if ?step=code is set.
+  useEffect(() => {
+    const errorParam = searchParams?.get('error')
+    if (errorParam) {
+      setServerError(`Link rejected (${errorParam}). Type the 6-digit code from your email instead.`)
+    }
+    const paramEmail = searchParams?.get('email')
+    if (paramEmail) {
+      setValue('email', paramEmail)
+      setEmail(paramEmail.trim().toLowerCase())
+    }
+    if (searchParams?.get('step') === 'code') setStep('code')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** "I already have a code" — skip the resend so the existing code stays valid. */
+  function jumpToCodeEntry() {
+    const e = (getValues('email') || '').trim().toLowerCase()
+    if (!e || !/^\S+@\S+\.\S+$/.test(e)) {
+      setServerError('Type your email above first, then click "I already have a code".')
+      return
+    }
+    setEmail(e)
+    setServerError(null)
+    setStep('code')
+  }
 
   async function onRequestCode({ email: rawEmail }: ResetPasswordInput) {
     setServerError(null)
@@ -163,6 +194,14 @@ export default function ResetPasswordPage() {
       </form>
 
       <div className="auth-links">
+        <button
+          type="button"
+          onClick={jumpToCodeEntry}
+          className="auth-link"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+        >
+          I already have a code →
+        </button>
         <Link href="/login" className="auth-link">← Back to sign in</Link>
       </div>
     </div>
