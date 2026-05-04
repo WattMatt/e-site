@@ -17,12 +17,16 @@ const magicLinkSchema = z.object({
 type MagicLinkInput = z.infer<typeof magicLinkSchema>
 
 type Mode = 'password' | 'magic-link'
+type MagicLinkStep = 'email' | 'code'
 
 export default function LoginPage() {
   const supabase = createClient()
   const [mode, setMode] = useState<Mode>('password')
   const [serverError, setServerError] = useState<string | null>(null)
-  const [magicLinkSent, setMagicLinkSent] = useState(false)
+  const [mlStep, setMlStep] = useState<MagicLinkStep>('email')
+  const [mlEmail, setMlEmail] = useState('')
+  const [mlCode, setMlCode] = useState('')
+  const [mlVerifying, setMlVerifying] = useState(false)
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
 
   // Password form
@@ -49,35 +53,88 @@ export default function LoginPage() {
       setServerError('Please complete the verification challenge.')
       return
     }
+    const trimmed = email.trim().toLowerCase()
     const emailRedirectTo = `${window.location.origin}/auth/callback?next=/dashboard&from=magic_link`
     const { error } = await supabase.auth.signInWithOtp({
-      email,
+      email: trimmed,
       options: {
         emailRedirectTo,
         shouldCreateUser: false,  // magic-link is for existing accounts only
         ...(captchaToken ? { captchaToken } : {}),
       },
     })
-    if (error) { setServerError(error.message); return }
-    void recordAuthEventAction('magic_link_requested', { email_domain: email.split('@')[1] ?? null })
+    if (error) {
+      console.error('signInWithOtp failed', error)
+      setServerError(error.message)
+      return
+    }
+    void recordAuthEventAction('magic_link_requested', { email_domain: trimmed.split('@')[1] ?? null })
       .catch(() => {})
-    setMagicLinkSent(true)
+    setMlEmail(trimmed)
+    setMlStep('code')
   }
 
-  if (magicLinkSent) {
+  async function onMagicLinkVerify(e: React.FormEvent) {
+    e.preventDefault()
+    setServerError(null)
+    if (mlCode.length !== 6) {
+      setServerError('Enter the 6-digit code from your email.')
+      return
+    }
+    setMlVerifying(true)
+    const { error } = await supabase.auth.verifyOtp({
+      email: mlEmail,
+      token: mlCode,
+      type:  'email',  // signInWithOtp sends type='email' OTPs
+    })
+    setMlVerifying(false)
+    if (error) {
+      console.error('verifyOtp magic link failed', error)
+      setServerError(error.message)
+      setMlCode('')
+      return
+    }
+    void recordAuthEventAction('login', { method: 'magic_link' }).catch(() => {})
+    const next = new URLSearchParams(window.location.search).get('next') ?? '/dashboard'
+    window.location.href = next
+  }
+
+  if (mode === 'magic-link' && mlStep === 'code') {
     return (
-      <div className="auth-card auth-success">
-        <div className="auth-success-icon">📬</div>
-        <h2>Check your inbox</h2>
-        <p>If an account exists for that email, we sent a sign-in link. The link expires in 1 hour.</p>
-        <div className="auth-links" style={{ marginTop: 28 }}>
+      <div className="auth-card">
+        <h2 className="auth-card-title">Enter your code</h2>
+        <p className="auth-card-sub">
+          We sent a 6-digit code to <strong>{mlEmail}</strong>. The code expires in 1 hour.
+        </p>
+        <form onSubmit={onMagicLinkVerify}>
+          {serverError && <div className="auth-alert-error">{serverError}</div>}
+          <div className="auth-field">
+            <label className="auth-label">6-digit code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={mlCode}
+              onChange={(e) => setMlCode(e.target.value.replace(/\D/g, ''))}
+              placeholder="123456"
+              className="auth-input"
+              style={{ fontSize: 22, letterSpacing: 6, textAlign: 'center' }}
+              autoFocus
+            />
+          </div>
+          <button type="submit" disabled={mlVerifying || mlCode.length !== 6} className="auth-btn">
+            {mlVerifying ? 'Verifying…' : 'Sign in →'}
+          </button>
+        </form>
+        <div className="auth-links">
           <button
             type="button"
-            onClick={() => { setMagicLinkSent(false); setMode('password') }}
+            onClick={() => { setMlStep('email'); setMlCode(''); setServerError(null) }}
             className="auth-link"
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
           >
-            ← Back to sign in
+            ← Different email
           </button>
         </div>
       </div>

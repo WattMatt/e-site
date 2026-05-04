@@ -14,11 +14,22 @@ const MIN_ACCEPTABLE_SCORE = 2
 
 type Status = 'checking' | 'ready' | 'invalid' | 'updated'
 
+/**
+ * Set-new-password page. Reached two ways:
+ *
+ *   1. After verifyOtp({ type: 'recovery' }) succeeds on /reset-password —
+ *      session is already established, we go straight to the password form.
+ *   2. By clicking the email's fallback link → /auth/callback exchanges the
+ *      token and redirects here with a session.
+ *
+ * If neither succeeded (link burned by a scanner, or direct URL visit
+ * without a recovery session), we surface a "request a new code" link
+ * back to /reset-password.
+ */
 export default function ResetPasswordConfirmPage() {
   const supabase = createClient()
   const [status, setStatus] = useState<Status>('checking')
   const [serverError, setServerError] = useState<string | null>(null)
-
   const [pwEval, setPwEval] = useState<PasswordEvaluation | null>(null)
 
   const {
@@ -38,7 +49,7 @@ export default function ResetPasswordConfirmPage() {
     return () => { cancelled = true }
   }, [supabase])
 
-  async function onSubmit({ password }: UpdatePasswordInput) {
+  async function onSubmit({ password: newPassword }: UpdatePasswordInput) {
     setServerError(null)
     if (pwEval && (pwEval.pwned || pwEval.score < MIN_ACCEPTABLE_SCORE)) {
       setServerError(pwEval.pwned
@@ -46,12 +57,12 @@ export default function ResetPasswordConfirmPage() {
         : 'This password is too weak. Aim for a longer phrase or mix of words.')
       return
     }
-    const { error } = await supabase.auth.updateUser({ password })
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
     if (error) {
       setServerError(error.message)
       return
     }
-    void recordAuthEventAction('password_changed', { via: 'reset_link' })
+    void recordAuthEventAction('password_changed', { via: 'reset_otp' })
       .catch(() => { /* audit best-effort */ })
     await supabase.auth.signOut()
     setStatus('updated')
@@ -61,8 +72,8 @@ export default function ResetPasswordConfirmPage() {
     return (
       <div className="auth-card auth-success">
         <div className="auth-success-icon">⏳</div>
-        <h2>Verifying link…</h2>
-        <p>One moment while we check your reset link.</p>
+        <h2>Verifying…</h2>
+        <p>One moment.</p>
       </div>
     )
   }
@@ -71,11 +82,11 @@ export default function ResetPasswordConfirmPage() {
     return (
       <div className="auth-card auth-success">
         <div className="auth-success-icon">⚠️</div>
-        <h2>Link invalid or expired</h2>
-        <p>This reset link can no longer be used. Request a new one to continue.</p>
+        <h2>Session not found</h2>
+        <p>The reset link or code wasn&apos;t completed. Request a new code to continue.</p>
         <div className="auth-links" style={{ marginTop: 28 }}>
           <Link href="/reset-password" className="auth-link">
-            <span className="auth-link-accent">Request a new link</span>
+            <span className="auth-link-accent">Request a new code</span>
           </Link>
           <Link href="/login" className="auth-link">← Back to sign in</Link>
         </div>
@@ -113,6 +124,7 @@ export default function ResetPasswordConfirmPage() {
             type="password"
             className={`auth-input${errors.password ? ' auth-input-error' : ''}`}
             autoComplete="new-password"
+            autoFocus
           />
           {errors.password && <p className="auth-error-text">{errors.password.message}</p>}
           <PasswordStrengthMeter password={password} onChange={setPwEval} />

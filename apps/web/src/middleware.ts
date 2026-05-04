@@ -63,8 +63,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 2. Has session on auth page → dashboard
-  if (user && isPublicPath && !isAuthCallback) {
+  // 2. Has session on an auth page → dashboard. Skip /auth/callback (in-flight
+  //    code exchange) and /reset-password* (the OTP flow establishes a
+  //    recovery session via verifyOtp, then the user sets a new password
+  //    while still on /reset-password/confirm — must NOT bounce them away).
+  const isResetFlow = pathname.startsWith('/reset-password')
+  if (user && isPublicPath && !isAuthCallback && !isResetFlow) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     url.searchParams.delete('next')

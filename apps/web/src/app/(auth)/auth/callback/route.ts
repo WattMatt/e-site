@@ -19,8 +19,22 @@ export async function GET(request: Request) {
   const tokenHash = searchParams.get('token_hash') ?? searchParams.get('token')
   const otpTypeRaw = searchParams.get('type')
   const next = searchParams.get('next') ?? '/dashboard'
+  // Supabase redirects back with these when its /verify endpoint rejects
+  // the token (expired, already-used, or burned by an email scanner).
+  const errorCode = searchParams.get('error_code')
   // `from` annotates the caller: 'magic_link', 'oauth_google', etc.
   const from = searchParams.get('from')
+
+  // If Supabase bounced with an error_code, route the user to a recovery
+  // path rather than the generic /login?error=... so they can request a
+  // fresh code without thinking about it.
+  if (errorCode) {
+    console.warn('auth/callback: supabase error_code', { errorCode, next })
+    if (next.startsWith('/reset-password')) {
+      return NextResponse.redirect(`${origin}/reset-password?error=${encodeURIComponent(errorCode)}`)
+    }
+    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(errorCode)}`)
+  }
 
   const supabase = await createClient()
 

@@ -43,6 +43,11 @@ const changeEmailSchema = z.object({
   password: z.string().min(1, 'Please enter your password.'),
 })
 
+const confirmEmailChangeSchema = z.object({
+  newEmail: z.string().email(),
+  code:     z.string().regex(/^\d{6}$/, 'Enter the 6-digit code.'),
+})
+
 export async function deleteAccountAction(formData: FormData): Promise<{
   ok:    boolean
   error?: string
@@ -149,8 +154,9 @@ export async function deleteAccountAction(formData: FormData): Promise<{
  * clicked. Returns ok=true once the confirmation email is dispatched.
  */
 export async function changeEmailAction(formData: FormData): Promise<{
-  ok:    boolean
-  error?: string
+  ok:       boolean
+  error?:   string
+  newEmail?: string
 }> {
   const headersList = await headers()
   const ip = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
@@ -186,13 +192,55 @@ export async function changeEmailAction(formData: FormData): Promise<{
     return { ok: false, error: updErr.message }
   }
 
-  const service = createServiceClient()
-  await logAuthEvent(service, {
-    userId:    user.id,
+  return { ok: true, newEmail }
+}
+
+/**
+ * Confirm a pending email change by submitting the 6-digit code Supabase
+ * sent to the new address. After verifyOtp(type:'email_change') succeeds,
+ * Supabase flips the user's email and we log the event.
+ */
+export async function confirmEmailChangeAction(formData: FormData): Promise<{
+  ok:    boolean
+  error?: string
+}> {
+  const headersList = await headers()
+  const ip = headersList.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ua = headersList.get('user-agent') ?? null
+
+  if (!rateLimit(`email-change-confirm:${ip}`, 10, 600_000)) {
+    return { ok: false, error: 'Too many attempts. Please try again later.' }
+  }
+
+  const parsed = confirmEmailChangeSchema.safeParse({
+    newEmail: formData.get('newEmail'),
+    code:     formData.get('code'),
+  })
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+
+  const supabase = await createClient()
+  const { data: { user: oldUser } } = await supabase.auth.getUser()
+  if (!oldUser) return { ok: false, error: 'Not authenticated.' }
+  const fromEmail = oldUser.email ?? null
+
+  const { error: verErr } = await supabase.auth.verifyOtp({
+    email: parsed.data.newEmail,
+    token: parsed.data.code,
+    type:  'email_change',
+  })
+  if (verErr) {
+    console.error('confirmEmailChange verifyOtp failed', verErr)
+    return { ok: false, error: verErr.message }
+  }
+
+  await logAuthEvent(createServiceClient(), {
+    userId:    oldUser.id,
     eventType: 'account_email_changed',
     ipAddress: ip === 'unknown' ? null : ip,
     userAgent: ua,
-    metadata:  { from_email: user.email, to_email: newEmail },
+    metadata:  { from_email: fromEmail, to_email: parsed.data.newEmail },
   })
 
   return { ok: true }
