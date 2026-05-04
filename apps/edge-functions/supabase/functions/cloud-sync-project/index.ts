@@ -42,7 +42,10 @@ import { decryptToken, encryptToken } from '../_shared/encryption.ts'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const DOCUMENTS_BUCKET = 'project-documents'
-const FLOOR_PLANS_BUCKET = 'floor-plans'
+// Existing tenants.floor_plans rows store paths in the `drawings` bucket
+// (created by 00012_invites_storage.sql) — we match that for cloud-synced
+// drawings so the existing markup canvas + RFI annotation flows just work.
+const FLOOR_PLANS_BUCKET = 'drawings'
 
 // Depth + count limits to keep a single sync bounded. Phase 2 adds
 // scheduled chunked syncs that pick up where these leave off.

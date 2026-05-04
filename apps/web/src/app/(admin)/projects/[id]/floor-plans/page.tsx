@@ -4,20 +4,36 @@ import { createClient } from '@/lib/supabase/server'
 import { projectService, floorPlanService } from '@esite/shared'
 import { FloorPlanUploadButton } from './FloorPlanUploadButton'
 import { DrawingsList, type DrawingListItem } from './DrawingsList'
+import { CloudSyncToolbar } from '@/components/cloud-storage/CloudSyncToolbar'
 
 interface Props { params: Promise<{ id: string }> }
+
+interface ConnectionOption {
+  id: string
+  provider: 'dropbox' | 'google_drive' | 'onedrive'
+  account_email: string
+}
 
 export default async function FloorPlansPage({ params }: Props) {
   const { id: projectId } = await params
   const supabase = await createClient()
 
-  const [project, plans] = await Promise.all([
+  const [project, plans, connectionsRes] = await Promise.all([
     projectService.getById(supabase as any, projectId).catch(() => null),
     floorPlanService.listByProject(supabase as any, projectId).catch(() => []),
+    // Connections (for the picker). Cast through any: tables not in types.ts yet.
+    (supabase as any)
+      .from('org_storage_connections')
+      .select('id, provider, account_email')
+      .order('created_at', { ascending: false }),
   ])
   if (!project) notFound()
 
   const orgId = (project as any).organisation_id as string
+  const connections = (connectionsRes?.data ?? []) as unknown as ConnectionOption[]
+  const cloudFolderPath = (project as any).cloud_storage_folder_path ?? null
+  const lastSyncAt = (project as any).cloud_storage_last_sync_at ?? null
+  const mappedConnectionId = (project as any).cloud_storage_connection_id ?? null
 
   const plansWithUrls: DrawingListItem[] = await Promise.all(
     plans.map(async (plan) => {
@@ -56,6 +72,14 @@ export default async function FloorPlansPage({ params }: Props) {
         </div>
         <FloorPlanUploadButton projectId={projectId} orgId={orgId} />
       </div>
+
+      <CloudSyncToolbar
+        projectId={projectId}
+        connections={connections}
+        mappedConnectionId={mappedConnectionId}
+        cloudFolderPath={cloudFolderPath}
+        lastSyncAt={lastSyncAt}
+      />
 
       <DrawingsList plans={plansWithUrls} projectId={projectId} />
     </div>
