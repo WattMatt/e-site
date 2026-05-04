@@ -41,7 +41,7 @@ export interface SendResult {
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 const FROM = Deno.env.get('RESEND_FROM') ?? 'E-Site <noreply@e-site.live>'
-const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://app.e-site.co.za'
+const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://app.e-site.live'
 
 export function getSiteUrl(): string {
   return SITE_URL

@@ -80,7 +80,7 @@ export default function TermsPage() {
 
       <H2>10. Contact</H2>
       <P>
-        General enquiries: <a href="mailto:hello@e-site.co.za" style={{ color: 'var(--c-text-mid)' }}>hello@e-site.co.za</a>.
+        General enquiries: <a href="mailto:hello@e-site.live" style={{ color: 'var(--c-text-mid)' }}>hello@e-site.live</a>.
       </P>
     </div>
   )

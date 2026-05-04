@@ -45,7 +45,7 @@ export async function optOutMarketingEmailsAction(userId: string): Promise<{
 
   if (error) {
     console.error('unsubscribe: update failed', error)
-    return { ok: false, error: 'We couldn\u2019t process your unsubscribe. Please email hello@e-site.co.za.' }
+    return { ok: false, error: 'We couldn\u2019t process your unsubscribe. Please email hello@e-site.live.' }
   }
 
   return { ok: true, email: (data as { email?: string } | null)?.email ?? undefined }
@@ -65,7 +65,7 @@ export async function optBackInMarketingEmailsAction(userId: string): Promise<{
     .eq('id', userId)
 
   if (error) {
-    return { ok: false, error: 'We couldn\u2019t update your preference. Please email hello@e-site.co.za.' }
+    return { ok: false, error: 'We couldn\u2019t update your preference. Please email hello@e-site.live.' }
   }
   return { ok: true }
 }

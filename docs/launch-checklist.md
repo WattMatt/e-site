@@ -78,24 +78,24 @@ Must be done before items 4 and 5.
 ## 2. Resend — Email Domain Verification
 
 ### What it is
-E-Site sends lifecycle emails (onboarding, re-engagement, payment recovery) from `noreply@e-site.co.za`. Resend requires you to prove you own that domain before emails go out. Without this, all lifecycle emails are blocked.
+E-Site sends lifecycle emails (onboarding, re-engagement, payment recovery) from `noreply@e-site.live`. Resend requires you to prove you own that domain before emails go out. Without this, all lifecycle emails are blocked.
 
 ### How to set it up
 1. Go to [https://resend.com](https://resend.com) and sign in (or create an account with `arno@watsonmattheus.com`).
 2. Click **Domains → Add Domain**.
-3. Enter `e-site.co.za` and click **Add**.
+3. Enter `e-site.live` and click **Add**.
 4. Resend will show you 3–4 DNS records to add. They look like:
    ```
-   Type: TXT   Name: resend._domainkey.e-site.co.za   Value: p=... (copy exact value from Resend dashboard)
-   Type: MX    Name: send.e-site.co.za                Value: feedback-smtp.eu-west-1.amazonses.com
-   Type: TXT   Name: send.e-site.co.za                Value: v=spf1 include:amazonses.com ~all
+   Type: TXT   Name: resend._domainkey.e-site.live   Value: p=... (copy exact value from Resend dashboard)
+   Type: MX    Name: send.e-site.live                Value: feedback-smtp.eu-west-1.amazonses.com
+   Type: TXT   Name: send.e-site.live                Value: v=spf1 include:amazonses.com ~all
    ```
-5. Log in to your DNS provider (wherever `e-site.co.za` is registered — likely Domains.co.za, Afrihost, or similar). Add each record exactly as shown.
+5. Log in to your DNS provider (wherever `e-site.live` is registered — likely Domains.co.za, Afrihost, or similar). Add each record exactly as shown.
 6. Click **Verify** in Resend. DNS propagation can take 10–60 minutes. Resend will email you when verified.
 7. Once verified, go to **API Keys → Create API Key**. Set:
    - **Name:** `esite-production`
    - **Permission:** Sending access
-   - **Domain:** `e-site.co.za`
+   - **Domain:** `e-site.live`
 8. Copy the API key (store in 1Password — do not write it here).
 
 ### What to do with it
@@ -104,11 +104,11 @@ Set these in Vercel (item 4) and as Supabase Edge Function secrets:
 | Variable | Value |
 |---|---|
 | `RESEND_API_KEY` | `re_xxxx` (the key from step 8) |
-| `RESEND_FROM` | `E-Site <noreply@e-site.co.za>` |
+| `RESEND_FROM` | `E-Site <noreply@e-site.live>` |
 
 For Edge Functions:
 ```bash
-npx supabase secrets set RESEND_API_KEY=re_xxxx RESEND_FROM="E-Site <noreply@e-site.co.za>" --project-ref <staging-ref>
+npx supabase secrets set RESEND_API_KEY=re_xxxx RESEND_FROM="E-Site <noreply@e-site.live>" --project-ref <staging-ref>
 ```
 
 ### Verification
@@ -117,7 +117,7 @@ npx supabase secrets set RESEND_API_KEY=re_xxxx RESEND_FROM="E-Site <noreply@e-s
 curl -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer re_xxxx" \
   -H "Content-Type: application/json" \
-  -d '{"from":"noreply@e-site.co.za","to":"arno@watsonmattheus.com","subject":"Test","html":"<p>Test</p>"}'
+  -d '{"from":"noreply@e-site.live","to":"arno@watsonmattheus.com","subject":"Test","html":"<p>Test</p>"}'
 # Expected: {"id":"..."}
 ```
 
@@ -151,7 +151,7 @@ E-Site uses Paystack for subscriptions and supplier payouts. You need a South Af
 
 #### 3c. Set webhook URL (needed for staging)
 1. On the same Settings → API Keys & Webhooks page, scroll to **Webhooks**.
-2. Add webhook URL: `https://staging.e-site.co.za/api/paystack/webhook`
+2. Add webhook URL: `https://staging.e-site.live/api/paystack/webhook`
 3. Generate a random webhook secret (use [https://generate-secret.vercel.app/32](https://generate-secret.vercel.app/32)) and paste it into the **Signature** field.
 4. Copy the webhook secret (store in 1Password).
 
@@ -187,7 +187,7 @@ npx tsx scripts/paystack/pilot-test.ts
 # Expected: all 5 split variants + EFT + subscriptions pass
 ```
 
-Also visit `https://staging.e-site.co.za/settings/billing` — the billing page should load and "Upgrade" should redirect to a Paystack checkout page.
+Also visit `https://staging.e-site.live/settings/billing` — the billing page should load and "Upgrade" should redirect to a Paystack checkout page.
 
 ### Dependencies
 Must complete 3c before Claude Code runs staging smoke tests.
@@ -216,7 +216,7 @@ Go to **Project → Settings → Environment Variables** and add every row below
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase dashboard → staging project → Settings → API | Preview only for staging; Production for prod |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Same location — "anon public" key | All |
 | `SUPABASE_SERVICE_ROLE_KEY` | Same — "service_role" key | All (server-only) |
-| `NEXT_PUBLIC_SITE_URL` | `https://staging.e-site.co.za` for staging; `https://app.e-site.co.za` for prod | Per-environment |
+| `NEXT_PUBLIC_SITE_URL` | `https://staging.e-site.live` for staging; `https://app.e-site.live` for prod | Per-environment |
 | `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY` | Paystack → Settings → API Keys (item 3) | All |
 | `PAYSTACK_SECRET_KEY` | Same — secret key | All (server-only) |
 | `PAYSTACK_WEBHOOK_SECRET` | The secret you set in Paystack (item 3c) | All (server-only) |
@@ -229,14 +229,14 @@ Go to **Project → Settings → Environment Variables** and add every row below
 | `RESEND_API_KEY` | Resend (item 2) | All (server-only) |
 
 #### 4c. Set staging subdomain
-In **Project → Settings → Domains**, add `staging.e-site.co.za`. Vercel will show you DNS records to add (usually a CNAME). Add them at your DNS provider.
+In **Project → Settings → Domains**, add `staging.e-site.live`. Vercel will show you DNS records to add (usually a CNAME). Add them at your DNS provider.
 
 #### 4d. Redeploy
 Trigger a new deployment from the Vercel dashboard after setting all variables.
 
 ### Verification
 ```bash
-curl https://staging.e-site.co.za/api/health
+curl https://staging.e-site.live/api/health
 # Expected: {"healthy":true,"components":{"database":{"status":"ok"},...}}
 ```
 All components must show `"ok"` or `"degraded"` (not `"error"`).
@@ -304,7 +304,7 @@ npx eas build --platform android --profile preview
 Update `eas.json` with the real values once you have them:
 ```json
 "ios": {
-  "appleId": "developer@e-site.co.za",
+  "appleId": "developer@e-site.live",
   "ascAppId": "<App Store Connect App ID>",
   "appleTeamId": "<10-char team ID from developer.apple.com/account>"
 }
@@ -365,7 +365,7 @@ pnpm add @sentry/react-native expo-application expo-device expo-localization --f
 ```
 
 ### Verification
-**Web:** Visit any page on staging and check Sentry dashboard for a session. Or trigger a test error by visiting `https://staging.e-site.co.za/api/health` and checking the Sentry → Issues list.
+**Web:** Visit any page on staging and check Sentry dashboard for a session. Or trigger a test error by visiting `https://staging.e-site.live/api/health` and checking the Sentry → Issues list.
 
 **Mobile:** In the dev build, shake the device and a Sentry event should appear within 30 seconds in the Sentry dashboard.
 
@@ -420,7 +420,7 @@ Several DNS records are needed for the app to work correctly: the web app domain
 
 ### Records to add
 
-All records go at your DNS provider for `e-site.co.za`. If you don't know your DNS provider, check your domain registrar (likely Domains.co.za, Afrihost, or Hetzner SA).
+All records go at your DNS provider for `e-site.live`. If you don't know your DNS provider, check your domain registrar (likely Domains.co.za, Afrihost, or Hetzner SA).
 
 #### Web app
 | Type | Name | Value | Purpose |
@@ -439,20 +439,20 @@ Resend gives you the exact records to add (item 2). Typically:
 | `TXT` | `send` | `v=spf1 include:amazonses.com ~all` |
 
 #### iOS Universal Links (for magic-link auth on iPhone)
-Apple requires an HTTPS endpoint at `https://e-site.co.za/.well-known/apple-app-site-association` that returns a JSON file. This is served by the Next.js app. Make sure the `app` A/CNAME record above is live before testing.
+Apple requires an HTTPS endpoint at `https://e-site.live/.well-known/apple-app-site-association` that returns a JSON file. This is served by the Next.js app. Make sure the `app` A/CNAME record above is live before testing.
 
-The file is already generated by the `app.config.ts` `associatedDomains: ['applinks:e-site.co.za']` setting — Expo handles this automatically during the App Store submission process.
+The file is already generated by the `app.config.ts` `associatedDomains: ['applinks:e-site.live']` setting — Expo handles this automatically during the App Store submission process.
 
 ### Verification
 ```bash
 # Check web app DNS
-dig CNAME app.e-site.co.za
+dig CNAME app.e-site.live
 
 # Check email DNS
-dig TXT resend._domainkey.e-site.co.za
+dig TXT resend._domainkey.e-site.live
 
 # After app is live — check Apple site association
-curl https://e-site.co.za/.well-known/apple-app-site-association
+curl https://e-site.live/.well-known/apple-app-site-association
 ```
 
 ### Dependencies
@@ -599,7 +599,7 @@ Required to distribute the iOS app on the App Store. Annual fee: USD $99/year.
 
 ### How to set it up
 1. Go to [https://developer.apple.com/programs/enroll/](https://developer.apple.com/programs/enroll/).
-2. Sign in with your Apple ID (create one at `developer@e-site.co.za` if needed).
+2. Sign in with your Apple ID (create one at `developer@e-site.live` if needed).
 3. Enrol as an **Organisation** (not individual — requires your CIPC registration and D-U-N-S number).
 4. **Get a D-U-N-S number** (free, required for org enrolment):
    - Go to [https://www.dnb.com/duns-number/get-a-duns.html](https://www.dnb.com/duns-number/get-a-duns.html)
@@ -615,7 +615,7 @@ Required to distribute the iOS app on the App Store. Annual fee: USD $99/year.
 Update `esite/apps/mobile/eas.json`:
 ```json
 "ios": {
-  "appleId": "developer@e-site.co.za",
+  "appleId": "developer@e-site.live",
   "ascAppId": "1234567890",
   "appleTeamId": "ABCDE12345"
 }
@@ -638,7 +638,7 @@ Required to distribute the Android app on the Google Play Store. One-time fee: U
 
 ### How to set it up
 1. Go to [https://play.google.com/console/signup](https://play.google.com/console/signup).
-2. Sign in with a Google account (`developer@e-site.co.za`).
+2. Sign in with a Google account (`developer@e-site.live`).
 3. Pay the one-time $25 registration fee.
 4. Complete the developer profile:
    - Developer name: `Watson Mattheus (Pty) Ltd`
@@ -696,7 +696,7 @@ Should be in place before production launch. Your lawyer (item 10) can review th
 Before handing off to Claude Code to run the staging deploy, confirm:
 
 - [ ] Supabase staging project created — URL, anon key, service role key, DB URL copied
-- [ ] `e-site.co.za` DNS records added for `staging.` subdomain (Vercel CNAME)
+- [ ] `e-site.live` DNS records added for `staging.` subdomain (Vercel CNAME)
 - [ ] Resend API key obtained and domain verification initiated (DNS records added)
 - [ ] Paystack SA test account created — public key, secret key, webhook secret copied
 - [ ] PowerSync instance URL confirmed (your existing PowerSync project)
@@ -754,8 +754,8 @@ Once all 6 items are confirmed, tell Claude Code: **"Staging is ready — run th
 ```bash
 npx supabase secrets set \
   RESEND_API_KEY=re_... \
-  RESEND_FROM="E-Site <noreply@e-site.co.za>" \
-  SITE_URL=https://app.e-site.co.za \
+  RESEND_FROM="E-Site <noreply@e-site.live>" \
+  SITE_URL=https://app.e-site.live \
   PAYSTACK_SECRET_KEY=sk_... \
   PAYSTACK_WEBHOOK_SECRET=... \
   --project-ref <your-project-ref>

@@ -25,7 +25,7 @@ export function BillingCheckoutButton({ tier, period, label, variant = 'primary'
       })
       const data = await res.json()
       if (data.contactSales) {
-        window.location.href = 'mailto:sales@e-site.co.za'
+        window.location.href = 'mailto:sales@e-site.live'
         return
       }
       if (data.authorization_url) {

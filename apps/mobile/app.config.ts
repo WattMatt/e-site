@@ -37,7 +37,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         'E-Site may use the microphone during video capture on site.',
       UIBackgroundModes: ['remote-notification'],
     },
-    associatedDomains: ['applinks:e-site.co.za'],
+    associatedDomains: ['applinks:app.e-site.live'],
   },
   android: {
     adaptiveIcon: {

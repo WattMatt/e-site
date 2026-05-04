@@ -58,7 +58,7 @@ ${preheader}
   </td></tr>
   <tr><td style="padding:20px 4px 0;font-size:11px;color:${PALETTE.textDim};line-height:1.5">
     E-Site · Construction management for SA electrical contractors.<br>
-    <a href="${v.siteUrl}" style="color:${PALETTE.textMid};text-decoration:underline">app.e-site.co.za</a>
+    <a href="${v.siteUrl}" style="color:${PALETTE.textMid};text-decoration:underline">app.e-site.live</a>
     · <a href="${v.unsubscribeUrl}" style="color:${PALETTE.textMid};text-decoration:underline">Unsubscribe</a>
   </td></tr>
 </table>

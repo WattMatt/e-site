@@ -152,7 +152,7 @@ export default async function BillingPage() {
               {!isCurrent && (
                 isEnterprise ? (
                   <a
-                    href="mailto:sales@e-site.co.za"
+                    href="mailto:sales@e-site.live"
                     style={{
                       display: 'block',
                       textAlign: 'center',

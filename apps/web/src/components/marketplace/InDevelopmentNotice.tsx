@@ -73,7 +73,7 @@ export function InDevelopmentNotice({
           We&apos;re holding it back until the Paystack settlement model and supplier onboarding are validated.
         </p>
         <p style={{ fontSize: 13, color: 'var(--c-text-dim)', margin: '0 0 24px' }}>
-          Want early access? Email <a href="mailto:hello@e-site.co.za" style={{ color: 'var(--c-amber)' }}>hello@e-site.co.za</a>.
+          Want early access? Email <a href="mailto:hello@e-site.live" style={{ color: 'var(--c-amber)' }}>hello@e-site.live</a>.
         </p>
 
         <Link

@@ -77,8 +77,8 @@ SELECT count(*) FROM supabase_migrations.schema_migrations;
 ```bash
 # Required secrets (run once per environment)
 supabase secrets set RESEND_API_KEY=re_... --project-ref <ref>
-supabase secrets set RESEND_FROM="E-Site <noreply@e-site.co.za>" --project-ref <ref>
-supabase secrets set SITE_URL="https://app.e-site.co.za" --project-ref <ref>
+supabase secrets set RESEND_FROM="E-Site <noreply@e-site.live>" --project-ref <ref>
+supabase secrets set SITE_URL="https://app.e-site.live" --project-ref <ref>
 
 # All internal functions (including lifecycle email + payment recovery + health scoring)
 for fn in onboarding-email-d0 onboarding-email-d1 onboarding-email-d3 \
@@ -201,7 +201,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY    = eyJhbG...
 SUPABASE_SERVICE_ROLE_KEY        = eyJhbG...  (server-only, not NEXT_PUBLIC_)
 PAYSTACK_SECRET_KEY              = sk_test_xxxx
 NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY  = pk_test_xxxx
-NEXT_PUBLIC_SITE_URL             = https://staging.e-site.co.za
+NEXT_PUBLIC_SITE_URL             = https://staging.e-site.live
 NEXT_PUBLIC_POSTHOG_KEY          = phc_xxxx
 NEXT_PUBLIC_POSTHOG_HOST         = https://eu.posthog.com
 SENTRY_DSN                       = https://xxxx@sentry.io/xxxx
@@ -222,7 +222,7 @@ git push origin feat/powersync:staging
 
 ### 5c. Verify deployment
 
-- Visit `https://staging.e-site.co.za/api/health`
+- Visit `https://staging.e-site.live/api/health`
 - Expect: `{ "healthy": true, ... }`
 - All components should show `"ok"` status
 
@@ -251,7 +251,7 @@ eas update --branch staging --message "T-059 staging build"
 | `EXPO_PUBLIC_SUPABASE_URL` | staging Supabase URL | prod Supabase URL |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | staging anon key | prod anon key |
 | `EXPO_PUBLIC_POWERSYNC_URL` | staging PowerSync | prod PowerSync |
-| `EXPO_PUBLIC_WEB_URL` | `https://esite-lilac.vercel.app` | `https://e-site.co.za` |
+| `EXPO_PUBLIC_WEB_URL` | `https://esite-lilac.vercel.app` | `https://e-site.live` |
 
 `EXPO_PUBLIC_WEB_URL` is required — it's where the mobile app sends authenticated notification dispatches. Without it the app falls back to the staging URL even in production builds.
 
@@ -264,7 +264,7 @@ eas update --branch staging --message "T-059 staging build"
 
 1. Log in to Paystack dashboard (test mode)
 2. Go to Settings → API Keys & Webhooks
-3. Set webhook URL: `https://staging.e-site.co.za/api/paystack/webhook`
+3. Set webhook URL: `https://staging.e-site.live/api/paystack/webhook`
 4. Note the webhook secret; set it as `PAYSTACK_WEBHOOK_SECRET` in Vercel
 
 ---
@@ -329,8 +329,8 @@ Before going to production, record these baselines:
 
 ```bash
 # Lighthouse on key pages
-npx lighthouse https://staging.e-site.co.za/dashboard --output=json > docs/lighthouse-staging.json
-npx lighthouse https://staging.e-site.co.za/compliance --output=json >> docs/lighthouse-staging.json
+npx lighthouse https://staging.e-site.live/dashboard --output=json > docs/lighthouse-staging.json
+npx lighthouse https://staging.e-site.live/compliance --output=json >> docs/lighthouse-staging.json
 ```
 
 Target: LCP < 2.5s, FID < 100ms, CLS < 0.1 on staging.

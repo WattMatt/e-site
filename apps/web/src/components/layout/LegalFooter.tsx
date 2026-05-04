@@ -15,7 +15,7 @@ const BUSINESS = {
   registrationNo:    '2026/XXXXXX/07',                      // TODO pull from CIPC certificate
   vatNo:             'Not yet VAT-registered',              // TODO update when VAT-registered
   physicalAddress:   'Somerset West, Western Cape, South Africa',  // TODO full street address
-  contactEmail:      'hello@e-site.co.za',
+  contactEmail:      'hello@e-site.live',
   infoOfficer:       'Arno Mattheus',
   infoOfficerEmail:  'arno@watsonmattheus.com',
 }

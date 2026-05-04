@@ -18,7 +18,7 @@ for (const { path: route, heading } of LEGAL_PAGES) {
     await expect(page.getByRole('heading', { name: heading })).toBeVisible()
   })
 
-  test(`${route} contains POPIA / e-site.co.za reference`, async ({ page }) => {
+  test(`${route} contains POPIA / e-site.live reference`, async ({ page }) => {
     await page.goto(route)
     const body = await page.textContent('body')
     // Should reference the company or POPIA

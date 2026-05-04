@@ -26,7 +26,7 @@ export default async function UnsubscribePage(props: {
         <P>
           This link is missing the information we need to identify your account. If you got here
           by following an E-Site email link, please try again or email
-          {' '}<a href="mailto:hello@e-site.co.za" style={{ color: 'var(--c-text-mid)' }}>hello@e-site.co.za</a>.
+          {' '}<a href="mailto:hello@e-site.live" style={{ color: 'var(--c-text-mid)' }}>hello@e-site.live</a>.
         </P>
       </div>
     )

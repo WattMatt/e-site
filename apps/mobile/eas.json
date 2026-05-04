@@ -33,7 +33,7 @@
       "channel": "production",
       "distribution": "store",
       "env": {
-        "EXPO_PUBLIC_WEB_URL": "https://e-site.co.za"
+        "EXPO_PUBLIC_WEB_URL": "https://app.e-site.live"
       },
       "ios": {
         "credentialsSource": "remote"
@@ -47,7 +47,7 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "developer@e-site.co.za",
+        "appleId": "developer@e-site.live",
         "ascAppId": "TODO_APP_STORE_CONNECT_APP_ID",
         "appleTeamId": "TODO_APPLE_TEAM_ID"
       },

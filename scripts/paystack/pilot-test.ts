@@ -25,7 +25,7 @@
  *   PAYSTACK_SECRET_KEY=sk_test_xxxx \
  *   SUPABASE_URL=https://<ref>.supabase.co \
  *   SUPABASE_SERVICE_ROLE_KEY=eyJhbG... \
- *   STAGING_WEBHOOK_URL=https://staging.e-site.co.za/api/paystack/webhook \
+ *   STAGING_WEBHOOK_URL=https://staging.e-site.live/api/paystack/webhook \
  *   PILOT_ORDER_ID=<uuid>          # marketplace.orders row that exists in the DB
  *   PILOT_ORG_ID=<uuid>            # organisations row that exists in the DB
  *   PILOT_CUSTOMER_EMAIL=alice@e-site-pilot.co.za \

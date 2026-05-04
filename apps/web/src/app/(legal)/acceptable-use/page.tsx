@@ -49,7 +49,7 @@ export default function AcceptableUsePage() {
       <H2>5. Reporting abuse</H2>
       <P>
         If you see something on E-Site that violates this policy, email
-        {' '}<a href="mailto:abuse@e-site.co.za" style={{ color: 'var(--c-text-mid)' }}>abuse@e-site.co.za</a>.
+        {' '}<a href="mailto:abuse@e-site.live" style={{ color: 'var(--c-text-mid)' }}>abuse@e-site.live</a>.
       </P>
     </div>
   )
