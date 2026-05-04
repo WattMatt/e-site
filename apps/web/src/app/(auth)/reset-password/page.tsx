@@ -80,7 +80,11 @@ export default function ResetPasswordPage() {
       return
     }
     const trimmed = rawEmail.trim().toLowerCase()
-    const redirectTo = `${window.location.origin}/auth/callback?next=/reset-password/confirm`
+    // Carry the email through redirect_to so /auth/callback can pre-fill the
+    // code-entry page if Supabase bounces back with otp_expired (scanner-burnt
+    // link). Round-trips: app → Supabase /verify → app /auth/callback → app
+    // /reset-password?step=code&email=...
+    const redirectTo = `${window.location.origin}/auth/callback?next=/reset-password/confirm&email=${encodeURIComponent(trimmed)}`
     const { error } = await supabase.auth.resetPasswordForEmail(trimmed, {
       redirectTo,
       ...(captchaToken ? { captchaToken } : {}),

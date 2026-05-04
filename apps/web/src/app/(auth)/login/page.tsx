@@ -246,7 +246,12 @@ export default function LoginPage() {
 
       <div className="auth-links">
         {mode === 'password' && (
-          <Link href="/reset-password" className="auth-link">Forgot password?</Link>
+          <Link
+            href={`/reset-password${pw.watch('email') ? `?email=${encodeURIComponent(pw.watch('email'))}` : ''}`}
+            className="auth-link"
+          >
+            Forgot password?
+          </Link>
         )}
         <Link href="/signup" className="auth-link">
           No account?{' '}

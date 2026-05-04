@@ -25,15 +25,20 @@ export async function GET(request: Request) {
   // `from` annotates the caller: 'magic_link', 'oauth_google', etc.
   const from = searchParams.get('from')
 
-  // If Supabase bounced with an error_code, route the user to a recovery
-  // path rather than the generic /login?error=... so they can request a
-  // fresh code without thinking about it.
+  // If Supabase bounced with an error_code, route the user straight to the
+  // code-entry page with email pre-filled (if we have it) so they can type
+  // the code from the same email without restarting the flow.
   if (errorCode) {
-    console.warn('auth/callback: supabase error_code', { errorCode, next })
+    const carriedEmail = searchParams.get('email')
+    console.warn('auth/callback: supabase error_code', { errorCode, next, hasEmail: !!carriedEmail })
     if (next.startsWith('/reset-password')) {
-      return NextResponse.redirect(`${origin}/reset-password?error=${encodeURIComponent(errorCode)}`)
+      const params = new URLSearchParams({ step: 'code', error: errorCode })
+      if (carriedEmail) params.set('email', carriedEmail)
+      return NextResponse.redirect(`${origin}/reset-password?${params.toString()}`)
     }
-    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(errorCode)}`)
+    const params = new URLSearchParams({ error: errorCode })
+    if (carriedEmail) params.set('email', carriedEmail)
+    return NextResponse.redirect(`${origin}/login?${params.toString()}`)
   }
 
   const supabase = await createClient()
