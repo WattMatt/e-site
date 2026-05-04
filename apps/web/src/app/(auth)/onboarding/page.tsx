@@ -128,17 +128,7 @@ export default function OnboardingPage() {
                 </select>
               </div>
 
-              <div className="ob-field">
-                <label className="ob-label">CIPC registration number</label>
-                <input name="registrationNumber" className="ob-input" placeholder="2020/123456/07" />
-              </div>
-
-              <div className="ob-field" style={{ marginBottom: 24 }}>
-                <label className="ob-label">VAT number <span style={{ color: 'var(--c-text-dim)' }}>(optional)</span></label>
-                <input name="vatNumber" className="ob-input" placeholder="4123456789" />
-              </div>
-
-              <button type="submit" disabled={isPending} className="ob-btn-primary">
+              <button type="submit" disabled={isPending} className="ob-btn-primary" style={{ marginTop: 8 }}>
                 {isPending ? 'Creating…' : 'Continue →'}
               </button>
             </form>
