@@ -34,3 +34,34 @@ bucket_definitions:
         FROM field.snag_photos sp
         JOIN snags s ON s.id = sp.snag_id
         WHERE s.organisation_id = bucket.org_id
+
+  # tenants.floor_plans — mirrored offline so field workers can open the
+  # markup canvas + RFI annotator without connectivity. Cloud-synced rows
+  # have source_provider populated; locally-uploaded rows have it null.
+  # Both shapes sync identically.
+  org_floor_plans:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT id, project_id, organisation_id, name, level, file_path,
+               file_size_bytes, width_px, height_px, scale, is_active,
+               source_provider, source_file_id, source_revision_id,
+               source_path, synced_at, uploaded_by, created_at, updated_at
+        FROM tenants.floor_plans
+        WHERE organisation_id = bucket.org_id
+
+  # tenants.documents — generic project documents (specs, contracts,
+  # handovers, photos). Mobile gets read-only access offline. Phase 1
+  # has no mobile-side write path; that's a Phase 3+ feature.
+  org_documents:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT id, project_id, organisation_id, name, category,
+               storage_path, mime_type, size_bytes,
+               source_provider, source_file_id, source_revision_id,
+               source_path, synced_at, uploaded_by, created_at, updated_at
+        FROM tenants.documents
+        WHERE organisation_id = bucket.org_id
