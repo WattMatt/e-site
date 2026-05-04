@@ -7,6 +7,12 @@ const ONBOARDING_PATH = '/onboarding'
 const VERIFY_EMAIL_PATH = '/verify-email'
 const VERIFY_MFA_PATH = '/verify-mfa'
 
+// API routes that authenticate via Authorization: Bearer header. They do their
+// own JWT verification + same-org enforcement, so the cookie-based session
+// middleware must NOT redirect them — otherwise mobile clients (Bearer-only)
+// get bounced to /login. See apps/web/src/app/api/notifications/dispatch/route.ts.
+const SELF_AUTH_PATHS = ['/api/notifications/dispatch']
+
 // Service-role client for org membership checks — bypasses RLS entirely.
 // Safe because we always verify the user session via updateSession() first.
 const serviceClient = createClient(
@@ -45,8 +51,17 @@ async function hasVerifiedMfaFactor(userId: string): Promise<boolean> {
 }
 
 export async function middleware(request: NextRequest) {
-  const { supabaseResponse, user, aal } = await updateSession(request)
   const { pathname } = request.nextUrl
+
+  // Bypass cookie-based auth for routes that authenticate themselves via Bearer.
+  // The route handler enforces its own JWT verification, same-org boundaries,
+  // and rate limits. Skipping updateSession also avoids an unnecessary Supabase
+  // round-trip for cookieless mobile callers.
+  if (SELF_AUTH_PATHS.some((p) => pathname.startsWith(p))) {
+    return NextResponse.next()
+  }
+
+  const { supabaseResponse, user, aal } = await updateSession(request)
 
   const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
   const isOnboarding = pathname.startsWith(ONBOARDING_PATH)
