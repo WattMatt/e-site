@@ -144,3 +144,54 @@ export async function clearProjectCloudFolderAction(
   revalidatePath(`/projects/${projectId}/documents`)
   return { ok: true }
 }
+
+/**
+ * Trigger a bulk sync of the project's mapped cloud folder. Calls the
+ * cloud-sync-project edge function (service-role) and returns the per-
+ * file counts. Idempotent — re-runs skip already-imported files.
+ *
+ * UI calls this from the "Sync now" button on the project drawings /
+ * documents tabs. Counts get displayed as a flash. Phase 2 polish: poll
+ * job-status table for long syncs that exceed the edge-function timeout.
+ */
+export async function syncProjectCloudFolderAction(
+  projectId: string,
+): Promise<{
+  sent: number
+  skipped: number
+  failed: number
+  classified: { floor_plans: number; documents: number }
+  errors?: string[]
+}> {
+  if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
+    throw new Error('Invalid project id')
+  }
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Not signed in')
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!supabaseUrl || !serviceKey) {
+    throw new Error('Server is missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
+  }
+
+  const res = await fetch(`${supabaseUrl}/functions/v1/cloud-sync-project`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ projectId, callerUserId: user.id }),
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`sync failed (HTTP ${res.status}): ${body.slice(0, 300)}`)
+  }
+  const result = (await res.json()) as Awaited<
+    ReturnType<typeof syncProjectCloudFolderAction>
+  >
+  revalidatePath(`/projects/${projectId}/floor-plans`)
+  revalidatePath(`/projects/${projectId}/documents`)
+  return result
+}
