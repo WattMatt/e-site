@@ -4,6 +4,11 @@ export const metadata: Metadata = {
   title: 'E-Site — Construction Management',
 }
 
+// All (auth) pages are per-request — they read cookies / search params /
+// supabase session. Static prerender adds no value and trips
+// prerender errors when env vars are missing on the build host.
+export const dynamic = 'force-dynamic'
+
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="auth-shell">

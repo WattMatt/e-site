@@ -3,6 +3,10 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
+
+// useSearchParams() requires either Suspense or force-dynamic. The page is
+// auth-flow / per-request anyway, so static prerender adds no value.
+export const dynamic = 'force-dynamic'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { resetPasswordSchema, type ResetPasswordInput } from '@esite/shared'
