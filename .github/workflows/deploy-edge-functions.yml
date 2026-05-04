@@ -1,10 +1,11 @@
 name: Deploy Edge Functions
 
+# Manual-only — auto-trigger on push removed because the GitHub Actions
+# secrets (SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF) aren't bound, so
+# every main push generated a noise email. Re-enable the push trigger
+# once those secrets are set in Settings → Secrets and Variables → Actions.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/edge-functions/supabase/functions/**'
+  workflow_dispatch:
 
 jobs:
   deploy:
