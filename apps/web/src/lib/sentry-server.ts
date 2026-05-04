@@ -12,7 +12,10 @@ export function initServerSentry(dsn: string) {
     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
     sampleRate: 1.0,
     includeLocalVariables: true,
-    integrations: [Sentry.httpIntegration()],
+    // httpIntegration is auto-included by @sentry/nextjs — explicit reference
+    // was removed when the SDK changed exports. Listing it here breaks the
+    // build with "httpIntegration is not exported".
+    integrations: [],
     tracesSampler(ctx) {
       const name = ctx.name ?? ''
       if (name.includes('/_next/') || name.includes('/favicon')) return 0

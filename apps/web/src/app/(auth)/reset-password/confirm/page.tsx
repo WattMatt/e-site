@@ -10,6 +10,10 @@ import { recordAuthEventAction } from '@/actions/auth-event.actions'
 import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter'
 import type { PasswordEvaluation } from '@/lib/password-strength'
 
+// Same reason as /verify-email/page.tsx — createClient() at component-eval
+// requires NEXT_PUBLIC_SUPABASE_* env vars not present during prerender.
+export const dynamic = 'force-dynamic'
+
 const MIN_ACCEPTABLE_SCORE = 2
 
 type Status = 'checking' | 'ready' | 'invalid' | 'updated'

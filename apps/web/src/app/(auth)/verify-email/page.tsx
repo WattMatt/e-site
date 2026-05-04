@@ -5,6 +5,14 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 
+// Disable prerender — this page calls createClient() at component-eval which
+// requires NEXT_PUBLIC_SUPABASE_* env vars. Those aren't set during the
+// static-export step on the CI build host (only on Vercel runtime), so
+// prerendering throws "@supabase/ssr: Your project's URL and API key are
+// required". The page is per-user / behind auth anyway — nothing to
+// statically pre-render.
+export const dynamic = 'force-dynamic'
+
 const POLL_MS = 4000
 
 export default function VerifyEmailPage() {
