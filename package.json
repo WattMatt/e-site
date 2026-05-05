@@ -19,7 +19,7 @@
     "db:migrate": "cd apps/edge-functions && supabase db push",
     "db:reset": "cd apps/edge-functions && supabase db reset",
     "db:seed": "cd apps/edge-functions && supabase db seed",
-    "demo:seed": "cd apps/web && node --experimental-strip-types scripts/seed-demo.ts"
+    "demo:seed": "node --experimental-strip-types scripts/seed-demo.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -32,7 +32,7 @@
     "typescript": "^5.5.0"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22 <25",
     "pnpm": ">=9.0.0"
   },
   "packageManager": "pnpm@10.33.0"
