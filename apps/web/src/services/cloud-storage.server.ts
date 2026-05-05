@@ -96,9 +96,21 @@ export async function connectCloudProvider(
 }
 
 /**
- * Best-effort revoke at the provider, then DELETE the local row. If the
- * provider revoke fails we still delete locally — better to lose the
- * server-side revoke than to leave the row stranded.
+ * Best-effort revoke at the provider, clear any project mappings that
+ * point at this connection, then DELETE the local row.
+ *
+ * Order matters:
+ *   1. Read the encrypted refresh token (RLS-gated).
+ *   2. Call provider.revoke (best effort — swallow failures).
+ *   3. Null out projects.cloud_storage_* columns on any project mapped
+ *      to this connection. Without this step the FK ON DELETE SET NULL
+ *      would null the connection_id but leave folder_id / folder_path
+ *      stranded, so the toolbar shows "Not mapped" while the DB still
+ *      has stale path data.
+ *   4. DELETE the connection row.
+ *
+ * If provider revoke fails we still delete locally — better to lose the
+ * server-side revoke than leave the row stranded.
  */
 export async function disconnectCloudConnection(
   connectionId: string,
@@ -127,6 +139,29 @@ export async function disconnectCloudConnection(
     await provider.revoke(refresh)
   } catch {
     /* swallow — best effort */
+  }
+
+  // Clear project mappings that point at this connection. RLS lets any
+  // active org member execute this UPDATE on projects.projects (per
+  // 00009 the FOR ALL policy is gated to owner/admin/project_manager;
+  // server actions calling disconnect inherit that gate). Cast through
+  // `any` because cloud_storage_* columns aren't yet in types.ts.
+  const { error: clearErr } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .update({
+      cloud_storage_connection_id: null,
+      cloud_storage_folder_id: null,
+      cloud_storage_folder_path: null,
+      cloud_storage_last_sync_at: null,
+    })
+    .eq('cloud_storage_connection_id', connectionId)
+  if (clearErr) {
+    // Don't fail the whole disconnect — the FK ON DELETE SET NULL will
+    // still null cloud_storage_connection_id when the row is deleted
+    // below. The folder_id / folder_path will be stranded but the user
+    // can re-pick a folder after reconnect.
+    console.warn(`[cloud-storage] failed to clear project mappings: ${clearErr.message}`)
   }
 
   const { error: delErr } = await supabase

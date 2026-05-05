@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { ALL_PROVIDERS } from '@esite/shared'
 import { ConnectProviderButton } from './ConnectProviderButton'
@@ -26,6 +27,27 @@ const PROVIDER_LABEL: Record<ConnectionRow['provider'], string> = {
 export default async function IntegrationsPage({ searchParams }: Props) {
   const sp = await searchParams
   const supabase = await createClient()
+
+  // Page-level role gate. /settings/integrations is org-management UX —
+  // client_viewer (project-scoped read-only role per spec §3) has no
+  // legitimate need to see or manage org-wide cloud connections, and
+  // the RESTRICTIVE RLS policy on org_storage_connections from migration
+  // 00040 would 403 their INSERT after they completed an OAuth round-trip
+  // and granted a real provider token to E-Site that we couldn't store.
+  // Cheaper to redirect them away from the page entirely.
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login?next=/settings/integrations')
+  const { data: mem } = await supabase
+    .from('user_organisations')
+    .select('role')
+    .eq('user_id', user.id)
+    .eq('is_active', true)
+    .limit(1)
+    .single()
+  if (!mem || (mem as { role: string }).role === 'client_viewer') {
+    redirect('/dashboard')
+  }
+
   // Cast through `any` because org_storage_connections isn't yet in
   // packages/db/src/types.ts (regen pending in a polish commit).
   const { data, error } = await (supabase as any)

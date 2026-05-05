@@ -47,10 +47,14 @@ const DOCUMENTS_BUCKET = 'project-documents'
 // drawings so the existing markup canvas + RFI annotation flows just work.
 const FLOOR_PLANS_BUCKET = 'drawings'
 
-// Depth + count limits to keep a single sync bounded. Phase 2 adds
-// scheduled chunked syncs that pick up where these leave off.
+// Depth + count limits to keep a single sync bounded.
+// Supabase Edge Functions have a 150s wall-clock cap. At ~2-5s per file
+// (download + upload + insert), MAX_FILES=50 leaves comfortable headroom
+// even for the slow tail (large PDFs over a slow link). The user can re-
+// click "Sync now" for the rest until the Phase-2 cron chunker lands —
+// dedup keeps repeat runs idempotent, so re-clicking is safe and cheap.
 const MAX_DEPTH = 5
-const MAX_FILES = 500
+const MAX_FILES = 50
 
 // Routing heuristic — see docs/cloud-storage-integration-design.md §6.
 const CAD_EXTENSIONS = new Set(['.dwg', '.dxf', '.dgn', '.rvt'])
@@ -217,7 +221,11 @@ async function syncProject(
       }
       const dl = await provider.downloadFile({ fileId: item.id, accessToken })
       const ab = await new Response(dl.body).arrayBuffer()
-      const bytes = new Uint8Array(ab)
+      // Wrap in Blob so supabase-js storage receives the canonical
+      // BlobPart shape — Uint8Array works in current versions but the
+      // Blob form makes intent + content-type explicit and forward-
+      // compatible with future SDK changes.
+      const blob = new Blob([ab], { type: dl.contentType })
 
       const ext = (item.name.match(/\.[a-z0-9]+$/i)?.[0] ?? '').toLowerCase()
       const bucket = target === 'floor_plans' ? FLOOR_PLANS_BUCKET : DOCUMENTS_BUCKET
@@ -225,7 +233,7 @@ async function syncProject(
 
       const { error: upErr } = await supabase.storage
         .from(bucket)
-        .upload(storagePath, bytes, {
+        .upload(storagePath, blob, {
           contentType: dl.contentType,
           upsert: true,
         })
@@ -240,7 +248,7 @@ async function syncProject(
             project_id: proj.id,
             name: item.name,
             file_path: storagePath,
-            file_size_bytes: dl.contentLength ?? bytes.byteLength,
+            file_size_bytes: dl.contentLength ?? blob.size,
             uploaded_by: req.callerUserId,
             source_provider: conn.provider,
             source_file_id: item.id,
@@ -262,7 +270,7 @@ async function syncProject(
             category: parentPath.split('/')[0] || 'misc',
             storage_path: storagePath,
             mime_type: dl.contentType,
-            size_bytes: dl.contentLength ?? bytes.byteLength,
+            size_bytes: dl.contentLength ?? blob.size,
             source_provider: conn.provider,
             source_file_id: item.id,
             source_revision_id: item.revisionId ?? null,

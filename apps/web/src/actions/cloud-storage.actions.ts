@@ -115,6 +115,13 @@ export async function listCloudFolderAction(args: {
 /**
  * Save (or replace) the per-project folder mapping. UI calls this after
  * the user picks a folder from the tree.
+ *
+ * Role enforcement: this action does NOT check the caller's org role
+ * directly. It relies on RLS on `projects.projects` (migration 00009
+ * "PMs and above can manage projects") to gate UPDATEs to
+ * `owner / admin / project_manager`. A field worker or client_viewer
+ * calling this will receive a 403 from PostgREST. If you ever change
+ * the projects-table RLS, revisit this action and add an app-side check.
  */
 export async function setProjectCloudFolderAction(args: {
   projectId: string
