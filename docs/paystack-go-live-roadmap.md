@@ -6,6 +6,19 @@
 
 ---
 
+## How to use this doc
+
+This roadmap is split into two layers:
+
+1. **Pre-fill blocks** (the boxed `> **PRE-FILL BEFORE PASTING**` sections) — Arno fills in the real-world values that Claude-in-Chrome cannot discover (CIPC numbers, bank details, support contacts, etc.). **If any field in a pre-fill block is blank, STOP — paste the script with blanks and Claude Chrome cannot complete it.**
+2. **Pasteable scripts** (the boxed `> **Task:**` sections) — these are the actual prompts to paste into a Claude-in-Chrome session. Each script is self-contained: it tells Claude exactly which dashboard to open, which buttons to click, what data to enter, what to verify, and what to report back. Plan amounts, plan-code lookup paths, file locations, env-var names, and SQL helpers are already filled from the codebase — no need to look those up.
+
+**Workflow:** Read §0. Resolve §0's code blocker (this is NOT a Claude-Chrome task — it's an engineering decision + commit + deploy). Then for each subsequent section: fill the PRE-FILL block → paste the Task block into Claude-in-Chrome → review the report-back → move to the next section.
+
+**Sections 1, 5, 7 are Arno-only** (gathering documents, real-card smoke test, accountant work). **Sections 2, 3, 4, 6 are Claude-in-Chrome.**
+
+---
+
 ## 0. Code-side blocker (NOT a Claude-Chrome task — flagged here so it doesn't get missed)
 
 **The subscription flow is currently a one-off charge, not a recurring subscription.**
@@ -66,18 +79,68 @@ The rest of this doc assumes Path B is the chosen path.
 
 ## 2. Paystack live-mode KYC (Claude-in-Chrome, ~30 min + Paystack review window of 1–3 business days)
 
-Paste this into Claude-in-Chrome:
+> **PRE-FILL BEFORE PASTING — Claude-in-Chrome cannot discover any of these.**
+> **Replace every `<...>` placeholder with the real value, then paste the whole Task block below.**
+>
+> ```
+> # === Operating entity (matches CIPC) ===
+> ENTITY_LEGAL_NAME=<e.g. "Watson Mattheus (Pty) Ltd">
+> ENTITY_TYPE=<one of: Limited Liability | Sole Proprietor | Partnership | NPO>
+> ENTITY_REGISTRATION_NUMBER=<e.g. "2018/123456/07">
+> ENTITY_REGISTERED_ADDRESS=<full street + suburb + city + postal code>
+> ENTITY_INCORPORATION_DATE=<YYYY-MM-DD from CoR 14.3>
+>
+> # === Trading details ===
+> TRADING_NAME=<max 22 chars, this is what shows on customer bank statements, e.g. "E-SITE">
+> BUSINESS_WEBSITE=<https://e-site.live OR https://esite-lilac.vercel.app>
+> BUSINESS_DESCRIPTION=<one or two sentences, default: "Construction site management SaaS for South African electrical contractors — snag tracking, COC compliance, RFIs, and site diaries.">
+> INDUSTRY_CATEGORY=<closest Paystack option, suggest "SaaS" or "Software / Technology">
+>
+> # === Director / shareholder (one block per director — duplicate as needed) ===
+> DIRECTOR_1_FULL_NAME=<as on ID>
+> DIRECTOR_1_ID_NUMBER=<13-digit SA ID number>
+> DIRECTOR_1_DOB=<YYYY-MM-DD>
+> DIRECTOR_1_RESIDENTIAL_ADDRESS=<full street + suburb + city + postal>
+> DIRECTOR_1_SHAREHOLDING_PCT=<integer 0–100>
+>
+> # === Settlement bank (must be in operating entity name, business account, not personal) ===
+> BANK_NAME=<e.g. FNB | Standard Bank | ABSA | Nedbank | Capitec | TymeBank | Discovery Bank>
+> BANK_ACCOUNT_HOLDER=<must match ENTITY_LEGAL_NAME>
+> BANK_ACCOUNT_NUMBER=<digits only, no spaces>
+> BANK_BRANCH_CODE=<6-digit universal branch code OR specific branch code>
+> BANK_ACCOUNT_TYPE=<Cheque / Current / Business>
+>
+> # === SARS / tax ===
+> SARS_INCOME_TAX_NUMBER=<10-digit company tax number>
+> VAT_REGISTERED=<YES | NO>
+> VAT_NUMBER=<10-digit, only if VAT_REGISTERED=YES>
+>
+> # === Support contacts (Paystack will route disputes here) ===
+> SUPPORT_EMAIL=<e.g. support@e-site.live — must be monitored daily>
+> SUPPORT_PHONE=<+27 nn nnn nnnn — must answer business hours>
+>
+> # === Documents ready to upload (PDFs, on the device used for KYC) ===
+> DOC_CIPC_CERTIFICATE=<file path or "ready">
+> DOC_MOI=<file path or "ready">  # Memorandum of Incorporation
+> DOC_DIRECTOR_ID_COPIES=<file paths or "ready" — one per director, certified <3 months>
+> DOC_PROOF_OF_BUSINESS_ADDRESS=<file path or "ready" — utility bill / lease / bank statement <3 months>
+> DOC_PROOF_OF_DIRECTOR_ADDRESS=<file paths or "ready" — one per director, <3 months>
+> DOC_BANK_CONFIRMATION_LETTER=<file path or "ready" — issued by bank, NOT a statement>
+> DOC_VAT_CERT=<file path OR "n/a if VAT_REGISTERED=NO">
+> ```
+>
+> **Validation:** if any field above still contains a `<...>` placeholder, do not paste yet. Common gaps: bank confirmation letter (people often submit a statement instead — Paystack rejects), proof-of-address >3 months old (Paystack rejects), residential address not matching ID (Paystack rejects).
+
+Paste this into Claude-in-Chrome (after the PRE-FILL block above is fully resolved):
 
 > **Task: complete Paystack live-mode business verification for E-Site.**
 >
-> **Context:** Arno currently has a Paystack TEST-mode account active (test keys live on Vercel). We need to upgrade to LIVE mode. All required documents are gathered (see §1 of `docs/paystack-go-live-roadmap.md`). Operating entity, trading name, settlement bank account, and support contacts are decided.
+> **Context:** Arno has a Paystack TEST-mode account active. Pre-fill values for the operating entity, trading name, directors, bank, tax, support contacts, and documents are at the top of this prompt. All documents are gathered. Sole goal of this session: submit the live-mode KYC form so Paystack starts its 1–3 day review.
 >
-> **Pre-conditions Arno will paste back:**
-> - Operating entity legal name + registration number:
-> - Trading name (max 22 chars):
-> - Settlement bank: bank name + account holder + account number + branch code:
-> - Support email + phone:
-> - Refund policy URL (or policy text):
+> **Pre-flight sanity checks (do these BEFORE filling anything):**
+> a. Confirm logged in to `dashboard.paystack.com` — top-right shows the email Arno expects.
+> b. Confirm we're upgrading the existing test account, NOT creating a new account. If a "create new account" CTA is the only path forward, STOP and tell Arno — he may have multiple Paystack identities and we need to know which one to upgrade.
+> c. Confirm top-right toggle currently shows "Test mode" (orange badge).
 >
 > **Steps:**
 > 1. Open `https://dashboard.paystack.com` and confirm logged in. Top-right toggle currently on "Test mode."
@@ -140,26 +203,29 @@ Paste this into Claude-in-Chrome **only after Paystack confirms verification by 
 > 4. **Roll** the secret key once after copy (Paystack lets you roll keys; this invalidates any leaked copy). Then re-copy the new value. Keeps the audit trail clean.
 >
 > **B. Create the four subscription plans**
+>
+> Amounts below are taken from [`packages/shared/src/services/billing.service.ts`](../packages/shared/src/services/billing.service.ts) `PLANS` constant (source of truth — if these don't match what Arno sees in his pricing page, flag it before continuing). Paystack expects amounts in **kobo** (cents × 100). The Paystack form usually shows a ZAR field that converts internally — if it asks for kobo directly, use the kobo column.
+>
 > 5. Plans → **Create Plan** (one per pricing tier × period combination):
 >
->    | Plan name | Amount | Currency | Interval | Description |
->    |---|---|---|---|---|
->    | Starter Monthly | <amount in ZAR> | ZAR | Monthly | E-Site Starter — 5 projects, 10 users |
->    | Starter Annual | <amount in ZAR> | ZAR | Annually | E-Site Starter — billed yearly, 2 months free |
->    | Professional Monthly | <amount in ZAR> | ZAR | Monthly | E-Site Professional — unlimited projects, unlimited users |
->    | Professional Annual | <amount in ZAR> | ZAR | Annually | E-Site Professional — billed yearly, 2 months free |
+>    | Plan name             | Amount (ZAR) | Amount (kobo) | Currency | Interval  | Description |
+>    |-----------------------|--------------|---------------|----------|-----------|-------------|
+>    | Starter Monthly       | R499.00      | 49900         | ZAR      | Monthly   | E-Site Starter — 5 projects, 10 users, COC tracking, floor plans, priority email support |
+>    | Starter Annual        | R4,990.00    | 499000        | ZAR      | Annually  | E-Site Starter — billed yearly, 2 months free vs monthly |
+>    | Professional Monthly  | R1,499.00    | 149900        | ZAR      | Monthly   | E-Site Professional — unlimited projects, 30 users, marketplace access, API access, phone support |
+>    | Professional Annual   | R14,990.00   | 1499000       | ZAR      | Annually  | E-Site Professional — billed yearly, 2 months free vs monthly |
 >
->    *(Amounts come from `PLANS` in `packages/shared`. Arno: paste actual ZAR amounts before sending this to Claude Chrome.)*
-> 6. After each plan is created, copy its **Plan Code** (starts with `PLN_`). Paste into a list:
+>    *(Skip the Free and Enterprise tiers — Free has no Paystack flow, Enterprise short-circuits to a `mailto:sales@e-site.live` link in the checkout route.)*
+> 6. After each plan is created, copy its **Plan Code** (starts with `PLN_`). Paste into the table below — these are the values that need to land in [`packages/shared/src/services/billing.service.ts`](../packages/shared/src/services/billing.service.ts) under each tier's `paystackPlanCode` field as part of the §0 Path B code change.
 >
->    | Plan | Plan Code |
->    |---|---|
->    | starter monthly | `PLN_…` |
->    | starter annual | `PLN_…` |
->    | professional monthly | `PLN_…` |
->    | professional annual | `PLN_…` |
+>    ```
+>    starter_monthly_plan_code=PLN_<paste>
+>    starter_annual_plan_code=PLN_<paste>
+>    professional_monthly_plan_code=PLN_<paste>
+>    professional_annual_plan_code=PLN_<paste>
+>    ```
 >
->    These plan codes go into `packages/shared/.../plans.ts` in the code change for §0 Path B.
+>    *(Format kept as KEY=VALUE so Arno can grep the chat transcript for `_plan_code=PLN_` and copy all four lines into the next engineering session.)*
 >
 > **C. Configure live webhook**
 > 7. Settings → API Keys & Webhooks → **Webhooks** section → Add webhook URL.
@@ -192,48 +258,119 @@ Paste this into Claude-in-Chrome **only after Paystack confirms verification by 
 
 **Only do this AFTER §3 is complete AND the §0 Path B code change is merged + deployed AND smoke-tested in test mode.**
 
-> **Task: rotate Paystack keys on Vercel from test to live, in production env only. Keep test keys on preview env so PR previews stay sandboxed.**
+> **PRE-FILL BEFORE PASTING — Claude-in-Chrome will paste these into Vercel.**
 >
-> **Context:** Live keys + plans + webhook configured on Paystack dashboard. Code change for §0 Path B is shipped and smoke-tested with test keys. Now we swap Vercel.
+> ```
+> # The live secret key copied from Paystack dashboard in §3 step 3.
+> # Format check: must start with "sk_live_" — if it starts with "sk_test_" you're still on test mode and §3 wasn't completed.
+> SK_LIVE=<sk_live_...>
+>
+> # The live public key copied from Paystack dashboard in §3 step 3.
+> # Format check: must start with "pk_live_".
+> PK_LIVE=<pk_live_...>
+>
+> # The production site URL. Default below assumes DNS cutover is done.
+> # If brand domain not yet cutover, use https://esite-lilac.vercel.app and update later.
+> PRODUCTION_SITE_URL=<https://app.e-site.live>
+> ```
+
+Paste this into Claude-in-Chrome (after the PRE-FILL block above is filled):
+
+> **Task: rotate Paystack keys on Vercel from test → live, Production env only. Keep test keys on Preview so PR previews stay sandboxed.**
+>
+> **Context:** Live keys + plans + webhook configured on Paystack dashboard. §0 Path B code change is shipped and smoke-tested with test keys. Pre-fill values above contain the live keys to paste.
+>
+> **Validation before starting:**
+> a. Confirm `SK_LIVE` starts with `sk_live_`. If it starts with `sk_test_`, STOP — §3 wasn't completed correctly.
+> b. Confirm `PK_LIVE` starts with `pk_live_`. Same check.
 >
 > **Steps:**
 > 1. Open `https://vercel.com/arno-mattheus-projects/esite/settings/environment-variables`.
-> 2. Find `PAYSTACK_SECRET_KEY`. Click the value → "Edit." For the **Production** env only, paste the `sk_live_…` value. Leave **Preview** untouched (test key stays).
-> 3. Find `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY`. Same edit: Production → `pk_live_…`, Preview untouched.
-> 4. While here: confirm `NEXT_PUBLIC_SITE_URL` is `https://app.e-site.live` for Production (after DNS cutover), and `https://esite-lilac.vercel.app` for Preview. If wrong, fix.
-> 5. Trigger a Vercel **redeploy** of the latest production deployment so the new env vars apply. (Vercel does NOT auto-redeploy on env-var change.)
->    - Deployments tab → latest production deployment → ⋯ menu → **Redeploy**.
-> 6. Confirm redeploy reaches READY (~50s).
+> 2. Find `PAYSTACK_SECRET_KEY`. Click the row → "Edit." Three environment checkboxes will appear (Production / Preview / Development). For the **Production** row only, paste the `SK_LIVE` value. Leave **Preview** and **Development** rows untouched (they keep the test key).
+>    - **Vercel UX gotcha:** if the value field shows the test key as the current value across all envs, you need to "split" the var — click "Add another value" or similar to create a per-env override. Confirm afterward that `vercel env ls` (read-only) shows the var with two distinct entries: one for Production, one for Preview/Development.
+> 3. Find `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY`. Same edit: Production → `PK_LIVE`, Preview/Development untouched.
+> 4. Find `NEXT_PUBLIC_SITE_URL`. Confirm Production value matches `PRODUCTION_SITE_URL`. If wrong, fix it. Preview value should stay `https://esite-lilac.vercel.app`.
+> 5. Trigger a Vercel **redeploy** of the latest production deployment (env-var changes do NOT auto-redeploy).
+>    - Deployments tab → filter by Production → latest → ⋯ menu → **Redeploy** → tick "Use existing Build Cache" → Redeploy.
+> 6. Wait until status shows READY (~50s typical). Note the new `dpl_…` ID from the URL bar.
+>
+> **Post-rotation verification (do this in this same Chrome session):**
+> 7. Open `https://app.e-site.live/api/health` (or whichever the production domain is). The route reads `PAYSTACK_SECRET_KEY` and reports `status:'degraded'` if missing — a 200 response with no Paystack-degraded message confirms the key is loaded post-redeploy.
+> 8. As a non-destructive end-to-end check, log in to a real org and click **Subscribe** on `/settings/billing` for the cheapest tier. The Paystack hosted checkout page that opens has a small "Powered by Paystack" footer — if it says "Test mode" anywhere on that page, the rotation didn't take effect (still serving test keys). DO NOT actually pay — just confirm the badge is absent → close the tab.
 >
 > **Report back:**
-> - Production env updated for both keys? Y/N
-> - Preview env still on test keys? Y/N
-> - Redeploy completed? Y/N + new dpl_… ID
+> - `PAYSTACK_SECRET_KEY` Production updated? Y/N + screenshot of env-vars page (with values blurred)
+> - `PAYSTACK_PUBLIC_KEY` Production updated? Y/N
+> - Preview/Development still on `sk_test_…`? Y/N
+> - `NEXT_PUBLIC_SITE_URL` Production correct? Y/N + value
+> - Redeploy READY? Y/N + new `dpl_…` ID
+> - `/api/health` returns 200 with no Paystack-degraded message? Y/N
+> - Hosted checkout page in §4.8 absent the "Test mode" badge? Y/N
 
 ---
 
-## 5. Smoke test with a real (small) charge (~15 min, real money)
+## 5. Smoke test with a real (small) charge (~15 min + 24–48h settlement wait, real money)
 
 **Use a real card. R10 is the smallest sensible test.** Don't use a test card on live mode — Paystack will reject and may flag the account.
 
-Steps Arno does himself (NOT a Claude Chrome task, requires real card + real bank statement):
+Steps Arno does himself (NOT a Claude-Chrome task — requires real card, real bank statement, and decisions only Arno can make about which org to use as the smoke-test target):
 
-1. Open `https://app.e-site.live/settings/billing` (production, real auth).
-2. Pick the cheapest tier × period combo. Click **Subscribe**.
+**0. Identify which org to use as the smoke-test target.** Open Supabase Studio for the production project → SQL Editor → run:
+   ```sql
+   -- Lists every org Arno is in, with current tier + project count.
+   -- Pick the org with the smallest project count (ideally just 1) so the
+   -- post-test paywall-clear behaviour is observable.
+   SELECT
+     o.id              AS org_id,
+     o.name            AS org_name,
+     s.tier            AS current_tier,
+     s.status          AS subscription_status,
+     COUNT(p.id)       AS project_count
+   FROM tenants.organisations o
+   LEFT JOIN billing.subscriptions s ON s.organisation_id = o.id
+   LEFT JOIN projects.projects p ON p.organisation_id = o.id
+   WHERE o.id IN (
+     SELECT organisation_id FROM tenants.user_organisations
+     WHERE user_id = auth.uid() AND is_active = true
+   )
+   GROUP BY o.id, o.name, s.tier, s.status
+   ORDER BY project_count;
+   ```
+   Note the `org_id` UUID of the chosen test org. Save it as `SMOKE_ORG_ID` for steps 5 + 7 below.
+
+1. Open `https://app.e-site.live/settings/billing` (production, real auth, while logged in as a member of `SMOKE_ORG_ID`).
+2. Pick **Starter Monthly** (R499 — the cheapest non-free tier; R10 isn't an option because pricing is plan-fixed). Click **Subscribe**.
 3. On Paystack hosted checkout, pay with real card.
 4. Confirm redirect back to `/settings/billing?success=1`.
-5. Query staging-vs-prod DB:
+5. Verify in DB — paste this into Supabase Studio SQL Editor (replace `<SMOKE_ORG_ID>` with the UUID from step 0):
    ```sql
-   SELECT org_id, tier, status, paystack_customer_code, paystack_subscription_code, current_period_end
-     FROM billing.subscriptions
-    WHERE org_id = '<your test org id>';
+   SELECT
+     organisation_id,
+     tier,
+     status,
+     paystack_customer_code,
+     paystack_subscription_code,
+     current_period_start,
+     current_period_end,
+     created_at,
+     updated_at
+   FROM billing.subscriptions
+   WHERE organisation_id = '<SMOKE_ORG_ID>';
    ```
-   Should show `tier='starter'` (or whichever), `status='active'`, plus a non-NULL `paystack_subscription_code` (this is what proves Path B is working — without it, you're still on one-off mode).
-6. Check Paystack dashboard → Transactions → confirm the R10 charge present.
-7. Refund the R10 from Paystack dashboard (Transactions → ⋯ → Refund) so the customer-side reconciliation is clean. Refund webhook will fire `charge.refund` — confirm it doesn't trip the `subscription.disable` path (it shouldn't, but worth checking).
-8. **Wait for settlement.** Paystack settles SA cards on T+1 to T+2. Check the business bank account 24–48h later. Confirm the refund arrived back too (-R10 settlement).
+   Expected:
+   - `tier='starter'`
+   - `status='active'`
+   - `paystack_customer_code` non-NULL (starts with `CUS_`)
+   - `paystack_subscription_code` non-NULL (starts with `SUB_`) — **this is the critical Path B proof**: a NULL here means the checkout still ran in one-off mode, the §0 code change didn't actually land, and recurring billing won't work next month.
+   - `current_period_end` ≈ `current_period_start + 1 month`
+6. Verify in Paystack dashboard → Transactions → the R499 charge is present, status "Success", and clicking it shows Customer + Subscription IDs matching step 5.
+7. **Refund the R499** from Paystack dashboard (Transactions → ⋯ → Refund full amount). This is "good citizen" behaviour for a smoke test. The refund webhook will fire `charge.refund` and `charge.success` should already have flipped the subscription to `active`. Confirm the refund does NOT trip `subscription.disable` — re-run the SQL in step 5 after the refund webhook lands (~30s later); `status` should still be `active`. (If status flips to `cancelled`, the webhook handler is over-eager and needs a fix before more customers go live.)
+8. **Cancel the test subscription** so it doesn't try to renew next month and re-charge the refunded card. From the app: `/settings/billing` → "Cancel subscription" (if UI exists). Otherwise from Paystack dashboard → Customers → the test customer → Subscriptions → ⋯ → Disable.
+9. **Wait for settlement** (24–48h, T+1 to T+2 SA bank schedule). Check the operating-entity bank account: should see `+R499` settlement and shortly after `-R499` refund. Net zero. Confirms the bank link is correct.
 
-If steps 4 / 5 / 6 / 8 all pass: **live mode is working.**
+**Pass criteria:** all of: step 4 redirects with `?success=1`, step 5 SQL shows non-NULL `paystack_subscription_code`, step 6 transaction visible in Paystack, step 7 refund doesn't trip cancel, step 9 net-zero settlement on bank.
+
+**If any step fails, fail the cutover** — don't open up to real customers until the failed step is debugged. Easiest to debug: the failure mode where step 5 shows NULL `paystack_subscription_code` → §0 Path B code didn't actually ship → roll back keys (see Rollback plan below) and fix the code first.
 
 ---
 
