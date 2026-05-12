@@ -1,11 +1,24 @@
 import type { TypedSupabaseClient } from '@esite/db'
 
+// PLANS — single source of truth for tier pricing + Paystack plan-code lookup.
+//
+// Plan codes are NOT hardcoded; they're discovered at runtime from env vars
+// (created on Paystack dashboard per docs/paystack-go-live-roadmap.md §3).
+// When the env var is unset (e.g. test mode pre-plan-creation), the checkout
+// route falls back to one-off transaction mode. This means:
+//   - test mode today (no env vars set) → one-off charge, no recurring
+//   - test mode after creating test plans → recurring against test plans
+//   - live mode after creating live plans → recurring against live plans
+// Free + Enterprise have no Paystack flow (free has nothing to charge,
+// enterprise short-circuits to mailto:sales in the checkout route).
 export const PLANS = {
   free: {
     tier: 'free',
     name: 'Free',
     monthlyKobo: 0,
     annualKobo: 0,
+    monthlyPlanCodeEnv: null,
+    annualPlanCodeEnv: null,
     features: ['1 project', '5 users', 'Basic snag tracking', 'RFI management'],
     limits: { projects: 1, users: 5 },
   },
@@ -14,6 +27,8 @@ export const PLANS = {
     name: 'Starter',
     monthlyKobo: 49900, // R499/mo
     annualKobo: 499000, // R4,990/yr (2 months free)
+    monthlyPlanCodeEnv: 'PAYSTACK_PLAN_STARTER_MONTHLY',
+    annualPlanCodeEnv: 'PAYSTACK_PLAN_STARTER_ANNUAL',
     features: ['5 projects', '10 users', 'COC tracking', 'Floor plans', 'Priority email support'],
     limits: { projects: 5, users: 10 },
   },
@@ -22,6 +37,8 @@ export const PLANS = {
     name: 'Professional',
     monthlyKobo: 149900, // R1,499/mo
     annualKobo: 1499000, // R14,990/yr
+    monthlyPlanCodeEnv: 'PAYSTACK_PLAN_PROFESSIONAL_MONTHLY',
+    annualPlanCodeEnv: 'PAYSTACK_PLAN_PROFESSIONAL_ANNUAL',
     features: ['Unlimited projects', '30 users', 'Marketplace access', 'API access', 'Phone support'],
     limits: { projects: -1, users: 30 },
   },
@@ -30,12 +47,39 @@ export const PLANS = {
     name: 'Enterprise',
     monthlyKobo: 0, // Custom
     annualKobo: 0,
+    monthlyPlanCodeEnv: null,
+    annualPlanCodeEnv: null,
     features: ['Custom limits', 'White label', 'Dedicated CSM', 'SLA guarantee', 'Custom integrations'],
     limits: { projects: -1, users: -1 },
   },
 } as const
 
 export type PlanTier = keyof typeof PLANS
+
+/**
+ * Resolve the Paystack plan code for a (tier, period) pair from env vars at
+ * runtime. Returns undefined when unset — callers should fall back to one-off
+ * `transaction/initialize` with `amount`. When set, callers should pass `plan`
+ * to Paystack and Paystack will auto-create a customer + recurring subscription.
+ *
+ * Env var names (set in Vercel after creating plans on Paystack dashboard):
+ *   PAYSTACK_PLAN_STARTER_MONTHLY       (PLN_…)
+ *   PAYSTACK_PLAN_STARTER_ANNUAL        (PLN_…)
+ *   PAYSTACK_PLAN_PROFESSIONAL_MONTHLY  (PLN_…)
+ *   PAYSTACK_PLAN_PROFESSIONAL_ANNUAL   (PLN_…)
+ */
+export function resolvePaystackPlanCode(
+  tier: PlanTier,
+  period: 'monthly' | 'annual',
+  env: Record<string, string | undefined> = (typeof process !== 'undefined' ? process.env : {}) as Record<string, string | undefined>,
+): string | undefined {
+  const plan = PLANS[tier]
+  if (!plan) return undefined
+  const envName = period === 'monthly' ? plan.monthlyPlanCodeEnv : plan.annualPlanCodeEnv
+  if (!envName) return undefined
+  const value = env[envName]?.trim()
+  return value && value.length > 0 ? value : undefined
+}
 
 export const billingService = {
   async getSubscription(client: TypedSupabaseClient, orgId: string) {

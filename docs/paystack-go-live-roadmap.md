@@ -19,37 +19,37 @@ This roadmap is split into two layers:
 
 ---
 
-## 0. Code-side blocker (NOT a Claude-Chrome task — flagged here so it doesn't get missed)
+## 0. Code-side state — Path B SHIPPED (env-var-gated)
 
-**The subscription flow is currently a one-off charge, not a recurring subscription.**
+**Status as of commit `<this commit>`:** the recurring-subscription wiring is in place but **gated by env vars**, so it ships safely without breaking pre-go-live testing. The behaviour is:
 
-Look at [`apps/web/src/app/api/paystack/checkout/route.ts`](../apps/web/src/app/api/paystack/checkout/route.ts):
-- Calls `POST https://api.paystack.co/transaction/initialize` with a fixed `amount` and `currency`.
-- No `plan` / `plan_code` field is sent.
-- No customer is created in Paystack's customer registry.
+| `PAYSTACK_PLAN_<TIER>_<PERIOD>` env var | Checkout sends | Result |
+|---|---|---|
+| **unset** (today, every env)     | `amount` only     | One-off charge (legacy behaviour, no recurring). Tier gets set. Customer is NOT charged again next month. |
+| **set** (after Paystack plans created) | `plan: PLN_…`    | Paystack auto-creates a customer + recurring subscription. First charge happens immediately. Recurring fires on the plan's interval. Webhook fills in `paystack_subscription_code` ~5–30s after first charge. |
 
-This means: the customer pays once → callback route sets `tier='starter'` (or whichever) → next month, **Paystack does NOT auto-charge them.** The subscription will silently lapse with no renewal attempt.
+**Files touched:**
+- [`packages/shared/src/services/billing.service.ts`](../packages/shared/src/services/billing.service.ts) — `PLANS` gained `monthlyPlanCodeEnv` + `annualPlanCodeEnv`. New helper `resolvePaystackPlanCode(tier, period)` reads from `process.env`, returns `undefined` when unset.
+- [`apps/web/src/app/api/paystack/checkout/route.ts`](../apps/web/src/app/api/paystack/checkout/route.ts) — branches on `resolvePaystackPlanCode`. When set, sends `plan` + omits `amount`. When unset, sends `amount` (legacy).
+- [`apps/web/src/app/api/paystack/callback/route.ts`](../apps/web/src/app/api/paystack/callback/route.ts) — captures `plan_code` from metadata, persists to `paystack_plan_code`. Documents the race: `paystack_subscription_code` is intentionally omitted (webhook fills it).
+- [`apps/web/src/app/api/paystack/webhook/route.ts`](../apps/web/src/app/api/paystack/webhook/route.ts) — new `subscription.create` handler matches by (customer_code + plan_code) and fills in `subscription_code` + `next_billing_date`. Existing `subscription.disable` / `not_renew` / `payment_failed` handlers unchanged.
 
-The `webhook` route already handles `subscription.disable`, `subscription.not_renew`, and `invoice.payment_failed` — so the system was designed for recurring billing, but the checkout side was wired as a one-off. Pre-go-live, **one** of two paths must land:
+**Env vars to set on Vercel** (Production env only — leave Preview unset to keep PR previews on one-off mode):
 
-**Path A — keep one-off, make the app drive renewals (smaller code change):**
-- Add `expires_at` column on `billing.subscriptions` (or use existing `current_period_end` if present).
-- Cron job (pg_cron edge function) that flips status → `expired` when `expires_at < now()`.
-- App banner / email at T-7 / T-3 / T-0 prompting the customer to manually re-pay.
-- Predictable code, no Paystack subscription state to keep in sync. Cost: friction (customers must remember).
+| Env var name | Value (pasted from §3 step 6) |
+|---|---|
+| `PAYSTACK_PLAN_STARTER_MONTHLY`      | `PLN_…` (live mode) |
+| `PAYSTACK_PLAN_STARTER_ANNUAL`       | `PLN_…` (live mode) |
+| `PAYSTACK_PLAN_PROFESSIONAL_MONTHLY` | `PLN_…` (live mode) |
+| `PAYSTACK_PLAN_PROFESSIONAL_ANNUAL`  | `PLN_…` (live mode) |
 
-**Path B — wire actual recurring subscriptions via Paystack's Plans API (proper):**
-- Create Plans on Paystack dashboard (Starter monthly, Starter annual, Professional monthly, Professional annual). Get back four `plan_code` values.
-- Add `plan_code` to `PLANS` constant in `packages/shared`.
-- Change the checkout body to include `plan: <plan_code>` (Paystack auto-creates a customer + subscription on first charge).
-- Webhook already handles renewal events — should "just work."
-- Cancellation flow: separate UI button calling `subscription.disable` API.
+(For test-mode smoke testing of recurring before going live: also create plans on Paystack TEST dashboard, copy the test `PLN_…` codes, and set the same env-var names against the **Preview** env. Production stays unset until live keys + live plans are ready.)
 
-**Recommendation:** Path B for any real-customer scenario. Path A is fine for paying friends-and-family pilot or first 5 customers, but is a maintenance burden long-term.
+**Schema:** `billing.subscriptions` table already has `paystack_plan_code` + `paystack_subscription_code` + `paystack_customer_code` + `next_billing_date` columns from migration `00007_billing_schema.sql`. No migration needed.
 
-If shipping Path B: **do this code change FIRST**, deploy to staging with test keys, smoke-test recurring with Paystack's test-mode plan auto-renewal, THEN go live. Don't go live with one-off charges and try to retro-fit Plans later — every existing one-off-charged customer becomes a special case.
+**Cancellation:** the `subscription.disable` webhook handler already flips status → `cancelled`. A user-facing "Cancel my subscription" button in the app is NOT yet wired — Arno currently has to cancel via Paystack dashboard (Customers → ⋯ → Disable subscription). Adding the button is a separate ~30min task: server action calls `POST https://api.paystack.co/subscription/disable` with the row's `paystack_subscription_code` + `email_token` (which Paystack returns on subscription.create — needs persisting). Defer until first real customer asks.
 
-The rest of this doc assumes Path B is the chosen path.
+**The rest of this doc assumes Path B is shipped (it is) and that Arno is now ready to provision live mode.**
 
 ---
 

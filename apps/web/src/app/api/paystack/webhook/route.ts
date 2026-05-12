@@ -19,13 +19,14 @@ export async function POST(req: NextRequest) {
 
   if (event.event === 'charge.success') {
     const data = event.data
-    const { org_id, tier, period, amount_kobo } = data.metadata ?? {}
+    const { org_id, tier, period, amount_kobo, plan_code, mode } = data.metadata ?? {}
     if (org_id && tier) {
       await billingService.upsertSubscription(supabase as any, org_id, {
         tier,
         billingPeriod: period ?? 'monthly',
         status: 'active',
         paystackCustomerCode: data.customer?.customer_code,
+        paystackPlanCode: plan_code ?? data.plan_object?.plan_code ?? data.plan ?? undefined,
         amountKobo: amount_kobo ?? data.amount,
       }).catch(console.error)
 
@@ -33,9 +34,32 @@ export async function POST(req: NextRequest) {
         paystackReference: data.reference,
         amountKobo: data.amount,
         status: 'paid',
-        description: `${tier} plan charge`,
+        description: `${tier} plan charge${mode === 'recurring' ? ' (recurring)' : ''}`,
         paidAt: new Date().toISOString(),
       }).catch(console.error)
+    }
+  }
+
+  // Path B: subscription.create fires once per recurring subscription, ~5–30s
+  // after the first charge.success. Carries the authoritative subscription_code
+  // and next_payment_date that the synchronous callback couldn't capture.
+  // We match the existing row by (customer_code + plan_code) and fill them in.
+  if (event.event === 'subscription.create') {
+    const sub = event.data
+    const customerCode = sub.customer?.customer_code
+    const planCode = sub.plan?.plan_code
+    if (customerCode && planCode) {
+      const { error } = await supabase
+        .schema('billing')
+        .from('subscriptions')
+        .update({
+          paystack_subscription_code: sub.subscription_code,
+          next_billing_date: sub.next_payment_date ?? null,
+          status: 'active',
+        })
+        .eq('paystack_customer_code', customerCode)
+        .eq('paystack_plan_code', planCode)
+      if (error) console.error('Webhook subscription.create error:', error)
     }
   }
 

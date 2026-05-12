@@ -21,26 +21,35 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/settings/billing?error=failed', req.url))
   }
 
-  const { org_id, tier, period, amount_kobo } = body.data.metadata ?? {}
+  const data = body.data
+  const { org_id, tier, period, amount_kobo, plan_code, mode } = data.metadata ?? {}
   if (!org_id || !tier) {
     return NextResponse.redirect(new URL('/settings/billing?error=meta', req.url))
   }
 
-  // Upsert subscription record using service role
+  // Path B note: when this transaction was a recurring subscription
+  // (mode === 'recurring' / plan_code present), Paystack created the
+  // subscription server-side but the verify response does NOT always include
+  // the subscription_code synchronously. The webhook `subscription.create`
+  // event arrives within ~5–30s and fills in `paystack_subscription_code`
+  // by matching on (paystack_customer_code + paystack_plan_code). The
+  // intentional race is documented in the webhook handler.
   const supabase = createServiceClient()
   await billingService.upsertSubscription(supabase as any, org_id, {
     tier,
     billingPeriod: period ?? 'monthly',
     status: 'active',
-    paystackCustomerCode: body.data.customer?.customer_code,
-    amountKobo: amount_kobo ?? body.data.amount,
+    paystackCustomerCode: data.customer?.customer_code,
+    paystackPlanCode: plan_code ?? data.plan_object?.plan_code ?? data.plan ?? undefined,
+    // paystackSubscriptionCode intentionally omitted — webhook will fill it.
+    amountKobo: amount_kobo ?? data.amount,
   })
 
   await billingService.recordInvoice(supabase as any, org_id, {
     paystackReference: reference,
-    amountKobo: body.data.amount,
+    amountKobo: data.amount,
     status: 'paid',
-    description: `${tier} plan (${period ?? 'monthly'})`,
+    description: `${tier} plan (${period ?? 'monthly'})${mode === 'recurring' ? ' — first charge' : ''}`,
     paidAt: new Date().toISOString(),
   })
 

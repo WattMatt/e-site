@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { PLANS } from '@esite/shared'
+import { PLANS, resolvePaystackPlanCode } from '@esite/shared'
 import { rateLimit } from '@/lib/rate-limit'
 
 const bodySchema = z.object({
@@ -55,25 +55,42 @@ export async function POST(req: NextRequest) {
 
   const callbackUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/api/paystack/callback`
 
+  // Path B: when PAYSTACK_PLAN_<TIER>_<PERIOD> env is set, send `plan` field.
+  // Paystack auto-creates a customer + recurring subscription. Without env
+  // var, fall back to one-off `amount` (the legacy / pre-go-live behaviour).
+  // See packages/shared/src/services/billing.service.ts resolvePaystackPlanCode.
+  const planCode = resolvePaystackPlanCode(tier as 'starter' | 'professional', period)
+  const isRecurring = !!planCode
+
+  const initBody: Record<string, unknown> = {
+    email: user.email,
+    currency: 'ZAR',
+    callback_url: callbackUrl,
+    metadata: {
+      org_id: mem.organisation_id,
+      tier,
+      period,
+      amount_kobo: amountKobo,
+      plan_code: planCode ?? null, // captured so the callback knows which mode it was
+      mode: isRecurring ? 'recurring' : 'one_off',
+      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}/settings/billing`,
+    },
+  }
+  if (isRecurring) {
+    initBody.plan = planCode
+    // When `plan` is set, Paystack uses the plan's amount + interval.
+    // Sending `amount` alongside is allowed (must match) but redundant.
+  } else {
+    initBody.amount = amountKobo
+  }
+
   const response = await fetch('https://api.paystack.co/transaction/initialize', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${PAYSTACK_SECRET}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      email: user.email,
-      amount: amountKobo, // in kobo
-      currency: 'ZAR',
-      callback_url: callbackUrl,
-      metadata: {
-        org_id: mem.organisation_id,
-        tier,
-        period,
-        amount_kobo: amountKobo,
-        cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}/settings/billing`,
-      },
-    }),
+    body: JSON.stringify(initBody),
   })
 
   const body = await response.json()
