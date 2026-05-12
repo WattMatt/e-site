@@ -28,10 +28,28 @@ import {
 const REDIRECT_PATH = '/api/auth/cloud-callback'
 
 function siteUrl(): string {
-  // Prefer NEXT_PUBLIC_SITE_URL when configured; fall back to the Vercel-
-  // production URL (esite-lilac.vercel.app) for local/preview where the
-  // env may be unset. The redirect URI MUST match what's registered with
-  // each provider's OAuth app — Phase 1 registrations use NEXT_PUBLIC_SITE_URL.
+  // OAuth redirect URI host resolution:
+  //
+  // 1. On NON-PRODUCTION Vercel deploys (preview / development), prefer
+  //    VERCEL_BRANCH_URL — the stable per-branch alias — so a preview
+  //    deploy's "Connect" callback lands on THAT preview, not on
+  //    production-aliased lilac. Without this, every preview-branch test
+  //    of an OAuth flow bounces to production and 404s if production is
+  //    behind on the relevant route handler.
+  //
+  // 2. On PRODUCTION deploys, use the explicit NEXT_PUBLIC_SITE_URL (the
+  //    production hostname registered with each provider as the canonical
+  //    redirect URI).
+  //
+  // 3. Fallbacks for local dev / scripts / build-time codepaths.
+  //
+  // The redirect URI MUST be one of those registered with each provider's
+  // OAuth app. Register BOTH the production host AND the branch alias on
+  // each provider — see docs/cloud-storage-oauth-setup-roadmap.md §2-§4.
+  if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production') {
+    if (process.env.VERCEL_BRANCH_URL) return `https://${process.env.VERCEL_BRANCH_URL}`
+    if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
+  }
   const explicit = process.env.NEXT_PUBLIC_SITE_URL
   if (explicit) return explicit.replace(/\/$/, '')
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
