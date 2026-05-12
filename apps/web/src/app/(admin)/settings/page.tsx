@@ -87,6 +87,33 @@ export default async function SettingsPage() {
           </div>
         </div>
 
+        {/* Cloud-storage integrations (admin/owner/PM only — page itself
+            re-checks role and bounces client_viewer to /dashboard). */}
+        {isAdmin && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Cloud-storage integrations</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>Org-level</span>
+            </div>
+            <div style={{ padding: '16px 18px' }}>
+              <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+                Connect Dropbox, Google Drive, or OneDrive — then map a folder per project to sync drawings + documents automatically.
+              </p>
+              <Link
+                href="/settings/integrations"
+                style={{
+                  display: 'inline-block',
+                  fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                  border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                  textDecoration: 'none',
+                }}
+              >
+                Manage integrations →
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Danger zone */}
         <div className="data-panel" style={{ borderColor: '#6b1e1e' }}>
           <div className="data-panel-header" style={{ borderColor: '#6b1e1e' }}>

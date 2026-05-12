@@ -6,7 +6,7 @@ import { usePathname, useSearchParams } from 'next/navigation'
 import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen, ShieldCheck,
   MessageSquare, ClipboardList, ShoppingBag, Users, CreditCard,
-  Settings, LogOut, Activity, Map, ClipboardCheck, ArrowLeft,
+  Settings, LogOut, Activity, Map, ClipboardCheck, ArrowLeft, Cloud,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -68,10 +68,11 @@ function projectNav(id: string) {
 }
 
 const FOOTER_ITEMS = [
-  { href: '/admin/health',     label: 'Health',   Icon: Activity },
-  { href: '/settings/team',    label: 'Team',     Icon: Users },
-  { href: '/settings/billing', label: 'Billing',  Icon: CreditCard },
-  { href: '/settings',         label: 'Settings', Icon: Settings },
+  { href: '/admin/health',           label: 'Health',       Icon: Activity },
+  { href: '/settings/team',          label: 'Team',         Icon: Users },
+  { href: '/settings/billing',       label: 'Billing',      Icon: CreditCard },
+  { href: '/settings/integrations',  label: 'Integrations', Icon: Cloud },
+  { href: '/settings',               label: 'Settings',     Icon: Settings },
 ] as const
 
 function extractProjectId(pathname: string): string | null {
