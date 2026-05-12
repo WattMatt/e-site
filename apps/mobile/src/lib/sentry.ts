@@ -4,7 +4,9 @@
  * Requires `@sentry/react-native` (see docs/t061-observability-runbook.md for
  * the install command). When the package or DSN is missing, init() and
  * captureError() are silent no-ops so unit tests and dev without keys still
- * work.
+ * work. expo-application / expo-device / expo-localization populate context
+ * tags so a stack trace tells us "Pixel 8 / Android 14 / en-ZA / build 47"
+ * without us shipping a custom diagnostic payload.
  */
 
 let sentryLoaded = false
@@ -38,9 +40,44 @@ export async function initSentry() {
       },
     })
     ;(globalThis as any).__SENTRY__ = Sentry
+
+    // Best-effort context enrichment. Each Expo package is wrapped so a single
+    // missing module never aborts init.
+    void enrichContext(Sentry)
   } catch (err) {
     // @sentry/react-native not installed — silent no-op.
     if (__DEV__) console.warn('[sentry] package not installed, skipping init')
+  }
+}
+
+async function enrichContext(Sentry: any) {
+  try {
+    const Application = await import('expo-application' as any)
+    Sentry.setTag?.('app.version', Application.nativeApplicationVersion ?? 'unknown')
+    Sentry.setTag?.('app.build', Application.nativeBuildVersion ?? 'unknown')
+  } catch {
+    /* expo-application missing — skip */
+  }
+  try {
+    const Device = await import('expo-device' as any)
+    Sentry.setContext?.('device', {
+      model: Device.modelName,
+      manufacturer: Device.manufacturer,
+      os_name: Device.osName,
+      os_version: Device.osVersion,
+      device_type: Device.deviceType,
+    })
+  } catch {
+    /* expo-device missing — skip */
+  }
+  try {
+    const Localization = await import('expo-localization' as any)
+    const locale = Localization.getLocales?.()?.[0]
+    Sentry.setTag?.('locale', locale?.languageTag ?? 'unknown')
+    Sentry.setTag?.('region', locale?.regionCode ?? 'unknown')
+    Sentry.setTag?.('timezone', Localization.getCalendars?.()?.[0]?.timeZone ?? 'unknown')
+  } catch {
+    /* expo-localization missing — skip */
   }
 }
 

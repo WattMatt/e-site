@@ -10,6 +10,7 @@ import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useQueryClient } from '@tanstack/react-query'
 import { snagService, storageService } from '@esite/shared'
 import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
+import { track, ANALYTICS_EVENTS } from '../../src/lib/analytics'
 
 const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
 const CATEGORIES = ['electrical', 'mechanical', 'civil', 'safety', 'general']
@@ -70,6 +71,16 @@ export default function CreateSnagScreen() {
         location: location.trim() || '',
         category: category || '',
         priority,
+      })
+
+      void track(ANALYTICS_EVENTS.SNAG_LOGGED, {
+        snag_id: snag.id,
+        project_id: snag.project_id,
+        priority,
+        category: category || undefined,
+        has_photos: photos.length > 0,
+        photo_count: photos.length,
+        source: 'mobile',
       })
 
       if (photos.length > 0) {

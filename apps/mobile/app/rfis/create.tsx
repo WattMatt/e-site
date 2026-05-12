@@ -9,6 +9,7 @@ import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { rfiService } from '@esite/shared'
 import { useQueryClient } from '@tanstack/react-query'
 import { colors, fontSize, fontWeight, priorityColor, radius, spacing } from '../../src/theme'
+import { track, ANALYTICS_EVENTS } from '../../src/lib/analytics'
 import { AttachmentStaging } from '../../src/components/attachments/AttachmentStaging'
 import { FloorPlanAttachModal } from '../../src/components/attachments/FloorPlanAttachModal'
 import { commitStagedAttachments } from '../../src/components/attachments/commit'
@@ -56,6 +57,16 @@ export default function CreateRfiScreen() {
         priority,
         category: category || '',
         dueDate: dueDate || '',
+      })
+
+      void track(ANALYTICS_EVENTS.RFI_CREATED, {
+        rfi_id: rfi.id,
+        project_id: projectId,
+        priority,
+        category: category || undefined,
+        has_attachments: attachments.length > 0,
+        attachment_count: attachments.length,
+        source: 'mobile',
       })
 
       if (attachments.length > 0) {

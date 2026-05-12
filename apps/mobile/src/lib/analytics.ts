@@ -23,6 +23,15 @@ export const ANALYTICS_EVENTS = {
   PROJECT_CREATED:          'project_created',
   SNAG_LOGGED:              'snag_logged',
   SNAG_RESOLVED:            'snag_resolved',
+  RFI_CREATED:              'rfi_created',
+  RFI_RESPONDED:            'rfi_responded',
+  RFI_CLOSED:               'rfi_closed',
+  DIARY_ENTRY_CREATED:      'diary_entry_created',
+  FLOORPLAN_MARKUP_SAVED:   'floorplan_markup_saved',
+  // Mobile-only operational telemetry (no web equivalent — mobile is the
+  // surface that goes offline and runs PowerSync).
+  OFFLINE_WRITE_BUFFERED:   'offline_write_buffered',
+  SYNC_COMPLETED:           'sync_completed',
   SUPPLIER_REGISTERED:      'supplier_registered',
   SUPPLIER_PAYSTACK_LINKED: 'supplier_paystack_linked',
   CATALOGUE_ITEM_PUBLISHED: 'catalogue_item_published',

@@ -10,6 +10,7 @@ import type { DiaryEntryType } from '@esite/shared'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
+import { track, ANALYTICS_EVENTS } from '../../src/lib/analytics'
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Rain', 'Windy', 'Hot']
 
@@ -49,6 +50,15 @@ export default function SiteDiaryScreen() {
         delays: delays.trim() || undefined,
       }),
     onSuccess: () => {
+      void track(ANALYTICS_EVENTS.DIARY_ENTRY_CREATED, {
+        project_id: projectId,
+        entry_type: entryType,
+        workers_on_site: workers ? parseInt(workers, 10) : undefined,
+        has_safety_notes: !!safetyNotes.trim(),
+        has_weather: !!weather,
+        has_delays: !!delays.trim(),
+        source: 'mobile',
+      })
       queryClient.invalidateQueries({ queryKey: ['diary', projectId] })
       setShowForm(false)
       setEntryType('progress')
