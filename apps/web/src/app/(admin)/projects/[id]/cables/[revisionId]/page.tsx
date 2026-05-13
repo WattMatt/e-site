@@ -11,11 +11,13 @@ import {
 } from '@esite/shared'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
 import { AddEntityPanel, type NodeOption, type SupplyOption } from './AddEntityPanel'
+import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 
 export const metadata: Metadata = { title: 'Cable schedule revision' }
 
 interface Props {
   params: Promise<{ id: string; revisionId: string }>
+  searchParams: Promise<{ view?: string }>
 }
 
 interface RevisionRow {
@@ -64,8 +66,13 @@ interface CableRow extends CableForCalc {
   notes: string | null
 }
 
-export default async function RevisionDetailPage({ params }: Props) {
+export default async function RevisionDetailPage({ params, searchParams }: Props) {
   const { id: projectId, revisionId } = await params
+  const sp = await searchParams
+  const lengthMode: LengthMode =
+    sp.view === 'design' ? 'design'
+    : sp.view === 'worst' ? 'worst'
+    : 'as-built'
   const supabase = await createClient()
 
   const project = await projectService
@@ -124,6 +131,7 @@ export default async function RevisionDetailPage({ params }: Props) {
   const cumulativeMap = computeCumulativeVdMap(
     supplies as SupplyForCalc[],
     cables as CableForCalc[],
+    lengthMode,
   )
 
   const nodeByIdSource = new Map(sources.map((s) => [s.id, s] as const))
@@ -140,7 +148,7 @@ export default async function RevisionDetailPage({ params }: Props) {
   const cumulativeBySupply = cumulativeMap
   const supplyVdById = new Map<string, number>()
   for (const s of supplies) {
-    supplyVdById.set(s.id, voltDropPctForSupply(s, cables as CableForCalc[]))
+    supplyVdById.set(s.id, voltDropPctForSupply(s, cables as CableForCalc[], lengthMode))
   }
 
   const rows: ScheduleRow[] = cables.map((c) => {
@@ -238,6 +246,10 @@ export default async function RevisionDetailPage({ params }: Props) {
             {' '}{cables.length} cable{cables.length !== 1 ? 's' : ''}
           </p>
         </div>
+        <LengthModeToggle
+          basePath={`/projects/${projectId}/cables/${revisionId}`}
+          current={lengthMode}
+        />
       </div>
 
       <div
@@ -288,7 +300,11 @@ export default async function RevisionDetailPage({ params }: Props) {
           </div>
         </div>
       ) : (
-        <CableScheduleGrid rows={rows} locked={revision.status !== 'DRAFT'} />
+        <CableScheduleGrid
+          rows={rows}
+          locked={revision.status !== 'DRAFT'}
+          lengthMode={lengthMode}
+        />
       )}
     </div>
   )

@@ -39,14 +39,36 @@ export interface SupplyForCalc {
 }
 
 /**
- * Active length per spec §15.6 — confirmed if signed off, otherwise measured.
- * Returns null when neither has been entered yet.
+ * Length-selection mode per spec §15.6 / §15.7. Drives which length the
+ * VD + cost calculations use.
+ *
+ *   'design'    — measured length always (tender / budget estimate basis)
+ *   'as-built'  — confirmed if signed off, else measured  (default — what
+ *                 the workbook already produces and the spec calls
+ *                 "active length")
+ *   'worst'     — max(measured, confirmed) per cable (engineer's
+ *                 compliance buffer view)
  */
-export function activeLengthM(cable: CableForCalc): number | null {
-  if (cable.length_status === 'CONFIRMED' && cable.confirmed_length_m != null) {
-    return Number(cable.confirmed_length_m)
+export type LengthMode = 'design' | 'as-built' | 'worst'
+
+/**
+ * Active length per the given mode. Returns null when no length is set
+ * at all.
+ */
+export function activeLengthM(
+  cable: CableForCalc,
+  mode: LengthMode = 'as-built',
+): number | null {
+  const meas = cable.measured_length_m == null ? null : Number(cable.measured_length_m)
+  const conf = cable.confirmed_length_m == null ? null : Number(cable.confirmed_length_m)
+  if (mode === 'design') return meas
+  if (mode === 'worst') {
+    if (meas != null && conf != null) return Math.max(meas, conf)
+    return conf ?? meas
   }
-  return cable.measured_length_m == null ? null : Number(cable.measured_length_m)
+  // 'as-built' (default)
+  if (cable.length_status === 'CONFIRMED' && conf != null) return conf
+  return meas
 }
 
 /**
@@ -78,6 +100,7 @@ export function voltDropPctSingle(
 export function voltDropPctForSupply(
   supply: SupplyForCalc,
   cables: CableForCalc[],
+  mode: LengthMode = 'as-built',
 ): number {
   const live = cables.filter((c) => c.supply_id === supply.id && c.ohm_per_km != null)
   if (live.length === 0) return 0
@@ -88,7 +111,7 @@ export function voltDropPctForSupply(
   const firstOhm = live[0]!.ohm_per_km!
   const sameAll = live.every((c) => c.size_mm2 === firstSize && c.ohm_per_km === firstOhm)
   if (sameAll) {
-    const len = avgActiveLength(live)
+    const len = avgActiveLength(live, mode)
     if (len == null) return 0
     return voltDropPctSingle(firstOhm / live.length, len, supply.design_load_a, supply.voltage_v)
   }
@@ -97,7 +120,7 @@ export function voltDropPctForSupply(
   // sum-of-conductances approximation when length data is incomplete.
   let inv = 0
   for (const c of live) {
-    const len = activeLengthM(c)
+    const len = activeLengthM(c, mode)
     if (len == null) continue
     const vd = voltDropPctSingle(c.ohm_per_km!, len, supply.design_load_a, supply.voltage_v)
     if (vd > 0) inv += 1 / vd
@@ -105,10 +128,10 @@ export function voltDropPctForSupply(
   return inv > 0 ? 1 / inv : 0
 }
 
-function avgActiveLength(cables: CableForCalc[]): number | null {
+function avgActiveLength(cables: CableForCalc[], mode: LengthMode = 'as-built'): number | null {
   const lens: number[] = []
   for (const c of cables) {
-    const l = activeLengthM(c)
+    const l = activeLengthM(c, mode)
     if (l != null) lens.push(l)
   }
   if (lens.length === 0) return null
@@ -128,6 +151,7 @@ function avgActiveLength(cables: CableForCalc[]): number | null {
 export function computeCumulativeVdMap(
   supplies: SupplyForCalc[],
   cables: CableForCalc[],
+  mode: LengthMode = 'as-built',
 ): Map<string, number> {
   const out = new Map<string, number>()
   const supplyByFromBoard = new Map<string, SupplyForCalc[]>()
@@ -145,7 +169,7 @@ export function computeCumulativeVdMap(
   function walk(supply: SupplyForCalc, accumulatedVd: number) {
     if (visiting.has(supply.id)) return        // cycle guard
     visiting.add(supply.id)
-    const here = accumulatedVd + voltDropPctForSupply(supply, cables)
+    const here = accumulatedVd + voltDropPctForSupply(supply, cables, mode)
     out.set(supply.id, here)
     const downstream = supplyByFromBoard.get(supply.to_board_id) ?? []
     for (const down of downstream) walk(down, here)
@@ -154,6 +178,28 @@ export function computeCumulativeVdMap(
 
   for (const r of roots) walk(r, 0)
   return out
+}
+
+/**
+ * 1-second short-circuit capacity vs the source fault level. Returns the
+ * passing margin (cable rating − required) and a tone.
+ *
+ * Required SC current at the cable = fault_level_ka (the source's prospective
+ * fault current). The cable's tabulated 1 s SC rating must equal or exceed
+ * it. Per IEC convention SC duration is < 1 s in typical LV networks but
+ * we use the conservative 1 s table value as the comparison basis.
+ */
+export function shortCircuitCheck(
+  cable1sRatingKa: number | null,
+  faultLevelKa: number | null,
+): { ok: boolean; marginKa: number | null; tone: 'ok' | 'warning' | 'danger' | 'unknown' } {
+  if (cable1sRatingKa == null || faultLevelKa == null || faultLevelKa <= 0) {
+    return { ok: true, marginKa: null, tone: 'unknown' }
+  }
+  const margin = cable1sRatingKa - faultLevelKa
+  if (margin < 0) return { ok: false, marginKa: margin, tone: 'danger' }
+  if (margin < faultLevelKa * 0.10) return { ok: true, marginKa: margin, tone: 'warning' }
+  return { ok: true, marginKa: margin, tone: 'ok' }
 }
 
 /**

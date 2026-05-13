@@ -1,6 +1,10 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import {
+  MeasuredLengthEditor,
+  ConfirmedLengthEditor,
+} from './LengthEditPopover'
 
 export interface ScheduleRow {
   id: string
@@ -31,6 +35,7 @@ export interface ScheduleRow {
 interface Props {
   rows: ScheduleRow[]
   locked: boolean
+  lengthMode: 'design' | 'as-built' | 'worst'
 }
 
 const LENGTH_STATUS_TONE: Record<ScheduleRow['length_status'], string> = {
@@ -67,8 +72,10 @@ function cableTag(r: ScheduleRow): string {
   return `${r.from_label}-${r.to_label}-${r.size_mm2}-${r.cable_no}`
 }
 
-export function CableScheduleGrid({ rows, locked }: Props) {
+export function CableScheduleGrid({ rows, locked, lengthMode }: Props) {
   const [query, setQuery] = useState('')
+  const [editMeasured, setEditMeasured] = useState<ScheduleRow | null>(null)
+  const [editConfirmed, setEditConfirmed] = useState<ScheduleRow | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -108,6 +115,22 @@ export function CableScheduleGrid({ rows, locked }: Props) {
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
           {filtered.length} of {rows.length} cables
         </div>
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
+            padding: '4px 8px', borderRadius: 4,
+            color: lengthMode === 'design' ? 'var(--c-amber)'
+                 : lengthMode === 'worst'  ? '#dc2626'
+                 : 'var(--c-text-mid)',
+            background: lengthMode === 'design' ? 'var(--c-amber-dim)'
+                      : lengthMode === 'worst'  ? 'rgba(220,38,38,0.08)'
+                      : 'var(--c-base)',
+            border: '1px solid var(--c-border)',
+          }}
+          title="Active length-source mode driving VD + cumulative VD"
+        >
+          mode: {lengthMode.toUpperCase()}
+        </span>
         {locked && (
           <span
             style={{
@@ -205,8 +228,34 @@ export function CableScheduleGrid({ rows, locked }: Props) {
                   <Td align="center">{r.insulation}</Td>
                   <Td align="right">{fmt(r.ohm_per_km, 4)}</Td>
                   <Td align="right">{r.cable_no}</Td>
-                  <Td align="right">{fmt(r.measured_length_m, 1)}</Td>
-                  <Td align="right">{fmt(r.confirmed_length_m, 1)}</Td>
+                  <Td align="right">
+                    {locked ? (
+                      fmt(r.measured_length_m, 1)
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setEditMeasured(r)}
+                        title="Edit measured length (Designer)"
+                        style={editCellBtn}
+                      >
+                        {fmt(r.measured_length_m, 1)}
+                      </button>
+                    )}
+                  </Td>
+                  <Td align="right">
+                    {locked ? (
+                      fmt(r.confirmed_length_m, 1)
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setEditConfirmed(r)}
+                        title="Confirm length (Site / Verifier)"
+                        style={editCellBtn}
+                      >
+                        {fmt(r.confirmed_length_m, 1)}
+                      </button>
+                    )}
+                  </Td>
                   <Td align="right">
                     {delta == null ? '—' : (
                       <span style={{ color: deltaFlag ? '#dc2626' : 'var(--c-text)' }}>
@@ -243,8 +292,37 @@ export function CableScheduleGrid({ rows, locked }: Props) {
           </tbody>
         </table>
       </div>
+
+      {editMeasured && (
+        <MeasuredLengthEditor
+          cableId={editMeasured.id}
+          initialValue={editMeasured.measured_length_m}
+          initialMethod={null}
+          onClose={() => setEditMeasured(null)}
+        />
+      )}
+      {editConfirmed && (
+        <ConfirmedLengthEditor
+          cableId={editConfirmed.id}
+          initialValue={editConfirmed.confirmed_length_m}
+          initialMethod={null}
+          measuredM={editConfirmed.measured_length_m}
+          onClose={() => setEditConfirmed(null)}
+        />
+      )}
     </div>
   )
+}
+
+const editCellBtn: React.CSSProperties = {
+  background: 'none',
+  border: '1px dashed transparent',
+  borderRadius: 3,
+  color: 'inherit',
+  font: 'inherit',
+  padding: '0 4px',
+  margin: '-2px',
+  cursor: 'pointer',
 }
 
 function Th({
