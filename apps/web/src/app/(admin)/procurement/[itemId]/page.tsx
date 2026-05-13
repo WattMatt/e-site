@@ -7,6 +7,7 @@ import { QuoteCompareTable, type QuoteRow } from './QuoteCompareTable'
 import { ShopDrawingsPanel, type ShopDrawingRow } from './ShopDrawingsPanel'
 import { GRNPanel, type GRNRow } from './GRNPanel'
 import { POButton } from './POButton'
+import { SupplierInvoicePanel, type SupplierInvoiceRow } from './SupplierInvoicePanel'
 
 export const metadata: Metadata = { title: 'Procurement item' }
 
@@ -93,7 +94,7 @@ export default async function ProcurementItemPage({ params }: Props) {
   if (!itemRow) notFound()
   const item = itemRow as ProcurementItem
 
-  const [scheduleRes, quotesRes, projectRes, suppliersRes, shopDrawingsRes, grnsRes] = await Promise.all([
+  const [scheduleRes, quotesRes, projectRes, suppliersRes, shopDrawingsRes, grnsRes, invoicesRes] = await Promise.all([
     item.schedule_item_id
       ? (supabase as any)
           .schema('projects')
@@ -143,6 +144,15 @@ export default async function ProcurementItemPage({ params }: Props) {
       )
       .eq('procurement_item_id', itemId)
       .order('delivered_at', { ascending: false }),
+    (supabase as any)
+      .schema('projects')
+      .from('supplier_invoices')
+      .select(
+        'id, invoice_number, supplier_invoice_date, amount, vat_amount, currency, ' +
+        'status, paid_at, payment_reference, notes, file_path, file_mime, created_at',
+      )
+      .eq('procurement_item_id', itemId)
+      .order('supplier_invoice_date', { ascending: false }),
   ])
 
   const schedule = (scheduleRes?.data ?? null) as ScheduleStub | null
@@ -151,6 +161,10 @@ export default async function ProcurementItemPage({ params }: Props) {
   const suppliers = ((suppliersRes?.data ?? []) as unknown as SupplierStub[])
   const shopDrawings = ((shopDrawingsRes?.data ?? []) as unknown as ShopDrawingRow[])
   const grns = ((grnsRes?.data ?? []) as unknown as GRNRow[])
+  const supplierInvoices = ((invoicesRes?.data ?? []) as unknown as SupplierInvoiceRow[])
+  const expectedTotal = item.quantity != null && item.quoted_price != null
+    ? Number(item.quantity) * Number(item.quoted_price)
+    : null
 
   // Show Shop Drawings panel when linked schedule line requires one, OR
   // when at least one drawing has already been submitted (covers the case
@@ -340,6 +354,23 @@ export default async function ProcurementItemPage({ params }: Props) {
                 procurementUnit={item.unit}
                 procurementQuantity={item.quantity}
                 grns={grns}
+              />
+            </div>
+          </div>
+
+          {/* Supplier invoices (AP handoff) */}
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">
+                Supplier invoices ({supplierInvoices.length})
+              </span>
+            </div>
+            <div style={{ padding: '14px 18px' }}>
+              <SupplierInvoicePanel
+                procurementItemId={item.id}
+                organisationId={item.organisation_id}
+                invoices={supplierInvoices}
+                expectedTotal={expectedTotal}
               />
             </div>
           </div>
