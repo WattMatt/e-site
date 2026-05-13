@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, formatZAR, getSlaSummary, SLA_DEFAULTS } from '@esite/shared'
+import { projectService, formatZAR, getSlaSummary, SLA_DEFAULTS, getProcurementSummary } from '@esite/shared'
 import { isMarketplaceEnabled } from '@/components/marketplace/InDevelopmentNotice'
 import Link from 'next/link'
 
@@ -21,7 +21,7 @@ export default async function DashboardPage() {
 
   const orgId = membership?.organisation_id
 
-  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, complianceResult, sla] = await Promise.all([
+  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, complianceResult, sla, procurement] = await Promise.all([
     orgId
       ? projectService.getStats(supabase as any, orgId)
       : Promise.resolve({ activeProjects: 0, openSnags: 0, pendingCocs: 0 }),
@@ -100,6 +100,15 @@ export default async function DashboardPage() {
           agingSnags: { count: 0, top: [] },
           pendingCocs: { count: 0, top: [] },
           staleRfis: { count: 0, top: [] },
+        }),
+
+    orgId
+      ? getProcurementSummary(supabase as any, orgId)
+      : Promise.resolve({
+          outstanding: { count: 0, top: [] },
+          quotesPending: { count: 0, top: [] },
+          deliveriesThisWeek: { count: 0, top: [] },
+          committedSpend: 0,
         }),
   ])
 
@@ -353,6 +362,67 @@ export default async function DashboardPage() {
         </div>
       )}
 
+      {/* Procurement rollup — outstanding / quotes pending / deliveries this week */}
+      {(procurement.outstanding.count > 0
+        || procurement.quotesPending.count > 0
+        || procurement.deliveriesThisWeek.count > 0
+        || procurement.committedSpend > 0) && (
+        <div className="animate-fadeup animate-fadeup-2" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+            <h2 style={{
+              fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+              letterSpacing: '0.08em', textTransform: 'uppercase', margin: 0,
+            }}>
+              Procurement pipeline
+            </h2>
+            {procurement.committedSpend > 0 && (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-amber)' }}>
+                {formatZAR(procurement.committedSpend)} committed
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            <ProcurementCard
+              href="/procurement?status=draft"
+              icon="📋"
+              label="Outstanding requisitions"
+              count={procurement.outstanding.count}
+              top={procurement.outstanding.top.map((i) => ({
+                id: i.id,
+                primary: i.description,
+                secondary: [i.project_name, i.required_by ? `req. ${i.required_by}` : null]
+                  .filter(Boolean).join(' · '),
+                href: `/procurement/${i.id}`,
+              }))}
+            />
+            <ProcurementCard
+              href="/procurement?status=sent"
+              icon="💬"
+              label="Quotes pending"
+              count={procurement.quotesPending.count}
+              top={procurement.quotesPending.top.map((i) => ({
+                id: i.id,
+                primary: i.description,
+                secondary: i.project_name ?? '',
+                href: `/procurement/${i.id}`,
+              }))}
+            />
+            <ProcurementCard
+              href="/procurement?status=fulfilled"
+              icon="📦"
+              label="Deliveries this week"
+              count={procurement.deliveriesThisWeek.count}
+              top={procurement.deliveriesThisWeek.top.map((g) => ({
+                id: g.id,
+                primary: g.description ?? '(item)',
+                secondary: `${g.project_name ?? ''} · ${g.delivered_at} · ${g.quantity_received}`,
+                href: `/procurement/${g.procurement_item_id}`,
+              }))}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Two-column grid */}
       <div
         className="animate-fadeup animate-fadeup-2"
@@ -488,5 +558,68 @@ export default async function DashboardPage() {
         ))}
       </div>
     </div>
+  )
+}
+
+interface CardTop { id: string; primary: string; secondary: string; href: string }
+
+function ProcurementCard({
+  href, icon, label, count, top,
+}: {
+  href: string
+  icon: string
+  label: string
+  count: number
+  top: CardTop[]
+}) {
+  const tone =
+    count === 0 ? 'var(--c-text-dim)'
+    : count > 5 ? 'var(--c-amber)' : 'var(--c-text)'
+  return (
+    <Link
+      href={href}
+      className="data-panel"
+      style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <span style={{ fontSize: 16 }} aria-hidden="true">{icon}</span>
+        <span style={{
+          fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+          letterSpacing: '0.08em', textTransform: 'uppercase',
+        }}>
+          {label}
+        </span>
+        <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 20, fontWeight: 700, color: tone }}>
+          {count}
+        </span>
+      </div>
+      {top.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--c-text-dim)', fontStyle: 'italic' }}>
+          All clear.
+        </div>
+      ) : (
+        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {top.map((t) => (
+            <li key={t.id} style={{ minWidth: 0 }}>
+              <div style={{
+                fontSize: 12, color: 'var(--c-text)', overflow: 'hidden',
+                textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600,
+              }}>
+                {t.primary}
+              </div>
+              {t.secondary && (
+                <div style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 10,
+                  color: 'var(--c-text-dim)', marginTop: 2,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {t.secondary}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Link>
   )
 }
