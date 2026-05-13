@@ -246,10 +246,36 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             {' '}{cables.length} cable{cables.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <LengthModeToggle
-          basePath={`/projects/${projectId}/cables/${revisionId}`}
-          current={lengthMode}
-        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <Link
+            href={`/projects/${projectId}/cables/${revisionId}/tags`}
+            className="btn-primary-amber"
+            style={{
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+              textDecoration: 'none',
+            }}
+          >
+            🏷 Tag schedule
+          </Link>
+          <Link
+            href={`/projects/${projectId}/cables/${revisionId}/cost`}
+            className="btn-primary-amber"
+            style={{
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+              textDecoration: 'none',
+            }}
+          >
+            💰 Cost summary
+          </Link>
+          <LengthModeToggle
+            basePath={`/projects/${projectId}/cables/${revisionId}`}
+            current={lengthMode}
+          />
+        </div>
       </div>
 
       <div
