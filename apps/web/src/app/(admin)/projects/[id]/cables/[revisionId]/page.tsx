@@ -8,6 +8,8 @@ import {
   voltDropPctForSupply,
   type CableForCalc,
   type SupplyForCalc,
+  changedCableIds,
+  type DiffableCable,
 } from '@esite/shared'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
 import { AddEntityPanel, type NodeOption, type SupplyOption } from './AddEntityPanel'
@@ -80,15 +82,28 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     .catch(() => null)
   if (!project) notFound()
 
-  const { data: revisionRow } = await (supabase as any)
-    .schema('cable_schedule')
-    .from('revisions')
-    .select('id, project_id, code, description, status, issued_at, fault_level_ka')
-    .eq('id', revisionId)
-    .eq('project_id', projectId)
-    .single()
+  const [{ data: revisionRow }, { data: priorList }] = await Promise.all([
+    (supabase as any)
+      .schema('cable_schedule')
+      .from('revisions')
+      .select('id, project_id, code, description, status, issued_at, fault_level_ka')
+      .eq('id', revisionId)
+      .eq('project_id', projectId)
+      .single(),
+    // Most-recent ISSUED revision (other than this one) for the cloud-marker diff.
+    (supabase as any)
+      .schema('cable_schedule')
+      .from('revisions')
+      .select('id, code, created_at')
+      .eq('project_id', projectId)
+      .eq('status', 'ISSUED')
+      .neq('id', revisionId)
+      .order('created_at', { ascending: false })
+      .limit(1),
+  ])
   if (!revisionRow) notFound()
   const revision = revisionRow as RevisionRow
+  const priorIssued = ((priorList ?? []) as Array<{ id: string; code: string }>)[0] ?? null
 
   const [sourcesRes, boardsRes, suppliesRes, cablesRes] = await Promise.all([
     (supabase as any)
@@ -127,6 +142,78 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   const supplies = (suppliesRes?.data ?? []) as unknown as SupplyRow[]
   const cables   = (cablesRes?.data   ?? []) as unknown as CableRow[]
 
+  // Cloud markers: compare current cables against the most-recent ISSUED
+  // snapshot. Rows that are new in this revision or have any diffable
+  // field changed get a ☁ icon + revision letter in the schedule grid.
+  let revCloudAdded = new Set<string>()
+  let revCloudChanged = new Set<string>()
+  if (priorIssued) {
+    const [priorCablesRes] = await Promise.all([
+      (supabase as any)
+        .schema('cable_schedule')
+        .from('cables')
+        .select(
+          'id, cable_no, size_mm2, cores, conductor, insulation, ' +
+          'measured_length_m, confirmed_length_m, length_status, ohm_per_km, ' +
+          'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
+          'derated_current_rating_a, tag_override, notes, ' +
+          'supply:supplies!supply_id(' +
+            'voltage_v, design_load_a, ' +
+            'source:sources!from_source_id(code), ' +
+            'from_board:boards!from_board_id(code), ' +
+            'to_board:boards!to_board_id(code))',
+        )
+        .eq('revision_id', priorIssued.id),
+    ])
+    const toDiffable = (rows: any[]): DiffableCable[] => rows.map((c) => ({
+      id: c.id,
+      cable_no: c.cable_no,
+      size_mm2: Number(c.size_mm2),
+      cores: c.cores,
+      conductor: c.conductor,
+      insulation: c.insulation,
+      measured_length_m: c.measured_length_m == null ? null : Number(c.measured_length_m),
+      confirmed_length_m: c.confirmed_length_m == null ? null : Number(c.confirmed_length_m),
+      length_status: c.length_status,
+      ohm_per_km: c.ohm_per_km == null ? null : Number(c.ohm_per_km),
+      installation_method: c.installation_method,
+      depth_mm: c.depth_mm == null ? null : Number(c.depth_mm),
+      grouped_with: Number(c.grouped_with ?? 1),
+      ambient_temp_c: Number(c.ambient_temp_c ?? 30),
+      derated_current_rating_a: c.derated_current_rating_a == null
+        ? null
+        : Number(c.derated_current_rating_a),
+      tag_override: c.tag_override,
+      notes: c.notes,
+      from_label: c.supply?.source?.code ?? c.supply?.from_board?.code ?? '?',
+      to_label: c.supply?.to_board?.code ?? '?',
+      voltage_v: c.supply?.voltage_v == null ? null : Number(c.supply.voltage_v),
+      load_a: c.supply?.design_load_a == null ? null : Number(c.supply.design_load_a),
+    }))
+    // Re-fetch current cables with the supply join for accurate diffing
+    const { data: currentRich } = await (supabase as any)
+      .schema('cable_schedule')
+      .from('cables')
+      .select(
+        'id, cable_no, size_mm2, cores, conductor, insulation, ' +
+        'measured_length_m, confirmed_length_m, length_status, ohm_per_km, ' +
+        'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
+        'derated_current_rating_a, tag_override, notes, ' +
+        'supply:supplies!supply_id(' +
+          'voltage_v, design_load_a, ' +
+          'source:sources!from_source_id(code), ' +
+          'from_board:boards!from_board_id(code), ' +
+          'to_board:boards!to_board_id(code))',
+      )
+      .eq('revision_id', revisionId)
+    const { added, changed } = changedCableIds(
+      toDiffable((priorCablesRes?.data ?? []) as any[]),
+      toDiffable((currentRich ?? []) as any[]),
+    )
+    revCloudAdded = added
+    revCloudChanged = changed
+  }
+
   // Pre-compute volt drop + cumulative VD so the grid renders synchronously.
   const cumulativeMap = computeCumulativeVdMap(
     supplies as SupplyForCalc[],
@@ -150,6 +237,9 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   for (const s of supplies) {
     supplyVdById.set(s.id, voltDropPctForSupply(s, cables as CableForCalc[], lengthMode))
   }
+
+  // Revision-cloud letter (matches the drawing convention — e.g. "8" from "Rev 8").
+  const revLetter = revision.code.replace(/^rev\s*/i, '').trim() || revision.code
 
   const rows: ScheduleRow[] = cables.map((c) => {
     const supply = supplyById.get(c.supply_id)
@@ -204,6 +294,10 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       tag_override: c.tag_override,
       manual_override: c.manual_override,
       notes: c.notes,
+      cloud_kind: revCloudAdded.has(c.id) ? 'added' as const
+              : revCloudChanged.has(c.id) ? 'changed' as const
+              : null,
+      cloud_letter: revLetter,
     }
   })
 
@@ -270,6 +364,19 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             }}
           >
             💰 Cost summary
+          </Link>
+          <Link
+            href={`/projects/${projectId}/cables/${revisionId}/diff`}
+            className="btn-primary-amber"
+            style={{
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+              textDecoration: 'none',
+            }}
+            title={priorIssued ? `Diff against ${priorIssued.code}` : 'No prior issued revision to diff against'}
+          >
+            🔀 Diff
           </Link>
           <LengthModeToggle
             basePath={`/projects/${projectId}/cables/${revisionId}`}

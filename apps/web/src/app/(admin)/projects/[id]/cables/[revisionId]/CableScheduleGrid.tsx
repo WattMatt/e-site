@@ -30,6 +30,9 @@ export interface ScheduleRow {
   tag_override: string | null
   manual_override: boolean
   notes: string | null
+  /** When this cable is new or changed vs the most-recent ISSUED revision. */
+  cloud_kind: 'added' | 'changed' | null
+  cloud_letter: string
 }
 
 interface Props {
@@ -160,6 +163,7 @@ export function CableScheduleGrid({ rows, locked, lengthMode }: Props) {
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
               <Th w={4} />
+              <Th w={32} align="center">Δ</Th>
               <Th w={220}>Cable tag</Th>
               <Th w={120}>From</Th>
               <Th w={120}>To</Th>
@@ -212,6 +216,30 @@ export function CableScheduleGrid({ rows, locked, lengthMode }: Props) {
                   }}
                 >
                   <td style={{ padding: 0, width: 4, background: isPartOfParallel(i) ? 'var(--c-amber)' : 'transparent' }} />
+                  <Td align="center" style={{ padding: '4px 6px' }}>
+                    {r.cloud_kind && (
+                      <span
+                        title={r.cloud_kind === 'added'
+                          ? `New in ${r.cloud_letter} vs last issued`
+                          : `Changed in ${r.cloud_letter} vs last issued`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 2,
+                          padding: '1px 4px',
+                          borderRadius: 8,
+                          fontSize: 9,
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                          color: r.cloud_kind === 'added' ? '#16a34a' : 'var(--c-amber)',
+                          background: r.cloud_kind === 'added' ? 'rgba(34,197,94,0.1)' : 'var(--c-amber-dim)',
+                          border: `1px solid ${r.cloud_kind === 'added' ? '#16a34a' : 'var(--c-amber-mid)'}`,
+                        }}
+                      >
+                        ☁{r.cloud_letter}
+                      </span>
+                    )}
+                  </Td>
                   <Td>
                     <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>{cableTag(r)}</span>
                     {r.manual_override && (
