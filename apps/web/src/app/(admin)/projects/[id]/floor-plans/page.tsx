@@ -50,6 +50,7 @@ export default async function FloorPlansPage({ params }: Props) {
         scale: plan.scale,
         file_size_bytes: plan.file_size_bytes,
         previewUrl,
+        source_path: (plan as { source_path?: string | null }).source_path ?? null,
       }
     })
   )

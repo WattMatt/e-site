@@ -10,6 +10,17 @@ export type DrawingListItem = {
   scale: string | null
   file_size_bytes: number | null
   previewUrl: string | null
+  source_path: string | null
+}
+
+const naturalCmp = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
+
+function groupKey(p: DrawingListItem): string {
+  if (p.source_path) {
+    const segments = p.source_path.split('/').filter(Boolean)
+    if (segments.length > 1) return segments.slice(0, -1).join(' / ')
+  }
+  return p.level?.trim() || 'Unspecified'
 }
 
 function formatBytes(bytes: number | null) {
@@ -30,22 +41,26 @@ export function DrawingsList({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return plans
-    return plans.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        (p.level ?? '').toLowerCase().includes(q),
-    )
+    const base = !q
+      ? plans
+      : plans.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) ||
+            (p.level ?? '').toLowerCase().includes(q) ||
+            (p.source_path ?? '').toLowerCase().includes(q),
+        )
+    return [...base].sort((a, b) => naturalCmp(a.name, b.name))
   }, [plans, query])
 
   const grouped = useMemo(() => {
     const map = new Map<string, DrawingListItem[]>()
     for (const p of filtered) {
-      const k = p.level?.trim() || 'Unspecified'
+      const k = groupKey(p)
       if (!map.has(k)) map.set(k, [])
       map.get(k)!.push(p)
     }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+    for (const items of map.values()) items.sort((a, b) => naturalCmp(a.name, b.name))
+    return Array.from(map.entries()).sort((a, b) => naturalCmp(a[0], b[0]))
   }, [filtered])
 
   return (
@@ -55,7 +70,7 @@ export function DrawingsList({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search name or level…"
+          placeholder="Search name, level, or folder…"
           aria-label="Search drawings"
           className="ob-input"
           style={{ flex: 1, minWidth: 220, maxWidth: 360 }}
@@ -91,7 +106,7 @@ export function DrawingsList({
                   cursor: 'pointer',
                 }}
               >
-                {mode === 'list' ? 'List' : 'By level'}
+                {mode === 'list' ? 'List' : 'By folder'}
               </button>
             )
           })}
