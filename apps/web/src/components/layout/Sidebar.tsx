@@ -7,7 +7,7 @@ import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen, ShieldCheck,
   MessageSquare, ClipboardList, ShoppingBag, Users, CreditCard,
   Settings, LogOut, Activity, Map, ClipboardCheck, ArrowLeft, Cloud,
-  Wrench, Cable, BookMarked,
+  Wrench, Cable, BookMarked, HardHat,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -71,6 +71,7 @@ function projectNav(id: string) {
 }
 
 const FOOTER_ITEMS = [
+  { href: '/site',                   label: 'Site capture', Icon: HardHat },
   { href: '/cable-schedule/sans',    label: 'SANS ref',     Icon: BookMarked },
   { href: '/admin/health',           label: 'Health',       Icon: Activity },
   { href: '/settings/team',          label: 'Team',         Icon: Users },

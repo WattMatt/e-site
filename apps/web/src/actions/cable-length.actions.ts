@@ -24,6 +24,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
+import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
 
 const uuid = z.string().uuid()
 
@@ -79,6 +80,7 @@ async function loadCableContext(supabase: any, cableId: string) {
   return {
     revisionId: r.revision_id as string,
     projectId: r.revision.project_id as string,
+    organisationId: r.organisation_id as string,
     measured: r.measured_length_m == null ? null : Number(r.measured_length_m),
     confirmed: r.confirmed_length_m == null ? null : Number(r.confirmed_length_m),
     status: r.length_status as 'UNMEASURED' | 'MEASURED' | 'CONFIRMED' | 'DISCREPANCY',
@@ -97,6 +99,11 @@ export async function updateMeasuredLengthAction(
 
   const ctx = await loadCableContext(supabase, parsed.data.cableId)
   if ('error' in ctx) return { error: ctx.error }
+
+  const role = await lookupCableRole(supabase, user.id, ctx.organisationId)
+  if (!ROLE_CAPS[role].editMeasured) {
+    return { error: `Your role (${role}) cannot edit measured length.` }
+  }
 
   // Status transitions:
   //   measured set, no confirmed     → MEASURED
@@ -160,6 +167,15 @@ export async function updateConfirmedLengthAction(
 
   const ctx = await loadCableContext(supabase, parsed.data.cableId)
   if ('error' in ctx) return { error: ctx.error }
+
+  const role = await lookupCableRole(supabase, user.id, ctx.organisationId)
+  const caps = ROLE_CAPS[role]
+  if (!caps.enterConfirmed) {
+    return { error: `Your role (${role}) cannot enter confirmed length.` }
+  }
+  if (parsed.data.signOff && !caps.signOff) {
+    return { error: `Your role (${role}) cannot sign off. A Verifier or Admin must approve.` }
+  }
 
   const newConfirmed = parsed.data.confirmedLengthM
   // Status logic:

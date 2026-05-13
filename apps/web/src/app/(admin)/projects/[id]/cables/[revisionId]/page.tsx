@@ -378,6 +378,18 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
           >
             🔀 Diff
           </Link>
+          <Link
+            href={`/projects/${projectId}/cables/${revisionId}/discrepancies`}
+            className="btn-primary-amber"
+            style={{
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+              textDecoration: 'none',
+            }}
+          >
+            📐 Discrepancies
+          </Link>
           <LengthModeToggle
             basePath={`/projects/${projectId}/cables/${revisionId}`}
             current={lengthMode}
