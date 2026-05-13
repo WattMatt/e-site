@@ -126,37 +126,15 @@ export default async function CablesPage({ params }: Props) {
                 marginTop: 6,
               }}
             >
-              Start Rev 0 to begin modelling the LV/MV distribution. You can
-              add sources, boards, supplies and cables, or import an existing
-              Excel cable schedule (coming in the next slice).
+              Click <strong>+ Start Rev 0</strong> above to begin modelling
+              the LV/MV distribution from scratch, or <strong>⬆ Import
+              Excel</strong> to load an existing cable schedule workbook.
             </div>
           </div>
         </div>
       ) : (
         <RevisionsList projectId={projectId} revisions={rows} />
       )}
-
-      <div
-        className="data-panel"
-        style={{
-          padding: 14,
-          marginTop: 16,
-          background: 'var(--c-base)',
-          border: '1px dashed var(--c-border)',
-          color: 'var(--c-text-dim)',
-          fontSize: 13,
-        }}
-      >
-        <div style={{ fontWeight: 600, color: 'var(--c-text)', marginBottom: 6 }}>
-          Cable schedule module — what's coming
-        </div>
-        Phase C-1 schema is in place. Next slices land the SANS reference
-        library (C-2), the AG-Grid cable schedule view (C-3), volt-drop +
-        derating calculations (C-4), tag schedule + cost summary (C-5),
-        diff viewer (C-6), Excel ingestion (C-7), measured-vs-confirmed
-        lengths + mobile capture (C-8), Excel/PDF/CSV export (C-9), and the
-        schematic distribution tree (C-10). See SPEC DOCS for the full plan.
-      </div>
     </div>
   )
 }
