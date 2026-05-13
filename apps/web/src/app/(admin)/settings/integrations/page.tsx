@@ -53,12 +53,26 @@ export default async function IntegrationsPage({ searchParams }: Props) {
 
   // Cast through `any` because org_storage_connections isn't yet in
   // packages/db/src/types.ts (regen pending in a polish commit).
-  const { data, error } = await (supabase as any)
-    .from('org_storage_connections')
-    .select('id, provider, account_email, scope, expires_at, created_at, team_id, team_name')
-    .order('created_at', { ascending: false })
-
-  const connections: ConnectionRow[] = (error ? [] : (data as unknown as ConnectionRow[])) ?? []
+  let connections: ConnectionRow[] = []
+  let dbgError: string | null = null
+  try {
+    const { data, error } = await (supabase as any)
+      .from('org_storage_connections')
+      .select('id, provider, account_email, scope, expires_at, created_at, team_id, team_name')
+      .order('created_at', { ascending: false })
+    if (error) {
+      console.error('[integrations] select error:', error)
+      dbgError = `select: ${error.message ?? JSON.stringify(error)}`
+    } else if (Array.isArray(data)) {
+      connections = data as ConnectionRow[]
+    } else {
+      console.error('[integrations] unexpected data shape:', typeof data, data)
+      dbgError = `unexpected data shape: ${typeof data}`
+    }
+  } catch (e) {
+    console.error('[integrations] select threw:', e)
+    dbgError = `threw: ${e instanceof Error ? e.message : String(e)}`
+  }
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 720 }}>
@@ -90,6 +104,11 @@ export default async function IntegrationsPage({ searchParams }: Props) {
         <div style={banner('error')}>
           ✕ Connection failed: {sp.error.replace(/_/g, ' ')}
           {sp.detail ? ` — ${sp.detail}` : ''}
+        </div>
+      )}
+      {dbgError && (
+        <div style={banner('error')}>
+          ✕ Diagnostic: failed to load connections — {dbgError}
         </div>
       )}
 
