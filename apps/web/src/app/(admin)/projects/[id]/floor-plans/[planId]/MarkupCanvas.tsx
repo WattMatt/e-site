@@ -20,6 +20,7 @@ import {
   createRfiAnnotationAction,
   updateRfiAnnotationAction,
 } from '@/actions/rfi-annotation.actions'
+import { createRfiAction } from '@/actions/rfi.actions'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -219,6 +220,12 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
   const [saveError, setSaveError] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerRfiId, setPickerRfiId] = useState<string>('')
+  // Picker has two modes: 'attach' (default when there are existing RFIs) and
+  // 'create' (inline form that creates a new RFI then attaches the markup).
+  const [pickerMode, setPickerMode] = useState<'attach' | 'create'>('attach')
+  const [newRfiSubject, setNewRfiSubject] = useState('')
+  const [newRfiDescription, setNewRfiDescription] = useState('')
+  const [newRfiPriority, setNewRfiPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium')
   // Polygon in-progress vertices (image-space). Cleared on commit / cancel.
   const [polyPoints, setPolyPoints] = useState<number[]>([])
 
@@ -901,7 +908,46 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
     }
     // Create mode — open the RFI picker.
     setPickerRfiId(rfis[0]?.id ?? '')
+    // Default to 'create' when no RFIs exist yet so the user lands straight
+    // on the form; otherwise default to attaching to an existing one.
+    setPickerMode(rfis.length === 0 ? 'create' : 'attach')
     setPickerOpen(true)
+  }
+
+  async function submitNewRfiWithAnnotation() {
+    const snap = snapshotScene()
+    if (!snap) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const rfiRes = await createRfiAction({
+        projectId,
+        subject: newRfiSubject.trim(),
+        description: newRfiDescription.trim(),
+        priority: newRfiPriority,
+      })
+      if (rfiRes.error || !rfiRes.rfiId) {
+        setSaveError(rfiRes.error ?? 'Failed to create RFI')
+        return
+      }
+      const annoRes = await createRfiAnnotationAction({
+        rfiId: rfiRes.rfiId,
+        sourceFloorPlanId: plan.id,
+        sceneJson: snap.scene as unknown,
+        pngBase64: snap.pngBase64,
+      })
+      if (annoRes.error) {
+        // RFI exists but annotation save failed. Surface the error; the user
+        // can navigate to the new RFI manually if they want to keep it.
+        setSaveError(`RFI created but markup save failed: ${annoRes.error}`)
+        return
+      }
+      void clearDraftRecord(draftKey)
+      setPickerOpen(false)
+      router.push(`/rfis/${rfiRes.rfiId}?projectId=${projectId}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function submitNewAnnotation() {
@@ -1387,13 +1433,51 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
             }}
           >
             <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--c-text)', margin: 0 }}>
-              Attach markup to RFI
+              {pickerMode === 'create' ? 'New RFI from markup' : 'Attach markup to RFI'}
             </h3>
-            {rfis.length === 0 ? (
-              <p style={{ fontSize: 13, color: 'var(--c-text-mid)', margin: 0 }}>
-                No RFIs in this project yet. Create an RFI first, then come back to attach this markup.
-              </p>
-            ) : (
+
+            {/* Mode tabs — hidden when no RFIs exist (only 'create' is valid). */}
+            {rfis.length > 0 && (
+              <div
+                role="tablist"
+                aria-label="RFI mode"
+                style={{
+                  display: 'flex',
+                  border: '1px solid var(--c-border)',
+                  borderRadius: 6,
+                  overflow: 'hidden',
+                }}
+              >
+                {(['attach', 'create'] as const).map((m) => {
+                  const active = pickerMode === m
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setPickerMode(m)}
+                      style={{
+                        flex: 1,
+                        padding: '8px 12px',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 10,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        background: active ? 'var(--c-amber-mid)' : 'var(--c-panel)',
+                        color: active ? 'var(--c-amber)' : 'var(--c-text-mid)',
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {m === 'attach' ? 'Attach to existing' : 'Create new'}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {pickerMode === 'attach' ? (
               <div>
                 <label className="ob-label" htmlFor="rfi-picker">
                   Choose an RFI
@@ -1411,7 +1495,57 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
                   ))}
                 </select>
               </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div>
+                  <label className="ob-label" htmlFor="rfi-new-subject">
+                    Subject
+                  </label>
+                  <input
+                    id="rfi-new-subject"
+                    type="text"
+                    value={newRfiSubject}
+                    onChange={(e) => setNewRfiSubject(e.target.value)}
+                    className="ob-input"
+                    maxLength={300}
+                    placeholder="e.g. Cashbuild shop 93 — power layout clearance"
+                  />
+                </div>
+                <div>
+                  <label className="ob-label" htmlFor="rfi-new-description">
+                    Description
+                  </label>
+                  <textarea
+                    id="rfi-new-description"
+                    value={newRfiDescription}
+                    onChange={(e) => setNewRfiDescription(e.target.value)}
+                    className="ob-input"
+                    rows={3}
+                    maxLength={10000}
+                    placeholder="What clarification do you need? Reference the markup pins/circles."
+                  />
+                </div>
+                <div>
+                  <label className="ob-label" htmlFor="rfi-new-priority">
+                    Priority
+                  </label>
+                  <select
+                    id="rfi-new-priority"
+                    value={newRfiPriority}
+                    onChange={(e) =>
+                      setNewRfiPriority(e.target.value as typeof newRfiPriority)
+                    }
+                    className="ob-input"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+              </div>
             )}
+
             {saveError && (
               <p role="alert" style={{ color: '#dc2626', fontSize: 12, margin: 0 }}>
                 {saveError}
@@ -1430,14 +1564,36 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={submitNewAnnotation}
-                className="btn-primary-amber"
-                disabled={saving || rfis.length === 0}
-              >
-                {saving ? 'Saving…' : 'Attach to RFI'}
-              </button>
+              {pickerMode === 'attach' ? (
+                <button
+                  type="button"
+                  onClick={submitNewAnnotation}
+                  className="btn-primary-amber"
+                  disabled={saving || rfis.length === 0}
+                >
+                  {saving ? 'Saving…' : 'Attach to RFI'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={submitNewRfiWithAnnotation}
+                  className="btn-primary-amber"
+                  disabled={
+                    saving ||
+                    newRfiSubject.trim().length < 2 ||
+                    newRfiDescription.trim().length < 10
+                  }
+                  title={
+                    newRfiSubject.trim().length < 2
+                      ? 'Subject must be at least 2 characters'
+                      : newRfiDescription.trim().length < 10
+                        ? 'Description must be at least 10 characters'
+                        : undefined
+                  }
+                >
+                  {saving ? 'Creating…' : 'Create RFI & attach'}
+                </button>
+              )}
             </div>
           </div>
         </div>
