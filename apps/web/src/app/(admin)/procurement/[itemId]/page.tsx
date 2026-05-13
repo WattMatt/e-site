@@ -4,6 +4,9 @@ import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { QuoteUploadForm } from './QuoteUploadForm'
 import { QuoteCompareTable, type QuoteRow } from './QuoteCompareTable'
+import { ShopDrawingsPanel, type ShopDrawingRow } from './ShopDrawingsPanel'
+import { GRNPanel, type GRNRow } from './GRNPanel'
+import { POButton } from './POButton'
 
 export const metadata: Metadata = { title: 'Procurement item' }
 
@@ -90,7 +93,7 @@ export default async function ProcurementItemPage({ params }: Props) {
   if (!itemRow) notFound()
   const item = itemRow as ProcurementItem
 
-  const [scheduleRes, quotesRes, projectRes, suppliersRes] = await Promise.all([
+  const [scheduleRes, quotesRes, projectRes, suppliersRes, shopDrawingsRes, grnsRes] = await Promise.all([
     item.schedule_item_id
       ? (supabase as any)
           .schema('projects')
@@ -124,12 +127,42 @@ export default async function ProcurementItemPage({ params }: Props) {
       .select('id, name')
       .eq('organisation_id', item.organisation_id)
       .order('name'),
+    (supabase as any)
+      .schema('projects')
+      .from('shop_drawings')
+      .select(
+        'id, title, revision, file_path, file_size_bytes, file_mime, status, notes, submitted_at',
+      )
+      .eq('procurement_item_id', itemId)
+      .order('revision', { ascending: false }),
+    (supabase as any)
+      .schema('projects')
+      .from('goods_received_notes')
+      .select(
+        'id, delivered_at, quantity_received, condition, notes, photo_paths, signed_pod_path, created_at',
+      )
+      .eq('procurement_item_id', itemId)
+      .order('delivered_at', { ascending: false }),
   ])
 
   const schedule = (scheduleRes?.data ?? null) as ScheduleStub | null
   const quotes = ((quotesRes?.data ?? []) as unknown as QuoteRow[])
   const project = (projectRes?.data ?? null) as { id: string; name: string } | null
   const suppliers = ((suppliersRes?.data ?? []) as unknown as SupplierStub[])
+  const shopDrawings = ((shopDrawingsRes?.data ?? []) as unknown as ShopDrawingRow[])
+  const grns = ((grnsRes?.data ?? []) as unknown as GRNRow[])
+
+  // Show Shop Drawings panel when linked schedule line requires one, OR
+  // when at least one drawing has already been submitted (covers the case
+  // where the engineer changes their mind after submissions started).
+  const showShopDrawings =
+    !!schedule?.shop_drawing_required || shopDrawings.length > 0
+
+  // PO PDF availability: needs a selected_quote_id. Disabled-with-reason
+  // otherwise so the user understands what to do.
+  const poDisabledReason = !item.selected_quote_id
+    ? 'Select a winning quote first.'
+    : undefined
 
   return (
     <div className="animate-fadeup">
@@ -274,6 +307,42 @@ export default async function ProcurementItemPage({ params }: Props) {
               </div>
             </div>
           </div>
+
+          {/* Shop drawings approval chain */}
+          {showShopDrawings && (
+            <div className="data-panel">
+              <div className="data-panel-header">
+                <span className="data-panel-title">
+                  Shop drawings ({shopDrawings.length})
+                </span>
+              </div>
+              <div style={{ padding: '14px 18px' }}>
+                <ShopDrawingsPanel
+                  procurementItemId={item.id}
+                  organisationId={item.organisation_id}
+                  drawings={shopDrawings}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Goods Received Notes */}
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">
+                Deliveries ({grns.length})
+              </span>
+            </div>
+            <div style={{ padding: '14px 18px' }}>
+              <GRNPanel
+                procurementItemId={item.id}
+                organisationId={item.organisation_id}
+                procurementUnit={item.unit}
+                procurementQuantity={item.quantity}
+                grns={grns}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Side: item details */}
@@ -299,6 +368,13 @@ export default async function ProcurementItemPage({ params }: Props) {
             <Detail label="Required by" value={fmtDate(item.required_by)} />
             <Detail label="Created" value={fmtDate(item.created_at)} />
             {item.notes && <Detail label="Notes" value={item.notes} multiline />}
+            <div style={{ borderTop: '1px solid var(--c-border)', paddingTop: 12 }}>
+              <POButton
+                procurementItemId={item.id}
+                disabled={!item.selected_quote_id}
+                disabledReason={poDisabledReason}
+              />
+            </div>
           </div>
         </div>
       </div>
