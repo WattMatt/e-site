@@ -37,7 +37,7 @@ export default async function ProcurementPage({ searchParams }: Props) {
 
   const orgId = mem?.organisation_id ?? ''
 
-  const [items, projects, projectRow] = await Promise.all([
+  const [items, projects, projectRow, scheduleItemsRes] = await Promise.all([
     procurementService.listByOrg(supabase as any, orgId, { status, projectId }).catch(() => []),
     supabase.schema('projects').from('projects')
       .select('id, name').eq('organisation_id', orgId).eq('status', 'active').order('name')
@@ -45,7 +45,20 @@ export default async function ProcurementPage({ searchParams }: Props) {
     projectId
       ? supabase.schema('projects').from('projects').select('id, name').eq('id', projectId).single().then(r => r.data)
       : Promise.resolve(null),
+    (supabase as any).schema('projects').from('engineer_equipment_schedule')
+      .select('id, project_id, item_code, description, quantity, unit')
+      .eq('organisation_id', orgId)
+      .in('status', ['open', 'partially_ordered'])
+      .order('item_code', { ascending: true, nullsFirst: false }),
   ])
+  const scheduleItems = (scheduleItemsRes?.data ?? []) as unknown as Array<{
+    id: string
+    project_id: string
+    item_code: string | null
+    description: string
+    quantity: number
+    unit: string | null
+  }>
 
   const totalApproved = (items as any[])
     .filter((i: any) => i.status === 'approved' || i.status === 'fulfilled')
@@ -143,9 +156,19 @@ export default async function ProcurementPage({ searchParams }: Props) {
                     </div>
                   </div>
                   <div style={{ padding: '12px 18px' }}>
-                    <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', marginBottom: 4 }}>
-                      {item.description}
-                    </p>
+                    <Link
+                      href={`/procurement/${item.id}`}
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: 'var(--c-text)',
+                        marginBottom: 4,
+                        textDecoration: 'none',
+                        display: 'block',
+                      }}
+                    >
+                      {item.description} <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>›</span>
+                    </Link>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                       {item.quantity && (
                         <span>{item.quantity} {item.unit ?? 'units'}</span>
@@ -182,6 +205,7 @@ export default async function ProcurementPage({ searchParams }: Props) {
             userId={user!.id}
             projects={projects as any}
             defaultProjectId={projectId}
+            scheduleItems={scheduleItems}
           />
         </div>
       </div>

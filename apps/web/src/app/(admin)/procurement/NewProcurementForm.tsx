@@ -1,21 +1,69 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
+export interface ScheduleStub {
+  id: string
+  project_id: string
+  item_code: string | null
+  description: string
+  quantity: number
+  unit: string | null
+}
+
 export function NewProcurementForm({
-  orgId, userId, projects, defaultProjectId,
-}: { orgId: string; userId: string; projects: { id: string; name: string }[]; defaultProjectId?: string }) {
+  orgId, userId, projects, defaultProjectId, scheduleItems = [],
+}: {
+  orgId: string
+  userId: string
+  projects: { id: string; name: string }[]
+  defaultProjectId?: string
+  scheduleItems?: ScheduleStub[]
+}) {
   const router = useRouter()
   const [description, setDescription] = useState('')
   const [quantity, setQuantity] = useState('')
   const [unit, setUnit] = useState('')
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '')
+  const [scheduleItemId, setScheduleItemId] = useState<string>('')
   const [requiredBy, setRequiredBy] = useState('')
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Filter schedule lines to the currently-selected project. Reset the
+  // selection if the user switches project and the chosen line no longer
+  // applies.
+  const scheduleOptions = useMemo(
+    () => scheduleItems.filter((s) => s.project_id === projectId),
+    [scheduleItems, projectId],
+  )
+
+  function onProjectChange(next: string) {
+    setProjectId(next)
+    // If switching project invalidates the schedule line, clear it.
+    if (scheduleItemId && !scheduleItems.some((s) => s.id === scheduleItemId && s.project_id === next)) {
+      setScheduleItemId('')
+    }
+  }
+
+  function onScheduleChange(id: string) {
+    setScheduleItemId(id)
+    // Auto-fill from the schedule line if the user picks one and fields
+    // are still empty. Saves typing for the common case.
+    if (!id) return
+    const line = scheduleItems.find((s) => s.id === id)
+    if (!line) return
+    if (!description.trim()) {
+      setDescription(line.item_code
+        ? `${line.item_code} — ${line.description}`
+        : line.description)
+    }
+    if (!quantity) setQuantity(String(Number(line.quantity)))
+    if (!unit && line.unit) setUnit(line.unit)
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,10 +86,12 @@ export function NewProcurementForm({
         required_by: requiredBy || null,
         notes: notes || null,
         status: 'draft',
+        schedule_item_id: scheduleItemId || null,
       })
 
     if (err) { setError(err.message); setSaving(false); return }
     setDescription(''); setQuantity(''); setUnit(''); setRequiredBy(''); setNotes('')
+    setScheduleItemId('')
     router.refresh()
     setSaving(false)
   }
@@ -59,10 +109,27 @@ export function NewProcurementForm({
           </div>
           <div>
             <label className="ob-label">Project *</label>
-            <select className="ob-select" value={projectId} onChange={e => setProjectId(e.target.value)}>
+            <select className="ob-select" value={projectId} onChange={e => onProjectChange(e.target.value)}>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
+          {scheduleOptions.length > 0 && (
+            <div>
+              <label className="ob-label">Link to schedule line (optional)</label>
+              <select
+                className="ob-select"
+                value={scheduleItemId}
+                onChange={(e) => onScheduleChange(e.target.value)}
+              >
+                <option value="">(ad-hoc — not on the engineer's schedule)</option>
+                {scheduleOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.item_code ? `${s.item_code} — ` : ''}{s.description} ({Number(s.quantity)}{s.unit ? ` ${s.unit}` : ''})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <div>
               <label className="ob-label">Qty</label>

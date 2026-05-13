@@ -25,50 +25,9 @@ import {
 } from '@esite/shared'
 import { z } from 'zod'
 
+import { dispatchNotification } from '@/lib/notifications'
+
 const uuidSchema = z.string().uuid()
-
-interface NotifyArgs {
-  userIds: string[]
-  title: string
-  body: string
-  route: string
-  type: string          // notification type (e.g. 'rfi_assigned', 'rfi_response')
-  entityType?: string   // 'rfi' | 'rfi_response' — drives in-app linking
-  entityId?: string     // the rfi or response uuid
-}
-
-async function dispatchNotification({
-  userIds, title, body, route, type, entityType, entityId,
-}: NotifyArgs): Promise<void> {
-  // Best-effort: never block the parent action on notification failure.
-  try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!supabaseUrl || !serviceKey) return
-
-    const unique = [...new Set(userIds.filter(Boolean))]
-    if (unique.length === 0) return
-
-    await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${serviceKey}`,
-      },
-      body: JSON.stringify({
-        userIds: unique,
-        title,
-        body,
-        type,
-        entityType,
-        entityId,
-        data: { route },
-      }),
-    }).catch(() => {/* non-blocking */})
-  } catch {
-    // Notification failure must never propagate.
-  }
-}
 
 // ─── createRfiAction ────────────────────────────────────────────────────
 
