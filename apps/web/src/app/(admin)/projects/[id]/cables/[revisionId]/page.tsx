@@ -14,6 +14,7 @@ import {
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
 import { AddEntityPanel, type NodeOption, type SupplyOption } from './AddEntityPanel'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
+import { ExportMenu } from './ExportMenu'
 
 export const metadata: Metadata = { title: 'Cable schedule revision' }
 
@@ -394,6 +395,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             basePath={`/projects/${projectId}/cables/${revisionId}`}
             current={lengthMode}
           />
+          <ExportMenu projectId={projectId} revisionId={revisionId} />
         </div>
       </div>
 
