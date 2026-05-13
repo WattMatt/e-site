@@ -58,10 +58,24 @@ export default async function CablesPage({ params }: Props) {
             {project.name} · {rows.length} revision{rows.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <CreateRevisionButton
-          projectId={projectId}
-          hasDraft={rows.some((r) => r.status === 'DRAFT')}
-        />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Link
+            href={`/projects/${projectId}/cables/import`}
+            className="btn-primary-amber"
+            style={{
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+              textDecoration: 'none',
+            }}
+          >
+            ⬆ Import Excel
+          </Link>
+          <CreateRevisionButton
+            projectId={projectId}
+            hasDraft={rows.some((r) => r.status === 'DRAFT')}
+          />
+        </div>
       </div>
 
       {!schemaExposed && (

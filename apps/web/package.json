@@ -28,6 +28,7 @@
     "@zxcvbn-ts/language-en": "^3.0.2",
     "clsx": "^2.1.0",
     "date-fns": "^4.1.0",
+    "exceljs": "^4.4.0",
     "konva": "^10.2.5",
     "lucide-react": "^0.441.0",
     "next": "^15.0.0",
