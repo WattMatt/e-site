@@ -167,15 +167,29 @@ export class DropboxProvider implements CloudStorageProvider {
   // Team-namespace plumbing
   //
   // Dropbox Business members have TWO namespaces visible to their account:
-  //   - HOME (default)   → only their personal member folder + files they own
+  //   - HOME (default)   → their personal member subfolder of the team root
   //   - ROOT             → the team's full folder tree (incl. shared team folders)
   //
   // Without `Dropbox-API-Path-Root: {".tag":"root","root":"<id>"}`, every
   // /files/* call defaults to HOME — so the folder picker only shows the
-  // user's personal slice and team-shared content stays invisible. For
-  // personal Dropbox accounts (root_info.tag === "user"), we OMIT the
-  // header (sending it would 400). For team accounts, we send it on every
-  // list_folder + download call.
+  // user's personal slice and team-shared content stays invisible.
+  //
+  // PREDICATE: detect "needs path-root header" by namespace divergence.
+  //   root_info.root_namespace_id !== root_info.home_namespace_id
+  //
+  // Why divergence and NOT root_info[".tag"] === "team":
+  //   Dropbox returns root_info[".tag"] = "team" ONLY when the caller's
+  //   home IS the team root (e.g. team admin in admin context). For a
+  //   normal team member, .tag is "user" even though they're in a team —
+  //   their home is a personal subfolder of the team root and the two
+  //   namespace IDs differ. Checking .tag === "team" misses every regular
+  //   member, which is the entire user base. Confirmed via debug-route
+  //   data 2026-05-13 (Watson Mattheus team, root=2606589667, home=51521165,
+  //   .tag="user", account_type=business, team object present).
+  //
+  // For personal Dropbox accounts (no team), the two IDs are equal and the
+  // header is omitted — sending it with the user's own root_namespace_id
+  // would be a no-op anyway.
   //
   // root_info comes from /users/get_current_account; we cache it per access
   // token in-memory to avoid 1 extra round-trip per call. Cache key is the
@@ -198,8 +212,7 @@ export class DropboxProvider implements CloudStorageProvider {
     const cached = rootInfoCache.get(accessToken)
     if (cached !== undefined) return cached.rootNamespaceId
     const info = await this.fetchAccountInfo(accessToken)
-    const rootNamespaceId =
-      info.root_info?.['.tag'] === 'team' ? info.root_info.root_namespace_id : undefined
+    const rootNamespaceId = deriveRootNamespaceId(info)
     rootInfoCache.set(accessToken, { email: info.email, rootNamespaceId })
     return rootNamespaceId
   }
@@ -208,8 +221,7 @@ export class DropboxProvider implements CloudStorageProvider {
     const cached = rootInfoCache.get(accessToken)
     if (cached) return cached.email
     const info = await this.fetchAccountInfo(accessToken)
-    const rootNamespaceId =
-      info.root_info?.['.tag'] === 'team' ? info.root_info.root_namespace_id : undefined
+    const rootNamespaceId = deriveRootNamespaceId(info)
     rootInfoCache.set(accessToken, { email: info.email, rootNamespaceId })
     return info.email
   }
@@ -234,7 +246,29 @@ interface DropboxAccountInfo {
     '.tag': 'team' | 'user'
     root_namespace_id: string
     home_namespace_id: string
+    home_path?: string
   }
+  team?: {
+    id: string
+    name: string
+  }
+  account_type?: { '.tag': 'basic' | 'pro' | 'business' }
+}
+
+/**
+ * Returns the team's root namespace id when the caller's home is BELOW the
+ * team root (i.e. they're a team member, not at the root themselves), so
+ * /files/* calls need `Dropbox-API-Path-Root` to escape the home namespace.
+ * Returns undefined when:
+ *   - root_info is missing entirely (very old API responses)
+ *   - root_namespace_id === home_namespace_id (caller IS at the root —
+ *     personal account, OR team admin in admin-context, OR single-user team)
+ */
+function deriveRootNamespaceId(info: DropboxAccountInfo): string | undefined {
+  const ri = info.root_info
+  if (!ri) return undefined
+  if (ri.root_namespace_id === ri.home_namespace_id) return undefined
+  return ri.root_namespace_id
 }
 
 // In-memory cache of root_info per access token.

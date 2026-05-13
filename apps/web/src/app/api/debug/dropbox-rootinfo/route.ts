@@ -68,16 +68,19 @@ export async function GET() {
     raw = { _error: 'fetch threw', _detail: String(e) }
   }
 
-  // Also try a list_folder("") with the namespace header so we see what would actually come back
-  const r = raw as { root_info?: { '.tag'?: string; root_namespace_id?: string; home_namespace_id?: string } }
-  const isTeam = r?.root_info?.['.tag'] === 'team'
-  const headerWouldBe = isTeam
-    ? { 'Dropbox-API-Path-Root': JSON.stringify({ '.tag': 'root', root: r.root_info!.root_namespace_id! }) }
+  // Also try a list_folder("") with the namespace header so we see what would actually come back.
+  // Predicate matches dropbox.provider.ts deriveRootNamespaceId(): namespace-id divergence.
+  const r = raw as { root_info?: { '.tag'?: string; root_namespace_id?: string; home_namespace_id?: string }; team?: unknown }
+  const ri = r?.root_info
+  const needsPathRoot = !!(ri && ri.root_namespace_id && ri.root_namespace_id !== ri.home_namespace_id)
+  const headerWouldBe = needsPathRoot
+    ? { 'Dropbox-API-Path-Root': JSON.stringify({ '.tag': 'root', root: ri!.root_namespace_id! }) }
     : null
+  const isTeam = needsPathRoot // alias kept for backwards-compatibility with existing reports
 
-  let listResultWithHeader: unknown = 'skipped (not a team account)'
+  let listResultWithHeader: unknown = 'skipped (root_namespace_id == home_namespace_id — no path-root header needed)'
   let listResultWithoutHeader: unknown = null
-  if (isTeam && headerWouldBe) {
+  if (needsPathRoot && headerWouldBe) {
     try {
       const r2 = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
         method: 'POST',
@@ -112,9 +115,12 @@ export async function GET() {
       connection: { id: conn.id, account_email: conn.account_email, created_at: conn.created_at },
       dropbox_get_current_account_response: raw,
       derived: {
-        isTeamAccount: isTeam,
+        needsPathRootHeader: needsPathRoot,
+        isTeamAccount: isTeam, // legacy alias
         root_namespace_id: r?.root_info?.root_namespace_id ?? null,
         home_namespace_id: r?.root_info?.home_namespace_id ?? null,
+        namespace_ids_diverge: ri ? ri.root_namespace_id !== ri.home_namespace_id : null,
+        team_object_present: !!r?.team,
         headerThatProviderWouldSend: headerWouldBe,
       },
       listFolderRoot_WITH_namespaceHeader: listResultWithHeader,
