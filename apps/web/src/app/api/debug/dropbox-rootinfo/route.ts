@@ -1,9 +1,15 @@
 /**
- * TEMPORARY debug route — surfaces what /users/get_current_account returns
- * for the caller's most recent Dropbox connection. Used to diagnose whether
- * the team-namespace fix in dropbox.provider.ts is being applied.
+ * TEMPORARY debug route at /api/debug/dropbox-rootinfo — surfaces what
+ * /users/get_current_account returns for the caller's most recent Dropbox
+ * connection. Used to diagnose whether the team-namespace fix in
+ * dropbox.provider.ts is being applied.
  *
- * DELETE ONCE the picker is confirmed working.
+ * Originally lived under /api/__debug/... but Next.js App Router treats
+ * path segments starting with `_` as PRIVATE FOLDERS (skipped from routing)
+ * — that's why the prior URL returned 404 even though the file was in
+ * the build. Single-segment plain `debug` is the fix.
+ *
+ * DELETE THIS ROUTE once the picker is confirmed working.
  */
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
