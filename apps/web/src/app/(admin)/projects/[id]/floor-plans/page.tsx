@@ -45,6 +45,7 @@ export default async function FloorPlansPage({ params }: Props) {
     file_size_bytes: plan.file_size_bytes,
     previewUrl: null,
     source_path: (plan as { source_path?: string | null }).source_path ?? null,
+    file_path: plan.file_path,
   }))
 
   return (

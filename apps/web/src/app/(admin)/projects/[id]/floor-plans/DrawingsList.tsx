@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
+import { createBrowserClient } from '@supabase/ssr'
 
 export type DrawingListItem = {
   id: string
@@ -11,6 +12,7 @@ export type DrawingListItem = {
   file_size_bytes: number | null
   previewUrl: string | null
   source_path: string | null
+  file_path: string
 }
 
 const naturalCmp = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
@@ -176,21 +178,30 @@ function Row({
   projectId: string
   isLast: boolean
 }) {
+  // Row uses a div (not a Link) so the inline download <button> doesn't end
+  // up nested inside an <a> (invalid HTML). The name+metadata is wrapped in
+  // its own Link; the download button is a sibling.
   return (
-    <Link
-      href={`/projects/${projectId}/floor-plans/${plan.id}`}
+    <div
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 14,
         padding: '12px 16px',
-        textDecoration: 'none',
-        color: 'inherit',
         borderBottom: isLast ? 'none' : '1px solid var(--c-border)',
       }}
     >
       <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden="true">📄</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <Link
+        href={`/projects/${projectId}/floor-plans/${plan.id}`}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'block',
+          textDecoration: 'none',
+          color: 'inherit',
+        }}
+      >
         <div
           style={{
             fontSize: 13,
@@ -219,7 +230,7 @@ function Row({
             {plan.source_path ?? plan.level}
           </div>
         )}
-      </div>
+      </Link>
       <div
         style={{
           display: 'flex',
@@ -233,9 +244,75 @@ function Row({
         {plan.scale && <span>Scale {plan.scale}</span>}
         {plan.file_size_bytes && <span>{formatBytes(plan.file_size_bytes)}</span>}
       </div>
-      <span style={{ color: 'var(--c-text-dim)', fontSize: 12, flexShrink: 0 }} aria-hidden="true">
+      <DownloadButton filePath={plan.file_path} name={plan.name} />
+      <Link
+        href={`/projects/${projectId}/floor-plans/${plan.id}`}
+        aria-label={`Open ${plan.name}`}
+        style={{
+          color: 'var(--c-text-dim)',
+          fontSize: 12,
+          flexShrink: 0,
+          textDecoration: 'none',
+        }}
+      >
         ›
-      </span>
-    </Link>
+      </Link>
+    </div>
+  )
+}
+
+function DownloadButton({ filePath, name }: { filePath: string; name: string }) {
+  const [busy, setBusy] = useState(false)
+  async function onClick() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      )
+      const { data, error } = await supabase.storage
+        .from('drawings')
+        .createSignedUrl(filePath, 3600, { download: name })
+      if (error || !data?.signedUrl) {
+        alert(`Cannot download: ${error?.message ?? 'no URL'}`)
+        return
+      }
+      // Trigger the download via a hidden anchor; `?download=` query param
+      // is added by Supabase Storage when we pass { download } to
+      // createSignedUrl, which forces a Content-Disposition: attachment
+      // header rather than inline preview.
+      const a = document.createElement('a')
+      a.href = data.signedUrl
+      a.rel = 'noopener'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      aria-label={`Download ${name}`}
+      title="Download original file"
+      style={{
+        background: 'none',
+        border: '1px solid var(--c-border)',
+        borderRadius: 6,
+        color: 'var(--c-text-mid)',
+        cursor: busy ? 'progress' : 'pointer',
+        padding: '4px 8px',
+        fontSize: 12,
+        flexShrink: 0,
+        fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.04em',
+      }}
+    >
+      {busy ? '…' : '↓'}
+    </button>
   )
 }
