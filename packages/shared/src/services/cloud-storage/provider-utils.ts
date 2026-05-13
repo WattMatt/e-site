@@ -39,9 +39,10 @@ export interface ProviderCredentials {
 export function getProviderCredentials(provider: ProviderName): ProviderCredentials {
   const env = readEnv()
   const map: Record<ProviderName, { id: string; secret: string }> = {
-    dropbox:      { id: 'DROPBOX_APP_KEY',    secret: 'DROPBOX_APP_SECRET' },
-    google_drive: { id: 'GOOGLE_CLIENT_ID',   secret: 'GOOGLE_CLIENT_SECRET' },
-    onedrive:     { id: 'MS_GRAPH_CLIENT_ID', secret: 'MS_GRAPH_CLIENT_SECRET' },
+    dropbox:      { id: 'DROPBOX_APP_KEY',         secret: 'DROPBOX_APP_SECRET' },
+    dropbox_team: { id: 'DROPBOX_TEAM_APP_KEY',    secret: 'DROPBOX_TEAM_APP_SECRET' },
+    google_drive: { id: 'GOOGLE_CLIENT_ID',        secret: 'GOOGLE_CLIENT_SECRET' },
+    onedrive:     { id: 'MS_GRAPH_CLIENT_ID',      secret: 'MS_GRAPH_CLIENT_SECRET' },
   }
   const { id, secret } = map[provider]
   const clientId = env(id)

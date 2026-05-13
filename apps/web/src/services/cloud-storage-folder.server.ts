@@ -24,6 +24,8 @@ interface ConnectionRow {
   access_token_enc: string
   refresh_token_enc: string
   expires_at: string | null
+  /** Populated for provider=dropbox_team rows; threaded as Dropbox-API-Select-User. */
+  team_member_id: string | null
 }
 
 interface ListFolderArgs {
@@ -49,11 +51,15 @@ export async function listCloudFolder(
   const conn = await loadConnection(args.connectionId, supabase)
   const accessToken = await getActiveAccessToken(conn, supabase)
   const provider = getCloudStorageProvider(conn.provider)
+  // For dropbox_team, every /files/* call needs the installing admin's
+  // team_member_id sent as Dropbox-API-Select-User. Thread it from the row.
+  const selectUserId = conn.team_member_id ?? undefined
   try {
     return await provider.listFolder({
       folderId: args.folderId,
       accessToken,
       pageToken: args.pageToken,
+      selectUserId,
     })
   } catch (e) {
     if (e instanceof CloudStorageError && e.status === 401) {
@@ -63,6 +69,7 @@ export async function listCloudFolder(
         folderId: args.folderId,
         accessToken: fresh,
         pageToken: args.pageToken,
+        selectUserId,
       })
     }
     throw e
@@ -119,9 +126,9 @@ async function loadConnection(
   supabase: SupabaseClient,
 ): Promise<ConnectionRow> {
   if (!/^[0-9a-f-]{36}$/i.test(connectionId)) throw new Error('Invalid connection id')
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('org_storage_connections')
-    .select('id, provider, organisation_id, access_token_enc, refresh_token_enc, expires_at')
+    .select('id, provider, organisation_id, access_token_enc, refresh_token_enc, expires_at, team_member_id')
     .eq('id', connectionId)
     .single()
   if (error || !data) {

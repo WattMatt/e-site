@@ -10,7 +10,7 @@
  * the caller's (server-action / edge function) responsibility.
  */
 
-export type ProviderName = 'dropbox' | 'google_drive' | 'onedrive'
+export type ProviderName = 'dropbox' | 'google_drive' | 'onedrive' | 'dropbox_team'
 
 export interface TokenBundle {
   accessToken: string
@@ -20,6 +20,17 @@ export interface TokenBundle {
   expiresAt: Date | null
   /** Cloud account email — display label for /settings/integrations. */
   accountEmail: string
+  /**
+   * Team metadata, populated by team-scoped providers (e.g. dropbox_team).
+   * teamId       — provider's team identifier (Dropbox: "dbtid:...")
+   * teamName     — display label (e.g. "WATSON MATTHEUS")
+   * teamMemberId — installing admin's per-team identity (Dropbox: "dbmid:...")
+   *                — sent as Dropbox-API-Select-User on /files/* calls so the
+   *                team token acts as the admin during listing/downloads.
+   */
+  teamId?: string
+  teamName?: string
+  teamMemberId?: string
 }
 
 export interface CloudItem {
@@ -74,6 +85,12 @@ export interface ListFolderOptions {
   accessToken: string
   /** Opaque cursor returned by a previous listFolder call. */
   pageToken?: string
+  /**
+   * Optional Dropbox team_member_id ("dbmid:...") — for dropbox_team provider
+   * only, sent as `Dropbox-API-Select-User` so the team token acts as that
+   * member during the call. Other providers ignore this field.
+   */
+  selectUserId?: string
 }
 
 export interface ListFolderResult {
@@ -85,6 +102,8 @@ export interface ListFolderResult {
 export interface DownloadOptions {
   fileId: string
   accessToken: string
+  /** See ListFolderOptions.selectUserId. */
+  selectUserId?: string
 }
 
 /**

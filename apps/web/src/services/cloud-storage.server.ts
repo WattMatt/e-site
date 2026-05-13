@@ -71,7 +71,11 @@ export async function connectCloudProvider(
   // upsert on the unique (organisation_id, provider, account_email) tuple so
   // re-connecting the same Dropbox account replaces the old row instead of
   // erroring with "duplicate key" — the user expects a re-auth to "just work".
-  const { data, error } = await supabase
+  // For team-scoped providers (dropbox_team), tokens.teamId/teamName/teamMemberId
+  // are populated from the OAuth exchange and persisted alongside the row so
+  // every subsequent /files/* call has the Select-User member id available
+  // without an extra round-trip per call.
+  const { data, error } = await (supabase as any)
     .from('org_storage_connections')
     .upsert(
       {
@@ -83,6 +87,9 @@ export async function connectCloudProvider(
         scope: tokens.scope,
         expires_at: tokens.expiresAt?.toISOString() ?? null,
         connected_by: args.connectedBy,
+        team_id: tokens.teamId ?? null,
+        team_name: tokens.teamName ?? null,
+        team_member_id: tokens.teamMemberId ?? null,
       },
       { onConflict: 'organisation_id,provider,account_email' },
     )

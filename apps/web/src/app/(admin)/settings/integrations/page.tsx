@@ -11,15 +11,18 @@ interface Props {
 
 interface ConnectionRow {
   id: string
-  provider: 'dropbox' | 'google_drive' | 'onedrive'
+  provider: 'dropbox' | 'google_drive' | 'onedrive' | 'dropbox_team'
   account_email: string
   scope: string | null
   expires_at: string | null
   created_at: string
+  team_id: string | null
+  team_name: string | null
 }
 
 const PROVIDER_LABEL: Record<ConnectionRow['provider'], string> = {
-  dropbox: 'Dropbox',
+  dropbox: 'Dropbox (Personal)',
+  dropbox_team: 'Dropbox (Team)',
   google_drive: 'Google Drive',
   onedrive: 'Microsoft OneDrive',
 }
@@ -52,7 +55,7 @@ export default async function IntegrationsPage({ searchParams }: Props) {
   // packages/db/src/types.ts (regen pending in a polish commit).
   const { data, error } = await (supabase as any)
     .from('org_storage_connections')
-    .select('id, provider, account_email, scope, expires_at, created_at')
+    .select('id, provider, account_email, scope, expires_at, created_at, team_id, team_name')
     .order('created_at', { ascending: false })
 
   const connections: ConnectionRow[] = (error ? [] : (data as unknown as ConnectionRow[])) ?? []
@@ -103,8 +106,17 @@ export default async function IntegrationsPage({ searchParams }: Props) {
                 <div>
                   <div style={{ fontWeight: 700, color: 'var(--c-text)' }}>
                     {PROVIDER_LABEL[c.provider]}
+                    {c.provider === 'dropbox_team' && c.team_name && (
+                      <span style={{ marginLeft: 8, fontWeight: 400, color: 'var(--c-text-mid)', fontSize: 12 }}>
+                        · {c.team_name}
+                      </span>
+                    )}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--c-text-mid)' }}>{c.account_email}</div>
+                  <div style={{ fontSize: 12, color: 'var(--c-text-mid)' }}>
+                    {c.provider === 'dropbox_team'
+                      ? `Installed by ${c.account_email}`
+                      : c.account_email}
+                  </div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
                     Connected {new Date(c.created_at).toISOString().slice(0, 10)}
                   </div>

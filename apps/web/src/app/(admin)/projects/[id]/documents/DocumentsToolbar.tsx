@@ -1,20 +1,16 @@
 'use client'
 
 /**
- * CloudSyncToolbar — surfaces the project's cloud-folder mapping + lets
- * the user re-pick the folder, sync now, or clear the mapping. Used on
- * both the /projects/[id]/documents and /projects/[id]/floor-plans pages.
+ * DocumentsToolbar — surfaces the project's current cloud-folder mapping
+ * + lets the user re-pick the folder, sync now, or clear the mapping.
  *
- * The same mapping drives sync into BOTH tenants.documents and
- * tenants.floor_plans (the cloud-sync-project edge function classifies
- * each file by extension + folder name); rendering the toolbar on either
- * page therefore manages the SAME state.
+ * If no connections exist, points the user at /settings/integrations.
  */
 
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { CloudFolderPicker } from './CloudFolderPicker'
+import { CloudFolderPicker } from '@/components/cloud-storage/CloudFolderPicker'
 import {
   clearProjectCloudFolderAction,
   setProjectCloudFolderAction,
@@ -43,7 +39,7 @@ const PROVIDER_LABEL: Record<ProviderName, string> = {
   onedrive: 'OneDrive',
 }
 
-export function CloudSyncToolbar(props: Props) {
+export function DocumentsToolbar(props: Props) {
   const router = useRouter()
   const [pickerConnId, setPickerConnId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -90,7 +86,7 @@ export function CloudSyncToolbar(props: Props) {
   }
 
   function onClearMapping() {
-    if (!confirm("Remove the cloud-folder mapping? Existing synced files stay; new ones won't be pulled.")) return
+    if (!confirm('Remove the cloud-folder mapping? Existing synced files stay; new ones won\'t be pulled.')) return
     setError(null)
     setFlash(null)
     startClearTransition(async () => {
@@ -106,8 +102,8 @@ export function CloudSyncToolbar(props: Props) {
 
   return (
     <div className="data-panel" style={panel}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 240 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
+        <div style={{ flex: 1 }}>
           <div style={label}>Cloud folder</div>
           {props.cloudFolderPath && mappedConn ? (
             <>
@@ -117,7 +113,10 @@ export function CloudSyncToolbar(props: Props) {
               <div style={meta}>
                 {PROVIDER_LABEL[mappedConn.provider]} · {mappedConn.account_email}
                 {props.lastSyncAt && (
-                  <>{' · '}Last sync {new Date(props.lastSyncAt).toLocaleString()}</>
+                  <>
+                    {' · '}
+                    Last sync {new Date(props.lastSyncAt).toLocaleString()}
+                  </>
                 )}
               </div>
             </>
@@ -185,7 +184,11 @@ function PickerLauncher({
       <summary style={{ ...btnGhost, listStyle: 'none', userSelect: 'none' }}>Set folder…</summary>
       <div style={popover}>
         {connections.map((c) => (
-          <button key={c.id} onClick={() => onPick(c.id)} style={popoverItem}>
+          <button
+            key={c.id}
+            onClick={() => onPick(c.id)}
+            style={popoverItem}
+          >
             <strong>{PROVIDER_LABEL[c.provider]}</strong>
             <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>{c.account_email}</span>
           </button>

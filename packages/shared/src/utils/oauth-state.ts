@@ -11,7 +11,7 @@
 
 const STATE_TTL_MS = 10 * 60 * 1000 // 10 minutes — enough for the OAuth round-trip
 
-export type OAuthProvider = 'dropbox' | 'google_drive' | 'onedrive'
+export type OAuthProvider = 'dropbox' | 'google_drive' | 'onedrive' | 'dropbox_team'
 
 export interface OAuthStatePayload {
   /** auth.uid() of the user who initiated the OAuth flow. */
