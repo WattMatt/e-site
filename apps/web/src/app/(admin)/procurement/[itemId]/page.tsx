@@ -8,6 +8,7 @@ import { ShopDrawingsPanel, type ShopDrawingRow } from './ShopDrawingsPanel'
 import { GRNPanel, type GRNRow } from './GRNPanel'
 import { POButton } from './POButton'
 import { SupplierInvoicePanel, type SupplierInvoiceRow } from './SupplierInvoicePanel'
+import { RequisitionPhotos } from './RequisitionPhotos'
 
 export const metadata: Metadata = { title: 'Procurement item' }
 
@@ -31,6 +32,7 @@ interface ProcurementItem {
   schedule_item_id: string | null
   selected_quote_id: string | null
   supplier_id: string | null
+  photo_paths: string[] | null
   created_at: string
 }
 
@@ -87,7 +89,7 @@ export default async function ProcurementItemPage({ params }: Props) {
     .select(
       'id, project_id, organisation_id, description, quantity, unit, status, ' +
       'required_by, quoted_price, currency, po_number, notes, schedule_item_id, ' +
-      'selected_quote_id, supplier_id, created_at',
+      'selected_quote_id, supplier_id, photo_paths, created_at',
     )
     .eq('id', itemId)
     .single()
@@ -222,6 +224,20 @@ export default async function ProcurementItemPage({ params }: Props) {
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Requisition photos (field captured from mobile) */}
+          {item.photo_paths && item.photo_paths.length > 0 && (
+            <div className="data-panel">
+              <div className="data-panel-header">
+                <span className="data-panel-title">
+                  Field photos ({item.photo_paths.length})
+                </span>
+              </div>
+              <div style={{ padding: '14px 18px' }}>
+                <RequisitionPhotos photoPaths={item.photo_paths} />
+              </div>
+            </div>
+          )}
+
           {/* Schedule link panel (if linked) */}
           {schedule && (
             <div className="data-panel">

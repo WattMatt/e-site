@@ -14,9 +14,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity,
-  StyleSheet, ActivityIndicator, Alert,
+  StyleSheet, ActivityIndicator, Alert, Image,
 } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
+import * as ImagePicker from 'expo-image-picker'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
@@ -82,6 +83,7 @@ export default function CreateProcurementScreen() {
   const [unit, setUnit] = useState('')
   const [requiredBy, setRequiredBy] = useState('')
   const [notes, setNotes] = useState('')
+  const [photos, setPhotos] = useState<Array<{ uri: string; type: string }>>([])
   const [saving, setSaving] = useState(false)
 
   // Default to the first project when only one is in scope and nothing was
@@ -107,6 +109,51 @@ export default function CreateProcurementScreen() {
     if (!unit && line.unit) setUnit(line.unit)
   }
 
+  async function pickFromLibrary() {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (status !== 'granted') { Alert.alert('Permission required', 'Allow photo library access.'); return }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      quality: 0.8,
+    })
+    if (!result.canceled) {
+      setPhotos((p) => [...p, ...result.assets.map((a) => ({ uri: a.uri, type: a.mimeType ?? 'image/jpeg' }))])
+    }
+  }
+
+  async function takePhoto() {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync()
+    if (status !== 'granted') { Alert.alert('Permission required', 'Allow camera access.'); return }
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.8 })
+    if (!result.canceled) {
+      setPhotos((p) => [...p, { uri: result.assets[0]!.uri, type: result.assets[0]!.mimeType ?? 'image/jpeg' }])
+    }
+  }
+
+  function removePhoto(idx: number) {
+    setPhotos((p) => p.filter((_, i) => i !== idx))
+  }
+
+  async function uploadPhotos(itemId: string): Promise<string[]> {
+    if (photos.length === 0) return []
+    const paths: string[] = []
+    for (let i = 0; i < photos.length; i++) {
+      const photo = photos[i]!
+      const ext = (photo.type.split('/')[1] ?? 'jpg').toLowerCase()
+      const path = `${orgId}/${itemId}/${Date.now()}-${i}.${ext}`
+      // RN: read URI as Blob via fetch, then upload.
+      const resp = await fetch(photo.uri)
+      const blob = await resp.blob()
+      const { error } = await (client as any).storage
+        .from('requisition-photos')
+        .upload(path, blob, { contentType: photo.type, upsert: false })
+      if (error) throw new Error(`Photo upload failed: ${error.message}`)
+      paths.push(path)
+    }
+    return paths
+  }
+
   async function submit() {
     if (!projectId) { Alert.alert('Required', 'Pick a project.'); return }
     if (!description.trim()) { Alert.alert('Required', 'Description.'); return }
@@ -130,9 +177,26 @@ export default function CreateProcurementScreen() {
         .select('id')
         .single()
       if (error || !data) throw new Error(error?.message ?? 'Failed to save')
+      const itemId = (data as { id: string }).id
+
+      // Upload photos then patch photo_paths on the row. If photo upload
+      // fails we keep the row (text is more important than photos) and
+      // surface the error.
+      if (photos.length > 0) {
+        try {
+          const paths = await uploadPhotos(itemId)
+          await (client as any)
+            .schema('projects')
+            .from('procurement_items')
+            .update({ photo_paths: paths })
+            .eq('id', itemId)
+        } catch (photoErr: any) {
+          Alert.alert('Photo upload failed', `${photoErr.message ?? 'unknown'}. Requisition saved without photos.`)
+        }
+      }
 
       queryClient.invalidateQueries({ queryKey: ['procurement', orgId] })
-      Alert.alert('Saved', 'Procurement requisition raised at status draft.')
+      Alert.alert('Saved', `Requisition raised at status draft${photos.length > 0 ? ` with ${photos.length} photo(s)` : ''}.`)
       router.back()
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Failed to raise requisition')
@@ -245,10 +309,32 @@ export default function CreateProcurementScreen() {
           style={[s.input, s.textarea]}
           value={notes}
           onChangeText={setNotes}
-          placeholder="Brand, spec, reference photos sent separately…"
+          placeholder="Brand, spec, packaging label…"
           placeholderTextColor={colors.textDim}
           multiline
         />
+
+        <Text style={s.label}>Photos</Text>
+        <View style={s.photoRow}>
+          <TouchableOpacity onPress={takePhoto} style={s.photoBtn}>
+            <Text style={s.photoBtnText}>📷 Take photo</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={pickFromLibrary} style={s.photoBtn}>
+            <Text style={s.photoBtnText}>🖼 From library</Text>
+          </TouchableOpacity>
+        </View>
+        {photos.length > 0 && (
+          <ScrollView horizontal style={s.thumbScroll} contentContainerStyle={{ gap: spacing.xs }}>
+            {photos.map((p, i) => (
+              <View key={`${p.uri}-${i}`} style={s.thumbWrap}>
+                <Image source={{ uri: p.uri }} style={s.thumb} />
+                <TouchableOpacity onPress={() => removePhoto(i)} style={s.thumbRemove}>
+                  <Text style={s.thumbRemoveText}>×</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        )}
 
         <TouchableOpacity
           onPress={submit}
@@ -309,4 +395,20 @@ const s = StyleSheet.create({
   },
   submitDisabled: { opacity: 0.5 },
   submitText: { color: colors.bg, fontWeight: fontWeight.semibold, fontSize: fontSize.body },
+  photoRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  photoBtn: {
+    flex: 1, backgroundColor: colors.panel,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    paddingVertical: spacing.sm, alignItems: 'center',
+  },
+  photoBtnText: { color: colors.text, fontSize: fontSize.body, fontWeight: fontWeight.semibold },
+  thumbScroll: { marginTop: spacing.sm },
+  thumbWrap: { position: 'relative' },
+  thumb: { width: 80, height: 80, borderRadius: radius.sm, backgroundColor: colors.panel },
+  thumbRemove: {
+    position: 'absolute', top: -6, right: -6,
+    width: 22, height: 22, borderRadius: 11, backgroundColor: '#dc2626',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  thumbRemoveText: { color: '#fff', fontWeight: fontWeight.semibold, fontSize: 14, lineHeight: 16 },
 })
