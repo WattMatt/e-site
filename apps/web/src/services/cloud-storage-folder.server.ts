@@ -83,7 +83,13 @@ export async function setProjectCloudFolder(
   if (!/^[0-9a-f-]{36}$/i.test(args.projectId) || !/^[0-9a-f-]{36}$/i.test(args.connectionId)) {
     throw new Error('Invalid project or connection id')
   }
-  const { error } = await supabase
+  // projects.projects lives in the `projects` schema (not public). Without the
+  // schema('projects') chain, supabase-js targets public.projects which either
+  // doesn't exist or doesn't have the cloud_storage_* columns — Server Components
+  // render boundary catches the failure and shows the generic Next.js error.
+  // Cloud storage columns aren't in packages/db/src/types.ts yet so we cast.
+  const { error } = await (supabase as any)
+    .schema('projects')
     .from('projects')
     .update({
       cloud_storage_connection_id: args.connectionId,
@@ -99,7 +105,8 @@ export async function clearProjectCloudFolder(
   supabase: SupabaseClient,
 ): Promise<void> {
   if (!/^[0-9a-f-]{36}$/i.test(projectId)) throw new Error('Invalid project id')
-  const { error } = await supabase
+  const { error } = await (supabase as any)
+    .schema('projects')
     .from('projects')
     .update({
       cloud_storage_connection_id: null,
