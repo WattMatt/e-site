@@ -10,7 +10,7 @@ import type {
   ProviderName,
   TokenBundle,
 } from './types'
-import { asProviderError, getProviderCredentials, postForm } from './provider-utils'
+import { asProviderError, getProviderCredentials, postForm, sortCloudItems } from './provider-utils'
 
 const AUTH_URL = 'https://www.dropbox.com/oauth2/authorize'
 const TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token'
@@ -117,7 +117,7 @@ export class DropboxProvider implements CloudStorageProvider {
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'list folder')
     const j = (await res.json()) as DropboxListFolderResponse
     return {
-      items: j.entries.filter((e) => e['.tag'] !== 'deleted').map(toCloudItem),
+      items: sortCloudItems(j.entries.filter((e) => e['.tag'] !== 'deleted').map(toCloudItem)),
       nextPageToken: j.has_more ? j.cursor : undefined,
     }
   }

@@ -66,6 +66,20 @@ function readEnv(): (k: string) => string | undefined {
 }
 
 /**
+ * Natural-alphanumeric sort for cloud-folder picker items. Folders before
+ * files, then within each group sort by name with `numeric: true` so
+ * "001" < "002" < "010" (rather than the default string sort which gives
+ * "001" < "010" < "002"). Used by every provider's listFolder to deliver
+ * a consistent, intuitive order to the picker UI + bulk-sync edge fn.
+ */
+export function sortCloudItems<T extends { name: string; type: 'file' | 'folder' }>(items: T[]): T[] {
+  return [...items].sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  })
+}
+
+/**
  * POST application/x-www-form-urlencoded — the OAuth token-exchange
  * standard for all 3 providers.
  */

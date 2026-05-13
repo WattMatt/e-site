@@ -10,7 +10,7 @@ import type {
   ProviderName,
   TokenBundle,
 } from './types'
-import { asProviderError, getProviderCredentials, postForm } from './provider-utils'
+import { asProviderError, getProviderCredentials, postForm, sortCloudItems } from './provider-utils'
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -117,7 +117,7 @@ export class GoogleDriveProvider implements CloudStorageProvider {
     if (!res.ok) throw await asProviderError(res, 'google_drive', 'list folder')
     const j = (await res.json()) as DriveListResponse
     return {
-      items: j.files.map(toDriveItem),
+      items: sortCloudItems(j.files.map(toDriveItem)),
       nextPageToken: j.nextPageToken,
     }
   }

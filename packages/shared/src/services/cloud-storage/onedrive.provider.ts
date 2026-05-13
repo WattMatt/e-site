@@ -10,7 +10,7 @@ import type {
   ProviderName,
   TokenBundle,
 } from './types'
-import { asProviderError, getProviderCredentials, postForm } from './provider-utils'
+import { asProviderError, getProviderCredentials, postForm, sortCloudItems } from './provider-utils'
 
 // /common/ tenant covers both work/school accounts and personal Microsoft
 // accounts (consumer OneDrive). For a single tenant locked down to e.g. a
@@ -101,7 +101,7 @@ export class OneDriveProvider implements CloudStorageProvider {
       })
       if (!res.ok) throw await asProviderError(res, 'onedrive', 'list folder (continue)')
       const j = (await res.json()) as GraphListResponse
-      return { items: j.value.map(toGraphItem), nextPageToken: j['@odata.nextLink'] }
+      return { items: sortCloudItems(j.value.map(toGraphItem)), nextPageToken: j['@odata.nextLink'] }
     }
     const path = opts.folderId
       ? `/me/drive/items/${encodeURIComponent(opts.folderId)}/children`
@@ -111,7 +111,7 @@ export class OneDriveProvider implements CloudStorageProvider {
     })
     if (!res.ok) throw await asProviderError(res, 'onedrive', 'list folder')
     const j = (await res.json()) as GraphListResponse
-    return { items: j.value.map(toGraphItem), nextPageToken: j['@odata.nextLink'] }
+    return { items: sortCloudItems(j.value.map(toGraphItem)), nextPageToken: j['@odata.nextLink'] }
   }
 
   async downloadFile(opts: DownloadOptions): Promise<DownloadResult> {
