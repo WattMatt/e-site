@@ -63,6 +63,10 @@ const DRAWING_FOLDER_RE = /(^|\/)(drawings?|plans?|floor[ -]?plans?)(\/|$)/i
 interface SyncRequest {
   projectId: string
   callerUserId: string
+  // When set, overrides the extension+folder-name classifier so every file
+  // in this run is routed to the corresponding table/bucket. Driven by
+  // which tab the user clicked "Sync now" from in the web UI.
+  intent?: 'drawings' | 'documents'
 }
 
 interface ProjectRow {
@@ -132,6 +136,9 @@ interface SyncResult {
   skipped: number
   failed: number
   classified: { floor_plans: number; documents: number }
+  // Echoes the request's intent (or 'auto' when the classifier ran).
+  // Diagnostic so the caller can verify intent flowed through.
+  intent: 'drawings' | 'documents' | 'auto'
   errors?: string[]
 }
 
@@ -208,12 +215,18 @@ async function syncProject(
     skipped: 0,
     failed: 0,
     classified: { floor_plans: 0, documents: 0 },
+    intent: req.intent ?? 'auto',
     errors: [],
   }
 
   for (const { item, parentPath } of files) {
     try {
-      const target = classify(item, parentPath)
+      const target =
+        req.intent === 'drawings'
+          ? 'floor_plans'
+          : req.intent === 'documents'
+            ? 'documents'
+            : classify(item, parentPath)
       const exists = await dedupCheck(supabase, target, proj.id, conn.provider, item.id)
       if (exists) {
         result.skipped++

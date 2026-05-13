@@ -181,15 +181,20 @@ export async function clearProjectCloudFolderAction(
  */
 export async function syncProjectCloudFolderAction(
   projectId: string,
+  intent?: 'drawings' | 'documents',
 ): Promise<{
   sent: number
   skipped: number
   failed: number
   classified: { floor_plans: number; documents: number }
+  intent: 'drawings' | 'documents' | 'auto'
   errors?: string[]
 }> {
   if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
     throw new Error('Invalid project id')
+  }
+  if (intent && intent !== 'drawings' && intent !== 'documents') {
+    throw new Error('Invalid intent')
   }
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -207,7 +212,7 @@ export async function syncProjectCloudFolderAction(
       Authorization: `Bearer ${serviceKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ projectId, callerUserId: user.id }),
+    body: JSON.stringify({ projectId, callerUserId: user.id, intent }),
   })
   if (!res.ok) {
     const body = await res.text()

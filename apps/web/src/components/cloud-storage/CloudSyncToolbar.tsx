@@ -5,10 +5,9 @@
  * the user re-pick the folder, sync now, or clear the mapping. Used on
  * both the /projects/[id]/documents and /projects/[id]/floor-plans pages.
  *
- * The same mapping drives sync into BOTH tenants.documents and
- * tenants.floor_plans (the cloud-sync-project edge function classifies
- * each file by extension + folder name); rendering the toolbar on either
- * page therefore manages the SAME state.
+ * The same mapping feeds both tables. The `intent` prop tells the edge
+ * function which table to target for THIS sync run, so files always land
+ * on the tab the user clicked from regardless of extension/folder name.
  */
 
 import { useState, useTransition } from 'react'
@@ -34,6 +33,7 @@ interface Props {
   mappedConnectionId: string | null
   cloudFolderPath: string | null
   lastSyncAt: string | null
+  intent: 'drawings' | 'documents'
 }
 
 const PROVIDER_LABEL: Record<ProviderName, string> = {
@@ -77,7 +77,7 @@ export function CloudSyncToolbar(props: Props) {
     setFlash(null)
     startSyncTransition(async () => {
       try {
-        const r = await syncProjectCloudFolderAction(props.projectId)
+        const r = await syncProjectCloudFolderAction(props.projectId, props.intent)
         setFlash(
           `Sync done — ${r.sent} new (${r.classified.documents} docs / ${r.classified.floor_plans} drawings), ${r.skipped} skipped, ${r.failed} failed.`,
         )

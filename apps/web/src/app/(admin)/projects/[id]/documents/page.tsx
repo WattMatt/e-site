@@ -108,6 +108,7 @@ export default async function DocumentsPage({ params }: Props) {
         mappedConnectionId={mappedConnectionId}
         cloudFolderPath={cloudFolderPath}
         lastSyncAt={lastSyncAt}
+        intent="documents"
       />
 
       <DocumentList documents={documents} />

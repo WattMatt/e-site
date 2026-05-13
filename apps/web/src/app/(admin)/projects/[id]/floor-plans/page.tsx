@@ -79,6 +79,7 @@ export default async function FloorPlansPage({ params }: Props) {
         mappedConnectionId={mappedConnectionId}
         cloudFolderPath={cloudFolderPath}
         lastSyncAt={lastSyncAt}
+        intent="drawings"
       />
 
       <DrawingsList plans={plansWithUrls} projectId={projectId} />
