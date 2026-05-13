@@ -417,6 +417,17 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const initFitDone = useRef(false)
+  // Always-fresh refs so wheel/pinch handlers can read the current viewport
+  // synchronously between React commits (rapid input outpaces useState).
+  const scaleRef = useRef(1)
+  const offsetRef = useRef({ x: 0, y: 0 })
+  useEffect(() => {
+    scaleRef.current = scale
+  }, [scale])
+  useEffect(() => {
+    offsetRef.current = offset
+  }, [offset])
+  const [gestureActive, setGestureActive] = useState(false)
 
   useEffect(() => {
     const el = containerRef.current
@@ -453,12 +464,118 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
     initFitDone.current = true
   }, [img, viewport.w, viewport.h, fitToView])
 
+  // Zoom by `factor`, keeping the point (anchorX, anchorY) — in container-
+  // local CSS pixels — stationary on screen. Used by wheel, pinch, and the
+  // toolbar buttons (which anchor on the viewport centre).
+  const zoomBy = useCallback((factor: number, anchorX: number, anchorY: number) => {
+    const prev = scaleRef.current
+    const next = Math.min(8, Math.max(0.05, prev * factor))
+    if (next === prev) return
+    const ratio = next / prev
+    const o = offsetRef.current
+    const newOffset = {
+      x: anchorX - (anchorX - o.x) * ratio,
+      y: anchorY - (anchorY - o.y) * ratio,
+    }
+    scaleRef.current = next
+    offsetRef.current = newOffset
+    setScale(next)
+    setOffset(newOffset)
+  }, [])
+
   function zoomIn() {
-    setScale((s) => Math.min(s * 1.25, 8))
+    zoomBy(1.25, viewport.w / 2, viewport.h / 2)
   }
   function zoomOut() {
-    setScale((s) => Math.max(s / 1.25, 0.05))
+    zoomBy(1 / 1.25, viewport.w / 2, viewport.h / 2)
   }
+
+  // Native wheel + multi-touch gestures. Konva doesn't expose pointerId for
+  // reliable 2-finger tracking and wheel needs preventDefault (which Konva's
+  // event wrapper doesn't cleanly support), so we bind directly to the
+  // container in capture phase.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const pointers = new Map<number, { x: number; y: number }>()
+    let gesture: { dist: number; cx: number; cy: number } | null = null
+
+    const localPt = (e: PointerEvent | WheelEvent) => {
+      const r = el.getBoundingClientRect()
+      return { x: e.clientX - r.left, y: e.clientY - r.top }
+    }
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const { x, y } = localPt(e)
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+      zoomBy(factor, x, y)
+    }
+    const onDown = (e: PointerEvent) => {
+      pointers.set(e.pointerId, localPt(e))
+      if (pointers.size === 2) {
+        const pts = [...pointers.values()]
+        const dx = pts[1]!.x - pts[0]!.x
+        const dy = pts[1]!.y - pts[0]!.y
+        gesture = {
+          dist: Math.hypot(dx, dy),
+          cx: (pts[0]!.x + pts[1]!.x) / 2,
+          cy: (pts[0]!.y + pts[1]!.y) / 2,
+        }
+        setCurrent(null)
+        setGestureActive(true)
+      }
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!pointers.has(e.pointerId)) return
+      pointers.set(e.pointerId, localPt(e))
+      if (pointers.size === 2 && gesture) {
+        e.preventDefault()
+        const pts = [...pointers.values()]
+        const dx = pts[1]!.x - pts[0]!.x
+        const dy = pts[1]!.y - pts[0]!.y
+        const dist = Math.hypot(dx, dy)
+        const cx = (pts[0]!.x + pts[1]!.x) / 2
+        const cy = (pts[0]!.y + pts[1]!.y) / 2
+        if (dist > 0 && gesture.dist > 0) {
+          zoomBy(dist / gesture.dist, cx, cy)
+        }
+        const panDx = cx - gesture.cx
+        const panDy = cy - gesture.cy
+        if (panDx !== 0 || panDy !== 0) {
+          const newOffset = {
+            x: offsetRef.current.x + panDx,
+            y: offsetRef.current.y + panDy,
+          }
+          offsetRef.current = newOffset
+          setOffset(newOffset)
+        }
+        gesture = { dist, cx, cy }
+      }
+    }
+    const onUp = (e: PointerEvent) => {
+      pointers.delete(e.pointerId)
+      if (pointers.size < 2) {
+        gesture = null
+        setGestureActive(false)
+      }
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false })
+    el.addEventListener('pointerdown', onDown)
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', onUp)
+    el.addEventListener('pointerleave', onUp)
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      el.removeEventListener('pointerdown', onDown)
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', onUp)
+      el.removeEventListener('pointerleave', onUp)
+    }
+  }, [zoomBy])
 
   // Keyboard: F or 0 → fit-to-view, +/= zoom in, - zoom out.
   // Skip when typing in an input/textarea so calibration entry isn't hijacked.
@@ -979,11 +1096,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
         </ToolbarGroup>
         <ToolbarSeparator />
         <ToolbarGroup>
-          <ToolbarButton onClick={zoomOut} title="Zoom out (−)">−</ToolbarButton>
-          <ToolbarButton onClick={fitToView} disabled={!img} title="Fit to view — recenter drawing (F or 0)">
+          <ToolbarButton onClick={zoomOut} title="Zoom out (−, scroll wheel, or pinch)">−</ToolbarButton>
+          <ToolbarButton onClick={fitToView} disabled={!img} title="Fit to view (F or 0) — scroll wheel or pinch to zoom, two-finger drag to pan">
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>FIT</span>
           </ToolbarButton>
-          <ToolbarButton onClick={zoomIn} title="Zoom in (+)">+</ToolbarButton>
+          <ToolbarButton onClick={zoomIn} title="Zoom in (+, scroll wheel, or pinch)">+</ToolbarButton>
           <span
             style={{
               minWidth: 44,
@@ -1137,6 +1254,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
           border: '1px solid var(--c-border)',
           borderRadius: 8,
           overflow: 'hidden',
+          // Suppress the browser's native pinch-to-zoom + scroll-pan so our
+          // wheel+pointer handlers own the gesture.
+          touchAction: 'none',
+          // Disable iOS Safari's text-selection callout on long-press.
+          WebkitUserSelect: 'none',
         }}
       >
         {!plan.signedUrl ? (
@@ -1160,10 +1282,12 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
             scaleY={scale}
             x={offset.x}
             y={offset.y}
-            draggable={tool === 'select'}
+            draggable={tool === 'select' && !gestureActive}
             onDragEnd={(e) => {
               const t = e.target as Konva.Stage
-              setOffset({ x: t.x(), y: t.y() })
+              const next = { x: t.x(), y: t.y() }
+              offsetRef.current = next
+              setOffset(next)
             }}
             onMouseDown={onPointerDown}
             onMouseMove={onPointerMove}
@@ -1178,7 +1302,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
               tool === 'select' ? fitToView : tool === 'polygon' ? closePolygon : undefined
             }
             style={{
-              cursor: tool === 'select' ? 'grab' : 'crosshair',
+              cursor: gestureActive
+                ? 'grabbing'
+                : tool === 'select'
+                  ? 'grab'
+                  : 'crosshair',
               background: 'white',
             }}
           >
