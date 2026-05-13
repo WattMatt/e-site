@@ -10,6 +10,7 @@ import {
   type SupplyForCalc,
 } from '@esite/shared'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
+import { AddEntityPanel, type NodeOption, type SupplyOption } from './AddEntityPanel'
 
 export const metadata: Metadata = { title: 'Cable schedule revision' }
 
@@ -251,6 +252,21 @@ export default async function RevisionDetailPage({ params }: Props) {
         <BoardsPanel boards={boards} />
       </div>
 
+      {revision.status === 'DRAFT' && (
+        <AddEntityPanel
+          revisionId={revision.id}
+          sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
+          boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
+          supplies={supplies.map<SupplyOption>((s) => ({
+            id: s.id,
+            fromLabel: nodeLabel(s.from_source_id ?? s.from_board_id),
+            toLabel:   nodeLabel(s.to_board_id),
+            voltage_v: s.voltage_v,
+            load_a:    s.design_load_a,
+          }))}
+        />
+      )}
+
       {cables.length === 0 ? (
         <div className="data-panel">
           <div
@@ -265,9 +281,9 @@ export default async function RevisionDetailPage({ params }: Props) {
                 marginTop: 6,
               }}
             >
-              Add sources and distribution boards, then create supplies between them.
-              Each supply carries 1..N parallel cables. <strong>Add forms ship in C-3.2;</strong>{' '}
-              meanwhile you can import an existing Excel schedule via C-7 once that lands.
+              Use <strong>+ Add to schedule</strong> above to add sources, boards,
+              supplies and cables. Cable rows auto-fill Ω/km + base rating from the
+              bundled SANS library. Bulk import via Excel arrives in C-7.
             </div>
           </div>
         </div>
