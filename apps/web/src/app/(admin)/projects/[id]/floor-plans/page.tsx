@@ -35,25 +35,17 @@ export default async function FloorPlansPage({ params }: Props) {
   const lastSyncAt = (project as any).cloud_storage_last_sync_at ?? null
   const mappedConnectionId = (project as any).cloud_storage_connection_id ?? null
 
-  const plansWithUrls: DrawingListItem[] = await Promise.all(
-    plans.map(async (plan) => {
-      const isImage = /\.(png|jpe?g|webp|svg)$/i.test(plan.file_path)
-      let previewUrl: string | null = null
-      if (isImage) {
-        const { data } = await supabase.storage.from('drawings').createSignedUrl(plan.file_path, 3600)
-        previewUrl = data?.signedUrl ?? null
-      }
-      return {
-        id: plan.id,
-        name: plan.name,
-        level: plan.level,
-        scale: plan.scale,
-        file_size_bytes: plan.file_size_bytes,
-        previewUrl,
-        source_path: (plan as { source_path?: string | null }).source_path ?? null,
-      }
-    })
-  )
+  // Drawings list is row-based — no per-row image preview, so we don't pay
+  // the cost of a signed-URL round-trip per drawing.
+  const plansWithUrls: DrawingListItem[] = plans.map((plan) => ({
+    id: plan.id,
+    name: plan.name,
+    level: plan.level,
+    scale: plan.scale,
+    file_size_bytes: plan.file_size_bytes,
+    previewUrl: null,
+    source_path: (plan as { source_path?: string | null }).source_path ?? null,
+  }))
 
   return (
     <div className="animate-fadeup">

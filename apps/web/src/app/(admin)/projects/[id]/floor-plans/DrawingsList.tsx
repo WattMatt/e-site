@@ -152,49 +152,46 @@ export function DrawingsList({
 
 function Grid({ plans, projectId }: { plans: DrawingListItem[]; projectId: string }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-      {plans.map((plan) => (
-        <Card key={plan.id} plan={plan} projectId={projectId} />
+    <div
+      className="data-panel"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      {plans.map((plan, i) => (
+        <Row key={plan.id} plan={plan} projectId={projectId} isLast={i === plans.length - 1} />
       ))}
     </div>
   )
 }
 
-function Card({ plan, projectId }: { plan: DrawingListItem; projectId: string }) {
+function Row({
+  plan,
+  projectId,
+  isLast,
+}: {
+  plan: DrawingListItem
+  projectId: string
+  isLast: boolean
+}) {
   return (
     <Link
       href={`/projects/${projectId}/floor-plans/${plan.id}`}
-      className="data-panel"
       style={{
-        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        padding: '12px 16px',
         textDecoration: 'none',
         color: 'inherit',
-        display: 'block',
+        borderBottom: isLast ? 'none' : '1px solid var(--c-border)',
       }}
     >
-      <div
-        style={{
-          height: 160,
-          background: 'var(--c-base)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderBottom: '1px solid var(--c-border)',
-          overflow: 'hidden',
-        }}
-      >
-        {plan.previewUrl ? (
-          <img
-            src={plan.previewUrl}
-            alt={plan.name}
-            style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-          />
-        ) : (
-          <span style={{ fontSize: 40 }} aria-hidden="true">📄</span>
-        )}
-      </div>
-      <div style={{ padding: '12px 14px' }}>
-        <p
+      <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden="true">📄</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
           style={{
             fontSize: 13,
             fontWeight: 600,
@@ -205,33 +202,40 @@ function Card({ plan, projectId }: { plan: DrawingListItem; projectId: string })
           }}
         >
           {plan.name}
-        </p>
-        {plan.level && (
-          <p
+        </div>
+        {(plan.source_path || plan.level) && (
+          <div
             style={{
               fontFamily: 'var(--font-mono)',
               fontSize: 10,
               color: 'var(--c-text-dim)',
               marginTop: 2,
               letterSpacing: '0.04em',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
             }}
           >
-            {plan.level}
-          </p>
+            {plan.source_path ?? plan.level}
+          </div>
         )}
-        <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
-          {plan.scale && (
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
-              Scale: {plan.scale}
-            </span>
-          )}
-          {plan.file_size_bytes && (
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
-              {formatBytes(plan.file_size_bytes)}
-            </span>
-          )}
-        </div>
       </div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 14,
+          fontFamily: 'var(--font-mono)',
+          fontSize: 10,
+          color: 'var(--c-text-dim)',
+          flexShrink: 0,
+        }}
+      >
+        {plan.scale && <span>Scale {plan.scale}</span>}
+        {plan.file_size_bytes && <span>{formatBytes(plan.file_size_bytes)}</span>}
+      </div>
+      <span style={{ color: 'var(--c-text-dim)', fontSize: 12, flexShrink: 0 }} aria-hidden="true">
+        ›
+      </span>
     </Link>
   )
 }
