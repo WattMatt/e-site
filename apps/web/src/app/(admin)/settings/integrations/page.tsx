@@ -27,29 +27,40 @@ const PROVIDER_LABEL: Record<ConnectionRow['provider'], string> = {
   onedrive: 'Microsoft OneDrive',
 }
 
-export default async function IntegrationsPage(props: Props) {
-  try {
-    return await renderPage(props)
-  } catch (e) {
-    console.error('[integrations] PAGE THREW:', e)
-    const msg = e instanceof Error
-      ? `${e.name}: ${e.message}\n${e.stack?.split('\n').slice(0, 5).join('\n')}`
-      : String(e)
-    return (
-      <div className="animate-fadeup" style={{ maxWidth: 720 }}>
-        <h1 className="page-title">Cloud-storage integrations</h1>
-        <pre style={{
-          marginTop: 16, padding: 14, background: 'rgba(248,113,113,0.08)',
-          border: '1px solid rgba(248,113,113,0.3)', color: '#f87171',
-          fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap',
-          borderRadius: 6,
-        }}>
-{`Render failed (caught + surfaced for debugging):
-${msg}`}
-        </pre>
-      </div>
-    )
-  }
+// MINIMAL version for diagnosis — strips out connections rendering + provider
+// buttons. If this version renders, the bug is in the connections/buttons
+// section. If this ALSO crashes with a Server Components error, the bug is
+// in the (admin) layout chain or upstream.
+export default async function IntegrationsPage({ searchParams }: Props) {
+  const sp = await searchParams
+  return (
+    <div className="animate-fadeup" style={{ maxWidth: 720 }}>
+      <h1 className="page-title">Cloud-storage integrations</h1>
+      <p className="page-subtitle" style={{ marginTop: 8 }}>
+        MINIMAL DIAGNOSTIC VERSION — connections + buttons disabled.
+      </p>
+      <pre style={{
+        marginTop: 24, padding: 14,
+        background: 'rgba(74,222,128,0.08)',
+        border: '1px solid rgba(74,222,128,0.3)',
+        color: '#4ade80',
+        fontFamily: 'monospace', fontSize: 12,
+        borderRadius: 6,
+      }}>
+{`If you can read this, the bug is NOT in the integrations page itself.
+It's in the (admin) layout chain or in the rendering of:
+  - ConnectProviderButton (client component, 4 instances)
+  - DisconnectButton (client component, 1 instance per connection)
+  - Connection-row JSX with PROVIDER_LABEL lookups
+
+searchParams: ${JSON.stringify(sp)}
+`}
+      </pre>
+      <p style={{ marginTop: 16, fontSize: 13, color: 'var(--c-text-mid)' }}>
+        Hit <code>/api/debug/integrations-render</code> for the data-layer trace.
+      </p>
+    </div>
+  )
 }
 
 async function renderPage({ searchParams }: Props) {
