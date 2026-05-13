@@ -7,6 +7,7 @@ import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen, ShieldCheck,
   MessageSquare, ClipboardList, ShoppingBag, Users, CreditCard,
   Settings, LogOut, Activity, Map, ClipboardCheck, ArrowLeft, Cloud,
+  Wrench,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -61,6 +62,7 @@ function projectNav(id: string) {
     { href: `/projects/${id}/snags`,        label: 'Snags',       Icon: AlertTriangle, exact: false },
     { href: `/projects/${id}/diary`,        label: 'Site Diary',  Icon: BookOpen,      exact: false },
     { href: `/rfis?projectId=${id}`,        label: 'RFIs',        Icon: MessageSquare, exact: false },
+    { href: `/projects/${id}/schedule`,     label: 'Schedule',    Icon: Wrench,        exact: false },
     { href: `/procurement?projectId=${id}`, label: 'Procurement', Icon: ClipboardList, exact: false },
     { href: `/projects/${id}/floor-plans`,  label: 'Floor Plans', Icon: Map,           exact: false },
     { href: `/projects/${id}/handover`,     label: 'Handover',    Icon: ClipboardCheck, exact: false },
