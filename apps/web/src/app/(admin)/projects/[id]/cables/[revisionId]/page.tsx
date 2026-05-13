@@ -442,7 +442,8 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             >
               Use <strong>+ Add to schedule</strong> above to add sources, boards,
               supplies and cables. Cable rows auto-fill Ω/km + base rating from the
-              bundled SANS library. Bulk import via Excel arrives in C-7.
+              bundled SANS library. To bulk-load from an existing workbook, use
+              <strong> ⬆ Import Excel</strong> from the revisions list.
             </div>
           </div>
         </div>
