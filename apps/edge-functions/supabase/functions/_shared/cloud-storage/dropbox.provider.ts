@@ -114,10 +114,10 @@ export class DropboxProvider implements CloudStorageProvider {
 
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
+      headers: await this.namespaceHeaders(opts.accessToken, {
         Authorization: `Bearer ${opts.accessToken}`,
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify(body),
     })
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'list folder')
@@ -131,11 +131,11 @@ export class DropboxProvider implements CloudStorageProvider {
   async downloadFile(opts: DownloadOptions): Promise<DownloadResult> {
     const res = await fetch(`${CONTENT_BASE}/files/download`, {
       method: 'POST',
-      headers: {
+      headers: await this.namespaceHeaders(opts.accessToken, {
         Authorization: `Bearer ${opts.accessToken}`,
         // Dropbox requires the file path/id in this header, NOT the body.
         'Dropbox-API-Arg': JSON.stringify({ path: opts.fileId }),
-      },
+      }),
     })
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'download')
     if (!res.body) throw new Error('dropbox: download response body is empty')
@@ -163,18 +163,97 @@ export class DropboxProvider implements CloudStorageProvider {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Team-namespace plumbing
+  //
+  // Dropbox Business members have TWO namespaces visible to their account:
+  //   - HOME (default)   → only their personal member folder + files they own
+  //   - ROOT             → the team's full folder tree (incl. shared team folders)
+  //
+  // Without `Dropbox-API-Path-Root: {".tag":"root","root":"<id>"}`, every
+  // /files/* call defaults to HOME — so the folder picker only shows the
+  // user's personal slice and team-shared content stays invisible. For
+  // personal Dropbox accounts (root_info.tag === "user"), we OMIT the
+  // header (sending it would 400). For team accounts, we send it on every
+  // list_folder + download call.
+  //
+  // root_info comes from /users/get_current_account; we cache it per access
+  // token in-memory to avoid 1 extra round-trip per call. Cache key is the
+  // access token itself, so token rotation invalidates naturally.
+  // ─────────────────────────────────────────────────────────────────────
+
+  private async namespaceHeaders(
+    accessToken: string,
+    base: Record<string, string>,
+  ): Promise<Record<string, string>> {
+    const ns = await this.getRootNamespaceId(accessToken)
+    if (!ns) return base
+    return {
+      ...base,
+      'Dropbox-API-Path-Root': JSON.stringify({ '.tag': 'root', root: ns }),
+    }
+  }
+
+  private async getRootNamespaceId(accessToken: string): Promise<string | undefined> {
+    const cached = rootInfoCache.get(accessToken)
+    if (cached !== undefined) return cached.rootNamespaceId
+    const info = await this.fetchAccountInfo(accessToken)
+    const rootNamespaceId =
+      info.root_info?.['.tag'] === 'team' ? info.root_info.root_namespace_id : undefined
+    rootInfoCache.set(accessToken, { email: info.email, rootNamespaceId })
+    return rootNamespaceId
+  }
+
   private async getAccountEmail(accessToken: string): Promise<string> {
-    // /users/get_current_account is a POST with no body.
+    const cached = rootInfoCache.get(accessToken)
+    if (cached) return cached.email
+    const info = await this.fetchAccountInfo(accessToken)
+    const rootNamespaceId =
+      info.root_info?.['.tag'] === 'team' ? info.root_info.root_namespace_id : undefined
+    rootInfoCache.set(accessToken, { email: info.email, rootNamespaceId })
+    return info.email
+  }
+
+  private async fetchAccountInfo(accessToken: string): Promise<DropboxAccountInfo> {
+    // /users/get_current_account is a POST with no body. Returns email +
+    // root_info (only present for v2 API responses, but we expect it).
     const res = await fetch(`${API_BASE}/users/get_current_account`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}` },
     })
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'get account')
-    const j = (await res.json()) as { email?: string }
+    const j = (await res.json()) as DropboxAccountInfo
     if (!j.email) throw new Error('dropbox: get_current_account returned no email')
-    return j.email
+    return j
   }
 }
+
+interface DropboxAccountInfo {
+  email: string
+  root_info?: {
+    '.tag': 'team' | 'user'
+    root_namespace_id: string
+    home_namespace_id: string
+  }
+}
+
+// In-memory cache of root_info per access token.
+// Access tokens are short-lived (~4h); cache eviction is implicit when the
+// token rotates. Bound the size to prevent unbounded growth in long-running
+// processes (edge functions / web server with many concurrent users).
+const ROOT_INFO_CACHE_MAX = 256
+class BoundedMap<K, V> extends Map<K, V> {
+  constructor(private readonly max: number) { super() }
+  set(key: K, value: V): this {
+    if (this.size >= this.max && !this.has(key)) {
+      // Evict oldest insertion (Map preserves insertion order)
+      const firstKey = this.keys().next().value
+      if (firstKey !== undefined) this.delete(firstKey)
+    }
+    return super.set(key, value)
+  }
+}
+const rootInfoCache = new BoundedMap<string, { email: string; rootNamespaceId: string | undefined }>(ROOT_INFO_CACHE_MAX)
 
 interface DropboxTokenResponse {
   access_token: string
