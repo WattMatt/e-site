@@ -914,6 +914,21 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
     setPickerOpen(true)
   }
 
+  function openSaveDialog(mode: 'attach' | 'create') {
+    if (shapes.length === 0) return
+    setSaveError(null)
+    if (editing) {
+      // In re-edit mode the dialog isn't used at all — the button is the
+      // single-action "Update markup" path that targets the existing
+      // annotation row. Defer to handleSaveClick which handles that branch.
+      void handleSaveClick()
+      return
+    }
+    setPickerRfiId(rfis[0]?.id ?? '')
+    setPickerMode(mode)
+    setPickerOpen(true)
+  }
+
   async function submitNewRfiWithAnnotation() {
     const snap = snapshotScene()
     if (!snap) return
@@ -1204,14 +1219,47 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
         <div style={{ flex: 1 }} />
         <ToolbarGroup>
           <ToolbarButton onClick={startCalibration} title="Calibrate this drawing for the measure tool">Calibrate</ToolbarButton>
-          <button
-            type="button"
-            className="btn-primary-amber"
-            onClick={handleSaveClick}
-            disabled={saving || shapes.length === 0}
-          >
-            {saving ? 'Saving…' : editing ? 'Update markup' : 'Save markup'}
-          </button>
+          {editing ? (
+            <button
+              type="button"
+              className="btn-primary-amber"
+              onClick={handleSaveClick}
+              disabled={saving || shapes.length === 0}
+              title="Save changes back to the existing RFI annotation"
+            >
+              {saving ? 'Saving…' : 'Update markup'}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn-primary-amber"
+                onClick={() => openSaveDialog('create')}
+                disabled={saving || shapes.length === 0}
+                title="Create a new RFI with this markup attached"
+                style={{
+                  background: 'var(--c-panel)',
+                  border: '1px solid var(--c-amber)',
+                  color: 'var(--c-amber)',
+                }}
+              >
+                {saving ? 'Saving…' : '+ Create RFI'}
+              </button>
+              <button
+                type="button"
+                className="btn-primary-amber"
+                onClick={() => openSaveDialog('attach')}
+                disabled={saving || shapes.length === 0 || rfis.length === 0}
+                title={
+                  rfis.length === 0
+                    ? 'No RFIs in this project yet — use "+ Create RFI" instead'
+                    : 'Attach this markup to an existing RFI'
+                }
+              >
+                {saving ? 'Saving…' : 'Attach to RFI'}
+              </button>
+            </>
+          )}
         </ToolbarGroup>
       </div>
       {saveError && (
