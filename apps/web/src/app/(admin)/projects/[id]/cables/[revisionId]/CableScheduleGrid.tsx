@@ -11,7 +11,7 @@ import {
   ConfirmedLengthEditor,
 } from './LengthEditPopover'
 import { EditableCell } from './EditableCell'
-import { updateSupplyAction, updateCableAction, deleteCableAction } from '@/actions/cable-entities.actions'
+import { updateSupplyAction, updateCableAction, deleteCableAction, repointSupplyAction } from '@/actions/cable-entities.actions'
 
 const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
   .map((v) => ({ value: String(v), label: `${v} V` }))
@@ -116,6 +116,7 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
   const [query, setQuery] = useState('')
   const [editConfirmed, setEditConfirmed] = useState<ScheduleRow | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ScheduleRow | null>(null)
+  const [repointing, setRepointing] = useState<{ row: ScheduleRow; end: 'from' | 'to' } | null>(null)
 
   const [liveRows, setLiveRows] = useState<ScheduleRow[]>(rows)
   const [liveSupplies, setLiveSupplies] = useState<SupplyForCalc[]>(supplies)
@@ -462,8 +463,20 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                       <span style={{ marginLeft: 4, fontSize: 9, color: 'var(--c-amber)' }} title="Manual override">⚑</span>
                     )}
                   </Td>
-                  <Td>{r.from_label}</Td>
-                  <Td>{r.to_label}</Td>
+                  <Td>
+                    {canEdit && !locked ? (
+                      <button type="button" style={editCellBtn} onClick={() => setRepointing({ row: r, end: 'from' })}>
+                        {r.from_label}
+                      </button>
+                    ) : r.from_label}
+                  </Td>
+                  <Td>
+                    {canEdit && !locked ? (
+                      <button type="button" style={editCellBtn} onClick={() => setRepointing({ row: r, end: 'to' })}>
+                        {r.to_label}
+                      </button>
+                    ) : r.to_label}
+                  </Td>
                   <Td align="right">
                     <EditableCell
                       type="select" align="right" disabled={locked || !canEdit}
@@ -596,6 +609,26 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
           onCancel={() => setPendingDelete(null)}
         />
       )}
+      {repointing && (
+        <RepointPicker
+          end={repointing.end}
+          current={repointing.end === 'from' ? repointing.row.from_node_id : repointing.row.to_node_id}
+          nodeOptions={repointing.end === 'from' ? nodeOptions : nodeOptions.filter((n) => n.kind === 'board')}
+          onCancel={() => setRepointing(null)}
+          onPick={async (nodeId, kind) => {
+            const { row, end } = repointing
+            setRepointing(null)
+            const res = await repointSupplyAction({
+              supplyId: row.supply_id,
+              ...(end === 'from'
+                ? { fromSourceId: kind === 'source' ? nodeId : null, fromBoardId: kind === 'board' ? nodeId : null }
+                : { toBoardId: nodeId }),
+            })
+            if (res.error) { alert(`Could not re-route: ${res.error}`) }
+            // repointSupplyAction revalidates → fresh rows arrive via the Task-8 useEffect re-seed.
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -689,6 +722,63 @@ function ConfirmDialog({
           <button type="button" onClick={onConfirm} className="btn-primary-amber"
             style={{ background: '#dc2626', borderColor: '#dc2626' }}>
             {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RepointPicker({
+  end, current, nodeOptions, onCancel, onPick,
+}: {
+  end: 'from' | 'to'
+  current: string
+  nodeOptions: NodeOption[]
+  onCancel: () => void
+  onPick: (nodeId: string, kind: 'source' | 'board') => void
+}) {
+  const [selected, setSelected] = useState(current ?? nodeOptions[0]?.id ?? '')
+
+  const selectedOption = nodeOptions.find((n) => n.id === selected)
+
+  function handlePick() {
+    if (!selectedOption) return
+    onPick(selectedOption.id, selectedOption.kind)
+  }
+
+  return (
+    <div role="dialog" aria-modal="true" aria-labelledby="c12-repoint-picker-title"
+      tabIndex={-1}
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel() }}
+      onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+      <div className="data-panel" style={{ padding: 16, minWidth: 320, maxWidth: 440,
+        display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--c-panel)' }}>
+        <h3 id="c12-repoint-picker-title" style={{ fontSize: 14, fontWeight: 600, margin: 0, color: 'var(--c-text)' }}>
+          Re-route — change the {end === 'from' ? 'origin' : 'destination'}
+        </h3>
+        <select
+          className="ob-input"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+          style={{ fontSize: 12 }}
+        >
+          {nodeOptions.map((n) => (
+            <option key={n.id} value={n.id}>
+              {n.code} {n.kind === 'source' ? '(source)' : '(board)'}
+            </option>
+          ))}
+        </select>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+          <button type="button" onClick={onCancel} className="btn-primary-amber" autoFocus
+            style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}>
+            Cancel
+          </button>
+          <button type="button" onClick={handlePick} className="btn-primary-amber"
+            disabled={!selectedOption}>
+            Re-route
           </button>
         </div>
       </div>
