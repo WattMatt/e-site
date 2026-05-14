@@ -11,7 +11,7 @@ import {
   ConfirmedLengthEditor,
 } from './LengthEditPopover'
 import { EditableCell } from './EditableCell'
-import { updateSupplyAction, updateCableAction } from '@/actions/cable-entities.actions'
+import { updateSupplyAction, updateCableAction, deleteCableAction } from '@/actions/cable-entities.actions'
 
 const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
   .map((v) => ({ value: String(v), label: `${v} V` }))
@@ -115,6 +115,7 @@ function cableTag(r: ScheduleRow): string {
 export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cables, nodeOptions, locked, lengthMode, canEdit }: Props) {
   const [query, setQuery] = useState('')
   const [editConfirmed, setEditConfirmed] = useState<ScheduleRow | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<ScheduleRow | null>(null)
 
   const [liveRows, setLiveRows] = useState<ScheduleRow[]>(rows)
   const [liveSupplies, setLiveSupplies] = useState<SupplyForCalc[]>(supplies)
@@ -262,6 +263,19 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
     return {}
   }
 
+  async function confirmDeleteCable() {
+    if (!pendingDelete) return
+    const target = pendingDelete
+    setPendingDelete(null)
+    const prev = liveRows
+    setLiveRows(liveRows.filter((r) => r.id !== target.id))
+    const res = await deleteCableAction(target.id)
+    if (res.error) {
+      setLiveRows(prev)
+      alert(`Could not delete: ${res.error}`)
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return liveRows
@@ -346,6 +360,7 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
             <tr style={{ background: 'var(--c-base)' }}>
               <Th w={4} />
               <Th w={32} align="center">Δ</Th>
+              {canEdit && !locked && <Th w={28} />}
               <Th w={220}>Cable tag</Th>
               <Th w={120}>From</Th>
               <Th w={120}>To</Th>
@@ -422,6 +437,15 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                       </span>
                     )}
                   </Td>
+                  {canEdit && !locked && (
+                    <Td align="center" style={{ padding: '4px 2px' }}>
+                      <button type="button" title="Delete cable"
+                        onClick={() => setPendingDelete(r)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12 }}>
+                        ✕
+                      </button>
+                    </Td>
+                  )}
                   <Td>
                     <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>{cableTag(r)}</span>
                     {r.manual_override && (
@@ -553,6 +577,15 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
           onClose={() => setEditConfirmed(null)}
         />
       )}
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Delete cable"
+          body={`Delete cable #${pendingDelete.cable_no} (${pendingDelete.from_label} → ${pendingDelete.to_label})? This also removes its terminations and tags. If it is the last cable on this run, the run is removed too.`}
+          confirmLabel="Delete"
+          onConfirm={confirmDeleteCable}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   )
 }
@@ -618,5 +651,35 @@ function Td({
     >
       {children}
     </td>
+  )
+}
+
+function ConfirmDialog({
+  title, body, confirmLabel, onConfirm, onCancel,
+}: {
+  title: string; body: string; confirmLabel: string
+  onConfirm: () => void; onCancel: () => void
+}) {
+  return (
+    <div role="dialog" aria-modal="true"
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel() }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+      <div className="data-panel" style={{ padding: 16, minWidth: 320, maxWidth: 440,
+        display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--c-panel)' }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, color: 'var(--c-text)' }}>{title}</h3>
+        <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: 0 }}>{body}</p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+          <button type="button" onClick={onCancel} className="btn-primary-amber"
+            style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}>
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} className="btn-primary-amber"
+            style={{ background: '#dc2626', borderColor: '#dc2626' }}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

@@ -537,10 +537,10 @@ export async function deleteCableAction(id: string): Promise<{ ok?: true; error?
   const { data: c } = await (supabase as any)
     .schema('cable_schedule')
     .from('cables')
-    .select('revision_id, organisation_id, cable_no')
+    .select('revision_id, organisation_id, cable_no, supply_id')
     .eq('id', id)
     .single()
-  const cable = c as { revision_id?: string; organisation_id?: string; cable_no?: number } | null
+  const cable = c as { revision_id?: string; organisation_id?: string; cable_no?: number; supply_id?: string } | null
   if (!cable?.revision_id) return { error: 'Cable not found' }
   const guard = await assertDraft(supabase, cable.revision_id)
   if ('error' in guard) return { error: guard.error }
@@ -558,6 +558,27 @@ export async function deleteCableAction(id: string): Promise<{ ok?: true; error?
     label: `Cable #${cable.cable_no ?? '?'}`,
     userId: user?.id ?? null,
   })
+  // If that was the last cable on the supply, the run is now empty — remove it.
+  if (cable.supply_id) {
+    const { data: remaining } = await (supabase as any)
+      .schema('cable_schedule').from('cables')
+      .select('id').eq('supply_id', cable.supply_id).limit(1)
+    if (!remaining || remaining.length === 0) {
+      const { data: sup } = await (supabase as any)
+        .schema('cable_schedule').from('supplies')
+        .select('voltage_v, design_load_a').eq('id', cable.supply_id).single()
+      await (supabase as any)
+        .schema('cable_schedule').from('supplies').delete().eq('id', cable.supply_id)
+      await logDeletion(supabase, {
+        revisionId: cable.revision_id,
+        organisationId: cable.organisation_id!,
+        entityType: 'supply',
+        entityId: cable.supply_id,
+        label: `Supply ${(sup as any)?.voltage_v ?? '?'}V / ${(sup as any)?.design_load_a ?? '?'}A (auto-removed: empty)`,
+        userId: user?.id ?? null,
+      })
+    }
+  }
   revalidatePath(`/projects/${guard.projectId}/cables/${cable.revision_id}`)
   return { ok: true }
 }
