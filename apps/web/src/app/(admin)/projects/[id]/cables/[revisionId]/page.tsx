@@ -12,7 +12,8 @@ import {
   type DiffableCable,
 } from '@esite/shared'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
-import { AddEntityPanel, type NodeOption } from './AddEntityPanel'
+import { AddEntityPanel } from './AddEntityPanel'
+import { type NodeOption } from './CableScheduleGrid'
 import { NodesPanel, type PanelNode } from './NodesPanel'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 import { ExportMenu } from './ExportMenu'
@@ -477,10 +478,11 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
                 marginTop: 6,
               }}
             >
-              Use <strong>+ Add to schedule</strong> above to add sources, boards,
-              supplies and cables. Cable rows auto-fill Ω/km + base rating from the
-              bundled SANS library. To bulk-load from an existing workbook, use
-              <strong> ⬆ Import Excel</strong> from the revisions list.
+              Use <strong>⚙ Manage nodes</strong> to set up your origins and boards,
+              then <strong>+ Add cable</strong> to start the schedule. Cable rows
+              auto-fill Ω/km + base rating from the bundled SANS library. To
+              bulk-load from an existing workbook, use{' '}
+              <strong>⬆ Import Excel</strong> from the revisions list.
             </div>
           </div>
         </div>

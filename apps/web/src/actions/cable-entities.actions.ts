@@ -220,50 +220,6 @@ export async function deleteBoardAction(id: string): Promise<{ ok?: true; error?
 
 // ─── supplies ────────────────────────────────────────────────────────
 
-const supplySchema = z.object({
-  revisionId: uuid,
-  fromSourceId: uuid.optional().nullable(),
-  fromBoardId: uuid.optional().nullable(),
-  toBoardId: uuid,
-  voltageV: z.number().positive(),
-  designLoadA: z.number().positive(),
-  section: z.enum(['NORMAL','EMERGENCY']).optional().nullable(),
-  notes: z.string().trim().max(2000).optional().nullable(),
-}).refine(
-  (d) => (d.fromSourceId ? 1 : 0) + (d.fromBoardId ? 1 : 0) === 1,
-  { message: 'Pick exactly one origin: a source OR a board' },
-)
-
-export async function addSupplyAction(
-  input: z.infer<typeof supplySchema>,
-): Promise<{ id?: string; error?: string }> {
-  const parsed = supplySchema.safeParse(input)
-  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
-  const supabase = await createClient()
-  const guard = await assertDraft(supabase, parsed.data.revisionId)
-  if ('error' in guard) return { error: guard.error }
-
-  const { data, error } = await (supabase as any)
-    .schema('cable_schedule')
-    .from('supplies')
-    .insert({
-      revision_id: parsed.data.revisionId,
-      organisation_id: guard.orgId,
-      from_source_id: parsed.data.fromSourceId ?? null,
-      from_board_id: parsed.data.fromBoardId ?? null,
-      to_board_id: parsed.data.toBoardId,
-      voltage_v: parsed.data.voltageV,
-      design_load_a: parsed.data.designLoadA,
-      section: parsed.data.section ?? null,
-      notes: parsed.data.notes ?? null,
-    })
-    .select('id')
-    .single()
-  if (error) return { error: error.message }
-  revalidatePath(`/projects/${guard.projectId}/cables/${parsed.data.revisionId}`)
-  return { id: (data as { id: string }).id }
-}
-
 export async function deleteSupplyAction(id: string): Promise<{ ok?: true; error?: string }> {
   if (!uuid.safeParse(id).success) return { error: 'Invalid id' }
   const supabase = await createClient()
@@ -548,39 +504,6 @@ export async function addCableAction(
     id: (data as { id: string }).id,
     cableNo: (data as { cable_no: number }).cable_no,
   }
-}
-
-export async function addParallelCableAction(
-  supplyId: string,
-): Promise<{ id?: string; cableNo?: number; error?: string }> {
-  if (!uuid.safeParse(supplyId).success) return { error: 'Invalid supply id' }
-  const supabase = await createClient()
-  // Clone the lowest-numbered cable in the supply
-  const { data: src } = await (supabase as any)
-    .schema('cable_schedule')
-    .from('cables')
-    .select('size_mm2, cores, conductor, insulation, armour, measured_length_m, installation_method, depth_mm, grouped_with, ambient_temp_c, thermal_resistivity_kmw, notes')
-    .eq('supply_id', supplyId)
-    .order('cable_no', { ascending: true })
-    .limit(1)
-    .single()
-  if (!src) return { error: 'No existing cable to clone — add one first' }
-  const c = src as any
-  return addCableAction({
-    supplyId,
-    sizeMm2: Number(c.size_mm2),
-    cores: c.cores,
-    conductor: c.conductor,
-    insulation: c.insulation,
-    armour: c.armour,
-    measuredLengthM: c.measured_length_m == null ? null : Number(c.measured_length_m),
-    installationMethod: c.installation_method,
-    depthMm: c.depth_mm == null ? null : Number(c.depth_mm),
-    groupedWith: c.grouped_with,
-    ambientTempC: Number(c.ambient_temp_c),
-    thermalResistivityKmw: Number(c.thermal_resistivity_kmw),
-    notes: c.notes,
-  })
 }
 
 export async function deleteCableAction(id: string): Promise<{ ok?: true; error?: string }> {

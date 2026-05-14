@@ -6,12 +6,7 @@ import {
   findOrCreateSupplyAction,
   addCableAction,
 } from '@/actions/cable-entities.actions'
-
-export interface NodeOption {
-  id: string
-  code: string
-  kind: 'source' | 'board'
-}
+import { type NodeOption } from './CableScheduleGrid'
 
 interface Props {
   revisionId: string
