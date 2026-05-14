@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Metadata } from 'next'
+import type { CSSProperties } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
 import {
@@ -270,6 +271,20 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   // Revision-cloud letter (matches the drawing convention — e.g. "8" from "Rev 8").
   const revLetter = revision.code.replace(/^rev\s*/i, '').trim() || revision.code
 
+  const headerNavLinkStyle: CSSProperties = {
+    background: 'var(--c-panel)',
+    border: '1px solid var(--c-border)',
+    color: 'var(--c-text-mid)',
+    borderRadius: 6,
+    padding: '9px 16px',
+    fontSize: 13,
+    fontFamily: 'var(--font-sans)',
+    textDecoration: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+  }
+
   const rows: ScheduleRow[] = cables.map((c) => {
     const supply = supplyById.get(c.supply_id)
     if (!supply) {
@@ -386,61 +401,21 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <Link
-            href={`/projects/${projectId}/cables/${revisionId}/tags`}
-            className="btn-primary-amber"
-            style={{
-              background: 'var(--c-panel)',
-              border: '1px solid var(--c-border)',
-              color: 'var(--c-text-mid)',
-              textDecoration: 'none',
-            }}
-          >
-            🏷 Tag schedule
-          </Link>
-          <Link
-            href={`/projects/${projectId}/cables/${revisionId}/cost`}
-            className="btn-primary-amber"
-            style={{
-              background: 'var(--c-panel)',
-              border: '1px solid var(--c-border)',
-              color: 'var(--c-text-mid)',
-              textDecoration: 'none',
-            }}
-          >
-            💰 Cost summary
-          </Link>
-          <Link
-            href={`/projects/${projectId}/cables/${revisionId}/diff`}
-            className="btn-primary-amber"
-            style={{
-              background: 'var(--c-panel)',
-              border: '1px solid var(--c-border)',
-              color: 'var(--c-text-mid)',
-              textDecoration: 'none',
-            }}
-            title={priorIssued ? `Diff against ${priorIssued.code}` : 'No prior issued revision to diff against'}
-          >
-            🔀 Diff
-          </Link>
-          <Link
-            href={`/projects/${projectId}/cables/${revisionId}/discrepancies`}
-            className="btn-primary-amber"
-            style={{
-              background: 'var(--c-panel)',
-              border: '1px solid var(--c-border)',
-              color: 'var(--c-text-mid)',
-              textDecoration: 'none',
-            }}
-          >
-            📐 Discrepancies
-          </Link>
-          <LengthModeToggle
-            basePath={`/projects/${projectId}/cables/${revisionId}`}
-            current={lengthMode}
-            hasConfirmedLengths={hasConfirmedLengths}
-          />
-          <ExportMenu projectId={projectId} revisionId={revisionId} />
+          <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+            <Link href={`/projects/${projectId}/cables/${revisionId}/tags`} style={headerNavLinkStyle}>🏷 Tag schedule</Link>
+            <Link href={`/projects/${projectId}/cables/${revisionId}/cost`} style={headerNavLinkStyle}>💰 Cost summary</Link>
+            <Link href={`/projects/${projectId}/cables/${revisionId}/diff`} style={headerNavLinkStyle}
+              title={priorIssued ? `Diff against ${priorIssued.code}` : 'No prior issued revision to diff against'}>🔀 Diff</Link>
+            <Link href={`/projects/${projectId}/cables/${revisionId}/discrepancies`} style={headerNavLinkStyle}>📐 Discrepancies</Link>
+          </div>
+          <div style={{ display: 'inline-flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <LengthModeToggle
+              basePath={`/projects/${projectId}/cables/${revisionId}`}
+              current={lengthMode}
+              hasConfirmedLengths={hasConfirmedLengths}
+            />
+            <ExportMenu projectId={projectId} revisionId={revisionId} />
+          </div>
         </div>
       </div>
 
