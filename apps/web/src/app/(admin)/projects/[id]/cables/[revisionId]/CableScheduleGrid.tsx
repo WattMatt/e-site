@@ -47,6 +47,10 @@ export interface ScheduleRow {
   vd_pct: number
   cumulative_vd_pct: number
   derated_rating_a: number | null
+  /** Sum of the supply's cables' derated ratings (grouping-aware combined capacity), in A. */
+  combined_capacity_a: number
+  /** True when the supply's combined capacity is below its design load. */
+  supply_under_rated: boolean
   installation_method: string | null
   depth_mm: number | null
   grouped_with: number
@@ -114,8 +118,8 @@ function deltaLength(r: ScheduleRow): { abs: number; pct: number } | null {
 }
 
 function utilisationPct(r: ScheduleRow): number | null {
-  if (r.derated_rating_a == null || r.derated_rating_a <= 0 || r.load_a == null) return null
-  return (r.load_a / r.derated_rating_a) * 100
+  if (r.combined_capacity_a <= 0 || r.load_a == null) return null
+  return (r.load_a / r.combined_capacity_a) * 100
 }
 
 function cableTag(r: ScheduleRow): string {
@@ -571,6 +575,14 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                   </Td>
                   <Td align="right" style={{ color: utilTooHot ? '#dc2626' : 'var(--c-text)' }}>
                     {fmt(r.derated_rating_a, 0)}
+                    {r.supply_under_rated && (
+                      <span
+                        title={`Supply under-rated: ${Math.round(r.combined_capacity_a)} A combined capacity < ${r.load_a ?? '?'} A design load`}
+                        style={{ marginLeft: 6, color: 'var(--c-red)', fontWeight: 700, cursor: 'help' }}
+                      >
+                        ⚠
+                      </span>
+                    )}
                   </Td>
                   <Td align="right" style={{ color: utilTone, fontWeight: util != null && util > 65 ? 700 : 400 }}>
                     {util == null ? '—' : fmt(util, 1)}

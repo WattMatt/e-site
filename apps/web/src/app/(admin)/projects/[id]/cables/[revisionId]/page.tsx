@@ -7,6 +7,7 @@ import { projectService } from '@esite/shared'
 import {
   computeCumulativeVdMap,
   voltDropPctForSupply,
+  supplyParallelCapacity,
   type CableForCalc,
   type SupplyForCalc,
   changedCableIds,
@@ -259,6 +260,14 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     return nodeByIdSource.get(id)?.code ?? nodeByIdBoard.get(id)?.code ?? '?'
   }
 
+  // Per-supply combined parallel capacity (sum of cables' derated ratings) +
+  // an under-rated flag (combined capacity below the supply's design load).
+  const capacityBySupply = new Map<string, number>()
+  for (const sup of supplies) {
+    const supCables = cables.filter((c) => c.supply_id === sup.id)
+    capacityBySupply.set(sup.id, supplyParallelCapacity(supCables))
+  }
+
   // Build grid rows: one row per cable, with FROM / TO / VD / cumulative VD
   // resolved up-front.
   const supplyById = new Map(supplies.map((s) => [s.id, s] as const))
@@ -306,6 +315,8 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         vd_pct: 0,
         cumulative_vd_pct: 0,
         derated_rating_a: c.derated_current_rating_a,
+        combined_capacity_a: 0,
+        supply_under_rated: false,
         installation_method: c.installation_method,
         depth_mm: c.depth_mm,
         grouped_with: c.grouped_with,
@@ -342,6 +353,9 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       vd_pct: supplyVdById.get(c.supply_id) ?? 0,
       cumulative_vd_pct: cumulativeBySupply.get(c.supply_id) ?? 0,
       derated_rating_a: c.derated_current_rating_a,
+      combined_capacity_a: capacityBySupply.get(c.supply_id) ?? 0,
+      supply_under_rated: supply.design_load_a != null
+        && (capacityBySupply.get(c.supply_id) ?? 0) < supply.design_load_a,
       installation_method: c.installation_method,
       depth_mm: c.depth_mm,
       grouped_with: c.grouped_with,
