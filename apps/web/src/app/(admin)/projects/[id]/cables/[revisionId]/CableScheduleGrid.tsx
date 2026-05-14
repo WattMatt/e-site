@@ -90,6 +90,9 @@ function fmt(n: number | null | undefined, decimals = 0): string {
   return Number(n).toFixed(decimals)
 }
 
+// Mirrors activeLengthM() in @esite/shared. The logic is intentionally duplicated
+// (not imported) because ScheduleRow is not structurally assignable to CableForCalc —
+// keep the three branches in sync with the canonical version if it ever changes.
 function activeLength(r: ScheduleRow, mode: 'design' | 'as-built' | 'worst'): number | null {
   const meas = r.measured_length_m
   const conf = r.confirmed_length_m
