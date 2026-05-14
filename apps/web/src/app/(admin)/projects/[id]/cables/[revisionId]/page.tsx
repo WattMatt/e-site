@@ -59,6 +59,7 @@ interface CableRow extends CableForCalc {
   cores: string
   conductor: 'CU' | 'AL'
   insulation: 'PVC' | 'XLPE' | 'PILC'
+  armour: string | null
   installation_method: string | null
   depth_mm: number | null
   grouped_with: number
@@ -128,7 +129,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       .schema('cable_schedule')
       .from('cables')
       .select(
-        'id, supply_id, cable_no, size_mm2, cores, conductor, insulation, ohm_per_km, ' +
+        'id, supply_id, cable_no, size_mm2, cores, conductor, insulation, armour, ohm_per_km, ' +
         'measured_length_m, confirmed_length_m, length_status, ' +
         'derate_depth, derate_thermal, derate_grouping, derate_temp, ' +
         'derated_current_rating_a, installation_method, depth_mm, grouped_with, ' +
@@ -269,6 +270,14 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         tag_override: c.tag_override,
         manual_override: c.manual_override,
         notes: c.notes,
+        cloud_kind: null,
+        cloud_letter: revLetter,
+        supply_id: c.supply_id,
+        from_node_id: '',
+        to_node_id: '',
+        armour: c.armour,
+        section: null,
+        ambient_temp_c: Number(c.ambient_temp_c),
       }
     }
     return {
@@ -299,6 +308,12 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
               : revCloudChanged.has(c.id) ? 'changed' as const
               : null,
       cloud_letter: revLetter,
+      supply_id: c.supply_id,
+      from_node_id: supply.from_source_id ?? supply.from_board_id ?? '',
+      to_node_id: supply.to_board_id,
+      armour: c.armour,
+      section: supply.section,
+      ambient_temp_c: Number(c.ambient_temp_c),
     }
   })
 
@@ -449,9 +464,18 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         </div>
       ) : (
         <CableScheduleGrid
+          projectId={projectId}
+          revisionId={revisionId}
           rows={rows}
+          supplies={supplies as SupplyForCalc[]}
+          cables={cables as CableForCalc[]}
+          nodeOptions={[
+            ...sources.map((s) => ({ id: s.id, code: s.code, kind: 'source' as const })),
+            ...boards.map((b) => ({ id: b.id, code: b.code, kind: 'board' as const })),
+          ]}
           locked={revision.status !== 'DRAFT'}
           lengthMode={lengthMode}
+          canEdit={revision.status === 'DRAFT'}
         />
       )}
     </div>

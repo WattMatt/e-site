@@ -1,6 +1,12 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  computeCumulativeVdMap,
+  voltDropPctForSupply,
+  type CableForCalc,
+  type SupplyForCalc,
+} from '@esite/shared'
 import {
   MeasuredLengthEditor,
   ConfirmedLengthEditor,
@@ -33,12 +39,26 @@ export interface ScheduleRow {
   /** When this cable is new or changed vs the most-recent ISSUED revision. */
   cloud_kind: 'added' | 'changed' | null
   cloud_letter: string
+  supply_id: string
+  from_node_id: string
+  to_node_id: string
+  armour: string | null
+  section: string | null
+  ambient_temp_c: number
 }
 
+export interface NodeOption { id: string; code: string; kind: 'source' | 'board' }
+
 interface Props {
+  projectId: string
+  revisionId: string
   rows: ScheduleRow[]
+  supplies: SupplyForCalc[]
+  cables: CableForCalc[]
+  nodeOptions: NodeOption[]
   locked: boolean
   lengthMode: 'design' | 'as-built' | 'worst'
+  canEdit: boolean
 }
 
 const LENGTH_STATUS_TONE: Record<ScheduleRow['length_status'], string> = {
@@ -75,22 +95,46 @@ function cableTag(r: ScheduleRow): string {
   return `${r.from_label}-${r.to_label}-${r.size_mm2}-${r.cable_no}`
 }
 
-export function CableScheduleGrid({ rows, locked, lengthMode }: Props) {
+export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cables, nodeOptions, locked, lengthMode, canEdit }: Props) {
   const [query, setQuery] = useState('')
   const [editMeasured, setEditMeasured] = useState<ScheduleRow | null>(null)
   const [editConfirmed, setEditConfirmed] = useState<ScheduleRow | null>(null)
 
+  const [liveRows, setLiveRows] = useState<ScheduleRow[]>(rows)
+  const [liveSupplies, setLiveSupplies] = useState<SupplyForCalc[]>(supplies)
+  const [liveCables, setLiveCables] = useState<CableForCalc[]>(cables)
+
+  // Re-seed if the server sends fresh data (after revalidatePath).
+  useEffect(() => { setLiveRows(rows); setLiveSupplies(supplies); setLiveCables(cables) },
+    [rows, supplies, cables])
+
+  /** Recompute VD + cumulative VD across all rows from the current raw snapshot. */
+  function recomputeVd(
+    nextSupplies: SupplyForCalc[],
+    nextCables: CableForCalc[],
+  ): Map<string, { vd: number; cum: number }> {
+    const cumMap = computeCumulativeVdMap(nextSupplies, nextCables, lengthMode)
+    const out = new Map<string, { vd: number; cum: number }>()
+    for (const s of nextSupplies) {
+      out.set(s.id, {
+        vd: voltDropPctForSupply(s, nextCables, lengthMode),
+        cum: cumMap.get(s.id) ?? 0,
+      })
+    }
+    return out
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter(
+    if (!q) return liveRows
+    return liveRows.filter(
       (r) =>
         r.from_label.toLowerCase().includes(q) ||
         r.to_label.toLowerCase().includes(q) ||
         cableTag(r).toLowerCase().includes(q) ||
         (r.notes ?? '').toLowerCase().includes(q),
     )
-  }, [rows, query])
+  }, [liveRows, query])
 
   // Group rows by supply for the parallel-cable left-edge brace (same FROM-TO
   // pair sharing a colour). Two adjacent rows with identical FROM+TO get a
@@ -116,7 +160,7 @@ export function CableScheduleGrid({ rows, locked, lengthMode }: Props) {
           style={{ flex: 1, minWidth: 240, maxWidth: 360 }}
         />
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
-          {filtered.length} of {rows.length} cables
+          {filtered.length} of {liveRows.length} cables
         </div>
         <span
           style={{
