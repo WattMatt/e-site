@@ -400,6 +400,87 @@ const cableSchema = z.object({
   notes: z.string().trim().max(2000).optional().nullable(),
 })
 
+/**
+ * Resolves a cable's electrical fields from the SANS library: ohm/km (or a
+ * manual override), the four derate factors, the grouping-aware derated
+ * current rating, and the standard string. Shared by addCableAction and
+ * addParallelCableSetAction so the lookup logic lives in one place.
+ */
+async function resolveCableElectricals(
+  supabase: any,
+  args: {
+    conductor: 'CU' | 'AL'
+    insulation: 'PVC' | 'XLPE' | 'PILC'
+    cores: '3' | '3+E' | '4'
+    sizeMm2: number
+    installationMethod: 'DIRECT_IN_GROUND' | 'DUCT' | 'LADDER' | 'TRAY' | 'CLIPPED' | null
+    depthMm: number | null
+    thermalResistivityKmw: number
+    ambientTempC: number
+    groupedWith: number
+    ohmPerKmOverride: number | null
+    projectId: string
+  },
+): Promise<{
+  ohm_per_km: number | null
+  derate_depth: number
+  derate_thermal: number
+  derate_grouping: number
+  derate_temp: number
+  derated_current_rating_a: number | null
+  standard: string
+  manual_override: boolean
+}> {
+  const props = await lookupCableProperties(supabase, {
+    conductor: args.conductor,
+    insulation: args.insulation,
+    cores: args.cores,
+    size_mm2: args.sizeMm2,
+    projectId: args.projectId,
+  })
+
+  const manualOverride = args.ohmPerKmOverride != null
+  const ohmPerKm = manualOverride
+    ? args.ohmPerKmOverride!
+    : props?.ac_resistance ?? props?.dc_resistance ?? null
+
+  const baseRating =
+    args.installationMethod === 'DIRECT_IN_GROUND' ? props?.rating_direct_buried
+    : args.installationMethod === 'DUCT'           ? props?.rating_in_duct
+    : props?.rating_in_air
+
+  const derate = await lookupDeratingFactors(supabase, {
+    depth_mm: args.depthMm ?? 500,
+    thermal_resistivity_kmw: args.thermalResistivityKmw,
+    grouped_with: args.groupedWith,
+    ambient_c: args.ambientTempC,
+    insulation: args.insulation,
+  })
+
+  const deratedA = deratedRating(baseRating ?? null, {
+    depth: derate.depth,
+    thermal: derate.thermal,
+    grouping: derate.grouping,
+    temperature: derate.temperature,
+  })
+
+  const standard =
+    args.insulation === 'XLPE' ? 'SANS 1507-4'
+    : args.insulation === 'PVC' ? 'SANS 1507-3'
+    : 'SANS 97'
+
+  return {
+    ohm_per_km: ohmPerKm,
+    derate_depth: derate.depth,
+    derate_thermal: derate.thermal,
+    derate_grouping: derate.grouping,
+    derate_temp: derate.temperature,
+    derated_current_rating_a: deratedA,
+    standard,
+    manual_override: manualOverride,
+  }
+}
+
 export async function addCableAction(
   input: z.infer<typeof cableSchema>,
 ): Promise<{ id?: string; cableNo?: number; error?: string }> {
@@ -431,45 +512,19 @@ export async function addCableAction(
     ?? (((existing?.[0] as { cable_no?: number } | undefined)?.cable_no ?? 0) + 1)
 
   // SANS lookup for ohm_per_km + base rating + derate factors
-  const props = await lookupCableProperties(supabase as any, {
+  const elec = await resolveCableElectricals(supabase as any, {
     conductor: parsed.data.conductor,
     insulation: parsed.data.insulation,
     cores: parsed.data.cores,
-    size_mm2: parsed.data.sizeMm2,
+    sizeMm2: parsed.data.sizeMm2,
+    installationMethod: parsed.data.installationMethod ?? null,
+    depthMm: parsed.data.depthMm ?? null,
+    thermalResistivityKmw: parsed.data.thermalResistivityKmw,
+    ambientTempC: parsed.data.ambientTempC,
+    groupedWith: parsed.data.groupedWith,
+    ohmPerKmOverride: parsed.data.ohmPerKmOverride ?? null,
     projectId: guard.projectId,
   })
-
-  const manualOverride = parsed.data.ohmPerKmOverride != null
-  const ohmPerKm = manualOverride
-    ? parsed.data.ohmPerKmOverride!
-    : props?.ac_resistance ?? props?.dc_resistance ?? null
-
-  // Resolve base rating from installation_method
-  const baseRating =
-    parsed.data.installationMethod === 'DIRECT_IN_GROUND' ? props?.rating_direct_buried
-    : parsed.data.installationMethod === 'DUCT'           ? props?.rating_in_duct
-    : props?.rating_in_air
-
-  const derate = await lookupDeratingFactors(supabase as any, {
-    depth_mm: parsed.data.depthMm ?? 500,
-    thermal_resistivity_kmw: parsed.data.thermalResistivityKmw,
-    grouped_with: parsed.data.groupedWith,
-    ambient_c: parsed.data.ambientTempC,
-    insulation: parsed.data.insulation,
-  })
-
-  const deratedA = deratedRating(baseRating ?? null, {
-    depth: derate.depth,
-    thermal: derate.thermal,
-    grouping: derate.grouping,
-    temperature: derate.temperature,
-  })
-
-  // Resolve standard from insulation
-  const standard =
-    parsed.data.insulation === 'XLPE' ? 'SANS 1507-4'
-    : parsed.data.insulation === 'PVC' ? 'SANS 1507-3'
-    : 'SANS 97'
 
   const { data, error } = await (supabase as any)
     .schema('cable_schedule')
@@ -484,7 +539,7 @@ export async function addCableAction(
       conductor: parsed.data.conductor,
       insulation: parsed.data.insulation,
       armour: parsed.data.armour ?? 'SWA',
-      standard,
+      standard: elec.standard,
       measured_length_m: parsed.data.measuredLengthM ?? null,
       length_status: parsed.data.measuredLengthM != null ? 'MEASURED' : 'UNMEASURED',
       installation_method: parsed.data.installationMethod ?? null,
@@ -492,13 +547,13 @@ export async function addCableAction(
       grouped_with: parsed.data.groupedWith,
       ambient_temp_c: parsed.data.ambientTempC,
       thermal_resistivity_kmw: parsed.data.thermalResistivityKmw,
-      ohm_per_km: ohmPerKm,
-      derate_depth: derate.depth,
-      derate_thermal: derate.thermal,
-      derate_grouping: derate.grouping,
-      derate_temp: derate.temperature,
-      derated_current_rating_a: deratedA,
-      manual_override: manualOverride,
+      ohm_per_km: elec.ohm_per_km,
+      derate_depth: elec.derate_depth,
+      derate_thermal: elec.derate_thermal,
+      derate_grouping: elec.derate_grouping,
+      derate_temp: elec.derate_temp,
+      derated_current_rating_a: elec.derated_current_rating_a,
+      manual_override: elec.manual_override,
       notes: parsed.data.notes ?? null,
     })
     .select('id, cable_no')
