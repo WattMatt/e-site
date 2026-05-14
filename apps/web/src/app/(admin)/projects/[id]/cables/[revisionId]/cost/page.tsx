@@ -85,6 +85,8 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
   const cables = (cablesRes?.data ?? []) as unknown as CableRow[]
   const costLines = (costRes?.data ?? []) as unknown as CostLine[]
 
+  const hasConfirmedLengths = cables.some((c) => c.confirmed_length_m != null)
+
   // Aggregate cable totals per size
   const totalsBySize = new Map<number, { totalLength: number; count: number }>()
   for (const c of cables) {
@@ -169,6 +171,7 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
         <LengthModeToggle
           basePath={`/projects/${projectId}/cables/${revisionId}/cost`}
           current={lengthMode}
+          hasConfirmedLengths={hasConfirmedLengths}
         />
       </div>
 

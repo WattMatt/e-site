@@ -147,6 +147,8 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   const supplies = (suppliesRes?.data ?? []) as unknown as SupplyRow[]
   const cables   = (cablesRes?.data   ?? []) as unknown as CableRow[]
 
+  const hasConfirmedLengths = cables.some((c) => c.confirmed_length_m != null)
+
   // Blast-radius counts: how many supplies and cables cascade-delete if a node is removed.
   function blastFor(nodeId: string, category: 'source' | 'board') {
     const hit = supplies.filter((s) =>
@@ -436,6 +438,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
           <LengthModeToggle
             basePath={`/projects/${projectId}/cables/${revisionId}`}
             current={lengthMode}
+            hasConfirmedLengths={hasConfirmedLengths}
           />
           <ExportMenu projectId={projectId} revisionId={revisionId} />
         </div>
