@@ -467,7 +467,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
                 marginTop: 6,
               }}
             >
-              Use <strong>⚙ Manage nodes</strong> to set up your origins and boards,
+              Use the <strong>Structure</strong> panel above to set up your sources and boards,
               then <strong>+ Add cable</strong> to start the schedule. Cable rows
               auto-fill Ω/km + base rating from the bundled SANS library. To
               bulk-load from an existing workbook, use{' '}
