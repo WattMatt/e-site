@@ -745,6 +745,9 @@ export async function updateCableAction(
   // Manual Ω/km override. A SANS-affecting change always clears the override.
   let recomputed: { ohm_per_km: number | null; derated_current_rating_a: number | null } | undefined
   if (sansChanged) {
+    // NOTE: intentionally NOT using resolveCableElectricals — this recompute
+    // path has different behaviour (no manual-override branch; reads
+    // thermal_resistivity_kmw from the existing row, not parsed input).
     const props = await lookupCableProperties(supabase as any, {
       conductor: next.conductor, insulation: next.insulation,
       cores: next.cores, size_mm2: next.sizeMm2, projectId: c.revision.project_id,
