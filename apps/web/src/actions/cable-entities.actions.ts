@@ -489,3 +489,166 @@ export async function deleteCableAction(id: string): Promise<{ ok?: true; error?
   revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
   return { ok: true }
 }
+
+// ─── cable updates (C12) ─────────────────────────────────────────────
+
+const updateCableSchema = z.object({
+  cableId: uuid,
+  sizeMm2: z.number().positive().optional(),
+  cores: z.enum(['3', '3+E', '4']).optional(),
+  conductor: z.enum(['CU', 'AL']).optional(),
+  insulation: z.enum(['PVC', 'XLPE', 'PILC']).optional(),
+  armour: z.enum(['SWA', 'UNARMOURED']).nullable().optional(),
+  installationMethod: z.enum(['DIRECT_IN_GROUND', 'DUCT', 'LADDER', 'TRAY', 'CLIPPED']).nullable().optional(),
+  depthMm: z.number().int().positive().nullable().optional(),
+  groupedWith: z.number().int().positive().optional(),
+  ambientTempC: z.number().optional(),
+  measuredLengthM: z.number().nonnegative().nullable().optional(),
+  ohmPerKmOverride: z.number().positive().nullable().optional(),
+  tagOverride: z.string().trim().max(120).nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+})
+
+// fields whose change forces a SANS + derating re-lookup
+const SANS_FIELDS = [
+  'sizeMm2', 'cores', 'conductor', 'insulation',
+  'installationMethod', 'depthMm', 'groupedWith', 'ambientTempC',
+] as const
+
+export async function updateCableAction(
+  input: z.infer<typeof updateCableSchema>,
+): Promise<{
+  ok?: true
+  error?: string
+  recomputed?: { ohm_per_km: number | null; derated_current_rating_a: number | null }
+}> {
+  const parsed = updateCableSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: row } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .select(
+      'id, revision_id, organisation_id, size_mm2, cores, conductor, insulation, armour, ' +
+      'installation_method, depth_mm, grouped_with, ambient_temp_c, thermal_resistivity_kmw, ' +
+      'measured_length_m, length_status, ohm_per_km, manual_override, tag_override, notes, ' +
+      'revision:revisions!revision_id(status, project_id)',
+    )
+    .eq('id', parsed.data.cableId)
+    .single()
+  if (!row) return { error: 'Cable not found' }
+  const c = row as any
+  if (c.revision?.status !== 'DRAFT') {
+    return { error: 'Revision is ISSUED — start a new revision to make changes.' }
+  }
+
+  const role = await lookupCableRole(supabase, user.id, c.organisation_id)
+  if (!ROLE_CAPS[role].editDesignFields) {
+    return { error: `Your role (${role}) cannot edit the schedule.` }
+  }
+
+  // Effective new values (input value if provided, else current).
+  const next = {
+    sizeMm2: parsed.data.sizeMm2 ?? Number(c.size_mm2),
+    cores: parsed.data.cores ?? c.cores,
+    conductor: parsed.data.conductor ?? c.conductor,
+    insulation: parsed.data.insulation ?? c.insulation,
+    installationMethod: parsed.data.installationMethod !== undefined
+      ? parsed.data.installationMethod : c.installation_method,
+    depthMm: parsed.data.depthMm !== undefined ? parsed.data.depthMm : c.depth_mm,
+    groupedWith: parsed.data.groupedWith ?? Number(c.grouped_with ?? 1),
+    ambientTempC: parsed.data.ambientTempC ?? Number(c.ambient_temp_c ?? 30),
+  }
+
+  const sansChanged = SANS_FIELDS.some((f) => parsed.data[f] !== undefined)
+
+  const patch: Record<string, unknown> = {}
+  const events: Array<Record<string, unknown>> = []
+  const log = (field: string, oldV: unknown, newV: unknown) => {
+    if (oldV === newV) return
+    patch[field] = newV
+    events.push({
+      revision_id: c.revision_id, organisation_id: c.organisation_id,
+      entity_type: 'cable', entity_id: c.id, field_name: field,
+      old_value: oldV, new_value: newV, changed_by: user.id,
+    })
+  }
+
+  if (parsed.data.sizeMm2 !== undefined) log('size_mm2', Number(c.size_mm2), parsed.data.sizeMm2)
+  if (parsed.data.cores !== undefined) log('cores', c.cores, parsed.data.cores)
+  if (parsed.data.conductor !== undefined) log('conductor', c.conductor, parsed.data.conductor)
+  if (parsed.data.insulation !== undefined) log('insulation', c.insulation, parsed.data.insulation)
+  if (parsed.data.armour !== undefined) log('armour', c.armour, parsed.data.armour)
+  if (parsed.data.installationMethod !== undefined) log('installation_method', c.installation_method, parsed.data.installationMethod)
+  if (parsed.data.depthMm !== undefined) log('depth_mm', c.depth_mm, parsed.data.depthMm)
+  if (parsed.data.groupedWith !== undefined) log('grouped_with', Number(c.grouped_with ?? 1), parsed.data.groupedWith)
+  if (parsed.data.ambientTempC !== undefined) log('ambient_temp_c', Number(c.ambient_temp_c ?? 30), parsed.data.ambientTempC)
+  if (parsed.data.tagOverride !== undefined) log('tag_override', c.tag_override, parsed.data.tagOverride)
+  if (parsed.data.notes !== undefined) log('notes', c.notes, parsed.data.notes)
+  if (parsed.data.measuredLengthM !== undefined) {
+    log('measured_length_m', c.measured_length_m == null ? null : Number(c.measured_length_m), parsed.data.measuredLengthM)
+    // keep the status machine honest for the simple inline-cell path
+    patch.measured_length_method = parsed.data.measuredLengthM != null ? 'MANUAL' : null
+    const newStatus = parsed.data.measuredLengthM != null
+      ? (c.length_status === 'UNMEASURED' ? 'MEASURED' : c.length_status)
+      : (c.length_status === 'MEASURED' ? 'UNMEASURED' : c.length_status)
+    if (newStatus !== c.length_status) log('length_status', c.length_status, newStatus)
+  }
+
+  // Manual Ω/km override. A SANS-affecting change always clears the override.
+  let recomputed: { ohm_per_km: number | null; derated_current_rating_a: number | null } | undefined
+  if (sansChanged) {
+    const props = await lookupCableProperties(supabase as any, {
+      conductor: next.conductor, insulation: next.insulation,
+      cores: next.cores, size_mm2: next.sizeMm2, projectId: c.revision.project_id,
+    })
+    const ohm = props?.ac_resistance ?? props?.dc_resistance ?? null
+    const baseRating =
+      next.installationMethod === 'DIRECT_IN_GROUND' ? props?.rating_direct_buried
+      : next.installationMethod === 'DUCT' ? props?.rating_in_duct
+      : props?.rating_in_air
+    const derate = await lookupDeratingFactors(supabase as any, {
+      depth_mm: next.depthMm ?? 500,
+      thermal_resistivity_kmw: Number(c.thermal_resistivity_kmw ?? 1.0),
+      grouped_with: next.groupedWith,
+      ambient_c: next.ambientTempC,
+      insulation: next.insulation,
+    })
+    const deratedA = deratedRating(baseRating ?? null, {
+      depth: derate.depth, thermal: derate.thermal,
+      grouping: derate.grouping, temperature: derate.temperature,
+    })
+    log('ohm_per_km', c.ohm_per_km == null ? null : Number(c.ohm_per_km), ohm)
+    patch.derate_depth = derate.depth
+    patch.derate_thermal = derate.thermal
+    patch.derate_grouping = derate.grouping
+    patch.derate_temp = derate.temperature
+    patch.derated_current_rating_a = deratedA
+    patch.manual_override = false
+    if (c.manual_override) log('manual_override', true, false)
+    recomputed = { ohm_per_km: ohm, derated_current_rating_a: deratedA }
+  } else if (parsed.data.ohmPerKmOverride !== undefined) {
+    const ov = parsed.data.ohmPerKmOverride
+    log('ohm_per_km', c.ohm_per_km == null ? null : Number(c.ohm_per_km), ov)
+    patch.manual_override = ov != null
+    if (!!c.manual_override !== (ov != null)) log('manual_override', !!c.manual_override, ov != null)
+    recomputed = { ohm_per_km: ov, derated_current_rating_a: null }
+  }
+
+  if (events.length === 0 && Object.keys(patch).length === 0) return { ok: true }
+
+  const { error } = await (supabase as any)
+    .schema('cable_schedule').from('cables')
+    .update(patch).eq('id', c.id)
+  if (error) return { error: error.message }
+
+  if (events.length > 0) {
+    await (supabase as any).schema('cable_schedule').from('change_log').insert(events)
+  }
+  revalidatePath(`/projects/${c.revision.project_id}/cables/${c.revision_id}`)
+  return { ok: true, recomputed }
+}
