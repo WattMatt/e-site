@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 
 export interface SansColumn {
   key: string
@@ -26,6 +26,10 @@ export interface SansTable {
   rows: Record<string, unknown>[]
 }
 
+function anchorId(code: string): string {
+  return 'sans-' + code.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+}
+
 export function SansTableViewer({ tables }: { tables: SansTable[] }) {
   const [query, setQuery] = useState('')
 
@@ -44,7 +48,15 @@ export function SansTableViewer({ tables }: { tables: SansTable[] }) {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          marginBottom: 16,
+          flexWrap: 'wrap',
+        }}
+      >
         <input
           type="search"
           value={query}
@@ -53,18 +65,14 @@ export function SansTableViewer({ tables }: { tables: SansTable[] }) {
           className="ob-input"
           style={{ flex: 1, minWidth: 240, maxWidth: 420 }}
         />
-        <div
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            color: 'var(--c-text-dim)',
-          }}
-        >
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
           {filtered.length} of {tables.length} tables
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <IndexPanel tables={filtered} />
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginTop: 24 }}>
         {filtered.map((t) => (
           <TableCard key={t.id} table={t} />
         ))}
@@ -73,72 +81,139 @@ export function SansTableViewer({ tables }: { tables: SansTable[] }) {
   )
 }
 
-function TableCard({ table }: { table: SansTable }) {
+// ─── index ──────────────────────────────────────────────────────────
+// Mirrors the "Index" sheet in SANS_Reference_Library.xlsx — every table
+// listed by number / standard / title, each row a jump link to its card.
+
+function IndexPanel({ tables }: { tables: SansTable[] }) {
+  if (tables.length === 0) return null
   return (
     <div className="data-panel" style={{ overflow: 'hidden' }}>
-      <div className="data-panel-header" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <div>
+      <div className="data-panel-header">
+        <span className="data-panel-title">Index</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+          {tables.length} table{tables.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+      <div style={{ overflowX: 'auto', maxHeight: 340, overflowY: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: 'var(--c-base)' }}>
+              <th style={indexTh}>Table</th>
+              <th style={indexTh}>Standard</th>
+              <th style={indexTh}>Title</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tables.map((t) => (
+              <tr key={t.id} style={{ borderTop: '1px solid var(--c-border)' }}>
+                <td style={{ ...indexTd, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                  <a href={'#' + anchorId(t.code)} style={{ color: 'var(--c-amber)', textDecoration: 'none' }}>
+                    {t.section_number ?? t.code}
+                  </a>
+                </td>
+                <td style={{ ...indexTd, whiteSpace: 'nowrap', color: 'var(--c-text-mid)' }}>
+                  {t.standard}
+                </td>
+                <td style={indexTd}>
+                  <a href={'#' + anchorId(t.code)} style={{ color: 'var(--c-text)', textDecoration: 'none' }}>
+                    {t.title}
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+const indexTh: CSSProperties = {
+  textAlign: 'left',
+  padding: '8px 12px',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: 'var(--c-text-dim)',
+  fontWeight: 600,
+}
+const indexTd: CSSProperties = { padding: '7px 12px', color: 'var(--c-text)' }
+
+// ─── table card ─────────────────────────────────────────────────────
+// One card per table, laid out like an Excel sheet: "Table X.X — Title"
+// header, a Standard / Construction metadata block, a two-row column
+// header (labels then units), spreadsheet gridlines, and a Source footer.
+
+function TableCard({ table }: { table: SansTable }) {
+  return (
+    <div
+      id={anchorId(table.code)}
+      className="data-panel"
+      style={{ overflow: 'hidden', scrollMarginTop: 24 }}
+    >
+      <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid var(--c-border)' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
           <span
             style={{
               fontFamily: 'var(--font-mono)',
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: '0.08em',
-              color: 'var(--c-text-dim)',
-              marginRight: 8,
+              fontSize: 13,
+              fontWeight: 700,
+              color: 'var(--c-amber)',
+              whiteSpace: 'nowrap',
             }}
           >
             Table {table.section_number ?? '—'}
           </span>
-          <span className="data-panel-title">{table.title}</span>
+          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--c-text)' }}>
+            {table.title}
+          </span>
         </div>
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 10,
-            letterSpacing: '0.06em',
-            color: 'var(--c-amber)',
-            background: 'var(--c-amber-dim)',
-            border: '1px solid var(--c-amber-mid)',
-            padding: '3px 8px',
-            borderRadius: 4,
-          }}
-        >
-          {table.standard}
-        </span>
-      </div>
 
-      {(table.cable_construction || table.description) && (
         <div
           style={{
-            padding: '12px 18px',
-            fontSize: 13,
-            color: 'var(--c-text-mid)',
-            borderBottom: '1px solid var(--c-border)',
+            marginTop: 6,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--c-text-dim)',
+            display: 'flex',
+            gap: 16,
+            flexWrap: 'wrap',
           }}
         >
+          <span>
+            Standard: <span style={{ color: 'var(--c-text-mid)' }}>{table.standard}</span>
+          </span>
           {table.cable_construction && (
-            <div style={{ color: 'var(--c-text)', fontWeight: 600, marginBottom: 4 }}>
-              {table.cable_construction}
-            </div>
+            <span>
+              Construction:{' '}
+              <span style={{ color: 'var(--c-text-mid)' }}>{table.cable_construction}</span>
+            </span>
           )}
-          {table.description && <div>{table.description}</div>}
         </div>
-      )}
+
+        {table.description && (
+          <div style={{ marginTop: 6, fontSize: 13, color: 'var(--c-text-mid)' }}>
+            {table.description}
+          </div>
+        )}
+      </div>
 
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
+            {/* row 1 — column labels */}
             <tr style={{ background: 'var(--c-base)' }}>
               {table.columns.map((c) => (
                 <th
                   key={c.key}
                   style={{
+                    ...gridCell,
                     textAlign: c.align ?? 'left',
-                    padding: '10px 12px',
                     fontFamily: 'var(--font-mono)',
                     fontSize: 10,
-                    letterSpacing: '0.08em',
+                    letterSpacing: '0.06em',
                     textTransform: 'uppercase',
                     color: 'var(--c-text-dim)',
                     fontWeight: 600,
@@ -146,26 +221,38 @@ function TableCard({ table }: { table: SansTable }) {
                   }}
                 >
                   {c.label}
-                  {c.unit && (
-                    <span style={{ fontWeight: 400, color: 'var(--c-text-dim)' }}>
-                      {' '}({c.unit})
-                    </span>
-                  )}
+                </th>
+              ))}
+            </tr>
+            {/* row 2 — units, mirrors the Excel "(mm²) (A) …" row */}
+            <tr style={{ background: 'var(--c-base)' }}>
+              {table.columns.map((c) => (
+                <th
+                  key={c.key}
+                  style={{
+                    ...gridCell,
+                    textAlign: c.align ?? 'left',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 10,
+                    color: 'var(--c-text-dim)',
+                    fontWeight: 400,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {c.unit ? `(${c.unit})` : ''}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {table.rows.map((row, idx) => (
-              <tr key={idx} style={{ borderTop: '1px solid var(--c-border)' }}>
+              <tr key={idx}>
                 {table.columns.map((c) => {
                   const v = row[c.key]
                   let display = '—'
                   if (v != null) {
                     if (c.type === 'number' && typeof v === 'number') {
-                      display = c.decimals != null
-                        ? v.toFixed(c.decimals)
-                        : String(v)
+                      display = c.decimals != null ? v.toFixed(c.decimals) : String(v)
                     } else {
                       display = String(v)
                     }
@@ -174,8 +261,8 @@ function TableCard({ table }: { table: SansTable }) {
                     <td
                       key={c.key}
                       style={{
+                        ...gridCell,
                         textAlign: c.align ?? 'left',
-                        padding: '8px 12px',
                         fontFamily: c.type === 'number' ? 'var(--font-mono)' : undefined,
                         fontSize: c.type === 'number' ? 12 : 13,
                         color: 'var(--c-text)',
@@ -188,6 +275,22 @@ function TableCard({ table }: { table: SansTable }) {
                 })}
               </tr>
             ))}
+            {table.rows.length === 0 && (
+              <tr>
+                <td
+                  colSpan={table.columns.length}
+                  style={{
+                    ...gridCell,
+                    padding: '16px 12px',
+                    textAlign: 'center',
+                    color: 'var(--c-text-dim)',
+                    fontStyle: 'italic',
+                  }}
+                >
+                  No rows.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -202,14 +305,21 @@ function TableCard({ table }: { table: SansTable }) {
             borderTop: '1px solid var(--c-border)',
           }}
         >
-          {table.notes && <div>Notes: {table.notes}</div>}
+          {table.notes && (
+            <div style={{ marginBottom: table.source_ref ? 4 : 0 }}>Notes: {table.notes}</div>
+          )}
           {table.source_ref && (
-            <div style={{ fontFamily: 'var(--font-mono)' }}>
-              Source: {table.source_ref}
-            </div>
+            <div style={{ fontFamily: 'var(--font-mono)' }}>Source: {table.source_ref}</div>
           )}
         </div>
       )}
     </div>
   )
+}
+
+// Spreadsheet-style gridlines on every header + body cell.
+const gridCell: CSSProperties = {
+  padding: '7px 12px',
+  borderRight: '1px solid var(--c-border)',
+  borderBottom: '1px solid var(--c-border)',
 }
