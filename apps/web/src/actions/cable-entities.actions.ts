@@ -18,6 +18,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { lookupCableProperties, lookupDeratingFactors, deratedRating } from '@esite/shared'
+import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
 
 const uuid = z.string().uuid()
 
@@ -233,6 +234,71 @@ export async function deleteSupplyAction(id: string): Promise<{ ok?: true; error
     .eq('id', id)
   if (error) return { error: error.message }
   revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
+  return { ok: true }
+}
+
+// ─── supply updates (C12) ────────────────────────────────────────────
+
+const updateSupplySchema = z.object({
+  supplyId: uuid,
+  voltageV: z.number().positive().optional(),
+  designLoadA: z.number().positive().optional(),
+  section: z.enum(['NORMAL', 'EMERGENCY']).nullable().optional(),
+})
+
+export async function updateSupplyAction(
+  input: z.infer<typeof updateSupplySchema>,
+): Promise<{ ok?: true; error?: string }> {
+  const parsed = updateSupplySchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: sup } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supplies')
+    .select(
+      'id, revision_id, organisation_id, voltage_v, design_load_a, section, ' +
+      'revision:revisions!revision_id(status, project_id)',
+    )
+    .eq('id', parsed.data.supplyId)
+    .single()
+  if (!sup) return { error: 'Supply not found' }
+  const s = sup as any
+  if (s.revision?.status !== 'DRAFT') {
+    return { error: 'Revision is ISSUED — start a new revision to make changes.' }
+  }
+
+  const role = await lookupCableRole(supabase, user.id, s.organisation_id)
+  if (!ROLE_CAPS[role].editDesignFields) {
+    return { error: `Your role (${role}) cannot edit the schedule.` }
+  }
+
+  const patch: Record<string, unknown> = {}
+  const events: Array<Record<string, unknown>> = []
+  const log = (field: string, oldV: unknown, newV: unknown) => {
+    if (oldV === newV) return
+    patch[field] = newV
+    events.push({
+      revision_id: s.revision_id, organisation_id: s.organisation_id,
+      entity_type: 'supply', entity_id: s.id, field_name: field,
+      old_value: oldV, new_value: newV, changed_by: user.id,
+    })
+  }
+  if (parsed.data.voltageV !== undefined) log('voltage_v', Number(s.voltage_v), parsed.data.voltageV)
+  if (parsed.data.designLoadA !== undefined) log('design_load_a', Number(s.design_load_a), parsed.data.designLoadA)
+  if (parsed.data.section !== undefined) log('section', s.section, parsed.data.section)
+  if (events.length === 0) return { ok: true }
+
+  const { error } = await (supabase as any)
+    .schema('cable_schedule').from('supplies')
+    .update(patch).eq('id', s.id)
+  if (error) return { error: error.message }
+
+  await (supabase as any).schema('cable_schedule').from('change_log').insert(events)
+  revalidatePath(`/projects/${s.revision.project_id}/cables/${s.revision_id}`)
   return { ok: true }
 }
 
