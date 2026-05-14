@@ -52,11 +52,17 @@ export function tableCodeFor(
   insulation: 'PVC' | 'XLPE' | 'PILC',
   cores: '3' | '3+E' | '4',
 ): string | null {
-  // Phase 1 mapping — extend as more bundled tables are seeded.
-  if (conductor === 'CU' && insulation === 'XLPE' && cores === '4') return 'TABLE_6_4'
-  if (conductor === 'CU' && insulation === 'XLPE' && cores === '3+E') return 'TABLE_6_4'
-  // Future: TABLE_6_3 (PVC 4-core), TABLE_6_5 (XLPE 3-core 600/1000V),
-  // TABLE_5_2 (XLPE 11kV), TABLE_4_2 (PILC 11kV), etc.
+  // Bundled LV multi-core tables, seeded from the firm's verified FACTS AND
+  // FIGURES workbook in migration 00056. `cores` is not a discriminator —
+  // each table covers both 3- and 4-core constructions.
+  void cores
+  if (insulation === 'XLPE' && conductor === 'CU') return 'TABLE_6_4'
+  if (insulation === 'XLPE' && conductor === 'AL') return 'TABLE_6_5'
+  if (insulation === 'PVC'  && conductor === 'CU') return 'TABLE_6_2'
+  if (insulation === 'PVC'  && conductor === 'AL') return 'TABLE_6_3'
+  // PILC (MV paper, Table 4.2 / 5.2) and single-core tables (6.6 / 6.7) are
+  // viewable in the SANS reference library but not auto-filled here — there
+  // is no LV multi-core lookup mapping for them.
   return null
 }
 
@@ -193,8 +199,12 @@ export async function lookupDeratingFactors(
   // Temperature differs (PVC 70 °C vs XLPE 90 °C → 6.3.5 vs 6.3.4).
   const tempCode = args.insulation === 'XLPE' ? 'TABLE_6_3_4' : 'TABLE_6_3_5'
 
+  // Table 6.3.1 (migration 00056, source-workbook shape) splits the depth
+  // factor into direct-in-ground vs single-way-duct columns — there is no
+  // plain `factor` key. Use the direct-in-ground factor as the canonical
+  // depth derate. Tables 6.3.2–6.3.5 keep the uniform `factor` column.
   const [d, th, gr, te] = await Promise.all([
-    lookupFactor(supabase, 'TABLE_6_3_1', 'depth_mm',          args.depth_mm),
+    lookupFactor(supabase, 'TABLE_6_3_1', 'depth_mm',          args.depth_mm, 'factor_direct_in_ground'),
     lookupFactor(supabase, 'TABLE_6_3_2', 'resistivity_kmw',   args.thermal_resistivity_kmw),
     lookupFactor(supabase, 'TABLE_6_3_3', 'n_cables',          args.grouped_with),
     lookupFactor(supabase, tempCode,      'ambient_c',         args.ambient_c),
@@ -207,6 +217,7 @@ async function lookupFactor(
   code: string,
   key: string,
   value: number,
+  factorKey = 'factor',
 ): Promise<number> {
   const { data: t } = await (supabase as any)
     .schema('cable_schedule')
@@ -232,20 +243,25 @@ async function lookupFactor(
     if (r.sort_key <= value) chosen = r
     else break
   }
-  const f = chosen.row_data.factor
+  const f = chosen.row_data[factorKey]
   return typeof f === 'number' ? f : 1
 }
 
 function normalise(r: Record<string, unknown>): CablePropertyLookup {
+  // Bootstrap tables (migration 00056) carry the source-workbook column
+  // names; legacy seeds and project overrides may use the older normalised
+  // names. Accept both. For XLPE the 90 °C rating column is the rated value
+  // (XLPE conductors run at 90 °C); PVC / AL tables have a single rating set.
+  const impedance = num(r.impedance_ohm_per_km)
   return {
     size_mm2:               num(r.size_mm2) ?? 0,
-    rating_direct_buried:   num(r.rating_direct_buried),
-    rating_in_duct:         num(r.rating_in_duct),
-    rating_in_air:          num(r.rating_in_air),
-    dc_resistance:          num(r.dc_resistance),
-    ac_resistance:          num(r.ac_resistance),
+    rating_direct_buried:   num(r.current_rating_ground_90c_a) ?? num(r.current_rating_ground_a) ?? num(r.rating_direct_buried),
+    rating_in_duct:         num(r.current_rating_duct_90c_a)   ?? num(r.current_rating_duct_a)   ?? num(r.rating_in_duct),
+    rating_in_air:          num(r.current_rating_air_90c_a)    ?? num(r.current_rating_air_a)    ?? num(r.rating_in_air),
+    dc_resistance:          num(r.dc_resistance) ?? impedance,
+    ac_resistance:          num(r.ac_resistance) ?? impedance,
     reactance:              num(r.reactance),
-    short_circuit_1s:       num(r.short_circuit_1s),
+    short_circuit_1s:       num(r.short_circuit_1s) ?? num(r.short_circuit_1s_ka),
   }
 }
 
