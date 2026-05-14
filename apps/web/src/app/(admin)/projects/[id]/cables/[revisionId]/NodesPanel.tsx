@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useRef, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   addSourceAction, addBoardAction,
@@ -161,14 +161,24 @@ function NodeRow({
 }) {
   const [editing, setEditing] = useState(false)
   const [code, setCode] = useState(node.code)
+  const escapeRef = useRef(false)
+  useEffect(() => { setCode(node.code) }, [node.code])
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
       {editing ? (
         <input className="ob-input" value={code} autoFocus style={{ width: 200 }}
           onChange={(e) => setCode(e.target.value)}
-          onBlur={() => { setEditing(false); if (code.trim() && code.trim() !== node.code) onRename(code.trim()) }}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-            if (e.key === 'Escape') { setCode(node.code); setEditing(false) } }} />
+          onBlur={() => {
+            if (escapeRef.current) { escapeRef.current = false; setEditing(false); return }
+            setEditing(false)
+            const trimmed = code.trim()
+            if (trimmed && trimmed !== node.code) onRename(trimmed)
+            setCode(node.code)  // revert local draft; the [node.code] effect re-syncs to the new name on success
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { escapeRef.current = true; setCode(node.code); setEditing(false) }
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          }} />
       ) : (
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, minWidth: 200 }}>
           {node.code}
