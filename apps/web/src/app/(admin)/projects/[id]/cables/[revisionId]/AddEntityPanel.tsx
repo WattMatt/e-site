@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   findOrCreateSupplyAction,
   addCableAction,
+  previewParallelCableSet,
+  addParallelCableSetAction,
 } from '@/actions/cable-entities.actions'
 import { type NodeOption } from './CableScheduleGrid'
 
@@ -111,38 +113,129 @@ function CableForm({
   const [groupedWith, setGroupedWith] = useState('1')
   const [ohmOverride, setOhmOverride] = useState('')
 
+  const [preview, setPreview] = useState<{
+    count: number
+    perCableRatingA: number
+    combinedRatingA: number
+    insufficient: boolean
+    mode: 'create-set' | 'add-single'
+  } | null>(null)
+  const [count, setCount] = useState('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const [kind, id] = fromKey.split(':')
+    const loadNum = Number(load)
+    if (!kind || !id || !toBoardId || !loadNum || loadNum <= 0) {
+      setPreview(null)
+      return
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      const res = await previewParallelCableSet({
+        revisionId,
+        fromSourceId: kind === 'source' ? id! : null,
+        fromBoardId: kind === 'board' ? id! : null,
+        toBoardId,
+        designLoadA: loadNum,
+        sizeMm2: Number(sizeMm2),
+        cores,
+        conductor,
+        insulation,
+        installationMethod: installMethod,
+        depthMm: depthMm ? Number(depthMm) : null,
+        ambientTempC: 30,
+        thermalResistivityKmw: 1.0,
+      })
+      if (res.error || res.count == null) {
+        setPreview(null)
+        return
+      }
+      const next = {
+        count: res.count,
+        perCableRatingA: res.perCableRatingA!,
+        combinedRatingA: res.combinedRatingA!,
+        insufficient: res.insufficient!,
+        mode: res.mode!,
+      }
+      setPreview(next)
+      // Pre-fill the count field only in create-set mode and only when the
+      // user has not started editing it (empty string == untouched).
+      setCount((prev) => (prev === '' && next.mode === 'create-set' && !next.insufficient
+        ? String(next.count) : prev))
+    }, 400)
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [revisionId, fromKey, toBoardId, load, sizeMm2, cores, conductor, insulation, installMethod, depthMm])
+
   function go() {
-    onSubmit(
-      async () => {
-        const [kind, id] = fromKey.split(':')
-        if (!kind || !id) return { error: 'Please select a valid From node' }
-        const supplyResult = await findOrCreateSupplyAction({
-          revisionId,
-          fromSourceId: kind === 'source' ? id! : null,
-          fromBoardId: kind === 'board' ? id! : null,
-          toBoardId,
-          voltageV: Number(voltage),
-          designLoadA: Number(load),
-          section: (section || null) as 'NORMAL' | 'EMERGENCY' | null | undefined,
-        })
-        if (supplyResult.error) return { error: supplyResult.error }
-        return addCableAction({
-          supplyId: supplyResult.supplyId!,
-          sizeMm2: Number(sizeMm2),
-          cores,
-          conductor,
-          insulation,
-          measuredLengthM: measuredLengthM ? Number(measuredLengthM) : null,
-          installationMethod: installMethod,
-          depthMm: depthMm ? Number(depthMm) : null,
-          groupedWith: Number(groupedWith),
-          ambientTempC: 30,
-          thermalResistivityKmw: 1.0,
-          ohmPerKmOverride: ohmOverride ? Number(ohmOverride) : null,
-        })
-      },
-      'Cable',
-    )
+    const [kind, id] = fromKey.split(':')
+    const setCountNum = Number(count)
+    const useSet =
+      preview != null &&
+      preview.mode === 'create-set' &&
+      !preview.insufficient &&
+      Number.isFinite(setCountNum) &&
+      setCountNum >= 1
+
+    if (useSet) {
+      onSubmit(
+        async () => {
+          if (!kind || !id) return { error: 'Please select a valid From node' }
+          return addParallelCableSetAction({
+            revisionId,
+            fromSourceId: kind === 'source' ? id! : null,
+            fromBoardId: kind === 'board' ? id! : null,
+            toBoardId,
+            voltageV: Number(voltage),
+            designLoadA: Number(load),
+            section: (section || null) as 'NORMAL' | 'EMERGENCY' | null | undefined,
+            count: setCountNum,
+            sizeMm2: Number(sizeMm2),
+            cores,
+            conductor,
+            insulation,
+            measuredLengthM: measuredLengthM ? Number(measuredLengthM) : null,
+            installationMethod: installMethod,
+            depthMm: depthMm ? Number(depthMm) : null,
+            ambientTempC: 30,
+            thermalResistivityKmw: 1.0,
+            ohmPerKmOverride: ohmOverride ? Number(ohmOverride) : null,
+          })
+        },
+        `${setCountNum} cable${setCountNum === 1 ? '' : 's'}`,
+      )
+    } else {
+      onSubmit(
+        async () => {
+          if (!kind || !id) return { error: 'Please select a valid From node' }
+          const supplyResult = await findOrCreateSupplyAction({
+            revisionId,
+            fromSourceId: kind === 'source' ? id! : null,
+            fromBoardId: kind === 'board' ? id! : null,
+            toBoardId,
+            voltageV: Number(voltage),
+            designLoadA: Number(load),
+            section: (section || null) as 'NORMAL' | 'EMERGENCY' | null | undefined,
+          })
+          if (supplyResult.error) return { error: supplyResult.error }
+          return addCableAction({
+            supplyId: supplyResult.supplyId!,
+            sizeMm2: Number(sizeMm2),
+            cores,
+            conductor,
+            insulation,
+            measuredLengthM: measuredLengthM ? Number(measuredLengthM) : null,
+            installationMethod: installMethod,
+            depthMm: depthMm ? Number(depthMm) : null,
+            groupedWith: Number(groupedWith),
+            ambientTempC: 30,
+            thermalResistivityKmw: 1.0,
+            ohmPerKmOverride: ohmOverride ? Number(ohmOverride) : null,
+          })
+        },
+        'Cable',
+      )
+    }
     setMeasuredLengthM(''); setOhmOverride('')
   }
 
@@ -239,10 +332,37 @@ function CableForm({
           </Field>
         </>
       )}
+      {preview && (
+        <div style={{ gridColumn: '1 / -1', fontSize: 12, fontFamily: 'var(--font-mono)',
+          padding: '8px 10px', borderRadius: 4, border: '1px solid var(--c-border)',
+          background: 'var(--c-base)',
+          color: preview.insufficient ? 'var(--c-red)' : 'var(--c-text-mid)' }}>
+          {preview.insufficient
+            ? `⚠ Even 16 in parallel won't carry ${Number(load)} A at this size — pick a larger cable.`
+            : preview.mode === 'add-single'
+              ? `This supply already has cables — Add will add 1 more. (≈${preview.count} recommended for ${Number(load)} A.)`
+              : `${preview.count} × ${sizeMm2}mm² ${conductor === 'CU' ? 'Cu' : 'Al'} → combined ${Math.round(preview.combinedRatingA)} A (≥ ${Number(load)} A design load)`}
+        </div>
+      )}
+      {preview && preview.mode === 'create-set' && !preview.insufficient && (
+        <Field label="Cables in parallel" wide>
+          <input className="ob-input" type="number" min="1" step="1" value={count}
+            onChange={(e) => setCount(e.target.value)} />
+          {Number(count) > 0 && Number(count) < preview.count && (
+            <span style={{ fontSize: 11, color: 'var(--c-warning)', display: 'block', marginTop: 4 }}>
+              Below recommended ({preview.count}).
+            </span>
+          )}
+        </Field>
+      )}
       <SubmitButton
         disabled={pending || !fromKey || !toBoardId || !load || !sizeMm2}
         pending={pending}
-        label="Add cable"
+        label={
+          preview && preview.mode === 'create-set' && !preview.insufficient && Number(count) >= 1
+            ? `Add ${Number(count)} cable${Number(count) === 1 ? '' : 's'}`
+            : 'Add cable'
+        }
         onClick={go}
       />
     </Grid>
