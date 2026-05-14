@@ -12,6 +12,8 @@ interface SansTableRow {
   section_number: string | null
   cable_construction: string | null
   description: string | null
+  category: string | null
+  applicable_to: SansTable['applicable_to']
   columns: SansTable['columns']
   notes: string | null
   source_ref: string | null
@@ -31,7 +33,8 @@ export default async function SansReferencePage() {
       .schema('cable_schedule')
       .from('sans_tables')
       .select(
-        'id, code, title, standard, section_number, cable_construction, description, columns, notes, source_ref',
+        'id, code, title, standard, section_number, cable_construction, description, ' +
+        'category, applicable_to, columns, notes, source_ref',
       )
       .order('section_number', { ascending: true, nullsFirst: false }),
     (supabase as any)
@@ -59,6 +62,8 @@ export default async function SansReferencePage() {
     section_number: t.section_number,
     cable_construction: t.cable_construction,
     description: t.description,
+    category: t.category,
+    applicable_to: t.applicable_to,
     columns: t.columns,
     notes: t.notes,
     source_ref: t.source_ref,

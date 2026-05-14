@@ -12,6 +12,14 @@ export interface SansColumn {
   width?: number
 }
 
+export interface ApplicableTo {
+  voltage_class?: string
+  conductor?: string
+  insulation?: string
+  armour?: string
+  cores?: number[] | string
+}
+
 export interface SansTable {
   id: string
   code: string
@@ -20,6 +28,8 @@ export interface SansTable {
   section_number: string | null
   cable_construction: string | null
   description: string | null
+  category: string | null
+  applicable_to: ApplicableTo | null
   columns: SansColumn[]
   notes: string | null
   source_ref: string | null
@@ -28,6 +38,21 @@ export interface SansTable {
 
 function anchorId(code: string): string {
   return 'sans-' + code.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+}
+
+// Render applicable_to like the Excel header — "MV · Cu / Al · PAPER · STA ·
+// 3-core" — skipping ANY/unset fields.
+function formatApplicable(a: ApplicableTo | null): string | null {
+  if (!a) return null
+  const parts: string[] = []
+  if (a.voltage_class && a.voltage_class !== 'ANY') parts.push(a.voltage_class)
+  if (a.conductor && a.conductor !== 'ANY') {
+    parts.push(a.conductor === 'BOTH' ? 'Cu / Al' : a.conductor)
+  }
+  if (a.insulation && a.insulation !== 'ANY') parts.push(a.insulation)
+  if (a.armour && a.armour !== 'ANY') parts.push(a.armour)
+  if (Array.isArray(a.cores) && a.cores.length > 0) parts.push(a.cores.join('/') + '-core')
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 export function SansTableViewer({ tables }: { tables: SansTable[] }) {
@@ -101,6 +126,7 @@ function IndexPanel({ tables }: { tables: SansTable[] }) {
             <tr style={{ background: 'var(--c-base)' }}>
               <th style={indexTh}>Table</th>
               <th style={indexTh}>Standard</th>
+              <th style={indexTh}>Category</th>
               <th style={indexTh}>Title</th>
             </tr>
           </thead>
@@ -114,6 +140,17 @@ function IndexPanel({ tables }: { tables: SansTable[] }) {
                 </td>
                 <td style={{ ...indexTd, whiteSpace: 'nowrap', color: 'var(--c-text-mid)' }}>
                   {t.standard}
+                </td>
+                <td
+                  style={{
+                    ...indexTd,
+                    whiteSpace: 'nowrap',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    color: 'var(--c-text-dim)',
+                  }}
+                >
+                  {t.category ?? '—'}
                 </td>
                 <td style={indexTd}>
                   <a href={'#' + anchorId(t.code)} style={{ color: 'var(--c-text)', textDecoration: 'none' }}>
@@ -147,6 +184,7 @@ const indexTd: CSSProperties = { padding: '7px 12px', color: 'var(--c-text)' }
 // header (labels then units), spreadsheet gridlines, and a Source footer.
 
 function TableCard({ table }: { table: SansTable }) {
+  const applicable = formatApplicable(table.applicable_to)
   return (
     <div
       id={anchorId(table.code)}
@@ -185,10 +223,20 @@ function TableCard({ table }: { table: SansTable }) {
           <span>
             Standard: <span style={{ color: 'var(--c-text-mid)' }}>{table.standard}</span>
           </span>
+          {table.category && (
+            <span>
+              Category: <span style={{ color: 'var(--c-text-mid)' }}>{table.category}</span>
+            </span>
+          )}
           {table.cable_construction && (
             <span>
               Construction:{' '}
               <span style={{ color: 'var(--c-text-mid)' }}>{table.cable_construction}</span>
+            </span>
+          )}
+          {applicable && (
+            <span>
+              Applicable to: <span style={{ color: 'var(--c-text-mid)' }}>{applicable}</span>
             </span>
           )}
         </div>
