@@ -118,6 +118,7 @@ function CableForm({
     onSubmit(
       async () => {
         const [kind, id] = fromKey.split(':')
+        if (!kind || !id) return { error: 'Please select a valid From node' }
         const supplyResult = await findOrCreateSupplyAction({
           revisionId,
           fromSourceId: kind === 'source' ? id! : null,

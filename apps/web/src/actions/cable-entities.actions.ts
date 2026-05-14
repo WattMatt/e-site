@@ -395,7 +395,10 @@ export async function findOrCreateSupplyAction(
   q = parsed.data.fromSourceId
     ? q.eq('from_source_id', parsed.data.fromSourceId)
     : q.eq('from_board_id', parsed.data.fromBoardId)
-  const { data: existing } = await q.maybeSingle()
+  const { data: existing, error: findErr } = await q.maybeSingle()
+  if (findErr) {
+    return { error: `Could not look up existing supply: ${findErr.message}` }
+  }
   if (existing) return { supplyId: (existing as { id: string }).id }
 
   const { data, error } = await (supabase as any)
