@@ -180,7 +180,7 @@ function CableForm({
         </select>
       </Field>
       <div style={{ gridColumn: '1 / -1' }}>
-        <button type="button" onClick={() => setShowMore((v) => !v)}
+        <button type="button" onClick={() => setShowMore((v) => !v)} aria-expanded={showMore}
           style={{ background: 'none', border: 'none', cursor: 'pointer',
             color: 'var(--c-text-mid)', fontSize: 12, fontFamily: 'var(--font-mono)',
             letterSpacing: '0.04em', padding: 0 }}>
