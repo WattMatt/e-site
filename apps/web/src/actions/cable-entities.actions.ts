@@ -344,19 +344,10 @@ export async function findOrCreateSupplyAction(
   const guard = await assertDraft(supabase, parsed.data.revisionId)
   if ('error' in guard) return { error: guard.error }
 
-  // Existing supply for this (from, to) pair?
-  let q = (supabase as any).schema('cable_schedule').from('supplies')
-    .select('id').eq('revision_id', parsed.data.revisionId)
-    .eq('to_board_id', parsed.data.toBoardId)
-  q = parsed.data.fromSourceId
-    ? q.eq('from_source_id', parsed.data.fromSourceId)
-    : q.eq('from_board_id', parsed.data.fromBoardId)
-  const { data: existing, error: findErr } = await q.maybeSingle()
-  if (findErr) {
-    return { error: `Could not look up existing supply: ${findErr.message}` }
-  }
-  if (existing) return { supplyId: (existing as { id: string }).id }
-
+  // Insert-first upsert: migration 00055's partial unique indexes make the
+  // (from, to) pair unique per revision, so a 23505 means the supply already
+  // exists (or a concurrent caller just created it). Atomic — the old
+  // find-then-insert was a TOCTOU race.
   const { data, error } = await (supabase as any)
     .schema('cable_schedule').from('supplies')
     .insert({
@@ -370,8 +361,22 @@ export async function findOrCreateSupplyAction(
       section: parsed.data.section ?? null,
     })
     .select('id').single()
-  if (error) return { error: error.message }
-  return { supplyId: (data as { id: string }).id }
+  if (!error) return { supplyId: (data as { id: string }).id }
+  if (error.code !== '23505') return { error: error.message }
+
+  // Supply already exists for this (from, to) pair. .maybeSingle() is safe now
+  // that the 00055 unique indexes guarantee at most one match.
+  let q = (supabase as any).schema('cable_schedule').from('supplies')
+    .select('id').eq('revision_id', parsed.data.revisionId)
+    .eq('to_board_id', parsed.data.toBoardId)
+  q = parsed.data.fromSourceId
+    ? q.eq('from_source_id', parsed.data.fromSourceId)
+    : q.eq('from_board_id', parsed.data.fromBoardId)
+  const { data: existing, error: findErr } = await q.maybeSingle()
+  if (findErr || !existing) {
+    return { error: `Could not look up existing supply: ${findErr?.message ?? 'not found'}` }
+  }
+  return { supplyId: (existing as { id: string }).id }
 }
 
 // ─── cables ──────────────────────────────────────────────────────────
@@ -820,7 +825,7 @@ export async function repointSupplyAction(
   return { ok: true }
 }
 
-// ─── rename actions (C12 — NodesPanel) ──────────────────────────────
+// ─── rename actions (C12 — StructurePanel) ──────────────────────────
 
 const renameSchema = z.object({ id: uuid, code: z.string().trim().min(1).max(80) })
 
