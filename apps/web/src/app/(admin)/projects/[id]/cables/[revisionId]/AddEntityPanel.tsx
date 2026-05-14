@@ -130,6 +130,7 @@ function CableForm({
       setPreview(null)
       return
     }
+    let cancelled = false
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
       const res = await previewParallelCableSet({
@@ -147,6 +148,7 @@ function CableForm({
         ambientTempC: 30,
         thermalResistivityKmw: 1.0,
       })
+      if (cancelled) return
       if (res.error || res.count == null) {
         setPreview(null)
         return
@@ -164,7 +166,10 @@ function CableForm({
       setCount((prev) => (prev === '' && next.mode === 'create-set' && !next.insufficient
         ? String(next.count) : prev))
     }, 400)
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+    return () => {
+      cancelled = true
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
   }, [revisionId, fromKey, toBoardId, load, sizeMm2, cores, conductor, insulation, installMethod, depthMm])
 
   function go() {
