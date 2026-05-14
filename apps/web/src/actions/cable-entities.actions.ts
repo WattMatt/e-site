@@ -379,6 +379,133 @@ export async function findOrCreateSupplyAction(
   return { supplyId: (existing as { id: string }).id }
 }
 
+// ─── parallel cable set batch-create ────────────────────────────────
+
+const addParallelCableSetSchema = z.object({
+  revisionId: uuid,
+  fromSourceId: uuid.nullable().optional(),
+  fromBoardId: uuid.nullable().optional(),
+  toBoardId: uuid,
+  voltageV: z.number().positive(),
+  designLoadA: z.number().positive(),
+  section: z.enum(['NORMAL', 'EMERGENCY']).nullable().optional(),
+  count: z.number().int().min(1).max(64),
+  sizeMm2: z.number().positive(),
+  cores: z.enum(['3', '3+E', '4']),
+  conductor: z.enum(['CU', 'AL']),
+  insulation: z.enum(['PVC', 'XLPE', 'PILC']),
+  armour: z.enum(['SWA', 'UNARMOURED']).nullable().optional(),
+  measuredLengthM: z.number().nonnegative().nullable().optional(),
+  installationMethod: z.enum(['DIRECT_IN_GROUND', 'DUCT', 'LADDER', 'TRAY', 'CLIPPED']),
+  depthMm: z.number().int().positive().nullable().optional(),
+  ambientTempC: z.number().default(30),
+  thermalResistivityKmw: z.number().default(1.0),
+  ohmPerKmOverride: z.number().positive().nullable().optional(),
+})
+
+export async function addParallelCableSetAction(
+  input: z.infer<typeof addParallelCableSetSchema>,
+): Promise<{ supplyId?: string; createdCount?: number; error?: string }> {
+  const parsed = addParallelCableSetSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const supabase = await createClient()
+
+  const guard = await assertDraft(supabase, parsed.data.revisionId)
+  if ('error' in guard) return { error: guard.error }
+  const { data: { user } } = await supabase.auth.getUser()
+
+  // Resolve (or create) the supply for this (from, to) pair.
+  const supplyResult = await findOrCreateSupplyAction({
+    revisionId: parsed.data.revisionId,
+    fromSourceId: parsed.data.fromSourceId ?? null,
+    fromBoardId: parsed.data.fromBoardId ?? null,
+    toBoardId: parsed.data.toBoardId,
+    voltageV: parsed.data.voltageV,
+    designLoadA: parsed.data.designLoadA,
+    section: parsed.data.section ?? null,
+  })
+  if (supplyResult.error || !supplyResult.supplyId) {
+    return { error: supplyResult.error ?? 'Could not resolve supply' }
+  }
+  const supplyId = supplyResult.supplyId
+
+  // Empty-supply guard: only bulk-create when the supply has no cables yet.
+  // Otherwise fall back to adding a single cable (clamp the count to 1).
+  const { data: existingCables } = await (supabase as any)
+    .schema('cable_schedule').from('cables')
+    .select('cable_no').eq('supply_id', supplyId)
+    .order('cable_no', { ascending: false })
+  const existing = (existingCables ?? []) as Array<{ cable_no: number }>
+  const startNo = (existing[0]?.cable_no ?? 0) + 1
+  const effectiveCount = existing.length > 0 ? 1 : parsed.data.count
+
+  // All cables in the set share spec + group size, so resolve electricals once.
+  const elec = await resolveCableElectricals(supabase as any, {
+    conductor: parsed.data.conductor,
+    insulation: parsed.data.insulation,
+    cores: parsed.data.cores,
+    sizeMm2: parsed.data.sizeMm2,
+    installationMethod: parsed.data.installationMethod,
+    depthMm: parsed.data.depthMm ?? null,
+    thermalResistivityKmw: parsed.data.thermalResistivityKmw,
+    ambientTempC: parsed.data.ambientTempC,
+    groupedWith: effectiveCount,
+    ohmPerKmOverride: parsed.data.ohmPerKmOverride ?? null,
+    projectId: guard.projectId,
+  })
+
+  const rows = Array.from({ length: effectiveCount }, (_, i) => ({
+    supply_id: supplyId,
+    revision_id: parsed.data.revisionId,
+    organisation_id: guard.orgId,
+    cable_no: startNo + i,
+    size_mm2: parsed.data.sizeMm2,
+    cores: parsed.data.cores,
+    conductor: parsed.data.conductor,
+    insulation: parsed.data.insulation,
+    armour: parsed.data.armour ?? 'SWA',
+    standard: elec.standard,
+    measured_length_m: parsed.data.measuredLengthM ?? null,
+    length_status: parsed.data.measuredLengthM != null ? 'MEASURED' : 'UNMEASURED',
+    installation_method: parsed.data.installationMethod,
+    depth_mm: parsed.data.depthMm ?? null,
+    grouped_with: effectiveCount,
+    ambient_temp_c: parsed.data.ambientTempC,
+    thermal_resistivity_kmw: parsed.data.thermalResistivityKmw,
+    ohm_per_km: elec.ohm_per_km,
+    derate_depth: elec.derate_depth,
+    derate_thermal: elec.derate_thermal,
+    derate_grouping: elec.derate_grouping,
+    derate_temp: elec.derate_temp,
+    derated_current_rating_a: elec.derated_current_rating_a,
+    manual_override: elec.manual_override,
+  }))
+
+  // One array insert — atomic at the statement level (no partial parallel sets).
+  const { error } = await (supabase as any)
+    .schema('cable_schedule').from('cables').insert(rows)
+  if (error) return { error: error.message }
+
+  // Best-effort audit entry.
+  try {
+    await (supabase as any).schema('cable_schedule').from('change_log').insert({
+      revision_id: parsed.data.revisionId,
+      organisation_id: guard.orgId,
+      entity_type: 'supply',
+      entity_id: supplyId,
+      field_name: 'cables',
+      old_value: null,
+      new_value: `auto-parallel: ${effectiveCount} cable(s)`,
+      changed_by: user?.id ?? null,
+    })
+  } catch {
+    // a logging failure must never surface to the caller
+  }
+
+  revalidatePath(`/projects/${guard.projectId}/cables/${parsed.data.revisionId}`)
+  return { supplyId, createdCount: effectiveCount }
+}
+
 // ─── cables ──────────────────────────────────────────────────────────
 
 const cableSchema = z.object({
