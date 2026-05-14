@@ -367,6 +367,54 @@ export async function updateSupplyAction(
   return { ok: true }
 }
 
+// ─── find-or-create supply (implicit supply for CableForm) ──────────
+
+const findOrCreateSupplySchema = z.object({
+  revisionId: uuid,
+  fromSourceId: uuid.nullable().optional(),
+  fromBoardId: uuid.nullable().optional(),
+  toBoardId: uuid,
+  voltageV: z.number().positive(),
+  designLoadA: z.number().positive(),
+  section: z.enum(['NORMAL', 'EMERGENCY']).nullable().optional(),
+})
+
+export async function findOrCreateSupplyAction(
+  input: z.infer<typeof findOrCreateSupplySchema>,
+): Promise<{ supplyId?: string; error?: string }> {
+  const parsed = findOrCreateSupplySchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const supabase = await createClient()
+  const guard = await assertDraft(supabase, parsed.data.revisionId)
+  if ('error' in guard) return { error: guard.error }
+
+  // Existing supply for this (from, to) pair?
+  let q = (supabase as any).schema('cable_schedule').from('supplies')
+    .select('id').eq('revision_id', parsed.data.revisionId)
+    .eq('to_board_id', parsed.data.toBoardId)
+  q = parsed.data.fromSourceId
+    ? q.eq('from_source_id', parsed.data.fromSourceId)
+    : q.eq('from_board_id', parsed.data.fromBoardId)
+  const { data: existing } = await q.maybeSingle()
+  if (existing) return { supplyId: (existing as { id: string }).id }
+
+  const { data, error } = await (supabase as any)
+    .schema('cable_schedule').from('supplies')
+    .insert({
+      revision_id: parsed.data.revisionId,
+      organisation_id: guard.orgId,
+      from_source_id: parsed.data.fromSourceId ?? null,
+      from_board_id: parsed.data.fromBoardId ?? null,
+      to_board_id: parsed.data.toBoardId,
+      voltage_v: parsed.data.voltageV,
+      design_load_a: parsed.data.designLoadA,
+      section: parsed.data.section ?? null,
+    })
+    .select('id').single()
+  if (error) return { error: error.message }
+  return { supplyId: (data as { id: string }).id }
+}
+
 // ─── cables ──────────────────────────────────────────────────────────
 
 const cableSchema = z.object({
