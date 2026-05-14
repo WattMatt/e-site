@@ -273,11 +273,13 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         cloud_kind: null,
         cloud_letter: revLetter,
         supply_id: c.supply_id,
+        // No supply resolved for this cable — empty-string sentinel; the Task 12
+        // re-point picker treats a falsy from/to_node_id as "unrouted".
         from_node_id: '',
         to_node_id: '',
         armour: c.armour,
         section: null,
-        ambient_temp_c: Number(c.ambient_temp_c),
+        ambient_temp_c: Number(c.ambient_temp_c ?? 30),
       }
     }
     return {
@@ -313,7 +315,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       to_node_id: supply.to_board_id,
       armour: c.armour,
       section: supply.section,
-      ambient_temp_c: Number(c.ambient_temp_c),
+      ambient_temp_c: Number(c.ambient_temp_c ?? 30),
     }
   })
 
