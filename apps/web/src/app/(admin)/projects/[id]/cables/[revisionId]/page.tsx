@@ -460,18 +460,11 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             style={{ padding: '48px 18px', textAlign: 'center' }}
           >
             ⚡ No cables in this revision yet.
-            <div
-              style={{
-                fontSize: 13,
-                color: 'var(--c-text-dim)',
-                marginTop: 6,
-              }}
-            >
-              Use the <strong>Structure</strong> panel above to set up your sources and boards,
-              then <strong>+ Add cable</strong> to start the schedule. Cable rows
-              auto-fill Ω/km + base rating from the bundled SANS library. To
-              bulk-load from an existing workbook, use{' '}
-              <strong>⬆ Import Excel</strong> from the revisions list.
+            <div style={{ fontSize: 13, color: 'var(--c-text-dim)', marginTop: 6 }}>
+              Build your <strong>Structure</strong> above (sources and boards), then use{' '}
+              <strong>+ Add cable</strong> to start the schedule. Cable rows auto-fill Ω/km +
+              base rating from the bundled SANS library. To bulk-load from an existing
+              workbook, use <strong>⬆ Import Excel</strong> from the revisions list.
             </div>
           </div>
         </div>

@@ -94,6 +94,8 @@ function CableForm({
     ...boards.map((b) => ({ key: `board:${b.id}`, label: `🟦 ${b.code}` })),
   ]
 
+  const [showMore, setShowMore] = useState(false)
+
   const [fromKey, setFromKey] = useState(allFrom[0]?.key ?? '')
   const [toBoardId, setToBoardId] = useState(boards[0]?.id ?? '')
   const [voltage, setVoltage] = useState('400')
@@ -147,7 +149,7 @@ function CableForm({
   if (allFrom.length === 0 || boards.length === 0) {
     return (
       <p style={{ color: 'var(--c-text-dim)', fontSize: 13, fontStyle: 'italic' }}>
-        Add at least one source AND one board via the Nodes panel before placing a cable.
+        Add at least one source and one board in the Structure panel above before placing a cable.
       </p>
     )
   }
@@ -172,59 +174,71 @@ function CableForm({
       <Field label="Design load (A) *">
         <input className="ob-input" type="number" step="any" min="0.1" value={load} onChange={(e) => setLoad(e.target.value)} />
       </Field>
-      <Field label="Section">
-        <select className="ob-input" value={section} onChange={(e) => setSection(e.target.value as any)}>
-          <option value="">—</option>
-          <option value="NORMAL">Normal</option>
-          <option value="EMERGENCY">Emergency</option>
-        </select>
-      </Field>
       <Field label="Size (mm²) *">
         <select className="ob-input" value={sizeMm2} onChange={(e) => setSizeMm2(e.target.value)}>
           {SIZE_DEFAULTS.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
       </Field>
-      <Field label="Cores">
-        <select className="ob-input" value={cores} onChange={(e) => setCores(e.target.value as any)}>
-          <option value="3">3</option>
-          <option value="3+E">3+E</option>
-          <option value="4">4</option>
-        </select>
-      </Field>
-      <Field label="Conductor">
-        <select className="ob-input" value={conductor} onChange={(e) => setConductor(e.target.value as any)}>
-          <option value="CU">Cu</option>
-          <option value="AL">Al</option>
-        </select>
-      </Field>
-      <Field label="Insulation">
-        <select className="ob-input" value={insulation} onChange={(e) => setInsulation(e.target.value as any)}>
-          <option value="XLPE">XLPE</option>
-          <option value="PVC">PVC</option>
-          <option value="PILC">PILC</option>
-        </select>
-      </Field>
-      <Field label="Length (m)">
-        <input className="ob-input" type="number" step="any" min="0" value={measuredLengthM} onChange={(e) => setMeasuredLengthM(e.target.value)} placeholder="scaled from drawing" />
-      </Field>
-      <Field label="Install method">
-        <select className="ob-input" value={installMethod} onChange={(e) => setInstallMethod(e.target.value as any)}>
-          <option value="DIRECT_IN_GROUND">Direct in ground</option>
-          <option value="DUCT">Duct</option>
-          <option value="LADDER">Ladder</option>
-          <option value="TRAY">Tray</option>
-          <option value="CLIPPED">Clipped</option>
-        </select>
-      </Field>
-      <Field label="Depth (mm)">
-        <input className="ob-input" type="number" step="50" min="0" value={depthMm} onChange={(e) => setDepthMm(e.target.value)} />
-      </Field>
-      <Field label="Group size">
-        <input className="ob-input" type="number" step="1" min="1" value={groupedWith} onChange={(e) => setGroupedWith(e.target.value)} />
-      </Field>
-      <Field label="Ω/km override">
-        <input className="ob-input" type="number" step="any" min="0" value={ohmOverride} onChange={(e) => setOhmOverride(e.target.value)} placeholder="(auto from SANS)" />
-      </Field>
+      <div style={{ gridColumn: '1 / -1' }}>
+        <button type="button" onClick={() => setShowMore((v) => !v)}
+          style={{ background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--c-text-mid)', fontSize: 12, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.04em', padding: 0 }}>
+          {showMore ? '− Less cable detail' : '+ More cable detail'}
+        </button>
+      </div>
+      {showMore && (
+        <>
+          <Field label="Section">
+            <select className="ob-input" value={section} onChange={(e) => setSection(e.target.value as any)}>
+              <option value="">—</option>
+              <option value="NORMAL">Normal</option>
+              <option value="EMERGENCY">Emergency</option>
+            </select>
+          </Field>
+          <Field label="Cores">
+            <select className="ob-input" value={cores} onChange={(e) => setCores(e.target.value as any)}>
+              <option value="3">3</option>
+              <option value="3+E">3+E</option>
+              <option value="4">4</option>
+            </select>
+          </Field>
+          <Field label="Conductor">
+            <select className="ob-input" value={conductor} onChange={(e) => setConductor(e.target.value as any)}>
+              <option value="CU">Cu</option>
+              <option value="AL">Al</option>
+            </select>
+          </Field>
+          <Field label="Insulation">
+            <select className="ob-input" value={insulation} onChange={(e) => setInsulation(e.target.value as any)}>
+              <option value="XLPE">XLPE</option>
+              <option value="PVC">PVC</option>
+              <option value="PILC">PILC</option>
+            </select>
+          </Field>
+          <Field label="Length (m)">
+            <input className="ob-input" type="number" step="any" min="0" value={measuredLengthM} onChange={(e) => setMeasuredLengthM(e.target.value)} placeholder="scaled from drawing" />
+          </Field>
+          <Field label="Install method">
+            <select className="ob-input" value={installMethod} onChange={(e) => setInstallMethod(e.target.value as any)}>
+              <option value="DIRECT_IN_GROUND">Direct in ground</option>
+              <option value="DUCT">Duct</option>
+              <option value="LADDER">Ladder</option>
+              <option value="TRAY">Tray</option>
+              <option value="CLIPPED">Clipped</option>
+            </select>
+          </Field>
+          <Field label="Depth (mm)">
+            <input className="ob-input" type="number" step="50" min="0" value={depthMm} onChange={(e) => setDepthMm(e.target.value)} />
+          </Field>
+          <Field label="Group size">
+            <input className="ob-input" type="number" step="1" min="1" value={groupedWith} onChange={(e) => setGroupedWith(e.target.value)} />
+          </Field>
+          <Field label="Ω/km override">
+            <input className="ob-input" type="number" step="any" min="0" value={ohmOverride} onChange={(e) => setOhmOverride(e.target.value)} placeholder="(auto from SANS)" />
+          </Field>
+        </>
+      )}
       <SubmitButton
         disabled={pending || !fromKey || !toBoardId || !load || !sizeMm2}
         pending={pending}
