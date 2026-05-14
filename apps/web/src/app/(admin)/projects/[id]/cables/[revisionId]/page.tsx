@@ -12,7 +12,8 @@ import {
   type DiffableCable,
 } from '@esite/shared'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
-import { AddEntityPanel, type NodeOption, type SupplyOption } from './AddEntityPanel'
+import { AddEntityPanel, type NodeOption } from './AddEntityPanel'
+import { NodesPanel, type PanelNode } from './NodesPanel'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 import { ExportMenu } from './ExportMenu'
 
@@ -44,6 +45,7 @@ interface SourceRow {
 interface BoardRow {
   id: string
   code: string
+  kind: string
   tenant_name: string | null
   area_m2: number | null
   breaker_rating_a: number | null
@@ -117,7 +119,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     (supabase as any)
       .schema('cable_schedule')
       .from('boards')
-      .select('id, code, tenant_name, area_m2, breaker_rating_a, section, parent_board_id')
+      .select('id, code, kind, tenant_name, area_m2, breaker_rating_a, section, parent_board_id')
       .eq('revision_id', revisionId)
       .order('code'),
     (supabase as any)
@@ -143,6 +145,28 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   const boards   = (boardsRes?.data   ?? []) as unknown as BoardRow[]
   const supplies = (suppliesRes?.data ?? []) as unknown as SupplyRow[]
   const cables   = (cablesRes?.data   ?? []) as unknown as CableRow[]
+
+  // Blast-radius counts: how many supplies and cables cascade-delete if a node is removed.
+  function blastFor(nodeId: string, category: 'source' | 'board') {
+    const hit = supplies.filter((s) =>
+      category === 'source'
+        ? s.from_source_id === nodeId
+        : (s.from_board_id === nodeId || s.to_board_id === nodeId))
+    const supplyIds = new Set(hit.map((s) => s.id))
+    const cableCount = cables.filter((c) => supplyIds.has(c.supply_id)).length
+    return { blastSupplies: hit.length, blastCables: cableCount }
+  }
+
+  const panelNodes: PanelNode[] = [
+    ...sources.map((s) => ({
+      id: s.id, code: s.code, category: 'source' as const, nodeType: s.type,
+      ...blastFor(s.id, 'source'),
+    })),
+    ...boards.map((b) => ({
+      id: b.id, code: b.code, category: 'board' as const, nodeType: b.kind,
+      ...blastFor(b.id, 'board'),
+    })),
+  ]
 
   // Cloud markers: compare current cables against the most-recent ISSUED
   // snapshot. Rows that are new in this revision or have any diffable
@@ -429,18 +453,14 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       </div>
 
       {revision.status === 'DRAFT' && (
-        <AddEntityPanel
-          revisionId={revision.id}
-          sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
-          boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
-          supplies={supplies.map<SupplyOption>((s) => ({
-            id: s.id,
-            fromLabel: nodeLabel(s.from_source_id ?? s.from_board_id),
-            toLabel:   nodeLabel(s.to_board_id),
-            voltage_v: s.voltage_v,
-            load_a:    s.design_load_a,
-          }))}
-        />
+        <>
+          <NodesPanel revisionId={revision.id} nodes={panelNodes} canEdit={revision.status === 'DRAFT'} />
+          <AddEntityPanel
+            revisionId={revision.id}
+            sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
+            boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
+          />
+        </>
       )}
 
       {cables.length === 0 ? (
