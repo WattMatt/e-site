@@ -42,6 +42,7 @@ export function RevisionsList({
   const router = useRouter()
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [, startTransition] = useTransition()
 
   function onIssue(id: string) {
@@ -85,11 +86,23 @@ export function RevisionsList({
           </thead>
           <tbody>
             {revisions.map((r) => (
-              <tr key={r.id} style={{ borderTop: '1px solid var(--c-border)' }}>
+              <tr
+                key={r.id}
+                onClick={() => router.push(`/projects/${projectId}/cables/${r.id}`)}
+                onMouseEnter={() => setHoveredId(r.id)}
+                onMouseLeave={() => setHoveredId(null)}
+                style={{
+                  borderTop: '1px solid var(--c-border)',
+                  borderLeft: r.status === 'DRAFT' ? '3px solid var(--c-amber)' : '3px solid transparent',
+                  background: hoveredId === r.id ? 'var(--c-elevated)' : undefined,
+                  cursor: 'pointer',
+                }}
+              >
                 <Td mono>
                   <Link
                     href={`/projects/${projectId}/cables/${r.id}`}
-                    style={{ color: 'var(--c-text)', fontWeight: 600, textDecoration: 'none' }}
+                    style={{ color: 'var(--c-amber)', fontWeight: 600, textDecoration: 'none' }}
+                    onClick={(e) => e.stopPropagation()}
                   >
                     {r.code}
                   </Link>
@@ -106,7 +119,7 @@ export function RevisionsList({
                       <>
                         <button
                           type="button"
-                          onClick={() => onIssue(r.id)}
+                          onClick={(e) => { e.stopPropagation(); onIssue(r.id) }}
                           disabled={pendingId === r.id}
                           style={{ ...actionBtn, color: '#16a34a' }}
                         >
@@ -114,7 +127,7 @@ export function RevisionsList({
                         </button>
                         <button
                           type="button"
-                          onClick={() => onDelete(r.id)}
+                          onClick={(e) => { e.stopPropagation(); onDelete(r.id) }}
                           disabled={pendingId === r.id}
                           style={{ ...actionBtn, color: '#dc2626' }}
                         >
@@ -123,6 +136,13 @@ export function RevisionsList({
                       </>
                     )}
                   </div>
+                  <span style={{
+                    marginLeft: 10, fontFamily: 'var(--font-mono)', fontSize: 11,
+                    color: hoveredId === r.id ? 'var(--c-amber)' : 'var(--c-text-dim)',
+                    letterSpacing: '0.04em',
+                  }}>
+                    Open →
+                  </span>
                 </Td>
               </tr>
             ))}
