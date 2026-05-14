@@ -17,7 +17,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
-import { lookupCableProperties, lookupDeratingFactors, deratedRating } from '@esite/shared'
+import { lookupCableProperties, lookupDeratingFactors, deratedRating, requiredParallelSet } from '@esite/shared'
 import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
 
 const uuid = z.string().uuid()
@@ -933,4 +933,106 @@ export async function renameBoardAction(id: string, code: string): Promise<{ ok?
   })
   revalidatePath(`/projects/${guard.projectId}/cables/${b.revision_id}`)
   return { ok: true }
+}
+
+// ─── parallel cable set preview (read-only) ──────────────────────────
+
+const previewParallelSchema = z.object({
+  revisionId: uuid,
+  fromSourceId: uuid.nullable().optional(),
+  fromBoardId: uuid.nullable().optional(),
+  toBoardId: uuid,
+  designLoadA: z.number().positive(),
+  sizeMm2: z.number().positive(),
+  cores: z.enum(['3', '3+E', '4']),
+  conductor: z.enum(['CU', 'AL']),
+  insulation: z.enum(['PVC', 'XLPE', 'PILC']),
+  installationMethod: z.enum(['DIRECT_IN_GROUND', 'DUCT', 'LADDER', 'TRAY', 'CLIPPED']),
+  depthMm: z.number().int().positive().nullable().optional(),
+  ambientTempC: z.number().default(30),
+  thermalResistivityKmw: z.number().default(1.0),
+})
+
+const MAX_PARALLEL_N = 16
+
+export async function previewParallelCableSet(
+  input: z.infer<typeof previewParallelSchema>,
+): Promise<{
+  count?: number
+  perCableRatingA?: number
+  combinedRatingA?: number
+  insufficient?: boolean
+  mode?: 'create-set' | 'add-single'
+  error?: string
+}> {
+  const parsed = previewParallelSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const supabase = await createClient()
+
+  const guard = await assertDraft(supabase, parsed.data.revisionId)
+  if ('error' in guard) return { error: guard.error }
+
+  // Per-cable base rating: same SANS lookup the cable insert uses, by install method.
+  const props = await lookupCableProperties(supabase as any, {
+    conductor: parsed.data.conductor,
+    insulation: parsed.data.insulation,
+    cores: parsed.data.cores,
+    size_mm2: parsed.data.sizeMm2,
+    projectId: guard.projectId,
+  })
+  const baseRating =
+    parsed.data.installationMethod === 'DIRECT_IN_GROUND' ? props?.rating_direct_buried
+    : parsed.data.installationMethod === 'DUCT'           ? props?.rating_in_duct
+    : props?.rating_in_air
+
+  // Grouping-aware: fetch the derate factors for every group size 1..MAX_PARALLEL_N
+  // concurrently, build a per-N derated-rating lookup, then run the pure calc.
+  const factorSets = await Promise.all(
+    Array.from({ length: MAX_PARALLEL_N }, (_, i) =>
+      lookupDeratingFactors(supabase as any, {
+        depth_mm: parsed.data.depthMm ?? 500,
+        thermal_resistivity_kmw: parsed.data.thermalResistivityKmw,
+        grouped_with: i + 1,
+        ambient_c: parsed.data.ambientTempC,
+        insulation: parsed.data.insulation,
+      }),
+    ),
+  )
+  const ratingForN = (n: number): number | null => {
+    if (n < 1 || n > MAX_PARALLEL_N) return null
+    const f = factorSets[n - 1]!
+    return deratedRating(baseRating ?? null, {
+      depth: f.depth, thermal: f.thermal, grouping: f.grouping, temperature: f.temperature,
+    })
+  }
+
+  const result = requiredParallelSet(parsed.data.designLoadA, ratingForN, MAX_PARALLEL_N)
+  if (!result) {
+    // No base rating resolved for this spec — the form falls back to a plain single add.
+    return { error: 'No SANS rating found for this cable spec' }
+  }
+
+  // mode: does a supply already exist for this (from, to) pair, and does it have cables?
+  let q = (supabase as any).schema('cable_schedule').from('supplies')
+    .select('id').eq('revision_id', parsed.data.revisionId)
+    .eq('to_board_id', parsed.data.toBoardId)
+  q = parsed.data.fromSourceId
+    ? q.eq('from_source_id', parsed.data.fromSourceId)
+    : q.eq('from_board_id', parsed.data.fromBoardId)
+  const { data: existingSupply } = await q.maybeSingle()
+  let mode: 'create-set' | 'add-single' = 'create-set'
+  if (existingSupply) {
+    const { data: existingCables } = await (supabase as any)
+      .schema('cable_schedule').from('cables')
+      .select('id').eq('supply_id', (existingSupply as { id: string }).id).limit(1)
+    if (existingCables && existingCables.length > 0) mode = 'add-single'
+  }
+
+  return {
+    count: result.count,
+    perCableRatingA: result.perCableRatingA,
+    combinedRatingA: result.combinedRatingA,
+    insufficient: result.insufficient,
+    mode,
+  }
 }
