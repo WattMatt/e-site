@@ -39,6 +39,30 @@ async function assertDraft(
   return { orgId: rev.organisation_id, projectId: rev.project_id }
 }
 
+/** Records a deletion in change_log. Best-effort — never blocks the delete. */
+async function logDeletion(
+  supabase: any,
+  args: {
+    revisionId: string
+    organisationId: string
+    entityType: 'source' | 'board' | 'supply' | 'cable'
+    entityId: string
+    label: string
+    userId: string | null
+  },
+): Promise<void> {
+  await supabase.schema('cable_schedule').from('change_log').insert({
+    revision_id: args.revisionId,
+    organisation_id: args.organisationId,
+    entity_type: args.entityType,
+    entity_id: args.entityId,
+    field_name: 'deleted',
+    old_value: args.label,
+    new_value: null,
+    changed_by: args.userId,
+  })
+}
+
 // ─── sources ─────────────────────────────────────────────────────────
 
 const sourceSchema = z.object({
@@ -81,13 +105,15 @@ export async function addSourceAction(
 export async function deleteSourceAction(id: string): Promise<{ ok?: true; error?: string }> {
   if (!uuid.safeParse(id).success) return { error: 'Invalid id' }
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
   const { data: src } = await (supabase as any)
     .schema('cable_schedule')
     .from('sources')
-    .select('revision_id')
+    .select('revision_id, organisation_id, code')
     .eq('id', id)
     .single()
-  const revId = (src as { revision_id?: string } | null)?.revision_id
+  const source = src as { revision_id?: string; organisation_id?: string; code?: string } | null
+  const revId = source?.revision_id
   if (!revId) return { error: 'Source not found' }
   const guard = await assertDraft(supabase, revId)
   if ('error' in guard) return { error: guard.error }
@@ -98,6 +124,14 @@ export async function deleteSourceAction(id: string): Promise<{ ok?: true; error
     .delete()
     .eq('id', id)
   if (error) return { error: error.message }
+  await logDeletion(supabase, {
+    revisionId: revId,
+    organisationId: source!.organisation_id!,
+    entityType: 'source',
+    entityId: id,
+    label: `Source "${source!.code ?? '?'}"`,
+    userId: user?.id ?? null,
+  })
   revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
   return { ok: true }
 }
@@ -148,13 +182,15 @@ export async function addBoardAction(
 export async function deleteBoardAction(id: string): Promise<{ ok?: true; error?: string }> {
   if (!uuid.safeParse(id).success) return { error: 'Invalid id' }
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
   const { data: b } = await (supabase as any)
     .schema('cable_schedule')
     .from('boards')
-    .select('revision_id')
+    .select('revision_id, organisation_id, code')
     .eq('id', id)
     .single()
-  const revId = (b as { revision_id?: string } | null)?.revision_id
+  const board = b as { revision_id?: string; organisation_id?: string; code?: string } | null
+  const revId = board?.revision_id
   if (!revId) return { error: 'Board not found' }
   const guard = await assertDraft(supabase, revId)
   if ('error' in guard) return { error: guard.error }
@@ -164,6 +200,14 @@ export async function deleteBoardAction(id: string): Promise<{ ok?: true; error?
     .delete()
     .eq('id', id)
   if (error) return { error: error.message }
+  await logDeletion(supabase, {
+    revisionId: revId,
+    organisationId: board!.organisation_id!,
+    entityType: 'board',
+    entityId: id,
+    label: `Board "${board!.code ?? '?'}"`,
+    userId: user?.id ?? null,
+  })
   revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
   return { ok: true }
 }
@@ -217,13 +261,15 @@ export async function addSupplyAction(
 export async function deleteSupplyAction(id: string): Promise<{ ok?: true; error?: string }> {
   if (!uuid.safeParse(id).success) return { error: 'Invalid id' }
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
   const { data: s } = await (supabase as any)
     .schema('cable_schedule')
     .from('supplies')
-    .select('revision_id')
+    .select('revision_id, organisation_id')
     .eq('id', id)
     .single()
-  const revId = (s as { revision_id?: string } | null)?.revision_id
+  const supply = s as { revision_id?: string; organisation_id?: string } | null
+  const revId = supply?.revision_id
   if (!revId) return { error: 'Supply not found' }
   const guard = await assertDraft(supabase, revId)
   if ('error' in guard) return { error: guard.error }
@@ -233,6 +279,14 @@ export async function deleteSupplyAction(id: string): Promise<{ ok?: true; error
     .delete()
     .eq('id', id)
   if (error) return { error: error.message }
+  await logDeletion(supabase, {
+    revisionId: revId,
+    organisationId: supply!.organisation_id!,
+    entityType: 'supply',
+    entityId: id,
+    label: `Supply ${id}`,
+    userId: user?.id ?? null,
+  })
   revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
   return { ok: true }
 }
@@ -470,15 +524,16 @@ export async function addParallelCableAction(
 export async function deleteCableAction(id: string): Promise<{ ok?: true; error?: string }> {
   if (!uuid.safeParse(id).success) return { error: 'Invalid id' }
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
   const { data: c } = await (supabase as any)
     .schema('cable_schedule')
     .from('cables')
-    .select('revision_id')
+    .select('revision_id, organisation_id, cable_no')
     .eq('id', id)
     .single()
-  const revId = (c as { revision_id?: string } | null)?.revision_id
-  if (!revId) return { error: 'Cable not found' }
-  const guard = await assertDraft(supabase, revId)
+  const cable = c as { revision_id?: string; organisation_id?: string; cable_no?: number } | null
+  if (!cable?.revision_id) return { error: 'Cable not found' }
+  const guard = await assertDraft(supabase, cable.revision_id)
   if ('error' in guard) return { error: guard.error }
   const { error } = await (supabase as any)
     .schema('cable_schedule')
@@ -486,7 +541,15 @@ export async function deleteCableAction(id: string): Promise<{ ok?: true; error?
     .delete()
     .eq('id', id)
   if (error) return { error: error.message }
-  revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
+  await logDeletion(supabase, {
+    revisionId: cable.revision_id,
+    organisationId: cable.organisation_id!,
+    entityType: 'cable',
+    entityId: id,
+    label: `Cable #${cable.cable_no ?? '?'}`,
+    userId: user?.id ?? null,
+  })
+  revalidatePath(`/projects/${guard.projectId}/cables/${cable.revision_id}`)
   return { ok: true }
 }
 
