@@ -173,6 +173,9 @@ function CableForm({
   }, [revisionId, fromKey, toBoardId, load, sizeMm2, cores, conductor, insulation, installMethod, depthMm])
 
   function go() {
+    // Note: preview.mode is a debounced snapshot — addParallelCableSetAction is the
+    // real authority and re-checks supply state server-side, so it may create a
+    // single cable even when this picked the create-set path.
     const [kind, id] = fromKey.split(':')
     const setCountNum = Number(count)
     const useSet =
@@ -329,9 +332,14 @@ function CableForm({
           <Field label="Depth (mm)">
             <input className="ob-input" type="number" step="50" min="0" value={depthMm} onChange={(e) => setDepthMm(e.target.value)} />
           </Field>
-          <Field label="Group size">
-            <input className="ob-input" type="number" step="1" min="1" value={groupedWith} onChange={(e) => setGroupedWith(e.target.value)} />
-          </Field>
+          {/* Manual group size only applies on the single-cable path. In the
+              create-set parallel path addParallelCableSetAction sets grouped_with
+              to the parallel count, so this control would be a no-op there. */}
+          {!(preview && preview.mode === 'create-set' && !preview.insufficient) && (
+            <Field label="Group size">
+              <input className="ob-input" type="number" step="1" min="1" value={groupedWith} onChange={(e) => setGroupedWith(e.target.value)} />
+            </Field>
+          )}
           <Field label="Ω/km override">
             <input className="ob-input" type="number" step="any" min="0" value={ohmOverride} onChange={(e) => setOhmOverride(e.target.value)} placeholder="(auto from SANS)" />
           </Field>
