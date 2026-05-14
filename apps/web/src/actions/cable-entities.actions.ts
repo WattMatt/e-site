@@ -507,8 +507,17 @@ const updateCableSchema = z.object({
   ohmPerKmOverride: z.number().positive().nullable().optional(),
   tagOverride: z.string().trim().max(120).nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
-})
+}).refine(
+  (d) => {
+    const sansSent = ['sizeMm2','cores','conductor','insulation','installationMethod','depthMm','groupedWith','ambientTempC']
+      .some((f) => (d as Record<string, unknown>)[f] !== undefined)
+    return !(sansSent && d.ohmPerKmOverride !== undefined)
+  },
+  { message: 'Cannot change a SANS-affecting field and the Ω/km override in the same call' },
+)
 
+// Note: thermal_resistivity_kmw also affects derating but is intentionally NOT
+// editable in C12 (per spec §6.1) — recompute reads it from the existing row.
 // fields whose change forces a SANS + derating re-lookup
 const SANS_FIELDS = [
   'sizeMm2', 'cores', 'conductor', 'insulation',
@@ -535,7 +544,7 @@ export async function updateCableAction(
     .select(
       'id, revision_id, organisation_id, size_mm2, cores, conductor, insulation, armour, ' +
       'installation_method, depth_mm, grouped_with, ambient_temp_c, thermal_resistivity_kmw, ' +
-      'measured_length_m, length_status, ohm_per_km, manual_override, tag_override, notes, ' +
+      'measured_length_m, measured_length_method, length_status, ohm_per_km, manual_override, tag_override, notes, ' +
       'revision:revisions!revision_id(status, project_id)',
     )
     .eq('id', parsed.data.cableId)
@@ -584,7 +593,7 @@ export async function updateCableAction(
   if (parsed.data.insulation !== undefined) log('insulation', c.insulation, parsed.data.insulation)
   if (parsed.data.armour !== undefined) log('armour', c.armour, parsed.data.armour)
   if (parsed.data.installationMethod !== undefined) log('installation_method', c.installation_method, parsed.data.installationMethod)
-  if (parsed.data.depthMm !== undefined) log('depth_mm', c.depth_mm, parsed.data.depthMm)
+  if (parsed.data.depthMm !== undefined) log('depth_mm', c.depth_mm == null ? null : Number(c.depth_mm), parsed.data.depthMm)
   if (parsed.data.groupedWith !== undefined) log('grouped_with', Number(c.grouped_with ?? 1), parsed.data.groupedWith)
   if (parsed.data.ambientTempC !== undefined) log('ambient_temp_c', Number(c.ambient_temp_c ?? 30), parsed.data.ambientTempC)
   if (parsed.data.tagOverride !== undefined) log('tag_override', c.tag_override, parsed.data.tagOverride)
@@ -592,7 +601,8 @@ export async function updateCableAction(
   if (parsed.data.measuredLengthM !== undefined) {
     log('measured_length_m', c.measured_length_m == null ? null : Number(c.measured_length_m), parsed.data.measuredLengthM)
     // keep the status machine honest for the simple inline-cell path
-    patch.measured_length_method = parsed.data.measuredLengthM != null ? 'MANUAL' : null
+    const newMethod = parsed.data.measuredLengthM != null ? 'MANUAL' : null
+    log('measured_length_method', c.measured_length_method, newMethod)
     const newStatus = parsed.data.measuredLengthM != null
       ? (c.length_status === 'UNMEASURED' ? 'MEASURED' : c.length_status)
       : (c.length_status === 'MEASURED' ? 'UNMEASURED' : c.length_status)
@@ -607,6 +617,7 @@ export async function updateCableAction(
       cores: next.cores, size_mm2: next.sizeMm2, projectId: c.revision.project_id,
     })
     const ohm = props?.ac_resistance ?? props?.dc_resistance ?? null
+    // LADDER / TRAY / CLIPPED all fall through to the in-air rating (matches addCableAction).
     const baseRating =
       next.installationMethod === 'DIRECT_IN_GROUND' ? props?.rating_direct_buried
       : next.installationMethod === 'DUCT' ? props?.rating_in_duct
@@ -636,6 +647,8 @@ export async function updateCableAction(
     log('ohm_per_km', c.ohm_per_km == null ? null : Number(c.ohm_per_km), ov)
     patch.manual_override = ov != null
     if (!!c.manual_override !== (ov != null)) log('manual_override', !!c.manual_override, ov != null)
+    // derated_current_rating_a stays null here = "unchanged"; the override doesn't
+    // affect the derated rating. The caller treats null as "keep your cached value".
     recomputed = { ohm_per_km: ov, derated_current_rating_a: null }
   }
 
