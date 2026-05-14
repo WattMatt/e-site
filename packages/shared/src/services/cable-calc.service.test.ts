@@ -80,6 +80,15 @@ describe('requiredParallelSet', () => {
   it('returns null when no base rating resolves (rating at N=1 is null)', () => {
     expect(requiredParallelSet(1000, () => null)).toBeNull()
   })
+
+  it('insufficient result reports the rating at maxN, even when grouping derates', () => {
+    // rating(n) = 100 - (n-1)*5  ->  at n=8: 100-35 = 65; 8*65 = 520 < 5000
+    const r = requiredParallelSet(5000, (n) => 100 - (n - 1) * 5, 8)
+    expect(r?.count).toBe(8)
+    expect(r?.insufficient).toBe(true)
+    expect(r?.perCableRatingA).toBe(65)
+    expect(r?.combinedRatingA).toBe(520)
+  })
 })
 
 describe('supplyParallelCapacity', () => {

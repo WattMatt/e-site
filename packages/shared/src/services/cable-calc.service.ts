@@ -295,7 +295,8 @@ export function requiredParallelSet(
     }
   }
 
-  const rMax = ratingForN(maxN) ?? 0
+  const rMaxRaw = ratingForN(maxN)
+  const rMax = rMaxRaw != null && Number.isFinite(rMaxRaw) && rMaxRaw > 0 ? rMaxRaw : 0
   return { count: maxN, perCableRatingA: rMax, combinedRatingA: rMax * maxN, insufficient: true }
 }
 
