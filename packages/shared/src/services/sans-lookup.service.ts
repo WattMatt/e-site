@@ -174,8 +174,10 @@ export async function loadCableTable(
 }
 
 /**
- * Apply derating factors. Pulls factors from Tables 6.3.1–6.3.5 based on
- * the installation parameters.
+ * Apply derating factors. Pulls factors from the SANS 1507 LV derating
+ * tables — 6.3.1 (depth), 6.3.2 (soil thermal resistivity), 6.3.6
+ * (grouping) and 6.3.4 (ground temperature) — based on the installation
+ * parameters.
  *
  * If a factor table lookup misses a value, the nearest-conservative
  * (lower) factor is used so the calculation errs on the safe side.
@@ -195,19 +197,20 @@ export async function lookupDeratingFactors(
   grouping: number
   temperature: number
 }> {
-  // depth + thermal + grouping share table codes between PVC and XLPE.
-  // Temperature differs (PVC 70 °C vs XLPE 90 °C → 6.3.5 vs 6.3.4).
-  const tempCode = args.insulation === 'XLPE' ? 'TABLE_6_3_4' : 'TABLE_6_3_5'
+  // SANS 1507 LV derating tables 6.3.1–6.3.6 (migration 00057, source-workbook
+  // shape). Each tabulates a direct-in-ground and an in-duct factor; the
+  // auto-calc takes the direct-in-ground / touching / ground-temperature
+  // values as the conservative default. Temperature (6.3.4) carries separate
+  // columns for PVC 70 °C and XLPE 90 °C conductors. Grouping reads 6.3.6
+  // (per-count, includes n = 1) rather than the 6.3.3 axial-spacing matrix,
+  // since the caller supplies only a cable count, not a spacing.
+  const tempFactorKey = args.insulation === 'XLPE' ? 'factor_xlpe_90c' : 'factor_pvc_70c'
 
-  // Table 6.3.1 (migration 00056, source-workbook shape) splits the depth
-  // factor into direct-in-ground vs single-way-duct columns — there is no
-  // plain `factor` key. Use the direct-in-ground factor as the canonical
-  // depth derate. Tables 6.3.2–6.3.5 keep the uniform `factor` column.
   const [d, th, gr, te] = await Promise.all([
-    lookupFactor(supabase, 'TABLE_6_3_1', 'depth_mm',          args.depth_mm, 'factor_direct_in_ground'),
-    lookupFactor(supabase, 'TABLE_6_3_2', 'resistivity_kmw',   args.thermal_resistivity_kmw),
-    lookupFactor(supabase, 'TABLE_6_3_3', 'n_cables',          args.grouped_with),
-    lookupFactor(supabase, tempCode,      'ambient_c',         args.ambient_c),
+    lookupFactor(supabase, 'TABLE_6_3_1', 'depth_mm',        args.depth_mm,                'factor_direct_in_ground'),
+    lookupFactor(supabase, 'TABLE_6_3_2', 'resistivity_kmw', args.thermal_resistivity_kmw, 'factor_direct_in_ground'),
+    lookupFactor(supabase, 'TABLE_6_3_6', 'n_cables',        args.grouped_with,            'factor_touching'),
+    lookupFactor(supabase, 'TABLE_6_3_4', 'ambient_c',       args.ambient_c,               tempFactorKey),
   ])
   return { depth: d, thermal: th, grouping: gr, temperature: te }
 }
