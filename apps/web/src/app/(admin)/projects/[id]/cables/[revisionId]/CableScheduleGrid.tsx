@@ -16,10 +16,6 @@ import { updateSupplyAction } from '@/actions/cable-entities.actions'
 
 const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
   .map((v) => ({ value: String(v), label: `${v} V` }))
-const SECTION_OPTIONS = [
-  { value: 'NORMAL', label: 'Normal' },
-  { value: 'EMERGENCY', label: 'Emergency' },
-]
 
 export interface ScheduleRow {
   id: string
@@ -140,9 +136,14 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
   ): Promise<{ error?: string }> {
     const prevSupplies = liveSupplies
     const prevRows = liveRows
+    // EditableCell yields strings for select cells and null for cleared number cells.
+    const numericNext: number | null = next == null ? null : Number(next)
     // Optimistic: patch raw supplies + every row on that supply.
-    const nextSupplies = liveSupplies.map((s) =>
-      s.id === supplyId ? { ...s, [field]: next } as SupplyForCalc : s)
+    // section doesn't affect VD — only the calc fields go into liveSupplies.
+    const nextSupplies = field === 'section'
+      ? liveSupplies
+      : liveSupplies.map((s) =>
+          s.id === supplyId ? { ...s, [field]: numericNext as number } : s)
     setLiveSupplies(nextSupplies)
     const vd = recomputeVd(nextSupplies, liveCables)
     setLiveRows(liveRows.map((r) => {
@@ -150,8 +151,8 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
       const v = vd.get(supplyId)
       return {
         ...r,
-        voltage_v: field === 'voltage_v' ? (next as number) : r.voltage_v,
-        load_a: field === 'design_load_a' ? (next as number) : r.load_a,
+        voltage_v: field === 'voltage_v' ? numericNext : r.voltage_v,
+        load_a: field === 'design_load_a' ? numericNext : r.load_a,
         section: field === 'section' ? (next as string | null) : r.section,
         vd_pct: v?.vd ?? r.vd_pct,
         cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct,
