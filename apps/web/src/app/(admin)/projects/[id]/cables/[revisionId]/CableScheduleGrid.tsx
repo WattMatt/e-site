@@ -8,14 +8,26 @@ import {
   type SupplyForCalc,
 } from '@esite/shared'
 import {
-  MeasuredLengthEditor,
   ConfirmedLengthEditor,
 } from './LengthEditPopover'
 import { EditableCell } from './EditableCell'
-import { updateSupplyAction } from '@/actions/cable-entities.actions'
+import { updateSupplyAction, updateCableAction } from '@/actions/cable-entities.actions'
 
 const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
   .map((v) => ({ value: String(v), label: `${v} V` }))
+
+const SIZE_OPTIONS = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400]
+  .map((s) => ({ value: String(s), label: String(s) }))
+const CORES_OPTIONS = ['3', '3+E', '4'].map((c) => ({ value: c, label: c }))
+const CONDUCTOR_OPTIONS = [{ value: 'CU', label: 'Cu' }, { value: 'AL', label: 'Al' }]
+const INSULATION_OPTIONS = ['XLPE', 'PVC', 'PILC'].map((i) => ({ value: i, label: i }))
+const INSTALL_OPTIONS = [
+  { value: 'DIRECT_IN_GROUND', label: 'Direct in ground' },
+  { value: 'DUCT', label: 'Duct' },
+  { value: 'LADDER', label: 'Ladder' },
+  { value: 'TRAY', label: 'Tray' },
+  { value: 'CLIPPED', label: 'Clipped' },
+]
 
 export interface ScheduleRow {
   id: string
@@ -102,7 +114,6 @@ function cableTag(r: ScheduleRow): string {
 
 export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cables, nodeOptions, locked, lengthMode, canEdit }: Props) {
   const [query, setQuery] = useState('')
-  const [editMeasured, setEditMeasured] = useState<ScheduleRow | null>(null)
   const [editConfirmed, setEditConfirmed] = useState<ScheduleRow | null>(null)
 
   const [liveRows, setLiveRows] = useState<ScheduleRow[]>(rows)
@@ -166,6 +177,88 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
       section: field === 'section' ? (next as 'NORMAL' | 'EMERGENCY' | null) : undefined,
     })
     if (res.error) { setLiveSupplies(prevSupplies); setLiveRows(prevRows); return { error: res.error } }
+    return {}
+  }
+
+  type CableField =
+    | 'size_mm2' | 'cores' | 'conductor' | 'insulation' | 'armour'
+    | 'installation_method' | 'depth_mm' | 'grouped_with' | 'ambient_temp_c'
+    | 'measured_length_m' | 'ohm_per_km_override' | 'tag_override' | 'notes'
+
+  async function saveCableField(
+    cableId: string, supplyId: string, field: CableField, next: string | number | null,
+  ): Promise<{ error?: string }> {
+    const prevRows = liveRows
+    const prevCables = liveCables
+
+    const rowKey: Partial<ScheduleRow> = {}
+    const cableKey: Record<string, unknown> = {}
+    switch (field) {
+      case 'size_mm2': rowKey.size_mm2 = Number(next); cableKey.size_mm2 = Number(next); break
+      case 'cores': rowKey.cores = next as string; cableKey.cores = next; break
+      case 'conductor': rowKey.conductor = next as 'CU' | 'AL'; cableKey.conductor = next; break
+      case 'insulation': rowKey.insulation = next as ScheduleRow['insulation']; cableKey.insulation = next; break
+      case 'armour': rowKey.armour = next as string | null; break
+      case 'installation_method': rowKey.installation_method = next as string | null; break
+      case 'depth_mm': rowKey.depth_mm = next == null ? null : Number(next); break
+      case 'grouped_with': rowKey.grouped_with = Number(next); break
+      case 'ambient_temp_c': rowKey.ambient_temp_c = Number(next); break
+      case 'measured_length_m':
+        rowKey.measured_length_m = next == null ? null : Number(next)
+        cableKey.measured_length_m = next == null ? null : Number(next)
+        break
+      case 'ohm_per_km_override':
+        rowKey.ohm_per_km = next == null ? null : Number(next)
+        rowKey.manual_override = next != null
+        cableKey.ohm_per_km = next == null ? null : Number(next)
+        break
+      case 'tag_override': rowKey.tag_override = next as string | null; break
+      case 'notes': rowKey.notes = next as string | null; break
+    }
+    const nextCables = liveCables.map((c) =>
+      c.id === cableId ? { ...c, ...cableKey } as CableForCalc : c)
+    setLiveCables(nextCables)
+    const vd = recomputeVd(liveSupplies, nextCables)
+    setLiveRows(liveRows.map((r) => {
+      if (r.id !== cableId) {
+        if (r.supply_id === supplyId) {
+          const v = vd.get(supplyId)
+          return { ...r, vd_pct: v?.vd ?? r.vd_pct, cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct }
+        }
+        return r
+      }
+      const v = vd.get(supplyId)
+      return { ...r, ...rowKey, vd_pct: v?.vd ?? r.vd_pct, cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct }
+    }))
+
+    const res = await updateCableAction({
+      cableId,
+      sizeMm2: field === 'size_mm2' ? Number(next) : undefined,
+      cores: field === 'cores' ? (next as '3' | '3+E' | '4') : undefined,
+      conductor: field === 'conductor' ? (next as 'CU' | 'AL') : undefined,
+      insulation: field === 'insulation' ? (next as 'PVC' | 'XLPE' | 'PILC') : undefined,
+      armour: field === 'armour' ? (next as 'SWA' | 'UNARMOURED' | null) : undefined,
+      installationMethod: field === 'installation_method'
+        ? (next as 'DIRECT_IN_GROUND' | 'DUCT' | 'LADDER' | 'TRAY' | 'CLIPPED' | null) : undefined,
+      depthMm: field === 'depth_mm' ? (next == null ? null : Number(next)) : undefined,
+      groupedWith: field === 'grouped_with' ? Number(next) : undefined,
+      ambientTempC: field === 'ambient_temp_c' ? Number(next) : undefined,
+      measuredLengthM: field === 'measured_length_m' ? (next == null ? null : Number(next)) : undefined,
+      ohmPerKmOverride: field === 'ohm_per_km_override' ? (next == null ? null : Number(next)) : undefined,
+      tagOverride: field === 'tag_override' ? (next as string | null) : undefined,
+      notes: field === 'notes' ? (next as string | null) : undefined,
+    })
+    if (res.error) { setLiveRows(prevRows); setLiveCables(prevCables); return { error: res.error } }
+    if (res.recomputed) {
+      setLiveRows((cur) => cur.map((r) => r.id === cableId
+        ? {
+            ...r,
+            ohm_per_km: res.recomputed!.ohm_per_km,
+            derated_rating_a: res.recomputed!.derated_current_rating_a ?? r.derated_rating_a,
+            manual_override: field === 'ohm_per_km_override' ? r.manual_override : false,
+          }
+        : r))
+    }
     return {}
   }
 
@@ -352,25 +445,39 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                       onSave={(next) => saveSupplyField(r.supply_id, 'design_load_a', next)}
                     />
                   </Td>
-                  <Td align="right">{fmt(r.size_mm2)}</Td>
-                  <Td align="center">{r.cores}</Td>
-                  <Td align="center">{r.conductor}</Td>
-                  <Td align="center">{r.insulation}</Td>
-                  <Td align="right">{fmt(r.ohm_per_km, 4)}</Td>
+                  <Td align="right">
+                    <EditableCell type="select" align="right" disabled={locked || !canEdit}
+                      value={r.size_mm2} options={SIZE_OPTIONS}
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'size_mm2', n)} />
+                  </Td>
+                  <Td align="center">
+                    <EditableCell type="select" align="center" disabled={locked || !canEdit}
+                      value={r.cores} options={CORES_OPTIONS}
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'cores', n)} />
+                  </Td>
+                  <Td align="center">
+                    <EditableCell type="select" align="center" disabled={locked || !canEdit}
+                      value={r.conductor} options={CONDUCTOR_OPTIONS}
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'conductor', n)} />
+                  </Td>
+                  <Td align="center">
+                    <EditableCell type="select" align="center" disabled={locked || !canEdit}
+                      value={r.insulation} options={INSULATION_OPTIONS}
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'insulation', n)} />
+                  </Td>
+                  <Td align="right">
+                    <EditableCell type="number" align="right" disabled={locked || !canEdit}
+                      value={r.ohm_per_km}
+                      format={(v) => fmt(typeof v === 'number' ? v : null, 4)}
+                      placeholder="(auto)"
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'ohm_per_km_override', n)} />
+                  </Td>
                   <Td align="right">{r.cable_no}</Td>
                   <Td align="right">
-                    {locked ? (
-                      fmt(r.measured_length_m, 1)
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setEditMeasured(r)}
-                        title="Edit measured length (Designer)"
-                        style={editCellBtn}
-                      >
-                        {fmt(r.measured_length_m, 1)}
-                      </button>
-                    )}
+                    <EditableCell type="number" align="right" disabled={locked || !canEdit}
+                      value={r.measured_length_m}
+                      format={(v) => fmt(typeof v === 'number' ? v : null, 1)}
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'measured_length_m', n)} />
                   </Td>
                   <Td align="right">
                     {locked ? (
@@ -410,11 +517,25 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                   <Td align="right" style={{ color: utilTone, fontWeight: util != null && util > 65 ? 700 : 400 }}>
                     {util == null ? '—' : fmt(util, 1)}
                   </Td>
-                  <Td>{r.installation_method ?? '—'}</Td>
-                  <Td align="right">{fmt(r.depth_mm)}</Td>
-                  <Td align="right">{r.grouped_with}</Td>
+                  <Td>
+                    <EditableCell type="select" disabled={locked || !canEdit}
+                      value={r.installation_method} options={INSTALL_OPTIONS}
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'installation_method', n)} />
+                  </Td>
+                  <Td align="right">
+                    <EditableCell type="number" align="right" disabled={locked || !canEdit}
+                      value={r.depth_mm}
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'depth_mm', n)} />
+                  </Td>
+                  <Td align="right">
+                    <EditableCell type="number" align="right" disabled={locked || !canEdit}
+                      value={r.grouped_with}
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'grouped_with', n)} />
+                  </Td>
                   <Td style={{ fontFamily: 'inherit', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {r.notes ?? ''}
+                    <EditableCell type="text" disabled={locked || !canEdit}
+                      value={r.notes} placeholder=""
+                      onSave={(n) => saveCableField(r.id, r.supply_id, 'notes', n)} />
                   </Td>
                 </tr>
               )
@@ -423,14 +544,6 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
         </table>
       </div>
 
-      {editMeasured && (
-        <MeasuredLengthEditor
-          cableId={editMeasured.id}
-          initialValue={editMeasured.measured_length_m}
-          initialMethod={null}
-          onClose={() => setEditMeasured(null)}
-        />
-      )}
       {editConfirmed && (
         <ConfirmedLengthEditor
           cableId={editConfirmed.id}
