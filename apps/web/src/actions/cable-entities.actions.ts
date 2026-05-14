@@ -51,16 +51,20 @@ async function logDeletion(
     userId: string | null
   },
 ): Promise<void> {
-  await supabase.schema('cable_schedule').from('change_log').insert({
-    revision_id: args.revisionId,
-    organisation_id: args.organisationId,
-    entity_type: args.entityType,
-    entity_id: args.entityId,
-    field_name: 'deleted',
-    old_value: args.label,
-    new_value: null,
-    changed_by: args.userId,
-  })
+  try {
+    await supabase.schema('cable_schedule').from('change_log').insert({
+      revision_id: args.revisionId,
+      organisation_id: args.organisationId,
+      entity_type: args.entityType,
+      entity_id: args.entityId,
+      field_name: 'deleted',
+      old_value: args.label,
+      new_value: null,
+      changed_by: args.userId,
+    })
+  } catch {
+    // best-effort — a logging failure must never surface to the caller
+  }
 }
 
 // ─── sources ─────────────────────────────────────────────────────────
@@ -265,10 +269,15 @@ export async function deleteSupplyAction(id: string): Promise<{ ok?: true; error
   const { data: s } = await (supabase as any)
     .schema('cable_schedule')
     .from('supplies')
-    .select('revision_id, organisation_id')
+    .select('revision_id, organisation_id, voltage_v, design_load_a')
     .eq('id', id)
     .single()
-  const supply = s as { revision_id?: string; organisation_id?: string } | null
+  const supply = s as {
+    revision_id?: string
+    organisation_id?: string
+    voltage_v?: number | null
+    design_load_a?: number | null
+  } | null
   const revId = supply?.revision_id
   if (!revId) return { error: 'Supply not found' }
   const guard = await assertDraft(supabase, revId)
@@ -284,7 +293,7 @@ export async function deleteSupplyAction(id: string): Promise<{ ok?: true; error
     organisationId: supply!.organisation_id!,
     entityType: 'supply',
     entityId: id,
-    label: `Supply ${id}`,
+    label: `Supply ${supply!.voltage_v ?? '?'}V / ${supply!.design_load_a ?? '?'}A`,
     userId: user?.id ?? null,
   })
   revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
