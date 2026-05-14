@@ -31,14 +31,16 @@ export function EditableCell({
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement>(null)
 
-  // Reset draft whenever we enter editing (or the upstream value changed).
+  // Seed the draft + focus the input ONCE when we enter editing. `value` is
+  // intentionally omitted from deps — re-seeding mid-edit would clobber the
+  // user's in-progress input if the parent re-renders with a new value.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (state === 'editing') {
-      setDraft(value == null ? '' : String(value))
-      inputRef.current?.focus()
-      if (inputRef.current instanceof HTMLInputElement) inputRef.current.select()
-    }
-  }, [state, value])
+    if (state !== 'editing') return
+    setDraft(value == null ? '' : String(value))
+    inputRef.current?.focus()
+    if (inputRef.current instanceof HTMLInputElement) inputRef.current.select()
+  }, [state])
 
   // Briefly show the ✓ then return to idle.
   useEffect(() => {
@@ -67,10 +69,15 @@ export function EditableCell({
     // No-op if unchanged.
     if (String(nextValue ?? '') === String(value ?? '')) { setState('idle'); return }
     setState('saving')
-    onSave(nextValue).then((res) => {
-      if (res.error) { setError(res.error); setState('error'); return }
-      setError(null); setState('saved')
-    })
+    onSave(nextValue)
+      .then((res) => {
+        if (res.error) { setError(res.error); setState('error'); return }
+        setError(null); setState('saved')
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Save failed')
+        setState('error')
+      })
   }
 
   if (state === 'editing' || state === 'saving') {
