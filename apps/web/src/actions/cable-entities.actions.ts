@@ -665,3 +665,84 @@ export async function updateCableAction(
   revalidatePath(`/projects/${c.revision.project_id}/cables/${c.revision_id}`)
   return { ok: true, recomputed }
 }
+
+// ─── re-pointing a run (C12) ─────────────────────────────────────────
+
+const repointSchema = z.object({
+  supplyId: uuid,
+  fromSourceId: uuid.nullable().optional(),
+  fromBoardId: uuid.nullable().optional(),
+  toBoardId: uuid.optional(),
+})
+
+export async function repointSupplyAction(
+  input: z.infer<typeof repointSchema>,
+): Promise<{ ok?: true; error?: string }> {
+  const parsed = repointSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: sup } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supplies')
+    .select(
+      'id, revision_id, organisation_id, from_source_id, from_board_id, to_board_id, ' +
+      'revision:revisions!revision_id(status, project_id)',
+    )
+    .eq('id', parsed.data.supplyId)
+    .single()
+  if (!sup) return { error: 'Supply not found' }
+  const s = sup as any
+  if (s.revision?.status !== 'DRAFT') {
+    return { error: 'Revision is ISSUED — start a new revision to make changes.' }
+  }
+
+  const role = await lookupCableRole(supabase, user.id, s.organisation_id)
+  if (!ROLE_CAPS[role].editDesignFields) {
+    return { error: `Your role (${role}) cannot edit the schedule.` }
+  }
+
+  // Effective new origin/destination
+  const nextFromSource = parsed.data.fromSourceId !== undefined ? parsed.data.fromSourceId : s.from_source_id
+  const nextFromBoard = parsed.data.fromBoardId !== undefined ? parsed.data.fromBoardId : s.from_board_id
+  const nextTo = parsed.data.toBoardId ?? s.to_board_id
+
+  // XOR: exactly one origin
+  if ((nextFromSource ? 1 : 0) + (nextFromBoard ? 1 : 0) !== 1) {
+    return { error: 'Pick exactly one origin: a source OR a board.' }
+  }
+  if (!nextTo) return { error: 'A destination board is required.' }
+
+  const patch = {
+    from_source_id: nextFromSource ?? null,
+    from_board_id: nextFromBoard ?? null,
+    to_board_id: nextTo,
+  }
+  const { error } = await (supabase as any)
+    .schema('cable_schedule').from('supplies')
+    .update(patch).eq('id', s.id)
+  if (error) return { error: error.message }
+
+  const events: Array<Record<string, unknown>> = []
+  const baseEvent = {
+    revision_id: s.revision_id, organisation_id: s.organisation_id,
+    entity_type: 'supply', entity_id: s.id, changed_by: user.id,
+  }
+  if ((s.from_source_id ?? null) !== patch.from_source_id) {
+    events.push({ ...baseEvent, field_name: 'from_source_id', old_value: s.from_source_id, new_value: patch.from_source_id })
+  }
+  if ((s.from_board_id ?? null) !== patch.from_board_id) {
+    events.push({ ...baseEvent, field_name: 'from_board_id', old_value: s.from_board_id, new_value: patch.from_board_id })
+  }
+  if (s.to_board_id !== patch.to_board_id) {
+    events.push({ ...baseEvent, field_name: 'to_board_id', old_value: s.to_board_id, new_value: patch.to_board_id })
+  }
+  if (events.length > 0) {
+    await (supabase as any).schema('cable_schedule').from('change_log').insert(events)
+  }
+  revalidatePath(`/projects/${s.revision.project_id}/cables/${s.revision_id}`)
+  return { ok: true }
+}
