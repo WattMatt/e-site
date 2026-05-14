@@ -90,9 +90,17 @@ function fmt(n: number | null | undefined, decimals = 0): string {
   return Number(n).toFixed(decimals)
 }
 
-function activeLength(r: ScheduleRow): number | null {
-  if (r.length_status === 'CONFIRMED' && r.confirmed_length_m != null) return r.confirmed_length_m
-  return r.measured_length_m
+function activeLength(r: ScheduleRow, mode: 'design' | 'as-built' | 'worst'): number | null {
+  const meas = r.measured_length_m
+  const conf = r.confirmed_length_m
+  if (mode === 'design') return meas
+  if (mode === 'worst') {
+    if (meas != null && conf != null) return Math.max(meas, conf)
+    return conf ?? meas
+  }
+  // as-built
+  if (r.length_status === 'CONFIRMED' && conf != null) return conf
+  return meas
 }
 
 function deltaLength(r: ScheduleRow): { abs: number; pct: number } | null {
@@ -413,7 +421,7 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                 && r.derated_rating_a < r.load_a
               const deltaFlag = delta && r.measured_length_m
                 && (Math.abs(delta.abs) > 5 || Math.abs(delta.pct) > 10)
-              const len = activeLength(r)
+              const len = activeLength(r, lengthMode)
 
               return (
                 <tr
