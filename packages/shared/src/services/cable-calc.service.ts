@@ -254,3 +254,58 @@ export function utilisationTone(util: number | null): 'ok' | 'warning' | 'danger
   if (util > 65) return 'warning'
   return 'ok'
 }
+
+/**
+ * Result of sizing a parallel cable set against a design load.
+ */
+export interface ParallelSetResult {
+  /** Number of cables in parallel (1..maxN). */
+  count: number
+  /** Per-cable derated rating at this group size, in A. */
+  perCableRatingA: number
+  /** count * perCableRatingA, in A. */
+  combinedRatingA: number
+  /** True when even maxN cables cannot carry the design load. */
+  insufficient: boolean
+}
+
+/**
+ * Smallest number of parallel cables that carries `designLoadA`.
+ *
+ * Pure + grouping-aware: `ratingForN(n)` must return the per-cable derated
+ * rating *when n cables are grouped together* (the grouping derate factor
+ * worsens as n rises, so the caller bakes that into ratingForN). Iterates
+ * n = 1..maxN and returns the first n where n * ratingForN(n) >= designLoadA.
+ * If maxN is still short, returns that n with `insufficient: true`.
+ * Returns null when no base rating resolves (ratingForN(1) is null/<=0).
+ */
+export function requiredParallelSet(
+  designLoadA: number,
+  ratingForN: (n: number) => number | null,
+  maxN = 16,
+): ParallelSetResult | null {
+  const r1 = ratingForN(1)
+  if (r1 == null || !Number.isFinite(r1) || r1 <= 0) return null
+
+  for (let n = 1; n <= maxN; n++) {
+    const r = ratingForN(n)
+    if (r == null || !Number.isFinite(r) || r <= 0) continue
+    if (n * r >= designLoadA) {
+      return { count: n, perCableRatingA: r, combinedRatingA: n * r, insufficient: false }
+    }
+  }
+
+  const rMax = ratingForN(maxN) ?? 0
+  return { count: maxN, perCableRatingA: rMax, combinedRatingA: rMax * maxN, insufficient: true }
+}
+
+/**
+ * Combined current capacity of a supply's parallel cable set: the sum of
+ * each cable's already-stored derated rating (each parallel cable's stored
+ * value already includes its grouping derate). Null ratings count as 0.
+ */
+export function supplyParallelCapacity(
+  cables: Array<{ derated_current_rating_a: number | null }>,
+): number {
+  return cables.reduce((sum, c) => sum + (c.derated_current_rating_a ?? 0), 0)
+}
