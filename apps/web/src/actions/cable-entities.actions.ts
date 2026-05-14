@@ -1008,8 +1008,10 @@ export async function previewParallelCableSet(
 
   const result = requiredParallelSet(parsed.data.designLoadA, ratingForN, MAX_PARALLEL_N)
   if (!result) {
-    // No base rating resolved for this spec — the form falls back to a plain single add.
-    return { error: 'No SANS rating found for this cable spec' }
+    // No SANS rating for this spec — an expected, non-error outcome. Return an
+    // empty result (no count); callers see count == null and fall back to a
+    // plain single-cable add. The `error` channel stays reserved for genuine failures.
+    return {}
   }
 
   // mode: does a supply already exist for this (from, to) pair, and does it have cables?
