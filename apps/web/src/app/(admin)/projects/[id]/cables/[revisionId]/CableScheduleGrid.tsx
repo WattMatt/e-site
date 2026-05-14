@@ -11,6 +11,15 @@ import {
   MeasuredLengthEditor,
   ConfirmedLengthEditor,
 } from './LengthEditPopover'
+import { EditableCell } from './EditableCell'
+import { updateSupplyAction } from '@/actions/cable-entities.actions'
+
+const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
+  .map((v) => ({ value: String(v), label: `${v} V` }))
+const SECTION_OPTIONS = [
+  { value: 'NORMAL', label: 'Normal' },
+  { value: 'EMERGENCY', label: 'Emergency' },
+]
 
 export interface ScheduleRow {
   id: string
@@ -122,6 +131,41 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
       })
     }
     return out
+  }
+
+  async function saveSupplyField(
+    supplyId: string,
+    field: 'voltage_v' | 'design_load_a' | 'section',
+    next: string | number | null,
+  ): Promise<{ error?: string }> {
+    const prevSupplies = liveSupplies
+    const prevRows = liveRows
+    // Optimistic: patch raw supplies + every row on that supply.
+    const nextSupplies = liveSupplies.map((s) =>
+      s.id === supplyId ? { ...s, [field]: next } as SupplyForCalc : s)
+    setLiveSupplies(nextSupplies)
+    const vd = recomputeVd(nextSupplies, liveCables)
+    setLiveRows(liveRows.map((r) => {
+      if (r.supply_id !== supplyId) return r
+      const v = vd.get(supplyId)
+      return {
+        ...r,
+        voltage_v: field === 'voltage_v' ? (next as number) : r.voltage_v,
+        load_a: field === 'design_load_a' ? (next as number) : r.load_a,
+        section: field === 'section' ? (next as string | null) : r.section,
+        vd_pct: v?.vd ?? r.vd_pct,
+        cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct,
+      }
+    }))
+    // Persist.
+    const res = await updateSupplyAction({
+      supplyId,
+      voltageV: field === 'voltage_v' ? Number(next) : undefined,
+      designLoadA: field === 'design_load_a' ? Number(next) : undefined,
+      section: field === 'section' ? (next as 'NORMAL' | 'EMERGENCY' | null) : undefined,
+    })
+    if (res.error) { setLiveSupplies(prevSupplies); setLiveRows(prevRows); return { error: res.error } }
+    return {}
   }
 
   const filtered = useMemo(() => {
@@ -292,8 +336,21 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                   </Td>
                   <Td>{r.from_label}</Td>
                   <Td>{r.to_label}</Td>
-                  <Td align="right">{fmt(r.voltage_v)}</Td>
-                  <Td align="right">{fmt(r.load_a)}</Td>
+                  <Td align="right">
+                    <EditableCell
+                      type="select" align="right" disabled={locked || !canEdit}
+                      value={r.voltage_v} options={VOLTAGE_OPTIONS}
+                      format={(v) => v == null ? '—' : `${v}`}
+                      onSave={(next) => saveSupplyField(r.supply_id, 'voltage_v', next)}
+                    />
+                  </Td>
+                  <Td align="right">
+                    <EditableCell
+                      type="number" align="right" disabled={locked || !canEdit}
+                      value={r.load_a} format={(v) => fmt(typeof v === 'number' ? v : null)}
+                      onSave={(next) => saveSupplyField(r.supply_id, 'design_load_a', next)}
+                    />
+                  </Td>
                   <Td align="right">{fmt(r.size_mm2)}</Td>
                   <Td align="center">{r.cores}</Td>
                   <Td align="center">{r.conductor}</Td>
