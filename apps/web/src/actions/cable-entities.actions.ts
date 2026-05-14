@@ -72,7 +72,7 @@ async function logDeletion(
 const sourceSchema = z.object({
   revisionId: uuid,
   code: z.string().trim().min(1).max(80),
-  type: z.enum(['MINISUB','STANDBY','PV','UTILITY','RMU']),
+  type: z.enum(['COUNCIL_RMU','UTILITY','PV','STANDBY']),
   ratingKva: z.number().positive().optional().nullable(),
   voltageV: z.number().positive().optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
@@ -145,6 +145,7 @@ export async function deleteSourceAction(id: string): Promise<{ ok?: true; error
 const boardSchema = z.object({
   revisionId: uuid,
   code: z.string().trim().min(1).max(80),
+  kind: z.enum(['CONSUMER_RMU','TRANSFORMER','MAIN_BOARD','SUB_BOARD']).optional().nullable(),
   tenantName: z.string().trim().max(200).optional().nullable(),
   breakerRatingA: z.number().positive().optional().nullable(),
   poleConfig: z.enum(['SP','TP']).optional().nullable(),
@@ -169,6 +170,7 @@ export async function addBoardAction(
       revision_id: parsed.data.revisionId,
       organisation_id: guard.orgId,
       code: parsed.data.code,
+      kind: parsed.data.kind ?? null,
       tenant_name: parsed.data.tenantName ?? null,
       breaker_rating_a: parsed.data.breakerRatingA ?? null,
       pole_config: parsed.data.poleConfig ?? null,
@@ -841,5 +843,57 @@ export async function repointSupplyAction(
     await (supabase as any).schema('cable_schedule').from('change_log').insert(events)
   }
   revalidatePath(`/projects/${s.revision.project_id}/cables/${s.revision_id}`)
+  return { ok: true }
+}
+
+// ─── rename actions (C12 — NodesPanel) ──────────────────────────────
+
+const renameSchema = z.object({ id: uuid, code: z.string().trim().min(1).max(80) })
+
+export async function renameSourceAction(id: string, code: string): Promise<{ ok?: true; error?: string }> {
+  const parsed = renameSchema.safeParse({ id, code })
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const supabase = await createClient()
+  const { data: src } = await (supabase as any)
+    .schema('cable_schedule').from('sources')
+    .select('revision_id, organisation_id, code').eq('id', id).single()
+  const s = src as { revision_id?: string; organisation_id?: string; code?: string } | null
+  if (!s?.revision_id) return { error: 'Source not found' }
+  const guard = await assertDraft(supabase, s.revision_id)
+  if ('error' in guard) return { error: guard.error }
+  const { data: { user } } = await supabase.auth.getUser()
+  const { error } = await (supabase as any)
+    .schema('cable_schedule').from('sources').update({ code: parsed.data.code }).eq('id', id)
+  if (error) return { error: error.message }
+  await (supabase as any).schema('cable_schedule').from('change_log').insert({
+    revision_id: s.revision_id, organisation_id: s.organisation_id,
+    entity_type: 'source', entity_id: id, field_name: 'code',
+    old_value: s.code, new_value: parsed.data.code, changed_by: user?.id ?? null,
+  })
+  revalidatePath(`/projects/${guard.projectId}/cables/${s.revision_id}`)
+  return { ok: true }
+}
+
+export async function renameBoardAction(id: string, code: string): Promise<{ ok?: true; error?: string }> {
+  const parsed = renameSchema.safeParse({ id, code })
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const supabase = await createClient()
+  const { data: brd } = await (supabase as any)
+    .schema('cable_schedule').from('boards')
+    .select('revision_id, organisation_id, code').eq('id', id).single()
+  const b = brd as { revision_id?: string; organisation_id?: string; code?: string } | null
+  if (!b?.revision_id) return { error: 'Board not found' }
+  const guard = await assertDraft(supabase, b.revision_id)
+  if ('error' in guard) return { error: guard.error }
+  const { data: { user } } = await supabase.auth.getUser()
+  const { error } = await (supabase as any)
+    .schema('cable_schedule').from('boards').update({ code: parsed.data.code }).eq('id', id)
+  if (error) return { error: error.message }
+  await (supabase as any).schema('cable_schedule').from('change_log').insert({
+    revision_id: b.revision_id, organisation_id: b.organisation_id,
+    entity_type: 'board', entity_id: id, field_name: 'code',
+    old_value: b.code, new_value: parsed.data.code, changed_by: user?.id ?? null,
+  })
+  revalidatePath(`/projects/${guard.projectId}/cables/${b.revision_id}`)
   return { ok: true }
 }
