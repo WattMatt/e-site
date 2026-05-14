@@ -617,15 +617,15 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
           onCancel={() => setRepointing(null)}
           onPick={async (nodeId, kind) => {
             const { row, end } = repointing
-            setRepointing(null)
             const res = await repointSupplyAction({
               supplyId: row.supply_id,
               ...(end === 'from'
                 ? { fromSourceId: kind === 'source' ? nodeId : null, fromBoardId: kind === 'board' ? nodeId : null }
                 : { toBoardId: nodeId }),
             })
-            if (res.error) { alert(`Could not re-route: ${res.error}`) }
+            if (!res.error) setRepointing(null) // close ONLY on success
             // repointSupplyAction revalidates → fresh rows arrive via the Task-8 useEffect re-seed.
+            return res
           }}
         />
       )}
@@ -697,6 +697,8 @@ function Td({
   )
 }
 
+// NOTE: ConfirmDialog and RepointPicker share this fixed-overlay modal shell.
+// If a third modal lands in this file, extract a shared <ModalShell> wrapper.
 function ConfirmDialog({
   title, body, confirmLabel, onConfirm, onCancel,
 }: {
@@ -736,15 +738,24 @@ function RepointPicker({
   current: string
   nodeOptions: NodeOption[]
   onCancel: () => void
-  onPick: (nodeId: string, kind: 'source' | 'board') => void
+  onPick: (nodeId: string, kind: 'source' | 'board') => Promise<{ error?: string }>
 }) {
-  const [selected, setSelected] = useState(current ?? nodeOptions[0]?.id ?? '')
+  const [selectedId, setSelectedId] = useState<string>(
+    nodeOptions.some((n) => n.id === current) ? current : (nodeOptions[0]?.id ?? ''),
+  )
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const selectedOption = nodeOptions.find((n) => n.id === selected)
+  const selectedOption = nodeOptions.find((n) => n.id === selectedId)
 
-  function handlePick() {
-    if (!selectedOption) return
-    onPick(selectedOption.id, selectedOption.kind)
+  async function handlePick() {
+    const opt = nodeOptions.find((n) => n.id === selectedId)
+    if (!opt) return
+    setSaving(true); setError(null)
+    const res = await onPick(opt.id, opt.kind)
+    setSaving(false)
+    if (res.error) setError(res.error)
+    // on success the parent calls setRepointing(null), which unmounts this component
   }
 
   return (
@@ -761,8 +772,8 @@ function RepointPicker({
         </h3>
         <select
           className="ob-input"
-          value={selected}
-          onChange={(e) => setSelected(e.target.value)}
+          value={selectedId}
+          onChange={(e) => setSelectedId(e.target.value)}
           style={{ fontSize: 12 }}
         >
           {nodeOptions.map((n) => (
@@ -771,14 +782,17 @@ function RepointPicker({
             </option>
           ))}
         </select>
+        {error && (
+          <p style={{ fontSize: 11, color: '#dc2626', margin: 0 }}>{error}</p>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
           <button type="button" onClick={onCancel} className="btn-primary-amber" autoFocus
             style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}>
             Cancel
           </button>
           <button type="button" onClick={handlePick} className="btn-primary-amber"
-            disabled={!selectedOption}>
-            Re-route
+            disabled={!selectedOption || saving}>
+            {saving ? 'Re-routing…' : 'Re-route'}
           </button>
         </div>
       </div>
