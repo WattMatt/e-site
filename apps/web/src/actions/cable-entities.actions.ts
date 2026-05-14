@@ -431,10 +431,11 @@ export async function addParallelCableSetAction(
 
   // Empty-supply guard: only bulk-create when the supply has no cables yet.
   // Otherwise fall back to adding a single cable (clamp the count to 1).
-  const { data: existingCables } = await (supabase as any)
+  const { data: existingCables, error: existingErr } = await (supabase as any)
     .schema('cable_schedule').from('cables')
     .select('cable_no').eq('supply_id', supplyId)
-    .order('cable_no', { ascending: false })
+    .order('cable_no', { ascending: false }).limit(1)
+  if (existingErr) return { error: existingErr.message }
   const existing = (existingCables ?? []) as Array<{ cable_no: number }>
   const startNo = (existing[0]?.cable_no ?? 0) + 1
   const effectiveCount = existing.length > 0 ? 1 : parsed.data.count
