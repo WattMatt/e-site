@@ -136,11 +136,14 @@ export function RevisionsList({
                       </>
                     )}
                   </div>
-                  <span style={{
-                    marginLeft: 10, fontFamily: 'var(--font-mono)', fontSize: 11,
-                    color: hoveredId === r.id ? 'var(--c-amber)' : 'var(--c-text-dim)',
-                    letterSpacing: '0.04em',
-                  }}>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      marginLeft: 10, fontFamily: 'var(--font-mono)', fontSize: 11,
+                      color: hoveredId === r.id ? 'var(--c-amber)' : 'var(--c-text-dim)',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
                     Open →
                   </span>
                 </Td>
