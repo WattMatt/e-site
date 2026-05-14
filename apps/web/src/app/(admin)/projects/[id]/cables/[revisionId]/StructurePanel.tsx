@@ -41,29 +41,15 @@ const TYPE_LABEL: Record<string, string> = Object.fromEntries(
   [...SOURCE_TYPES, ...BOARD_KINDS].map((t) => [t.value, t.label]),
 )
 
-export function NodesPanel({ revisionId, nodes, canEdit }: Props) {
+export function StructurePanel({ revisionId, nodes, canEdit }: Props) {
   const router = useRouter()
-  const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState<'source' | 'board' | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<PanelNode | null>(null)
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
 
-  if (!open) {
-    return (
-      <div style={{ marginBottom: 14 }}>
-        <button type="button" className="btn-primary-amber" onClick={() => setOpen(true)}>
-          ⚙ Manage nodes ({nodes.length})
-        </button>
-      </div>
-    )
-  }
-
-  const grouped = [...SOURCE_TYPES, ...BOARD_KINDS].map((t) => ({
-    type: t.value,
-    label: t.label,
-    items: nodes.filter((n) => n.nodeType === t.value),
-  })).filter((g) => g.items.length > 0)
+  const sources = nodes.filter((n) => n.category === 'source')
+  const boards = nodes.filter((n) => n.category === 'board')
 
   function run(fn: () => Promise<{ error?: string }>) {
     setError(null)
@@ -76,13 +62,57 @@ export function NodesPanel({ revisionId, nodes, canEdit }: Props) {
     })
   }
 
+  // Render helper, NOT a nested component — calling it inline avoids a
+  // component boundary, so AddNodeForm's local state never remounts.
+  const renderColumn = (
+    which: 'source' | 'board',
+    items: PanelNode[],
+    emptyHint: string,
+  ) => (
+    <div style={{ flex: 1, minWidth: 260 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span style={{
+          fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.08em',
+          textTransform: 'uppercase', color: 'var(--c-text-mid)',
+        }}>
+          {which === 'source' ? 'Sources' : 'Boards'} ({items.length})
+        </span>
+        {canEdit && (
+          <button type="button" className="btn-primary-amber"
+            style={{ fontSize: 11, padding: '4px 10px' }}
+            onClick={() => setAdding(which)}>
+            + Add {which}
+          </button>
+        )}
+      </div>
+      {items.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--c-text-dim)', fontStyle: 'italic', margin: '4px 0 0' }}>
+          {emptyHint}
+        </p>
+      ) : (
+        items.map((n) => (
+          <NodeRow key={n.id} node={n} canEdit={canEdit} pending={pending}
+            onRename={(code) => run(() => n.category === 'source'
+              ? renameSourceAction(n.id, code) : renameBoardAction(n.id, code))}
+            onDelete={() => setConfirmDelete(n)} />
+        ))
+      )}
+      {adding === which && (
+        <AddNodeForm category={which} revisionId={revisionId} pending={pending}
+          onCancel={() => setAdding(null)}
+          onSubmit={(payload) => run(() => which === 'source'
+            ? addSourceAction(payload as never) : addBoardAction(payload as never))} />
+      )}
+    </div>
+  )
+
   return (
     <div className="data-panel" style={{ padding: 16, marginBottom: 14 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Nodes</h3>
-        <button type="button" onClick={() => setOpen(false)}
-          style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', fontSize: 18, cursor: 'pointer' }}
-          aria-label="Close nodes panel">×</button>
+      <div style={{ marginBottom: 12 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Structure</h3>
+        <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: '2px 0 0' }}>
+          Where power comes from, and the boards it feeds. Build this first, then wire up cables below.
+        </p>
       </div>
 
       {error && (
@@ -90,35 +120,15 @@ export function NodesPanel({ revisionId, nodes, canEdit }: Props) {
           background: 'rgba(220,38,38,0.1)', color: '#dc2626', fontSize: 12 }}>✕ {error}</div>
       )}
 
-      {grouped.map((g) => (
-        <div key={g.type} style={{ marginBottom: 12 }}>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
-            textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 4 }}>{g.label}</div>
-          {g.items.map((n) => (
-            <NodeRow key={n.id} node={n} canEdit={canEdit} pending={pending}
-              onRename={(code) => run(() => n.category === 'source'
-                ? renameSourceAction(n.id, code) : renameBoardAction(n.id, code))}
-              onDelete={() => setConfirmDelete(n)} />
-          ))}
-        </div>
-      ))}
-
-      {canEdit && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-          <button type="button" className="btn-primary-amber" onClick={() => setAdding('source')}>+ Origin node</button>
-          <button type="button" className="btn-primary-amber" onClick={() => setAdding('board')}>+ Distribution node</button>
-        </div>
-      )}
-
-      {adding && (
-        <AddNodeForm category={adding} revisionId={revisionId} pending={pending}
-          onCancel={() => setAdding(null)}
-          onSubmit={(payload) => run(() => adding === 'source'
-            ? addSourceAction(payload as never) : addBoardAction(payload as never))} />
-      )}
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+        {renderColumn('source', sources,
+          'Start here — add where power comes from (a council RMU, generator, etc.).')}
+        {renderColumn('board', boards,
+          'Add the boards power is distributed to (main boards, sub boards, minisubs).')}
+      </div>
 
       {confirmDelete && (
-        <div role="dialog" aria-modal="true" aria-labelledby="nodes-del-title"
+        <div role="dialog" aria-modal="true" aria-labelledby="structure-del-title"
           onClick={(e) => { if (e.target === e.currentTarget) setConfirmDelete(null) }}
           onKeyDown={(e) => { if (e.key === 'Escape') setConfirmDelete(null) }}
           tabIndex={-1}
@@ -126,7 +136,7 @@ export function NodesPanel({ revisionId, nodes, canEdit }: Props) {
             display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div className="data-panel" style={{ padding: 16, minWidth: 340, maxWidth: 460,
             display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--c-panel)' }}>
-            <h3 id="nodes-del-title" style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Remove node</h3>
+            <h3 id="structure-del-title" style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Remove {confirmDelete.category}</h3>
             <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: 0 }}>
               Removing <strong>{confirmDelete.code}</strong> ({TYPE_LABEL[confirmDelete.nodeType]}) will also
               delete <strong>{confirmDelete.blastSupplies}</strong> suppl{confirmDelete.blastSupplies === 1 ? 'y' : 'ies'} and{' '}

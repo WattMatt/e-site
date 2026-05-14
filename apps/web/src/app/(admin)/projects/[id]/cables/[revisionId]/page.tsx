@@ -14,7 +14,7 @@ import {
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
 import { AddEntityPanel } from './AddEntityPanel'
 import { type NodeOption } from './CableScheduleGrid'
-import { NodesPanel, type PanelNode } from './NodesPanel'
+import { StructurePanel, type PanelNode } from './StructurePanel'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 import { ExportMenu } from './ExportMenu'
 
@@ -444,27 +444,13 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 16,
-          marginBottom: 16,
-        }}
-      >
-        <SourcesPanel sources={sources} />
-        <BoardsPanel boards={boards} />
-      </div>
-
+      <StructurePanel revisionId={revision.id} nodes={panelNodes} canEdit={revision.status === 'DRAFT'} />
       {revision.status === 'DRAFT' && (
-        <>
-          <NodesPanel revisionId={revision.id} nodes={panelNodes} canEdit={revision.status === 'DRAFT'} />
-          <AddEntityPanel
-            revisionId={revision.id}
-            sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
-            boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
-          />
-        </>
+        <AddEntityPanel
+          revisionId={revision.id}
+          sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
+          boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
+        />
       )}
 
       {cables.length === 0 ? (
@@ -509,69 +495,3 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   )
 }
 
-function SourcesPanel({ sources }: { sources: SourceRow[] }) {
-  return (
-    <div className="data-panel">
-      <div className="data-panel-header">
-        <span className="data-panel-title">Sources ({sources.length})</span>
-      </div>
-      <div style={{ padding: '12px 18px' }}>
-        {sources.length === 0 ? (
-          <div style={{ color: 'var(--c-text-dim)', fontSize: 13, fontStyle: 'italic' }}>
-            None yet.
-          </div>
-        ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {sources.map((s) => (
-              <li key={s.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--c-text)' }}>
-                  {s.code}
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', letterSpacing: '0.06em' }}>
-                  {s.type}{s.rating_kva ? ` · ${s.rating_kva} kVA` : ''}{s.voltage_v ? ` · ${s.voltage_v} V` : ''}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function BoardsPanel({ boards }: { boards: BoardRow[] }) {
-  return (
-    <div className="data-panel">
-      <div className="data-panel-header">
-        <span className="data-panel-title">Boards ({boards.length})</span>
-      </div>
-      <div style={{ padding: '12px 18px' }}>
-        {boards.length === 0 ? (
-          <div style={{ color: 'var(--c-text-dim)', fontSize: 13, fontStyle: 'italic' }}>
-            None yet.
-          </div>
-        ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {boards.slice(0, 12).map((b) => (
-              <li key={b.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: 'var(--c-text)' }}>
-                  {b.code}
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
-                  {b.breaker_rating_a ? `${b.breaker_rating_a} A` : ''}
-                  {b.section ? ` · ${b.section}` : ''}
-                  {b.tenant_name ? ` · ${b.tenant_name}` : ''}
-                </span>
-              </li>
-            ))}
-            {boards.length > 12 && (
-              <li style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
-                +{boards.length - 12} more
-              </li>
-            )}
-          </ul>
-        )}
-      </div>
-    </div>
-  )
-}
