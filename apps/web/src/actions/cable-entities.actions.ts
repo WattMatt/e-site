@@ -567,16 +567,20 @@ export async function deleteCableAction(id: string): Promise<{ ok?: true; error?
       const { data: sup } = await (supabase as any)
         .schema('cable_schedule').from('supplies')
         .select('voltage_v, design_load_a').eq('id', cable.supply_id).single()
-      await (supabase as any)
+      const { error: supDelErr } = await (supabase as any)
         .schema('cable_schedule').from('supplies').delete().eq('id', cable.supply_id)
-      await logDeletion(supabase, {
-        revisionId: cable.revision_id,
-        organisationId: cable.organisation_id!,
-        entityType: 'supply',
-        entityId: cable.supply_id,
-        label: `Supply ${(sup as any)?.voltage_v ?? '?'}V / ${(sup as any)?.design_load_a ?? '?'}A (auto-removed: empty)`,
-        userId: user?.id ?? null,
-      })
+      // Only log the supply removal if the delete actually succeeded — an
+      // FK / RLS / concurrent-insert failure must not be recorded as a deletion.
+      if (!supDelErr) {
+        await logDeletion(supabase, {
+          revisionId: cable.revision_id,
+          organisationId: cable.organisation_id!,
+          entityType: 'supply',
+          entityId: cable.supply_id,
+          label: `Supply ${(sup as any)?.voltage_v ?? '?'}V / ${(sup as any)?.design_load_a ?? '?'}A (auto-removed: empty)`,
+          userId: user?.id ?? null,
+        })
+      }
     }
   }
   revalidatePath(`/projects/${guard.projectId}/cables/${cable.revision_id}`)

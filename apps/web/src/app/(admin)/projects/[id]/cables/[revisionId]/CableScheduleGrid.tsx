@@ -267,11 +267,21 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
     if (!pendingDelete) return
     const target = pendingDelete
     setPendingDelete(null)
-    const prev = liveRows
-    setLiveRows(liveRows.filter((r) => r.id !== target.id))
+    const prevRows = liveRows
+    const prevCables = liveCables
+    // Optimistic: prune the cable from the raw snapshot and recompute VD so a
+    // surviving parallel sibling reflects its new (higher) volt-drop immediately.
+    const nextCables = liveCables.filter((c) => c.id !== target.id)
+    setLiveCables(nextCables)
+    const vd = recomputeVd(liveSupplies, nextCables)
+    setLiveRows(liveRows.filter((r) => r.id !== target.id).map((r) => {
+      const v = vd.get(r.supply_id)
+      return v ? { ...r, vd_pct: v.vd, cumulative_vd_pct: v.cum } : r
+    }))
     const res = await deleteCableAction(target.id)
     if (res.error) {
-      setLiveRows(prev)
+      setLiveRows(prevRows)
+      setLiveCables(prevCables)
       alert(`Could not delete: ${res.error}`)
     }
   }
@@ -661,16 +671,18 @@ function ConfirmDialog({
   onConfirm: () => void; onCancel: () => void
 }) {
   return (
-    <div role="dialog" aria-modal="true"
+    <div role="dialog" aria-modal="true" aria-labelledby="c12-confirm-dialog-title"
+      tabIndex={-1}
       onClick={(e) => { if (e.target === e.currentTarget) onCancel() }}
+      onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
       <div className="data-panel" style={{ padding: 16, minWidth: 320, maxWidth: 440,
         display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--c-panel)' }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0, color: 'var(--c-text)' }}>{title}</h3>
+        <h3 id="c12-confirm-dialog-title" style={{ fontSize: 14, fontWeight: 600, margin: 0, color: 'var(--c-text)' }}>{title}</h3>
         <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: 0 }}>{body}</p>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
-          <button type="button" onClick={onCancel} className="btn-primary-amber"
+          <button type="button" onClick={onCancel} className="btn-primary-amber" autoFocus
             style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}>
             Cancel
           </button>
