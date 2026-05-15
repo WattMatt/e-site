@@ -168,13 +168,33 @@ function TreeNode({
   const escapeRef = useRef(false)
   useEffect(() => { setCode(node.code) }, [node.code])
 
-  const icon = node.category === 'source' ? '⚡' : '🟦'
+  // Single-char glyph icons (text — not emoji — so they render at the row's
+  // font size, line up, and don't dominate the row).
+  const icon = node.category === 'source' ? '◆' : '▪'
+  const iconColor = node.category === 'source'
+    ? 'var(--c-amber)'
+    : node.alsoFedElsewhere ? 'var(--c-text-dim)' : 'var(--c-text-mid)'
   const f = node.feedSummary
+
+  // Inline action-button style — gives the actions visible breathing room and
+  // a subtle hover affordance so they no longer mash into the node code.
+  const actionBtnBase = {
+    background: 'none',
+    border: '1px solid transparent',
+    cursor: 'pointer',
+    fontSize: 11,
+    padding: '2px 8px',
+    borderRadius: 4,
+    lineHeight: 1.4,
+  } as const
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', paddingLeft: depth * 22 }}>
-        <span aria-hidden="true">{icon}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0', paddingLeft: depth * 22 }}>
+        <span aria-hidden="true" style={{
+          color: iconColor, fontFamily: 'var(--font-mono)', fontSize: 12,
+          width: 14, display: 'inline-block', textAlign: 'center',
+        }}>{icon}</span>
         {editing ? (
           <input className="ob-input" value={code} autoFocus style={{ width: 200 }}
             onChange={(e) => setCode(e.target.value)}
@@ -204,21 +224,24 @@ function TreeNode({
             ↻ also fed elsewhere
           </span>
         )}
+        {/* Spacer pushes the actions to the right of the row — clear visual
+            separation from the node code + edge label. */}
+        <div style={{ flex: 1 }} />
         {canEdit && !editing && !node.alsoFedElsewhere && (
-          <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <button type="button" onClick={() => onFeedBoard(`${node.category}:${node.id}`)} disabled={pending}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-amber)', fontSize: 11 }}>
+              style={{ ...actionBtnBase, color: 'var(--c-amber)', fontWeight: 600 }}>
               + feed a board
             </button>
             <button type="button" onClick={() => setEditing(true)} disabled={pending}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 11 }}>
+              style={{ ...actionBtnBase, color: 'var(--c-text-dim)' }}>
               rename
             </button>
             <button type="button" onClick={() => onDelete(node)} disabled={pending}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 11 }}>
+              style={{ ...actionBtnBase, color: '#dc2626' }}>
               remove
             </button>
-          </>
+          </div>
         )}
       </div>
       {!node.alsoFedElsewhere && node.children.map((child) => (
