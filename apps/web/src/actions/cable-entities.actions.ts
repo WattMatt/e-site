@@ -785,12 +785,46 @@ const SANS_FIELDS = [
   'installationMethod', 'depthMm', 'groupedWith', 'ambientTempC',
 ] as const
 
+/**
+ * Recompute audit — explains how the new derated rating was derived.
+ *
+ * Included on the action response whenever a SANS-affecting field changed.
+ * Engineering observability: a safety-critical calc should always be able to
+ * answer "which table, which row, which factors produced this number?".
+ */
+export interface RecomputeAudit {
+  inputs: {
+    conductor: 'CU' | 'AL'
+    insulation: 'PVC' | 'XLPE' | 'PILC'
+    cores: '3' | '3+E' | '4'
+    sizeMm2: number
+    installationMethod: string | null
+    depthMm: number | null
+    groupedWith: number
+    ambientTempC: number
+  }
+  /** false ⇒ no SANS row matched — `derated_current_rating_a` will be null. */
+  propsFound: boolean
+  /** Pre-derating base rating from the matched SANS row, or null if not found. */
+  baseRating: number | null
+  derate: {
+    depth: number | null
+    thermal: number | null
+    grouping: number | null
+    temperature: number | null
+  }
+}
+
 export async function updateCableAction(
   input: z.infer<typeof updateCableSchema>,
 ): Promise<{
   ok?: true
   error?: string
-  recomputed?: { ohm_per_km: number | null; derated_current_rating_a: number | null }
+  recomputed?: {
+    ohm_per_km: number | null
+    derated_current_rating_a: number | null
+    audit?: RecomputeAudit
+  }
 }> {
   const parsed = updateCableSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
@@ -871,7 +905,11 @@ export async function updateCableAction(
   }
 
   // Manual Ω/km override. A SANS-affecting change always clears the override.
-  let recomputed: { ohm_per_km: number | null; derated_current_rating_a: number | null } | undefined
+  let recomputed: {
+    ohm_per_km: number | null
+    derated_current_rating_a: number | null
+    audit?: RecomputeAudit
+  } | undefined
   if (sansChanged) {
     // NOTE: intentionally NOT using resolveCableElectricals — this recompute
     // path has different behaviour (no manual-override branch; reads
@@ -905,7 +943,37 @@ export async function updateCableAction(
     patch.derated_current_rating_a = deratedA
     patch.manual_override = false
     if (c.manual_override) log('manual_override', true, false)
-    recomputed = { ohm_per_km: ohm, derated_current_rating_a: deratedA }
+    const audit: RecomputeAudit = {
+      inputs: {
+        conductor: next.conductor,
+        insulation: next.insulation,
+        cores: next.cores,
+        sizeMm2: next.sizeMm2,
+        installationMethod: next.installationMethod,
+        depthMm: next.depthMm,
+        groupedWith: next.groupedWith,
+        ambientTempC: next.ambientTempC,
+      },
+      propsFound: props != null,
+      baseRating: baseRating ?? null,
+      derate: {
+        depth: derate.depth,
+        thermal: derate.thermal,
+        grouping: derate.grouping,
+        temperature: derate.temperature,
+      },
+    }
+    // Server-side observability — appears in Vercel function logs / local dev console.
+    // A safety-critical recompute always leaves a trail of how the new rating was
+    // derived (which SANS table inputs, what factors, final result).
+    console.log('[cable-recompute]', {
+      cableId: c.id,
+      revisionId: c.revision_id,
+      ...audit,
+      ohm,
+      deratedA,
+    })
+    recomputed = { ohm_per_km: ohm, derated_current_rating_a: deratedA, audit }
   } else if (parsed.data.ohmPerKmOverride !== undefined) {
     const ov = parsed.data.ohmPerKmOverride
     log('ohm_per_km', c.ohm_per_km == null ? null : Number(c.ohm_per_km), ov)

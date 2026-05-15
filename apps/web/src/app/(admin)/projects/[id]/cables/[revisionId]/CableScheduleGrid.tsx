@@ -269,11 +269,27 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
     })
     if (res.error) { setLiveRows(prevRows); setLiveCables(prevCables); return { error: res.error } }
     if (res.recomputed) {
+      // Engineering observability: surface the recompute trail to anyone
+      // with DevTools open. `audit` (added when a SANS-affecting field
+      // changed) reveals exactly which table/row/factors produced the new
+      // rating — invaluable when a Cu→Al switch produces a surprising result.
+      if (res.recomputed.audit) {
+        // eslint-disable-next-line no-console
+        console.log('[cable-recompute]', { cableId, field, ...res.recomputed })
+      }
       setLiveRows((cur) => cur.map((r) => r.id === cableId
         ? {
             ...r,
             ohm_per_km: res.recomputed!.ohm_per_km,
-            derated_rating_a: res.recomputed!.derated_current_rating_a ?? r.derated_rating_a,
+            // Calc honesty: when a SANS-affecting field changed, the recompute
+            // is authoritative — null means "no SANS row matched, cannot
+            // derate honestly" and must render as "—", NOT silently fall back
+            // to the stale value (which would lie to the engineer). The
+            // ohm-override path uses null as a "no change" sentinel, so the
+            // fallback only applies there.
+            derated_rating_a: field === 'ohm_per_km_override'
+              ? r.derated_rating_a
+              : res.recomputed!.derated_current_rating_a,
             manual_override: field === 'ohm_per_km_override' ? r.manual_override : false,
           }
         : r))
@@ -580,7 +596,14 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                     {r.cumulative_vd_pct > 0 ? fmt(r.cumulative_vd_pct, 2) : '—'}
                   </Td>
                   <Td align="right" style={{ color: utilTooHot ? '#dc2626' : 'var(--c-text)' }}>
-                    {fmt(r.derated_rating_a, 0)}
+                    <span
+                      title={r.derated_rating_a == null
+                        ? `No SANS rating data for ${r.size_mm2}mm² ${r.cores}-core ${r.conductor === 'CU' ? 'Cu' : 'Al'} ${r.insulation} — pick a different size or add a project override in the SANS library.`
+                        : undefined}
+                      style={r.derated_rating_a == null ? { cursor: 'help' } : undefined}
+                    >
+                      {fmt(r.derated_rating_a, 0)}
+                    </span>
                     {r.supply_under_rated && (
                       <span
                         title={`Supply under-rated: ${Math.round(r.combined_capacity_a)} A combined capacity < ${r.load_a ?? '?'} A design load`}
