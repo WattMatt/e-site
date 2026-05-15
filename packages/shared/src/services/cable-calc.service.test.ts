@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   activeLengthM,
+  deratedRating,
   requiredParallelSet,
   supplyParallelCapacity,
   type CableForCalc,
@@ -102,5 +103,16 @@ describe('supplyParallelCapacity', () => {
 
   it('is 0 for a supply with no cables', () => {
     expect(supplyParallelCapacity([])).toBe(0)
+  })
+})
+
+describe('deratedRating', () => {
+  it('returns null when any derate factor is explicitly null (missing SANS table)', () => {
+    expect(deratedRating(340, { depth: null, thermal: 1, grouping: 1, temperature: 1 })).toBeNull()
+    expect(deratedRating(340, { depth: 1, thermal: 1, grouping: 1, temperature: null })).toBeNull()
+  })
+
+  it('still multiplies through when all four factors are real numbers', () => {
+    expect(deratedRating(400, { depth: 0.9, thermal: 1, grouping: 0.8, temperature: 1 })).toBeCloseTo(288, 5)
   })
 })

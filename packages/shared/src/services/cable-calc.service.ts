@@ -220,6 +220,15 @@ export function deratedRating(
   },
 ): number | null {
   if (baseRatingA == null || !Number.isFinite(baseRatingA)) return null
+  // A factor that is explicitly null means a SANS derate table is genuinely
+  // missing — we cannot honestly derate, so return null rather than silently
+  // treating it as 1. An omitted (undefined) factor still defaults to 1.
+  if (
+    factors.depth === null || factors.thermal === null ||
+    factors.grouping === null || factors.temperature === null
+  ) {
+    return null
+  }
   const product =
     (factors.depth ?? 1) *
     (factors.thermal ?? 1) *

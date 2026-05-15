@@ -551,10 +551,10 @@ async function resolveCableElectricals(
   },
 ): Promise<{
   ohm_per_km: number | null
-  derate_depth: number
-  derate_thermal: number
-  derate_grouping: number
-  derate_temp: number
+  derate_depth: number | null
+  derate_thermal: number | null
+  derate_grouping: number | null
+  derate_temp: number | null
   derated_current_rating_a: number | null
   standard: string
   manual_override: boolean

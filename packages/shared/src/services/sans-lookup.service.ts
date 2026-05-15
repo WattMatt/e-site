@@ -192,10 +192,10 @@ export async function lookupDeratingFactors(
     insulation: 'PVC' | 'XLPE' | 'PILC'
   },
 ): Promise<{
-  depth: number
-  thermal: number
-  grouping: number
-  temperature: number
+  depth: number | null
+  thermal: number | null
+  grouping: number | null
+  temperature: number | null
 }> {
   // SANS 1507 LV derating tables 6.3.1–6.3.6 (migration 00057, source-workbook
   // shape). Each tabulates a direct-in-ground and an in-duct factor; the
@@ -221,14 +221,14 @@ async function lookupFactor(
   key: string,
   value: number,
   factorKey = 'factor',
-): Promise<number> {
+): Promise<number | null> {
   const { data: t } = await (supabase as any)
     .schema('cable_schedule')
     .from('sans_tables')
     .select('id')
     .eq('code', code)
     .maybeSingle()
-  if (!t) return 1
+  if (!t) return null
   const { data: rows } = await (supabase as any)
     .schema('cable_schedule')
     .from('sans_rows')
@@ -236,7 +236,7 @@ async function lookupFactor(
     .eq('table_id', (t as { id: string }).id)
     .order('sort_key', { ascending: true })
   const list = ((rows ?? []) as Array<{ sort_key: number; row_data: Record<string, unknown> }>)
-  if (list.length === 0) return 1
+  if (list.length === 0) return null
 
   // Find the nearest sort_key ≤ value. If value is below the lowest
   // tabulated key, use the lowest. If value is above the highest, use the
@@ -247,7 +247,7 @@ async function lookupFactor(
     else break
   }
   const f = chosen.row_data[factorKey]
-  return typeof f === 'number' ? f : 1
+  return typeof f === 'number' ? f : null
 }
 
 function normalise(r: Record<string, unknown>): CablePropertyLookup {
