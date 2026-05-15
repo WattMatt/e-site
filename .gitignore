@@ -24,11 +24,15 @@ build/
 .env.test
 .env.test.local
 .env.production.local
+# Local env backups (never commit — contain secrets)
+*.bak
+*.session-bak
 
 # Supabase
 supabase/.temp/
 supabase/.branches/
 **/supabase/.temp/
+**/supabase/.branches/
 
 # OS
 .DS_Store
@@ -65,3 +69,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .vercel
+
+# iCloud sync conflict copies (e.g. "page 2.tsx", "pnpm-lock 2.yaml")
+* 2.*
+
+# Source files renamed to disable them in local dev
+*.dev-disabled
+
+# superpowers skill/brainstorm session state
+.superpowers/
