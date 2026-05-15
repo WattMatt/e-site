@@ -224,6 +224,17 @@ function TreeNode({
             ↻ also fed elsewhere
           </span>
         )}
+        {node.ringClosesBackTo && (
+          <span
+            title={`Ring main closure — the cable from this node feeds back to ${node.ringClosesBackTo}, completing the ring.`}
+            style={{
+              fontFamily: 'var(--font-mono)', fontSize: 10,
+              color: 'var(--c-amber)', fontStyle: 'italic', cursor: 'help',
+            }}
+          >
+            ↻ closes ring back to {node.ringClosesBackTo}
+          </span>
+        )}
         {/* Spacer pushes the actions to the right of the row — clear visual
             separation from the node code + edge label. */}
         <div style={{ flex: 1 }} />

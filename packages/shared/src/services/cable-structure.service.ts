@@ -7,9 +7,28 @@
  *   - roots  = every source, with its fed subtree
  *   - unfed  = boards with no incoming supply, each with its own subtree
  *
- * A board fed by more than one supply appears under each feeder; the
- * 2nd-and-later occurrences are flagged `alsoFedElsewhere` and not
- * re-expanded. A visited/expanded guard makes a cyclic graph terminate.
+ * ### Ring topology
+ *
+ * Cable schedules model **ring mains** as cable daisy-chains with a closing
+ * back-edge — e.g. RMU → T1 → T2 → T3 → T4 → T5 → RMU (the last cable is the
+ * ring closure). Rendering this literally as a deep nested tree is misleading
+ * — to an engineer the 5 transformers are *peers on the ring*, not parents
+ * and grandchildren of each other.
+ *
+ * This function detects rings (cycles in the directed supply graph reached
+ * via DFS from a source) and flattens them: every ring member becomes a
+ * direct child of the **ring entry parent** (the node where the ring closes
+ * back), in cable-order. The closing back-edge is annotated on the last
+ * ring member via `ringClosesBackTo` so the ring topology is still visible.
+ *
+ * Each ring member keeps its own non-ring downstream subtree (e.g. a
+ * transformer's main board + sub-boards still nest under that transformer).
+ *
+ * ### Multi-fed boards (non-ring)
+ *
+ * A board fed by more than one supply that **doesn't** form a ring (e.g.
+ * normal + standby feeds) still appears under each feeder; the 2nd-and-later
+ * occurrences are flagged `alsoFedElsewhere` and not re-expanded.
  *
  * No DB access — the per-edge `feedSummary` and the blast-radius counts are
  * supplied by the caller via the `decorate` callbacks, so this stays pure
@@ -36,8 +55,18 @@ export interface StructureTreeNode {
   /** The supply edge feeding this node — null for sources and unfed-board roots. */
   feedSummary: StructureFeedSummary | null
   children: StructureTreeNode[]
-  /** True when this is a 2nd-or-later occurrence of a multi-fed board (or a cycle back-edge). */
+  /**
+   * True when this is a 2nd-or-later occurrence of a board genuinely fed by
+   * more than one supply (e.g. normal + standby). Distinct from a ring
+   * closure: ring members are flattened into siblings, not marked here.
+   */
   alsoFedElsewhere: boolean
+  /**
+   * Set on the last member of a detected ring — value is the `code` of the
+   * ring entry parent that the closing back-edge cable connects to.
+   * Renderers should show this as "↻ closes ring back to <code>".
+   */
+  ringClosesBackTo: string | null
   /** Cascade-delete counts for the remove-confirm modal. */
   blastSupplies: number
   blastCables: number
@@ -62,6 +91,9 @@ export function buildStructureTree(
   },
 ): { roots: StructureTreeNode[]; unfed: StructureTreeNode[] } {
   const boardById = new Map(boards.map((b) => [b.id, b] as const))
+  const sourceById = new Map(sources.map((s) => [s.id, s] as const))
+  const nameOf = (id: string): string =>
+    sourceById.get(id)?.code ?? boardById.get(id)?.code ?? '?'
 
   // supplies grouped by their from-node id (source XOR board)
   const suppliesByFrom = new Map<string, TreeSupply[]>()
@@ -73,8 +105,86 @@ export function buildStructureTree(
     suppliesByFrom.set(fromId, list)
   }
 
-  const fedBoardIds = new Set(supplies.map((s) => s.to_board_id))
-  // boards whose full subtree has already been emitted somewhere in the forest
+  // -------------------------------------------------------------------------
+  // Pass 1 — Detect rings via DFS from every source.
+  //
+  // A ring is signalled by a back-edge: a supply whose `to_board_id` is
+  // already on the current DFS path (an ancestor of the supply's `from`).
+  // When we see one, the ring members are the path slice between the
+  // back-edge target (the entry parent) and the supply's from-node, in
+  // cable order.
+  //
+  // Outputs:
+  //   ringMember:        member_id  →  { entryParent_id, order }
+  //   ringEntry:         entry_id   →  ordered member ids (for sibling render)
+  //   closureSupplyIds:  supply ids that are ring closures (skip when walking
+  //                      a ring member's children — they don't recurse)
+  //   closureAnnotation: last_member_id → entry parent's display code
+  // -------------------------------------------------------------------------
+
+  const ringMember = new Map<string, { entryParent: string; order: number }>()
+  const ringEntry = new Map<string, string[]>()
+  const closureSupplyIds = new Set<string>()
+  const closureAnnotation = new Map<string, string>()
+
+  function detectRingsFrom(rootId: string) {
+    const path: string[] = []
+    const pathSet = new Set<string>()
+
+    function walk(currentId: string) {
+      path.push(currentId)
+      pathSet.add(currentId)
+
+      for (const sup of suppliesByFrom.get(currentId) ?? []) {
+        const to = sup.to_board_id
+        if (pathSet.has(to)) {
+          // Back-edge → ring closure cable.
+          closureSupplyIds.add(sup.id)
+          const idx = path.indexOf(to)
+          if (idx >= 0) {
+            const entryParentId = to
+            const members = path.slice(idx + 1) // chain from first ring member to currentId
+            const existingOrder = ringEntry.get(entryParentId) ?? []
+            for (const memberId of members) {
+              if (!ringMember.has(memberId)) {
+                ringMember.set(memberId, { entryParent: entryParentId, order: existingOrder.length })
+                existingOrder.push(memberId)
+              }
+            }
+            ringEntry.set(entryParentId, existingOrder)
+            const lastMember = members[members.length - 1]
+            if (lastMember && !closureAnnotation.has(lastMember)) {
+              closureAnnotation.set(lastMember, nameOf(entryParentId))
+            }
+          }
+          // Don't recurse — `to` is on the path
+        } else {
+          walk(to)
+        }
+      }
+
+      path.pop()
+      pathSet.delete(currentId)
+    }
+
+    walk(rootId)
+  }
+
+  for (const s of sources) detectRingsFrom(s.id)
+
+  // -------------------------------------------------------------------------
+  // Pass 2 — Build the tree, applying ring flattening.
+  // -------------------------------------------------------------------------
+
+  // The first supply whose to_board_id == X — used as the "feeding supply"
+  // when a ring member is added under its entry parent instead of its
+  // immediate supply-graph parent.
+  const firstSupplyTo = new Map<string, string>()
+  for (const s of supplies) {
+    if (!firstSupplyTo.has(s.to_board_id)) firstSupplyTo.set(s.to_board_id, s.id)
+  }
+
+  // Boards whose subtree has already been emitted (cross-tree dedupe).
   const expanded = new Set<string>()
 
   function build(
@@ -85,8 +195,6 @@ export function buildStructureTree(
     feedingSupplyId: string | null,
     visiting: Set<string>,
   ): StructureTreeNode {
-    // A board already expanded elsewhere, or a cycle back-edge into a node we're
-    // currently inside, becomes a leaf marker — no children, flagged.
     const isRepeat = category === 'board' && (expanded.has(id) || visiting.has(id))
     const node: StructureTreeNode = {
       id,
@@ -96,26 +204,62 @@ export function buildStructureTree(
       feedSummary: feedingSupplyId ? decorate.feedSummaryFor(feedingSupplyId) : null,
       children: [],
       alsoFedElsewhere: isRepeat,
+      ringClosesBackTo: closureAnnotation.get(id) ?? null,
       ...decorate.blastFor(id, category),
     }
     if (isRepeat) return node
     if (category === 'board') expanded.add(id)
+
     const nextVisiting = new Set(visiting)
     nextVisiting.add(id)
-    for (const sup of suppliesByFrom.get(id) ?? []) {
-      const child = boardById.get(sup.to_board_id)
-      if (!child) continue
-      node.children.push(build(child.id, child.code, 'board', child.kind, sup.id, nextVisiting))
+
+    const childrenAdded = new Set<string>()
+
+    // (a) If this node is a ring entry parent, render every ring member as a
+    //     direct child in cable-order. Each member is fed by whichever supply
+    //     targets it (the first cable in firstSupplyTo).
+    for (const memberId of ringEntry.get(id) ?? []) {
+      if (childrenAdded.has(memberId)) continue
+      const memberBoard = boardById.get(memberId)
+      if (!memberBoard) continue
+      childrenAdded.add(memberId)
+      const feedId = firstSupplyTo.get(memberId) ?? null
+      node.children.push(build(
+        memberBoard.id, memberBoard.code, 'board', memberBoard.kind,
+        feedId, nextVisiting,
+      ))
     }
+
+    // (b) Process this node's outgoing supplies for all non-ring children.
+    for (const sup of suppliesByFrom.get(id) ?? []) {
+      // Skip the ring-closure cable from this ring member back to the entry
+      // parent — already annotated via `ringClosesBackTo`.
+      if (closureSupplyIds.has(sup.id)) continue
+      const childId = sup.to_board_id
+      if (childrenAdded.has(childId)) continue
+      // If childId is a ring member whose entry parent isn't us, skip — its
+      // entry parent already added it (or will). This breaks the daisy-chain
+      // edge from one ring member to the next.
+      const childRing = ringMember.get(childId)
+      if (childRing && childRing.entryParent !== id) continue
+      const child = boardById.get(childId)
+      if (!child) continue
+      childrenAdded.add(childId)
+      node.children.push(build(
+        child.id, child.code, 'board', child.kind, sup.id, nextVisiting,
+      ))
+    }
+
     return node
   }
 
   const roots = sources.map((s) => build(s.id, s.code, 'source', s.type, null, new Set()))
 
+  const fedBoardIds = new Set(supplies.map((s) => s.to_board_id))
   const unfed: StructureTreeNode[] = []
   for (const b of boards) {
-    if (fedBoardIds.has(b.id)) continue // fed → already sits in some subtree
-    if (expanded.has(b.id)) continue // defensive — already emitted
+    if (fedBoardIds.has(b.id)) continue
+    if (expanded.has(b.id)) continue
     unfed.push(build(b.id, b.code, 'board', b.kind, null, new Set()))
   }
 
