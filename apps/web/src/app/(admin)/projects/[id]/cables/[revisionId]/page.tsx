@@ -268,6 +268,12 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     capacityBySupply.set(sup.id, supplyParallelCapacity(supCables))
   }
 
+  // Actual cable count per supply — drives the per-cable load share.
+  const cableCountBySupply = new Map<string, number>()
+  for (const sup of supplies) {
+    cableCountBySupply.set(sup.id, cables.filter((c) => c.supply_id === sup.id).length)
+  }
+
   // Build grid rows: one row per cable, with FROM / TO / VD / cumulative VD
   // resolved up-front.
   const supplyById = new Map(supplies.map((s) => [s.id, s] as const))
@@ -304,6 +310,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         to_label: '?',
         voltage_v: null,
         load_a: null,
+        per_cable_load_a: null,
         size_mm2: c.size_mm2,
         cores: c.cores,
         conductor: c.conductor,
@@ -342,6 +349,10 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       to_label: nodeLabel(supply.to_board_id),
       voltage_v: supply.voltage_v,
       load_a: supply.design_load_a,
+      per_cable_load_a: (() => {
+        const n = cableCountBySupply.get(c.supply_id) ?? 0
+        return n > 0 && supply.design_load_a != null ? supply.design_load_a / n : null
+      })(),
       size_mm2: c.size_mm2,
       cores: c.cores,
       conductor: c.conductor,

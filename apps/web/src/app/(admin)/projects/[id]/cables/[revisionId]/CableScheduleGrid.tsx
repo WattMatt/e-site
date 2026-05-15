@@ -36,6 +36,8 @@ export interface ScheduleRow {
   to_label: string
   voltage_v: number | null
   load_a: number | null
+  /** Per-cable current share: the supply's design load divided by the actual number of cables on it. Null when unknown. */
+  per_cable_load_a: number | null
   size_mm2: number
   cores: string
   conductor: 'CU' | 'AL'
@@ -392,6 +394,7 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
               <Th w={120}>To</Th>
               <Th w={70} align="right">V</Th>
               <Th w={70} align="right">A</Th>
+              <Th w={70} align="right">A / cable</Th>
               <Th w={70} align="right">mm²</Th>
               <Th w={55} align="center">Cores</Th>
               <Th w={55} align="center">Cond</Th>
@@ -506,6 +509,9 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                       value={r.load_a} format={(v) => fmt(typeof v === 'number' ? v : null)}
                       onSave={(next) => saveSupplyField(r.supply_id, 'design_load_a', next)}
                     />
+                  </Td>
+                  <Td align="right">
+                    {r.per_cable_load_a == null ? '—' : fmt(r.per_cable_load_a, 0)}
                   </Td>
                   <Td align="right">
                     <EditableCell type="select" align="right" disabled={locked || !canEdit}
