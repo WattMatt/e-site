@@ -175,7 +175,13 @@ export class DropboxProvider implements CloudStorageProvider {
     const parentPath = opts.parentFolderId
       ? await this.resolvePathFromId(opts.parentFolderId, opts.accessToken)
       : ''
-    const path = `${parentPath}/${opts.name}`
+    // Defensive normalisation:
+    //   - collapse any double slashes ("/foo//bar" → "/foo/bar") so empty
+    //     parent paths don't produce malformed input,
+    //   - ensure leading slash (Dropbox rejects paths without one),
+    //   - strip trailing whitespace which silently fails to match folder names.
+    const rawPath = `${parentPath}/${opts.name}`
+    const path = ('/' + rawPath.replace(/^\/+/, '').trim()).replace(/\/+/g, '/')
     const res = await fetch(`${API_BASE}/files/create_folder_v2`, {
       method: 'POST',
       headers: await this.namespaceHeaders(opts.accessToken, {

@@ -170,7 +170,8 @@ export class DropboxProvider implements CloudStorageProvider {
     const parentPath = opts.parentFolderId
       ? await this.resolvePathFromId(opts.parentFolderId, opts.accessToken)
       : ''
-    const path = `${parentPath}/${opts.name}`
+    const rawPath = `${parentPath}/${opts.name}`
+    const path = ('/' + rawPath.replace(/^\/+/, '').trim()).replace(/\/+/g, '/')
     const res = await fetch(`${API_BASE}/files/create_folder_v2`, {
       method: 'POST',
       headers: await this.namespaceHeaders(opts.accessToken, {

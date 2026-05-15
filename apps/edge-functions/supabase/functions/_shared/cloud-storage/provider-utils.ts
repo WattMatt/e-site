@@ -116,7 +116,13 @@ export async function asProviderError(
     }
     code = code ?? (j.error_summary as string) ?? (j.error_description as string)
   } catch { /* swallow */ }
-  const tail = code ? ` (${String(code)})` : ''
+  let tail = ''
+  if (code) {
+    tail = ` (${String(code)})`
+  } else if (body) {
+    const trimmed = body.replace(/\s+/g, ' ').trim().slice(0, 240)
+    if (trimmed) tail = ` — ${trimmed}`
+  }
   return new CloudStorageError(
     `${provider} ${context} failed: HTTP ${res.status}${tail}`,
     provider,

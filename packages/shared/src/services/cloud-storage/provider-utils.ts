@@ -124,7 +124,18 @@ export async function asProviderError(
     }
     code = code ?? (j.error_summary as string) ?? (j.error_description as string)
   } catch { /* swallow */ }
-  const tail = code ? ` (${String(code)})` : ''
+  // Fall back to a body excerpt when no recognisable error code is in the
+  // payload — Dropbox 400s for malformed requests often return plain-text
+  // "Error in call to API function …" that doesn't parse as JSON, and
+  // surfacing it is the difference between "HTTP 400" and an actionable
+  // message. Trim to 240 chars to keep the UI flash readable.
+  let tail = ''
+  if (code) {
+    tail = ` (${String(code)})`
+  } else if (body) {
+    const trimmed = body.replace(/\s+/g, ' ').trim().slice(0, 240)
+    if (trimmed) tail = ` — ${trimmed}`
+  }
   return new CloudStorageError(
     `${provider} ${context} failed: HTTP ${res.status}${tail}`,
     provider,
