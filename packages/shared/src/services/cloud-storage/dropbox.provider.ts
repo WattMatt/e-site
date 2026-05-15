@@ -2,6 +2,7 @@ import type {
   AuthorizeOptions,
   CloudItem,
   CloudStorageProvider,
+  CreateFolderOptions,
   DownloadOptions,
   DownloadResult,
   ExchangeCodeOptions,
@@ -9,6 +10,7 @@ import type {
   ListFolderResult,
   ProviderName,
   TokenBundle,
+  UploadFileOptions,
 } from './types'
 import { asProviderError, getProviderCredentials, postForm, sortCloudItems } from './provider-utils'
 
@@ -155,6 +157,85 @@ export class DropboxProvider implements CloudStorageProvider {
       contentLength,
       filename,
     }
+  }
+
+  async createFolder(opts: CreateFolderOptions): Promise<CloudItem> {
+    // Dropbox's /files/create_folder_v2 takes a full path, not parent-id +
+    // name. Resolve the parent's id-or-path to a path_display first, then
+    // concat. parentFolderId === null means root of the resolved namespace.
+    const parentPath = opts.parentFolderId
+      ? await this.resolvePathFromId(opts.parentFolderId, opts.accessToken)
+      : ''
+    const path = `${parentPath}/${opts.name}`
+    const res = await fetch(`${API_BASE}/files/create_folder_v2`, {
+      method: 'POST',
+      headers: await this.namespaceHeaders(opts.accessToken, {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({ path, autorename: false }),
+    })
+    if (!res.ok) throw await asProviderError(res, 'dropbox', 'create folder')
+    const j = (await res.json()) as { metadata: DropboxFileEntry }
+    return toCloudItem(j.metadata)
+  }
+
+  async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
+    // /files/upload accepts up to 150 MB in a single shot. Larger files
+    // need /files/upload_session — Phase-2.
+    const parentPath = await this.resolvePathFromId(opts.parentFolderId, opts.accessToken)
+    const path = `${parentPath}/${opts.name}`
+    const res = await fetch(`${CONTENT_BASE}/files/upload`, {
+      method: 'POST',
+      headers: await this.namespaceHeaders(opts.accessToken, {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': 'application/octet-stream',
+        // Dropbox-API-Arg carries the upload metadata. mode=add fails on
+        // conflict (autorename=false), which is what we want — caller
+        // should pre-dedup.
+        'Dropbox-API-Arg': JSON.stringify({
+          path,
+          mode: 'add',
+          autorename: false,
+          mute: true,
+          strict_conflict: false,
+        }),
+      }),
+      // Cast through BodyInit — Uint8Array IS valid at runtime (it's an
+      // ArrayBufferView, which is a BufferSource, which is a BodyInit),
+      // but TS 5.7's stricter Uint8Array<ArrayBufferLike> shape misses
+      // the BufferSource overlap. Cast is the minimal-disruption fix.
+      body: opts.body as unknown as BodyInit,
+    })
+    if (!res.ok) throw await asProviderError(res, 'dropbox', 'upload')
+    const j = (await res.json()) as DropboxFileEntry
+    return toCloudItem(j)
+  }
+
+  /**
+   * Dropbox accepts both `path: "id:abc"` AND `path: "/foo/bar"` in most
+   * /files/* endpoints, BUT /files/create_folder_v2 + /files/upload need
+   * a literal path that can be composed with a child segment ("/Name").
+   * If the caller already passed a path-style string (starts with "/" or
+   * empty for root), return as-is. Otherwise round-trip via get_metadata
+   * to resolve the id → path. No cache (paths can change via rename).
+   */
+  private async resolvePathFromId(
+    idOrPath: string,
+    accessToken: string,
+  ): Promise<string> {
+    if (idOrPath === '' || idOrPath.startsWith('/')) return idOrPath
+    const res = await fetch(`${API_BASE}/files/get_metadata`, {
+      method: 'POST',
+      headers: await this.namespaceHeaders(accessToken, {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({ path: idOrPath }),
+    })
+    if (!res.ok) throw await asProviderError(res, 'dropbox', 'get_metadata')
+    const j = (await res.json()) as DropboxFileEntry
+    return j.path_display ?? j.path_lower ?? ''
   }
 
   // ─────────────────────────────────────────────────────────────────────

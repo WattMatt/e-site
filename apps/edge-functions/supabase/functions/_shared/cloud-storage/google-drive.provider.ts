@@ -8,6 +8,7 @@ import type {
   AuthorizeOptions,
   CloudItem,
   CloudStorageProvider,
+  CreateFolderOptions,
   DownloadOptions,
   DownloadResult,
   ExchangeCodeOptions,
@@ -15,6 +16,7 @@ import type {
   ListFolderResult,
   ProviderName,
   TokenBundle,
+  UploadFileOptions,
 } from './types.ts'
 import { asProviderError, getProviderCredentials, postForm } from './provider-utils.ts'
 
@@ -152,6 +154,63 @@ export class GoogleDriveProvider implements CloudStorageProvider {
       contentLength: meta.size ? Number(meta.size) : undefined,
       filename: meta.name,
     }
+  }
+
+  async createFolder(opts: CreateFolderOptions): Promise<CloudItem> {
+    const u = new URL(`${API_BASE}/files`)
+    u.searchParams.set('supportsAllDrives', 'true')
+    u.searchParams.set('fields', FILE_FIELDS)
+    const res = await fetch(u.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: opts.name,
+        mimeType: FOLDER_MIME,
+        parents: opts.parentFolderId ? [opts.parentFolderId] : undefined,
+      }),
+    })
+    if (!res.ok) throw await asProviderError(res, 'google_drive', 'create folder')
+    const f = (await res.json()) as DriveFile
+    return toDriveItem(f)
+  }
+
+  async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
+    const boundary = `b${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
+    const mime = opts.mimeType ?? 'application/octet-stream'
+    const metaJson = JSON.stringify({
+      name: opts.name,
+      parents: [opts.parentFolderId],
+      mimeType: opts.mimeType,
+    })
+    const enc = new TextEncoder()
+    const head = enc.encode(
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metaJson}\r\n` +
+        `--${boundary}\r\nContent-Type: ${mime}\r\n\r\n`,
+    )
+    const tail = enc.encode(`\r\n--${boundary}--`)
+    const body = new Uint8Array(head.length + opts.body.length + tail.length)
+    body.set(head, 0)
+    body.set(opts.body, head.length)
+    body.set(tail, head.length + opts.body.length)
+
+    const u = new URL('https://www.googleapis.com/upload/drive/v3/files')
+    u.searchParams.set('uploadType', 'multipart')
+    u.searchParams.set('supportsAllDrives', 'true')
+    u.searchParams.set('fields', FILE_FIELDS)
+    const res = await fetch(u.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body,
+    })
+    if (!res.ok) throw await asProviderError(res, 'google_drive', 'upload')
+    const f = (await res.json()) as DriveFile
+    return toDriveItem(f)
   }
 
   private async getEmail(accessToken: string): Promise<string> {

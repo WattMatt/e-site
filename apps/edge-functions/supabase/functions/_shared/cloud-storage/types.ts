@@ -93,6 +93,20 @@ export interface DownloadOptions {
   accessToken: string
 }
 
+export interface CreateFolderOptions {
+  name: string
+  parentFolderId: string | null
+  accessToken: string
+}
+
+export interface UploadFileOptions {
+  name: string
+  parentFolderId: string
+  body: Uint8Array
+  mimeType?: string
+  accessToken: string
+}
+
 /**
  * The provider abstraction. All methods are async; HTTP / API errors
  * surface as CloudStorageError (see provider-utils.ts).
@@ -124,4 +138,10 @@ export interface CloudStorageProvider {
 
   /** Stream a file's content. Caller pipes the body to Supabase Storage. */
   downloadFile(opts: DownloadOptions): Promise<DownloadResult>
+
+  /** Create a folder under a parent. Returns the new folder's CloudItem. */
+  createFolder(opts: CreateFolderOptions): Promise<CloudItem>
+
+  /** Upload a file under a parent. Returns the new file's CloudItem. */
+  uploadFile(opts: UploadFileOptions): Promise<CloudItem>
 }

@@ -8,6 +8,7 @@ import type {
   AuthorizeOptions,
   CloudItem,
   CloudStorageProvider,
+  CreateFolderOptions,
   DownloadOptions,
   DownloadResult,
   ExchangeCodeOptions,
@@ -15,6 +16,7 @@ import type {
   ListFolderResult,
   ProviderName,
   TokenBundle,
+  UploadFileOptions,
 } from './types.ts'
 import { asProviderError, getProviderCredentials, postForm } from './provider-utils.ts'
 
@@ -144,6 +146,44 @@ export class OneDriveProvider implements CloudStorageProvider {
       contentLength: meta.size,
       filename: meta.name,
     }
+  }
+
+  async createFolder(opts: CreateFolderOptions): Promise<CloudItem> {
+    const path = opts.parentFolderId
+      ? `/me/drive/items/${encodeURIComponent(opts.parentFolderId)}/children`
+      : `/me/drive/root/children`
+    const res = await fetch(`${GRAPH_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: opts.name,
+        folder: {},
+        '@microsoft.graph.conflictBehavior': 'fail',
+      }),
+    })
+    if (!res.ok) throw await asProviderError(res, 'onedrive', 'create folder')
+    const g = (await res.json()) as GraphItem
+    return toGraphItem(g)
+  }
+
+  async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
+    const path =
+      `/me/drive/items/${encodeURIComponent(opts.parentFolderId)}` +
+      `:/${encodeURIComponent(opts.name)}:/content`
+    const res = await fetch(`${GRAPH_BASE}${path}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': opts.mimeType ?? 'application/octet-stream',
+      },
+      body: opts.body as unknown as BodyInit,
+    })
+    if (!res.ok) throw await asProviderError(res, 'onedrive', 'upload')
+    const g = (await res.json()) as GraphItem
+    return toGraphItem(g)
   }
 
   private async getEmail(accessToken: string): Promise<string> {

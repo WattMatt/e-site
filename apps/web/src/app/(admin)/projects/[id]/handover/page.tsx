@@ -83,6 +83,13 @@ export default async function HandoverPage({ params }: Props) {
           <h1 className="page-title">Handover Checklist</h1>
           <p className="page-subtitle">{done} / {total} complete</p>
         </div>
+        <Link
+          href={`/projects/${id}/handover/documents`}
+          className="btn-primary-amber"
+          style={{ padding: '7px 14px', fontSize: 12 }}
+        >
+          📂 Documents →
+        </Link>
       </div>
 
       <div

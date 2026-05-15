@@ -8,6 +8,7 @@ import type {
   AuthorizeOptions,
   CloudItem,
   CloudStorageProvider,
+  CreateFolderOptions,
   DownloadOptions,
   DownloadResult,
   ExchangeCodeOptions,
@@ -15,6 +16,7 @@ import type {
   ListFolderResult,
   ProviderName,
   TokenBundle,
+  UploadFileOptions,
 } from './types.ts'
 import { asProviderError, getProviderCredentials, postForm } from './provider-utils.ts'
 
@@ -161,6 +163,65 @@ export class DropboxProvider implements CloudStorageProvider {
       contentLength,
       filename,
     }
+  }
+
+  async createFolder(opts: CreateFolderOptions): Promise<CloudItem> {
+    const parentPath = opts.parentFolderId
+      ? await this.resolvePathFromId(opts.parentFolderId, opts.accessToken)
+      : ''
+    const path = `${parentPath}/${opts.name}`
+    const res = await fetch(`${API_BASE}/files/create_folder_v2`, {
+      method: 'POST',
+      headers: await this.namespaceHeaders(opts.accessToken, {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({ path, autorename: false }),
+    })
+    if (!res.ok) throw await asProviderError(res, 'dropbox', 'create folder')
+    const j = (await res.json()) as { metadata: DropboxFileEntry }
+    return toCloudItem(j.metadata)
+  }
+
+  async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
+    const parentPath = await this.resolvePathFromId(opts.parentFolderId, opts.accessToken)
+    const path = `${parentPath}/${opts.name}`
+    const res = await fetch(`${CONTENT_BASE}/files/upload`, {
+      method: 'POST',
+      headers: await this.namespaceHeaders(opts.accessToken, {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': 'application/octet-stream',
+        'Dropbox-API-Arg': JSON.stringify({
+          path,
+          mode: 'add',
+          autorename: false,
+          mute: true,
+          strict_conflict: false,
+        }),
+      }),
+      body: opts.body as unknown as BodyInit,
+    })
+    if (!res.ok) throw await asProviderError(res, 'dropbox', 'upload')
+    const j = (await res.json()) as DropboxFileEntry
+    return toCloudItem(j)
+  }
+
+  private async resolvePathFromId(
+    idOrPath: string,
+    accessToken: string,
+  ): Promise<string> {
+    if (idOrPath === '' || idOrPath.startsWith('/')) return idOrPath
+    const res = await fetch(`${API_BASE}/files/get_metadata`, {
+      method: 'POST',
+      headers: await this.namespaceHeaders(accessToken, {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({ path: idOrPath }),
+    })
+    if (!res.ok) throw await asProviderError(res, 'dropbox', 'get_metadata')
+    const j = (await res.json()) as DropboxFileEntry
+    return j.path_display ?? j.path_lower ?? ''
   }
 
   // ─────────────────────────────────────────────────────────────────────

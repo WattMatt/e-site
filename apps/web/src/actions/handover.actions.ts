@@ -1,0 +1,370 @@
+'use server'
+
+/**
+ * Handover Documents server actions.
+ *
+ * Three primary surfaces:
+ *   - initializeHandoverCategoryAction: bulk-create folders for a category
+ *     from FOLDER_TEMPLATES, with optional cloud mirror under the project's
+ *     "Handover" wrapper folder.
+ *   - createHandoverSubfolderAction: ad-hoc single folder under a parent.
+ *   - uploadHandoverDocumentAction: file upload — lands in Supabase
+ *     Storage's `project-documents` bucket AND mirrors to the user's
+ *     cloud provider when connected.
+ *
+ * All three are best-effort on the cloud-mirror side: if the cloud push
+ * fails, the local row commits anyway and the cloud_* columns stay NULL.
+ * The UI surfaces "cloud: not yet synced" so the user can retry.
+ */
+
+import { revalidatePath } from 'next/cache'
+import { createClient } from '@/lib/supabase/server'
+import {
+  ALL_CATEGORIES,
+  CATEGORY_LABELS,
+  FOLDER_TEMPLATES,
+  flattenTemplate,
+  type HandoverCategory,
+} from '@esite/shared'
+import {
+  ensureHandoverCloudRoot,
+  loadProjectCloudContext,
+  mirrorCreateFolder,
+  mirrorUploadFile,
+  type ProjectCloudContext,
+} from '@/services/handover.server'
+
+const BUCKET = 'project-documents'
+
+// ---------------------------------------------------------------------------
+// initializeHandoverCategoryAction
+// ---------------------------------------------------------------------------
+
+export type InitializeResult =
+  | { ok: true; foldersCreated: number; cloudMirrored: number }
+  | { error: string }
+
+export async function initializeHandoverCategoryAction(
+  projectId: string,
+  category: HandoverCategory,
+): Promise<InitializeResult> {
+  if (!isUuid(projectId)) return { error: 'Invalid project id' }
+  if (!ALL_CATEGORIES.includes(category)) return { error: 'Invalid category' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // Verify the project exists + the caller is org member (RLS enforces).
+  const { data: project, error: projErr } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('id, organisation_id')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (projErr || !project) return { error: 'Project not found' }
+  const orgId = project.organisation_id as string
+
+  // Best-effort cloud context — null when the project has no cloud mapping.
+  const cloudCtx = await loadProjectCloudContext(projectId, supabase).catch(() => null)
+  const cloudRootId = cloudCtx
+    ? await ensureHandoverCloudRoot(projectId, cloudCtx, supabase).catch(() => null)
+    : null
+
+  // 1. Create the category root folder (parent_folder_id = NULL).
+  const rootName = CATEGORY_LABELS[category]
+  const { data: existingRoot } = await (supabase as any)
+    .schema('tenants')
+    .from('handover_folders')
+    .select('id, cloud_folder_id')
+    .eq('project_id', projectId)
+    .eq('category', category)
+    .is('parent_folder_id', null)
+    .maybeSingle()
+
+  let categoryRootId: string
+  let categoryRootCloudId: string | null = null
+  let cloudMirrored = 0
+
+  if (existingRoot) {
+    categoryRootId = existingRoot.id as string
+    categoryRootCloudId = (existingRoot.cloud_folder_id as string | null) ?? null
+  } else {
+    let cloudFolder = null
+    if (cloudCtx && cloudRootId) {
+      cloudFolder = await mirrorCreateFolder(cloudCtx, cloudRootId, rootName)
+      if (cloudFolder) cloudMirrored++
+    }
+    const { data: inserted, error } = await (supabase as any)
+      .schema('tenants')
+      .from('handover_folders')
+      .insert({
+        organisation_id: orgId,
+        project_id: projectId,
+        parent_folder_id: null,
+        name: rootName,
+        category,
+        cloud_provider: cloudFolder ? cloudCtx!.provider : null,
+        cloud_folder_id: cloudFolder?.id ?? null,
+        cloud_folder_path: cloudFolder?.path ?? null,
+        cloud_synced_at: cloudFolder ? new Date().toISOString() : null,
+        created_by: user.id,
+      })
+      .select('id')
+      .single()
+    if (error || !inserted) return { error: `Failed to create category root: ${error?.message}` }
+    categoryRootId = inserted.id as string
+    categoryRootCloudId = cloudFolder?.id ?? null
+  }
+
+  // 2. Walk the template and insert each folder.
+  // pathToId maps "Drawings/Layout Drawings" → uuid for parent-lookup.
+  const flat = flattenTemplate(FOLDER_TEMPLATES[category])
+  const pathToId = new Map<string, string>()
+  const pathToCloudId = new Map<string, string>()
+  let foldersCreated = 0
+
+  for (const f of flat) {
+    const fullPath = f.parentPath ? `${f.parentPath}/${f.name}` : f.name
+    const parentId = f.parentPath ? pathToId.get(f.parentPath) ?? categoryRootId : categoryRootId
+    const parentCloudId = f.parentPath
+      ? pathToCloudId.get(f.parentPath) ?? categoryRootCloudId
+      : categoryRootCloudId
+
+    // Skip if already present (idempotent re-init).
+    const { data: existing } = await (supabase as any)
+      .schema('tenants')
+      .from('handover_folders')
+      .select('id, cloud_folder_id')
+      .eq('project_id', projectId)
+      .eq('category', category)
+      .eq('parent_folder_id', parentId)
+      .eq('name', f.name)
+      .maybeSingle()
+    if (existing) {
+      pathToId.set(fullPath, existing.id as string)
+      if (existing.cloud_folder_id) pathToCloudId.set(fullPath, existing.cloud_folder_id as string)
+      continue
+    }
+
+    let cloudFolder = null
+    if (cloudCtx && parentCloudId) {
+      cloudFolder = await mirrorCreateFolder(cloudCtx, parentCloudId, f.name)
+      if (cloudFolder) cloudMirrored++
+    }
+
+    const { data: inserted, error: insErr } = await (supabase as any)
+      .schema('tenants')
+      .from('handover_folders')
+      .insert({
+        organisation_id: orgId,
+        project_id: projectId,
+        parent_folder_id: parentId,
+        name: f.name,
+        category,
+        cloud_provider: cloudFolder ? cloudCtx!.provider : null,
+        cloud_folder_id: cloudFolder?.id ?? null,
+        cloud_folder_path: cloudFolder?.path ?? null,
+        cloud_synced_at: cloudFolder ? new Date().toISOString() : null,
+        created_by: user.id,
+      })
+      .select('id')
+      .single()
+    if (insErr || !inserted) continue
+    foldersCreated++
+    pathToId.set(fullPath, inserted.id as string)
+    if (cloudFolder) pathToCloudId.set(fullPath, cloudFolder.id)
+  }
+
+  revalidatePath(`/projects/${projectId}/handover`)
+  return { ok: true, foldersCreated, cloudMirrored }
+}
+
+// ---------------------------------------------------------------------------
+// createHandoverSubfolderAction
+// ---------------------------------------------------------------------------
+
+export type CreateFolderResult =
+  | { ok: true; folderId: string; cloudMirrored: boolean }
+  | { error: string }
+
+export async function createHandoverSubfolderAction(
+  projectId: string,
+  parentFolderId: string,
+  name: string,
+): Promise<CreateFolderResult> {
+  if (!isUuid(projectId)) return { error: 'Invalid project id' }
+  if (!isUuid(parentFolderId)) return { error: 'Invalid parent folder id' }
+  const trimmed = name.trim()
+  if (!trimmed || trimmed.length > 200) return { error: 'Folder name must be 1–200 chars' }
+  if (/[/\\:*?"<>|]/.test(trimmed)) return { error: 'Folder name contains illegal chars' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: parent } = await (supabase as any)
+    .schema('tenants')
+    .from('handover_folders')
+    .select('id, organisation_id, project_id, category, cloud_folder_id')
+    .eq('id', parentFolderId)
+    .maybeSingle()
+  if (!parent || parent.project_id !== projectId) return { error: 'Parent folder not found' }
+
+  const cloudCtx = await loadProjectCloudContext(projectId, supabase).catch(() => null)
+  let cloudFolder = null
+  if (cloudCtx && parent.cloud_folder_id) {
+    cloudFolder = await mirrorCreateFolder(cloudCtx, parent.cloud_folder_id, trimmed)
+  }
+
+  const { data: inserted, error } = await (supabase as any)
+    .schema('tenants')
+    .from('handover_folders')
+    .insert({
+      organisation_id: parent.organisation_id,
+      project_id: projectId,
+      parent_folder_id: parentFolderId,
+      name: trimmed,
+      category: parent.category,
+      cloud_provider: cloudFolder ? cloudCtx!.provider : null,
+      cloud_folder_id: cloudFolder?.id ?? null,
+      cloud_folder_path: cloudFolder?.path ?? null,
+      cloud_synced_at: cloudFolder ? new Date().toISOString() : null,
+      created_by: user.id,
+    })
+    .select('id')
+    .single()
+  if (error || !inserted) return { error: `Insert failed: ${error?.message}` }
+
+  revalidatePath(`/projects/${projectId}/handover`)
+  return { ok: true, folderId: inserted.id as string, cloudMirrored: !!cloudFolder }
+}
+
+// ---------------------------------------------------------------------------
+// uploadHandoverDocumentAction
+// ---------------------------------------------------------------------------
+
+export type UploadResult =
+  | { ok: true; documentId: string; cloudMirrored: boolean }
+  | { error: string }
+
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 // 50 MB — matches bucket limit in 00042
+
+/**
+ * FormData fields:
+ *   projectId   — UUID
+ *   folderId    — UUID (handover_folder_id; required)
+ *   file        — File
+ */
+export async function uploadHandoverDocumentAction(
+  formData: FormData,
+): Promise<UploadResult> {
+  const projectId = String(formData.get('projectId') ?? '')
+  const folderId = String(formData.get('folderId') ?? '')
+  const file = formData.get('file')
+
+  if (!isUuid(projectId)) return { error: 'Invalid project id' }
+  if (!isUuid(folderId)) return { error: 'Invalid folder id' }
+  if (!(file instanceof File)) return { error: 'No file provided' }
+  if (file.size === 0) return { error: 'File is empty' }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return { error: `File exceeds ${MAX_UPLOAD_BYTES / 1024 / 1024} MB limit` }
+  }
+  const safeName = file.name.replace(/[/\\:*?"<>|]/g, '_').slice(0, 200)
+  if (!safeName) return { error: 'Filename invalid' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: folder } = await (supabase as any)
+    .schema('tenants')
+    .from('handover_folders')
+    .select('id, organisation_id, project_id, category, folder_path, cloud_folder_id')
+    .eq('id', folderId)
+    .maybeSingle()
+  if (!folder || folder.project_id !== projectId) return { error: 'Folder not found' }
+
+  // Storage path: {org_id}/{project_id}/handover/{folder_path}/{ts}-{name}
+  // The leading slash in folder_path is stripped so the path keys cleanly.
+  const cleanFolderPath = (folder.folder_path as string).replace(/^\/+/, '').replace(/\/+/g, '/')
+  const ts = Date.now()
+  const storagePath = `${folder.organisation_id}/${projectId}/handover/${cleanFolderPath}/${ts}-${safeName}`
+
+  // 1. Upload to Supabase Storage.
+  const arrayBuf = await file.arrayBuffer()
+  const bytes = new Uint8Array(arrayBuf)
+  const { error: upErr } = await supabase.storage
+    .from(BUCKET)
+    .upload(storagePath, bytes, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: false,
+    })
+  if (upErr) return { error: `Upload failed: ${upErr.message}` }
+
+  // 2. Insert tenants.documents row linked to the handover folder.
+  const { data: docRow, error: insErr } = await (supabase as any)
+    .schema('tenants')
+    .from('documents')
+    .insert({
+      organisation_id: folder.organisation_id,
+      project_id: projectId,
+      name: safeName,
+      category: 'handover',
+      storage_path: storagePath,
+      mime_type: file.type || null,
+      size_bytes: file.size,
+      handover_folder_id: folderId,
+      handover_category: folder.category,
+      uploaded_by: user.id,
+    })
+    .select('id')
+    .single()
+  if (insErr || !docRow) {
+    // Roll back the storage upload to avoid orphans.
+    await supabase.storage.from(BUCKET).remove([storagePath]).catch(() => undefined)
+    return { error: `Document insert failed: ${insErr?.message}` }
+  }
+
+  // 3. Best-effort cloud mirror — only if folder has a cloud counterpart.
+  let cloudMirrored = false
+  if (folder.cloud_folder_id) {
+    const cloudCtx = await loadProjectCloudContext(projectId, supabase).catch(() => null)
+    if (cloudCtx) {
+      const mirror = await mirrorUploadFile(
+        cloudCtx,
+        folder.cloud_folder_id as string,
+        safeName,
+        bytes,
+        file.type || undefined,
+      )
+      if (mirror) {
+        cloudMirrored = true
+        await (supabase as any)
+          .schema('tenants')
+          .from('documents')
+          .update({
+            cloud_mirror_provider: cloudCtx.provider,
+            cloud_mirror_file_id: mirror.id,
+            cloud_mirror_path: mirror.path ?? null,
+            cloud_mirror_synced_at: new Date().toISOString(),
+          })
+          .eq('id', docRow.id)
+      }
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}/handover`)
+  return { ok: true, documentId: docRow.id as string, cloudMirrored }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function isUuid(s: string): boolean {
+  return /^[0-9a-f-]{36}$/i.test(s)
+}
+
+// Suppress unused-import warning for ProjectCloudContext.
+export type _HandoverActionCloudContext = ProjectCloudContext

@@ -2,6 +2,7 @@ import type {
   AuthorizeOptions,
   CloudItem,
   CloudStorageProvider,
+  CreateFolderOptions,
   DownloadOptions,
   DownloadResult,
   ExchangeCodeOptions,
@@ -9,6 +10,7 @@ import type {
   ListFolderResult,
   ProviderName,
   TokenBundle,
+  UploadFileOptions,
 } from './types'
 import { asProviderError, getProviderCredentials, postForm, sortCloudItems } from './provider-utils'
 
@@ -138,6 +140,52 @@ export class OneDriveProvider implements CloudStorageProvider {
       contentLength: meta.size,
       filename: meta.name,
     }
+  }
+
+  async createFolder(opts: CreateFolderOptions): Promise<CloudItem> {
+    // POST to the parent's /children with a folder body.
+    const path = opts.parentFolderId
+      ? `/me/drive/items/${encodeURIComponent(opts.parentFolderId)}/children`
+      : `/me/drive/root/children`
+    const res = await fetch(`${GRAPH_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: opts.name,
+        folder: {},
+        // 'fail' surfaces the conflict instead of auto-renaming.
+        '@microsoft.graph.conflictBehavior': 'fail',
+      }),
+    })
+    if (!res.ok) throw await asProviderError(res, 'onedrive', 'create folder')
+    const g = (await res.json()) as GraphItem
+    return toGraphItem(g)
+  }
+
+  async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
+    // Small-file upload — PUT to /items/{parent}:/{name}:/content. Hard
+    // upper bound 4 MB per the Graph docs; for larger handover packs we'd
+    // switch to the createUploadSession resumable flow (Phase-2).
+    // The name segment is URL-encoded so ":" / "/" in user-supplied names
+    // can't break out of the path template.
+    const path =
+      `/me/drive/items/${encodeURIComponent(opts.parentFolderId)}` +
+      `:/${encodeURIComponent(opts.name)}:/content`
+    const res = await fetch(`${GRAPH_BASE}${path}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${opts.accessToken}`,
+        'Content-Type': opts.mimeType ?? 'application/octet-stream',
+      },
+      // See dropbox.provider.ts uploadFile() for the cast rationale.
+      body: opts.body as unknown as BodyInit,
+    })
+    if (!res.ok) throw await asProviderError(res, 'onedrive', 'upload')
+    const g = (await res.json()) as GraphItem
+    return toGraphItem(g)
   }
 
   private async getEmail(accessToken: string): Promise<string> {

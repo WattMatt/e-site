@@ -88,6 +88,42 @@ export interface DownloadOptions {
 }
 
 /**
+ * Create a folder under a known parent. Used by features that mirror an
+ * in-app folder tree (e.g. Handover Documents) into the user's cloud
+ * provider so the same structure shows up in Dropbox / Drive / OneDrive
+ * natively. `parentFolderId` of `null` means the provider's drive root —
+ * callers should generally pass an explicit parent rooted under the
+ * project's mapped cloud folder, not the drive root.
+ */
+export interface CreateFolderOptions {
+  name: string
+  parentFolderId: string | null
+  accessToken: string
+}
+
+/**
+ * Upload a file under a known parent folder. The caller supplies the bytes
+ * as a Uint8Array (or anything BodyInit-compatible the provider's HTTP path
+ * accepts — see individual implementations). MIME type is best-effort:
+ * Dropbox ignores it, Drive uses it, Graph stores it as `file.mimeType`.
+ *
+ * For Phase 1, only "small" uploads are supported (<= 4 MB practical for
+ * Graph; <= 150 MB hard for Dropbox /files/upload; Drive's simple media
+ * upload is fine up to a few MB). Large-file resumable upload is a
+ * separate Phase-2 method that we'll add when handover packs start
+ * exceeding these limits in real use.
+ */
+export interface UploadFileOptions {
+  name: string
+  parentFolderId: string
+  /** Raw bytes of the file. */
+  body: Uint8Array
+  /** MIME type — Drive + Graph honour this; Dropbox doesn't store it. */
+  mimeType?: string
+  accessToken: string
+}
+
+/**
  * The provider abstraction. All methods are async; HTTP / API errors
  * surface as CloudStorageError (see provider-utils.ts).
  */
@@ -118,4 +154,23 @@ export interface CloudStorageProvider {
 
   /** Stream a file's content. Caller pipes the body to Supabase Storage. */
   downloadFile(opts: DownloadOptions): Promise<DownloadResult>
+
+  /**
+   * Create a folder under a parent. Returns the new folder's CloudItem
+   * (the provider-stable `id` is the important field — callers persist it
+   * alongside the local row to dedup later push-to-cloud retries).
+   * Idempotency note: all three providers will happily create duplicate
+   * folders with the same name in the same parent. Callers that want
+   * idempotency should pre-check via listFolder + name match.
+   */
+  createFolder(opts: CreateFolderOptions): Promise<CloudItem>
+
+  /**
+   * Upload a file under a known parent folder. Returns the new file's
+   * CloudItem. Like createFolder, this is NOT idempotent on the provider
+   * side — re-running creates duplicate files (Dropbox appends " (1)",
+   * Drive creates a fresh ID, Graph errors with @microsoft.graph.conflictBehavior=fail
+   * unless overridden). Callers should check before retrying.
+   */
+  uploadFile(opts: UploadFileOptions): Promise<CloudItem>
 }
