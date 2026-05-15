@@ -150,12 +150,14 @@ export async function mirrorCreateFolder(
   try {
     const safeName = sanitiseForCloud(name)
     if (!safeName) return { ok: false, error: `name "${name}" sanitises to empty` }
-    const item = await retryOn401(ctx, async (accessToken) =>
-      ctx.providerImpl.createFolder({
-        name: safeName,
-        parentFolderId: parentCloudFolderId,
-        accessToken,
-      }),
+    const item = await retryTransient(() =>
+      retryOn401(ctx, async (accessToken) =>
+        ctx.providerImpl.createFolder({
+          name: safeName,
+          parentFolderId: parentCloudFolderId,
+          accessToken,
+        }),
+      ),
     )
     return { ok: true, item }
   } catch (e) {
@@ -178,14 +180,16 @@ export async function mirrorUploadFile(
   try {
     const safeName = sanitiseForCloud(name)
     if (!safeName) return { ok: false, error: `name "${name}" sanitises to empty` }
-    const item = await retryOn401(ctx, async (accessToken) =>
-      ctx.providerImpl.uploadFile({
-        name: safeName,
-        parentFolderId: parentCloudFolderId,
-        body,
-        mimeType,
-        accessToken,
-      }),
+    const item = await retryTransient(() =>
+      retryOn401(ctx, async (accessToken) =>
+        ctx.providerImpl.uploadFile({
+          name: safeName,
+          parentFolderId: parentCloudFolderId,
+          body,
+          mimeType,
+          accessToken,
+        }),
+      ),
     )
     return { ok: true, item }
   } catch (e) {
@@ -222,6 +226,36 @@ async function retryOn401<T>(
     }
     throw e
   }
+}
+
+/**
+ * Retry-with-backoff for transient provider errors. Covers:
+ *   - 429 Too Many Requests (rate limiting)
+ *   - 500 / 502 / 503 / 504 (provider-side momentary outage — most
+ *     commonly Dropbox 503 during bursty createFolder runs)
+ *
+ * Up to MAX_ATTEMPTS total tries (incl. the first); exponential backoff
+ * 500ms → 1s → 2s between them. Permanent errors (400/403/404) skip the
+ * retry path and surface immediately.
+ */
+async function retryTransient<T>(fn: () => Promise<T>): Promise<T> {
+  const MAX_ATTEMPTS = 4
+  const BASE_DELAY_MS = 500
+  let lastError: unknown
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fn()
+    } catch (e) {
+      lastError = e
+      const status = e instanceof CloudStorageError ? e.status : undefined
+      const isTransient =
+        status === 429 || (status !== undefined && status >= 500 && status < 600)
+      if (!isTransient || attempt === MAX_ATTEMPTS - 1) throw e
+      // Exponential backoff: 500ms, 1s, 2s.
+      await new Promise((r) => setTimeout(r, BASE_DELAY_MS * 2 ** attempt))
+    }
+  }
+  throw lastError
 }
 
 async function getActiveAccessToken(
