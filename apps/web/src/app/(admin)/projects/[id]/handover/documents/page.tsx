@@ -6,9 +6,16 @@ import {
   CATEGORY_LABELS,
   type HandoverCategory,
 } from '@esite/shared'
+import { CloudSyncToolbar } from '@/components/cloud-storage/CloudSyncToolbar'
 import { HandoverInitButton } from './HandoverInitButton'
 import { HandoverNewFolderForm } from './HandoverNewFolderForm'
 import { HandoverUploadForm } from './HandoverUploadForm'
+
+interface ConnectionOption {
+  id: string
+  provider: 'dropbox' | 'google_drive' | 'onedrive'
+  account_email: string
+}
 
 interface Props {
   params: Promise<{ id: string }>
@@ -47,11 +54,21 @@ export default async function HandoverDocumentsPage({ params, searchParams }: Pr
     .schema('projects')
     .from('projects')
     .select(
-      'id, name, cloud_storage_connection_id, cloud_storage_folder_path, handover_cloud_folder_path',
+      'id, name, cloud_storage_connection_id, cloud_storage_folder_id, cloud_storage_folder_path, cloud_storage_last_sync_at, handover_cloud_folder_path',
     )
     .eq('id', projectId)
     .maybeSingle()
   if (!project) notFound()
+
+  // Active OAuth connections in this org — feeds the folder-picker dropdown.
+  const { data: connectionRows } = await (supabase as any)
+    .from('org_storage_connections')
+    .select('id, provider, account_email')
+    .order('created_at', { ascending: false })
+  const connections = ((connectionRows ?? []) as unknown as ConnectionOption[]) ?? []
+  const mappedConnectionId = (project.cloud_storage_connection_id as string | null) ?? null
+  const cloudFolderPath = (project.cloud_storage_folder_path as string | null) ?? null
+  const lastSyncAt = (project.cloud_storage_last_sync_at as string | null) ?? null
 
   const { data: folderRows } = await (supabase as any)
     .schema('tenants')
@@ -103,9 +120,23 @@ export default async function HandoverDocumentsPage({ params, searchParams }: Pr
           <p className="page-subtitle">
             {cloudConnected
               ? `Cloud mirror: ${project.handover_cloud_folder_path ?? project.cloud_storage_folder_path ?? 'connected'}`
-              : 'No cloud-storage mapping — files stay in E-Site only.'}
+              : 'Map a cloud folder below to mirror handover files into Dropbox / Drive / OneDrive.'}
           </p>
         </div>
+      </div>
+
+      {/* Cloud-storage mapping — same toolbar used on the Documents +
+          Drawings tabs. The handover module reuses the project's cloud
+          mapping; on first init we create a "Handover" wrapper under it. */}
+      <div style={{ marginBottom: 16 }}>
+        <CloudSyncToolbar
+          projectId={projectId}
+          connections={connections}
+          mappedConnectionId={mappedConnectionId}
+          cloudFolderPath={cloudFolderPath}
+          lastSyncAt={lastSyncAt}
+          intent="documents"
+        />
       </div>
 
       {/* Category tabs */}
