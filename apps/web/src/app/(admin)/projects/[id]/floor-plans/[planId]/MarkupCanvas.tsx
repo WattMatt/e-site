@@ -180,6 +180,8 @@ export type EditingAnnotation = {
   scene: SceneGraph
 }
 
+export type ViewerMode = 'view' | 'markup' | 'rfi'
+
 type Props = {
   plan: {
     id: string
@@ -193,6 +195,14 @@ type Props = {
   projectId: string
   rfis: RfiOption[]
   editing: EditingAnnotation | null
+  /**
+   * Tri-state viewer mode. Defaults to 'markup' for back-compat.
+   * - 'view'   — read-only: tool palette + save controls hidden, pan/zoom + overlays only.
+   * - 'markup' — full tool palette, save defaults to "attach to existing RFI".
+   * - 'rfi'   — full tool palette, save defaults to "create new RFI with this markup".
+   * Switching modes at runtime preserves canvas state (shapes, zoom, page).
+   */
+  mode?: ViewerMode
 }
 
 type Backing = HTMLImageElement | HTMLCanvasElement
@@ -202,7 +212,7 @@ function backingSize(b: Backing | null): [number, number] {
   return b instanceof HTMLImageElement ? [b.naturalWidth, b.naturalHeight] : [b.width, b.height]
 }
 
-export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props) {
+export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 'markup' }: Props) {
   const router = useRouter()
   const [tool, setTool] = useState<ToolMode>('select')
   const [color, setColor] = useState<string>(COLORS[0].value)
@@ -908,9 +918,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
     }
     // Create mode — open the RFI picker.
     setPickerRfiId(rfis[0]?.id ?? '')
-    // Default to 'create' when no RFIs exist yet so the user lands straight
-    // on the form; otherwise default to attaching to an existing one.
-    setPickerMode(rfis.length === 0 ? 'create' : 'attach')
+    // Default to 'create' when no RFIs exist yet OR when the viewer was
+    // entered in 'rfi' mode (the user explicitly chose "Raise RFI" from
+    // the preview). Otherwise default to attaching to an existing one.
+    setPickerMode(rfis.length === 0 || mode === 'rfi' ? 'create' : 'attach')
     setPickerOpen(true)
   }
 
@@ -1099,63 +1110,69 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
   // ── Render ───────────────────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {/* Toolbar */}
+      {/* Toolbar — tool palette / colour / stroke / undo groups are hidden
+          in view mode; zoom + page-nav stay visible so the viewer can pan,
+          zoom and step through multi-page PDFs while read-only. */}
       <div className="data-panel" style={{ padding: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <ToolbarGroup>
-          {TOOLS.map((t) => {
-            const disabled = t.needsCalibration && !pixelsPerMeter
-            return (
-              <ToolbarButton
-                key={t.value}
-                active={tool === t.value}
-                disabled={disabled}
-                onClick={() => setTool(t.value)}
-                title={disabled ? `${t.title} — calibrate first` : t.title}
-              >
-                {t.label}
-              </ToolbarButton>
-            )
-          })}
-        </ToolbarGroup>
-        <ToolbarSeparator />
-        <ToolbarGroup>
-          {COLORS.map((c) => (
-            <button
-              key={c.value}
-              type="button"
-              onClick={() => setColor(c.value)}
-              aria-label={c.label}
-              title={c.label}
-              style={{
-                width: 22,
-                height: 22,
-                borderRadius: '50%',
-                background: c.value,
-                border: color === c.value ? '2px solid var(--c-amber)' : '2px solid var(--c-border)',
-                cursor: 'pointer',
-                padding: 0,
-              }}
-            />
-          ))}
-        </ToolbarGroup>
-        <ToolbarSeparator />
-        <ToolbarGroup>
-          {STROKE_WIDTHS.map((w) => (
-            <ToolbarButton key={w.value} active={strokeWidth === w.value} onClick={() => setStrokeWidth(w.value)} title={w.label}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  width: 18,
-                  height: w.value,
-                  background: 'currentColor',
-                  borderRadius: w.value / 2,
-                  verticalAlign: 'middle',
-                }}
-              />
-            </ToolbarButton>
-          ))}
-        </ToolbarGroup>
-        <ToolbarSeparator />
+        {mode !== 'view' && (
+          <>
+            <ToolbarGroup>
+              {TOOLS.map((t) => {
+                const disabled = t.needsCalibration && !pixelsPerMeter
+                return (
+                  <ToolbarButton
+                    key={t.value}
+                    active={tool === t.value}
+                    disabled={disabled}
+                    onClick={() => setTool(t.value)}
+                    title={disabled ? `${t.title} — calibrate first` : t.title}
+                  >
+                    {t.label}
+                  </ToolbarButton>
+                )
+              })}
+            </ToolbarGroup>
+            <ToolbarSeparator />
+            <ToolbarGroup>
+              {COLORS.map((c) => (
+                <button
+                  key={c.value}
+                  type="button"
+                  onClick={() => setColor(c.value)}
+                  aria-label={c.label}
+                  title={c.label}
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: '50%',
+                    background: c.value,
+                    border: color === c.value ? '2px solid var(--c-amber)' : '2px solid var(--c-border)',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                />
+              ))}
+            </ToolbarGroup>
+            <ToolbarSeparator />
+            <ToolbarGroup>
+              {STROKE_WIDTHS.map((w) => (
+                <ToolbarButton key={w.value} active={strokeWidth === w.value} onClick={() => setStrokeWidth(w.value)} title={w.label}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 18,
+                      height: w.value,
+                      background: 'currentColor',
+                      borderRadius: w.value / 2,
+                      verticalAlign: 'middle',
+                    }}
+                  />
+                </ToolbarButton>
+              ))}
+            </ToolbarGroup>
+            <ToolbarSeparator />
+          </>
+        )}
         <ToolbarGroup>
           <ToolbarButton onClick={zoomOut} title="Zoom out (−, scroll wheel, or pinch)">−</ToolbarButton>
           <ToolbarButton onClick={fitToView} disabled={!img} title="Fit to view (F or 0) — scroll wheel or pinch to zoom, two-finger drag to pan">
@@ -1177,11 +1194,13 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
           </span>
         </ToolbarGroup>
         <ToolbarSeparator />
-        <ToolbarGroup>
-          <ToolbarButton onClick={undo} disabled={undoStack.length === 0} title="Undo">↶</ToolbarButton>
-          <ToolbarButton onClick={redo} disabled={redoStack.length === 0} title="Redo">↷</ToolbarButton>
-          <ToolbarButton onClick={clearAll} disabled={shapes.length === 0} title="Clear all">⌫</ToolbarButton>
-        </ToolbarGroup>
+        {mode !== 'view' && (
+          <ToolbarGroup>
+            <ToolbarButton onClick={undo} disabled={undoStack.length === 0} title="Undo">↶</ToolbarButton>
+            <ToolbarButton onClick={redo} disabled={redoStack.length === 0} title="Redo">↷</ToolbarButton>
+            <ToolbarButton onClick={clearAll} disabled={shapes.length === 0} title="Clear all">⌫</ToolbarButton>
+          </ToolbarGroup>
+        )}
         {pageCount > 1 && (
           <>
             <ToolbarSeparator />
@@ -1217,6 +1236,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
           </>
         )}
         <div style={{ flex: 1 }} />
+        {mode !== 'view' && (
         <ToolbarGroup>
           <ToolbarButton onClick={startCalibration} title="Calibrate this drawing for the measure tool">Calibrate</ToolbarButton>
           {editing ? (
@@ -1261,6 +1281,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing }: Props
             </>
           )}
         </ToolbarGroup>
+        )}
       </div>
       {saveError && (
         <div role="alert" style={{ color: '#dc2626', fontSize: 12, padding: '0 4px' }}>

@@ -236,7 +236,7 @@ function Row({
         {plan.file_size_bytes && <span>{formatBytes(plan.file_size_bytes)}</span>}
       </div>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-        <ViewButton filePath={plan.file_path} name={plan.name} />
+        <ViewLink projectId={projectId} planId={plan.id} name={plan.name} />
         <MarkupLink projectId={projectId} planId={plan.id} name={plan.name} />
         <DownloadButton filePath={plan.file_path} name={plan.name} />
       </div>
@@ -262,43 +262,28 @@ const actionButtonStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-function ViewButton({ filePath, name }: { filePath: string; name: string }) {
-  const [busy, setBusy] = useState(false)
-  async function onClick() {
-    if (busy) return
-    setBusy(true)
-    try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      )
-      // No { download } option → Content-Disposition: inline → browser
-      // shows the PDF/image in the tab instead of downloading.
-      const { data, error } = await supabase.storage
-        .from('drawings')
-        .createSignedUrl(filePath, 3600)
-      if (error || !data?.signedUrl) {
-        alert(`Cannot preview: ${error?.message ?? 'no URL'}`)
-        return
-      }
-      // noopener — opened tab can't access window.opener (security best
-      // practice for untrusted-origin tabs, even with a signed URL).
-      window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
-    } finally {
-      setBusy(false)
-    }
-  }
+function ViewLink({
+  projectId,
+  planId,
+  name,
+}: {
+  projectId: string
+  planId: string
+  name: string
+}) {
+  // In-app preview — lands on the per-plan page in view mode (default).
+  // Toolbar inside the page lets the user flow into Markup or RFI without
+  // leaving the route. The previous behaviour (signed URL → window.open)
+  // dropped the user into the browser's native PDF viewer, outside the app.
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={busy}
+    <Link
+      href={`/projects/${projectId}/floor-plans/${planId}`}
       aria-label={`Preview ${name}`}
-      title="Open in new tab — read-only preview"
-      style={{ ...actionButtonStyle, cursor: busy ? 'progress' : 'pointer' }}
+      title="Open in-app preview — pan, zoom, then flow into markup or RFI"
+      style={actionButtonStyle}
     >
-      {busy ? '…' : 'View'}
-    </button>
+      View
+    </Link>
   )
 }
 

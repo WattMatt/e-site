@@ -3,10 +3,11 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, floorPlanService, rfiService } from '@esite/shared'
 import { DrawingViewer, type EditingAnnotation } from './DrawingViewer'
+import type { ViewerMode } from './MarkupCanvas'
 
 interface Props {
   params: Promise<{ id: string; planId: string }>
-  searchParams: Promise<{ annotation?: string }>
+  searchParams: Promise<{ annotation?: string; mode?: string }>
 }
 
 type AnnotationRow = {
@@ -16,9 +17,19 @@ type AnnotationRow = {
   created_at: string
 }
 
+// Whitelist for the ?mode= querystring. Anything else (including absent)
+// falls back to 'view' so a stale or hand-typed URL doesn't 404.
+const VALID_MODES: ReadonlyArray<ViewerMode> = ['view', 'markup', 'rfi']
+function parseMode(raw: string | undefined): ViewerMode {
+  return (VALID_MODES as readonly string[]).includes(raw ?? '')
+    ? (raw as ViewerMode)
+    : 'view'
+}
+
 export default async function DrawingViewerPage({ params, searchParams }: Props) {
   const { id: projectId, planId } = await params
-  const { annotation: editingId } = await searchParams
+  const { annotation: editingId, mode: rawMode } = await searchParams
+  const initialMode = parseMode(rawMode)
   const supabase = await createClient()
 
   const [project, planRaw, rfisRaw] = await Promise.all([
@@ -113,6 +124,30 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
         </div>
       </div>
 
+      {!isPdf && !isImage ? (
+        // Non-PDF/image (e.g. DWG/DXF) — the markup canvas can't render it.
+        // Show a fallback panel and offer the original download via the
+        // existing /floor-plans list page (Download button there forces an
+        // attachment Content-Disposition).
+        <div className="data-panel">
+          <div className="data-panel-empty" style={{ padding: '48px 18px', textAlign: 'center' }}>
+            <div style={{ fontSize: 24, marginBottom: 8 }} aria-hidden="true">📄</div>
+            <div style={{ fontSize: 13, color: 'var(--c-text)', marginBottom: 6 }}>
+              Preview not supported for this file type yet.
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
+              In-browser preview is currently available for PDF, PNG, JPG, WebP and SVG.
+            </div>
+            <Link
+              href={`/projects/${projectId}/floor-plans`}
+              className="btn-primary-amber"
+              style={{ display: 'inline-block', marginTop: 18, textDecoration: 'none' }}
+            >
+              Back to drawings list to download original
+            </Link>
+          </div>
+        </div>
+      ) : (
       <DrawingViewer
         plan={{
           id: plan.id,
@@ -128,7 +163,9 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
         snagPins={snagPins as Array<{ id: string; title: string; status: string; priority: string; floor_plan_pin: { x: number; y: number } }>}
         rfis={rfis}
         editing={editing}
+        initialMode={initialMode}
       />
+      )}
     </div>
   )
 }
