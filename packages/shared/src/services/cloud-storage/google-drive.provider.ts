@@ -19,11 +19,18 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 const API_BASE = 'https://www.googleapis.com/drive/v3'
 const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
-// drive.readonly lets us point at any folder the user already owns or has
-// access to — covers shared drives via supportsAllDrives. Userinfo email
-// is the display label.
+// Full `drive` scope (read + write across the user's drive). We need write
+// because the handover cloud-mirror writes folders + files INTO a folder the
+// user picked from THEIR pre-existing drive tree (not one our app created).
+// `drive.file` would be more principle-of-least-privilege but only grants
+// access to files explicitly created or opened by the app — picking a folder
+// in our picker doesn't count as "opening" it in the Drive sense.
+//
+// Existing tokens issued under the older `drive.readonly` scope will 403 on
+// writes — user must disconnect + reconnect to pick up the broader scope.
+// Userinfo email is the display label on /settings/integrations.
 const SCOPES = [
-  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/userinfo.email',
 ].join(' ')
 const FILE_FIELDS = 'id,name,mimeType,size,parents,modifiedTime,headRevisionId'

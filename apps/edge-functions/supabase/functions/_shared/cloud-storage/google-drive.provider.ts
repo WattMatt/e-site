@@ -29,7 +29,7 @@ const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
 // access to — covers shared drives via supportsAllDrives. Userinfo email
 // is the display label.
 const SCOPES = [
-  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/userinfo.email',
 ].join(' ')
 const FILE_FIELDS = 'id,name,mimeType,size,parents,modifiedTime,headRevisionId'

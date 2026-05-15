@@ -27,7 +27,8 @@ const API_BASE = 'https://api.dropboxapi.com/2'
 const CONTENT_BASE = 'https://content.dropboxapi.com/2'
 // `account_info.read` lets us call /users/get_current_account for the email label.
 // `offline` access type produces a long-lived refresh token.
-const SCOPES = 'files.content.read files.metadata.read account_info.read'
+const SCOPES =
+  'files.content.read files.content.write files.metadata.read account_info.read'
 
 export class DropboxProvider implements CloudStorageProvider {
   readonly name: ProviderName = 'dropbox'

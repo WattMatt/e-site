@@ -20,9 +20,15 @@ import { asProviderError, getProviderCredentials, postForm, sortCloudItems } fro
 const AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
 const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
-// offline_access produces a refresh token. Files.Read.All covers both
-// personal OneDrive and SharePoint document libraries the user has access to.
-const SCOPES = ['Files.Read.All', 'User.Read', 'offline_access'].join(' ')
+// offline_access produces a refresh token. Files.ReadWrite.All covers both
+// personal OneDrive and SharePoint document libraries the user has access to,
+// for read AND write. Read-only Files.Read.All was sufficient for Phase 1
+// (one-way cloud → E-Site sync); handover mirror is the inverse direction
+// and needs write.
+//
+// Existing tokens issued under the older `Files.Read.All` scope will 403 on
+// writes — user must disconnect + reconnect to pick up ReadWrite.
+const SCOPES = ['Files.ReadWrite.All', 'User.Read', 'offline_access'].join(' ')
 
 export class OneDriveProvider implements CloudStorageProvider {
   readonly name: ProviderName = 'onedrive'

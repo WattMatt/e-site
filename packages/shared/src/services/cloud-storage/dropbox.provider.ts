@@ -21,7 +21,16 @@ const API_BASE = 'https://api.dropboxapi.com/2'
 const CONTENT_BASE = 'https://content.dropboxapi.com/2'
 // `account_info.read` lets us call /users/get_current_account for the email label.
 // `offline` access type produces a long-lived refresh token.
-const SCOPES = 'files.content.read files.metadata.read account_info.read'
+//
+// WRITE SCOPES (added 2026-05-15 for the handover cloud-mirror feature):
+// `files.content.write` is required by /files/upload + /files/create_folder_v2.
+// `files.metadata.write` would be required only if we ever rename / move / delete
+// existing files; we don't (handover is one-way mirror E-Site → cloud), so it
+// stays out. Existing tokens issued before this scope-bump are read-only and
+// will 401 on writes — the user must disconnect + reconnect to pick up the
+// new scope set.
+const SCOPES =
+  'files.content.read files.content.write files.metadata.read account_info.read'
 
 export class DropboxProvider implements CloudStorageProvider {
   readonly name: ProviderName = 'dropbox'

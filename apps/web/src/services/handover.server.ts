@@ -108,31 +108,40 @@ export async function loadProjectCloudContext(
   }
 }
 
+export type MirrorResult =
+  | { ok: true; item: CloudItem }
+  | { ok: false; error: string }
+
 /**
- * Best-effort folder mirror. Returns null on failure so the caller can
- * commit the local row anyway. Caller decides whether to log or surface.
+ * Best-effort folder mirror. Returns `{ ok: false, error }` instead of
+ * throwing so callers can commit the local row anyway + surface a
+ * useful message. Failures used to be swallowed to console — the error
+ * string is now returned so the UI can show the FIRST few (handover
+ * Sync action accumulates them).
  */
 export async function mirrorCreateFolder(
   ctx: ProjectCloudContext,
   parentCloudFolderId: string,
   name: string,
-): Promise<CloudItem | null> {
+): Promise<MirrorResult> {
   try {
-    return await retryOn401(ctx, async (accessToken) =>
+    const item = await retryOn401(ctx, async (accessToken) =>
       ctx.providerImpl.createFolder({
         name,
         parentFolderId: parentCloudFolderId,
         accessToken,
       }),
     )
+    return { ok: true, item }
   } catch (e) {
-    console.error('[handover] cloud createFolder failed:', (e as Error).message)
-    return null
+    const message = errorMessage(e)
+    console.error('[handover] cloud createFolder failed:', message)
+    return { ok: false, error: message }
   }
 }
 
 /**
- * Best-effort file mirror. Returns null on failure. body is Uint8Array.
+ * Best-effort file mirror. Same shape as mirrorCreateFolder.
  */
 export async function mirrorUploadFile(
   ctx: ProjectCloudContext,
@@ -140,9 +149,9 @@ export async function mirrorUploadFile(
   name: string,
   body: Uint8Array,
   mimeType?: string,
-): Promise<CloudItem | null> {
+): Promise<MirrorResult> {
   try {
-    return await retryOn401(ctx, async (accessToken) =>
+    const item = await retryOn401(ctx, async (accessToken) =>
       ctx.providerImpl.uploadFile({
         name,
         parentFolderId: parentCloudFolderId,
@@ -151,10 +160,20 @@ export async function mirrorUploadFile(
         accessToken,
       }),
     )
+    return { ok: true, item }
   } catch (e) {
-    console.error('[handover] cloud uploadFile failed:', (e as Error).message)
-    return null
+    const message = errorMessage(e)
+    console.error('[handover] cloud uploadFile failed:', message)
+    return { ok: false, error: message }
   }
+}
+
+function errorMessage(e: unknown): string {
+  if (e instanceof CloudStorageError) {
+    return `${e.provider} ${e.status ?? '???'}: ${e.message}`
+  }
+  if (e instanceof Error) return e.message
+  return String(e)
 }
 
 // ---------------------------------------------------------------------------

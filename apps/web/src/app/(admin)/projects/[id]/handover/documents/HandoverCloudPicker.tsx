@@ -94,6 +94,11 @@ export function HandoverCloudPicker(props: Props) {
           : ' — fully in sync'
       const fail = res.failed > 0 ? `, ${res.failed} failed` : ''
       setFlash(`Pushed ${pushed}${remaining}${fail}.`)
+      // Surface the first sample errors so the user can see WHY things
+      // failed without diving into Vercel function logs.
+      if (res.errors.length > 0) {
+        setError(`First error${res.errors.length === 1 ? '' : 's'}: ${res.errors.join(' · ')}`)
+      }
       router.refresh()
     })
   }

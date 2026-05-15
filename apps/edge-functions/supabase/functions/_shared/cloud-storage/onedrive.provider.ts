@@ -28,7 +28,7 @@ const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
 // offline_access produces a refresh token. Files.Read.All covers both
 // personal OneDrive and SharePoint document libraries the user has access to.
-const SCOPES = ['Files.Read.All', 'User.Read', 'offline_access'].join(' ')
+const SCOPES = ['Files.ReadWrite.All', 'User.Read', 'offline_access'].join(' ')
 
 export class OneDriveProvider implements CloudStorageProvider {
   readonly name: ProviderName = 'onedrive'

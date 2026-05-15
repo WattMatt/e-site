@@ -88,10 +88,13 @@ export async function initializeHandoverCategoryAction(
     categoryRootId = existingRoot.id as string
     categoryRootCloudId = (existingRoot.cloud_folder_id as string | null) ?? null
   } else {
-    let cloudFolder = null
+    let cloudFolder: { id: string; path?: string } | null = null
     if (cloudCtx && cloudRootId) {
-      cloudFolder = await mirrorCreateFolder(cloudCtx, cloudRootId, rootName)
-      if (cloudFolder) cloudMirrored++
+      const r = await mirrorCreateFolder(cloudCtx, cloudRootId, rootName)
+      if (r.ok) {
+        cloudFolder = r.item
+        cloudMirrored++
+      }
     }
     const { data: inserted, error } = await (supabase as any)
       .schema('tenants')
@@ -145,10 +148,13 @@ export async function initializeHandoverCategoryAction(
       continue
     }
 
-    let cloudFolder = null
+    let cloudFolder: { id: string; path?: string } | null = null
     if (cloudCtx && parentCloudId) {
-      cloudFolder = await mirrorCreateFolder(cloudCtx, parentCloudId, f.name)
-      if (cloudFolder) cloudMirrored++
+      const r = await mirrorCreateFolder(cloudCtx, parentCloudId, f.name)
+      if (r.ok) {
+        cloudFolder = r.item
+        cloudMirrored++
+      }
     }
 
     const { data: inserted, error: insErr } = await (supabase as any)
@@ -210,9 +216,10 @@ export async function createHandoverSubfolderAction(
   if (!parent || parent.project_id !== projectId) return { error: 'Parent folder not found' }
 
   const cloudCtx = await loadProjectCloudContext(projectId, supabase).catch(() => null)
-  let cloudFolder = null
+  let cloudFolder: { id: string; path?: string } | null = null
   if (cloudCtx && parent.cloud_folder_id) {
-    cloudFolder = await mirrorCreateFolder(cloudCtx, parent.cloud_folder_id, trimmed)
+    const r = await mirrorCreateFolder(cloudCtx, parent.cloud_folder_id, trimmed)
+    if (r.ok) cloudFolder = r.item
   }
 
   const { data: inserted, error } = await (supabase as any)
@@ -329,22 +336,22 @@ export async function uploadHandoverDocumentAction(
   if (folder.cloud_folder_id) {
     const cloudCtx = await loadProjectCloudContext(projectId, supabase).catch(() => null)
     if (cloudCtx) {
-      const mirror = await mirrorUploadFile(
+      const r = await mirrorUploadFile(
         cloudCtx,
         folder.cloud_folder_id as string,
         safeName,
         bytes,
         file.type || undefined,
       )
-      if (mirror) {
+      if (r.ok) {
         cloudMirrored = true
         await (supabase as any)
           .schema('tenants')
           .from('documents')
           .update({
             cloud_mirror_provider: cloudCtx.provider,
-            cloud_mirror_file_id: mirror.id,
-            cloud_mirror_path: mirror.path ?? null,
+            cloud_mirror_file_id: r.item.id,
+            cloud_mirror_path: r.item.path ?? null,
             cloud_mirror_synced_at: new Date().toISOString(),
           })
           .eq('id', docRow.id)
@@ -447,6 +454,9 @@ export type SyncToCloudResult =
       foldersRemaining: number
       filesRemaining: number
       failed: number
+      /** Up to first 3 error messages — surfaces provider responses for
+       *  diagnostics so users don't have to read Vercel logs. */
+      errors: string[]
     }
   | { error: string }
 
@@ -467,6 +477,10 @@ export async function syncHandoverToCloudAction(
   let foldersPushed = 0
   let filesPushed = 0
   let failed = 0
+  const errors: string[] = []
+  const pushError = (msg: string) => {
+    if (errors.length < 3) errors.push(msg)
+  }
 
   // ─── 1. Folders ─────────────────────────────────────────────────────────
   // Sort by folder_path ascending so parents are created before children.
@@ -507,24 +521,26 @@ export async function syncHandoverToCloudAction(
         // Parent isn't synced yet AND wasn't in this batch — skip; will be
         // picked up on a re-run after the parent lands.
         failed++
+        pushError(`folder "${f.name}": parent not yet pushed (re-run will retry)`)
         continue
       }
       parentCloudId = pcid
     }
 
-    const created = await mirrorCreateFolder(cloudCtx, parentCloudId, f.name)
-    if (!created) {
+    const r = await mirrorCreateFolder(cloudCtx, parentCloudId, f.name)
+    if (!r.ok) {
       failed++
+      pushError(`folder "${f.name}": ${r.error}`)
       continue
     }
-    cloudParentCache.set(f.id, created.id)
+    cloudParentCache.set(f.id, r.item.id)
     await (supabase as any)
       .schema('tenants')
       .from('handover_folders')
       .update({
         cloud_provider: cloudCtx.provider,
-        cloud_folder_id: created.id,
-        cloud_folder_path: created.path ?? null,
+        cloud_folder_id: r.item.id,
+        cloud_folder_path: r.item.path ?? null,
         cloud_synced_at: new Date().toISOString(),
       })
       .eq('id', f.id)
@@ -565,6 +581,7 @@ export async function syncHandoverToCloudAction(
     }
     if (!folderCloudId) {
       failed++
+      pushError(`file "${d.name}": folder not yet pushed`)
       continue
     }
 
@@ -572,19 +589,21 @@ export async function syncHandoverToCloudAction(
     const dl = await supabase.storage.from(BUCKET).download(d.storage_path)
     if (dl.error || !dl.data) {
       failed++
+      pushError(`file "${d.name}": Supabase Storage download failed: ${dl.error?.message ?? 'no data'}`)
       continue
     }
     const bytes = new Uint8Array(await dl.data.arrayBuffer())
 
-    const mirror = await mirrorUploadFile(
+    const r = await mirrorUploadFile(
       cloudCtx,
       folderCloudId,
       d.name,
       bytes,
       d.mime_type ?? undefined,
     )
-    if (!mirror) {
+    if (!r.ok) {
       failed++
+      pushError(`file "${d.name}": ${r.error}`)
       continue
     }
 
@@ -593,8 +612,8 @@ export async function syncHandoverToCloudAction(
       .from('documents')
       .update({
         cloud_mirror_provider: cloudCtx.provider,
-        cloud_mirror_file_id: mirror.id,
-        cloud_mirror_path: mirror.path ?? null,
+        cloud_mirror_file_id: r.item.id,
+        cloud_mirror_path: r.item.path ?? null,
         cloud_mirror_synced_at: new Date().toISOString(),
       })
       .eq('id', d.id)
@@ -624,6 +643,7 @@ export async function syncHandoverToCloudAction(
     foldersRemaining: foldersRemaining ?? 0,
     filesRemaining: filesRemaining ?? 0,
     failed,
+    errors,
   }
 }
 
