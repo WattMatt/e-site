@@ -280,6 +280,12 @@ function CableForm({
           {SIZE_DEFAULTS.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
       </Field>
+      <Field label="Conductor">
+        <select className="ob-input" value={conductor} onChange={(e) => setConductor(e.target.value as any)}>
+          <option value="CU">Cu</option>
+          <option value="AL">Al</option>
+        </select>
+      </Field>
       <div style={{ gridColumn: '1 / -1' }}>
         <button type="button" onClick={() => setShowMore((v) => !v)} aria-expanded={showMore}
           style={{ background: 'none', border: 'none', cursor: 'pointer',
@@ -302,12 +308,6 @@ function CableForm({
               <option value="3">3</option>
               <option value="3+E">3+E</option>
               <option value="4">4</option>
-            </select>
-          </Field>
-          <Field label="Conductor">
-            <select className="ob-input" value={conductor} onChange={(e) => setConductor(e.target.value as any)}>
-              <option value="CU">Cu</option>
-              <option value="AL">Al</option>
             </select>
           </Field>
           <Field label="Insulation">
