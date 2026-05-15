@@ -27,7 +27,6 @@ import {
   type HandoverCategory,
 } from '@esite/shared'
 import {
-  ensureHandoverCloudRoot,
   loadProjectCloudContext,
   mirrorCreateFolder,
   mirrorUploadFile,
@@ -65,11 +64,10 @@ export async function initializeHandoverCategoryAction(
   if (projErr || !project) return { error: 'Project not found' }
   const orgId = project.organisation_id as string
 
-  // Best-effort cloud context — null when the project has no cloud mapping.
+  // Best-effort cloud context — null when the project hasn't picked a
+  // dedicated handover folder yet (or has no connection).
   const cloudCtx = await loadProjectCloudContext(projectId, supabase).catch(() => null)
-  const cloudRootId = cloudCtx
-    ? await ensureHandoverCloudRoot(projectId, cloudCtx, supabase).catch(() => null)
-    : null
+  const cloudRootId = cloudCtx?.handoverRootFolderId ?? null
 
   // 1. Create the category root folder (parent_folder_id = NULL).
   const rootName = CATEGORY_LABELS[category]
@@ -368,3 +366,78 @@ function isUuid(s: string): boolean {
 
 // Suppress unused-import warning for ProjectCloudContext.
 export type _HandoverActionCloudContext = ProjectCloudContext
+
+// ---------------------------------------------------------------------------
+// Cloud-folder mapping actions (handover-specific — independent of the
+// projects.cloud_storage_folder_id used by the documents/drawings tabs).
+// ---------------------------------------------------------------------------
+
+export type SetHandoverFolderResult = { ok: true } | { error: string }
+
+export async function setHandoverCloudFolderAction(args: {
+  projectId: string
+  connectionId: string
+  folderId: string
+  folderPath?: string | null
+}): Promise<SetHandoverFolderResult> {
+  if (!isUuid(args.projectId)) return { error: 'Invalid project id' }
+  if (!isUuid(args.connectionId)) return { error: 'Invalid connection id' }
+  if (!args.folderId || typeof args.folderId !== 'string') {
+    return { error: 'Invalid folder id' }
+  }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // Verify the connection belongs to the same org as the project — RLS
+  // already gates both reads, but a belt-and-braces check keeps the error
+  // shape user-friendly when something is mis-wired.
+  const { data: project } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('id, organisation_id')
+    .eq('id', args.projectId)
+    .maybeSingle()
+  if (!project) return { error: 'Project not found' }
+
+  // Persist BOTH the connection id (shared with the documents-tab mapping
+  // because a provider auth is per-org, not per-tab) AND the dedicated
+  // handover folder + path.
+  const { error } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .update({
+      cloud_storage_connection_id: args.connectionId,
+      handover_cloud_folder_id: args.folderId,
+      handover_cloud_folder_path: args.folderPath ?? null,
+    })
+    .eq('id', args.projectId)
+  if (error) return { error: `Update failed: ${error.message}` }
+
+  revalidatePath(`/projects/${args.projectId}/handover/documents`)
+  return { ok: true }
+}
+
+export async function clearHandoverCloudFolderAction(
+  projectId: string,
+): Promise<SetHandoverFolderResult> {
+  if (!isUuid(projectId)) return { error: 'Invalid project id' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { error } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .update({
+      handover_cloud_folder_id: null,
+      handover_cloud_folder_path: null,
+    })
+    .eq('id', projectId)
+  if (error) return { error: `Clear failed: ${error.message}` }
+
+  revalidatePath(`/projects/${projectId}/handover/documents`)
+  return { ok: true }
+}

@@ -32,8 +32,13 @@ export interface ProjectCloudContext {
   connectionId: string
   provider: ProviderName
   organisationId: string
-  /** Provider-stable folder ID of the project's mapped cloud root. */
-  projectCloudFolderId: string
+  /**
+   * Provider-stable folder ID where handover content should be mirrored.
+   * Sourced from projects.handover_cloud_folder_id — a DEDICATED handover
+   * mapping that is INDEPENDENT of the project's documents/drawings cloud
+   * folder. Users pick this via HandoverCloudPicker on the handover page.
+   */
+  handoverRootFolderId: string
   /** Decrypted access token, valid for this request scope. */
   accessToken: string
   /** Provider instance — same one to reuse across calls within a request. */
@@ -52,14 +57,19 @@ interface ConnectionRow {
 interface ProjectRow {
   organisation_id: string
   cloud_storage_connection_id: string | null
-  cloud_storage_folder_id: string | null
   handover_cloud_folder_id: string | null
   handover_cloud_folder_path: string | null
 }
 
 /**
- * Returns the cloud context for a project, or null if the project has no
- * connection mapping. Refreshes tokens proactively + persists the new pair.
+ * Returns the cloud context for a project's HANDOVER mirror. Null when
+ * either the connection isn't set OR the dedicated handover folder isn't
+ * picked yet. Handover mirroring is intentionally DECOUPLED from the
+ * project's documents/drawings cloud folder — users pick a separate
+ * handover root so their handover pack doesn't get mixed into a
+ * "DRAWINGS/PDF/LATEST" tree (or wherever the documents tab maps to).
+ *
+ * Refreshes tokens proactively + persists the new pair.
  */
 export async function loadProjectCloudContext(
   projectId: string,
@@ -70,13 +80,13 @@ export async function loadProjectCloudContext(
     .schema('projects')
     .from('projects')
     .select(
-      'organisation_id, cloud_storage_connection_id, cloud_storage_folder_id, ' +
+      'organisation_id, cloud_storage_connection_id, ' +
         'handover_cloud_folder_id, handover_cloud_folder_path',
     )
     .eq('id', projectId)
     .maybeSingle()
   const p = proj as ProjectRow | null
-  if (!p || !p.cloud_storage_connection_id || !p.cloud_storage_folder_id) return null
+  if (!p || !p.cloud_storage_connection_id || !p.handover_cloud_folder_id) return null
 
   const { data: conn } = await supabase
     .from('org_storage_connections')
@@ -92,46 +102,10 @@ export async function loadProjectCloudContext(
     connectionId: c.id,
     provider: c.provider,
     organisationId: c.organisation_id,
-    projectCloudFolderId: p.cloud_storage_folder_id,
+    handoverRootFolderId: p.handover_cloud_folder_id,
     accessToken,
     providerImpl,
   }
-}
-
-/**
- * Returns the cloud folder ID of the project's "Handover" wrapper,
- * creating it under the project's cloud root if it doesn't exist.
- * Persists the new ID back to projects.projects.handover_cloud_folder_id.
- */
-export async function ensureHandoverCloudRoot(
-  projectId: string,
-  ctx: ProjectCloudContext,
-  supabase: SupabaseClient,
-): Promise<string> {
-  // Re-read to see if another concurrent call already created it.
-  const { data: proj } = await (supabase as any)
-    .schema('projects')
-    .from('projects')
-    .select('handover_cloud_folder_id, handover_cloud_folder_path')
-    .eq('id', projectId)
-    .maybeSingle()
-  const existing = (proj as { handover_cloud_folder_id: string | null } | null)?.handover_cloud_folder_id
-  if (existing) return existing
-
-  const created = await ctx.providerImpl.createFolder({
-    name: 'Handover',
-    parentFolderId: ctx.projectCloudFolderId,
-    accessToken: ctx.accessToken,
-  })
-  await (supabase as any)
-    .schema('projects')
-    .from('projects')
-    .update({
-      handover_cloud_folder_id: created.id,
-      handover_cloud_folder_path: created.path ?? null,
-    })
-    .eq('id', projectId)
-  return created.id
 }
 
 /**
