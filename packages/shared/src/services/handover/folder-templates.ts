@@ -121,7 +121,8 @@ export const FOLDER_TEMPLATES: Record<HandoverCategory, FolderTemplateNode[]> = 
 
   switchgear: equipmentTemplate([
     { name: 'Operation & Maintenance Procedures' },
-    { name: 'SF6 / Vacuum Test Records' },
+    { name: 'SF6 Test Records' },
+    { name: 'Vacuum Test Records' },
   ]),
 
   earthing_bonding: [

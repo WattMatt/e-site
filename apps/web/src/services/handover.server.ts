@@ -113,6 +113,29 @@ export type MirrorResult =
   | { ok: false; error: string }
 
 /**
+ * Sanitise a folder or file name so it's safe to push to ANY of the three
+ * supported providers. The union of disallowed characters:
+ *   - Dropbox: \ / : * ? " < > |   (also trailing whitespace + trailing '.')
+ *   - Google Drive: '/' is reserved (it's the path separator); rest tolerated
+ *   - OneDrive (Graph): : is reserved (path delimiter in url templates)
+ *
+ * We replace any of those with " - " so the cloud-side name reads
+ * sensibly. Trailing whitespace + periods are stripped. The local DB row
+ * keeps the original name (so the picker / breadcrumb still reads what
+ * the user typed) — only the cloud-side name is sanitised. That means a
+ * local "SF6 / Vacuum Test Records" mirrors as "SF6 - Vacuum Test Records"
+ * in Dropbox / Drive / OneDrive. Acceptable trade-off vs. either renaming
+ * the local row (surprising the user) or rejecting the push entirely.
+ */
+function sanitiseForCloud(name: string): string {
+  return name
+    .replace(/[\/\\:*?"<>|]/g, ' - ')
+    .replace(/\s+/g, ' ')
+    .replace(/[.\s]+$/, '')
+    .trim()
+}
+
+/**
  * Best-effort folder mirror. Returns `{ ok: false, error }` instead of
  * throwing so callers can commit the local row anyway + surface a
  * useful message. Failures used to be swallowed to console — the error
@@ -125,9 +148,11 @@ export async function mirrorCreateFolder(
   name: string,
 ): Promise<MirrorResult> {
   try {
+    const safeName = sanitiseForCloud(name)
+    if (!safeName) return { ok: false, error: `name "${name}" sanitises to empty` }
     const item = await retryOn401(ctx, async (accessToken) =>
       ctx.providerImpl.createFolder({
-        name,
+        name: safeName,
         parentFolderId: parentCloudFolderId,
         accessToken,
       }),
@@ -151,9 +176,11 @@ export async function mirrorUploadFile(
   mimeType?: string,
 ): Promise<MirrorResult> {
   try {
+    const safeName = sanitiseForCloud(name)
+    if (!safeName) return { ok: false, error: `name "${name}" sanitises to empty` }
     const item = await retryOn401(ctx, async (accessToken) =>
       ctx.providerImpl.uploadFile({
-        name,
+        name: safeName,
         parentFolderId: parentCloudFolderId,
         body,
         mimeType,
