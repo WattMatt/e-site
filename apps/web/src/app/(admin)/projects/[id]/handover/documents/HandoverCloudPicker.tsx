@@ -21,6 +21,7 @@ import { CloudFolderPicker } from '@/components/cloud-storage/CloudFolderPicker'
 import {
   clearHandoverCloudFolderAction,
   setHandoverCloudFolderAction,
+  syncHandoverToCloudAction,
 } from '@/actions/handover.actions'
 import type { ProviderName } from '@esite/shared'
 
@@ -70,6 +71,29 @@ export function HandoverCloudPicker(props: Props) {
       }
       setPickerConnId(null)
       setFlash(`Handover folder set: ${folderPath}`)
+      router.refresh()
+    })
+  }
+
+  function onSyncNow() {
+    setError(null)
+    setFlash(null)
+    startTransition(async () => {
+      const res = await syncHandoverToCloudAction(props.projectId)
+      if ('error' in res) {
+        setError(res.error)
+        return
+      }
+      const parts: string[] = []
+      if (res.foldersPushed > 0) parts.push(`${res.foldersPushed} folders`)
+      if (res.filesPushed > 0) parts.push(`${res.filesPushed} files`)
+      const pushed = parts.length > 0 ? parts.join(' + ') : 'nothing new'
+      const remaining =
+        res.foldersRemaining + res.filesRemaining > 0
+          ? ` — ${res.foldersRemaining} folder${res.foldersRemaining === 1 ? '' : 's'} + ${res.filesRemaining} file${res.filesRemaining === 1 ? '' : 's'} still pending (re-click to continue)`
+          : ' — fully in sync'
+      const fail = res.failed > 0 ? `, ${res.failed} failed` : ''
+      setFlash(`Pushed ${pushed}${remaining}${fail}.`)
       router.refresh()
     })
   }
@@ -137,6 +161,17 @@ export function HandoverCloudPicker(props: Props) {
               onPick={(id) => setPickerConnId(id)}
               hasMapping={!!props.handoverFolderPath}
             />
+          )}
+          {props.handoverFolderPath && (
+            <button
+              onClick={onSyncNow}
+              disabled={pending}
+              style={btnPrimary}
+              type="button"
+              title="Push every unsynced handover folder + file into the mapped cloud folder."
+            >
+              {pending ? 'Syncing…' : '↥ Sync to cloud'}
+            </button>
           )}
           {props.handoverFolderPath && (
             <button

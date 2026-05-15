@@ -419,6 +419,214 @@ export async function setHandoverCloudFolderAction(args: {
   return { ok: true }
 }
 
+// ---------------------------------------------------------------------------
+// syncHandoverToCloudAction — push any unsynced folders + documents to the
+// mapped handover cloud folder. Idempotent: only acts on rows where
+// cloud_folder_id / cloud_mirror_file_id IS NULL.
+//
+// Use cases:
+//   - Folders were initialised BEFORE a cloud mapping existed.
+//   - Cloud mapping was re-pointed to a different folder (existing rows
+//     keep their old IDs; clearing first + remapping + syncing pushes
+//     everything fresh against the new root).
+//   - Earlier cloud push failed for one folder; user re-clicks "Sync now".
+//
+// MAX_PER_RUN keeps a single action call bounded. Re-clicking the button
+// processes the next chunk. Edge-function-style chunked sync (background
+// pg_cron) is a Phase-2 if/when handover packs hit 1000s of files.
+// ---------------------------------------------------------------------------
+
+const SYNC_MAX_FOLDERS_PER_RUN = 100
+const SYNC_MAX_FILES_PER_RUN = 30
+
+export type SyncToCloudResult =
+  | {
+      ok: true
+      foldersPushed: number
+      filesPushed: number
+      foldersRemaining: number
+      filesRemaining: number
+      failed: number
+    }
+  | { error: string }
+
+export async function syncHandoverToCloudAction(
+  projectId: string,
+): Promise<SyncToCloudResult> {
+  if (!isUuid(projectId)) return { error: 'Invalid project id' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const cloudCtx = await loadProjectCloudContext(projectId, supabase).catch(() => null)
+  if (!cloudCtx) {
+    return { error: 'Map a handover cloud folder first' }
+  }
+
+  let foldersPushed = 0
+  let filesPushed = 0
+  let failed = 0
+
+  // ─── 1. Folders ─────────────────────────────────────────────────────────
+  // Sort by folder_path ascending so parents are created before children.
+  // Only fetch unsynced rows. Hard-cap at SYNC_MAX_FOLDERS_PER_RUN.
+  const { data: pendingFolders } = await (supabase as any)
+    .schema('tenants')
+    .from('handover_folders')
+    .select('id, parent_folder_id, name, folder_path, cloud_folder_id')
+    .eq('project_id', projectId)
+    .is('cloud_folder_id', null)
+    .order('folder_path', { ascending: true })
+    .limit(SYNC_MAX_FOLDERS_PER_RUN)
+
+  // In-memory cache of folder_id → cloud_folder_id so subsequent children
+  // can find their newly-created parent without an extra DB round-trip.
+  const cloudParentCache = new Map<string, string>()
+  for (const f of (pendingFolders ?? []) as Array<{
+    id: string
+    parent_folder_id: string | null
+    name: string
+    folder_path: string
+  }>) {
+    let parentCloudId: string
+    if (f.parent_folder_id === null) {
+      parentCloudId = cloudCtx.handoverRootFolderId
+    } else if (cloudParentCache.has(f.parent_folder_id)) {
+      parentCloudId = cloudParentCache.get(f.parent_folder_id)!
+    } else {
+      // Parent already had a cloud_folder_id (created in an earlier run).
+      const { data: parentRow } = await (supabase as any)
+        .schema('tenants')
+        .from('handover_folders')
+        .select('cloud_folder_id')
+        .eq('id', f.parent_folder_id)
+        .maybeSingle()
+      const pcid = (parentRow as { cloud_folder_id: string | null } | null)?.cloud_folder_id
+      if (!pcid) {
+        // Parent isn't synced yet AND wasn't in this batch — skip; will be
+        // picked up on a re-run after the parent lands.
+        failed++
+        continue
+      }
+      parentCloudId = pcid
+    }
+
+    const created = await mirrorCreateFolder(cloudCtx, parentCloudId, f.name)
+    if (!created) {
+      failed++
+      continue
+    }
+    cloudParentCache.set(f.id, created.id)
+    await (supabase as any)
+      .schema('tenants')
+      .from('handover_folders')
+      .update({
+        cloud_provider: cloudCtx.provider,
+        cloud_folder_id: created.id,
+        cloud_folder_path: created.path ?? null,
+        cloud_synced_at: new Date().toISOString(),
+      })
+      .eq('id', f.id)
+    foldersPushed++
+  }
+
+  // ─── 2. Documents ───────────────────────────────────────────────────────
+  // Only files whose containing folder IS already synced (cloud_folder_id
+  // NOT NULL) — otherwise we'd have nowhere to put them.
+  const { data: pendingDocs } = await (supabase as any)
+    .schema('tenants')
+    .from('documents')
+    .select('id, name, storage_path, mime_type, handover_folder_id')
+    .eq('project_id', projectId)
+    .not('handover_folder_id', 'is', null)
+    .is('cloud_mirror_file_id', null)
+    .limit(SYNC_MAX_FILES_PER_RUN)
+
+  for (const d of (pendingDocs ?? []) as Array<{
+    id: string
+    name: string
+    storage_path: string
+    mime_type: string | null
+    handover_folder_id: string
+  }>) {
+    // Folder cloud_folder_id from either cache (just created this run) or
+    // DB (synced earlier).
+    let folderCloudId = cloudParentCache.get(d.handover_folder_id)
+    if (!folderCloudId) {
+      const { data: fr } = await (supabase as any)
+        .schema('tenants')
+        .from('handover_folders')
+        .select('cloud_folder_id')
+        .eq('id', d.handover_folder_id)
+        .maybeSingle()
+      folderCloudId =
+        (fr as { cloud_folder_id: string | null } | null)?.cloud_folder_id ?? undefined
+    }
+    if (!folderCloudId) {
+      failed++
+      continue
+    }
+
+    // Download bytes from Supabase Storage.
+    const dl = await supabase.storage.from(BUCKET).download(d.storage_path)
+    if (dl.error || !dl.data) {
+      failed++
+      continue
+    }
+    const bytes = new Uint8Array(await dl.data.arrayBuffer())
+
+    const mirror = await mirrorUploadFile(
+      cloudCtx,
+      folderCloudId,
+      d.name,
+      bytes,
+      d.mime_type ?? undefined,
+    )
+    if (!mirror) {
+      failed++
+      continue
+    }
+
+    await (supabase as any)
+      .schema('tenants')
+      .from('documents')
+      .update({
+        cloud_mirror_provider: cloudCtx.provider,
+        cloud_mirror_file_id: mirror.id,
+        cloud_mirror_path: mirror.path ?? null,
+        cloud_mirror_synced_at: new Date().toISOString(),
+      })
+      .eq('id', d.id)
+    filesPushed++
+  }
+
+  // ─── 3. Compute remaining counts for the UI ─────────────────────────────
+  const { count: foldersRemaining } = await (supabase as any)
+    .schema('tenants')
+    .from('handover_folders')
+    .select('id', { count: 'exact', head: true })
+    .eq('project_id', projectId)
+    .is('cloud_folder_id', null)
+  const { count: filesRemaining } = await (supabase as any)
+    .schema('tenants')
+    .from('documents')
+    .select('id', { count: 'exact', head: true })
+    .eq('project_id', projectId)
+    .not('handover_folder_id', 'is', null)
+    .is('cloud_mirror_file_id', null)
+
+  revalidatePath(`/projects/${projectId}/handover/documents`)
+  return {
+    ok: true,
+    foldersPushed,
+    filesPushed,
+    foldersRemaining: foldersRemaining ?? 0,
+    filesRemaining: filesRemaining ?? 0,
+    failed,
+  }
+}
+
 export async function clearHandoverCloudFolderAction(
   projectId: string,
 ): Promise<SetHandoverFolderResult> {
