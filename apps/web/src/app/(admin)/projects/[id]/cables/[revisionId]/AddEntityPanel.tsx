@@ -7,6 +7,7 @@ import {
   addCableAction,
   previewParallelCableSet,
   addParallelCableSetAction,
+  addBoardAction,
 } from '@/actions/cable-entities.actions'
 import { type NodeOption } from './CableScheduleGrid'
 
@@ -14,17 +15,31 @@ interface Props {
   revisionId: string
   sources: NodeOption[]
   boards: NodeOption[]
+  /** When set (e.g. `source:<id>` / `board:<id>`), the form opens pre-seeded with this "From". */
+  feedFromKey?: string | null
+  /** Called once the pre-seeded feed has been used (submitted) so the caller can clear it. */
+  onFeedConsumed?: () => void
 }
 
 const SIZE_DEFAULTS = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400]
 const VOLTAGE_DEFAULTS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
+const BOARD_KIND_OPTIONS = [
+  { value: 'SUB_BOARD', label: 'Sub board' },
+  { value: 'MAIN_BOARD', label: 'Main board' },
+  { value: 'TRANSFORMER', label: 'Transformer / Minisub' },
+  { value: 'CONSUMER_RMU', label: 'Consumer RMU' },
+]
 
-export function AddEntityPanel({ revisionId, sources, boards }: Props) {
+export function AddEntityPanel({ revisionId, sources, boards, feedFromKey, onFeedConsumed }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (feedFromKey) setOpen(true)
+  }, [feedFromKey])
 
   function submit(fn: () => Promise<{ error?: string }>, label: string) {
     setError(null); setFlash(null)
@@ -33,6 +48,7 @@ export function AddEntityPanel({ revisionId, sources, boards }: Props) {
       if (r.error) { setError(r.error); return }
       setFlash(label + ' added.')
       router.refresh()
+      onFeedConsumed?.()
     })
   }
 
@@ -74,7 +90,7 @@ export function AddEntityPanel({ revisionId, sources, boards }: Props) {
         </div>
       )}
 
-      <CableForm revisionId={revisionId} sources={sources} boards={boards} pending={pending} onSubmit={submit} />
+      <CableForm revisionId={revisionId} sources={sources} boards={boards} pending={pending} onSubmit={submit} feedFromKey={feedFromKey} />
     </div>
   )
 }
@@ -82,13 +98,14 @@ export function AddEntityPanel({ revisionId, sources, boards }: Props) {
 // ─── cable form ─────────────────────────────────────────────────────
 
 function CableForm({
-  revisionId, sources, boards, pending, onSubmit,
+  revisionId, sources, boards, pending, onSubmit, feedFromKey,
 }: {
   revisionId: string
   sources: NodeOption[]
   boards: NodeOption[]
   pending: boolean
   onSubmit: (fn: () => Promise<{ error?: string }>, label: string) => void
+  feedFromKey?: string | null
 }) {
   // From = sources + boards; To = boards only
   const allFrom = [
@@ -112,6 +129,8 @@ function CableForm({
   const [depthMm, setDepthMm] = useState('500')
   const [groupedWith, setGroupedWith] = useState('1')
   const [ohmOverride, setOhmOverride] = useState('')
+  const [newBoardCode, setNewBoardCode] = useState('')
+  const [newBoardKind, setNewBoardKind] = useState('SUB_BOARD')
 
   const [preview, setPreview] = useState<{
     count: number
@@ -124,9 +143,15 @@ function CableForm({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
+    if (feedFromKey && allFrom.some((o) => o.key === feedFromKey)) {
+      setFromKey(feedFromKey)
+    }
+  }, [feedFromKey])
+
+  useEffect(() => {
     const [kind, id] = fromKey.split(':')
     const loadNum = Number(load)
-    if (!kind || !id || !toBoardId || !loadNum || loadNum <= 0) {
+    if (!kind || !id || !toBoardId || toBoardId === '__new__' || !loadNum || loadNum <= 0) {
       setPreview(null)
       return
     }
@@ -189,11 +214,17 @@ function CableForm({
       onSubmit(
         async () => {
           if (!kind || !id) return { error: 'Please select a valid From node' }
+          let resolvedToBoardId = toBoardId
+          if (toBoardId === '__new__') {
+            const board = await addBoardAction({ revisionId, code: newBoardCode.trim(), kind: newBoardKind as never })
+            if (board.error || !board.id) return { error: board.error ?? 'Could not create the board' }
+            resolvedToBoardId = board.id
+          }
           return addParallelCableSetAction({
             revisionId,
             fromSourceId: kind === 'source' ? id! : null,
             fromBoardId: kind === 'board' ? id! : null,
-            toBoardId,
+            toBoardId: resolvedToBoardId,
             voltageV: Number(voltage),
             designLoadA: Number(load),
             section: (section || null) as 'NORMAL' | 'EMERGENCY' | null | undefined,
@@ -216,11 +247,17 @@ function CableForm({
       onSubmit(
         async () => {
           if (!kind || !id) return { error: 'Please select a valid From node' }
+          let resolvedToBoardId = toBoardId
+          if (toBoardId === '__new__') {
+            const board = await addBoardAction({ revisionId, code: newBoardCode.trim(), kind: newBoardKind as never })
+            if (board.error || !board.id) return { error: board.error ?? 'Could not create the board' }
+            resolvedToBoardId = board.id
+          }
           const supplyResult = await findOrCreateSupplyAction({
             revisionId,
             fromSourceId: kind === 'source' ? id! : null,
             fromBoardId: kind === 'board' ? id! : null,
-            toBoardId,
+            toBoardId: resolvedToBoardId,
             voltageV: Number(voltage),
             designLoadA: Number(load),
             section: (section || null) as 'NORMAL' | 'EMERGENCY' | null | undefined,
@@ -265,7 +302,17 @@ function CableForm({
       <Field label="To (board) *">
         <select className="ob-input" value={toBoardId} onChange={(e) => setToBoardId(e.target.value)}>
           {boards.map((b) => <option key={b.id} value={b.id}>{b.code}</option>)}
+          <option value="__new__">+ new board…</option>
         </select>
+        {toBoardId === '__new__' && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <input className="ob-input" style={{ flex: 1 }} value={newBoardCode} maxLength={80}
+              placeholder="New board code" onChange={(e) => setNewBoardCode(e.target.value)} />
+            <select className="ob-input" value={newBoardKind} onChange={(e) => setNewBoardKind(e.target.value)}>
+              {BOARD_KIND_OPTIONS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+            </select>
+          </div>
+        )}
       </Field>
       <Field label="Voltage *">
         <select className="ob-input" value={voltage} onChange={(e) => setVoltage(e.target.value)}>
@@ -369,7 +416,8 @@ function CableForm({
         </Field>
       )}
       <SubmitButton
-        disabled={pending || !fromKey || !toBoardId || !load || !sizeMm2}
+        disabled={pending || !fromKey || !toBoardId || !load || !sizeMm2
+          || (toBoardId === '__new__' && newBoardCode.trim().length < 1)}
         pending={pending}
         label={
           preview && preview.mode === 'create-set' && !preview.insufficient && Number(count) >= 1
