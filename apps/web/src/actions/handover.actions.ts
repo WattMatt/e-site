@@ -443,8 +443,15 @@ export async function setHandoverCloudFolderAction(args: {
 // pg_cron) is a Phase-2 if/when handover packs hit 1000s of files.
 // ---------------------------------------------------------------------------
 
-const SYNC_MAX_FOLDERS_PER_RUN = 100
-const SYNC_MAX_FILES_PER_RUN = 30
+// Hard-cap per round to keep an individual server-action invocation inside
+// Vercel's wall-clock limit (~10s on Hobby, ~60s on Pro — assume Hobby).
+// Each Dropbox createFolder is ~150-400ms (network + namespace header),
+// each upload is ~300-1500ms depending on file size. With a 7s soft budget
+// and 25-folder mini-batches, we stay comfortably under the limit; the
+// client auto-resumes until everything's drained.
+const SYNC_TIME_BUDGET_MS = 7000
+const SYNC_FOLDER_BATCH = 25
+const SYNC_FILE_BATCH = 5
 
 export type SyncToCloudResult =
   | {
@@ -481,29 +488,40 @@ export async function syncHandoverToCloudAction(
   const pushError = (msg: string) => {
     if (errors.length < 3) errors.push(msg)
   }
-
-  // ─── 1. Folders ─────────────────────────────────────────────────────────
-  // Sort by folder_path ascending so parents are created before children.
-  // Only fetch unsynced rows. Hard-cap at SYNC_MAX_FOLDERS_PER_RUN.
-  const { data: pendingFolders } = await (supabase as any)
-    .schema('tenants')
-    .from('handover_folders')
-    .select('id, parent_folder_id, name, folder_path, cloud_folder_id')
-    .eq('project_id', projectId)
-    .is('cloud_folder_id', null)
-    .order('folder_path', { ascending: true })
-    .limit(SYNC_MAX_FOLDERS_PER_RUN)
+  const startedAt = Date.now()
+  const overBudget = () => Date.now() - startedAt > SYNC_TIME_BUDGET_MS
 
   // In-memory cache of folder_id → cloud_folder_id so subsequent children
   // can find their newly-created parent without an extra DB round-trip.
   const cloudParentCache = new Map<string, string>()
-  for (const f of (pendingFolders ?? []) as Array<{
-    id: string
-    parent_folder_id: string | null
-    name: string
-    folder_path: string
-  }>) {
-    let parentCloudId: string
+
+  // ─── 1. Folders ─────────────────────────────────────────────────────────
+  // Loop until everything pending is processed OR we run out of time budget.
+  // Each loop fetches the next batch in folder_path order so parents are
+  // created before children. Client auto-resumes on the next call when
+  // we stop early.
+  while (!overBudget()) {
+    const { data: batch } = await (supabase as any)
+      .schema('tenants')
+      .from('handover_folders')
+      .select('id, parent_folder_id, name, folder_path, cloud_folder_id')
+      .eq('project_id', projectId)
+      .is('cloud_folder_id', null)
+      .order('folder_path', { ascending: true })
+      .limit(SYNC_FOLDER_BATCH)
+
+    const rows = (batch ?? []) as Array<{
+      id: string
+      parent_folder_id: string | null
+      name: string
+      folder_path: string
+    }>
+    if (rows.length === 0) break
+
+    let progressedThisBatch = 0
+    for (const f of rows) {
+      if (overBudget()) break
+      let parentCloudId: string
     if (f.parent_folder_id === null) {
       parentCloudId = cloudCtx.handoverRootFolderId
     } else if (cloudParentCache.has(f.parent_folder_id)) {
@@ -533,39 +551,52 @@ export async function syncHandoverToCloudAction(
       pushError(`folder "${f.name}": ${r.error}`)
       continue
     }
-    cloudParentCache.set(f.id, r.item.id)
-    await (supabase as any)
-      .schema('tenants')
-      .from('handover_folders')
-      .update({
-        cloud_provider: cloudCtx.provider,
-        cloud_folder_id: r.item.id,
-        cloud_folder_path: r.item.path ?? null,
-        cloud_synced_at: new Date().toISOString(),
-      })
-      .eq('id', f.id)
-    foldersPushed++
+      cloudParentCache.set(f.id, r.item.id)
+      await (supabase as any)
+        .schema('tenants')
+        .from('handover_folders')
+        .update({
+          cloud_provider: cloudCtx.provider,
+          cloud_folder_id: r.item.id,
+          cloud_folder_path: r.item.path ?? null,
+          cloud_synced_at: new Date().toISOString(),
+        })
+        .eq('id', f.id)
+      foldersPushed++
+      progressedThisBatch++
+    }
+    // If a batch produced zero progress, the remaining rows are all
+    // blocked (e.g. parent-not-yet-pushed on a re-run). Break to avoid
+    // an infinite loop; the next Sync click will retry.
+    if (progressedThisBatch === 0) break
   }
 
   // ─── 2. Documents ───────────────────────────────────────────────────────
   // Only files whose containing folder IS already synced (cloud_folder_id
-  // NOT NULL) — otherwise we'd have nowhere to put them.
-  const { data: pendingDocs } = await (supabase as any)
-    .schema('tenants')
-    .from('documents')
-    .select('id, name, storage_path, mime_type, handover_folder_id')
-    .eq('project_id', projectId)
-    .not('handover_folder_id', 'is', null)
-    .is('cloud_mirror_file_id', null)
-    .limit(SYNC_MAX_FILES_PER_RUN)
+  // NOT NULL) — otherwise we'd have nowhere to put them. Loops until done
+  // or budget exhausts, mirroring the folder pass.
+  while (!overBudget()) {
+    const { data: batch } = await (supabase as any)
+      .schema('tenants')
+      .from('documents')
+      .select('id, name, storage_path, mime_type, handover_folder_id')
+      .eq('project_id', projectId)
+      .not('handover_folder_id', 'is', null)
+      .is('cloud_mirror_file_id', null)
+      .limit(SYNC_FILE_BATCH)
 
-  for (const d of (pendingDocs ?? []) as Array<{
-    id: string
-    name: string
-    storage_path: string
-    mime_type: string | null
-    handover_folder_id: string
-  }>) {
+    const rows = (batch ?? []) as Array<{
+      id: string
+      name: string
+      storage_path: string
+      mime_type: string | null
+      handover_folder_id: string
+    }>
+    if (rows.length === 0) break
+
+    let progressedThisBatch = 0
+    for (const d of rows) {
+      if (overBudget()) break
     // Folder cloud_folder_id from either cache (just created this run) or
     // DB (synced earlier).
     let folderCloudId = cloudParentCache.get(d.handover_folder_id)
@@ -618,6 +649,9 @@ export async function syncHandoverToCloudAction(
       })
       .eq('id', d.id)
     filesPushed++
+    progressedThisBatch++
+    }
+    if (progressedThisBatch === 0) break
   }
 
   // ─── 3. Compute remaining counts for the UI ─────────────────────────────

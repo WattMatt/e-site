@@ -79,25 +79,55 @@ export function HandoverCloudPicker(props: Props) {
     setError(null)
     setFlash(null)
     startTransition(async () => {
-      const res = await syncHandoverToCloudAction(props.projectId)
-      if ('error' in res) {
-        setError(res.error)
-        return
+      // Auto-resume loop. Each call to the server action processes one
+      // time-bounded chunk and returns the remaining count. We keep firing
+      // until either nothing is pending OR a round produces zero progress
+      // (which means the remaining rows are all blocked — e.g. parent-not-
+      // yet-pushed, scope error, etc.; the error pane will explain).
+      // MAX_ITERS is a safety cap against any unforeseen infinite-loop
+      // shape — at SYNC_FOLDER_BATCH=25 per round, 50 iters = 1250 folders
+      // worth of headroom which is way beyond anything realistic.
+      const MAX_ITERS = 50
+      let totalFolders = 0
+      let totalFiles = 0
+      let totalFailed = 0
+      const allErrors: string[] = []
+
+      for (let i = 0; i < MAX_ITERS; i++) {
+        const res = await syncHandoverToCloudAction(props.projectId)
+        if ('error' in res) {
+          setError(res.error)
+          router.refresh()
+          return
+        }
+        totalFolders += res.foldersPushed
+        totalFiles += res.filesPushed
+        totalFailed += res.failed
+        for (const e of res.errors) {
+          if (allErrors.length < 3) allErrors.push(e)
+        }
+
+        // Live progress — updates between rounds so the user sees movement
+        // for big trees instead of one big silent block.
+        const pending = res.foldersRemaining + res.filesRemaining
+        setFlash(
+          `Syncing… ${totalFolders} folders + ${totalFiles} files pushed` +
+            (pending > 0 ? `, ${pending} remaining` : ''),
+        )
+
+        if (pending === 0) break
+        if (res.foldersPushed === 0 && res.filesPushed === 0) {
+          // No forward progress this round — rest are blocked. Bail.
+          break
+        }
       }
-      const parts: string[] = []
-      if (res.foldersPushed > 0) parts.push(`${res.foldersPushed} folders`)
-      if (res.filesPushed > 0) parts.push(`${res.filesPushed} files`)
-      const pushed = parts.length > 0 ? parts.join(' + ') : 'nothing new'
-      const remaining =
-        res.foldersRemaining + res.filesRemaining > 0
-          ? ` — ${res.foldersRemaining} folder${res.foldersRemaining === 1 ? '' : 's'} + ${res.filesRemaining} file${res.filesRemaining === 1 ? '' : 's'} still pending (re-click to continue)`
-          : ' — fully in sync'
-      const fail = res.failed > 0 ? `, ${res.failed} failed` : ''
-      setFlash(`Pushed ${pushed}${remaining}${fail}.`)
-      // Surface the first sample errors so the user can see WHY things
-      // failed without diving into Vercel function logs.
-      if (res.errors.length > 0) {
-        setError(`First error${res.errors.length === 1 ? '' : 's'}: ${res.errors.join(' · ')}`)
+
+      const fail = totalFailed > 0 ? `, ${totalFailed} failed` : ''
+      setFlash(
+        `Sync complete: ${totalFolders} folders + ${totalFiles} files pushed${fail}.`,
+      )
+      if (allErrors.length > 0) {
+        setError(`First error${allErrors.length === 1 ? '' : 's'}: ${allErrors.join(' · ')}`)
       }
       router.refresh()
     })
