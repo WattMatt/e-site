@@ -157,3 +157,85 @@ export async function createProjectAction(
   revalidatePath('/dashboard')
   return { projectId: project.id }
 }
+
+// ─── deleteProjectAction ────────────────────────────────────────────────────
+
+export type DeleteProjectResult = { ok: true } | { error: string }
+
+/**
+ * Hard-delete a project. Owner-only. Cascade-deletes every child row
+ * (snags, RFIs, diary entries, floor plans, schedule items, procurement,
+ * shop drawings, GRN, supplier invoices, project_members) via the FK
+ * `ON DELETE CASCADE` chain set in 00002_projects_schema.sql and the
+ * procurement migrations (00046-00050).
+ *
+ * Caller must pass `confirmationName` matching the project's name exactly
+ * (case-sensitive, trim-tolerant). UI surfaces this as a type-to-confirm
+ * input — server check is the canonical gate.
+ *
+ * NOT REVERSIBLE. Add a soft-delete (status='cancelled') variant if/when
+ * a 30-day undo window becomes a requirement.
+ */
+export async function deleteProjectAction(
+  projectId: string,
+  confirmationName: string,
+): Promise<DeleteProjectResult> {
+  if (!projectId || typeof projectId !== 'string') {
+    return { error: 'Missing project id' }
+  }
+  if (typeof confirmationName !== 'string') {
+    return { error: 'Confirmation required' }
+  }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // Load project + its org. RLS gates this read — non-members get null.
+  const { data: project, error: projErr } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('id, name, organisation_id')
+    .eq('id', projectId)
+    .maybeSingle()
+
+  if (projErr || !project) return { error: 'Project not found' }
+
+  // Confirmation match — server-side canonical check.
+  if (confirmationName.trim() !== project.name.trim()) {
+    return { error: 'Confirmation name does not match project name' }
+  }
+
+  // Owner-only role gate for the project's org.
+  const { data: membership } = await supabase
+    .from('user_organisations')
+    .select('role')
+    .eq('user_id', user.id)
+    .eq('organisation_id', project.organisation_id)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (!membership || membership.role !== 'owner') {
+    return { error: 'Only org owners can delete projects' }
+  }
+
+  // Cascade DELETE. RLS on projects.projects allows owners to delete
+  // (FOR ALL policy on org-members in migration 00009_rls_policies.sql).
+  const { error: delErr } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .delete()
+    .eq('id', projectId)
+
+  if (delErr) return { error: delErr.message ?? 'Delete failed' }
+
+  await trackServer(user.id, ANALYTICS_EVENTS.PROJECT_DELETED, {
+    project_id: projectId,
+    org_id: project.organisation_id,
+    project_name: project.name,
+  })
+
+  revalidatePath('/projects')
+  revalidatePath('/dashboard')
+  return { ok: true }
+}

@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, snagService, rfiService, formatDate, formatZAR, getProjectCommittedSpend } from '@esite/shared'
 import { ReportButton } from '@/components/ui/ReportButton'
+import { DeleteProjectPanel } from './DeleteProjectPanel'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -53,6 +54,21 @@ export default async function ProjectDetailPage({ params }: Props) {
   if (!project) notFound()
 
   const openRfis = rfis.filter((r) => r.status === 'open').length
+
+  // Owner-only delete gate — fetch the current user's role on this org so
+  // the danger-zone panel renders only for owners. Server action re-checks.
+  const { data: { user } } = await supabase.auth.getUser()
+  let isOwner = false
+  if (user) {
+    const { data: membership } = await supabase
+      .from('user_organisations')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('organisation_id', (project as any).organisation_id)
+      .eq('is_active', true)
+      .maybeSingle()
+    isOwner = membership?.role === 'owner'
+  }
 
   return (
     <div className="animate-fadeup">
@@ -223,6 +239,11 @@ export default async function ProjectDetailPage({ params }: Props) {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Danger zone — owner-only hard delete */}
+      {isOwner && (
+        <DeleteProjectPanel projectId={id} projectName={project.name} />
       )}
     </div>
   )
