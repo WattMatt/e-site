@@ -219,6 +219,11 @@ function CableForm({
             const board = await addBoardAction({ revisionId, code: newBoardCode.trim(), kind: newBoardKind as never })
             if (board.error || !board.id) return { error: board.error ?? 'Could not create the board' }
             resolvedToBoardId = board.id
+            // Point the form at the now-created board so a retry after a partial
+            // failure (board created, feed failed) targets it instead of
+            // creating a duplicate board.
+            setToBoardId(board.id)
+            setNewBoardCode('')
           }
           return addParallelCableSetAction({
             revisionId,
@@ -252,6 +257,11 @@ function CableForm({
             const board = await addBoardAction({ revisionId, code: newBoardCode.trim(), kind: newBoardKind as never })
             if (board.error || !board.id) return { error: board.error ?? 'Could not create the board' }
             resolvedToBoardId = board.id
+            // Point the form at the now-created board so a retry after a partial
+            // failure (board created, feed failed) targets it instead of
+            // creating a duplicate board.
+            setToBoardId(board.id)
+            setNewBoardCode('')
           }
           const supplyResult = await findOrCreateSupplyAction({
             revisionId,
