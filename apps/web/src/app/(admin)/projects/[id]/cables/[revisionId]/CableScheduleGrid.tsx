@@ -393,8 +393,8 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
               <Th w={120}>From</Th>
               <Th w={120}>To</Th>
               <Th w={70} align="right">V</Th>
-              <Th w={70} align="right">A</Th>
-              <Th w={70} align="right">A / cable</Th>
+              <Th w={80} align="right">Load (A)</Th>
+              <Th w={90} align="right">Load / cable</Th>
               <Th w={70} align="right">mm²</Th>
               <Th w={55} align="center">Cores</Th>
               <Th w={55} align="center">Cond</Th>
@@ -407,7 +407,7 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
               <Th w={100}>Length</Th>
               <Th w={80} align="right">VD %</Th>
               <Th w={85} align="right">Σ VD %</Th>
-              <Th w={85} align="right">Derate A</Th>
+              <Th w={85} align="right">Rating (A)</Th>
               <Th w={75} align="right">Util %</Th>
               <Th w={100}>Install</Th>
               <Th w={70} align="right">Depth</Th>
