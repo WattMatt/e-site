@@ -2,28 +2,12 @@
 
 import { useState, useRef, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import type { StructureTreeNode } from '@esite/shared'
 import {
   addSourceAction, addBoardAction,
   deleteSourceAction, deleteBoardAction,
   renameSourceAction, renameBoardAction,
 } from '@/actions/cable-entities.actions'
-
-export interface PanelNode {
-  id: string
-  code: string
-  category: 'source' | 'board'
-  /** source.type or board.kind */
-  nodeType: string
-  /** count of supplies + cables that would cascade-delete with this node */
-  blastSupplies: number
-  blastCables: number
-}
-
-interface Props {
-  revisionId: string
-  nodes: PanelNode[]
-  canEdit: boolean
-}
 
 const SOURCE_TYPES = [
   { value: 'COUNCIL_RMU', label: 'Council RMU' },
@@ -41,15 +25,21 @@ const TYPE_LABEL: Record<string, string> = Object.fromEntries(
   [...SOURCE_TYPES, ...BOARD_KINDS].map((t) => [t.value, t.label]),
 )
 
-export function StructurePanel({ revisionId, nodes, canEdit }: Props) {
+interface Props {
+  revisionId: string
+  roots: StructureTreeNode[]
+  unfed: StructureTreeNode[]
+  canEdit: boolean
+  /** Emits a CableForm "From" key (`source:<id>` / `board:<id>`) when "+ feed a board" is clicked. */
+  onFeedBoard: (fromKey: string) => void
+}
+
+export function StructurePanel({ revisionId, roots, unfed, canEdit, onFeedBoard }: Props) {
   const router = useRouter()
   const [adding, setAdding] = useState<'source' | 'board' | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<PanelNode | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<StructureTreeNode | null>(null)
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
-
-  const sources = nodes.filter((n) => n.category === 'source')
-  const boards = nodes.filter((n) => n.category === 'board')
 
   function run(fn: () => Promise<{ error?: string }>) {
     setError(null)
@@ -62,56 +52,19 @@ export function StructurePanel({ revisionId, nodes, canEdit }: Props) {
     })
   }
 
-  // Render helper, NOT a nested component — calling it inline avoids a
-  // component boundary, so AddNodeForm's local state never remounts.
-  const renderColumn = (
-    which: 'source' | 'board',
-    items: PanelNode[],
-    emptyHint: string,
-  ) => (
-    <div style={{ flex: 1, minWidth: 260 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.08em',
-          textTransform: 'uppercase', color: 'var(--c-text-mid)',
-        }}>
-          {which === 'source' ? 'Sources' : 'Boards'} ({items.length})
-        </span>
-        {canEdit && (
-          <button type="button" className="btn-primary-amber"
-            style={{ fontSize: 11, padding: '4px 10px' }}
-            onClick={() => setAdding(which)}>
-            + Add {which}
-          </button>
-        )}
-      </div>
-      {items.length === 0 ? (
-        <p style={{ fontSize: 12, color: 'var(--c-text-dim)', fontStyle: 'italic', margin: '4px 0 0' }}>
-          {emptyHint}
-        </p>
-      ) : (
-        items.map((n) => (
-          <NodeRow key={n.id} node={n} canEdit={canEdit} pending={pending}
-            onRename={(code) => run(() => n.category === 'source'
-              ? renameSourceAction(n.id, code) : renameBoardAction(n.id, code))}
-            onDelete={() => setConfirmDelete(n)} />
-        ))
-      )}
-      {adding === which && (
-        <AddNodeForm category={which} revisionId={revisionId} pending={pending}
-          onCancel={() => setAdding(null)}
-          onSubmit={(payload) => run(() => which === 'source'
-            ? addSourceAction(payload as never) : addBoardAction(payload as never))} />
-      )}
-    </div>
-  )
+  const onRename = (node: StructureTreeNode, code: string) =>
+    run(() => node.category === 'source'
+      ? renameSourceAction(node.id, code)
+      : renameBoardAction(node.id, code))
+
+  const empty = roots.length === 0 && unfed.length === 0
 
   return (
     <div className="data-panel" style={{ padding: 16, marginBottom: 14 }}>
       <div style={{ marginBottom: 12 }}>
         <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Structure</h3>
         <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: '2px 0 0' }}>
-          Where power comes from, and the boards it feeds. Build this first, then wire up cables below.
+          Where power comes from, and the boards it feeds. Each branch is a cable — use "+ feed a board" to extend it.
         </p>
       </div>
 
@@ -120,12 +73,48 @@ export function StructurePanel({ revisionId, nodes, canEdit }: Props) {
           background: 'rgba(220,38,38,0.1)', color: '#dc2626', fontSize: 12 }}>✕ {error}</div>
       )}
 
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-        {renderColumn('source', sources,
-          'Start here — add where power comes from (a council RMU, generator, etc.).')}
-        {renderColumn('board', boards,
-          'Add the boards power is distributed to (main boards, sub boards, minisubs).')}
-      </div>
+      {empty ? (
+        <p style={{ fontSize: 12, color: 'var(--c-text-dim)', fontStyle: 'italic', margin: '4px 0 0' }}>
+          Start here — add where power comes from (a council RMU, generator, etc.), then "+ feed a board" to wire the structure.
+        </p>
+      ) : (
+        <>
+          {roots.map((n) => (
+            <TreeNode key={n.id} node={n} depth={0} canEdit={canEdit} pending={pending}
+              onRename={onRename} onDelete={setConfirmDelete} onFeedBoard={onFeedBoard} />
+          ))}
+          {unfed.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
+                textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 4 }}>
+                Unfed — not yet on any feed
+              </div>
+              {unfed.map((n) => (
+                <TreeNode key={n.id} node={n} depth={0} canEdit={canEdit} pending={pending}
+                  onRename={onRename} onDelete={setConfirmDelete} onFeedBoard={onFeedBoard} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {canEdit && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+          <button type="button" className="btn-primary-amber"
+            style={{ fontSize: 11, padding: '4px 10px' }}
+            onClick={() => setAdding('source')}>+ Add source</button>
+          <button type="button" className="btn-primary-amber"
+            style={{ fontSize: 11, padding: '4px 10px', background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}
+            onClick={() => setAdding('board')}>+ Add board (unfed)</button>
+        </div>
+      )}
+      {adding && (
+        <AddNodeForm category={adding} revisionId={revisionId} pending={pending}
+          onCancel={() => setAdding(null)}
+          onSubmit={(payload) => run(() => adding === 'source'
+            ? addSourceAction(payload as never) : addBoardAction(payload as never))} />
+      )}
 
       {confirmDelete && (
         <div role="dialog" aria-modal="true" aria-labelledby="structure-del-title"
@@ -138,7 +127,7 @@ export function StructurePanel({ revisionId, nodes, canEdit }: Props) {
             display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--c-panel)' }}>
             <h3 id="structure-del-title" style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Remove {confirmDelete.category}</h3>
             <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: 0 }}>
-              Removing <strong>{confirmDelete.code}</strong> ({TYPE_LABEL[confirmDelete.nodeType]}) will also
+              Removing <strong>{confirmDelete.code}</strong> ({TYPE_LABEL[confirmDelete.nodeType] ?? confirmDelete.nodeType}) will also
               delete <strong>{confirmDelete.blastSupplies}</strong> suppl{confirmDelete.blastSupplies === 1 ? 'y' : 'ies'} and{' '}
               <strong>{confirmDelete.blastCables}</strong> cable{confirmDelete.blastCables === 1 ? '' : 's'}.
               {confirmDelete.category === 'board' && ' Child boards re-parent to top-level.'} Continue?
@@ -163,49 +152,79 @@ export function StructurePanel({ revisionId, nodes, canEdit }: Props) {
   )
 }
 
-function NodeRow({
-  node, canEdit, pending, onRename, onDelete,
+function TreeNode({
+  node, depth, canEdit, pending, onRename, onDelete, onFeedBoard,
 }: {
-  node: PanelNode; canEdit: boolean; pending: boolean
-  onRename: (code: string) => void; onDelete: () => void
+  node: StructureTreeNode
+  depth: number
+  canEdit: boolean
+  pending: boolean
+  onRename: (node: StructureTreeNode, code: string) => void
+  onDelete: (node: StructureTreeNode) => void
+  onFeedBoard: (fromKey: string) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [code, setCode] = useState(node.code)
   const escapeRef = useRef(false)
   useEffect(() => { setCode(node.code) }, [node.code])
+
+  const icon = node.category === 'source' ? '⚡' : '🟦'
+  const f = node.feedSummary
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
-      {editing ? (
-        <input className="ob-input" value={code} autoFocus style={{ width: 200 }}
-          onChange={(e) => setCode(e.target.value)}
-          onBlur={() => {
-            if (escapeRef.current) { escapeRef.current = false; setEditing(false); return }
-            setEditing(false)
-            const trimmed = code.trim()
-            if (trimmed && trimmed !== node.code) onRename(trimmed)
-            setCode(node.code)  // revert local draft; the [node.code] effect re-syncs to the new name on success
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') { escapeRef.current = true; setCode(node.code); setEditing(false) }
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-          }} />
-      ) : (
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, minWidth: 200 }}>
-          {node.code}
-        </span>
-      )}
-      {canEdit && !editing && (
-        <>
-          <button type="button" onClick={() => setEditing(true)} disabled={pending}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 11 }}>
-            rename
-          </button>
-          <button type="button" onClick={onDelete} disabled={pending}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 11 }}>
-            remove
-          </button>
-        </>
-      )}
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0', paddingLeft: depth * 22 }}>
+        <span aria-hidden="true">{icon}</span>
+        {editing ? (
+          <input className="ob-input" value={code} autoFocus style={{ width: 200 }}
+            onChange={(e) => setCode(e.target.value)}
+            onBlur={() => {
+              if (escapeRef.current) { escapeRef.current = false; setEditing(false); return }
+              setEditing(false)
+              const trimmed = code.trim()
+              if (trimmed && trimmed !== node.code) onRename(node, trimmed)
+              setCode(node.code)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { escapeRef.current = true; setCode(node.code); setEditing(false) }
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            }} />
+        ) : (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600 }}>{node.code}</span>
+        )}
+        {f && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+            ← {f.cableCount > 0 ? f.sizeLabel : 'no cable'}
+            {f.vdPct ? ` · ${f.vdPct.toFixed(1)}% VD` : ''}
+            {f.underRated && <span style={{ color: 'var(--c-red)', fontWeight: 700 }}> ⚠ under-rated</span>}
+          </span>
+        )}
+        {node.alsoFedElsewhere && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', fontStyle: 'italic' }}>
+            ↻ also fed elsewhere
+          </span>
+        )}
+        {canEdit && !editing && !node.alsoFedElsewhere && (
+          <>
+            <button type="button" onClick={() => onFeedBoard(`${node.category}:${node.id}`)} disabled={pending}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-amber)', fontSize: 11 }}>
+              + feed a board
+            </button>
+            <button type="button" onClick={() => setEditing(true)} disabled={pending}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 11 }}>
+              rename
+            </button>
+            <button type="button" onClick={() => onDelete(node)} disabled={pending}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 11 }}>
+              remove
+            </button>
+          </>
+        )}
+      </div>
+      {!node.alsoFedElsewhere && node.children.map((child) => (
+        <TreeNode key={child.id} node={child} depth={depth + 1} canEdit={canEdit} pending={pending}
+          onRename={onRename} onDelete={onDelete} onFeedBoard={onFeedBoard} />
+      ))}
     </div>
   )
 }

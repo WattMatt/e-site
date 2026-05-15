@@ -8,15 +8,16 @@ import {
   computeCumulativeVdMap,
   voltDropPctForSupply,
   supplyParallelCapacity,
+  buildStructureTree,
+  type StructureFeedSummary,
   type CableForCalc,
   type SupplyForCalc,
   changedCableIds,
   type DiffableCable,
 } from '@esite/shared'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
-import { AddEntityPanel } from './AddEntityPanel'
 import { type NodeOption } from './CableScheduleGrid'
-import { StructurePanel, type PanelNode } from './StructurePanel'
+import { StructureSection } from './StructureSection'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 import { ExportMenu } from './ExportMenu'
 
@@ -162,16 +163,6 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     return { blastSupplies: hit.length, blastCables: cableCount }
   }
 
-  const panelNodes: PanelNode[] = [
-    ...sources.map((s) => ({
-      id: s.id, code: s.code, category: 'source' as const, nodeType: s.type,
-      ...blastFor(s.id, 'source'),
-    })),
-    ...boards.map((b) => ({
-      id: b.id, code: b.code, category: 'board' as const, nodeType: b.kind,
-      ...blastFor(b.id, 'board'),
-    })),
-  ]
 
   // Cloud markers: compare current cables against the most-recent ISSUED
   // snapshot. Rows that are new in this revision or have any diffable
@@ -282,6 +273,46 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   for (const s of supplies) {
     supplyVdById.set(s.id, voltDropPctForSupply(s, cables as CableForCalc[], lengthMode))
   }
+
+  // Per-supply feed summary for the structure tree's edge labels.
+  const cablesBySupply = new Map<string, CableRow[]>()
+  for (const c of cables) {
+    const list = cablesBySupply.get(c.supply_id) ?? []
+    list.push(c)
+    cablesBySupply.set(c.supply_id, list)
+  }
+  const feedSummaryBySupply = new Map<string, StructureFeedSummary>()
+  for (const sup of supplies) {
+    const supCables = cablesBySupply.get(sup.id) ?? []
+    const first = supCables[0]
+    const allSame = supCables.length > 0 && supCables.every(
+      (c) => c.size_mm2 === first!.size_mm2 && c.conductor === first!.conductor,
+    )
+    const sizeLabel = supCables.length === 0
+      ? '—'
+      : allSame
+        ? `${supCables.length}×${first!.size_mm2}mm² ${first!.conductor === 'CU' ? 'Cu' : 'Al'}`
+        : `${supCables.length} cables (mixed)`
+    feedSummaryBySupply.set(sup.id, {
+      cableCount: supCables.length,
+      sizeLabel,
+      vdPct: supplyVdById.get(sup.id) ?? 0,
+      underRated: sup.design_load_a != null
+        && (capacityBySupply.get(sup.id) ?? 0) < sup.design_load_a,
+    })
+  }
+
+  const { roots: structureRoots, unfed: structureUnfed } = buildStructureTree(
+    sources.map((s) => ({ id: s.id, code: s.code, type: s.type })),
+    boards.map((b) => ({ id: b.id, code: b.code, kind: b.kind })),
+    supplies.map((s) => ({
+      id: s.id, from_source_id: s.from_source_id, from_board_id: s.from_board_id, to_board_id: s.to_board_id,
+    })),
+    {
+      feedSummaryFor: (id) => feedSummaryBySupply.get(id) ?? null,
+      blastFor,
+    },
+  )
 
   // Revision-cloud letter (matches the drawing convention — e.g. "8" from "Rev 8").
   const revLetter = revision.code.replace(/^rev\s*/i, '').trim() || revision.code
@@ -444,14 +475,14 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         </div>
       </div>
 
-      <StructurePanel revisionId={revision.id} nodes={panelNodes} canEdit={revision.status === 'DRAFT'} />
-      {revision.status === 'DRAFT' && (
-        <AddEntityPanel
-          revisionId={revision.id}
-          sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
-          boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
-        />
-      )}
+      <StructureSection
+        revisionId={revision.id}
+        roots={structureRoots}
+        unfed={structureUnfed}
+        canEdit={revision.status === 'DRAFT'}
+        sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
+        boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
+      />
 
       {cables.length === 0 ? (
         <div className="data-panel">
