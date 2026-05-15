@@ -12,7 +12,13 @@ import type {
   TokenBundle,
   UploadFileOptions,
 } from './types'
-import { asProviderError, getProviderCredentials, postForm, sortCloudItems } from './provider-utils'
+import {
+  asProviderError,
+  CloudStorageError,
+  getProviderCredentials,
+  postForm,
+  sortCloudItems,
+} from './provider-utils'
 
 const AUTH_URL = 'https://www.dropbox.com/oauth2/authorize'
 const TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token'
@@ -190,9 +196,50 @@ export class DropboxProvider implements CloudStorageProvider {
       }),
       body: JSON.stringify({ path, autorename: false }),
     })
+    // 409 path-conflict on create_folder_v2 means the folder already
+    // exists at the same path. That typically happens when a previous
+    // retry-storm landed the create on Dropbox but the response was lost
+    // (network, 503 mid-flight, timeout). Recover idempotently by looking
+    // up the existing folder and returning it as if we'd just made it.
+    if (res.status === 409) {
+      const bodyText = await res.text()
+      if (bodyText.includes('path/conflict')) {
+        const existing = await this.lookupByPath(path, opts.accessToken)
+        if (existing && existing.type === 'folder') return existing
+      }
+      // Not a recoverable 409 — surface the body so we know what's up.
+      throw new CloudStorageError(
+        `dropbox create folder failed: HTTP 409 — ${bodyText.slice(0, 240)}`,
+        'dropbox',
+        409,
+      )
+    }
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'create folder')
     const j = (await res.json()) as { metadata: DropboxFileEntry }
     return toCloudItem(j.metadata)
+  }
+
+  /**
+   * Look up an existing file/folder by its full path. Used by createFolder
+   * to recover from "already exists" 409s after a lost-response retry.
+   * Returns null on 404 / not-found. Other errors bubble up.
+   */
+  private async lookupByPath(
+    path: string,
+    accessToken: string,
+  ): Promise<CloudItem | null> {
+    const res = await fetch(`${API_BASE}/files/get_metadata`, {
+      method: 'POST',
+      headers: await this.namespaceHeaders(accessToken, {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({ path }),
+    })
+    if (res.status === 409) return null  // not_found
+    if (!res.ok) throw await asProviderError(res, 'dropbox', 'lookup by path')
+    const j = (await res.json()) as DropboxFileEntry
+    return toCloudItem(j)
   }
 
   async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {

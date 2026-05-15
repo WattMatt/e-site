@@ -18,7 +18,12 @@ import type {
   TokenBundle,
   UploadFileOptions,
 } from './types.ts'
-import { asProviderError, getProviderCredentials, postForm } from './provider-utils.ts'
+import {
+  asProviderError,
+  CloudStorageError,
+  getProviderCredentials,
+  postForm,
+} from './provider-utils.ts'
 
 const AUTH_URL = 'https://www.dropbox.com/oauth2/authorize'
 const TOKEN_URL = 'https://api.dropboxapi.com/oauth2/token'
@@ -180,9 +185,39 @@ export class DropboxProvider implements CloudStorageProvider {
       }),
       body: JSON.stringify({ path, autorename: false }),
     })
+    if (res.status === 409) {
+      const bodyText = await res.text()
+      if (bodyText.includes('path/conflict')) {
+        const existing = await this.lookupByPath(path, opts.accessToken)
+        if (existing && existing.type === 'folder') return existing
+      }
+      throw new CloudStorageError(
+        `dropbox create folder failed: HTTP 409 — ${bodyText.slice(0, 240)}`,
+        'dropbox',
+        409,
+      )
+    }
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'create folder')
     const j = (await res.json()) as { metadata: DropboxFileEntry }
     return toCloudItem(j.metadata)
+  }
+
+  private async lookupByPath(
+    path: string,
+    accessToken: string,
+  ): Promise<CloudItem | null> {
+    const res = await fetch(`${API_BASE}/files/get_metadata`, {
+      method: 'POST',
+      headers: await this.namespaceHeaders(accessToken, {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({ path }),
+    })
+    if (res.status === 409) return null
+    if (!res.ok) throw await asProviderError(res, 'dropbox', 'lookup by path')
+    const j = (await res.json()) as DropboxFileEntry
+    return toCloudItem(j)
   }
 
   async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
