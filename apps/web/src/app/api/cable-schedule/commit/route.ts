@@ -43,6 +43,8 @@ interface ImportedCablePayload {
   size_mm2: number | null
   ohm_per_km: number | null
   cable_no: number
+  /** When set, this row was fanned out from a single Excel row with a Parallel column (parse-side). Carries the strand index (1..N) for traceability; the commit logic doesn't need to do anything different — the fanned rows already share a (FROM, TO) group and so land on the same supply. */
+  fanned_from_parallel?: number
   measured_length_m: number | null
   source_vd_pct: number | null
   conductor: 'CU' | 'AL'

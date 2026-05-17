@@ -150,8 +150,8 @@ function drawCoverPage(
     ],
     ['Sources', String(payload.sources.length)],
     ['Boards', String(payload.boards.length)],
-    ['Supplies', String(payload.supplies.length)],
-    ['Cables', String(payload.cables.length)],
+    ['Supplies (runs)', String(payload.supplies.length)],
+    ['Cables (strands)', String(payload.cables.length)],
     ['Tags', String(payload.cableTags.length)],
   ].filter((r): r is [string, string] => r[0] !== '')
 
@@ -237,11 +237,11 @@ function drawCoverPage(
 }
 
 interface ScheduleCol {
-  key: keyof EnrichedCable | 'effective_length_m'
+  key: string
   label: string
   width: number
   align: 'left' | 'right' | 'center'
-  format?: (c: EnrichedCable) => string
+  format: (run: ExportPayload['runs'][number]) => string
 }
 
 function drawSchedulePages(
@@ -250,52 +250,59 @@ function drawSchedulePages(
   helv: PDFFont,
   helvB: PDFFont,
 ): void {
-  // 14 columns over LAND_W = 841.89, accounting for margins.
+  // 15 columns over LAND_W = 841.89, accounting for margins.
+  // ONE ROW PER RUN (= supply) — parallel strands collapse under "×N".
+  function runLabel(run: ExportPayload['runs'][number]): string {
+    const head = run.cables[0]
+    const tag = head?.tag_override?.trim() ?? ''
+    return tag || `${run.from_label}-${run.to_label}`
+  }
+  function runLength(run: ExportPayload['runs'][number]): number | null {
+    // Worst (longest) effective length across strands.
+    let worst: number | null = null
+    for (const c of run.cables) {
+      const l = c.confirmed_length_m ?? c.measured_length_m
+      if (l == null) continue
+      if (worst == null || l > worst) worst = l
+    }
+    return worst
+  }
   const cols: ScheduleCol[] = [
-    { key: 'cable_no', label: 'No', width: 26, align: 'right' },
-    { key: 'cable_tag', label: 'Cable Tag', width: 95, align: 'left' },
-    { key: 'from_label', label: 'From', width: 65, align: 'left' },
-    { key: 'to_label', label: 'To', width: 65, align: 'left' },
-    { key: 'voltage_v', label: 'V', width: 32, align: 'right', format: (c) => fmt(c.voltage_v) },
-    { key: 'load_a', label: 'Load A', width: 38, align: 'right', format: (c) => fmt(c.load_a) },
-    { key: 'size_mm2', label: 'Size', width: 32, align: 'right', format: (c) => fmt(c.size_mm2) },
-    { key: 'cores', label: 'Cores', width: 32, align: 'center' },
-    { key: 'conductor', label: 'Mat', width: 28, align: 'center' },
-    { key: 'insulation', label: 'Ins', width: 28, align: 'center' },
-    { key: 'ohm_per_km', label: 'Ω/km', width: 38, align: 'right', format: (c) => fmt(c.ohm_per_km, 3) },
-    {
-      key: 'effective_length_m',
-      label: 'Len m',
-      width: 42,
-      align: 'right',
-      format: (c) => fmt(c.confirmed_length_m ?? c.measured_length_m),
-    },
-    { key: 'vd_pct', label: 'VD %', width: 38, align: 'right', format: (c) => fmt(c.vd_pct, 2) },
-    { key: 'cumulative_vd_pct', label: 'Cum %', width: 42, align: 'right', format: (c) => fmt(c.cumulative_vd_pct, 2) },
+    { key: 'run_no', label: 'No', width: 26, align: 'right', format: () => '' /* set per-row */ },
+    { key: 'tag', label: 'Cable Tag', width: 95, align: 'left', format: (run) => runLabel(run) },
+    { key: 'from_label', label: 'From', width: 60, align: 'left', format: (run) => run.from_label },
+    { key: 'to_label', label: 'To', width: 60, align: 'left', format: (run) => run.to_label },
+    { key: 'voltage_v', label: 'V', width: 30, align: 'right', format: (run) => fmt(run.voltage_v) },
+    { key: 'load_a', label: 'Load A', width: 38, align: 'right', format: (run) => fmt(run.load_a) },
+    { key: 'size_mm2', label: 'Size', width: 32, align: 'right', format: (run) => fmt(run.size_mm2) },
+    { key: 'cores', label: 'Cores', width: 32, align: 'center', format: (run) => String(run.cores) },
+    { key: 'conductor', label: 'Mat', width: 26, align: 'center', format: (run) => run.conductor === 'CU' ? 'Cu' : 'Al' },
+    { key: 'insulation', label: 'Ins', width: 28, align: 'center', format: (run) => run.insulation },
+    { key: 'parallel_count', label: 'Par', width: 26, align: 'center', format: (run) => `×${run.parallel_count}` },
+    { key: 'ohm_per_km', label: 'Ω/km', width: 38, align: 'right', format: (run) => fmt(run.ohm_per_km, 3) },
+    { key: 'effective_length_m', label: 'Len m', width: 42, align: 'right', format: (run) => fmt(runLength(run)) },
+    { key: 'vd_pct', label: 'VD %', width: 38, align: 'right', format: (run) => fmt(run.vd_pct, 2) },
+    { key: 'cumulative_vd_pct', label: 'Cum %', width: 42, align: 'right', format: (run) => fmt(run.cumulative_vd_pct, 2) },
   ]
   const totalW = cols.reduce((a, b) => a + b.width, 0)
   const startX = (LAND_W - totalW) / 2
 
-  // Group cables by (section, conductor) to insert section header rows
+  // Group RUNS by (section, conductor) to insert section header rows.
   const groups: Array<{
     sectionLabel: string | null
     conductorLabel: string
-    cables: EnrichedCable[]
+    runs: ExportPayload['runs']
   }> = []
-  const sectionBySupply = new Map<string, string | null>()
-  for (const s of payload.supplies) {
-    sectionBySupply.set(s.id, s.section ?? null)
-  }
-  const bucket = new Map<string, EnrichedCable[]>()
+  const bucket = new Map<string, ExportPayload['runs']>()
   const keyOrder: string[] = []
-  for (const c of payload.cables) {
-    const sec = sectionBySupply.get(c.supply_id) ?? null
-    const key = `${sec ?? '_'}|${c.conductor}`
+  for (const r of payload.runs) {
+    const sec = r.section ?? null
+    const key = `${sec ?? '_'}|${r.conductor}`
     if (!bucket.has(key)) {
       bucket.set(key, [])
       keyOrder.push(key)
     }
-    bucket.get(key)!.push(c)
+    bucket.get(key)!.push(r)
   }
   keyOrder.sort((a, b) => {
     const [sa, ca] = a.split('|')
@@ -313,22 +320,25 @@ function drawSchedulePages(
     groups.push({
       sectionLabel,
       conductorLabel: cond === 'CU' ? 'Copper' : 'Aluminium',
-      cables: bucket.get(k)!,
+      runs: bucket.get(k)!,
     })
   }
 
-  // Flatten: alternating section-header rows + cable rows. We treat
-  // section headers as items in a unified row queue so pagination is
-  // straightforward.
+  // Flatten: alternating section-header rows + run rows. Run number is
+  // assigned at flatten time so it's stable across the visible order.
   type QueueItem =
     | { kind: 'section'; label: string }
     | { kind: 'conductor'; label: string }
-    | { kind: 'cable'; cable: EnrichedCable }
+    | { kind: 'run'; run: ExportPayload['runs'][number]; runNumber: number }
   const queue: QueueItem[] = []
+  let runNumber = 1
   for (const g of groups) {
     if (g.sectionLabel) queue.push({ kind: 'section', label: g.sectionLabel })
     queue.push({ kind: 'conductor', label: g.conductorLabel })
-    for (const c of g.cables) queue.push({ kind: 'cable', cable: c })
+    for (const r of g.runs) {
+      queue.push({ kind: 'run', run: r, runNumber })
+      runNumber++
+    }
   }
 
   // Pagination — fit ~30 rows of body per landscape page (after header band).
@@ -383,6 +393,7 @@ function drawSchedulePages(
           color: TEXT_DARK,
         })
       } else {
+        // run row
         if (rowZebra) {
           page.drawRectangle({
             x: startX,
@@ -394,11 +405,9 @@ function drawSchedulePages(
         }
         let cx = startX
         for (const col of cols) {
-          const raw = col.format
-            ? col.format(item.cable)
-            : col.key === 'effective_length_m'
-              ? fmt(item.cable.confirmed_length_m ?? item.cable.measured_length_m)
-              : String((item.cable as any)[col.key] ?? '')
+          // Run-number column is computed at queue-assembly time so the
+          // number is stable across visible-sorted rows.
+          const raw = col.key === 'run_no' ? String(item.runNumber) : col.format(item.run)
           const text = clipText(raw, col.width - 4, helv, 8)
           const w = helv.widthOfTextAtSize(text, 8)
           let tx = cx + 4

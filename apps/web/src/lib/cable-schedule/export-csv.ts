@@ -1,7 +1,9 @@
 /**
  * CSV renderers — four flat files exported from a single payload.
  *
- *   schedule    — one row per cable
+ *   schedule    — one row per RUN (= supply). Parallel strands collapse
+ *                under a "parallel_count" column; per-strand detail is in
+ *                the `tags` and `change_log` variants.
  *   tags        — one row per cable_tag (each cable has FROM + TO)
  *   cost        — one row per cost line + aggregate totals
  *   change_log  — chronological audit trail for the revision
@@ -26,66 +28,80 @@ export function renderCsv(kind: CsvKind, payload: ExportPayload): string {
 }
 
 function scheduleCsv(payload: ExportPayload): string {
+  // ONE ROW PER RUN — collapse parallel strands under their shared logical
+  // feed. Per-strand detail (individual measured length, ohm override, tag)
+  // lives in the tags CSV (also a per-cable variant — `?type=tags`) and in
+  // the change_log CSV. This sheet is the buyer's schedule.
   const header = [
-    'cable_no',
+    'run_no',
     'cable_tag',
     'from',
     'to',
     'voltage_v',
     'load_a',
+    'parallel_count',
     'size_mm2',
     'cores',
     'conductor',
     'insulation',
-    'armour',
-    'standard',
     'ohm_per_km',
-    'measured_length_m',
-    'confirmed_length_m',
-    'length_status',
+    'effective_length_m', // worst across strands
+    'length_status',      // worst across strands
     'vd_pct',
     'cumulative_vd_pct',
-    'derated_current_rating_a',
+    'combined_capacity_a', // sum across strands
+    'under_rated',
     'installation_method',
     'depth_mm',
     'grouped_with',
-    'ambient_temp_c',
-    'tag_override',
-    'manual_override',
-    'notes',
+    'mixed_properties',   // semicolon-joined list of divergent fields, blank when consistent
+    'notes',              // head strand's notes
   ]
+  function runTag(run: ExportPayload['runs'][number]): string {
+    const head = run.cables[0]
+    return head?.tag_override?.trim() || `${run.from_label}-${run.to_label}`
+  }
+  function runLen(run: ExportPayload['runs'][number]): number | '' {
+    let worst: number | null = null
+    for (const c of run.cables) {
+      const l = c.confirmed_length_m ?? c.measured_length_m
+      if (l == null) continue
+      if (worst == null || l > worst) worst = l
+    }
+    return worst ?? ''
+  }
   const lines = [header.join(',')]
-  for (const c of payload.cables) {
+  let runNo = 1
+  for (const run of payload.runs) {
+    const head = run.cables[0]
     lines.push(
       [
-        c.cable_no,
-        c.cable_tag,
-        c.from_label,
-        c.to_label,
-        c.voltage_v ?? '',
-        c.load_a ?? '',
-        c.size_mm2,
-        c.cores,
-        c.conductor,
-        c.insulation,
-        c.armour ?? '',
-        c.standard ?? '',
-        c.ohm_per_km ?? '',
-        c.measured_length_m ?? '',
-        c.confirmed_length_m ?? '',
-        c.length_status,
-        round2(c.vd_pct),
-        round2(c.cumulative_vd_pct),
-        c.derated_current_rating_a ?? '',
-        c.installation_method ?? '',
-        c.depth_mm ?? '',
-        c.grouped_with,
-        c.ambient_temp_c,
-        c.tag_override ?? '',
-        c.manual_override ? 'true' : 'false',
-        c.notes ?? '',
+        runNo,
+        runTag(run),
+        run.from_label,
+        run.to_label,
+        run.voltage_v ?? '',
+        run.load_a ?? '',
+        run.parallel_count,
+        run.size_mm2,
+        run.cores,
+        run.conductor,
+        run.insulation,
+        run.ohm_per_km ?? '',
+        runLen(run),
+        run.length_status,
+        round2(run.vd_pct),
+        round2(run.cumulative_vd_pct),
+        run.combined_capacity_a ?? '',
+        run.under_rated ? 'true' : 'false',
+        run.installation_method ?? '',
+        run.depth_mm ?? '',
+        run.grouped_with,
+        run.mixed_properties.fields.join(';'),
+        head?.notes ?? '',
       ].map(esc).join(','),
     )
+    runNo++
   }
   return lines.join(NL) + NL
 }

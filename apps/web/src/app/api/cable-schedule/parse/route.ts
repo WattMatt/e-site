@@ -92,6 +92,15 @@ export async function POST(req: Request) {
       fidelity_ok,
       fidelity_skipped,
       fidelity_fail,
+      // Round-trip / legacy diagnostics — surface to the preview UI.
+      // parallel_fanouts: how many Excel rows had Parallel ≥ 2 (each
+      //   produced N ImportedCable entries).
+      // legacy_format_detected: true when no Parallel column was found
+      //   AND at least one (from, to) group repeats — the importer's
+      //   pre-existing grouping silently collapses these into runs, so
+      //   the UI just needs to surface the fact for transparency.
+      parallel_fanouts: preview.parallel_fanouts,
+      legacy_format_detected: preview.legacy_format_detected,
     },
   })
 }

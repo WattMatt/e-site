@@ -40,6 +40,8 @@ export interface ImportedCable {
   size_mm2: number | null
   ohm_per_km: number | null
   cable_no: number
+  /** When > 0, this row was fanned out from a single Excel row with a "Parallel" column. Records which strand in the set this is (1..parallel_count). 0 means single. */
+  fanned_from_parallel?: number
   measured_length_m: number | null
   /** Workbook's own VD% column reading — used for fidelity verification. */
   source_vd_pct: number | null
@@ -62,6 +64,18 @@ export interface ImportPreview {
   conductor_headers: number                    // count of 'Aluminium' / 'Copper' header rows
   placeholders_skipped: number                 // 'insert rows' etc.
   duplicate_tags: number
+  /**
+   * Round-trip / legacy detection — empty in the normal one-row-per-cable
+   * legacy case. Populated when:
+   *  - parallel_fanouts > 0: rows had an explicit "Parallel" column ≥ 2;
+   *    each such row was fanned out into N ImportedCable entries.
+   *  - legacy_format_detected: no "Parallel" column was found AND at least
+   *    one (FROM, TO) group repeats. The importer's pre-existing grouping
+   *    already collapses these into one supply with N cables — this flag
+   *    just surfaces the fact in the preview UI.
+   */
+  parallel_fanouts: number
+  legacy_format_detected: boolean
   sheet_summary: Array<{
     name: string
     role: 'CABLE SCHEDULE' | 'COST SUMMARY' | 'FACTS AND FIGURES' | 'IGNORE'
@@ -78,6 +92,9 @@ const HEADER_LABELS: Record<string, RegExp> = {
   size_mm2:         /^(type|size|mm.?|csa)/i,
   ohm_per_km:       /^(ohm\/km|Ω\/km|impedance|r\s*per\s*km)/i,
   cable_no:         /^(cable\s*no|c\/no|cable\s*number)/i,
+  // Parallel column: one row per RUN with a count → fan out into N cables.
+  // Accepts plain "Parallel", "Parallel cables", "Cables", "×N", "x N".
+  parallel_count:   /^(parallel(\s*cables)?|cables(\s*in\s*parallel)?|×\s*n|x\s*n)$/i,
   measured_length_m:/^(length|route\s*length|measured\s*length)/i,
   volt_drop_pct:    /^(volt\s*drop|vd\s*%|voltage\s*drop)/i,
 }
@@ -208,6 +225,8 @@ export async function parseScheduleWorkbook(buffer: Buffer): Promise<ImportPrevi
       conductor_headers: 0,
       placeholders_skipped: 0,
       duplicate_tags: 0,
+      parallel_fanouts: 0,
+      legacy_format_detected: false,
       sheet_summary,
     }
   }
@@ -223,6 +242,8 @@ export async function parseScheduleWorkbook(buffer: Buffer): Promise<ImportPrevi
       conductor_headers: 0,
       placeholders_skipped: 0,
       duplicate_tags: 0,
+      parallel_fanouts: 0,
+      legacy_format_detected: false,
       sheet_summary,
     }
   }
@@ -235,6 +256,7 @@ export async function parseScheduleWorkbook(buffer: Buffer): Promise<ImportPrevi
   const cables: ImportedCable[] = []
   const seenTags = new Map<string, number>()
   let duplicate_tags = 0
+  let parallel_fanouts = 0
 
   // Map logical → col letter → for fast access
   const col = (logical: string) => columns[logical]
@@ -308,38 +330,66 @@ export async function parseScheduleWorkbook(buffer: Buffer): Promise<ImportPrevi
     if (!to)   errors.push('TO is empty')
     if (sizeNum == null) errors.push('Size missing')
 
-    const groupKey = `${from}||${to}`
-    const nextCableNo = (cableNoByGroup.get(groupKey) ?? 0) + 1
-    cableNoByGroup.set(groupKey, nextCableNo)
+    // Parallel column — when present and ≥ 2, this single Excel row
+    // represents a run of N parallel cables and we fan it out into N
+    // ImportedCable entries with cable_no 1..N. Default 1 (single).
+    const parCell = getCell(r, 'parallel_count')
+    let parallelCount = parCell ? cellNumber(parCell) : null
+    if (parallelCount == null || !Number.isFinite(parallelCount) || parallelCount < 1) {
+      parallelCount = 1
+    }
+    parallelCount = Math.max(1, Math.floor(parallelCount))
+    if (parallelCount > 1) parallel_fanouts++
 
+    const groupKey = `${from}||${to}`
     const tagInput = cellText(row.getCell('B')) || null
 
-    const tagFingerprint = tagInput ?? `${from}-${to}-${sizeNum}-${nextCableNo}`
-    if (seenTags.has(tagFingerprint)) {
-      duplicate_tags++
-      warnings.push(`Duplicate tag — also at source row ${seenTags.get(tagFingerprint)}`)
-    } else {
-      seenTags.set(tagFingerprint, r)
-    }
+    for (let strandIdx = 1; strandIdx <= parallelCount; strandIdx++) {
+      const nextCableNo = (cableNoByGroup.get(groupKey) ?? 0) + 1
+      cableNoByGroup.set(groupKey, nextCableNo)
 
-    cables.push({
-      source_row: r,
-      tag_input: tagInput,
-      from_label: from,
-      to_label: to,
-      voltage_v: vNum,
-      load_a: aNum,
-      size_mm2: sizeNum,
-      ohm_per_km: ohmNum,
-      cable_no: nextCableNo,
-      measured_length_m: lenNum,
-      source_vd_pct: vdNum,
-      conductor: conductorContext,
-      section: sectionContext,
-      warnings,
-      errors,
-    })
+      // Tag fingerprint: when fanning out, append the strand index so the
+      // dup-tag detector doesn't fire on intentional parallels sharing a
+      // single Excel-row tag.
+      const tagFingerprint = tagInput
+        ? (parallelCount > 1 ? `${tagInput}#${strandIdx}` : tagInput)
+        : `${from}-${to}-${sizeNum}-${nextCableNo}`
+      if (seenTags.has(tagFingerprint)) {
+        duplicate_tags++
+        warnings.push(`Duplicate tag — also at source row ${seenTags.get(tagFingerprint)}`)
+      } else {
+        seenTags.set(tagFingerprint, r)
+      }
+
+      cables.push({
+        source_row: r,
+        tag_input: tagInput,
+        from_label: from,
+        to_label: to,
+        voltage_v: vNum,
+        load_a: aNum,
+        size_mm2: sizeNum,
+        ohm_per_km: ohmNum,
+        cable_no: nextCableNo,
+        fanned_from_parallel: parallelCount > 1 ? strandIdx : undefined,
+        measured_length_m: lenNum,
+        source_vd_pct: vdNum,
+        conductor: conductorContext,
+        section: sectionContext,
+        warnings,
+        errors,
+      })
+    }
   }
+
+  // Legacy-format detection: no explicit Parallel column AND at least one
+  // (FROM, TO) group has multiple cables. The existing group-by-from-to
+  // counter already produces correctly-grouped parallels for these — the
+  // flag just lets the preview UI tell the user "We detected the old
+  // per-cable layout and grouped these into runs automatically".
+  const hasParallelColumn = !!columns['parallel_count']
+  const groupHadMultiples = Array.from(cableNoByGroup.values()).some((n) => n > 1)
+  const legacy_format_detected = !hasParallelColumn && groupHadMultiples
 
   return {
     schedule_sheet_name: scheduleWs.name,
@@ -350,6 +400,8 @@ export async function parseScheduleWorkbook(buffer: Buffer): Promise<ImportPrevi
     conductor_headers,
     placeholders_skipped,
     duplicate_tags,
+    parallel_fanouts,
+    legacy_format_detected,
     sheet_summary,
   }
 }

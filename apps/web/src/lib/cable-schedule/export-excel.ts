@@ -105,6 +105,10 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
   // The importer also hardcodes the cable tag at column B, so we keep
   // the tag IN B regardless of how we order anything else.
   const HEADERS: Array<[string, string]> = [
+    // Column A label stays 'Cable No' for back-compat with the importer's
+    // regex (/^(cable\s*no|c\/no|…)/i), but the VALUE is now the run number
+    // (1..M across the whole schedule). The importer ignores the column A
+    // value anyway — it re-derives cable_no per (FROM, TO) group sequence.
     ['A', 'Cable No'],
     ['B', 'Cable Tag'],
     ['C', 'From'],
@@ -123,6 +127,11 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
     ['P', 'Install method'],
     ['Q', 'Tag override'],
     ['R', 'Notes'],
+    // Parallel column — matches importer regex
+    // /^(parallel(\s*cables)?|cables(\s*in\s*parallel)?|×\s*n|x\s*n)$/i
+    // When ≥ 2, the importer fans the row out into N cables on one supply.
+    // When absent or 1, the row is a single cable (legacy shape).
+    ['S', 'Parallel'],
   ]
   for (const [letter, label] of HEADERS) {
     const cell = ws.getCell(`${letter}6`)
@@ -159,12 +168,15 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
   ws.getColumn('P').width = 16
   ws.getColumn('Q').width = 14
   ws.getColumn('R').width = 30
+  ws.getColumn('S').width = 9
 
-  // Group cables by (section, conductor) so we can stamp section header
-  // rows the way the importer expects. Section first (NORMAL/EMERGENCY,
-  // pulled from the cable's supply), conductor second (CU/AL).
-  const grouped = groupBySectionConductor(payload.cables, payload.supplies)
+  // ONE ROW PER RUN — collapse parallels under their shared logical feed.
+  // Group runs by (section, conductor) so we can stamp section header rows
+  // the way the importer expects. Section first (NORMAL/EMERGENCY), then
+  // conductor (CU/AL).
+  const grouped = groupRunsBySectionConductor(payload.runs)
   let rowIdx = 7
+  let runNumber = 1
 
   for (const group of grouped) {
     if (group.section) {
@@ -174,56 +186,46 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
     writeSectionHeaderRow(ws, rowIdx, group.conductor === 'CU' ? 'Copper' : 'Aluminium')
     rowIdx++
 
-    for (const c of group.cables) {
-      writeCableRow(ws, rowIdx, c)
+    for (const run of group.runs) {
+      writeRunRow(ws, rowIdx, run, runNumber)
       rowIdx++
+      runNumber++
     }
   }
 }
 
-interface CableGroup {
+interface RunGroup {
   section: 'NORMAL' | 'EMERGENCY' | null
   conductor: 'CU' | 'AL'
-  cables: EnrichedCable[]
+  runs: ExportPayload['runs']
 }
 
-function groupBySectionConductor(
-  cables: EnrichedCable[],
-  supplies: ExportPayload['supplies'],
-): CableGroup[] {
-  // Map supply_id → section so we can route each cable
-  const sectionBySupply = new Map<string, 'NORMAL' | 'EMERGENCY' | null>()
-  for (const s of supplies) {
-    const v = s.section
-    sectionBySupply.set(
-      s.id,
-      v === 'EMERGENCY' ? 'EMERGENCY' : v === 'NORMAL' ? 'NORMAL' : null,
-    )
-  }
-
-  // Bucket: section then conductor
-  const buckets = new Map<string, CableGroup>()
+function groupRunsBySectionConductor(runs: ExportPayload['runs']): RunGroup[] {
+  // Bucket runs by (section, conductor). Section + conductor live ON the run
+  // already (run.section is the supply's section; run.conductor is the head
+  // strand's metal — and in practice all parallels share conductor).
+  const buckets = new Map<string, RunGroup>()
   const orderKeys: string[] = []
-  for (const c of cables) {
-    const section = sectionBySupply.get(c.supply_id) ?? null
-    const key = `${section ?? '_'}|${c.conductor}`
+  for (const r of runs) {
+    const section = r.section === 'EMERGENCY' ? 'EMERGENCY'
+                  : r.section === 'NORMAL' ? 'NORMAL'
+                  : null
+    const key = `${section ?? '_'}|${r.conductor}`
     if (!buckets.has(key)) {
-      buckets.set(key, { section, conductor: c.conductor, cables: [] })
+      buckets.set(key, { section, conductor: r.conductor, runs: [] })
       orderKeys.push(key)
     }
-    buckets.get(key)!.cables.push(c)
+    buckets.get(key)!.runs.push(r)
   }
   // Stable order: NORMAL first, then EMERGENCY, then null. CU before AL.
   orderKeys.sort((a, b) => {
     const [sa, ca] = a.split('|')
     const [sb, cb] = b.split('|')
-    const sectionRank = (s: string) =>
-      s === 'NORMAL' ? 0 : s === 'EMERGENCY' ? 1 : 2
+    const sectionRank = (s: string) => (s === 'NORMAL' ? 0 : s === 'EMERGENCY' ? 1 : 2)
     if (sectionRank(sa) !== sectionRank(sb)) return sectionRank(sa) - sectionRank(sb)
     const condRank = (c: string) => (c === 'CU' ? 0 : 1)
     return condRank(ca) - condRank(cb)
   })
-
   return orderKeys.map((k) => buckets.get(k)!)
 }
 
@@ -242,7 +244,8 @@ function writeSectionHeaderRow(
   }
   cell.alignment = { horizontal: 'left', vertical: 'middle' }
   // Faint amber underline across the whole row to draw the eye
-  for (let col = 1; col <= 18; col++) {
+  // (col 1..19 — includes new Parallel column at S)
+  for (let col = 1; col <= 19; col++) {
     const c = ws.getRow(rowIdx).getCell(col)
     if (col !== 1) {
       c.fill = {
@@ -257,29 +260,44 @@ function writeSectionHeaderRow(
   }
 }
 
-function writeCableRow(
+function writeRunRow(
   ws: ExcelJS.Worksheet,
   rowIdx: number,
-  c: EnrichedCable,
+  run: ExportPayload['runs'][number],
+  runNumber: number,
 ): void {
-  ws.getCell(`A${rowIdx}`).value = c.cable_no
-  ws.getCell(`B${rowIdx}`).value = c.cable_tag
-  ws.getCell(`C${rowIdx}`).value = c.from_label
-  ws.getCell(`D${rowIdx}`).value = c.to_label
-  ws.getCell(`E${rowIdx}`).value = c.voltage_v
-  ws.getCell(`F${rowIdx}`).value = c.load_a
-  ws.getCell(`G${rowIdx}`).value = c.size_mm2
-  ws.getCell(`H${rowIdx}`).value = c.cores
-  ws.getCell(`I${rowIdx}`).value = c.conductor
-  ws.getCell(`J${rowIdx}`).value = c.insulation
-  ws.getCell(`K${rowIdx}`).value = c.ohm_per_km
-  ws.getCell(`L${rowIdx}`).value = effectiveLength(c)
-  ws.getCell(`M${rowIdx}`).value = c.vd_pct
-  ws.getCell(`N${rowIdx}`).value = c.cumulative_vd_pct
-  ws.getCell(`O${rowIdx}`).value = c.derated_current_rating_a
-  ws.getCell(`P${rowIdx}`).value = c.installation_method
-  ws.getCell(`Q${rowIdx}`).value = c.tag_override
-  ws.getCell(`R${rowIdx}`).value = c.notes
+  const head = run.cables[0]
+  // Run-level tag: prefer the head strand's override, else a synthesised
+  // run tag (no strand suffix — that's per-cable territory).
+  const runTag = head.tag_override?.trim()
+    || `${head.from_label.replace(/[^A-Z0-9]/gi, '').toUpperCase()}-${head.to_label.replace(/[^A-Z0-9]/gi, '').toUpperCase()}`
+  // Effective length = worst (longest) measured/confirmed across strands.
+  let effLen: number | null = null
+  for (const c of run.cables) {
+    const l = effectiveLength(c)
+    if (l == null) continue
+    if (effLen == null || l > effLen) effLen = l
+  }
+
+  ws.getCell(`A${rowIdx}`).value = runNumber
+  ws.getCell(`B${rowIdx}`).value = runTag
+  ws.getCell(`C${rowIdx}`).value = run.from_label
+  ws.getCell(`D${rowIdx}`).value = run.to_label
+  ws.getCell(`E${rowIdx}`).value = run.voltage_v
+  ws.getCell(`F${rowIdx}`).value = run.load_a
+  ws.getCell(`G${rowIdx}`).value = run.size_mm2
+  ws.getCell(`H${rowIdx}`).value = run.cores
+  ws.getCell(`I${rowIdx}`).value = run.conductor
+  ws.getCell(`J${rowIdx}`).value = run.insulation
+  ws.getCell(`K${rowIdx}`).value = run.ohm_per_km
+  ws.getCell(`L${rowIdx}`).value = effLen
+  ws.getCell(`M${rowIdx}`).value = run.vd_pct
+  ws.getCell(`N${rowIdx}`).value = run.cumulative_vd_pct
+  ws.getCell(`O${rowIdx}`).value = run.combined_capacity_a
+  ws.getCell(`P${rowIdx}`).value = run.installation_method
+  ws.getCell(`Q${rowIdx}`).value = head.tag_override
+  ws.getCell(`R${rowIdx}`).value = head.notes
+  ws.getCell(`S${rowIdx}`).value = run.parallel_count
 
   // Number formats
   ws.getCell(`G${rowIdx}`).numFmt = '0'
@@ -288,18 +306,19 @@ function writeCableRow(
   ws.getCell(`M${rowIdx}`).numFmt = '0.00'
   ws.getCell(`N${rowIdx}`).numFmt = '0.00'
   ws.getCell(`O${rowIdx}`).numFmt = '0'
+  ws.getCell(`S${rowIdx}`).numFmt = '0'
 
-  // Faint dividers
-  for (let col = 1; col <= 18; col++) {
+  // Faint dividers (col 1..19 — bumped to include the new Parallel column)
+  for (let col = 1; col <= 19; col++) {
     ws.getRow(rowIdx).getCell(col).border = {
       bottom: { style: 'hair', color: { argb: 'FF333333' } },
     }
   }
 
-  // Light fill if the manual_override flag is set, signalling "engineer
-  // typed Ω/km manually — SANS lookup didn't cover this row".
-  if (c.manual_override) {
-    for (let col = 1; col <= 18; col++) {
+  // Light fill when any strand carries manual_override — surfaces "engineer
+  // typed Ω/km manually" at run level. Use the most-pessimistic signal.
+  if (run.cables.some((c) => c.manual_override)) {
+    for (let col = 1; col <= 19; col++) {
       ws.getRow(rowIdx).getCell(col).fill = {
         type: 'pattern',
         pattern: 'solid',
