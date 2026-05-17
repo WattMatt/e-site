@@ -7,11 +7,19 @@ import {
   type CableForCalc,
   type SupplyForCalc,
 } from '@esite/shared'
+import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-payload'
 import {
   ConfirmedLengthEditor,
 } from './LengthEditPopover'
 import { EditableCell } from './EditableCell'
-import { updateSupplyAction, updateCableAction, deleteCableAction, repointSupplyAction } from '@/actions/cable-entities.actions'
+import {
+  updateSupplyAction,
+  updateCableAction,
+  updateRunCableFieldsAction,
+  normaliseRunPropertiesAction,
+  deleteCableAction,
+  repointSupplyAction,
+} from '@/actions/cable-entities.actions'
 
 const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
   .map((v) => ({ value: String(v), label: `${v} V` }))
@@ -29,6 +37,11 @@ const INSTALL_OPTIONS = [
   { value: 'CLIPPED', label: 'Clipped' },
 ]
 
+/**
+ * Legacy per-cable row shape kept for cloud-diff annotations + node IDs that
+ * EnrichedRun doesn't carry today. Used as a sidecar lookup; the grid no longer
+ * iterates this directly (one row per RUN now).
+ */
 export interface ScheduleRow {
   id: string
   cable_no: number
@@ -36,7 +49,6 @@ export interface ScheduleRow {
   to_label: string
   voltage_v: number | null
   load_a: number | null
-  /** Per-cable current share: the supply's design load divided by the actual number of cables on it. Null when unknown. */
   per_cable_load_a: number | null
   size_mm2: number
   cores: string
@@ -49,9 +61,7 @@ export interface ScheduleRow {
   vd_pct: number
   cumulative_vd_pct: number
   derated_rating_a: number | null
-  /** Sum of the supply's cables' derated ratings (grouping-aware combined capacity), in A. */
   combined_capacity_a: number
-  /** True when the supply's combined capacity is below its design load. */
   supply_under_rated: boolean
   installation_method: string | null
   depth_mm: number | null
@@ -59,7 +69,6 @@ export interface ScheduleRow {
   tag_override: string | null
   manual_override: boolean
   notes: string | null
-  /** When this cable is new or changed vs the most-recent ISSUED revision. */
   cloud_kind: 'added' | 'changed' | null
   cloud_letter: string
   supply_id: string
@@ -75,7 +84,10 @@ export interface NodeOption { id: string; code: string; kind: 'source' | 'board'
 interface Props {
   projectId: string
   revisionId: string
+  /** Cloud annotations + node IDs keyed by cable id; legacy shape. */
   rows: ScheduleRow[]
+  /** One per supply — the canonical "schedule line" iteration target. */
+  runs: EnrichedRun[]
   supplies: SupplyForCalc[]
   cables: CableForCalc[]
   nodeOptions: NodeOption[]
@@ -84,7 +96,7 @@ interface Props {
   canEdit: boolean
 }
 
-const LENGTH_STATUS_TONE: Record<ScheduleRow['length_status'], string> = {
+const LENGTH_STATUS_TONE: Record<EnrichedRun['length_status'], string> = {
   UNMEASURED: 'badge-muted',
   MEASURED:   'badge-info',
   CONFIRMED:  'badge-success',
@@ -96,54 +108,105 @@ function fmt(n: number | null | undefined, decimals = 0): string {
   return Number(n).toFixed(decimals)
 }
 
-// Mirrors activeLengthM() in @esite/shared. The logic is intentionally duplicated
-// (not imported) because ScheduleRow is not structurally assignable to CableForCalc —
-// keep the three branches in sync with the canonical version if it ever changes.
-function activeLength(r: ScheduleRow, mode: 'design' | 'as-built' | 'worst'): number | null {
-  const meas = r.measured_length_m
-  const conf = r.confirmed_length_m
+function activeLengthForCable(c: EnrichedCable, mode: 'design' | 'as-built' | 'worst'): number | null {
+  const meas = c.measured_length_m
+  const conf = c.confirmed_length_m
   if (mode === 'design') return meas
   if (mode === 'worst') {
     if (meas != null && conf != null) return Math.max(meas, conf)
     return conf ?? meas
   }
-  // as-built
-  if (r.length_status === 'CONFIRMED' && conf != null) return conf
+  if (c.length_status === 'CONFIRMED' && conf != null) return conf
   return meas
 }
 
-function deltaLength(r: ScheduleRow): { abs: number; pct: number } | null {
-  if (r.measured_length_m == null || r.confirmed_length_m == null) return null
-  const abs = r.confirmed_length_m - r.measured_length_m
-  const pct = r.measured_length_m > 0 ? (abs / r.measured_length_m) * 100 : 0
+/** Worst (longest) active length across a run's strands, in metres. */
+function activeLengthForRun(run: EnrichedRun, mode: 'design' | 'as-built' | 'worst'): number | null {
+  let worst: number | null = null
+  for (const c of run.cables) {
+    const l = activeLengthForCable(c, mode)
+    if (l == null) continue
+    if (worst == null || l > worst) worst = l
+  }
+  return worst
+}
+
+function deltaForCable(c: EnrichedCable): { abs: number; pct: number } | null {
+  if (c.measured_length_m == null || c.confirmed_length_m == null) return null
+  const abs = c.confirmed_length_m - c.measured_length_m
+  const pct = c.measured_length_m > 0 ? (abs / c.measured_length_m) * 100 : 0
   return { abs, pct }
 }
 
-function utilisationPct(r: ScheduleRow): number | null {
-  if (r.combined_capacity_a <= 0 || r.load_a == null) return null
-  return (r.load_a / r.combined_capacity_a) * 100
+function utilisationPctForRun(run: EnrichedRun): number | null {
+  if (run.combined_capacity_a == null || run.combined_capacity_a <= 0) return null
+  if (run.load_a == null) return null
+  return (run.load_a / run.combined_capacity_a) * 100
 }
 
-function cableTag(r: ScheduleRow): string {
-  if (r.tag_override) return r.tag_override
-  return `${r.from_label}-${r.to_label}-${r.size_mm2}-${r.cable_no}`
+/** Canonical run identifier shown in the "Cable tag" column. */
+function runLabel(run: EnrichedRun): string {
+  const suffix = run.parallel_count > 1 ? ` ×${run.parallel_count}` : ''
+  return `${run.from_label}–${run.to_label}${suffix}`
 }
 
-export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cables, nodeOptions, locked, lengthMode, canEdit }: Props) {
+/** Per-strand tag for the drill-down. Honours the cable's tag_override. */
+function strandTag(c: EnrichedCable): string {
+  if (c.tag_override) return c.tag_override
+  return `${c.from_label}-${c.to_label}-${c.size_mm2}-${c.cable_no}`
+}
+
+/**
+ * Cloud annotation for a run = "added" if ANY strand is added, else "changed"
+ * if any strand is changed, else null. Letter takes the first matching strand.
+ */
+function cloudForRun(run: EnrichedRun, rowById: Map<string, ScheduleRow>): { kind: 'added' | 'changed' | null; letter: string } {
+  let kind: 'added' | 'changed' | null = null
+  let letter = ''
+  for (const c of run.cables) {
+    const r = rowById.get(c.id)
+    if (!r?.cloud_kind) continue
+    if (r.cloud_kind === 'added') {
+      return { kind: 'added', letter: r.cloud_letter }
+    }
+    if (kind == null) {
+      kind = 'changed'
+      letter = r.cloud_letter
+    }
+  }
+  return { kind, letter }
+}
+
+export function CableScheduleGrid({
+  projectId,
+  revisionId,
+  rows,
+  runs,
+  supplies,
+  cables,
+  nodeOptions,
+  locked,
+  lengthMode,
+  canEdit,
+}: Props) {
   const [query, setQuery] = useState('')
-  const [editConfirmed, setEditConfirmed] = useState<ScheduleRow | null>(null)
-  const [pendingDelete, setPendingDelete] = useState<ScheduleRow | null>(null)
-  const [repointing, setRepointing] = useState<{ row: ScheduleRow; end: 'from' | 'to' } | null>(null)
+  const [editConfirmed, setEditConfirmed] = useState<EnrichedCable | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<EnrichedCable | null>(null)
+  const [repointing, setRepointing] = useState<{ supplyId: string; from: string; to: string; end: 'from' | 'to'; current: string } | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [savingShared, setSavingShared] = useState<string | null>(null) // supply_id while a fan-out is in flight
+  const [sharedError, setSharedError] = useState<{ supplyId: string; message: string } | null>(null)
 
-  const [liveRows, setLiveRows] = useState<ScheduleRow[]>(rows)
+  // Live state mirrors props so optimistic edits survive until revalidatePath
+  // brings fresh server data. Re-seeded on prop change (same pattern as before).
+  const [liveRuns, setLiveRuns] = useState<EnrichedRun[]>(runs)
   const [liveSupplies, setLiveSupplies] = useState<SupplyForCalc[]>(supplies)
   const [liveCables, setLiveCables] = useState<CableForCalc[]>(cables)
+  useEffect(() => { setLiveRuns(runs); setLiveSupplies(supplies); setLiveCables(cables) }, [runs, supplies, cables])
 
-  // Re-seed if the server sends fresh data (after revalidatePath).
-  useEffect(() => { setLiveRows(rows); setLiveSupplies(supplies); setLiveCables(cables) },
-    [rows, supplies, cables])
+  const rowById = useMemo(() => new Map(rows.map((r) => [r.id, r] as const)), [rows])
 
-  /** Recompute VD + cumulative VD across all rows from the current raw snapshot. */
+  // ── Recompute VD across all runs from the current raw snapshot ──────
   function recomputeVd(
     nextSupplies: SupplyForCalc[],
     nextCables: CableForCalc[],
@@ -159,162 +222,234 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
     return out
   }
 
+  // ── Supply-level field (voltage, design load, section) ──────────────
   async function saveSupplyField(
     supplyId: string,
     field: 'voltage_v' | 'design_load_a' | 'section',
     next: string | number | null,
   ): Promise<{ error?: string }> {
     const prevSupplies = liveSupplies
-    const prevRows = liveRows
-    // EditableCell yields strings for select cells and null for cleared number cells.
+    const prevRuns = liveRuns
     const numericNext: number | null = next == null ? null : Number(next)
-    // Optimistic: patch raw supplies + every row on that supply.
-    // section doesn't affect VD — only the calc fields go into liveSupplies.
+
     const nextSupplies = field === 'section'
       ? liveSupplies
-      : liveSupplies.map((s) =>
-          s.id === supplyId ? { ...s, [field]: numericNext as number } : s)
+      : liveSupplies.map((s) => s.id === supplyId ? { ...s, [field]: numericNext as number } : s)
     setLiveSupplies(nextSupplies)
     const vd = recomputeVd(nextSupplies, liveCables)
-    setLiveRows(liveRows.map((r) => {
+    setLiveRuns(liveRuns.map((r) => {
       if (r.supply_id !== supplyId) return r
       const v = vd.get(supplyId)
       return {
         ...r,
-        voltage_v: field === 'voltage_v' ? numericNext : r.voltage_v,
+        voltage_v: field === 'voltage_v' ? Number(numericNext) : r.voltage_v,
         load_a: field === 'design_load_a' ? numericNext : r.load_a,
         section: field === 'section' ? (next as string | null) : r.section,
         vd_pct: v?.vd ?? r.vd_pct,
         cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct,
       }
     }))
-    // Persist.
+
     const res = await updateSupplyAction({
       supplyId,
       voltageV: field === 'voltage_v' ? Number(next) : undefined,
       designLoadA: field === 'design_load_a' ? Number(next) : undefined,
       section: field === 'section' ? (next as 'NORMAL' | 'EMERGENCY' | null) : undefined,
     })
-    if (res.error) { setLiveSupplies(prevSupplies); setLiveRows(prevRows); return { error: res.error } }
+    if (res.error) { setLiveSupplies(prevSupplies); setLiveRuns(prevRuns); return { error: res.error } }
     return {}
   }
 
-  type CableField =
-    | 'size_mm2' | 'cores' | 'conductor' | 'insulation' | 'armour'
-    | 'installation_method' | 'depth_mm' | 'grouped_with' | 'ambient_temp_c'
-    | 'measured_length_m' | 'ohm_per_km_override' | 'tag_override' | 'notes'
+  // ── Run-level shared field (fan-out to every parallel cable on the supply) ─
+  type SharedField =
+    | 'size_mm2' | 'cores' | 'conductor' | 'insulation'
+    | 'installation_method' | 'depth_mm' | 'grouped_with'
 
-  async function saveCableField(
-    cableId: string, supplyId: string, field: CableField, next: string | number | null,
+  async function saveRunSharedField(
+    supplyId: string,
+    field: SharedField,
+    next: string | number | null,
   ): Promise<{ error?: string }> {
-    const prevRows = liveRows
+    const prevRuns = liveRuns
+    const prevCables = liveCables
+    setSavingShared(supplyId)
+    setSharedError(null)
+
+    // Optimistic: patch every strand in the supply + the run aggregate.
+    const nextCables = liveCables.map((c) => {
+      if (c.supply_id !== supplyId) return c
+      const patch: Record<string, unknown> = {}
+      if (field === 'size_mm2') patch.size_mm2 = Number(next)
+      else if (field === 'depth_mm') patch.depth_mm = next == null ? null : Number(next)
+      else if (field === 'grouped_with') patch.grouped_with = Number(next)
+      else patch[field] = next
+      return { ...c, ...patch } as CableForCalc
+    })
+    setLiveCables(nextCables)
+    const vd = recomputeVd(liveSupplies, nextCables)
+    setLiveRuns(liveRuns.map((r) => {
+      if (r.supply_id !== supplyId) return r
+      const v = vd.get(supplyId)
+      const headCables = r.cables.map((c) => {
+        const patch: Partial<EnrichedCable> = {}
+        if (field === 'size_mm2') patch.size_mm2 = Number(next)
+        else if (field === 'cores') patch.cores = next as EnrichedCable['cores']
+        else if (field === 'conductor') patch.conductor = next as EnrichedCable['conductor']
+        else if (field === 'insulation') patch.insulation = next as EnrichedCable['insulation']
+        else if (field === 'installation_method') patch.installation_method = next as string | null
+        else if (field === 'depth_mm') patch.depth_mm = next == null ? null : Number(next)
+        else if (field === 'grouped_with') patch.grouped_with = Number(next)
+        return { ...c, ...patch }
+      })
+      const headPatch: Partial<EnrichedRun> = {}
+      if (field === 'size_mm2') headPatch.size_mm2 = Number(next)
+      else if (field === 'cores') headPatch.cores = next as EnrichedRun['cores']
+      else if (field === 'conductor') headPatch.conductor = next as EnrichedRun['conductor']
+      else if (field === 'insulation') headPatch.insulation = next as EnrichedRun['insulation']
+      else if (field === 'installation_method') headPatch.installation_method = next as string | null
+      else if (field === 'depth_mm') headPatch.depth_mm = next == null ? null : Number(next)
+      else if (field === 'grouped_with') headPatch.grouped_with = Number(next)
+      return {
+        ...r,
+        ...headPatch,
+        cables: headCables,
+        vd_pct: v?.vd ?? r.vd_pct,
+        cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct,
+        // Fan-out clears any prior divergence on this field.
+        mixed_properties: { fields: r.mixed_properties.fields.filter((f) => f !== field) },
+      }
+    }))
+
+    const patch: Parameters<typeof updateRunCableFieldsAction>[0]['patch'] = {}
+    if (field === 'size_mm2') patch.sizeMm2 = Number(next)
+    else if (field === 'cores') patch.cores = next as '3' | '3+E' | '4'
+    else if (field === 'conductor') patch.conductor = next as 'CU' | 'AL'
+    else if (field === 'insulation') patch.insulation = next as 'PVC' | 'XLPE' | 'PILC'
+    else if (field === 'installation_method') patch.installationMethod = next as string | null
+    else if (field === 'depth_mm') patch.depthMm = next == null ? null : Number(next)
+    else if (field === 'grouped_with') patch.groupedWith = Number(next)
+
+    const res = await updateRunCableFieldsAction({ supplyId, patch })
+    setSavingShared(null)
+    if (res.error) {
+      setLiveRuns(prevRuns); setLiveCables(prevCables)
+      setSharedError({ supplyId, message: res.error })
+      return { error: res.error }
+    }
+    if (res.errors && res.errors.length > 0) {
+      // Partial success — keep optimistic state but surface the per-strand failures.
+      setSharedError({ supplyId, message: `${res.errors.length} strand(s) failed: ${res.errors[0].error}` })
+    }
+    return {}
+  }
+
+  // ── Per-strand field (measured length, ohm override, tag, notes) ────
+  type StrandField =
+    | 'measured_length_m' | 'ohm_per_km_override' | 'tag_override' | 'notes' | 'ambient_temp_c'
+
+  async function saveStrandField(
+    cableId: string, supplyId: string, field: StrandField, next: string | number | null,
+  ): Promise<{ error?: string }> {
+    const prevRuns = liveRuns
     const prevCables = liveCables
 
-    const rowKey: Partial<ScheduleRow> = {}
     const cableKey: Record<string, unknown> = {}
     switch (field) {
-      case 'size_mm2': rowKey.size_mm2 = Number(next); cableKey.size_mm2 = Number(next); break
-      case 'cores': rowKey.cores = next as string; cableKey.cores = next; break
-      case 'conductor': rowKey.conductor = next as 'CU' | 'AL'; cableKey.conductor = next; break
-      case 'insulation': rowKey.insulation = next as ScheduleRow['insulation']; cableKey.insulation = next; break
-      case 'armour': rowKey.armour = next as string | null; break
-      case 'installation_method': rowKey.installation_method = next as string | null; break
-      case 'depth_mm': rowKey.depth_mm = next == null ? null : Number(next); break
-      case 'grouped_with': rowKey.grouped_with = Number(next); break
-      case 'ambient_temp_c': rowKey.ambient_temp_c = Number(next); break
       case 'measured_length_m':
-        rowKey.measured_length_m = next == null ? null : Number(next)
         cableKey.measured_length_m = next == null ? null : Number(next)
         break
       case 'ohm_per_km_override':
-        rowKey.ohm_per_km = next == null ? null : Number(next)
-        rowKey.manual_override = next != null
         cableKey.ohm_per_km = next == null ? null : Number(next)
         break
-      case 'tag_override': rowKey.tag_override = next as string | null; break
-      case 'notes': rowKey.notes = next as string | null; break
+      case 'tag_override':
+        // no calc effect, no liveCables patch needed
+        break
+      case 'notes':
+        break
+      case 'ambient_temp_c':
+        cableKey.ambient_temp_c = Number(next)
+        break
     }
-    const nextCables = liveCables.map((c) =>
-      c.id === cableId ? { ...c, ...cableKey } as CableForCalc : c)
+    const nextCables = liveCables.map((c) => c.id === cableId ? { ...c, ...cableKey } as CableForCalc : c)
     setLiveCables(nextCables)
     const vd = recomputeVd(liveSupplies, nextCables)
-    setLiveRows(liveRows.map((r) => {
-      if (r.id !== cableId) {
-        if (r.supply_id === supplyId) {
-          const v = vd.get(supplyId)
-          return { ...r, vd_pct: v?.vd ?? r.vd_pct, cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct }
-        }
-        return r
-      }
+    setLiveRuns(liveRuns.map((r) => {
+      if (r.supply_id !== supplyId) return r
       const v = vd.get(supplyId)
-      return { ...r, ...rowKey, vd_pct: v?.vd ?? r.vd_pct, cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct }
+      const nextStrands = r.cables.map((c) => {
+        if (c.id !== cableId) return c
+        const patch: Partial<EnrichedCable> = {}
+        if (field === 'measured_length_m') patch.measured_length_m = next == null ? null : Number(next)
+        else if (field === 'ohm_per_km_override') {
+          patch.ohm_per_km = next == null ? null : Number(next)
+          patch.manual_override = next != null
+        }
+        else if (field === 'tag_override') patch.tag_override = next as string | null
+        else if (field === 'notes') patch.notes = next as string | null
+        else if (field === 'ambient_temp_c') patch.ambient_temp_c = Number(next)
+        return { ...c, ...patch }
+      })
+      return { ...r, cables: nextStrands, vd_pct: v?.vd ?? r.vd_pct, cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct }
     }))
 
     const res = await updateCableAction({
       cableId,
-      sizeMm2: field === 'size_mm2' ? Number(next) : undefined,
-      cores: field === 'cores' ? (next as '3' | '3+E' | '4') : undefined,
-      conductor: field === 'conductor' ? (next as 'CU' | 'AL') : undefined,
-      insulation: field === 'insulation' ? (next as 'PVC' | 'XLPE' | 'PILC') : undefined,
-      armour: field === 'armour' ? (next as 'SWA' | 'UNARMOURED' | null) : undefined,
-      installationMethod: field === 'installation_method'
-        ? (next as 'DIRECT_IN_GROUND' | 'DUCT' | 'LADDER' | 'TRAY' | 'CLIPPED' | null) : undefined,
-      depthMm: field === 'depth_mm' ? (next == null ? null : Number(next)) : undefined,
-      groupedWith: field === 'grouped_with' ? Number(next) : undefined,
-      ambientTempC: field === 'ambient_temp_c' ? Number(next) : undefined,
       measuredLengthM: field === 'measured_length_m' ? (next == null ? null : Number(next)) : undefined,
       ohmPerKmOverride: field === 'ohm_per_km_override' ? (next == null ? null : Number(next)) : undefined,
       tagOverride: field === 'tag_override' ? (next as string | null) : undefined,
       notes: field === 'notes' ? (next as string | null) : undefined,
+      ambientTempC: field === 'ambient_temp_c' ? Number(next) : undefined,
     })
-    if (res.error) { setLiveRows(prevRows); setLiveCables(prevCables); return { error: res.error } }
-    if (res.recomputed) {
-      // Engineering observability: surface the recompute trail to anyone
-      // with DevTools open. `audit` (added when a SANS-affecting field
-      // changed) reveals exactly which table/row/factors produced the new
-      // rating — invaluable when a Cu→Al switch produces a surprising result.
-      if (res.recomputed.audit) {
-        // eslint-disable-next-line no-console
-        console.log('[cable-recompute]', { cableId, field, ...res.recomputed })
-      }
-      setLiveRows((cur) => cur.map((r) => r.id === cableId
-        ? {
-            ...r,
-            ohm_per_km: res.recomputed!.ohm_per_km,
-            // Calc honesty: when a SANS-affecting field changed, the recompute
-            // is authoritative — null means "no SANS row matched, cannot
-            // derate honestly" and must render as "—", NOT silently fall back
-            // to the stale value (which would lie to the engineer). The
-            // ohm-override path uses null as a "no change" sentinel, so the
-            // fallback only applies there.
-            derated_rating_a: field === 'ohm_per_km_override'
-              ? r.derated_rating_a
-              : res.recomputed!.derated_current_rating_a,
-            manual_override: field === 'ohm_per_km_override' ? r.manual_override : false,
-          }
-        : r))
-    }
+    if (res.error) { setLiveRuns(prevRuns); setLiveCables(prevCables); return { error: res.error } }
     return {}
   }
 
-  async function confirmDeleteCable() {
+  // ── Normalise a run's divergent properties to head cable ────────────
+  async function normaliseRun(supplyId: string): Promise<void> {
+    const prevRuns = liveRuns
+    setSavingShared(supplyId)
+    setSharedError(null)
+    const res = await normaliseRunPropertiesAction(supplyId)
+    setSavingShared(null)
+    if (res.error) {
+      setLiveRuns(prevRuns)
+      setSharedError({ supplyId, message: res.error })
+      return
+    }
+    // Optimistically clear the mixed flag — fresh server snapshot will arrive
+    // via revalidatePath in the page route.
+    setLiveRuns(liveRuns.map((r) => r.supply_id === supplyId
+      ? { ...r, mixed_properties: { fields: [] } }
+      : r))
+  }
+
+  async function confirmDeleteCable(): Promise<void> {
     if (!pendingDelete) return
     const target = pendingDelete
     setPendingDelete(null)
-    const prevRows = liveRows
+    const prevRuns = liveRuns
     const prevCables = liveCables
-    // Optimistic: prune the cable from the raw snapshot and recompute VD so a
-    // surviving parallel sibling reflects its new (higher) volt-drop immediately.
     const nextCables = liveCables.filter((c) => c.id !== target.id)
     setLiveCables(nextCables)
     const vd = recomputeVd(liveSupplies, nextCables)
-    setLiveRows(liveRows.filter((r) => r.id !== target.id).map((r) => {
-      const v = vd.get(r.supply_id)
-      return v ? { ...r, vd_pct: v.vd, cumulative_vd_pct: v.cum } : r
-    }))
+    setLiveRuns(liveRuns
+      .map((r) => {
+        if (r.supply_id !== target.supply_id) return r
+        const remaining = r.cables.filter((c) => c.id !== target.id)
+        if (remaining.length === 0) return null
+        const v = vd.get(r.supply_id)
+        return {
+          ...r,
+          cables: remaining,
+          parallel_count: remaining.length,
+          vd_pct: v?.vd ?? r.vd_pct,
+          cumulative_vd_pct: v?.cum ?? r.cumulative_vd_pct,
+        }
+      })
+      .filter((r): r is EnrichedRun => r != null))
     const res = await deleteCableAction(target.id)
     if (res.error) {
-      setLiveRows(prevRows)
+      setLiveRuns(prevRuns)
       setLiveCables(prevCables)
       alert(`Could not delete: ${res.error}`)
     }
@@ -322,27 +457,24 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return liveRows
-    return liveRows.filter(
-      (r) =>
-        r.from_label.toLowerCase().includes(q) ||
-        r.to_label.toLowerCase().includes(q) ||
-        cableTag(r).toLowerCase().includes(q) ||
-        (r.notes ?? '').toLowerCase().includes(q),
-    )
-  }, [liveRows, query])
+    if (!q) return liveRuns
+    return liveRuns.filter((r) =>
+      r.from_label.toLowerCase().includes(q) ||
+      r.to_label.toLowerCase().includes(q) ||
+      runLabel(r).toLowerCase().includes(q) ||
+      r.cables.some((c) => (c.notes ?? '').toLowerCase().includes(q) || strandTag(c).toLowerCase().includes(q)))
+  }, [liveRuns, query])
 
-  // Group rows by supply for the parallel-cable left-edge brace (same FROM-TO
-  // pair sharing a colour). Two adjacent rows with identical FROM+TO get a
-  // matching colour-bar accent.
-  function isPartOfParallel(idx: number): boolean {
-    const r = filtered[idx]
-    const next = filtered[idx + 1]
-    const prev = filtered[idx - 1]
-    const sameAs = (a: ScheduleRow, b: ScheduleRow | undefined): boolean =>
-      !!b && a.from_label === b.from_label && a.to_label === b.to_label
-    return !!r && (sameAs(r, next) || sameAs(r, prev!))
+  function toggleExpand(supplyId: string): void {
+    setExpanded((cur) => {
+      const next = new Set(cur)
+      if (next.has(supplyId)) next.delete(supplyId)
+      else next.add(supplyId)
+      return next
+    })
   }
+
+  const totalStrands = useMemo(() => liveRuns.reduce((acc, r) => acc + r.parallel_count, 0), [liveRuns])
 
   return (
     <div>
@@ -356,7 +488,7 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
           style={{ flex: 1, minWidth: 240, maxWidth: 360 }}
         />
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
-          {filtered.length} of {liveRows.length} cables
+          {filtered.length} of {liveRuns.length} runs · {totalStrands} cables
         </div>
         <span
           style={{
@@ -387,10 +519,7 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
         )}
       </div>
 
-      <div
-        className="data-panel"
-        style={{ overflowX: 'auto', overflowY: 'visible' }}
-      >
+      <div className="data-panel" style={{ overflowX: 'auto', overflowY: 'visible' }}>
         <table
           style={{
             width: '100%',
@@ -402,9 +531,9 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
         >
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
-              <Th w={4} />
+              <Th w={24} align="center" />{/* expand chevron */}
+              <Th w={28} align="center">Run</Th>
               <Th w={32} align="center">Δ</Th>
-              {canEdit && !locked && <Th w={28} />}
               <Th w={220}>Cable tag</Th>
               <Th w={120}>From</Th>
               <Th w={120}>To</Th>
@@ -416,14 +545,12 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
               <Th w={55} align="center">Cond</Th>
               <Th w={55} align="center">Insul</Th>
               <Th w={80} align="right">Ω/km</Th>
-              <Th w={45} align="right">C/no</Th>
-              <Th w={75} align="right">Meas (m)</Th>
-              <Th w={75} align="right">Conf (m)</Th>
-              <Th w={70} align="right">Δ m</Th>
-              <Th w={100}>Length</Th>
+              <Th w={70} align="center">Parallel</Th>
+              <Th w={85}>Length (m)</Th>
+              <Th w={100}>Length status</Th>
               <Th w={80} align="right">VD %</Th>
               <Th w={85} align="right">Σ VD %</Th>
-              <Th w={85} align="right">Rating (A)</Th>
+              <Th w={95} align="right">Rating (A)</Th>
               <Th w={75} align="right">Util %</Th>
               <Th w={100}>Install</Th>
               <Th w={70} align="right">Depth</Th>
@@ -432,182 +559,159 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r, i) => {
-              const delta = deltaLength(r)
-              const util = utilisationPct(r)
-              const vdTone =
-                r.vd_pct > 5 ? '#dc2626' : r.vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
-              const cumTone =
-                r.cumulative_vd_pct > 5 ? '#dc2626'
-                : r.cumulative_vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
-              const utilTone =
-                util == null ? 'var(--c-text-dim)'
-                : util > 80 ? '#dc2626' : util > 65 ? 'var(--c-amber)' : 'var(--c-text)'
-              const utilTooHot = util != null && r.load_a != null && r.derated_rating_a != null
-                && r.derated_rating_a < r.load_a
-              const deltaFlag = delta && r.measured_length_m
-                && (Math.abs(delta.abs) > 5 || Math.abs(delta.pct) > 10)
-              const len = activeLength(r, lengthMode)
+            {filtered.map((run, runIdx) => {
+              const cloud = cloudForRun(run, rowById)
+              const util = utilisationPctForRun(run)
+              const vdTone = run.vd_pct > 5 ? '#dc2626' : run.vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
+              const cumTone = run.cumulative_vd_pct > 5 ? '#dc2626' : run.cumulative_vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
+              const utilTone = util == null ? 'var(--c-text-dim)' : util > 80 ? '#dc2626' : util > 65 ? 'var(--c-amber)' : 'var(--c-text)'
+              const len = activeLengthForRun(run, lengthMode)
+              const isExpandable = run.parallel_count > 1 || run.mixed_properties.fields.length > 0
+              const isExpanded = expanded.has(run.supply_id)
+              const head = run.cables[0]
+              const headRow = rowById.get(head.id)
+              const isMixed = (f: SharedField): boolean => run.mixed_properties.fields.includes(f as never)
+              const isSaving = savingShared === run.supply_id
 
-              return (
-                <tr
-                  key={r.id}
-                  style={{
-                    borderTop: '1px solid var(--c-border)',
-                    background: isPartOfParallel(i) ? 'rgba(243, 178, 88, 0.04)' : undefined,
-                  }}
-                >
-                  <td style={{ padding: 0, width: 4, background: isPartOfParallel(i) ? 'var(--c-amber)' : 'transparent' }} />
-                  <Td align="center" style={{ padding: '4px 6px' }}>
-                    {r.cloud_kind && (
-                      <span
-                        title={r.cloud_kind === 'added'
-                          ? `New in ${r.cloud_letter} vs last issued`
-                          : `Changed in ${r.cloud_letter} vs last issued`}
+              const mixedBadge = (field: SharedField, current: React.ReactNode): React.ReactNode => isMixed(field)
+                ? <span className="badge badge-warning" title={`Parallel cables disagree on ${field} — Expand to view; Normalise to fix.`}>⚠ Mixed</span>
+                : current
+
+              return [
+                <tr key={`run-${run.supply_id}`} style={{
+                  borderTop: '1px solid var(--c-border)',
+                  background: run.parallel_count > 1 ? 'rgba(243, 178, 88, 0.04)' : undefined,
+                }}>
+                  <Td align="center" style={{ padding: 0 }}>
+                    {isExpandable && (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(run.supply_id)}
+                        aria-label={isExpanded ? 'Collapse strands' : 'Expand strands'}
+                        title={isExpanded ? 'Hide individual strands' : 'Show individual parallel strands'}
                         style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 2,
-                          padding: '1px 4px',
-                          borderRadius: 8,
-                          fontSize: 9,
-                          fontWeight: 700,
-                          letterSpacing: '0.04em',
-                          color: r.cloud_kind === 'added' ? '#16a34a' : 'var(--c-amber)',
-                          background: r.cloud_kind === 'added' ? 'rgba(34,197,94,0.1)' : 'var(--c-amber-dim)',
-                          border: `1px solid ${r.cloud_kind === 'added' ? '#16a34a' : 'var(--c-amber-mid)'}`,
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: 'var(--c-text-mid)', fontSize: 12, padding: '2px 6px',
                         }}
                       >
-                        ☁{r.cloud_letter}
+                        {isExpanded ? '▾' : '▸'}
+                      </button>
+                    )}
+                  </Td>
+                  <Td align="center" style={{ color: 'var(--c-text-dim)', fontSize: 10 }}>
+                    {runIdx + 1}
+                  </Td>
+                  <Td align="center" style={{ padding: '4px 6px' }}>
+                    {cloud.kind && (
+                      <span
+                        title={cloud.kind === 'added' ? `New in ${cloud.letter} vs last issued` : `Changed in ${cloud.letter} vs last issued`}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 2, padding: '1px 4px',
+                          borderRadius: 8, fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
+                          color: cloud.kind === 'added' ? '#16a34a' : 'var(--c-amber)',
+                          background: cloud.kind === 'added' ? 'rgba(34,197,94,0.1)' : 'var(--c-amber-dim)',
+                          border: `1px solid ${cloud.kind === 'added' ? '#16a34a' : 'var(--c-amber-mid)'}`,
+                        }}
+                      >
+                        ☁{cloud.letter}
                       </span>
                     )}
                   </Td>
-                  {canEdit && !locked && (
-                    <Td align="center" style={{ padding: '4px 2px' }}>
-                      <button type="button" title="Delete cable"
-                        onClick={() => setPendingDelete(r)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12 }}>
-                        ✕
-                      </button>
-                    </Td>
-                  )}
                   <Td>
-                    <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>{cableTag(r)}</span>
-                    {r.manual_override && (
+                    <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>{runLabel(run)}</span>
+                    {run.parallel_count > 1 && (
+                      <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--c-text-dim)' }}>
+                        {run.cables.some((c) => c.manual_override) && <span title="At least one strand has manual Ω/km override" style={{ color: 'var(--c-amber)' }}>⚑ </span>}
+                        Strand 1: <span style={{ color: 'var(--c-text-mid)' }}>{strandTag(head)}</span>
+                      </span>
+                    )}
+                    {head.manual_override && run.parallel_count === 1 && (
                       <span style={{ marginLeft: 4, fontSize: 9, color: 'var(--c-amber)' }} title="Manual override">⚑</span>
                     )}
                   </Td>
                   <Td>
-                    {canEdit && !locked ? (
-                      <button type="button" style={editCellBtn} onClick={() => setRepointing({ row: r, end: 'from' })}>
-                        {r.from_label}
+                    {canEdit && !locked && headRow ? (
+                      <button type="button" style={editCellBtn} onClick={() => setRepointing({ supplyId: run.supply_id, from: run.from_label, to: run.to_label, end: 'from', current: headRow.from_node_id })}>
+                        {run.from_label}
                       </button>
-                    ) : r.from_label}
+                    ) : run.from_label}
                   </Td>
                   <Td>
-                    {canEdit && !locked ? (
-                      <button type="button" style={editCellBtn} onClick={() => setRepointing({ row: r, end: 'to' })}>
-                        {r.to_label}
+                    {canEdit && !locked && headRow ? (
+                      <button type="button" style={editCellBtn} onClick={() => setRepointing({ supplyId: run.supply_id, from: run.from_label, to: run.to_label, end: 'to', current: headRow.to_node_id })}>
+                        {run.to_label}
                       </button>
-                    ) : r.to_label}
+                    ) : run.to_label}
                   </Td>
                   <Td align="right">
-                    <EditableCell
-                      type="select" align="right" disabled={locked || !canEdit}
-                      value={r.voltage_v} options={VOLTAGE_OPTIONS}
+                    <EditableCell type="select" align="right" disabled={locked || !canEdit || isSaving}
+                      value={run.voltage_v} options={VOLTAGE_OPTIONS}
                       format={(v) => v == null ? '—' : `${v}`}
-                      onSave={(next) => saveSupplyField(r.supply_id, 'voltage_v', next)}
-                    />
+                      onSave={(n) => saveSupplyField(run.supply_id, 'voltage_v', n)} />
                   </Td>
                   <Td align="right">
-                    <EditableCell
-                      type="number" align="right" disabled={locked || !canEdit}
-                      value={r.load_a} format={(v) => fmt(typeof v === 'number' ? v : null)}
-                      onSave={(next) => saveSupplyField(r.supply_id, 'design_load_a', next)}
-                    />
+                    <EditableCell type="number" align="right" disabled={locked || !canEdit || isSaving}
+                      value={run.load_a} format={(v) => fmt(typeof v === 'number' ? v : null)}
+                      onSave={(n) => saveSupplyField(run.supply_id, 'design_load_a', n)} />
                   </Td>
                   <Td align="right">
-                    {r.per_cable_load_a == null ? '—' : fmt(r.per_cable_load_a, 0)}
+                    {run.load_a == null ? '—' : fmt(run.load_a / Math.max(1, run.parallel_count), 0)}
                   </Td>
                   <Td align="right">
-                    <EditableCell type="select" align="right" disabled={locked || !canEdit}
-                      value={r.size_mm2} options={SIZE_OPTIONS}
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'size_mm2', n)} />
+                    {mixedBadge('size_mm2',
+                      <EditableCell type="select" align="right" disabled={locked || !canEdit || isSaving}
+                        value={run.size_mm2} options={SIZE_OPTIONS}
+                        onSave={(n) => saveRunSharedField(run.supply_id, 'size_mm2', n)} />)}
                   </Td>
                   <Td align="center">
-                    <EditableCell type="select" align="center" disabled={locked || !canEdit}
-                      value={r.cores} options={CORES_OPTIONS}
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'cores', n)} />
+                    {mixedBadge('cores',
+                      <EditableCell type="select" align="center" disabled={locked || !canEdit || isSaving}
+                        value={run.cores} options={CORES_OPTIONS}
+                        onSave={(n) => saveRunSharedField(run.supply_id, 'cores', n)} />)}
                   </Td>
                   <Td align="center">
-                    <EditableCell type="select" align="center" disabled={locked || !canEdit}
-                      value={r.conductor} options={CONDUCTOR_OPTIONS}
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'conductor', n)} />
+                    {mixedBadge('conductor',
+                      <EditableCell type="select" align="center" disabled={locked || !canEdit || isSaving}
+                        value={run.conductor} options={CONDUCTOR_OPTIONS}
+                        onSave={(n) => saveRunSharedField(run.supply_id, 'conductor', n)} />)}
                   </Td>
                   <Td align="center">
-                    <EditableCell type="select" align="center" disabled={locked || !canEdit}
-                      value={r.insulation} options={INSULATION_OPTIONS}
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'insulation', n)} />
+                    {mixedBadge('insulation',
+                      <EditableCell type="select" align="center" disabled={locked || !canEdit || isSaving}
+                        value={run.insulation} options={INSULATION_OPTIONS}
+                        onSave={(n) => saveRunSharedField(run.supply_id, 'insulation', n)} />)}
                   </Td>
                   <Td align="right">
-                    <EditableCell type="number" align="right" disabled={locked || !canEdit}
-                      value={r.ohm_per_km}
-                      format={(v) => fmt(typeof v === 'number' ? v : null, 4)}
-                      placeholder="(auto)"
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'ohm_per_km_override', n)} />
+                    <span title={run.parallel_count > 1 ? 'Run-level Ω/km from head strand; expand to edit per-strand overrides.' : undefined}>
+                      {fmt(run.ohm_per_km, 4)}
+                    </span>
                   </Td>
-                  <Td align="right">{r.cable_no}</Td>
-                  <Td align="right">
-                    <EditableCell type="number" align="right" disabled={locked || !canEdit}
-                      value={r.measured_length_m}
-                      format={(v) => fmt(typeof v === 'number' ? v : null, 1)}
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'measured_length_m', n)} />
+                  <Td align="center" style={{ fontWeight: run.parallel_count > 1 ? 700 : 400 }}>
+                    {run.parallel_count > 1 ? `×${run.parallel_count}` : '×1'}
                   </Td>
-                  <Td align="right">
-                    {locked ? (
-                      fmt(r.confirmed_length_m, 1)
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setEditConfirmed(r)}
-                        title="Confirm length (Site / Verifier)"
-                        style={editCellBtn}
-                      >
-                        {fmt(r.confirmed_length_m, 1)}
-                      </button>
-                    )}
-                  </Td>
-                  <Td align="right">
-                    {delta == null ? '—' : (
-                      <span style={{ color: deltaFlag ? '#dc2626' : 'var(--c-text)' }}>
-                        {delta.abs > 0 ? '+' : ''}{fmt(delta.abs, 1)}
-                      </span>
-                    )}
-                  </Td>
+                  <Td>{fmt(len, 1)}</Td>
                   <Td>
-                    <span className={`badge ${LENGTH_STATUS_TONE[r.length_status]}`}>
-                      {r.length_status}
+                    <span className={`badge ${LENGTH_STATUS_TONE[run.length_status]}`}>
+                      {run.length_status}
                     </span>
                   </Td>
-                  <Td align="right" style={{ color: vdTone, fontWeight: r.vd_pct > 3 ? 700 : 400 }}>
-                    {r.vd_pct > 0 ? fmt(r.vd_pct, 2) : '—'}
+                  <Td align="right" style={{ color: vdTone, fontWeight: run.vd_pct > 3 ? 700 : 400 }}>
+                    {run.vd_pct > 0 ? fmt(run.vd_pct, 2) : '—'}
                   </Td>
-                  <Td align="right" style={{ color: cumTone, fontWeight: r.cumulative_vd_pct > 3 ? 700 : 400 }}>
-                    {r.cumulative_vd_pct > 0 ? fmt(r.cumulative_vd_pct, 2) : '—'}
+                  <Td align="right" style={{ color: cumTone, fontWeight: run.cumulative_vd_pct > 3 ? 700 : 400 }}>
+                    {run.cumulative_vd_pct > 0 ? fmt(run.cumulative_vd_pct, 2) : '—'}
                   </Td>
-                  <Td align="right" style={{ color: utilTooHot ? '#dc2626' : 'var(--c-text)' }}>
-                    <span
-                      title={r.derated_rating_a == null
-                        ? `No SANS rating data for ${r.size_mm2}mm² ${r.cores}-core ${r.conductor === 'CU' ? 'Cu' : 'Al'} ${r.insulation} — pick a different size or add a project override in the SANS library.`
-                        : undefined}
-                      style={r.derated_rating_a == null ? { cursor: 'help' } : undefined}
+                  <Td align="right" style={{ color: run.under_rated ? '#dc2626' : 'var(--c-text)' }}>
+                    <span title={run.combined_capacity_a == null
+                      ? `No SANS rating data for ${run.size_mm2}mm² ${run.cores}-core ${run.conductor === 'CU' ? 'Cu' : 'Al'} ${run.insulation} — pick a different size or add a project override in the SANS library.`
+                      : `Combined capacity: ${Math.round(run.combined_capacity_a)} A (sum of ${run.parallel_count} strands)`}
                     >
-                      {fmt(r.derated_rating_a, 0)}
+                      {fmt(run.combined_capacity_a, 0)}
                     </span>
-                    {r.supply_under_rated && (
+                    {run.under_rated && (
                       <span
-                        title={`Supply under-rated: ${Math.round(r.combined_capacity_a)} A combined capacity < ${r.load_a ?? '?'} A design load`}
-                        style={{ marginLeft: 6, color: 'var(--c-red)', fontWeight: 700, cursor: 'help' }}
+                        title={`Run under-rated: ${Math.round(run.combined_capacity_a ?? 0)} A combined capacity < ${run.load_a ?? '?'} A design load`}
+                        style={{ marginLeft: 6, color: '#dc2626', fontWeight: 700, cursor: 'help' }}
                       >
                         ⚠
                       </span>
@@ -617,27 +721,127 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
                     {util == null ? '—' : fmt(util, 1)}
                   </Td>
                   <Td>
-                    <EditableCell type="select" disabled={locked || !canEdit}
-                      value={r.installation_method} options={INSTALL_OPTIONS}
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'installation_method', n)} />
+                    {mixedBadge('installation_method',
+                      <EditableCell type="select" disabled={locked || !canEdit || isSaving}
+                        value={run.installation_method} options={INSTALL_OPTIONS}
+                        onSave={(n) => saveRunSharedField(run.supply_id, 'installation_method', n)} />)}
                   </Td>
                   <Td align="right">
-                    <EditableCell type="number" align="right" disabled={locked || !canEdit}
-                      value={r.depth_mm}
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'depth_mm', n)} />
+                    {mixedBadge('depth_mm',
+                      <EditableCell type="number" align="right" disabled={locked || !canEdit || isSaving}
+                        value={run.depth_mm}
+                        onSave={(n) => saveRunSharedField(run.supply_id, 'depth_mm', n)} />)}
                   </Td>
                   <Td align="right">
-                    <EditableCell type="number" align="right" disabled={locked || !canEdit}
-                      value={r.grouped_with}
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'grouped_with', n)} />
+                    {mixedBadge('grouped_with',
+                      <EditableCell type="number" align="right" disabled={locked || !canEdit || isSaving}
+                        value={run.grouped_with}
+                        onSave={(n) => saveRunSharedField(run.supply_id, 'grouped_with', n)} />)}
                   </Td>
                   <Td style={{ fontFamily: 'inherit', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <EditableCell type="text" disabled={locked || !canEdit}
-                      value={r.notes} placeholder=""
-                      onSave={(n) => saveCableField(r.id, r.supply_id, 'notes', n)} />
+                      value={head.notes} placeholder=""
+                      onSave={(n) => saveStrandField(head.id, run.supply_id, 'notes', n)} />
                   </Td>
-                </tr>
-              )
+                </tr>,
+                // ── Mixed-properties banner row (only when divergent) ─────
+                ...(run.mixed_properties.fields.length > 0 && canEdit && !locked ? [(
+                  <tr key={`mixed-${run.supply_id}`}>
+                    <td colSpan={25} style={{ background: 'var(--c-amber-dim)', padding: '6px 14px', borderTop: '1px solid var(--c-border)' }}>
+                      <span style={{ fontSize: 11, color: 'var(--c-text)' }}>
+                        ⚠ Parallel strands disagree on: <strong>{run.mixed_properties.fields.join(', ')}</strong>.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => normaliseRun(run.supply_id)}
+                        disabled={isSaving}
+                        className="btn-primary-amber"
+                        style={{ marginLeft: 10, padding: '2px 10px', fontSize: 11 }}
+                      >
+                        {isSaving ? 'Normalising…' : 'Normalise to strand 1'}
+                      </button>
+                    </td>
+                  </tr>
+                )] : []),
+                // ── Shared-edit error banner (only on partial failure) ────
+                ...(sharedError?.supplyId === run.supply_id ? [(
+                  <tr key={`error-${run.supply_id}`}>
+                    <td colSpan={25} role="alert" style={{ background: 'rgba(220,38,38,0.08)', padding: '6px 14px', borderTop: '1px solid #dc2626', color: '#dc2626', fontSize: 11 }}>
+                      {sharedError.message}
+                    </td>
+                  </tr>
+                )] : []),
+                // ── Expanded strand sub-rows ──────────────────────────────
+                ...(isExpanded ? run.cables.map((c) => {
+                  const delta = deltaForCable(c)
+                  const deltaFlag = delta && c.measured_length_m
+                    && (Math.abs(delta.abs) > 5 || Math.abs(delta.pct) > 10)
+                  const sLen = activeLengthForCable(c, lengthMode)
+                  return (
+                    <tr key={`strand-${c.id}`} style={{ background: 'var(--c-base)', fontSize: 11 }}>
+                      <Td align="center" style={{ color: 'var(--c-text-dim)' }}>↳</Td>
+                      <Td align="center" style={{ color: 'var(--c-text-dim)' }}>#{c.cable_no}</Td>
+                      <Td />
+                      <Td>
+                        <EditableCell type="text" align="left" disabled={locked || !canEdit}
+                          value={c.tag_override} placeholder={strandTag(c)}
+                          onSave={(n) => saveStrandField(c.id, run.supply_id, 'tag_override', n)} />
+                      </Td>
+                      <Td colSpan={2} style={{ color: 'var(--c-text-dim)', fontStyle: 'italic', fontSize: 10 }}>
+                        (strand of run above)
+                      </Td>
+                      <Td colSpan={5} />
+                      <Td align="right">
+                        <EditableCell type="number" align="right" disabled={locked || !canEdit}
+                          value={c.ohm_per_km}
+                          format={(v) => fmt(typeof v === 'number' ? v : null, 4)}
+                          placeholder="(auto)"
+                          onSave={(n) => saveStrandField(c.id, run.supply_id, 'ohm_per_km_override', n)} />
+                      </Td>
+                      <Td align="center" style={{ color: 'var(--c-text-dim)' }}>—</Td>
+                      <Td>
+                        <EditableCell type="number" align="left" disabled={locked || !canEdit}
+                          value={c.measured_length_m}
+                          format={(v) => fmt(typeof v === 'number' ? v : null, 1)}
+                          onSave={(n) => saveStrandField(c.id, run.supply_id, 'measured_length_m', n)} />
+                        {' / '}
+                        {locked ? (
+                          fmt(c.confirmed_length_m, 1)
+                        ) : (
+                          <button type="button" onClick={() => setEditConfirmed(c)} title="Confirm length (Site / Verifier)" style={editCellBtn}>
+                            {fmt(c.confirmed_length_m, 1)}
+                          </button>
+                        )}
+                        {delta != null && (
+                          <span style={{ marginLeft: 6, color: deltaFlag ? '#dc2626' : 'var(--c-text-dim)' }}>
+                            Δ{delta.abs > 0 ? '+' : ''}{fmt(delta.abs, 1)}
+                          </span>
+                        )}
+                        {sLen != null && (
+                          <span style={{ marginLeft: 6, color: 'var(--c-text-dim)' }} title={`Active (${lengthMode})`}>
+                            ({fmt(sLen, 1)})
+                          </span>
+                        )}
+                      </Td>
+                      <Td>
+                        <span className={`badge ${LENGTH_STATUS_TONE[c.length_status]}`}>{c.length_status}</span>
+                      </Td>
+                      <Td colSpan={2} />
+                      <Td align="right">{fmt(c.derated_current_rating_a, 0)}</Td>
+                      <Td colSpan={4} />
+                      <Td>
+                        {canEdit && !locked && (
+                          <button type="button" title={`Delete strand #${c.cable_no} — last strand deletes the run`}
+                            onClick={() => setPendingDelete(c)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 11 }}>
+                            ✕ delete strand
+                          </button>
+                        )}
+                      </Td>
+                    </tr>
+                  )
+                }) : []),
+              ]
             })}
           </tbody>
         </table>
@@ -654,8 +858,8 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
       )}
       {pendingDelete && (
         <ConfirmDialog
-          title="Delete cable"
-          body={`Delete cable #${pendingDelete.cable_no} (${pendingDelete.from_label} → ${pendingDelete.to_label})? This also removes its terminations and tags. If it is the last cable on this run, the run is removed too.`}
+          title="Delete strand"
+          body={`Delete strand #${pendingDelete.cable_no} (${pendingDelete.from_label} → ${pendingDelete.to_label})? This also removes its terminations and tags. If it is the last strand on this run, the run is removed too.`}
           confirmLabel="Delete"
           onConfirm={confirmDeleteCable}
           onCancel={() => setPendingDelete(null)}
@@ -664,19 +868,18 @@ export function CableScheduleGrid({ projectId, revisionId, rows, supplies, cable
       {repointing && (
         <RepointPicker
           end={repointing.end}
-          current={repointing.end === 'from' ? repointing.row.from_node_id : repointing.row.to_node_id}
+          current={repointing.current}
           nodeOptions={repointing.end === 'from' ? nodeOptions : nodeOptions.filter((n) => n.kind === 'board')}
           onCancel={() => setRepointing(null)}
           onPick={async (nodeId, kind) => {
-            const { row, end } = repointing
+            const { supplyId, end } = repointing
             const res = await repointSupplyAction({
-              supplyId: row.supply_id,
+              supplyId,
               ...(end === 'from'
                 ? { fromSourceId: kind === 'source' ? nodeId : null, fromBoardId: kind === 'board' ? nodeId : null }
                 : { toBoardId: nodeId }),
             })
-            if (!res.error) setRepointing(null) // close ONLY on success
-            // repointSupplyAction revalidates → fresh rows arrive via the Task-8 useEffect re-seed.
+            if (!res.error) setRepointing(null)
             return res
           }}
         />
@@ -727,14 +930,16 @@ function Th({
 }
 
 function Td({
-  children, align, style,
+  children, align, style, colSpan,
 }: {
   children?: React.ReactNode
   align?: 'left' | 'right' | 'center'
   style?: React.CSSProperties
+  colSpan?: number
 }) {
   return (
     <td
+      colSpan={colSpan}
       style={{
         textAlign: align ?? 'left',
         padding: '6px 10px',
@@ -749,8 +954,6 @@ function Td({
   )
 }
 
-// NOTE: ConfirmDialog and RepointPicker share this fixed-overlay modal shell.
-// If a third modal lands in this file, extract a shared <ModalShell> wrapper.
 function ConfirmDialog({
   title, body, confirmLabel, onConfirm, onCancel,
 }: {
@@ -800,14 +1003,13 @@ function RepointPicker({
 
   const selectedOption = nodeOptions.find((n) => n.id === selectedId)
 
-  async function handlePick() {
+  async function handlePick(): Promise<void> {
     const opt = nodeOptions.find((n) => n.id === selectedId)
     if (!opt) return
     setSaving(true); setError(null)
     const res = await onPick(opt.id, opt.kind)
     setSaving(false)
     if (res.error) setError(res.error)
-    // on success the parent calls setRepointing(null), which unmounts this component
   }
 
   return (

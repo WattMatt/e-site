@@ -60,6 +60,14 @@ export interface ExportPayload {
     section: string | null
   }>
   cables: EnrichedCable[]
+  /**
+   * Runs — the canonical SANS "one row per supply / circuit" projection.
+   * Each run aggregates 1..N parallel cables under their shared logical
+   * feed. This is what the schedule grid + Excel/PDF/CSV exporters render
+   * one row per. The `cables` array on each run is kept for drill-down
+   * (per-strand measured length, terminations, individual tags).
+   */
+  runs: EnrichedRun[]
   cableTags: Array<{
     id: string
     cable_id: string
@@ -122,6 +130,63 @@ export interface EnrichedCable {
   cumulative_vd_pct: number
   /** computed tag (override > auto from supply route + cable_no) */
   cable_tag: string
+}
+
+/**
+ * One row per supply (canonical SANS shape). Aggregates the supply's
+ * parallel cables under their shared logical feed.
+ *
+ * Shared properties (size_mm2, cores, conductor, insulation, install_method,
+ * depth_mm, grouped_with, ohm_per_km) are taken from the supply's FIRST
+ * cable. In a valid design these are identical across parallels; if they
+ * diverge, `mixed_properties.fields` lists which fields differ — the grid
+ * surfaces a "⚠ Mixed" badge with a one-click "Normalise to first" fix.
+ */
+export interface EnrichedRun {
+  supply_id: string
+  section: string | null
+  from_label: string
+  to_label: string
+
+  voltage_v: number
+  load_a: number | null
+  /** Number of physical cables on this supply (parallel_count). */
+  parallel_count: number
+
+  // Shared cable properties (taken from cables[0]; see mixed_properties)
+  size_mm2: number
+  cores: '3' | '3+E' | '4'
+  conductor: 'CU' | 'AL'
+  insulation: 'PVC' | 'XLPE' | 'PILC'
+  installation_method: string | null
+  depth_mm: number | null
+  grouped_with: number
+  ohm_per_km: number | null
+
+  // Length aggregation across parallel cables
+  /** Active length for the supply, in metres. Worst of the strands. Null if any strand is unmeasured and the design didn't fall back. */
+  active_length_m: number | null
+  /** Worst length_status across the supply's strands. UNMEASURED if any. */
+  length_status: 'UNMEASURED' | 'MEASURED' | 'CONFIRMED' | 'DISCREPANCY'
+
+  // Derived
+  /** Sum of strands' derated ratings (combined capacity), A. Null if any unknown. */
+  combined_capacity_a: number | null
+  /** True when combined capacity is below design load. */
+  under_rated: boolean
+  /** Voltage drop % for the run (same for all strands — supply-level). */
+  vd_pct: number
+  cumulative_vd_pct: number
+
+  /**
+   * Divergence flag — empty list means all parallels share identical
+   * shared properties (the normal case). Populated only when the schema's
+   * permissiveness has let strands drift apart.
+   */
+  mixed_properties: { fields: Array<keyof Pick<EnrichedRun, 'size_mm2' | 'cores' | 'conductor' | 'insulation' | 'installation_method' | 'depth_mm' | 'grouped_with' | 'ohm_per_km'>> }
+
+  /** Strand-level detail for drill-down. Ordered by cable_no asc. */
+  cables: EnrichedCable[]
 }
 
 interface RawCable extends CableForCalc {
@@ -215,7 +280,12 @@ export async function getRevisionExportPayload(
         'derated_current_rating_a, tag_override, manual_override, notes',
       )
       .eq('revision_id', revisionId)
-      .order('cable_no'),
+      // Sort by (supply_id, cable_no) so parallel cables on the same
+      // supply are guaranteed contiguous in the returned array. The
+      // previous .order('cable_no') alone interleaved parallels across
+      // supplies (A1, B1, A2, B2…), which broke the schedule grouping.
+      .order('supply_id', { ascending: true })
+      .order('cable_no', { ascending: true }),
     (supabase as any)
       .schema('cable_schedule')
       .from('cable_tags')
@@ -329,6 +399,118 @@ export async function getRevisionExportPayload(
     }
   })
 
+  // ── Collapse cables → runs (one row per supply) ─────────────────────
+  // Group strands by supply_id. Within each supply: ordered by cable_no.
+  // Shared properties taken from first strand; divergence flagged.
+  const cablesBySupply = new Map<string, EnrichedCable[]>()
+  for (const cable of cables) {
+    const list = cablesBySupply.get(cable.supply_id) ?? []
+    list.push(cable)
+    cablesBySupply.set(cable.supply_id, list)
+  }
+  type SharedField = EnrichedRun['mixed_properties']['fields'][number]
+  const SHARED_FIELDS: SharedField[] = [
+    'size_mm2',
+    'cores',
+    'conductor',
+    'insulation',
+    'installation_method',
+    'depth_mm',
+    'grouped_with',
+    'ohm_per_km',
+  ]
+  const LENGTH_STATUS_RANK: Record<EnrichedCable['length_status'], number> = {
+    CONFIRMED: 0,
+    MEASURED: 1,
+    DISCREPANCY: 2,
+    UNMEASURED: 3,
+  }
+
+  const runs: EnrichedRun[] = []
+  for (const supply of supplies) {
+    const strands = (cablesBySupply.get(supply.id) ?? [])
+      .slice()
+      .sort((a, b) => a.cable_no - b.cable_no)
+    if (strands.length === 0) continue // orphan supply — skip from runs view
+    const head = strands[0]
+
+    // Mixed-properties diagnostic — empty in the normal case.
+    const mixedFields: EnrichedRun['mixed_properties']['fields'] = []
+    for (const f of SHARED_FIELDS) {
+      const first = (head as any)[f]
+      if (strands.some((s) => (s as any)[f] !== first)) mixedFields.push(f as any)
+    }
+
+    // Length aggregation: worst (longest) measured length across strands.
+    // Length status: worst rank (UNMEASURED beats MEASURED beats CONFIRMED).
+    let activeLen: number | null = 0
+    for (const s of strands) {
+      const l = s.confirmed_length_m ?? s.measured_length_m
+      if (l == null) {
+        activeLen = null
+        break
+      }
+      if (l > (activeLen ?? 0)) activeLen = l
+    }
+    const worstStatus = strands.reduce<EnrichedCable['length_status']>(
+      (acc, s) => (LENGTH_STATUS_RANK[s.length_status] > LENGTH_STATUS_RANK[acc] ? s.length_status : acc),
+      strands[0].length_status,
+    )
+
+    // Combined capacity — sum of strands' derated ratings.
+    let combinedCap: number | null = 0
+    for (const s of strands) {
+      if (s.derated_current_rating_a == null) {
+        combinedCap = null
+        break
+      }
+      combinedCap += s.derated_current_rating_a
+    }
+    const designLoad = supply.design_load_a == null ? null : Number(supply.design_load_a)
+    const underRated = combinedCap != null && designLoad != null && combinedCap < designLoad
+
+    runs.push({
+      supply_id: supply.id,
+      section: supply.section,
+      from_label: head.from_label,
+      to_label: head.to_label,
+      voltage_v: Number(supply.voltage_v),
+      load_a: designLoad,
+      parallel_count: strands.length,
+
+      size_mm2: head.size_mm2,
+      cores: head.cores,
+      conductor: head.conductor,
+      insulation: head.insulation,
+      installation_method: head.installation_method,
+      depth_mm: head.depth_mm,
+      grouped_with: head.grouped_with,
+      ohm_per_km: head.ohm_per_km,
+
+      active_length_m: activeLen,
+      length_status: worstStatus,
+
+      combined_capacity_a: combinedCap,
+      under_rated: underRated,
+      vd_pct: supplyVdById.get(supply.id) ?? 0,
+      cumulative_vd_pct: cumulativeMap.get(supply.id) ?? 0,
+
+      mixed_properties: { fields: mixedFields as any },
+      cables: strands,
+    })
+  }
+  // Canonical sort: section → conductor (CU first) → from → to.
+  // The Excel writer groups by section + conductor for its header rows;
+  // this matches so the grid + sheet agree on row order.
+  runs.sort((a, b) => {
+    const sa = a.section ?? ''
+    const sb = b.section ?? ''
+    if (sa !== sb) return sa.localeCompare(sb)
+    if (a.conductor !== b.conductor) return a.conductor.localeCompare(b.conductor)
+    if (a.from_label !== b.from_label) return a.from_label.localeCompare(b.from_label, undefined, { numeric: true })
+    return a.to_label.localeCompare(b.to_label, undefined, { numeric: true })
+  })
+
   const revisionAny = revisionRow as any
   const issuedByName =
     revisionAny.issued_by_profile?.full_name?.trim?.() || null
@@ -363,6 +545,7 @@ export async function getRevisionExportPayload(
     boards,
     supplies,
     cables,
+    runs,
     cableTags,
     costLines: (costData ?? []).map((r: any) => ({
       id: r.id,

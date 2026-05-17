@@ -17,6 +17,7 @@ import {
 } from '@esite/shared'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
 import { type NodeOption } from './CableScheduleGrid'
+import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-payload'
 import { StructureSection } from './StructureSection'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 import { ExportMenu } from './ExportMenu'
@@ -417,6 +418,125 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     }
   })
 
+  // ── Derive runs (one per supply) from the per-cable rows ─────────────
+  // The grid renders ONE row per RUN, with parallel strands collapsed under
+  // a "×N" indicator + expand drill-down. See export-payload.ts for the
+  // canonical projection used by the exporters; this in-page derivation
+  // mirrors that shape using the data the page already has loaded.
+  const SHARED_FIELDS_FOR_DIVERGENCE: Array<
+    keyof Pick<ScheduleRow,
+      'size_mm2' | 'cores' | 'conductor' | 'insulation'
+      | 'installation_method' | 'depth_mm' | 'grouped_with' | 'ohm_per_km'>
+  > = [
+    'size_mm2', 'cores', 'conductor', 'insulation',
+    'installation_method', 'depth_mm', 'grouped_with', 'ohm_per_km',
+  ]
+  const LENGTH_STATUS_RANK: Record<ScheduleRow['length_status'], number> = {
+    CONFIRMED: 0, MEASURED: 1, DISCREPANCY: 2, UNMEASURED: 3,
+  }
+  // Convert a ScheduleRow back to the EnrichedCable shape the run cares about.
+  function toEnrichedCable(r: ScheduleRow): EnrichedCable {
+    return {
+      id: r.id,
+      supply_id: r.supply_id,
+      cable_no: r.cable_no,
+      size_mm2: r.size_mm2,
+      cores: r.cores as EnrichedCable['cores'],
+      conductor: r.conductor,
+      insulation: r.insulation,
+      armour: r.armour,
+      standard: null,
+      ohm_per_km: r.ohm_per_km,
+      measured_length_m: r.measured_length_m,
+      confirmed_length_m: r.confirmed_length_m,
+      length_status: r.length_status,
+      derated_current_rating_a: r.derated_rating_a,
+      installation_method: r.installation_method,
+      depth_mm: r.depth_mm,
+      grouped_with: r.grouped_with,
+      ambient_temp_c: r.ambient_temp_c,
+      tag_override: r.tag_override,
+      manual_override: r.manual_override,
+      notes: r.notes,
+      from_label: r.from_label,
+      to_label: r.to_label,
+      voltage_v: r.voltage_v,
+      load_a: r.load_a,
+      vd_pct: r.vd_pct,
+      cumulative_vd_pct: r.cumulative_vd_pct,
+      cable_tag: r.tag_override ?? `${r.from_label}-${r.to_label}-C${r.cable_no}`,
+    }
+  }
+  const rowsBySupply = new Map<string, ScheduleRow[]>()
+  for (const r of rows) {
+    const list = rowsBySupply.get(r.supply_id) ?? []
+    list.push(r)
+    rowsBySupply.set(r.supply_id, list)
+  }
+  const runs: EnrichedRun[] = []
+  for (const supply of supplies) {
+    const strands = (rowsBySupply.get(supply.id) ?? []).slice().sort((a, b) => a.cable_no - b.cable_no)
+    if (strands.length === 0) continue
+    const head = strands[0]
+    const mixedFields: EnrichedRun['mixed_properties']['fields'] = []
+    for (const f of SHARED_FIELDS_FOR_DIVERGENCE) {
+      const first = (head as any)[f]
+      if (strands.some((s) => (s as any)[f] !== first)) {
+        mixedFields.push(f as never)
+      }
+    }
+    let activeLen: number | null = 0
+    for (const s of strands) {
+      const l = s.confirmed_length_m ?? s.measured_length_m
+      if (l == null) { activeLen = null; break }
+      if (l > (activeLen ?? 0)) activeLen = l
+    }
+    const worstStatus = strands.reduce<ScheduleRow['length_status']>(
+      (acc, s) => (LENGTH_STATUS_RANK[s.length_status] > LENGTH_STATUS_RANK[acc] ? s.length_status : acc),
+      strands[0].length_status,
+    )
+    let combinedCap: number | null = 0
+    for (const s of strands) {
+      if (s.derated_rating_a == null) { combinedCap = null; break }
+      combinedCap += s.derated_rating_a
+    }
+    runs.push({
+      supply_id: supply.id,
+      section: supply.section ?? null,
+      from_label: head.from_label,
+      to_label: head.to_label,
+      voltage_v: Number(supply.voltage_v ?? head.voltage_v ?? 0),
+      load_a: head.load_a,
+      parallel_count: strands.length,
+      size_mm2: head.size_mm2,
+      cores: head.cores as EnrichedRun['cores'],
+      conductor: head.conductor,
+      insulation: head.insulation,
+      installation_method: head.installation_method,
+      depth_mm: head.depth_mm,
+      grouped_with: head.grouped_with,
+      ohm_per_km: head.ohm_per_km,
+      active_length_m: activeLen,
+      length_status: worstStatus,
+      combined_capacity_a: combinedCap,
+      under_rated: combinedCap != null && head.load_a != null && combinedCap < head.load_a,
+      vd_pct: head.vd_pct,
+      cumulative_vd_pct: head.cumulative_vd_pct,
+      mixed_properties: { fields: mixedFields },
+      cables: strands.map(toEnrichedCable),
+    })
+  }
+  // Sort canonically — section → conductor → from → to. Matches what
+  // export-payload.ts uses so the on-screen grid and Excel/PDF agree.
+  runs.sort((a, b) => {
+    const sa = a.section ?? ''
+    const sb = b.section ?? ''
+    if (sa !== sb) return sa.localeCompare(sb)
+    if (a.conductor !== b.conductor) return a.conductor.localeCompare(b.conductor)
+    if (a.from_label !== b.from_label) return a.from_label.localeCompare(b.from_label, undefined, { numeric: true })
+    return a.to_label.localeCompare(b.to_label, undefined, { numeric: true })
+  })
+
   return (
     <div className="animate-fadeup">
       <div style={{ marginBottom: 16 }}>
@@ -504,6 +624,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
           projectId={projectId}
           revisionId={revisionId}
           rows={rows}
+          runs={runs}
           supplies={supplies as SupplyForCalc[]}
           cables={cables as CableForCalc[]}
           nodeOptions={[

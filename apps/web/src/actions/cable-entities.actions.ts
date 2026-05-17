@@ -1234,3 +1234,158 @@ export async function previewParallelCableSet(
     mode,
   }
 }
+
+// ─── Run-level fan-out write ────────────────────────────────────────
+//
+// Schedule grid is one row per supply (= run). Edits to shared cable
+// properties (size_mm2, cores, conductor, insulation, install method,
+// depth_mm, grouped_with, ambient_temp_c, tag_override, notes) on a run
+// row apply to ALL parallel cables in that supply. Per-cable fields
+// (measured_length_m, manual ohm_per_km overrides) are NOT fanned out —
+// those stay strand-level and are edited via the row's expand drill-down.
+//
+// Implementation: load the supply's cable IDs (single query, RLS gated),
+// then call updateCableAction once per strand in parallel. Reusing the
+// existing per-cable path means SANS recompute, change_log, role check
+// and DRAFT enforcement all flow through unchanged.
+
+const runFanOutSchema = z.object({
+  supplyId: uuid,
+  patch: z.object({
+    sizeMm2: z.number().positive().optional(),
+    cores: z.enum(['3', '3+E', '4']).optional(),
+    conductor: z.enum(['CU', 'AL']).optional(),
+    insulation: z.enum(['PVC', 'XLPE', 'PILC']).optional(),
+    armour: z.string().trim().max(80).nullable().optional(),
+    installationMethod: z.string().trim().max(80).nullable().optional(),
+    depthMm: z.number().nullable().optional(),
+    groupedWith: z.number().int().positive().optional(),
+    ambientTempC: z.number().optional(),
+    tagOverride: z.string().trim().max(40).nullable().optional(),
+    notes: z.string().trim().max(2000).nullable().optional(),
+  }).refine((p) => Object.keys(p).length > 0, 'No fields to update'),
+})
+
+export type UpdateRunCableFieldsResult = {
+  ok?: true
+  error?: string
+  /** Number of strands updated. */
+  updated?: number
+  /** Per-strand failures (rest succeeded). */
+  errors?: Array<{ cableId: string; error: string }>
+}
+
+/**
+ * Fan a shared-field patch out to every cable on a supply.
+ *
+ * Called from the schedule grid when the PM edits a shared property on
+ * the collapsed run row. For per-strand fields (measured length, manual
+ * Ω/km override) use updateCableAction directly via the row's expand
+ * drill-down.
+ *
+ * Failure mode: partial success is allowed and reported. RLS / DRAFT /
+ * role checks are enforced per strand by updateCableAction, so a
+ * row-level write can't bypass the existing gates.
+ */
+export async function updateRunCableFieldsAction(
+  input: z.infer<typeof runFanOutSchema>,
+): Promise<UpdateRunCableFieldsResult> {
+  const parsed = runFanOutSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // Load the supply's cable IDs. RLS scopes this to the user's org.
+  const { data: strands, error: loadErr } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .select('id')
+    .eq('supply_id', parsed.data.supplyId)
+  if (loadErr) return { error: `Failed to load strands: ${loadErr.message}` }
+  if (!strands || strands.length === 0) {
+    return { error: 'Supply has no cables to update' }
+  }
+
+  // Fan out — Promise.allSettled so a single strand failure doesn't
+  // lose the rest. Each call routes through updateCableAction, which
+  // re-validates DRAFT status and the role gate per strand. The
+  // duplication is intentional: a fan-out caller forging a different
+  // org's supply_id is still blocked because updateCableAction's own
+  // RLS-backed SELECT will return null and the per-cable call fails.
+  const results = await Promise.allSettled(
+    (strands as Array<{ id: string }>).map((s) =>
+      updateCableAction({ cableId: s.id, ...parsed.data.patch } as z.infer<typeof updateCableSchema>),
+    ),
+  )
+
+  const errors: NonNullable<UpdateRunCableFieldsResult['errors']> = []
+  let updated = 0
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    const cableId = (strands as Array<{ id: string }>)[i].id
+    if (r.status === 'rejected') {
+      errors.push({ cableId, error: String(r.reason) })
+    } else if (r.value.error) {
+      errors.push({ cableId, error: r.value.error })
+    } else {
+      updated++
+    }
+  }
+
+  // updateCableAction already revalidates the per-revision path internally.
+  return errors.length === 0
+    ? { ok: true, updated }
+    : updated === 0
+      ? { error: errors[0].error, errors }
+      : { ok: true, updated, errors }
+}
+
+// ─── Normalise mixed-properties run ─────────────────────────────────
+//
+// When a run's parallel cables have drifted apart on shared properties
+// (the EnrichedRun.mixed_properties flag), this picks the first strand's
+// values as canonical and fans them out to the others. One-click fix
+// for the "⚠ Mixed" badge on the schedule grid. Idempotent — re-running
+// on an already-normalised run is a no-op.
+
+export async function normaliseRunPropertiesAction(
+  supplyId: string,
+): Promise<UpdateRunCableFieldsResult> {
+  if (!uuid.safeParse(supplyId).success) return { error: 'Invalid supplyId' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: strands } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .select(
+      'id, cable_no, size_mm2, cores, conductor, insulation, armour, ' +
+      'installation_method, depth_mm, grouped_with, ambient_temp_c',
+    )
+    .eq('supply_id', supplyId)
+    .order('cable_no', { ascending: true })
+
+  if (!strands || strands.length < 2) {
+    return { ok: true, updated: 0 } // nothing to normalise
+  }
+  const head = (strands as any[])[0]
+
+  return updateRunCableFieldsAction({
+    supplyId,
+    patch: {
+      sizeMm2: Number(head.size_mm2),
+      cores: head.cores,
+      conductor: head.conductor,
+      insulation: head.insulation,
+      armour: head.armour,
+      installationMethod: head.installation_method,
+      depthMm: head.depth_mm == null ? null : Number(head.depth_mm),
+      groupedWith: Number(head.grouped_with ?? 1),
+      ambientTempC: Number(head.ambient_temp_c ?? 30),
+    },
+  })
+}
