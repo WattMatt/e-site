@@ -518,14 +518,16 @@ function drawCostPage(
   const page = pdf.addPage([A4_W, A4_H])
   drawPortraitHeader(page, payload, helv, helvB, 'COST SUMMARY')
 
-  // Body
+  // Body — Mat (Cu/Al) column added 2026-05-18: cost_lines split by
+  // (size, conductor) since Al rates ~30% Cu at the same size.
   const cols = [
-    { label: 'Size mm²', x: MARGIN, w: 70, align: 'right' as const },
-    { label: 'Length m', x: MARGIN + 75, w: 70, align: 'right' as const },
-    { label: 'Supply R/m', x: MARGIN + 150, w: 80, align: 'right' as const },
-    { label: 'Install R/m', x: MARGIN + 235, w: 80, align: 'right' as const },
-    { label: 'Terms', x: MARGIN + 320, w: 50, align: 'right' as const },
-    { label: 'Term R', x: MARGIN + 375, w: 70, align: 'right' as const },
+    { label: 'Size mm²', x: MARGIN, w: 60, align: 'right' as const },
+    { label: 'Mat', x: MARGIN + 65, w: 30, align: 'center' as const },
+    { label: 'Length m', x: MARGIN + 100, w: 65, align: 'right' as const },
+    { label: 'Supply R/m', x: MARGIN + 170, w: 75, align: 'right' as const },
+    { label: 'Install R/m', x: MARGIN + 250, w: 75, align: 'right' as const },
+    { label: 'Terms', x: MARGIN + 330, w: 45, align: 'right' as const },
+    { label: 'Term R', x: MARGIN + 380, w: 65, align: 'right' as const },
     { label: 'Line ZAR', x: MARGIN + 450, w: 95, align: 'right' as const },
   ]
   let y = A4_H - 110
@@ -539,8 +541,11 @@ function drawCostPage(
   })
   for (const c of cols) {
     const w = helvB.widthOfTextAtSize(c.label, 9)
+    let tx: number
+    if (c.align === 'center') tx = c.x + (c.w - w) / 2
+    else tx = c.x + c.w - w - 2
     page.drawText(c.label, {
-      x: c.x + c.w - w - 2,
+      x: tx,
       y: y + 2,
       size: 9,
       font: helvB,
@@ -549,28 +554,58 @@ function drawCostPage(
   }
   y -= 22
 
-  // Aggregate
-  const lengthBySize = new Map<number, number>()
-  const termsBySize = new Map<number, number>()
+  // Aggregate by (size, conductor) — Cu and Al at the same size have
+  // distinct rates and must total separately.
+  const totalsByKey = new Map<
+    string,
+    { size: number; conductor: 'CU' | 'AL'; totalLength: number; terms: number }
+  >()
   for (const c of payload.cables) {
     const len = c.confirmed_length_m ?? c.measured_length_m ?? 0
-    lengthBySize.set(c.size_mm2, (lengthBySize.get(c.size_mm2) ?? 0) + len)
-    termsBySize.set(c.size_mm2, (termsBySize.get(c.size_mm2) ?? 0) + 2)
+    const key = `${c.size_mm2}|${c.conductor}`
+    const agg = totalsByKey.get(key) ?? {
+      size: c.size_mm2,
+      conductor: c.conductor,
+      totalLength: 0,
+      terms: 0,
+    }
+    agg.totalLength += len
+    agg.terms += 2
+    totalsByKey.set(key, agg)
   }
-  const sizes = Array.from(
-    new Set([
-      ...payload.costLines.map((l) => l.size_mm2),
-      ...Array.from(lengthBySize.keys()),
-    ]),
-  ).sort((a, b) => a - b)
+  // Include cost-line keys with no matching cables so unused rates still show.
+  for (const l of payload.costLines) {
+    const key = `${l.size_mm2}|${l.conductor}`
+    if (!totalsByKey.has(key)) {
+      totalsByKey.set(key, {
+        size: l.size_mm2,
+        conductor: l.conductor,
+        totalLength: 0,
+        terms: 0,
+      })
+    }
+  }
+  const sortedKeys = [...totalsByKey.keys()].sort((a, b) => {
+    const [sa, ca] = a.split('|')
+    const [sb, cb] = b.split('|')
+    const sn = Number(sa) - Number(sb)
+    if (sn !== 0) return sn
+    return ca.localeCompare(cb)
+  })
 
   let materialsTotal = 0
   let zebra = false
-  for (const size of sizes) {
+  for (const key of sortedKeys) {
     if (y < 200) break // leave room for totals
-    const line = payload.costLines.find((l) => l.size_mm2 === size)
-    const len = lengthBySize.get(size) ?? 0
-    const terms = termsBySize.get(size) ?? 0
+    const agg = totalsByKey.get(key)!
+    // Prefer exact (size, conductor) match; fall back to size-only for
+    // pre-migration-00061 data where every cost_lines row defaulted to CU.
+    const line =
+      payload.costLines.find(
+        (l) => l.size_mm2 === agg.size && l.conductor === agg.conductor,
+      ) ?? payload.costLines.find((l) => l.size_mm2 === agg.size)
+    const len = agg.totalLength
+    const terms = agg.terms
     const supply = line?.supply_rate_per_m ?? 0
     const install = line?.install_rate_per_m ?? 0
     const termRate = line?.termination_rate_each ?? 0
@@ -588,24 +623,30 @@ function drawCostPage(
     }
     zebra = !zebra
 
+    const matLabel = agg.conductor === 'CU' ? 'Cu' : 'Al'
+    const matColor = agg.conductor === 'AL' ? AMBER : TEXT_DARK
     const cells = [
-      String(size),
-      len.toFixed(2),
-      supply.toFixed(2),
-      install.toFixed(2),
-      String(terms),
-      termRate.toFixed(2),
-      lineTotal.toFixed(2),
+      { text: String(agg.size), color: TEXT_DARK },
+      { text: matLabel, color: matColor },
+      { text: len.toFixed(2), color: TEXT_DARK },
+      { text: supply.toFixed(2), color: TEXT_DARK },
+      { text: install.toFixed(2), color: TEXT_DARK },
+      { text: String(terms), color: TEXT_DARK },
+      { text: termRate.toFixed(2), color: TEXT_DARK },
+      { text: lineTotal.toFixed(2), color: TEXT_DARK },
     ]
-    cells.forEach((text, i) => {
+    cells.forEach((cell, i) => {
       const c = cols[i]
-      const w = helv.widthOfTextAtSize(text, 9)
-      page.drawText(text, {
-        x: c.x + c.w - w - 2,
+      const w = helv.widthOfTextAtSize(cell.text, 9)
+      let tx: number
+      if (c.align === 'center') tx = c.x + (c.w - w) / 2
+      else tx = c.x + c.w - w - 2
+      page.drawText(cell.text, {
+        x: tx,
         y: y + 2,
         size: 9,
         font: helv,
-        color: TEXT_DARK,
+        color: cell.color,
       })
     })
     y -= 18
