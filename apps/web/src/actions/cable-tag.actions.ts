@@ -35,15 +35,22 @@ interface CableJoin {
     from_board_id: string | null
     to_board_id: string
     source?: { code: string } | null
-    from_board?: { code: string } | null
-    to_board?: { code: string } | null
+    from_board?: { code: string; short_code?: string | null } | null
+    to_board?: { code: string; short_code?: string | null } | null
   }
 }
 
 function cableTagText(c: CableJoin): string {
   if (c.tag_override) return c.tag_override
-  const from = c.supply.source?.code ?? c.supply.from_board?.code ?? '?'
-  const to = c.supply.to_board?.code ?? '?'
+  const from =
+    c.supply.source?.code
+    ?? c.supply.from_board?.short_code
+    ?? c.supply.from_board?.code
+    ?? '?'
+  const to =
+    c.supply.to_board?.short_code
+    ?? c.supply.to_board?.code
+    ?? '?'
   return `${from}-${to}-${c.size_mm2}-${c.cable_no}`
 }
 
@@ -73,8 +80,8 @@ export async function generateTagsAction(
       'supply:supplies!supply_id(' +
         'id, from_source_id, from_board_id, to_board_id, ' +
         'source:sources!from_source_id(code), ' +
-        'from_board:boards!from_board_id(code), ' +
-        'to_board:boards!to_board_id(code))',
+        'from_board:boards!from_board_id(code, short_code), ' +
+        'to_board:boards!to_board_id(code, short_code))',
     )
     .eq('revision_id', revisionId)
   if (cabErr) return { error: cabErr.message }
