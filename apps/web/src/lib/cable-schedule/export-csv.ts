@@ -138,6 +138,7 @@ function tagsCsv(payload: ExportPayload): string {
 function costCsv(payload: ExportPayload): string {
   const header = [
     'size_mm2',
+    'conductor',
     'total_length_m',
     'supply_rate_per_m',
     'install_rate_per_m',
@@ -147,38 +148,53 @@ function costCsv(payload: ExportPayload): string {
   ]
   const lines = [header.join(',')]
 
-  const lengthBySize = new Map<number, number>()
-  const termsBySize = new Map<number, number>()
+  type Agg = { size: number; conductor: 'CU' | 'AL'; totalLength: number; terms: number }
+  const aggs = new Map<string, Agg>()
+  const keyOf = (size: number, conductor: 'CU' | 'AL') => `${size}|${conductor}`
+
   for (const c of payload.cables) {
+    const conductor = (c.conductor ?? 'CU') as 'CU' | 'AL'
+    const k = keyOf(c.size_mm2, conductor)
+    const existing = aggs.get(k) ?? { size: c.size_mm2, conductor, totalLength: 0, terms: 0 }
     const len = c.confirmed_length_m ?? c.measured_length_m ?? 0
-    lengthBySize.set(c.size_mm2, (lengthBySize.get(c.size_mm2) ?? 0) + len)
-    termsBySize.set(c.size_mm2, (termsBySize.get(c.size_mm2) ?? 0) + 2)
+    existing.totalLength += len
+    existing.terms += 2
+    aggs.set(k, existing)
   }
 
-  const sizes = Array.from(
-    new Set([
-      ...payload.costLines.map((l) => l.size_mm2),
-      ...Array.from(lengthBySize.keys()),
-    ]),
-  ).sort((a, b) => a - b)
+  // Seed cost_lines so rate-only rows (no cables yet) surface as zero-length
+  // entries — matches Excel (T1) + PDF (T2) shape.
+  for (const l of payload.costLines) {
+    const conductor = (l.conductor ?? 'CU') as 'CU' | 'AL'
+    const k = keyOf(l.size_mm2, conductor)
+    if (!aggs.has(k)) {
+      aggs.set(k, { size: l.size_mm2, conductor, totalLength: 0, terms: 0 })
+    }
+  }
+
+  const ordered = Array.from(aggs.values()).sort((a, b) => {
+    if (a.size !== b.size) return a.size - b.size
+    return a.conductor.localeCompare(b.conductor) // AL before CU
+  })
 
   let materialsTotal = 0
-  for (const size of sizes) {
-    const line = payload.costLines.find((l) => l.size_mm2 === size)
-    const len = lengthBySize.get(size) ?? 0
-    const terms = termsBySize.get(size) ?? 0
+  for (const agg of ordered) {
+    const line =
+      payload.costLines.find((l) => l.size_mm2 === agg.size && (l.conductor ?? 'CU') === agg.conductor) ??
+      payload.costLines.find((l) => l.size_mm2 === agg.size)
     const supply = line?.supply_rate_per_m ?? 0
     const install = line?.install_rate_per_m ?? 0
     const termRate = line?.termination_rate_each ?? 0
-    const lineTotal = len * (supply + install) + terms * termRate
+    const lineTotal = agg.totalLength * (supply + install) + agg.terms * termRate
     materialsTotal += lineTotal
     lines.push(
       [
-        size,
-        round2(len),
+        agg.size,
+        agg.conductor,
+        round2(agg.totalLength),
         round2(supply),
         round2(install),
-        terms,
+        agg.terms,
         round2(termRate),
         round2(lineTotal),
       ].map(esc).join(','),
@@ -190,9 +206,9 @@ function costCsv(payload: ExportPayload): string {
   // materials+install subtotal.
   const vat = materialsTotal * 0.15
   lines.push('')
-  lines.push(['MATERIALS_TOTAL', '', '', '', '', '', round2(materialsTotal)].map(esc).join(','))
-  lines.push(['VAT_15PCT', '', '', '', '', '', round2(vat)].map(esc).join(','))
-  lines.push(['GRAND_TOTAL', '', '', '', '', '', round2(materialsTotal + vat)].map(esc).join(','))
+  lines.push(['MATERIALS_TOTAL', '', '', '', '', '', '', round2(materialsTotal)].map(esc).join(','))
+  lines.push(['VAT_15PCT', '', '', '', '', '', '', round2(vat)].map(esc).join(','))
+  lines.push(['GRAND_TOTAL', '', '', '', '', '', '', round2(materialsTotal + vat)].map(esc).join(','))
 
   return lines.join(NL) + NL
 }
