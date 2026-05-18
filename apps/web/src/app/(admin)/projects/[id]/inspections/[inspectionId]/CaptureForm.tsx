@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useRef } from 'react'
 import { evaluateInspection, isFieldVisible } from '@esite/shared'
-import type { Template, Response as InspectionResponse } from '@esite/shared'
+import type { Template, Response as InspectionResponse, Section, SubSection, Field } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -60,25 +60,27 @@ export default function CaptureForm({
 
   const sectionStats = useMemo(() => {
     const stats = new Map<string, { answered: number; total: number; missing: number }>()
+    const tally = (s: Section, f: Field, subsection: SubSection | undefined, acc: { total: number; answered: number; missing: number }) => {
+      if (f.type === 'header' || f.type === 'computed') return
+      if (!isFieldVisible(f, responses, { section: s, subsection })) return
+      acc.total++
+      const r = responses.find((rr) => rr.section_id === s.section_id && rr.field_id === f.field_id)
+      const has =
+        r &&
+        (r.value_bool != null ||
+          r.value_number != null ||
+          (r.value_text?.length ?? 0) > 0 ||
+          (r.value_array?.length ?? 0) > 0)
+      if (has) acc.answered++
+      else if (f.required) acc.missing++
+    }
     for (const s of template.sections) {
-      let total = 0
-      let answered = 0
-      let missing = 0
-      for (const f of s.fields) {
-        if (f.type === 'header' || f.type === 'computed') continue
-        if (!isFieldVisible(f, responses)) continue
-        total++
-        const r = responses.find((rr) => rr.section_id === s.section_id && rr.field_id === f.field_id)
-        const has =
-          r &&
-          (r.value_bool != null ||
-            r.value_number != null ||
-            (r.value_text?.length ?? 0) > 0 ||
-            (r.value_array?.length ?? 0) > 0)
-        if (has) answered++
-        else if (f.required) missing++
+      const acc = { total: 0, answered: 0, missing: 0 }
+      for (const f of s.fields ?? []) tally(s, f, undefined, acc)
+      for (const ss of s.subsections ?? []) {
+        for (const f of ss.fields) tally(s, f, ss, acc)
       }
-      stats.set(s.section_id, { answered, total, missing })
+      stats.set(s.section_id, acc)
     }
     return stats
   }, [template, responses])
@@ -224,8 +226,8 @@ export default function CaptureForm({
               <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--c-text)', margin: 0 }}>
                 {section.title}
               </h2>
-              {section.fields.map((field) => {
-                if (!isFieldVisible(field, responses)) return null
+              {(section.fields ?? []).map((field) => {
+                if (!isFieldVisible(field, responses, { section })) return null
                 const response = responses.find(
                   (r) => r.section_id === section.section_id && r.field_id === field.field_id,
                 )
@@ -248,6 +250,65 @@ export default function CaptureForm({
                     {savingFields.has(key) && (
                       <span style={{ fontSize: 10, color: 'var(--c-text-dim)' }}>Saving…</span>
                     )}
+                  </div>
+                )
+              })}
+              {(section.subsections ?? []).map((ss) => {
+                // Subsection-level conditional_on — hide entire subsection if condition fails
+                if (ss.conditional_on && !isFieldVisible({ ...ss.fields[0], conditional_on: ss.conditional_on } as Field, responses, { section })) {
+                  return null
+                }
+                return (
+                  <div
+                    key={ss.subsection_id}
+                    style={{
+                      marginTop: 8,
+                      paddingTop: 12,
+                      borderTop: '1px solid var(--c-border)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                    }}
+                  >
+                    <h3
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: 'var(--c-text-mid)',
+                        margin: 0,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.04em',
+                      }}
+                    >
+                      {ss.title}
+                    </h3>
+                    {ss.fields.map((field) => {
+                      if (!isFieldVisible(field, responses, { section, subsection: ss })) return null
+                      const response = responses.find(
+                        (r) => r.section_id === section.section_id && r.field_id === field.field_id,
+                      )
+                      const key = `${section.section_id}:${field.field_id}`
+                      return (
+                        <div
+                          key={field.field_id}
+                          id={`field-${section.section_id}-${field.field_id}`}
+                          style={{ transition: 'box-shadow 0.2s' }}
+                        >
+                          <FieldRenderer
+                            field={field}
+                            response={response}
+                            inspectionId={inspectionId}
+                            sectionId={section.section_id}
+                            readOnly={readOnly && !isVerifier}
+                            verifierFlipMode={isVerifier}
+                            onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                          />
+                          {savingFields.has(key) && (
+                            <span style={{ fontSize: 10, color: 'var(--c-text-dim)' }}>Saving…</span>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}

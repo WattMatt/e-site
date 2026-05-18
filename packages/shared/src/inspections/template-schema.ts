@@ -28,11 +28,33 @@ const fieldSchema = z.object({
   sans_ref: z.string().optional(),
 });
 
+// Same union shape as field.conditional_on — both subsections and sections
+// can be conditionally hidden by an upstream answer.
+const conditionalOnSchema = z.union([
+  z.object({ field_id: z.string(), equals: z.union([z.string(), z.number(), z.boolean()]) }),
+  z.object({ field_id: z.string(), not_equals: z.union([z.string(), z.number(), z.boolean()]) }),
+  z.object({ field_id: z.string(), greater_than: z.number() }),
+  z.object({ field_id: z.string(), less_than: z.number() }),
+  z.object({ field_id: z.string(), in: z.array(z.union([z.string(), z.number()])).min(1) }),
+]);
+
+const subsectionSchema = z.object({
+  subsection_id: z.string().regex(/^[a-z0-9_]+$/, 'subsection_id must be snake_case'),
+  title: z.string().min(1),
+  fields: z.array(fieldSchema).min(1),
+  conditional_on: conditionalOnSchema.optional(),
+});
+
 const sectionSchema = z.object({
   section_id: z.string().regex(/^[a-z0-9_]+$/),
   title: z.string().min(1),
-  fields: z.array(fieldSchema).min(1),
-});
+  fields: z.array(fieldSchema),
+  subsections: z.array(subsectionSchema).optional(),
+  conditional_on: conditionalOnSchema.optional(),
+}).refine(
+  (s) => s.fields.length > 0 || (s.subsections?.length ?? 0) > 0,
+  { message: 'Section must have at least one field or subsection' },
+);
 
 export const templateSchema = z.object({
   template_id: z.string().regex(/^[a-z0-9-]+$/, 'template_id must be kebab-case'),

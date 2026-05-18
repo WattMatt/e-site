@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { evaluateField, isFieldVisible, evaluateInspection, computeDerivedField } from './engine';
-import type { Field, Template, Response } from './types';
+import type { Field, Section, SubSection, Template, Response } from './types';
 
 const passFailField: Field = { field_id: 'x', label: 'X', type: 'pass_fail', required: true };
 const numberField: Field = { field_id: 'ir', label: 'IR', type: 'number', unit: 'MΩ', pass_when: '>= 1', required: true };
@@ -378,6 +378,128 @@ describe('evaluateInspection — photo/signature min_count', () => {
     const r = evaluateInspection(t, [], { signatures: [{ section_id: 's', field_id: 'inspector_sig' }] });
     expect(r.missingRequired).toHaveLength(0);
     expect(r.overallResult).toBe('pass');
+  });
+});
+
+describe('evaluateInspection — sub-sections', () => {
+  // Template with one section that has a direct field AND a subsection with 2 fields.
+  const buildTemplate = (
+    sectionCond?: Section['conditional_on'],
+    subsectionCond?: SubSection['conditional_on'],
+  ): Template => ({
+    template_id: 'tpl-sub', name: 'Sub', version: '1.0',
+    applies_to_node_types: ['board'], deliverable_type: 'coc',
+    sections: [
+      // Trigger section that holds the conditional driver — always visible
+      {
+        section_id: 'driver', title: 'Driver', fields: [
+          { field_id: 'has_extra', label: 'Has extra?', type: 'pass_fail', required: false },
+        ],
+      },
+      {
+        section_id: 's', title: 'S',
+        conditional_on: sectionCond,
+        fields: [
+          { field_id: 'direct_a', label: 'Direct A', type: 'pass_fail', required: true },
+        ],
+        subsections: [
+          {
+            subsection_id: 'sub1', title: 'Sub 1',
+            conditional_on: subsectionCond,
+            fields: [
+              { field_id: 'sub_a', label: 'Sub A', type: 'pass_fail', required: true },
+              { field_id: 'sub_b', label: 'Sub B', type: 'number', pass_when: '>= 1' },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  it('counts subsection fields in visibleFieldCount when no conditions present', () => {
+    const r = evaluateInspection(buildTemplate(), []);
+    // 1 driver + 1 direct + 2 subsection = 4 visible
+    expect(r.visibleFieldCount).toBe(4);
+  });
+
+  it('evaluates a subsection field — required + missing → missingRequired flagged', () => {
+    const r = evaluateInspection(buildTemplate(), []);
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'direct_a' });
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'sub_a' });
+  });
+
+  it('subsection-level conditional_on hides only that subsection — direct field still visible', () => {
+    const cond = { field_id: 'has_extra', equals: true } as const;
+    const t = buildTemplate(undefined, cond);
+    // has_extra not answered → subsection hidden
+    const r = evaluateInspection(t, []);
+    expect(r.visibleFieldCount).toBe(2); // driver + direct_a only
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'direct_a' });
+    expect(r.missingRequired).not.toContainEqual({ sectionId: 's', fieldId: 'sub_a' });
+  });
+
+  it('subsection-level conditional_on reveals subsection when trigger flips on', () => {
+    const cond = { field_id: 'has_extra', equals: true } as const;
+    const t = buildTemplate(undefined, cond);
+    const responses: Response[] = [{ section_id: 'driver', field_id: 'has_extra', value_bool: true }];
+    const r = evaluateInspection(t, responses);
+    expect(r.visibleFieldCount).toBe(4); // driver + direct + 2 sub
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'sub_a' });
+  });
+
+  it('section-level conditional_on hides EVERYTHING in that section (direct + all subsections)', () => {
+    const cond = { field_id: 'has_extra', equals: true } as const;
+    const t = buildTemplate(cond, undefined);
+    const r = evaluateInspection(t, []);
+    expect(r.visibleFieldCount).toBe(1); // only driver
+    expect(r.missingRequired).toHaveLength(0); // hidden required fields don't count
+  });
+
+  it('section-level conditional_on revealed → direct + all subsection fields appear', () => {
+    const cond = { field_id: 'has_extra', equals: true } as const;
+    const t = buildTemplate(cond, undefined);
+    const responses: Response[] = [{ section_id: 'driver', field_id: 'has_extra', value_bool: true }];
+    const r = evaluateInspection(t, responses);
+    expect(r.visibleFieldCount).toBe(4);
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'direct_a' });
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'sub_a' });
+  });
+
+  it('section visibility takes precedence over subsection visibility (parent hides → child hides)', () => {
+    // Section-level says has_extra=true required. Subsection-level says always-visible.
+    const sectionCond = { field_id: 'has_extra', equals: true } as const;
+    const t = buildTemplate(sectionCond, undefined);
+    // has_extra=false → section hidden → subsection also hidden
+    const responses: Response[] = [{ section_id: 'driver', field_id: 'has_extra', value_bool: false }];
+    const r = evaluateInspection(t, responses);
+    expect(r.visibleFieldCount).toBe(1); // only driver
+  });
+
+  it('evaluateInspection overall pass when all subsection required pass + answered', () => {
+    const responses: Response[] = [
+      { section_id: 's', field_id: 'direct_a', value_bool: true },
+      { section_id: 's', field_id: 'sub_a', value_bool: true },
+    ];
+    const r = evaluateInspection(buildTemplate(), responses);
+    expect(r.overallResult).toBe('pass');
+  });
+
+  it('section with NO direct fields but with subsections — engine iterates subsection fields', () => {
+    const t: Template = {
+      template_id: 'sub-only', name: 'Sub Only', version: '1.0',
+      applies_to_node_types: ['board'], deliverable_type: 'coc',
+      sections: [{
+        section_id: 's', title: 'S',
+        fields: [],
+        subsections: [{
+          subsection_id: 'ss', title: 'SS',
+          fields: [{ field_id: 'only', label: 'Only', type: 'pass_fail', required: true }],
+        }],
+      }],
+    };
+    const r = evaluateInspection(t, []);
+    expect(r.visibleFieldCount).toBe(1);
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'only' });
   });
 });
 

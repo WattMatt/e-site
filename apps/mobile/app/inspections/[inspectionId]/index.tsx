@@ -264,8 +264,8 @@ export default function MobileCaptureScreen() {
 
       {/* Fields */}
       <ScrollView style={styles.fieldsScroll} contentContainerStyle={styles.fieldsContent}>
-        {section?.fields.map((field) => {
-          if (!isFieldVisible(field, responses)) return null
+        {section && (section.fields ?? []).map((field) => {
+          if (!isFieldVisible(field, responses, { section })) return null
           const response = responses.find(
             (r) => r.section_id === section.section_id && r.field_id === field.field_id,
           )
@@ -278,6 +278,35 @@ export default function MobileCaptureScreen() {
                 sectionId={section.section_id}
                 onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
               />
+            </View>
+          )
+        })}
+        {section && (section.subsections ?? []).map((ss) => {
+          // Subsection-level conditional_on
+          if (ss.conditional_on) {
+            const probe = { ...ss.fields[0], conditional_on: ss.conditional_on }
+            if (!isFieldVisible(probe, responses, { section })) return null
+          }
+          return (
+            <View key={ss.subsection_id} style={styles.subsectionWrap}>
+              <Text style={styles.subsectionTitle}>{ss.title}</Text>
+              {ss.fields.map((field) => {
+                if (!isFieldVisible(field, responses, { section, subsection: ss })) return null
+                const response = responses.find(
+                  (r) => r.section_id === section.section_id && r.field_id === field.field_id,
+                )
+                return (
+                  <View key={field.field_id} style={styles.fieldWrap}>
+                    <Renderer
+                      field={field}
+                      response={response}
+                      inspectionId={inspectionId!}
+                      sectionId={section.section_id}
+                      onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                    />
+                  </View>
+                )
+              })}
             </View>
           )
         })}
@@ -367,6 +396,20 @@ const styles = StyleSheet.create({
   fieldsScroll: { flex: 1 },
   fieldsContent: { padding: spacing.lg, paddingBottom: spacing.xxl },
   fieldWrap: { marginBottom: spacing.lg },
+  subsectionWrap: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderMid,
+  },
+  subsectionTitle: {
+    color: colors.textMid,
+    fontSize: fontSize.small,
+    fontWeight: fontWeight.semibold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: spacing.sm,
+  },
   bottomBar: {
     flexDirection: 'row',
     alignItems: 'center',

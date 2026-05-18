@@ -39,10 +39,19 @@ export interface Field {
   sans_ref?: string;
 }
 
+export interface SubSection {
+  subsection_id: string;
+  title: string;
+  fields: Field[];
+  conditional_on?: ConditionalOn;
+}
+
 export interface Section {
   section_id: string;
   title: string;
   fields: Field[];
+  subsections?: SubSection[];
+  conditional_on?: ConditionalOn;
 }
 
 export interface Template {

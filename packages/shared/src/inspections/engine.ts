@@ -1,4 +1,4 @@
-import type { Field, Response, Template, EvaluationResult } from './types';
+import type { ConditionalOn, Field, Response, Section, SubSection, Template, EvaluationResult } from './types';
 
 type PassState = 'pass' | 'fail' | 'na' | 'not_checked';
 
@@ -110,9 +110,9 @@ function evaluateMultiSelectThreshold(pw: string, vals: string[]): { passState: 
   return { passState: 'pass' };
 }
 
-export function isFieldVisible(field: Field, allResponses: Response[]): boolean {
-  if (!field.conditional_on) return true;
-  const cond = field.conditional_on;
+// Shared condition matcher — used for fields, subsections, and sections.
+// Returns true iff the conditional_on rule is satisfied by some response.
+function checkCondition(cond: ConditionalOn, allResponses: Response[]): boolean {
   const trigger = allResponses.find(r => r.field_id === cond.field_id);
   if (!trigger) return false;
 
@@ -143,6 +143,40 @@ export function isFieldVisible(field: Field, allResponses: Response[]): boolean 
   return false;
 }
 
+// Visibility precedence (most-distal → most-local):
+//   section.conditional_on  →  subsection.conditional_on  →  field.conditional_on
+// A field is visible iff EVERY ancestor in the chain that has conditional_on
+// passes its check, AND the field's own conditional_on (if any) passes.
+// `parent` is optional so existing callers (passing just field + responses)
+// continue to work — only section/subsection-level conditions are skipped in
+// that case (which is fine: the renderer is responsible for passing the parent).
+export function isFieldVisible(
+  field: Field,
+  allResponses: Response[],
+  parent?: { section?: Section; subsection?: SubSection },
+): boolean {
+  if (parent?.section?.conditional_on && !checkCondition(parent.section.conditional_on, allResponses)) return false;
+  if (parent?.subsection?.conditional_on && !checkCondition(parent.subsection.conditional_on, allResponses)) return false;
+  if (!field.conditional_on) return true;
+  return checkCondition(field.conditional_on, allResponses);
+}
+
+// Iterate every field across both direct section.fields and section.subsections[].fields.
+// Yields the field along with its section + optional subsection so callers can
+// reason about visibility precedence and locate the field for error reporting.
+function* iterateAllFields(template: Template): Generator<{
+  section: Section;
+  subsection?: SubSection;
+  field: Field;
+}> {
+  for (const section of template.sections) {
+    for (const field of section.fields ?? []) yield { section, field };
+    for (const subsection of section.subsections ?? []) {
+      for (const field of subsection.fields) yield { section, subsection, field };
+    }
+  }
+}
+
 export interface InspectionAttachments {
   photos?: { section_id: string; field_id: string }[];
   signatures?: { section_id?: string; field_id?: string }[];
@@ -158,66 +192,64 @@ export function evaluateInspection(
   let visibleFieldCount = 0;
   let answeredFieldCount = 0;
 
-  for (const section of template.sections) {
-    for (const field of section.fields) {
-      if (field.type === 'header' || field.type === 'computed') continue;
-      if (!isFieldVisible(field, responses)) continue;
+  for (const { section, subsection, field } of iterateAllFields(template)) {
+    if (field.type === 'header' || field.type === 'computed') continue;
+    if (!isFieldVisible(field, responses, { section, subsection })) continue;
 
-      visibleFieldCount++;
+    visibleFieldCount++;
 
-      // Attachment-backed field types (photo/signature/file) — count uploads instead of response values
-      if (field.type === 'photo' || field.type === 'file' || field.type === 'signature') {
-        if (attachments === undefined) {
-          // Backwards-compat: no attachments info → engine assumes legacy pass (no validation)
-          if (!field.required) continue;
-          // Count as answered for visibility metrics — legacy callers don't surface min_count
-          answeredFieldCount++;
-          continue;
-        }
-
-        const collection =
-          field.type === 'signature'
-            ? (attachments.signatures ?? []).filter(s => s.field_id === field.field_id && s.section_id === section.section_id)
-            : (attachments.photos ?? []).filter(p => p.field_id === field.field_id && p.section_id === section.section_id);
-        const count = collection.length;
-        const minRequired = field.required ? Math.max(field.min_count ?? 1, 1) : (field.min_count ?? 0);
-
-        if (count > 0) answeredFieldCount++;
-
-        if (field.required && count < minRequired) {
-          missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
-          if (minRequired > 1) {
-            const noun = field.type === 'signature' ? 'signatures' : field.type === 'file' ? 'files' : 'photos';
-            failedFields.push({
-              sectionId: section.section_id,
-              fieldId: field.field_id,
-              reason: `only ${count} of ${minRequired} required ${noun} uploaded`,
-            });
-          }
-        }
+    // Attachment-backed field types (photo/signature/file) — count uploads instead of response values
+    if (field.type === 'photo' || field.type === 'file' || field.type === 'signature') {
+      if (attachments === undefined) {
+        // Backwards-compat: no attachments info → engine assumes legacy pass (no validation)
+        if (!field.required) continue;
+        // Count as answered for visibility metrics — legacy callers don't surface min_count
+        answeredFieldCount++;
         continue;
       }
 
-      const response = responses.find(r => r.section_id === section.section_id && r.field_id === field.field_id);
-      const hasAnswer = !!response && (
-        (response.value_bool !== undefined && response.value_bool !== null) ||
-        (response.value_number !== undefined && response.value_number !== null) ||
-        (!!response.value_text && response.value_text.length > 0) ||
-        (!!response.value_array && response.value_array.length > 0)
-      );
+      const collection =
+        field.type === 'signature'
+          ? (attachments.signatures ?? []).filter(s => s.field_id === field.field_id && s.section_id === section.section_id)
+          : (attachments.photos ?? []).filter(p => p.field_id === field.field_id && p.section_id === section.section_id);
+      const count = collection.length;
+      const minRequired = field.required ? Math.max(field.min_count ?? 1, 1) : (field.min_count ?? 0);
 
-      if (hasAnswer) answeredFieldCount++;
+      if (count > 0) answeredFieldCount++;
 
-      if (field.required && !hasAnswer) {
+      if (field.required && count < minRequired) {
         missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
-        continue;
-      }
-
-      if (response) {
-        const ev = evaluateField(field, response);
-        if (ev.passState === 'fail') {
-          failedFields.push({ sectionId: section.section_id, fieldId: field.field_id, reason: ev.reason ?? 'failed' });
+        if (minRequired > 1) {
+          const noun = field.type === 'signature' ? 'signatures' : field.type === 'file' ? 'files' : 'photos';
+          failedFields.push({
+            sectionId: section.section_id,
+            fieldId: field.field_id,
+            reason: `only ${count} of ${minRequired} required ${noun} uploaded`,
+          });
         }
+      }
+      continue;
+    }
+
+    const response = responses.find(r => r.section_id === section.section_id && r.field_id === field.field_id);
+    const hasAnswer = !!response && (
+      (response.value_bool !== undefined && response.value_bool !== null) ||
+      (response.value_number !== undefined && response.value_number !== null) ||
+      (!!response.value_text && response.value_text.length > 0) ||
+      (!!response.value_array && response.value_array.length > 0)
+    );
+
+    if (hasAnswer) answeredFieldCount++;
+
+    if (field.required && !hasAnswer) {
+      missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
+      continue;
+    }
+
+    if (response) {
+      const ev = evaluateField(field, response);
+      if (ev.passState === 'fail') {
+        failedFields.push({ sectionId: section.section_id, fieldId: field.field_id, reason: ev.reason ?? 'failed' });
       }
     }
   }
@@ -226,12 +258,14 @@ export function evaluateInspection(
   if (missingRequired.length > 0) {
     overallResult = 'fail';
   } else {
-    const requiredFailed = failedFields.some(ff =>
-      template.sections.some(s =>
-        s.section_id === ff.sectionId &&
-        s.fields.some(f => f.field_id === ff.fieldId && f.required)
-      )
-    );
+    // A failed field counts as a "required failure" iff its template definition is required.
+    // Look up across both direct-fields and subsection-fields to catch every shape.
+    const requiredFailed = failedFields.some(ff => {
+      for (const { section, field } of iterateAllFields(template)) {
+        if (section.section_id === ff.sectionId && field.field_id === ff.fieldId && field.required) return true;
+      }
+      return false;
+    });
     if (requiredFailed) overallResult = 'fail';
     else if (failedFields.length > 0) overallResult = 'conditional_pass';
     else overallResult = 'pass';
@@ -276,25 +310,23 @@ export function computeDerivedField(field: Field, allResponses: Response[], temp
 function evaluateComputedKind(kind: ComputedFormulaKind, responses: Response[], template: Template): number {
   let visible = 0, answered = 0, failed = 0;
 
-  for (const section of template.sections) {
-    for (const f of section.fields) {
-      if (f.type === 'header' || f.type === 'computed') continue;
-      if (!isFieldVisible(f, responses)) continue;
-      visible++;
+  for (const { section, subsection, field: f } of iterateAllFields(template)) {
+    if (f.type === 'header' || f.type === 'computed') continue;
+    if (!isFieldVisible(f, responses, { section, subsection })) continue;
+    visible++;
 
-      const r = responses.find(x => x.section_id === section.section_id && x.field_id === f.field_id);
-      const hasAnswer = !!r && (
-        (r.value_bool !== undefined && r.value_bool !== null) ||
-        (r.value_number !== undefined && r.value_number !== null) ||
-        (!!r.value_text && r.value_text.length > 0) ||
-        (!!r.value_array && r.value_array.length > 0)
-      );
-      if (hasAnswer) answered++;
+    const r = responses.find(x => x.section_id === section.section_id && x.field_id === f.field_id);
+    const hasAnswer = !!r && (
+      (r.value_bool !== undefined && r.value_bool !== null) ||
+      (r.value_number !== undefined && r.value_number !== null) ||
+      (!!r.value_text && r.value_text.length > 0) ||
+      (!!r.value_array && r.value_array.length > 0)
+    );
+    if (hasAnswer) answered++;
 
-      if (r && hasAnswer) {
-        const ev = evaluateField(f, r);
-        if (ev.passState === 'fail') failed++;
-      }
+    if (r && hasAnswer) {
+      const ev = evaluateField(f, r);
+      if (ev.passState === 'fail') failed++;
     }
   }
 
