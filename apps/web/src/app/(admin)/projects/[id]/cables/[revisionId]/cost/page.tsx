@@ -65,15 +65,34 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
     .catch(() => null)
   if (!project) notFound()
 
-  const { data: revisionRow } = await (supabase as any)
+  // vat_pct landed on revisions in migration 00060. SELECT is tolerant —
+  // if the column isn't applied yet, PostgREST 400s and we fall back to
+  // the legacy cost_lines sentinel read (which currently null-defaults
+  // to 15 in the calc below).
+  let revisionRow: { id: string; code: string; status: string; project_id: string; vat_pct: number | null } | null = null
+  const revQuery = await (supabase as any)
     .schema('cable_schedule')
     .from('revisions')
-    .select('id, code, status, project_id')
+    .select('id, code, status, project_id, vat_pct')
     .eq('id', revisionId)
     .eq('project_id', projectId)
-    .single()
+    .maybeSingle()
+  if (revQuery.error) {
+    // Probably "column 'vat_pct' does not exist" — migration not applied yet.
+    // Fall back to the pre-00060 columns.
+    const fallback = await (supabase as any)
+      .schema('cable_schedule')
+      .from('revisions')
+      .select('id, code, status, project_id')
+      .eq('id', revisionId)
+      .eq('project_id', projectId)
+      .maybeSingle()
+    revisionRow = fallback.data ? { ...fallback.data, vat_pct: null } : null
+  } else {
+    revisionRow = revQuery.data
+  }
   if (!revisionRow) notFound()
-  const revision = revisionRow as { id: string; code: string; status: string; project_id: string }
+  const revision = revisionRow as { id: string; code: string; status: string; project_id: string; vat_pct: number | null }
 
   // Auto-pre-create cost_lines for every size present in the schedule but
   // missing from cost_lines. Without this, rate cells render disabled (the
@@ -151,12 +170,17 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
   const beforeAdj            = subtotalCables + subtotalTerminations
   // Contingency removed 2026-05-17 (contracts are net). VAT is applied
   // directly to the materials+terminations subtotal.
-  const vatPct               = header?.vat_pct ?? 15
+  // VAT source priority (post-migration 00060):
+  //   1. revision.vat_pct (the new canonical column on revisions table)
+  //   2. legacy header?.vat_pct (cost_lines sentinel, pre-migration data)
+  //   3. 15% default (the historical app default)
+  const vatPct               = revision.vat_pct ?? header?.vat_pct ?? 15
   const vatAmt               = (beforeAdj * Number(vatPct)) / 100
   const grandTotal           = beforeAdj + vatAmt
 
   const headerRow: CostHeader = {
     id: header?.id ?? null,
+    revision_id: revision.id,
     contingency_pct: 0,
     vat_pct: vatPct == null ? 15 : Number(vatPct),
     subtotalCables, subtotalTerminations, beforeAdj,

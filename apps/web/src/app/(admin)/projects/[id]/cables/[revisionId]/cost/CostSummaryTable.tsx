@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   ensureCostLinesAction,
   updateCostLineAction,
+  updateRevisionVatAction,
 } from '@/actions/cable-cost.actions'
 
 export interface CostRow {
@@ -20,7 +21,8 @@ export interface CostRow {
 }
 
 export interface CostHeader {
-  id: string | null
+  id: string | null         // legacy cost_lines sentinel; null on new revisions
+  revision_id: string       // VAT now lives on revisions; required for the new action
   contingency_pct: number
   vat_pct: number
   subtotalCables: number
@@ -67,6 +69,17 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
     setError(null)
     startTransition(async () => {
       const r = await updateCostLineAction({ id, ...fields } as any)
+      if (r.error) { setError(r.error); return }
+      router.refresh()
+    })
+  }
+
+  // VAT % is now per-revision (migration 00060). Separate save path
+  // because it doesn't go through cost_lines.
+  function saveVat(pct: number) {
+    setError(null)
+    startTransition(async () => {
+      const r = await updateRevisionVatAction({ revisionId: header.revision_id, vatPct: pct })
       if (r.error) { setError(r.error); return }
       router.refresh()
     })
@@ -139,10 +152,10 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
                 {' '}
                 <Editable
                   value={header.vat_pct}
-                  disabled={locked || !header.id}
+                  disabled={locked}
                   width={50}
                   suffix="%"
-                  onSave={(v) => patch(header.id, { vatPct: v })}
+                  onSave={(v) => saveVat(v)}
                 />
               </Td>
               <Td align="right" mono>{fmtZAR(header.vatAmt)}</Td>

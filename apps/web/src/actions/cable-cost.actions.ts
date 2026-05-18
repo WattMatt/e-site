@@ -102,8 +102,9 @@ const updateRateSchema = z.object({
   installRatePerM: z.number().nonnegative().optional(),
   terminationRateEach: z.number().nonnegative().optional(),
   // contingencyPct removed 2026-05-17 — net contracts have no contingency.
-  // DB column kept (archived revisions). New writes never set it.
-  vatPct: z.number().nonnegative().optional(),
+  // vatPct removed 2026-05-18 — VAT moved to revisions.vat_pct (migration
+  //   00060). DB columns on cost_lines kept for archived revisions; new
+  //   writes never set either.
 })
 
 export async function updateCostLineAction(
@@ -119,7 +120,6 @@ export async function updateCostLineAction(
   if (parsed.data.supplyRatePerM !== undefined)       patch.supply_rate_per_m = parsed.data.supplyRatePerM
   if (parsed.data.installRatePerM !== undefined)      patch.install_rate_per_m = parsed.data.installRatePerM
   if (parsed.data.terminationRateEach !== undefined)  patch.termination_rate_each = parsed.data.terminationRateEach
-  if (parsed.data.vatPct !== undefined)               patch.vat_pct = parsed.data.vatPct
 
   const { data, error } = await (supabase as any)
     .schema('cable_schedule')
@@ -134,5 +134,56 @@ export async function updateCostLineAction(
   if (d?.revision?.project_id) {
     revalidatePath(`/projects/${d.revision.project_id}/cables/${d.revision_id}/cost`)
   }
+  return { ok: true }
+}
+
+// ─── Revision-level VAT % ───────────────────────────────────────────
+// VAT lives on `cable_schedule.revisions.vat_pct` per migration 00060.
+// Replaces the previous sentinel-cost_lines pattern that was always
+// broken by CHECK (size_mm2 > 0). Range 0–100; 15 is the SA default.
+
+const updateRevisionVatSchema = z.object({
+  revisionId: uuid,
+  vatPct: z.number().min(0).max(100),
+})
+
+export async function updateRevisionVatAction(
+  input: z.infer<typeof updateRevisionVatSchema>,
+): Promise<{ ok?: true; error?: string }> {
+  const parsed = updateRevisionVatSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // DRAFT-only gate (consistent with the rest of cost editing).
+  const { data: rev } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id, status, project_id')
+    .eq('id', parsed.data.revisionId)
+    .single()
+  if (!rev) return { error: 'Revision not found' }
+  if ((rev as any).status !== 'DRAFT') {
+    return { error: 'Revision is ISSUED — VAT is read-only.' }
+  }
+
+  const { error } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('revisions')
+    .update({ vat_pct: parsed.data.vatPct })
+    .eq('id', parsed.data.revisionId)
+  if (error) {
+    // Common pre-migration error: column doesn't exist yet.
+    return {
+      error: error.code === '42703'
+        ? 'VAT migration 00060 not yet applied. Run it in Supabase Studio SQL Editor.'
+        : error.message,
+    }
+  }
+
+  const r = rev as { project_id: string }
+  revalidatePath(`/projects/${r.project_id}/cables/${parsed.data.revisionId}/cost`)
   return { ok: true }
 }
