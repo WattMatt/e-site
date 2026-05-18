@@ -755,6 +755,32 @@ export function CableScheduleGrid({
                         ✏
                       </button>
                     )}
+                    {canEdit && !locked && (
+                      <button
+                        type="button"
+                        onClick={() => setDrawer({
+                          mode: 'add-run',
+                          revisionId,
+                          nodeOptions,
+                          defaults: {
+                            size_mm2: run.size_mm2,
+                            cores: run.cores,
+                            conductor: run.conductor,
+                            insulation: run.insulation,
+                            installation_method: run.installation_method ?? undefined,
+                            depth_mm: run.depth_mm ?? undefined,
+                            voltage_v: run.voltage_v,
+                            design_load_a: run.load_a,
+                            section: run.section ?? null,
+                          },
+                        })}
+                        aria-label={`Duplicate run ${run.from_label} to ${run.to_label}`}
+                        title="Create a new run with these cable properties (you'll set the new FROM/TO)"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12, marginLeft: 2, padding: '0 4px' }}
+                      >
+                        📋
+                      </button>
+                    )}
                   </Td>
                   <Td>
                     {canEdit && !locked && headRow ? (

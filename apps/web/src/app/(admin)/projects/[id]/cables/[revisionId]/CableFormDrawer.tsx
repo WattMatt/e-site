@@ -46,8 +46,28 @@ import {
 
 type Mode = 'add-run' | 'add-strand' | 'edit-strand' | 'edit-run'
 
+/**
+ * Pre-fill payload for the add-run mode (Flow-3 "Duplicate"). Carries SHARED
+ * cable properties + supply-level defaults so an engineer running near-identical
+ * feeders to multiple sub-boards doesn't re-type every field. FROM/TO are
+ * deliberately NOT included — the engineer picks new endpoints for the duplicate.
+ * Per-strand fields (notes, tag_override, measured_length_m, manual_override)
+ * are also deliberately omitted — those are unique to each physical install.
+ */
+export interface AddRunDefaults {
+  size_mm2?: number
+  cores?: '3' | '3+E' | '4'
+  conductor?: 'CU' | 'AL'
+  insulation?: 'PVC' | 'XLPE' | 'PILC'
+  installation_method?: string
+  depth_mm?: number
+  voltage_v?: number
+  design_load_a?: number | null
+  section?: string | null
+}
+
 export type DrawerState =
-  | { mode: 'add-run'; revisionId: string; nodeOptions: NodeOption[] }
+  | { mode: 'add-run'; revisionId: string; nodeOptions: NodeOption[]; defaults?: AddRunDefaults }
   | { mode: 'add-strand'; supplyId: string; run: EnrichedRun }
   | { mode: 'edit-strand'; cableId: string; strand: EnrichedCable; supplyId: string; runLabel: string }
   | { mode: 'edit-run'; supplyId: string; run: EnrichedRun }
@@ -116,6 +136,8 @@ export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: P
     state.mode === 'add-run' ? null : state.supplyId
   const _revisionId: string | null = state.mode === 'add-run' ? state.revisionId : null
   const _nodeOptions: NodeOption[] = state.mode === 'add-run' ? state.nodeOptions : []
+  const _addRunDefaults: AddRunDefaults | undefined =
+    state.mode === 'add-run' ? state.defaults : undefined
   // Re-export under their public names (the trailing `!` is safe inside the
   // mode-guarded code paths below — TS just can't infer cross-statement).
   const run = _run
@@ -125,6 +147,9 @@ export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: P
   const supplyId = _supplyId
   const revisionId = _revisionId
   const nodeOptions = _nodeOptions
+  const addRunDefaults = _addRunDefaults
+  /** Flow-3 duplicate-mode flag: add-run with defaults populated. */
+  const isDuplicate = mode === 'add-run' && addRunDefaults !== undefined
   // `head` is only meaningful when we have a strand/run to inherit defaults
   // from. add-run starts from cold defaults — guard with the non-null modes.
   const head: EnrichedCable | null =
@@ -134,15 +159,27 @@ export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: P
   // Shared cable fields (used by add-run + add-strand + edit-run).
   // add-run defaults — sensible for ~80% of LV jobs at WM: 4×16 mm² Cu XLPE
   // direct in ground, grouped 1. Engineer overrides as needed.
-  const [sizeMm2, setSizeMm2] = useState<number>(head?.size_mm2 ?? 16)
-  const [cores, setCores] = useState<EnrichedCable['cores']>(head?.cores ?? '4')
-  const [conductor, setConductor] = useState<EnrichedCable['conductor']>(head?.conductor ?? 'CU')
-  const [insulation, setInsulation] = useState<EnrichedCable['insulation']>(head?.insulation ?? 'XLPE')
+  const [sizeMm2, setSizeMm2] = useState<number>(
+    mode === 'add-run' ? (addRunDefaults?.size_mm2 ?? 16) : (head?.size_mm2 ?? 16),
+  )
+  const [cores, setCores] = useState<EnrichedCable['cores']>(
+    mode === 'add-run' ? (addRunDefaults?.cores ?? '4') : (head?.cores ?? '4'),
+  )
+  const [conductor, setConductor] = useState<EnrichedCable['conductor']>(
+    mode === 'add-run' ? (addRunDefaults?.conductor ?? 'CU') : (head?.conductor ?? 'CU'),
+  )
+  const [insulation, setInsulation] = useState<EnrichedCable['insulation']>(
+    mode === 'add-run' ? (addRunDefaults?.insulation ?? 'XLPE') : (head?.insulation ?? 'XLPE'),
+  )
   const [installMethod, setInstallMethod] = useState<string>(
-    head?.installation_method ?? (mode === 'add-run' ? 'DIRECT_IN_GROUND' : ''),
+    mode === 'add-run'
+      ? (addRunDefaults?.installation_method ?? 'DIRECT_IN_GROUND')
+      : (head?.installation_method ?? ''),
   )
   const [depthMm, setDepthMm] = useState<string>(
-    head?.depth_mm == null ? (mode === 'add-run' ? '800' : '') : String(head.depth_mm),
+    mode === 'add-run'
+      ? (addRunDefaults?.depth_mm != null ? String(addRunDefaults.depth_mm) : '800')
+      : (head?.depth_mm == null ? '' : String(head.depth_mm)),
   )
   const [groupedWith, setGroupedWith] = useState<number>(head?.grouped_with ?? 1)
 
@@ -161,12 +198,18 @@ export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: P
 
   // Supply-level fields (used by add-run + edit-run).
   const initSupply = mode === 'edit-run' ? run! : null
-  const [voltageV, setVoltageV] = useState<number>(initSupply?.voltage_v ?? 400)
+  const [voltageV, setVoltageV] = useState<number>(
+    mode === 'add-run' ? (addRunDefaults?.voltage_v ?? 400) : (initSupply?.voltage_v ?? 400),
+  )
   const [designLoadA, setDesignLoadA] = useState<string>(
-    initSupply?.load_a == null ? '' : String(initSupply.load_a),
+    mode === 'add-run'
+      ? (addRunDefaults?.design_load_a != null ? String(addRunDefaults.design_load_a) : '')
+      : (initSupply?.load_a == null ? '' : String(initSupply.load_a)),
   )
   const [section, setSection] = useState<'NORMAL' | 'EMERGENCY' | ''>(
-    (initSupply?.section as 'NORMAL' | 'EMERGENCY' | null) ?? '',
+    mode === 'add-run'
+      ? ((addRunDefaults?.section as 'NORMAL' | 'EMERGENCY' | null | undefined) ?? '')
+      : ((initSupply?.section as 'NORMAL' | 'EMERGENCY' | null) ?? ''),
   )
 
   // FROM / TO selectors (add-run only). FROM accepts any source or board;
@@ -341,7 +384,11 @@ export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: P
   }
 
   const header = (() => {
-    if (mode === 'add-run') return 'Add run (new supply + first strand)'
+    if (mode === 'add-run') {
+      return isDuplicate
+        ? 'Duplicate run (new supply, cable properties carried over)'
+        : 'Add run (new supply + first strand)'
+    }
     if (mode === 'add-strand') return `Add strand to run ${run!.from_label} → ${run!.to_label}`
     if (mode === 'edit-strand') return `Edit strand #${strand!.cable_no} — ${runLabel}`
     return `Edit run ${run!.from_label} → ${run!.to_label} · ×${run!.parallel_count} strand${run!.parallel_count !== 1 ? 's' : ''}`
@@ -349,7 +396,7 @@ export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: P
 
   const submitLabel = (() => {
     if (saving) return 'Saving…'
-    if (mode === 'add-run') return '+ Create run'
+    if (mode === 'add-run') return isDuplicate ? '+ Create duplicate' : '+ Create run'
     if (mode === 'add-strand') return 'Add strand'
     if (mode === 'edit-strand') return 'Save changes'
     return `Apply to all ${run!.parallel_count} strand${run!.parallel_count !== 1 ? 's' : ''}`
