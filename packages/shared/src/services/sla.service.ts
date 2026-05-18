@@ -2,9 +2,11 @@
  * SLA service — answers operational questions on overdue / pending /
  * stale work that the audit flagged as DB-only-not-UI gaps:
  *
- *   - Aging snags  : open snags older than N days
- *   - Pending COCs : subsections in submitted/under_review state
- *   - Stale RFIs   : RFIs past due_date or open longer than N days
+ *   - Aging snags             : open snags older than N days
+ *   - Stale RFIs              : RFIs past due_date or open longer than N days
+ *   - Awaiting verification   : inspections completed by inspector, waiting on verifier
+ *   - Re-inspect required     : inspections sent back to inspector
+ *   - Stale draft inspections : inspections in assigned/in_progress for >N days
  *
  * Reusable from web (server components) + mobile (react-query). The
  * SupabaseClient is passed in so each app can use its own auth context.
@@ -14,6 +16,7 @@
  * the client_viewer scoping from migration 00034).
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TypedSupabaseClient } from '@esite/db'
 
 export const SLA_DEFAULTS = {
@@ -38,15 +41,6 @@ export interface AgingSnag {
   days_open: number
 }
 
-export interface PendingCoc {
-  id: string                  // subsection id
-  name: string
-  coc_status: 'submitted' | 'under_review'
-  site_id: string
-  site_name: string | null
-  uploaded_at: string | null  // most recent coc_uploads.created_at
-}
-
 export interface StaleRfi {
   id: string
   subject: string
@@ -62,7 +56,6 @@ export interface StaleRfi {
 
 export interface SlaSummary {
   agingSnags: { count: number; top: AgingSnag[] }
-  pendingCocs: { count: number; top: PendingCoc[] }
   staleRfis: { count: number; top: StaleRfi[] }
 }
 
@@ -137,53 +130,61 @@ export async function getAgingSnags(
   return { count: count ?? top.length, top }
 }
 
-// ─── Pending COCs (subsections awaiting review) ─────────────────────────
+// ─── Inspections SLA (replaces pending-COCs) ────────────────────────────
+//
+// These three functions surface the operational queue for the inspections
+// module: completed inspections awaiting verifier sign-off, inspections
+// kicked back for re-work, and drafts that have stalled.
 
-export async function getPendingCocs(
-  supabase: TypedSupabaseClient,
-  orgId: string,
-  limit: number = SLA_DEFAULTS.TOP_N,
-): Promise<{ count: number; top: PendingCoc[] }> {
-  // count: subsections with coc_status in (submitted, under_review)
-  const { count } = await (supabase as any)
-    .schema('compliance')
-    .from('subsections')
-    .select('id', { count: 'exact', head: true })
-    .eq('organisation_id', orgId)
-    .in('coc_status', ['submitted', 'under_review'])
+export async function getAwaitingVerification(
+  client: SupabaseClient,
+  orgIds: string[],
+): Promise<any[]> {
+  if (!orgIds.length) return []
+  const { data } = await (client as any)
+    .schema('inspections')
+    .from('inspections')
+    .select('id, target_label, project_id, template_id, completed_at')
+    .in('organisation_id', orgIds)
+    .eq('status', 'awaiting_verification')
+    .order('completed_at', { ascending: true })
+    .limit(50)
+  return data ?? []
+}
 
-  const { data: rows } = await (supabase as any)
-    .schema('compliance')
-    .from('subsections')
-    .select('id, name, coc_status, site_id, updated_at')
-    .eq('organisation_id', orgId)
-    .in('coc_status', ['submitted', 'under_review'])
-    .order('updated_at', { ascending: true }) // longest-pending first
-    .limit(limit)
+export async function getReInspectRequired(
+  client: SupabaseClient,
+  orgIds: string[],
+): Promise<any[]> {
+  if (!orgIds.length) return []
+  const { data } = await (client as any)
+    .schema('inspections')
+    .from('inspections')
+    .select('id, target_label, project_id, template_id, updated_at')
+    .in('organisation_id', orgIds)
+    .eq('status', 're-inspect_required')
+    .order('updated_at', { ascending: true })
+    .limit(50)
+  return data ?? []
+}
 
-  const list: any[] = rows ?? []
-  if (list.length === 0) return { count: count ?? 0, top: [] }
-
-  const siteIds = [...new Set(list.map(r => r.site_id).filter(Boolean))]
-  const { data: sites } = siteIds.length
-    ? await (supabase as any)
-        .schema('compliance')
-        .from('sites')
-        .select('id, name')
-        .in('id', siteIds)
-    : { data: [] }
-  const siteMap = new Map<string, string>((sites ?? []).map((s: any) => [s.id, s.name]))
-
-  const top: PendingCoc[] = list.map(r => ({
-    id: r.id,
-    name: r.name,
-    coc_status: r.coc_status,
-    site_id: r.site_id,
-    site_name: siteMap.get(r.site_id) ?? null,
-    uploaded_at: r.updated_at, // proxy — most recent state change
-  }))
-
-  return { count: count ?? top.length, top }
+export async function getStaleDraftInspections(
+  client: SupabaseClient,
+  orgIds: string[],
+  staleAfterDays = 14,
+): Promise<any[]> {
+  if (!orgIds.length) return []
+  const cutoff = new Date(Date.now() - staleAfterDays * 86_400_000).toISOString()
+  const { data } = await (client as any)
+    .schema('inspections')
+    .from('inspections')
+    .select('id, target_label, project_id, template_id, created_at')
+    .in('organisation_id', orgIds)
+    .in('status', ['assigned', 'in_progress'])
+    .lt('created_at', cutoff)
+    .order('created_at', { ascending: true })
+    .limit(50)
+  return data ?? []
 }
 
 // ─── Stale RFIs ─────────────────────────────────────────────────────────
@@ -256,10 +257,9 @@ export async function getSlaSummary(
   supabase: TypedSupabaseClient,
   orgId: string,
 ): Promise<SlaSummary> {
-  const [agingSnags, pendingCocs, staleRfis] = await Promise.all([
+  const [agingSnags, staleRfis] = await Promise.all([
     getAgingSnags(supabase, orgId),
-    getPendingCocs(supabase, orgId),
     getStaleRfis(supabase, orgId),
   ])
-  return { agingSnags, pendingCocs, staleRfis }
+  return { agingSnags, staleRfis }
 }

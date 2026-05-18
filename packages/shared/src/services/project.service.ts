@@ -94,7 +94,7 @@ export const projectService = {
   },
 
   async getStats(client: TypedSupabaseClient, orgId: string) {
-    const [projects, snags, cocs] = await Promise.all([
+    const [projects, snags] = await Promise.all([
       client
         .schema('projects')
         .from('projects')
@@ -107,17 +107,10 @@ export const projectService = {
         .select('id', { count: 'exact', head: true })
         .eq('organisation_id', orgId)
         .in('status', ['open', 'in_progress']),
-      client
-        .schema('compliance')
-        .from('subsections')
-        .select('id', { count: 'exact', head: true })
-        .eq('organisation_id', orgId)
-        .in('coc_status', ['missing', 'rejected']),
     ])
     return {
       activeProjects: projects.count ?? 0,
       openSnags: snags.count ?? 0,
-      pendingCocs: cocs.count ?? 0,
     }
   },
 }
