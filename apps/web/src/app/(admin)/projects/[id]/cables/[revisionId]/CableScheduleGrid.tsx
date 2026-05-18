@@ -8,6 +8,7 @@ import {
   type SupplyForCalc,
 } from '@esite/shared'
 import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-payload'
+import { sansBreadcrumb, sansBreadcrumbAsTooltip } from '@/lib/cable-schedule/sans-breadcrumb'
 import {
   ConfirmedLengthEditor,
 } from './LengthEditPopover'
@@ -767,20 +768,42 @@ export function CableScheduleGrid({
                     {run.cumulative_vd_pct > 0 ? fmt(run.cumulative_vd_pct, 2) : '—'}
                   </Td>
                   <Td align="right" style={{ color: run.under_rated ? '#dc2626' : 'var(--c-text)' }}>
-                    <span title={run.combined_capacity_a == null
-                      ? `No SANS rating data for ${run.size_mm2}mm² ${run.cores}-core ${run.conductor === 'CU' ? 'Cu' : 'Al'} ${run.insulation} — pick a different size or add a project override in the SANS library.`
-                      : `Combined capacity: ${Math.round(run.combined_capacity_a)} A (sum of ${run.parallel_count} strands)`}
-                    >
-                      {fmt(run.combined_capacity_a, 0)}
-                    </span>
-                    {run.under_rated && (
-                      <span
-                        title={`Run under-rated: ${Math.round(run.combined_capacity_a ?? 0)} A combined capacity < ${run.load_a ?? '?'} A design load`}
-                        style={{ marginLeft: 6, color: '#dc2626', fontWeight: 700, cursor: 'help' }}
-                      >
-                        ⚠
-                      </span>
-                    )}
+                    {(() => {
+                      const breadcrumb = sansBreadcrumb(run)
+                      const tipBody = sansBreadcrumbAsTooltip(breadcrumb)
+                      const capacityTip = run.combined_capacity_a == null
+                        ? tipBody
+                        : `Combined capacity: ${Math.round(run.combined_capacity_a)} A (sum of ${run.parallel_count} strands)\n\n${tipBody}`
+                      return (
+                        <>
+                          <span title={capacityTip}>{fmt(run.combined_capacity_a, 0)}</span>
+                          {breadcrumb.ratingTableCode && (
+                            <span
+                              title={tipBody}
+                              style={{ marginLeft: 6, color: 'var(--c-text-dim)', fontSize: 10, cursor: 'help', borderBottom: '1px dotted var(--c-text-dim)' }}
+                            >
+                              {breadcrumb.ratingTableCode.replace(/^TABLE_/, 'T').replace(/_/g, '.')}
+                            </span>
+                          )}
+                          {!breadcrumb.ratingTableCode && (
+                            <span
+                              title={tipBody}
+                              style={{ marginLeft: 6, color: 'var(--c-amber)', fontSize: 10, cursor: 'help' }}
+                            >
+                              ⚠ no SANS
+                            </span>
+                          )}
+                          {run.under_rated && (
+                            <span
+                              title={`Run under-rated: ${Math.round(run.combined_capacity_a ?? 0)} A combined capacity < ${run.load_a ?? '?'} A design load`}
+                              style={{ marginLeft: 6, color: '#dc2626', fontWeight: 700, cursor: 'help' }}
+                            >
+                              ⚠
+                            </span>
+                          )}
+                        </>
+                      )
+                    })()}
                   </Td>
                   <Td align="right" style={{ color: utilTone, fontWeight: util != null && util > 65 ? 700 : 400 }}>
                     {util == null ? '—' : fmt(util, 1)}
@@ -892,7 +915,24 @@ export function CableScheduleGrid({
                         <span className={`badge ${LENGTH_STATUS_TONE[c.length_status]}`}>{c.length_status}</span>
                       </Td>
                       <Td colSpan={2} />
-                      <Td align="right">{fmt(c.derated_current_rating_a, 0)}</Td>
+                      <Td align="right">
+                        <span title={sansBreadcrumbAsTooltip(sansBreadcrumb({
+                          size_mm2: c.size_mm2,
+                          cores: c.cores,
+                          conductor: c.conductor,
+                          insulation: c.insulation,
+                          ambient_temp_c: c.ambient_temp_c,
+                          depth_mm: c.depth_mm,
+                          grouped_with: c.grouped_with,
+                          derated_current_rating_a: c.derated_current_rating_a,
+                          derate_depth:    (c as EnrichedCable & { derate_depth?: number | null }).derate_depth ?? null,
+                          derate_thermal:  (c as EnrichedCable & { derate_thermal?: number | null }).derate_thermal ?? null,
+                          derate_grouping: (c as EnrichedCable & { derate_grouping?: number | null }).derate_grouping ?? null,
+                          derate_temp:     (c as EnrichedCable & { derate_temp?: number | null }).derate_temp ?? null,
+                        }))}>
+                          {fmt(c.derated_current_rating_a, 0)}
+                        </span>
+                      </Td>
                       <Td colSpan={4} />
                       <Td>
                         {canEdit && !locked && (
