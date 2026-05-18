@@ -209,6 +209,93 @@ describe('evaluateField — non-numeric / non-bool types', () => {
   });
 });
 
+describe('evaluateInspection — photo/signature min_count', () => {
+  const baseTemplate: Template = {
+    template_id: 'tpl-photos', name: 'Photos', version: '1.0',
+    applies_to_node_types: ['board'], deliverable_type: 'coc',
+    sections: [{
+      section_id: 's', title: 'S', fields: [
+        { field_id: 'before_photos', label: 'Before photos', type: 'photo', required: true, min_count: 3 },
+      ],
+    }],
+  };
+
+  it('flags required photo with min_count: 3 when only 1 uploaded', () => {
+    const attachments = { photos: [{ section_id: 's', field_id: 'before_photos' }] };
+    const r = evaluateInspection(baseTemplate, [], attachments);
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'before_photos' });
+    expect(r.failedFields.some(f => f.fieldId === 'before_photos' && /1 of 3/.test(f.reason))).toBe(true);
+  });
+
+  it('passes required photo with min_count: 3 when 3 uploaded', () => {
+    const attachments = {
+      photos: [
+        { section_id: 's', field_id: 'before_photos' },
+        { section_id: 's', field_id: 'before_photos' },
+        { section_id: 's', field_id: 'before_photos' },
+      ],
+    };
+    const r = evaluateInspection(baseTemplate, [], attachments);
+    expect(r.missingRequired).toHaveLength(0);
+    expect(r.failedFields).toHaveLength(0);
+    expect(r.overallResult).toBe('pass');
+  });
+
+  it('treats required photo without min_count as min_count: 1 — 0 uploaded flags missing', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{ section_id: 's', title: 'S', fields: [{ field_id: 'one_photo', label: 'One', type: 'photo', required: true }] }],
+    };
+    const r = evaluateInspection(t, [], { photos: [] });
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'one_photo' });
+  });
+
+  it('required photo without min_count + 1 uploaded passes', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{ section_id: 's', title: 'S', fields: [{ field_id: 'one_photo', label: 'One', type: 'photo', required: true }] }],
+    };
+    const r = evaluateInspection(t, [], { photos: [{ section_id: 's', field_id: 'one_photo' }] });
+    expect(r.missingRequired).toHaveLength(0);
+    expect(r.overallResult).toBe('pass');
+  });
+
+  it('optional photo with 0 uploaded — not in missingRequired', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{ section_id: 's', title: 'S', fields: [{ field_id: 'extra', label: 'Extra', type: 'photo' }] }],
+    };
+    const r = evaluateInspection(t, [], { photos: [] });
+    expect(r.missingRequired).toHaveLength(0);
+    expect(r.overallResult).toBe('pass');
+  });
+
+  it('backwards-compat: omitting attachments arg → photos not validated', () => {
+    const r = evaluateInspection(baseTemplate, []);
+    expect(r.missingRequired).toHaveLength(0); // legacy behaviour preserved
+    expect(r.overallResult).toBe('pass');
+  });
+
+  it('required signature missing → flagged as missingRequired', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{ section_id: 's', title: 'S', fields: [{ field_id: 'inspector_sig', label: 'Inspector', type: 'signature', required: true }] }],
+    };
+    const r = evaluateInspection(t, [], { photos: [], signatures: [] });
+    expect(r.missingRequired).toContainEqual({ sectionId: 's', fieldId: 'inspector_sig' });
+  });
+
+  it('required signature satisfied by 1 entry', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{ section_id: 's', title: 'S', fields: [{ field_id: 'inspector_sig', label: 'Inspector', type: 'signature', required: true }] }],
+    };
+    const r = evaluateInspection(t, [], { signatures: [{ section_id: 's', field_id: 'inspector_sig' }] });
+    expect(r.missingRequired).toHaveLength(0);
+    expect(r.overallResult).toBe('pass');
+  });
+});
+
 describe('computeDerivedField', () => {
   it('returns null for plain-English formula (v1 stub — wire later)', () => {
     const f: Field = { field_id: 'overall_pass', label: 'Overall', type: 'computed', formula: 'all required pass_fail fields are true' };

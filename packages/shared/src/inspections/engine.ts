@@ -71,7 +71,16 @@ export function isFieldVisible(field: Field, allResponses: Response[]): boolean 
   return trigger.value_text === target;
 }
 
-export function evaluateInspection(template: Template, responses: Response[]): EvaluationResult {
+export interface InspectionAttachments {
+  photos?: { section_id: string; field_id: string }[];
+  signatures?: { section_id?: string; field_id?: string }[];
+}
+
+export function evaluateInspection(
+  template: Template,
+  responses: Response[],
+  attachments?: InspectionAttachments,
+): EvaluationResult {
   const failedFields: { sectionId: string; fieldId: string; reason: string }[] = [];
   const missingRequired: { sectionId: string; fieldId: string }[] = [];
   let visibleFieldCount = 0;
@@ -83,6 +92,40 @@ export function evaluateInspection(template: Template, responses: Response[]): E
       if (!isFieldVisible(field, responses)) continue;
 
       visibleFieldCount++;
+
+      // Attachment-backed field types (photo/signature/file) — count uploads instead of response values
+      if (field.type === 'photo' || field.type === 'file' || field.type === 'signature') {
+        if (attachments === undefined) {
+          // Backwards-compat: no attachments info → engine assumes legacy pass (no validation)
+          if (!field.required) continue;
+          // Count as answered for visibility metrics — legacy callers don't surface min_count
+          answeredFieldCount++;
+          continue;
+        }
+
+        const collection =
+          field.type === 'signature'
+            ? (attachments.signatures ?? []).filter(s => s.field_id === field.field_id && s.section_id === section.section_id)
+            : (attachments.photos ?? []).filter(p => p.field_id === field.field_id && p.section_id === section.section_id);
+        const count = collection.length;
+        const minRequired = field.required ? Math.max(field.min_count ?? 1, 1) : (field.min_count ?? 0);
+
+        if (count > 0) answeredFieldCount++;
+
+        if (field.required && count < minRequired) {
+          missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
+          if (minRequired > 1) {
+            const noun = field.type === 'signature' ? 'signatures' : field.type === 'file' ? 'files' : 'photos';
+            failedFields.push({
+              sectionId: section.section_id,
+              fieldId: field.field_id,
+              reason: `only ${count} of ${minRequired} required ${noun} uploaded`,
+            });
+          }
+        }
+        continue;
+      }
+
       const response = responses.find(r => r.section_id === section.section_id && r.field_id === field.field_id);
       const hasAnswer = !!response && (
         (response.value_bool !== undefined && response.value_bool !== null) ||
