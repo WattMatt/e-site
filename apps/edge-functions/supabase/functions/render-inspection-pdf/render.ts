@@ -285,14 +285,19 @@ async function drawSectionPages(
     y = A4_HEIGHT - 42
   }
 
-  for (const field of section.fields ?? []) {
+  // Wrap the per-field render so we can recurse into repeating_group entries
+  // with the same renderer. `xIndent` shifts the left edge for nested
+  // sub-fields inside a repeating_group entry.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const renderField = async (field: any, xIndent: number, fieldIdOverride?: string) => {
     if (y < BOTTOM_MARGIN) newPage()
+    const lookupId = fieldIdOverride ?? field.field_id
     const resp = p.responses.find(
-      (r) => r.section_id === section.section_id && r.field_id === field.field_id,
+      (r) => r.section_id === section.section_id && r.field_id === lookupId,
     )
 
     page.drawText(String(field.label ?? field.field_id ?? ''), {
-      x: MARGIN_LEFT,
+      x: MARGIN_LEFT + xIndent,
       y,
       size: 10,
       font: fontReg,
@@ -301,8 +306,7 @@ async function drawSectionPages(
 
     let valStr = '—'
     if (field.type === 'pass_fail') {
-      valStr =
-        resp?.value_bool === true ? '✓ PASS' : resp?.value_bool === false ? '✗ FAIL' : '—'
+      valStr = resp?.value_bool === true ? '✓ PASS' : resp?.value_bool === false ? '✗ FAIL' : '—'
     } else if (field.type === 'number') {
       if (resp?.value_number != null) {
         const unit = field.unit ? ` ${field.unit}` : ''
@@ -316,20 +320,22 @@ async function drawSectionPages(
     } else {
       valStr = (resp?.value_text as string | null) ?? '—'
     }
-    page.drawText(valStr, { x: MARGIN_LEFT, y: y - 14, size: 11, font: fontBold })
+    page.drawText(valStr, { x: MARGIN_LEFT + xIndent, y: y - 14, size: 11, font: fontBold })
     y -= 32
 
-    // Inline photos for this field (3-up grid, max 3 thumbnails per row).
+    // Inline photos for this field id (3-up grid, max 3 thumbnails per row).
+    // When called from a repeating_group entry, `lookupId` is the synthetic
+    // `<group>[<i>].<sub>` so we automatically scope photos to the entry.
     const fieldPhotos = p.photos.filter(
-      (ph) => ph.section_id === section.section_id && ph.field_id === field.field_id,
+      (ph) => ph.section_id === section.section_id && ph.field_id === lookupId,
     )
     for (const photo of fieldPhotos.slice(0, 3)) {
       if (y < 200) newPage()
       if (!photo.signed_url) continue
       try {
-        const resp = await fetch(photo.signed_url)
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        const bytes = new Uint8Array(await resp.arrayBuffer())
+        const resp2 = await fetch(photo.signed_url)
+        if (!resp2.ok) throw new Error(`HTTP ${resp2.status}`)
+        const bytes = new Uint8Array(await resp2.arrayBuffer())
         let img
         try {
           img = await doc.embedJpg(bytes)
@@ -338,7 +344,7 @@ async function drawSectionPages(
         }
         const dims = img.scaleToFit(160, 120)
         page.drawImage(img, {
-          x: MARGIN_LEFT,
+          x: MARGIN_LEFT + xIndent,
           y: y - dims.height,
           width: dims.width,
           height: dims.height,
@@ -347,7 +353,7 @@ async function drawSectionPages(
       } catch (e) {
         const tail = photo.signed_url.split('?')[0]?.split('/').pop() ?? photo.id
         page.drawText(`[image unavailable: ${tail}]`, {
-          x: MARGIN_LEFT,
+          x: MARGIN_LEFT + xIndent,
           y,
           size: 9,
           font: fontReg,
@@ -358,6 +364,77 @@ async function drawSectionPages(
       }
     }
   }
+
+  for (const field of section.fields ?? []) {
+    if (y < BOTTOM_MARGIN) newPage()
+
+    // repeating_group: render group label as a sub-heading, then one block
+    // per entry (entry number + each sub-field rendered with xIndent so the
+    // hierarchy is visually obvious).
+    if (field.type === 'repeating_group') {
+      const subFields = (field.fields ?? []) as Array<{ field_id: string; label?: string; type?: string }>
+      // Discover entry indices from the responses (synthetic `<group>[<i>].<sub>` shape).
+      const indices = collectGroupEntryIndices(field.field_id, p.responses, section.section_id)
+
+      // Sub-heading
+      page.drawText(String(field.label ?? field.field_id ?? ''), {
+        x: MARGIN_LEFT,
+        y,
+        size: 12,
+        font: fontBold,
+        color: TEXT_DIM,
+      })
+      y -= 18
+
+      if (indices.length === 0) {
+        page.drawText('(no entries)', {
+          x: MARGIN_LEFT + 12,
+          y,
+          size: 10,
+          font: fontReg,
+          color: TEXT_FADED,
+        })
+        y -= 16
+        continue
+      }
+
+      for (const i of indices) {
+        if (y < BOTTOM_MARGIN + 40) newPage()
+        page.drawText(`Entry ${i + 1}`, {
+          x: MARGIN_LEFT + 8,
+          y,
+          size: 10,
+          font: fontBold,
+        })
+        y -= 14
+        for (const sub of subFields) {
+          const syntheticId = `${field.field_id}[${i}].${sub.field_id}`
+          await renderField(sub, 16, syntheticId)
+        }
+      }
+      continue
+    }
+
+    await renderField(field, 0)
+  }
+}
+
+// Collect distinct entry indices for a repeating_group from the response set
+// scoped to one section. Synthetic field_id shape: `<group>[<i>].<sub>`.
+function collectGroupEntryIndices(
+  groupFieldId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  responses: any[],
+  sectionId: string,
+): number[] {
+  const re = new RegExp(`^${groupFieldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\[(\\d+)\\]\\.`)
+  const set = new Set<number>()
+  for (const r of responses) {
+    if (r.section_id !== sectionId) continue
+    const m = String(r.field_id ?? '').match(re)
+    if (m) set.add(parseInt(m[1], 10))
+  }
+  return [...set].sort((a, b) => a - b)
 }
 
 function drawSummaryPage(
@@ -394,6 +471,30 @@ function drawSummaryPage(
   }>
   for (const section of sections) {
     for (const field of section.fields ?? []) {
+      // For a repeating_group: scan each entry's sub-fields for fails.
+      if (field.type === 'repeating_group') {
+        const indices = collectGroupEntryIndices(field.field_id, p.responses, section.section_id)
+        const subFields = (field.fields ?? []) as Array<{ field_id: string; label?: string; type?: string; sans_reference?: string }>
+        for (const i of indices) {
+          for (const sub of subFields) {
+            const syntheticId = `${field.field_id}[${i}].${sub.field_id}`
+            const resp = p.responses.find(
+              (r) => r.section_id === section.section_id && r.field_id === syntheticId,
+            )
+            const isFail =
+              (sub.type === 'pass_fail' && resp?.value_bool === false) ||
+              (sub.type === 'number' && resp?.pass_state === 'fail')
+            if (isFail) {
+              failed.push({
+                label: `${section.title} → ${field.label ?? field.field_id} [entry ${i + 1}] → ${sub.label ?? sub.field_id}`,
+                sans: sub.sans_reference,
+              })
+            }
+          }
+        }
+        continue
+      }
+
       const resp = p.responses.find(
         (r) => r.section_id === section.section_id && r.field_id === field.field_id,
       )
