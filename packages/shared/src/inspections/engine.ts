@@ -240,8 +240,67 @@ export function evaluateInspection(
   return { overallResult, failedFields, missingRequired, visibleFieldCount, answeredFieldCount };
 }
 
-// v1: computed fields carry a plain-English formula. We don't evaluate them yet;
-// the renderer shows the formula text as a tooltip. v2 adds a real evaluator.
-export function computeDerivedField(_field: Field, _allResponses: Response[]): unknown {
+// Declarative computed-field formulas. v1 covers the patterns the inspections-catalogue
+// templates actually use; unknown kinds return null so the renderer shows a fallback.
+//
+// Legacy plain-English formulas (the `formula` string field) are returned as-is so the
+// renderer can display them verbatim. Wire a real string-evaluator in v2 if templates
+// need it; for now templates use the structured `formula_kind`/`formula_args` shape.
+export type ComputedFormulaKind =
+  | 'count_visible_answered'
+  | 'count_visible'
+  | 'count_failed';
+
+interface ComputedFormulaField extends Field {
+  formula_kind?: ComputedFormulaKind;
+}
+
+const KNOWN_COMPUTED_KINDS: readonly ComputedFormulaKind[] = ['count_visible_answered', 'count_visible', 'count_failed'];
+
+export function computeDerivedField(field: Field, allResponses: Response[], template?: Template): unknown {
+  const cf = field as ComputedFormulaField;
+
+  if (cf.formula_kind && template) {
+    if (!KNOWN_COMPUTED_KINDS.includes(cf.formula_kind)) return null;
+    return evaluateComputedKind(cf.formula_kind, allResponses, template);
+  }
+
+  // Legacy plain-English formula passthrough — renderer displays the string.
+  if (typeof field.formula === 'string' && field.formula.length > 0) {
+    return field.formula;
+  }
+
   return null;
+}
+
+function evaluateComputedKind(kind: ComputedFormulaKind, responses: Response[], template: Template): number {
+  let visible = 0, answered = 0, failed = 0;
+
+  for (const section of template.sections) {
+    for (const f of section.fields) {
+      if (f.type === 'header' || f.type === 'computed') continue;
+      if (!isFieldVisible(f, responses)) continue;
+      visible++;
+
+      const r = responses.find(x => x.section_id === section.section_id && x.field_id === f.field_id);
+      const hasAnswer = !!r && (
+        (r.value_bool !== undefined && r.value_bool !== null) ||
+        (r.value_number !== undefined && r.value_number !== null) ||
+        (!!r.value_text && r.value_text.length > 0) ||
+        (!!r.value_array && r.value_array.length > 0)
+      );
+      if (hasAnswer) answered++;
+
+      if (r && hasAnswer) {
+        const ev = evaluateField(f, r);
+        if (ev.passState === 'fail') failed++;
+      }
+    }
+  }
+
+  switch (kind) {
+    case 'count_visible_answered': return answered;
+    case 'count_visible': return visible;
+    case 'count_failed': return failed;
+  }
 }

@@ -382,8 +382,61 @@ describe('evaluateInspection — photo/signature min_count', () => {
 });
 
 describe('computeDerivedField', () => {
-  it('returns null for plain-English formula (v1 stub — wire later)', () => {
+  const buildTemplate = (): Template => ({
+    template_id: 'tpl', name: 'T', version: '1.0',
+    applies_to_node_types: ['board'], deliverable_type: 'coc',
+    sections: [{
+      section_id: 's', title: 'S', fields: [
+        { field_id: 'a', label: 'A', type: 'pass_fail', required: true },
+        { field_id: 'b', label: 'B', type: 'pass_fail', required: true },
+        { field_id: 'c', label: 'C', type: 'pass_fail', required: true },
+        { field_id: 'd', label: 'D', type: 'pass_fail', required: true },
+      ],
+    }],
+  });
+
+  it('legacy plain-English formula passes through as the formula string', () => {
     const f: Field = { field_id: 'overall_pass', label: 'Overall', type: 'computed', formula: 'all required pass_fail fields are true' };
+    expect(computeDerivedField(f, [])).toBe('all required pass_fail fields are true');
+  });
+
+  it('count_visible_answered — 4 visible required fields, 3 answered → returns 3', () => {
+    const responses: Response[] = [
+      { section_id: 's', field_id: 'a', value_bool: true },
+      { section_id: 's', field_id: 'b', value_bool: true },
+      { section_id: 's', field_id: 'c', value_bool: false, fail_reason: 'x' },
+    ];
+    const tpl = buildTemplate();
+    const f = { field_id: 'cnt', label: 'Cnt', type: 'computed' as const, formula_kind: 'count_visible_answered' as const };
+    expect(computeDerivedField(f, responses, tpl)).toBe(3);
+  });
+
+  it('count_failed — 2 fields failing → returns 2', () => {
+    const responses: Response[] = [
+      { section_id: 's', field_id: 'a', value_bool: true },
+      { section_id: 's', field_id: 'b', value_bool: false, fail_reason: 'x' },
+      { section_id: 's', field_id: 'c', value_bool: false, fail_reason: 'y' },
+      { section_id: 's', field_id: 'd', value_bool: true },
+    ];
+    const tpl = buildTemplate();
+    const f = { field_id: 'fail', label: 'Failed', type: 'computed' as const, formula_kind: 'count_failed' as const };
+    expect(computeDerivedField(f, responses, tpl)).toBe(2);
+  });
+
+  it('count_visible total returns the visible count', () => {
+    const tpl = buildTemplate();
+    const f = { field_id: 'tot', label: 'Total', type: 'computed' as const, formula_kind: 'count_visible' as const };
+    expect(computeDerivedField(f, [], tpl)).toBe(4);
+  });
+
+  it('unknown formula_kind returns null', () => {
+    const tpl = buildTemplate();
+    const f = { field_id: 'x', label: 'X', type: 'computed' as const, formula_kind: 'mystery_kind' as unknown as 'count_visible' };
+    expect(computeDerivedField(f, [], tpl)).toBe(null);
+  });
+
+  it('no formula_kind and no formula string returns null', () => {
+    const f: Field = { field_id: 'x', label: 'X', type: 'computed' };
     expect(computeDerivedField(f, [])).toBe(null);
   });
 });
