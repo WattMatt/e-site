@@ -339,14 +339,15 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
     properties: { tabColor: { argb: 'FF4A9E6E' } },
   })
   ws.getColumn('A').width = 14
-  ws.getColumn('B').width = 14
+  ws.getColumn('B').width = 6
   ws.getColumn('C').width = 14
-  ws.getColumn('D').width = 16
+  ws.getColumn('D').width = 14
   ws.getColumn('E').width = 14
-  ws.getColumn('F').width = 14
+  ws.getColumn('F').width = 16
   ws.getColumn('G').width = 14
+  ws.getColumn('H').width = 14
 
-  ws.mergeCells('A1:G1')
+  ws.mergeCells('A1:H1')
   ws.getCell('A1').value = `COST SUMMARY · ${payload.revision.code}`
   ws.getCell('A1').font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } }
   ws.getCell('A1').fill = {
@@ -358,6 +359,7 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
 
   const headers = [
     'Size mm²',
+    'Cond',
     'Total length m',
     'Supply R/m',
     'Install R/m',
@@ -378,49 +380,89 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
   })
   ws.getRow(3).height = 22
 
-  // Aggregate length-by-size + termination-count-by-size
-  const lengthBySize = new Map<number, number>()
-  const termsBySize = new Map<number, number>()
+  // Aggregate length + termination-count by (size, conductor) — conductor-aware
+  // since migration 00061 (cost_lines.conductor split for Cu vs Al pricing).
+  // Pre-migration cost_lines rows lack the conductor column; fallback below.
+  interface CostAgg {
+    size: number
+    conductor: 'CU' | 'AL'
+    totalLength: number
+    terms: number
+  }
+  const totalsByKey = new Map<string, CostAgg>()
   for (const c of payload.cables) {
-    const len = effectiveLength(c) ?? 0
-    lengthBySize.set(c.size_mm2, (lengthBySize.get(c.size_mm2) ?? 0) + len)
-    termsBySize.set(c.size_mm2, (termsBySize.get(c.size_mm2) ?? 0) + 2)
+    const key = `${c.size_mm2}|${c.conductor}`
+    const agg = totalsByKey.get(key) ?? {
+      size: c.size_mm2,
+      conductor: c.conductor,
+      totalLength: 0,
+      terms: 0,
+    }
+    agg.totalLength += effectiveLength(c) ?? 0
+    agg.terms += 2
+    totalsByKey.set(key, agg)
+  }
+
+  // Also seed keys from costLines so rows-with-rates but no cables still appear.
+  for (const l of payload.costLines) {
+    const cond = ((l as { conductor?: string }).conductor ?? 'CU') as 'CU' | 'AL'
+    const key = `${l.size_mm2}|${cond}`
+    if (!totalsByKey.has(key)) {
+      totalsByKey.set(key, {
+        size: l.size_mm2,
+        conductor: cond,
+        totalLength: 0,
+        terms: 0,
+      })
+    }
   }
 
   let rowIdx = 4
   let grandTotal = 0
-  // Sort by size ascending
-  const sizes = Array.from(
-    new Set([
-      ...payload.costLines.map((l) => l.size_mm2),
-      ...Array.from(lengthBySize.keys()),
-    ]),
-  ).sort((a, b) => a - b)
+  // Sort by size ascending, then conductor (AL before CU alphabetically)
+  const sortedKeys = [...totalsByKey.keys()].sort((a, b) => {
+    const [sa, ca] = a.split('|')
+    const [sb, cb] = b.split('|')
+    const sn = Number(sa) - Number(sb)
+    if (sn !== 0) return sn
+    return ca.localeCompare(cb)
+  })
 
-  for (const size of sizes) {
-    const line = payload.costLines.find((l) => l.size_mm2 === size)
-    const totalLen = lengthBySize.get(size) ?? 0
-    const terms = termsBySize.get(size) ?? 0
-    const supplyRate = line?.supply_rate_per_m ?? 0
-    const installRate = line?.install_rate_per_m ?? 0
-    const termRate = line?.termination_rate_each ?? 0
+  for (const key of sortedKeys) {
+    const agg = totalsByKey.get(key)!
+    // Pre-migration-tolerant cost_lines lookup: match (size, conductor) first;
+    // fall back to size-only for legacy rows missing the conductor column.
+    const line =
+      payload.costLines.find(
+        (l) =>
+          l.size_mm2 === agg.size &&
+          (((l as { conductor?: string }).conductor ?? 'CU') === agg.conductor),
+      ) ?? payload.costLines.find((l) => l.size_mm2 === agg.size)
+    const supplyRate = Number(line?.supply_rate_per_m ?? 0)
+    const installRate = Number(line?.install_rate_per_m ?? 0)
+    const termRate = Number(line?.termination_rate_each ?? 0)
     const lineTotal =
-      totalLen * (supplyRate + installRate) + terms * termRate
+      agg.totalLength * (supplyRate + installRate) + agg.terms * termRate
     grandTotal += lineTotal
 
-    ws.getCell(`A${rowIdx}`).value = size
-    ws.getCell(`B${rowIdx}`).value = totalLen
-    ws.getCell(`C${rowIdx}`).value = supplyRate
-    ws.getCell(`D${rowIdx}`).value = installRate
-    ws.getCell(`E${rowIdx}`).value = terms
-    ws.getCell(`F${rowIdx}`).value = termRate
-    ws.getCell(`G${rowIdx}`).value = lineTotal
+    ws.getCell(`A${rowIdx}`).value = agg.size
+    ws.getCell(`B${rowIdx}`).value = agg.conductor === 'CU' ? 'Cu' : 'Al'
+    ws.getCell(`C${rowIdx}`).value = agg.totalLength
+    ws.getCell(`D${rowIdx}`).value = supplyRate
+    ws.getCell(`E${rowIdx}`).value = installRate
+    ws.getCell(`F${rowIdx}`).value = agg.terms
+    ws.getCell(`G${rowIdx}`).value = termRate
+    ws.getCell(`H${rowIdx}`).value = lineTotal
 
-    ws.getCell(`B${rowIdx}`).numFmt = '0.00'
     ws.getCell(`C${rowIdx}`).numFmt = '0.00'
     ws.getCell(`D${rowIdx}`).numFmt = '0.00'
-    ws.getCell(`F${rowIdx}`).numFmt = '0.00'
-    ws.getCell(`G${rowIdx}`).numFmt = '#,##0.00'
+    ws.getCell(`E${rowIdx}`).numFmt = '0.00'
+    ws.getCell(`G${rowIdx}`).numFmt = '0.00'
+    ws.getCell(`H${rowIdx}`).numFmt = '#,##0.00'
+    // Amber tint on Al cells to mirror the in-app cost summary.
+    if (agg.conductor === 'AL') {
+      ws.getCell(`B${rowIdx}`).font = { color: { argb: 'FFE8923A' } }
+    }
     rowIdx++
   }
 
@@ -430,12 +472,12 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
   const vat = grandTotal * 0.15
 
   function totalRow(label: string, val: number, bold = false): void {
-    ws.getCell(`F${rowIdx}`).value = label
-    ws.getCell(`G${rowIdx}`).value = val
-    ws.getCell(`G${rowIdx}`).numFmt = '#,##0.00'
+    ws.getCell(`G${rowIdx}`).value = label
+    ws.getCell(`H${rowIdx}`).value = val
+    ws.getCell(`H${rowIdx}`).numFmt = '#,##0.00'
     if (bold) {
-      ws.getCell(`F${rowIdx}`).font = { bold: true }
-      ws.getCell(`G${rowIdx}`).font = { bold: true, color: { argb: WM_AMBER } }
+      ws.getCell(`G${rowIdx}`).font = { bold: true }
+      ws.getCell(`H${rowIdx}`).font = { bold: true, color: { argb: WM_AMBER } }
     }
     rowIdx++
   }
