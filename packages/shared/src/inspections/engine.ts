@@ -124,3 +124,9 @@ export function evaluateInspection(template: Template, responses: Response[]): E
 
   return { overallResult, failedFields, missingRequired, visibleFieldCount, answeredFieldCount };
 }
+
+// v1: computed fields carry a plain-English formula. We don't evaluate them yet;
+// the renderer shows the formula text as a tooltip. v2 adds a real evaluator.
+export function computeDerivedField(_field: Field, _allResponses: Response[]): unknown {
+  return null;
+}

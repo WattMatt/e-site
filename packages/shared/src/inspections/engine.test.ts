@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateField, isFieldVisible, evaluateInspection } from './engine';
+import { evaluateField, isFieldVisible, evaluateInspection, computeDerivedField } from './engine';
 import type { Field, Template, Response } from './types';
 
 const passFailField: Field = { field_id: 'x', label: 'X', type: 'pass_fail', required: true };
@@ -131,5 +131,12 @@ describe('evaluateInspection', () => {
     const r = evaluateInspection(t2, responses);
     expect(r.missingRequired).toHaveLength(0);
     expect(r.overallResult).toBe('pass');
+  });
+});
+
+describe('computeDerivedField', () => {
+  it('returns null for plain-English formula (v1 stub — wire later)', () => {
+    const f: Field = { field_id: 'overall_pass', label: 'Overall', type: 'computed', formula: 'all required pass_fail fields are true' };
+    expect(computeDerivedField(f, [])).toBe(null);
   });
 });
