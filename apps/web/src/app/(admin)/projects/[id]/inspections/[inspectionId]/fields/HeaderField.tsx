@@ -1,6 +1,21 @@
 'use client'
-// Stub — real renderer lands in Task 25.
+
 import type { RendererProps } from '../FieldRenderer'
+
 export default function HeaderField({ field }: RendererProps) {
-  return <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{field.label}</div>
+  return (
+    <h3
+      style={{
+        fontSize: 14,
+        fontWeight: 600,
+        color: 'var(--c-text)',
+        marginTop: 16,
+        marginBottom: 4,
+        paddingBottom: 6,
+        borderBottom: '1px solid var(--c-border)',
+      }}
+    >
+      {field.label}
+    </h3>
+  )
 }

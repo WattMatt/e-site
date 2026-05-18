@@ -1,6 +1,24 @@
 'use client'
-// Stub — real renderer lands in Task 25.
+
 import type { RendererProps } from '../FieldRenderer'
+
 export default function ComputedField({ field }: RendererProps) {
-  return <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{field.label}</div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-text-dim)' }}>
+        {field.label}
+      </label>
+      <div
+        style={{
+          fontSize: 11,
+          fontStyle: 'italic',
+          color: 'var(--c-text-dim)',
+          fontFamily: 'var(--font-mono)',
+        }}
+        title={field.formula}
+      >
+        (computed: {field.formula ?? 'n/a'})
+      </div>
+    </div>
+  )
 }

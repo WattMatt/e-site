@@ -1,6 +1,131 @@
 'use client'
-// Stub — real renderer lands in Task 25.
+
 import type { RendererProps } from '../FieldRenderer'
-export default function FileField({ field }: RendererProps) {
-  return <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{field.label}</div>
+import { useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
+
+interface FileItem {
+  id: string
+  storage_path: string
+  signed_url?: string
+  filename: string
+}
+
+export default function FileField({ field, inspectionId, sectionId, readOnly }: RendererProps) {
+  const supabase = createClient()
+  const [files, setFiles] = useState<FileItem[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (supabase as any)
+        .schema('inspections')
+        .from('attachments')
+        .select('id, storage_path, filename')
+        .eq('inspection_id', inspectionId)
+        .eq('section_id', sectionId)
+        .eq('field_id', field.field_id)
+      if (cancelled) return
+      const rows = (data ?? []) as FileItem[]
+      const withUrls = await Promise.all(
+        rows.map(async (f) => {
+          const { data: sig } = await supabase.storage
+            .from('inspection-attachments')
+            .createSignedUrl(f.storage_path, 3600)
+          return { ...f, signed_url: sig?.signedUrl }
+        }),
+      )
+      if (!cancelled) setFiles(withUrls)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [supabase, inspectionId, sectionId, field.field_id])
+
+  const onUpload = async (file: File) => {
+    setUploading(true)
+    setError(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('inspectionId', inspectionId)
+      fd.append('sectionId', sectionId)
+      fd.append('fieldId', field.field_id)
+      const res = await fetch('/api/inspections/upload-file', { method: 'POST', body: fd })
+      if (!res.ok) {
+        const t = await res.text()
+        throw new Error(`Upload failed (HTTP ${res.status}): ${t}`)
+      }
+      const { id, storage_path, filename } = (await res.json()) as {
+        id: string
+        storage_path: string
+        filename: string
+      }
+      const { data: sig } = await supabase.storage
+        .from('inspection-attachments')
+        .createSignedUrl(storage_path, 3600)
+      setFiles((prev) => [...prev, { id, storage_path, filename, signed_url: sig?.signedUrl }])
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-text)' }}>
+        {field.label}
+        {field.required && <span style={{ color: 'var(--c-red)', marginLeft: 4 }}>*</span>}
+      </label>
+      {field.help_text && (
+        <p style={{ fontSize: 11, color: 'var(--c-text-dim)', margin: 0 }}>{field.help_text}</p>
+      )}
+      <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {files.map(
+          (f) =>
+            f.signed_url && (
+              <li key={f.id}>
+                <a
+                  href={f.signed_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline' }}
+                >
+                  {f.filename}
+                </a>
+              </li>
+            ),
+        )}
+      </ul>
+      {!readOnly && (
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '8px 12px',
+            border: '1px dashed var(--c-border)',
+            borderRadius: 6,
+            cursor: 'pointer',
+            fontSize: 12,
+            color: 'var(--c-text-dim)',
+            maxWidth: 200,
+          }}
+        >
+          {uploading ? 'Uploading…' : '+ Add file'}
+          <input
+            type="file"
+            accept=".pdf,.docx,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            style={{ display: 'none' }}
+            onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
+          />
+        </label>
+      )}
+      {error && <p style={{ fontSize: 11, color: 'var(--c-red)', margin: 0 }}>{error}</p>}
+    </div>
+  )
 }
