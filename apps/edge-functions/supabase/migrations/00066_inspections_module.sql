@@ -214,10 +214,32 @@ CREATE TABLE inspections.coc_number_seqs (
 -- 10. RLS helper functions
 -- ============================================================================
 
+-- public.user_has_project_access — true iff caller is a project_member of _project_id
+-- AND active in that project's organisation. SECURITY DEFINER so it can read
+-- projects.project_members + public.user_organisations without triggering RLS.
+CREATE OR REPLACE FUNCTION public.user_has_project_access(_project_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+SET search_path = public
+SET row_security = off
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM projects.project_members pm
+        JOIN public.user_organisations uo
+          ON uo.user_id = pm.user_id
+         AND uo.organisation_id = pm.organisation_id
+        WHERE pm.project_id = _project_id
+          AND pm.user_id = auth.uid()
+          AND uo.is_active = TRUE
+    )
+$$;
+
 CREATE OR REPLACE FUNCTION inspections.user_can_verify(_project_id UUID) RETURNS BOOLEAN
   LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
   SELECT EXISTS (
-    SELECT 1 FROM public.project_members pm
+    SELECT 1 FROM projects.project_members pm
     JOIN public.user_organisations uo
       ON uo.user_id = pm.user_id AND uo.organisation_id = pm.organisation_id
     WHERE pm.project_id = _project_id
@@ -238,7 +260,7 @@ CREATE OR REPLACE FUNCTION inspections.user_can_write_responses(_inspection_id U
   LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
   SELECT EXISTS (
     SELECT 1 FROM inspections.inspections i
-    JOIN public.project_members pm ON pm.project_id = i.project_id AND pm.user_id = auth.uid()
+    JOIN projects.project_members pm ON pm.project_id = i.project_id AND pm.user_id = auth.uid()
     JOIN public.user_organisations uo
       ON uo.user_id = auth.uid() AND uo.organisation_id = i.organisation_id
     WHERE i.id = _inspection_id
@@ -251,7 +273,7 @@ CREATE OR REPLACE FUNCTION inspections.user_has_inspection_read(_inspection_id U
   LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
   SELECT EXISTS (
     SELECT 1 FROM inspections.inspections i
-    JOIN public.project_members pm ON pm.project_id = i.project_id AND pm.user_id = auth.uid()
+    JOIN projects.project_members pm ON pm.project_id = i.project_id AND pm.user_id = auth.uid()
     JOIN public.user_organisations uo
       ON uo.user_id = auth.uid() AND uo.organisation_id = i.organisation_id
     WHERE i.id = _inspection_id
