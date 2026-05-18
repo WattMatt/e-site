@@ -87,31 +87,37 @@ async function processOne(item: PendingAttachment): Promise<void> {
       .upload(remotePath, bytes, { contentType, upsert: false })
     if (upErr) throw upErr
 
+    // The generated Database type doesn't enumerate the `inspections` schema
+    // yet (it isn't in packages/db/src/types.ts at the time of this commit),
+    // so we cast to any here. Regenerating Database types in a follow-up will
+    // let us drop the cast.
+    const supa = supabase as unknown as {
+      schema: (s: string) => {
+        from: (t: string) => {
+          insert: (payload: Record<string, unknown>) => Promise<{ error: { message: string } | null }>
+        }
+      }
+    }
+
     if (item.bucket === 'inspection-photos') {
-      const { error: insErr } = await supabase
-        .schema('inspections')
-        .from('photos')
-        .insert({
-          inspection_id: item.inspection_id,
-          section_id: item.section_id,
-          field_id: item.field_id,
-          storage_path: remotePath,
-          caption: item.caption,
-        } as never)
-      if (insErr) throw insErr
+      const { error: insErr } = await supa.schema('inspections').from('photos').insert({
+        inspection_id: item.inspection_id,
+        section_id: item.section_id,
+        field_id: item.field_id,
+        storage_path: remotePath,
+        caption: item.caption,
+      })
+      if (insErr) throw new Error(insErr.message)
     } else if (item.bucket === 'inspection-signatures') {
-      const { error: insErr } = await supabase
-        .schema('inspections')
-        .from('signatures')
-        .insert({
-          inspection_id: item.inspection_id,
-          role: item.signature_role,
-          signatory_name: item.signatory_name,
-          signatory_title: item.signatory_title,
-          registration_number: item.registration_number,
-          storage_path: remotePath,
-        } as never)
-      if (insErr) throw insErr
+      const { error: insErr } = await supa.schema('inspections').from('signatures').insert({
+        inspection_id: item.inspection_id,
+        role: item.signature_role,
+        signatory_name: item.signatory_name,
+        signatory_title: item.signatory_title,
+        registration_number: item.registration_number,
+        storage_path: remotePath,
+      })
+      if (insErr) throw new Error(insErr.message)
     }
     // 'inspection-attachments' bucket: upload only, no metadata row in v1.
 

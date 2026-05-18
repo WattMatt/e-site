@@ -102,7 +102,7 @@ export async function pendingCount(): Promise<number> {
   const rs = await powerSyncDb.execute(
     `SELECT COUNT(*) AS c FROM attachment_uploads WHERE status IN ('pending','failed')`,
   )
-  const row = (rs.rows?._array?.[0] ?? rs.rows?.[0]) as { c?: number } | undefined
+  const row = firstRow<{ c: number }>(rs)
   return row?.c ?? 0
 }
 
@@ -112,10 +112,7 @@ export async function nextPending(): Promise<PendingAttachment | null> {
      WHERE status='pending' OR (status='failed' AND retry_count < 5)
      ORDER BY created_at ASC LIMIT 1`,
   )
-  const row =
-    (rs.rows?._array?.[0] as PendingAttachment | undefined) ??
-    ((rs.rows as any)?.[0] as PendingAttachment | undefined)
-  return row ?? null
+  return firstRow<PendingAttachment>(rs) ?? null
 }
 
 export async function markDone(id: string): Promise<void> {
@@ -144,8 +141,19 @@ export async function lookupProjectId(inspectionId: string): Promise<string | nu
     `SELECT project_id FROM inspections WHERE id = ? LIMIT 1`,
     [inspectionId],
   )
-  const row =
-    (rs.rows?._array?.[0] as { project_id?: string | null } | undefined) ??
-    ((rs.rows as any)?.[0] as { project_id?: string | null } | undefined)
-  return row?.project_id ?? null
+  return firstRow<{ project_id: string | null }>(rs)?.project_id ?? null
+}
+
+// PowerSync's QueryResult exposes `rows._array` at runtime but isn't typed
+// that way; tolerate the unknown index shape via a tiny helper.
+function firstRow<T>(rs: { rows?: unknown }): T | undefined {
+  const r = rs.rows as { _array?: unknown[] } | unknown[] | undefined
+  if (!r) return undefined
+  if (Array.isArray((r as { _array?: unknown[] })._array)) {
+    return ((r as { _array: unknown[] })._array[0] as T) ?? undefined
+  }
+  if (Array.isArray(r)) {
+    return (r[0] as T) ?? undefined
+  }
+  return undefined
 }
