@@ -13,6 +13,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf
 import QRCode from 'qrcode'
 import type { EnrichedCable, ExportPayload } from './export-payload'
 import { stampPdfDraft } from './export-watermark'
+import { aggregateCostByMaterialKey } from './cost-aggregation'
 
 const A4_W = 595.28
 const A4_H = 841.89
@@ -562,48 +563,12 @@ function drawCostPage(
 
   // Aggregate by (size, conductor) — Cu and Al at the same size have
   // distinct rates and must total separately.
-  const totalsByKey = new Map<
-    string,
-    { size: number; conductor: 'CU' | 'AL'; totalLength: number; terms: number }
-  >()
-  for (const c of payload.cables) {
-    const len = c.confirmed_length_m ?? c.measured_length_m ?? 0
-    const key = `${c.size_mm2}|${c.conductor}`
-    const agg = totalsByKey.get(key) ?? {
-      size: c.size_mm2,
-      conductor: c.conductor,
-      totalLength: 0,
-      terms: 0,
-    }
-    agg.totalLength += len
-    agg.terms += 2
-    totalsByKey.set(key, agg)
-  }
-  // Include cost-line keys with no matching cables so unused rates still show.
-  for (const l of payload.costLines) {
-    const key = `${l.size_mm2}|${l.conductor}`
-    if (!totalsByKey.has(key)) {
-      totalsByKey.set(key, {
-        size: l.size_mm2,
-        conductor: l.conductor,
-        totalLength: 0,
-        terms: 0,
-      })
-    }
-  }
-  const sortedKeys = [...totalsByKey.keys()].sort((a, b) => {
-    const [sa, ca] = a.split('|')
-    const [sb, cb] = b.split('|')
-    const sn = Number(sa) - Number(sb)
-    if (sn !== 0) return sn
-    return ca.localeCompare(cb)
-  })
+  const sortedAggregates = aggregateCostByMaterialKey(payload.cables, payload.costLines)
 
   let materialsTotal = 0
   let zebra = false
-  for (const key of sortedKeys) {
+  for (const agg of sortedAggregates) {
     if (y < 200) break // leave room for totals
-    const agg = totalsByKey.get(key)!
     // Prefer exact (size, conductor) match; fall back to size-only for
     // pre-migration-00061 data where every cost_lines row defaulted to CU.
     const line =
@@ -611,7 +576,8 @@ function drawCostPage(
         (l) => l.size_mm2 === agg.size && l.conductor === agg.conductor,
       ) ?? payload.costLines.find((l) => l.size_mm2 === agg.size)
     const len = agg.totalLength
-    const terms = agg.terms
+    // 2 terminations per cable (one at each end)
+    const terms = agg.count * 2
     const supply = line?.supply_rate_per_m ?? 0
     const install = line?.install_rate_per_m ?? 0
     const termRate = line?.termination_rate_each ?? 0

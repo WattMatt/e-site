@@ -18,6 +18,7 @@
 
 import ExcelJS from 'exceljs'
 import type { ExportPayload, EnrichedCable } from './export-payload'
+import { aggregateCostByMaterialKey } from './cost-aggregation'
 import { stampExcelDraft } from './export-watermark'
 
 const WM_AMBER = 'FFE69500'
@@ -392,56 +393,18 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
   })
   ws.getRow(3).height = 22
 
-  // Aggregate length + termination-count by (size, conductor) — conductor-aware
-  // since migration 00061 (cost_lines.conductor split for Cu vs Al pricing).
-  // Pre-migration cost_lines rows lack the conductor column; fallback below.
-  interface CostAgg {
-    size: number
-    conductor: 'CU' | 'AL'
-    totalLength: number
-    terms: number
-  }
-  const totalsByKey = new Map<string, CostAgg>()
-  for (const c of payload.cables) {
-    const key = `${c.size_mm2}|${c.conductor}`
-    const agg = totalsByKey.get(key) ?? {
-      size: c.size_mm2,
-      conductor: c.conductor,
-      totalLength: 0,
-      terms: 0,
-    }
-    agg.totalLength += effectiveLength(c) ?? 0
-    agg.terms += 2
-    totalsByKey.set(key, agg)
-  }
-
-  // Also seed keys from costLines so rows-with-rates but no cables still appear.
-  for (const l of payload.costLines) {
-    const key = `${l.size_mm2}|${l.conductor}`
-    if (!totalsByKey.has(key)) {
-      totalsByKey.set(key, {
-        size: l.size_mm2,
-        conductor: l.conductor,
-        totalLength: 0,
-        terms: 0,
-      })
-    }
-  }
+  // Aggregate length by (size, conductor) — conductor-aware since
+  // migration 00061 (cost_lines.conductor split for Cu vs Al pricing).
+  // Pre-migration cost_lines rows lack the conductor column; size-only
+  // fallback in the rate lookup below.
+  const sortedAggregates = aggregateCostByMaterialKey(payload.cables, payload.costLines)
 
   let rowIdx = 4
   let grandTotal = 0
-  // Sort by size ascending, then conductor (AL before CU alphabetically).
-  // Al rows render above Cu at same size for visual grouping.
-  const sortedKeys = [...totalsByKey.keys()].sort((a, b) => {
-    const [sa, ca] = a.split('|')
-    const [sb, cb] = b.split('|')
-    const sn = Number(sa) - Number(sb)
-    if (sn !== 0) return sn
-    return ca.localeCompare(cb)
-  })
 
-  for (const key of sortedKeys) {
-    const agg = totalsByKey.get(key)!
+  for (const agg of sortedAggregates) {
+    // 2 terminations per cable (one at each end)
+    const terms = agg.count * 2
     // Pre-migration-tolerant cost_lines lookup: match (size, conductor) first;
     // fall back to size-only for legacy rows missing the conductor column.
     const line =
@@ -452,7 +415,7 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
     const installRate = Number(line?.install_rate_per_m ?? 0)
     const termRate = Number(line?.termination_rate_each ?? 0)
     const lineTotal =
-      agg.totalLength * (supplyRate + installRate) + agg.terms * termRate
+      agg.totalLength * (supplyRate + installRate) + terms * termRate
     grandTotal += lineTotal
 
     ws.getCell(`A${rowIdx}`).value = agg.size
@@ -460,7 +423,7 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
     ws.getCell(`C${rowIdx}`).value = agg.totalLength
     ws.getCell(`D${rowIdx}`).value = supplyRate
     ws.getCell(`E${rowIdx}`).value = installRate
-    ws.getCell(`F${rowIdx}`).value = agg.terms
+    ws.getCell(`F${rowIdx}`).value = terms
     ws.getCell(`G${rowIdx}`).value = termRate
     ws.getCell(`H${rowIdx}`).value = lineTotal
 

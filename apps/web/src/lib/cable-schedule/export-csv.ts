@@ -13,6 +13,7 @@
  */
 
 import type { ExportPayload } from './export-payload'
+import { aggregateCostByMaterialKey } from './cost-aggregation'
 
 const NL = '\r\n' // Windows-style — Excel + LibreOffice both happy
 
@@ -201,44 +202,19 @@ function costCsv(payload: ExportPayload): string {
   ]
   const lines = [header.join(',')]
 
-  type Agg = { size: number; conductor: 'CU' | 'AL'; totalLength: number; terms: number }
-  const aggs = new Map<string, Agg>()
-  const keyOf = (size: number, conductor: 'CU' | 'AL') => `${size}|${conductor}`
-
-  for (const c of payload.cables) {
-    const conductor = (c.conductor ?? 'CU') as 'CU' | 'AL'
-    const k = keyOf(c.size_mm2, conductor)
-    const existing = aggs.get(k) ?? { size: c.size_mm2, conductor, totalLength: 0, terms: 0 }
-    const len = c.confirmed_length_m ?? c.measured_length_m ?? 0
-    existing.totalLength += len
-    existing.terms += 2
-    aggs.set(k, existing)
-  }
-
-  // Seed cost_lines so rate-only rows (no cables yet) surface as zero-length
-  // entries — matches Excel (T1) + PDF (T2) shape.
-  for (const l of payload.costLines) {
-    const conductor = (l.conductor ?? 'CU') as 'CU' | 'AL'
-    const k = keyOf(l.size_mm2, conductor)
-    if (!aggs.has(k)) {
-      aggs.set(k, { size: l.size_mm2, conductor, totalLength: 0, terms: 0 })
-    }
-  }
-
-  const ordered = Array.from(aggs.values()).sort((a, b) => {
-    if (a.size !== b.size) return a.size - b.size
-    return a.conductor.localeCompare(b.conductor) // AL before CU
-  })
+  const ordered = aggregateCostByMaterialKey(payload.cables, payload.costLines)
 
   let materialsTotal = 0
   for (const agg of ordered) {
+    // 2 terminations per cable (one at each end)
+    const terms = agg.count * 2
     const line =
-      payload.costLines.find((l) => l.size_mm2 === agg.size && (l.conductor ?? 'CU') === agg.conductor) ??
+      payload.costLines.find((l) => l.size_mm2 === agg.size && l.conductor === agg.conductor) ??
       payload.costLines.find((l) => l.size_mm2 === agg.size)
     const supply = line?.supply_rate_per_m ?? 0
     const install = line?.install_rate_per_m ?? 0
     const termRate = line?.termination_rate_each ?? 0
-    const lineTotal = agg.totalLength * (supply + install) + agg.terms * termRate
+    const lineTotal = agg.totalLength * (supply + install) + terms * termRate
     materialsTotal += lineTotal
     lines.push(
       [
@@ -247,7 +223,7 @@ function costCsv(payload: ExportPayload): string {
         round2(agg.totalLength),
         round2(supply),
         round2(install),
-        agg.terms,
+        terms,
         round2(termRate),
         round2(lineTotal),
       ].map(esc).join(','),
