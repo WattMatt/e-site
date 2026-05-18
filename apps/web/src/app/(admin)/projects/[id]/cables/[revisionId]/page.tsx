@@ -602,40 +602,41 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         canEdit={revision.status === 'DRAFT'}
         sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
         boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
-      />
-
-      {cables.length === 0 ? (
-        <div className="data-panel">
-          <div
-            className="data-panel-empty"
-            style={{ padding: '48px 18px', textAlign: 'center' }}
-          >
-            ⚡ No cables in this revision yet.
-            <div style={{ fontSize: 13, color: 'var(--c-text-dim)', marginTop: 6 }}>
-              Build your <strong>Structure</strong> above (sources and boards), then use{' '}
-              <strong>+ Add cable</strong> to start the schedule. Cable rows auto-fill Ω/km +
-              base rating from the bundled SANS library. To bulk-load from an existing
-              workbook, use <strong>⬆ Import Excel</strong> from the revisions list.
+        addPanelDefaultOpen={cables.length === 0}
+      >
+        {cables.length === 0 ? (
+          <div className="data-panel">
+            <div
+              className="data-panel-empty"
+              style={{ padding: '48px 18px', textAlign: 'center' }}
+            >
+              ⚡ No cables in this revision yet.
+              <div style={{ fontSize: 13, color: 'var(--c-text-dim)', marginTop: 6 }}>
+                Build your <strong>Structure</strong> above (sources and boards), then use{' '}
+                <strong>+ Add cable</strong> below to start the schedule. Cable rows auto-fill Ω/km +
+                base rating from the bundled SANS library. To bulk-load from an existing
+                workbook, use <strong>⬆ Import Excel</strong> from the revisions list.
+              </div>
             </div>
           </div>
-        </div>
-      ) : (
-        <CableScheduleGrid
-          projectId={projectId}
-          revisionId={revisionId}
-          rows={rows}
-          runs={runs}
-          supplies={supplies as SupplyForCalc[]}
-          cables={cables as CableForCalc[]}
-          nodeOptions={[
-            ...sources.map((s) => ({ id: s.id, code: s.code, kind: 'source' as const })),
-            ...boards.map((b) => ({ id: b.id, code: b.code, kind: 'board' as const })),
-          ]}
-          locked={revision.status !== 'DRAFT'}
-          lengthMode={lengthMode}
-          canEdit={revision.status === 'DRAFT'}
-        />
-      )}
+        ) : (
+          <CableScheduleGrid
+            projectId={projectId}
+            revisionId={revisionId}
+            rows={rows}
+            runs={runs}
+            supplies={supplies as SupplyForCalc[]}
+            cables={cables as CableForCalc[]}
+            nodeOptions={[
+              ...sources.map((s) => ({ id: s.id, code: s.code, kind: 'source' as const })),
+              ...boards.map((b) => ({ id: b.id, code: b.code, kind: 'board' as const })),
+            ]}
+            locked={revision.status !== 'DRAFT'}
+            lengthMode={lengthMode}
+            canEdit={revision.status === 'DRAFT'}
+          />
+        )}
+      </StructureSection>
     </div>
   )
 }

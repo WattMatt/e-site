@@ -19,6 +19,8 @@ interface Props {
   feedFromKey?: string | null
   /** Called once the pre-seeded feed has been used (submitted) so the caller can clear it. */
   onFeedConsumed?: () => void
+  /** Open the panel on first render (e.g. when the revision is empty). Defaults to false. */
+  defaultOpen?: boolean
 }
 
 const SIZE_DEFAULTS = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400]
@@ -30,9 +32,9 @@ const BOARD_KIND_OPTIONS = [
   { value: 'CONSUMER_RMU', label: 'Consumer RMU' },
 ]
 
-export function AddEntityPanel({ revisionId, sources, boards, feedFromKey, onFeedConsumed }: Props) {
+export function AddEntityPanel({ revisionId, sources, boards, feedFromKey, onFeedConsumed, defaultOpen = false }: Props) {
   const router = useRouter()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)

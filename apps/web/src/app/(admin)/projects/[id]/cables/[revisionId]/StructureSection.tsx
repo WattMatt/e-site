@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { StructureTreeNode } from '@esite/shared'
 import { StructurePanel } from './StructurePanel'
 import { AddEntityPanel } from './AddEntityPanel'
@@ -13,14 +13,31 @@ interface Props {
   canEdit: boolean
   sources: NodeOption[]
   boards: NodeOption[]
+  /** Schedule grid (or empty-state) rendered between the structure tree and the Add-cable panel. */
+  children?: ReactNode
+  /** Auto-open the Add-cable panel on first render (e.g. when the revision has zero cables). */
+  addPanelDefaultOpen?: boolean
 }
 
 /**
  * Thin client wrapper that holds the shared "feed-from" state: clicking
  * "+ feed a board" on a tree node in StructurePanel pre-seeds the Add-cable
  * form's "From". page.tsx is a server component and can't hold this state.
+ *
+ * Layout: StructurePanel → {children: schedule grid} → AddEntityPanel. The
+ * Add-cable panel sits BELOW the grid so it's the natural next step after
+ * the engineer's eye lands on the (often empty) table.
  */
-export function StructureSection({ revisionId, roots, unfed, canEdit, sources, boards }: Props) {
+export function StructureSection({
+  revisionId,
+  roots,
+  unfed,
+  canEdit,
+  sources,
+  boards,
+  children,
+  addPanelDefaultOpen = false,
+}: Props) {
   const [feedFrom, setFeedFrom] = useState<string | null>(null)
   return (
     <>
@@ -31,6 +48,7 @@ export function StructureSection({ revisionId, roots, unfed, canEdit, sources, b
         canEdit={canEdit}
         onFeedBoard={(fromKey) => setFeedFrom(fromKey)}
       />
+      {children}
       {canEdit && (
         <AddEntityPanel
           revisionId={revisionId}
@@ -38,6 +56,7 @@ export function StructureSection({ revisionId, roots, unfed, canEdit, sources, b
           boards={boards}
           feedFromKey={feedFrom}
           onFeedConsumed={() => setFeedFrom(null)}
+          defaultOpen={addPanelDefaultOpen}
         />
       )}
     </>
