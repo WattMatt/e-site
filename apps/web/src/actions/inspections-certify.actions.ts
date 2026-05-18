@@ -15,10 +15,64 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { dispatchNotification } from '@/lib/notifications'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
+
+// ─── helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Returns the user_ids of all distinct contributors to an inspection,
+ * read from response_history (history-of-truth, captures every save).
+ */
+async function getInspectionContributors(
+  supabase: AnyClient,
+  inspectionId: string,
+): Promise<string[]> {
+  const { data } = await supabase
+    .schema('inspections')
+    .from('response_history')
+    .select('responded_by')
+    .eq('inspection_id', inspectionId)
+  return [
+    ...new Set(
+      ((data ?? []) as Array<{ responded_by: string }>)
+        .map((r) => r.responded_by)
+        .filter(Boolean),
+    ),
+  ]
+}
+
+/**
+ * Returns the user_ids of project_members whose org-level role is
+ * owner / admin / project_manager. Two-step query because PostgREST embed
+ * across `projects` and `public` schemas is unreliable (PGRST200 — see
+ * Session 22 cable-schedule notes).
+ */
+async function getProjectManagerIds(
+  supabase: AnyClient,
+  projectId: string,
+): Promise<string[]> {
+  const { data: members } = await supabase
+    .schema('projects')
+    .from('project_members')
+    .select('user_id')
+    .eq('project_id', projectId)
+  const memberIds = ((members ?? []) as Array<{ user_id: string }>)
+    .map((m) => m.user_id)
+    .filter(Boolean)
+  if (memberIds.length === 0) return []
+
+  const { data: roles } = await supabase
+    .from('user_organisations')
+    .select('user_id, role')
+    .in('user_id', memberIds)
+  return ((roles ?? []) as Array<{ user_id: string; role: string }>)
+    .filter((r) => ['owner', 'admin', 'project_manager'].includes(r.role))
+    .map((r) => r.user_id)
+}
 
 export interface CertifyInspectionInput {
   inspectionId: string
@@ -127,6 +181,28 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
     console.warn('render-inspection-pdf invocation failed:', (e as Error).message)
   }
 
+  // Best-effort notification fan-out to PMs + contributors. dispatchNotification
+  // is already never-throw; the outer try is defence-in-depth so cert state
+  // remains valid even if the recipient queries fail.
+  try {
+    const contributors = await getInspectionContributors(supabase, input.inspectionId)
+    const pms = await getProjectManagerIds(supabase, input.projectId)
+    const recipients = [...new Set([...contributors, ...pms].filter((id) => id !== user.id))]
+    if (recipients.length > 0) {
+      await dispatchNotification({
+        userIds: recipients,
+        title: 'Inspection certified',
+        body: `COC ${cocNumber} has been issued`,
+        route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
+        type: 'inspection_certified',
+        entityType: 'inspection',
+        entityId: input.inspectionId,
+      })
+    }
+  } catch (e) {
+    console.warn('certify notification dispatch failed:', (e as Error).message)
+  }
+
   revalidatePath(`/projects/${input.projectId}/inspections/${input.inspectionId}`)
   revalidatePath(`/projects/${input.projectId}/inspections`)
   return cocNumber
@@ -164,6 +240,26 @@ export async function sendBackForReinspectionAction(input: {
     .eq('status', 'awaiting_verification')
   if (error) throw error
 
+  // Notify all contributors that the inspection needs more work, with the
+  // verifier's notes. Verifier-self excluded (they wrote the notes).
+  try {
+    const contributors = await getInspectionContributors(supabase, input.inspectionId)
+    const recipients = contributors.filter((id) => id !== user.id)
+    if (recipients.length > 0) {
+      await dispatchNotification({
+        userIds: recipients,
+        title: 'Inspection sent back for re-inspection',
+        body: input.notes.trim().slice(0, 200),
+        route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
+        type: 'inspection_re_inspect_required',
+        entityType: 'inspection',
+        entityId: input.inspectionId,
+      })
+    }
+  } catch (e) {
+    console.warn('send-back notification dispatch failed:', (e as Error).message)
+  }
+
   revalidatePath(`/projects/${input.projectId}/inspections/${input.inspectionId}`)
   revalidatePath(`/projects/${input.projectId}/inspections`)
 }
@@ -193,6 +289,44 @@ export async function revokeCertificateAction(input: {
     })
     .eq('id', input.certificateId)
   if (error) throw error
+
+  // Notify verifier + PMs + contributors. The revoker is excluded so they
+  // don't get a self-notification for the action they just took.
+  try {
+    const { data: insp } = await supabase
+      .schema('inspections')
+      .from('inspections')
+      .select('verifier_id, coc_number')
+      .eq('id', input.inspectionId)
+      .single()
+    const verifierId = (insp as { verifier_id: string | null } | null)?.verifier_id ?? null
+    const cocNumber = (insp as { coc_number: string | null } | null)?.coc_number ?? null
+
+    const contributors = await getInspectionContributors(supabase, input.inspectionId)
+    const pms = await getProjectManagerIds(supabase, input.projectId)
+    const recipients = [
+      ...new Set(
+        [verifierId, ...contributors, ...pms]
+          .filter((id): id is string => Boolean(id))
+          .filter((id) => id !== user.id),
+      ),
+    ]
+    if (recipients.length > 0) {
+      await dispatchNotification({
+        userIds: recipients,
+        title: 'Certificate revoked',
+        body: cocNumber
+          ? `COC ${cocNumber} revoked: ${input.reason.trim().slice(0, 160)}`
+          : `Certificate revoked: ${input.reason.trim().slice(0, 200)}`,
+        route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
+        type: 'inspection_revoked',
+        entityType: 'inspection',
+        entityId: input.inspectionId,
+      })
+    }
+  } catch (e) {
+    console.warn('revoke notification dispatch failed:', (e as Error).message)
+  }
 
   revalidatePath(`/projects/${input.projectId}/inspections/${input.inspectionId}`)
 }
