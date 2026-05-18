@@ -1,11 +1,18 @@
 'use client'
 
 /**
- * CableFormDrawer — three-mode form drawer covering the explicit save/cancel
+ * CableFormDrawer — four-mode form drawer covering the explicit save/cancel
  * paths the inline EditableCell pattern can't (atomic multi-field edits,
  * cross-field validation, less-confident-user friendly, mobile-friendly).
  *
  * Modes:
+ *   • add-run      — create a NEW run (supply + its first cable strand) in one
+ *                    transaction. Engineer picks FROM (source or board) + TO
+ *                    (board) and the shared cable properties. C9 — symmetric
+ *                    with the other three modes so the engineer never leaves
+ *                    the drawer pattern. Subsequent parallel strands go
+ *                    through add-strand. Posts via addRunAction (thin wrapper
+ *                    over addParallelCableSetAction with count=1).
  *   • add-strand   — append a new parallel strand to an existing run (supply).
  *                    Defaults inherited from the run's head strand; engineer
  *                    overrides any field; one atomic INSERT via addCableAction.
@@ -26,18 +33,21 @@
  * (ConfirmedLengthEditor / LengthEditPopover) for the site-verifier flow.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-payload'
+import type { NodeOption } from './CableScheduleGrid'
 import {
   addCableAction,
+  addRunAction,
   updateCableAction,
   updateSupplyAction,
   updateRunCableFieldsAction,
 } from '@/actions/cable-entities.actions'
 
-type Mode = 'add-strand' | 'edit-strand' | 'edit-run'
+type Mode = 'add-run' | 'add-strand' | 'edit-strand' | 'edit-run'
 
 export type DrawerState =
+  | { mode: 'add-run'; revisionId: string; nodeOptions: NodeOption[] }
   | { mode: 'add-strand'; supplyId: string; run: EnrichedRun }
   | { mode: 'edit-strand'; cableId: string; strand: EnrichedCable; supplyId: string; runLabel: string }
   | { mode: 'edit-run'; supplyId: string; run: EnrichedRun }
@@ -61,11 +71,15 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
   const mode: Mode = state.mode
   // Narrow the discriminated union to per-mode locals — TS narrows correctly
   // inside the ternaries but not across uses of the captured `mode` variable.
-  const _run: EnrichedRun | null = state.mode === 'edit-strand' ? null : state.run
+  const _run: EnrichedRun | null =
+    state.mode === 'add-strand' || state.mode === 'edit-run' ? state.run : null
   const _strand: EnrichedCable | null = state.mode === 'edit-strand' ? state.strand : null
   const _cableId: string | null = state.mode === 'edit-strand' ? state.cableId : null
   const _runLabel: string | null = state.mode === 'edit-strand' ? state.runLabel : null
-  const _supplyId: string = state.supplyId
+  const _supplyId: string | null =
+    state.mode === 'add-run' ? null : state.supplyId
+  const _revisionId: string | null = state.mode === 'add-run' ? state.revisionId : null
+  const _nodeOptions: NodeOption[] = state.mode === 'add-run' ? state.nodeOptions : []
   // Re-export under their public names (the trailing `!` is safe inside the
   // mode-guarded code paths below — TS just can't infer cross-statement).
   const run = _run
@@ -73,30 +87,43 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
   const cableId = _cableId
   const runLabel = _runLabel
   const supplyId = _supplyId
-  const head: EnrichedCable = strand ?? run!.cables[0]
+  const revisionId = _revisionId
+  const nodeOptions = _nodeOptions
+  // `head` is only meaningful when we have a strand/run to inherit defaults
+  // from. add-run starts from cold defaults — guard with the non-null modes.
+  const head: EnrichedCable | null =
+    mode === 'add-run' ? null : (strand ?? run!.cables[0])
 
   // ── Form state ─────────────────────────────────────────────────────
-  // Shared cable fields (used by add-strand + edit-run).
-  const [sizeMm2, setSizeMm2] = useState<number>(head.size_mm2)
-  const [cores, setCores] = useState<EnrichedCable['cores']>(head.cores)
-  const [conductor, setConductor] = useState<EnrichedCable['conductor']>(head.conductor)
-  const [insulation, setInsulation] = useState<EnrichedCable['insulation']>(head.insulation)
-  const [installMethod, setInstallMethod] = useState<string>(head.installation_method ?? '')
-  const [depthMm, setDepthMm] = useState<string>(head.depth_mm == null ? '' : String(head.depth_mm))
-  const [groupedWith, setGroupedWith] = useState<number>(head.grouped_with)
-
-  // Per-strand fields (used by add-strand + edit-strand).
-  const [measuredLengthM, setMeasuredLengthM] = useState<string>(head.measured_length_m == null ? '' : String(head.measured_length_m))
-  const [ohmPerKmOverride, setOhmPerKmOverride] = useState<string>(
-    head.manual_override && head.ohm_per_km != null ? String(head.ohm_per_km) : '',
+  // Shared cable fields (used by add-run + add-strand + edit-run).
+  // add-run defaults — sensible for ~80% of LV jobs at WM: 4×16 mm² Cu XLPE
+  // direct in ground, grouped 1. Engineer overrides as needed.
+  const [sizeMm2, setSizeMm2] = useState<number>(head?.size_mm2 ?? 16)
+  const [cores, setCores] = useState<EnrichedCable['cores']>(head?.cores ?? '4')
+  const [conductor, setConductor] = useState<EnrichedCable['conductor']>(head?.conductor ?? 'CU')
+  const [insulation, setInsulation] = useState<EnrichedCable['insulation']>(head?.insulation ?? 'XLPE')
+  const [installMethod, setInstallMethod] = useState<string>(
+    head?.installation_method ?? (mode === 'add-run' ? 'DIRECT_IN_GROUND' : ''),
   )
-  const [tagOverride, setTagOverride] = useState<string>(head.tag_override ?? '')
-  const [notes, setNotes] = useState<string>(head.notes ?? '')
+  const [depthMm, setDepthMm] = useState<string>(
+    head?.depth_mm == null ? (mode === 'add-run' ? '800' : '') : String(head.depth_mm),
+  )
+  const [groupedWith, setGroupedWith] = useState<number>(head?.grouped_with ?? 1)
+
+  // Per-strand fields (used by add-run + add-strand + edit-strand).
+  const [measuredLengthM, setMeasuredLengthM] = useState<string>(
+    head?.measured_length_m == null ? '' : String(head.measured_length_m),
+  )
+  const [ohmPerKmOverride, setOhmPerKmOverride] = useState<string>(
+    head?.manual_override && head?.ohm_per_km != null ? String(head.ohm_per_km) : '',
+  )
+  const [tagOverride, setTagOverride] = useState<string>(head?.tag_override ?? '')
+  const [notes, setNotes] = useState<string>(head?.notes ?? '')
   const [ambientTempC, setAmbientTempC] = useState<number>(
     mode === 'edit-strand' ? strand!.ambient_temp_c : 30,
   )
 
-  // Supply-level fields (used by edit-run only).
+  // Supply-level fields (used by add-run + edit-run).
   const initSupply = mode === 'edit-run' ? run! : null
   const [voltageV, setVoltageV] = useState<number>(initSupply?.voltage_v ?? 400)
   const [designLoadA, setDesignLoadA] = useState<string>(
@@ -105,6 +132,13 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
   const [section, setSection] = useState<'NORMAL' | 'EMERGENCY' | ''>(
     (initSupply?.section as 'NORMAL' | 'EMERGENCY' | null) ?? '',
   )
+
+  // FROM / TO selectors (add-run only). FROM accepts any source or board;
+  // TO is a board only (matches the supplies-table CHECK constraint).
+  const fromOptions = useMemo(() => nodeOptions, [nodeOptions])
+  const toOptions = useMemo(() => nodeOptions.filter((n) => n.kind === 'board'), [nodeOptions])
+  const [fromNodeId, setFromNodeId] = useState<string>('')
+  const [toNodeId, setToNodeId] = useState<string>('')
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -137,9 +171,21 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
     if (ohmPerKmOverride !== '' && (isNaN(Number(ohmPerKmOverride)) || Number(ohmPerKmOverride) <= 0)) {
       errs.ohmPerKmOverride = 'Must be positive (leave blank for SANS auto-lookup)'
     }
-    if (mode === 'edit-run') {
-      if (designLoadA !== '' && (isNaN(Number(designLoadA)) || Number(designLoadA) < 0)) {
-        errs.designLoadA = 'Must be a non-negative number'
+    if (mode === 'add-run' || mode === 'edit-run') {
+      if (designLoadA === '' || isNaN(Number(designLoadA)) || Number(designLoadA) <= 0) {
+        errs.designLoadA = mode === 'add-run'
+          ? 'Design load required (A)'
+          : 'Must be a positive number'
+      }
+    }
+    if (mode === 'add-run') {
+      if (!fromNodeId) errs.fromNodeId = 'FROM (source or board) required'
+      if (!toNodeId) errs.toNodeId = 'TO (board) required'
+      // installation method has no '' option for add-run — but guard anyway.
+      if (!installMethod) errs.installMethod = 'Installation method required'
+      // Self-loop guard — board to itself isn't a valid supply.
+      if (fromNodeId && toNodeId && fromNodeId === toNodeId) {
+        errs.toNodeId = 'TO must be different from FROM'
       }
     }
     return errs
@@ -161,9 +207,37 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
       const tagVal = tagOverride.trim() || null
       const notesVal = notes.trim() || null
 
-      if (mode === 'add-strand') {
+      if (mode === 'add-run') {
+        // Resolve FROM kind from the picked node so we set fromSourceId XOR
+        // fromBoardId per the supplies-table CHECK constraint.
+        const fromOpt = fromOptions.find((o) => o.id === fromNodeId)
+        if (!fromOpt) { setError('FROM node not found'); return }
+        const res = await addRunAction({
+          revisionId: revisionId!,
+          fromSourceId: fromOpt.kind === 'source' ? fromNodeId : null,
+          fromBoardId: fromOpt.kind === 'board' ? fromNodeId : null,
+          toBoardId: toNodeId,
+          voltageV,
+          designLoadA: Number(designLoadA),
+          section: section === '' ? null : section,
+          sizeMm2,
+          cores,
+          conductor,
+          insulation,
+          armour: 'SWA',
+          measuredLengthM: measVal,
+          installationMethod: installVal as
+            | 'DIRECT_IN_GROUND' | 'DUCT' | 'LADDER' | 'TRAY' | 'CLIPPED',
+          depthMm: depthVal,
+          groupedWith,
+          ambientTempC,
+          thermalResistivityKmw: 1.0,
+          ohmPerKmOverride: ohmVal,
+        })
+        if (res.error) { setError(res.error); return }
+      } else if (mode === 'add-strand') {
         const res = await addCableAction({
-          supplyId: supplyId,
+          supplyId: supplyId!,
           sizeMm2,
           cores,
           conductor,
@@ -197,13 +271,13 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
         const designLoadVal = designLoadA === '' ? undefined : Number(designLoadA)
         const [supplyRes, fanRes] = await Promise.all([
           updateSupplyAction({
-            supplyId: supplyId,
+            supplyId: supplyId!,
             voltageV,
             designLoadA: designLoadVal,
             section: sectionVal,
           }),
           updateRunCableFieldsAction({
-            supplyId: supplyId,
+            supplyId: supplyId!,
             patch: {
               sizeMm2,
               cores,
@@ -231,6 +305,7 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
   }
 
   const header = (() => {
+    if (mode === 'add-run') return 'Add run (new supply + first strand)'
     if (mode === 'add-strand') return `Add strand to run ${run!.from_label} → ${run!.to_label}`
     if (mode === 'edit-strand') return `Edit strand #${strand!.cable_no} — ${runLabel}`
     return `Edit run ${run!.from_label} → ${run!.to_label} · ×${run!.parallel_count} strand${run!.parallel_count !== 1 ? 's' : ''}`
@@ -238,15 +313,17 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
 
   const submitLabel = (() => {
     if (saving) return 'Saving…'
+    if (mode === 'add-run') return '+ Create run'
     if (mode === 'add-strand') return 'Add strand'
     if (mode === 'edit-strand') return 'Save changes'
     return `Apply to all ${run!.parallel_count} strand${run!.parallel_count !== 1 ? 's' : ''}`
   })()
 
   // Field visibility flags.
-  const showSharedCableFields = mode === 'add-strand' || mode === 'edit-run'
-  const showPerStrandFields = mode === 'add-strand' || mode === 'edit-strand'
-  const showSupplyFields = mode === 'edit-run'
+  const showFromToFields = mode === 'add-run'
+  const showSharedCableFields = mode === 'add-run' || mode === 'add-strand' || mode === 'edit-run'
+  const showPerStrandFields = mode === 'add-run' || mode === 'add-strand' || mode === 'edit-strand'
+  const showSupplyFields = mode === 'add-run' || mode === 'edit-run'
 
   return (
     <div
@@ -279,6 +356,29 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
 
         {/* Body — scrollable */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {showFromToFields && (
+            <FieldGroup title="Route">
+              <Row label="From (source or board)" error={validationErrors.fromNodeId}>
+                <select className="ob-input" value={fromNodeId} onChange={(e) => setFromNodeId(e.target.value)} disabled={saving}>
+                  <option value="">— Pick origin —</option>
+                  {fromOptions.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.code} {n.kind === 'source' ? '(source)' : '(board)'}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+              <Row label="To (board)" error={validationErrors.toNodeId} hint={toOptions.length === 0 ? 'No boards in this revision yet — add one in Structure above.' : undefined}>
+                <select className="ob-input" value={toNodeId} onChange={(e) => setToNodeId(e.target.value)} disabled={saving || toOptions.length === 0}>
+                  <option value="">— Pick destination —</option>
+                  {toOptions.map((n) => (
+                    <option key={n.id} value={n.id}>{n.code}</option>
+                  ))}
+                </select>
+              </Row>
+            </FieldGroup>
+          )}
+
           {showSupplyFields && (
             <FieldGroup title="Supply">
               <Row label="Voltage (V)" error={validationErrors.voltageV}>
@@ -298,7 +398,13 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
           )}
 
           {showSharedCableFields && (
-            <FieldGroup title={mode === 'edit-run' ? `Shared cable properties (applies to all ${run!.parallel_count} strand${run!.parallel_count !== 1 ? 's' : ''})` : 'Cable properties'}>
+            <FieldGroup title={
+              mode === 'edit-run'
+                ? `Shared cable properties (applies to all ${run!.parallel_count} strand${run!.parallel_count !== 1 ? 's' : ''})`
+                : mode === 'add-run'
+                  ? 'Cable properties (first strand)'
+                  : 'Cable properties'
+            }>
               <Row label="Size (mm²)" error={validationErrors.sizeMm2}>
                 <select className="ob-input" value={sizeMm2} onChange={(e) => setSizeMm2(Number(e.target.value))} disabled={saving}>
                   {SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -319,7 +425,7 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
                   <option value="XLPE">XLPE</option><option value="PVC">PVC</option><option value="PILC">PILC</option>
                 </select>
               </Row>
-              <Row label="Installation method">
+              <Row label="Installation method" error={validationErrors.installMethod}>
                 <select className="ob-input" value={installMethod} onChange={(e) => setInstallMethod(e.target.value)} disabled={saving}>
                   <option value="">— None —</option>
                   <option value="DIRECT_IN_GROUND">Direct in ground</option>
@@ -344,7 +450,16 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
           )}
 
           {showPerStrandFields && (
-            <FieldGroup title={mode === 'add-strand' ? 'This strand' : 'Strand'}>
+            <FieldGroup title={
+              mode === 'add-run' ? 'First strand'
+                : mode === 'add-strand' ? 'This strand'
+                : 'Strand'
+            }>
+              {mode === 'add-run' && (
+                <Row label="Measured length (m)" error={validationErrors.measuredLengthM} hint="Optional — leave blank to start UNMEASURED.">
+                  <input className="ob-input" type="number" step="0.1" min={0} value={measuredLengthM} onChange={(e) => setMeasuredLengthM(e.target.value)} disabled={saving} />
+                </Row>
+              )}
               {mode === 'add-strand' && (
                 <Row label="Measured length (m)" error={validationErrors.measuredLengthM} hint="Defaults to head strand's length — adjust if this strand has a different route.">
                   <input className="ob-input" type="number" step="0.1" min={0} value={measuredLengthM} onChange={(e) => setMeasuredLengthM(e.target.value)} disabled={saving} />
@@ -358,15 +473,19 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
               <Row label="Ω/km manual override" hint="Leave blank to use SANS auto-lookup." error={validationErrors.ohmPerKmOverride}>
                 <input className="ob-input" type="number" step="any" min={0} value={ohmPerKmOverride} onChange={(e) => setOhmPerKmOverride(e.target.value)} disabled={saving} placeholder="(auto)" />
               </Row>
-              <Row label="Tag override" hint="Leave blank to use the auto-generated tag (FROM-TO-size-strand)">
-                <input className="ob-input" type="text" maxLength={40} value={tagOverride} onChange={(e) => setTagOverride(e.target.value)} disabled={saving} />
-              </Row>
+              {mode !== 'add-run' && (
+                <Row label="Tag override" hint="Leave blank to use the auto-generated tag (FROM-TO-size-strand)">
+                  <input className="ob-input" type="text" maxLength={40} value={tagOverride} onChange={(e) => setTagOverride(e.target.value)} disabled={saving} />
+                </Row>
+              )}
               <Row label="Ambient temp (°C)">
                 <input className="ob-input" type="number" step="1" value={ambientTempC} onChange={(e) => setAmbientTempC(Number(e.target.value) || 30)} disabled={saving} />
               </Row>
-              <Row label="Notes">
-                <textarea className="ob-input" maxLength={2000} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={saving} />
-              </Row>
+              {mode !== 'add-run' && (
+                <Row label="Notes">
+                  <textarea className="ob-input" maxLength={2000} rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={saving} />
+                </Row>
+              )}
             </FieldGroup>
           )}
 

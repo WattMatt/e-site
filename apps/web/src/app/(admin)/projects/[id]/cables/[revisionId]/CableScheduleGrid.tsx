@@ -545,6 +545,17 @@ export function CableScheduleGrid({
             🔒 READ-ONLY (revision issued)
           </span>
         )}
+        {canEdit && !locked && (
+          <button
+            type="button"
+            className="btn-primary-amber"
+            onClick={() => setDrawer({ mode: 'add-run', revisionId, nodeOptions })}
+            title="Add a new run (supply + first cable strand) via the drawer"
+            style={{ marginLeft: 'auto' }}
+          >
+            + Add run
+          </button>
+        )}
       </div>
 
       <div className="data-panel" style={{ overflowX: 'auto', overflowY: 'visible' }}>

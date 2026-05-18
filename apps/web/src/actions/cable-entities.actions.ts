@@ -507,6 +507,77 @@ export async function addParallelCableSetAction(
   return { supplyId, createdCount: effectiveCount }
 }
 
+// ─── add-run drawer (C9) ────────────────────────────────────────────
+//
+// Thin wrapper over addParallelCableSetAction tuned for the CableFormDrawer's
+// add-run mode (the 4th mode added in C9 — symmetric with add-strand /
+// edit-strand / edit-run). Creates one supply + its first cable strand in a
+// single call. Subsequent strands go through add-strand.
+//
+// Exactly one of fromSourceId / fromBoardId must be set (the supply schema
+// enforces this with a CHECK constraint, but we surface a friendlier error
+// here). DRAFT-only + role gating live inside addParallelCableSetAction.
+
+const addRunSchema = z.object({
+  revisionId: uuid,
+  fromSourceId: uuid.nullable().optional(),
+  fromBoardId: uuid.nullable().optional(),
+  toBoardId: uuid,
+  voltageV: z.number().positive(),
+  designLoadA: z.number().positive(),
+  section: z.enum(['NORMAL', 'EMERGENCY']).nullable().optional(),
+  sizeMm2: z.number().positive(),
+  cores: z.enum(['3', '3+E', '4']),
+  conductor: z.enum(['CU', 'AL']),
+  insulation: z.enum(['PVC', 'XLPE', 'PILC']),
+  armour: z.enum(['SWA', 'UNARMOURED']).nullable().optional(),
+  measuredLengthM: z.number().nonnegative().nullable().optional(),
+  installationMethod: z.enum(['DIRECT_IN_GROUND', 'DUCT', 'LADDER', 'TRAY', 'CLIPPED']),
+  depthMm: z.number().int().positive().nullable().optional(),
+  groupedWith: z.number().int().positive().default(1),
+  ambientTempC: z.number().default(30),
+  thermalResistivityKmw: z.number().default(1.0),
+  ohmPerKmOverride: z.number().positive().nullable().optional(),
+})
+
+export async function addRunAction(
+  input: z.infer<typeof addRunSchema>,
+): Promise<{ supplyId?: string; error?: string }> {
+  const parsed = addRunSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const d = parsed.data
+
+  // FROM exactly-one guard (mirrors the supplies table CHECK constraint with a
+  // friendlier message than the DB error would produce).
+  const hasSource = !!d.fromSourceId
+  const hasBoard = !!d.fromBoardId
+  if (hasSource === hasBoard) {
+    return { error: 'FROM must be exactly one source or one board.' }
+  }
+
+  return addParallelCableSetAction({
+    revisionId: d.revisionId,
+    fromSourceId: d.fromSourceId ?? null,
+    fromBoardId: d.fromBoardId ?? null,
+    toBoardId: d.toBoardId,
+    voltageV: d.voltageV,
+    designLoadA: d.designLoadA,
+    section: d.section ?? null,
+    count: 1, // add-run = supply + first strand; parallels via add-strand
+    sizeMm2: d.sizeMm2,
+    cores: d.cores,
+    conductor: d.conductor,
+    insulation: d.insulation,
+    armour: d.armour ?? 'SWA',
+    measuredLengthM: d.measuredLengthM ?? null,
+    installationMethod: d.installationMethod,
+    depthMm: d.depthMm ?? null,
+    ambientTempC: d.ambientTempC,
+    thermalResistivityKmw: d.thermalResistivityKmw,
+    ohmPerKmOverride: d.ohmPerKmOverride ?? null,
+  }).then((r) => r.error ? { error: r.error } : { supplyId: r.supplyId })
+}
+
 // ─── cables ──────────────────────────────────────────────────────────
 
 const cableSchema = z.object({
