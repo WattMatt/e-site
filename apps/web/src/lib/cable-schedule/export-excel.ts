@@ -33,7 +33,9 @@ export async function renderScheduleWorkbook(
   wb.title = `${payload.project.name} — ${payload.revision.code} cable schedule`
 
   buildScheduleSheet(wb, payload)
-  buildCostSheet(wb, payload)
+  // Cost sheet omitted entirely for redacted (client_viewer) exports —
+  // see redactPayloadCost in export-role.ts.
+  if (!payload.costRedacted) buildCostSheet(wb, payload)
   buildFactsSheet(wb, payload)
   buildHistorySheet(wb, payload)
 

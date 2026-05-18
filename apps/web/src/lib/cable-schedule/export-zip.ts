@@ -39,7 +39,9 @@ export async function renderRevisionZip(
   if (csv) {
     csv.file('schedule.csv', renderCsv('schedule', payload))
     csv.file('tags.csv', renderCsv('tags', payload))
-    csv.file('cost.csv', renderCsv('cost', payload))
+    // Cost CSV omitted entirely for redacted (client_viewer) exports —
+    // README explains the omission. See redactPayloadCost in export-role.ts.
+    if (!payload.costRedacted) csv.file('cost.csv', renderCsv('cost', payload))
     csv.file('change_log.csv', renderCsv('change_log', payload))
   }
 
@@ -62,6 +64,7 @@ function buildReadme(payload: ExportPayload, stem: string): string {
   } else {
     statusLine = 'ISSUED revision — frozen snapshot.'
   }
+  const redacted = !!payload.costRedacted
   return [
     `CABLE SCHEDULE — REVISION PACK`,
     ``,
@@ -77,16 +80,22 @@ function buildReadme(payload: ExportPayload, stem: string): string {
     ``,
     `Contents`,
     `--------`,
-    `${stem}.xlsx     — Excel workbook (4 sheets):`,
+    `${stem}.xlsx     — Excel workbook (${redacted ? '3' : '4'} sheets):`,
     `                    • CABLE SCHEDULE — one row per run; Parallel column for strand count`,
-    `                    • COST SUMMARY — supply + install + termination rates per (size, conductor)`,
+    ...(redacted
+      ? []
+      : [`                    • COST SUMMARY — supply + install + termination rates per (size, conductor)`]),
     `                    • FACTS AND FIGURES — calc audit reference`,
     `                    • REVISION HISTORY — change_log entries`,
     `${stem}.pdf      — Revision pack: cover + landscape schedule (Cu/Al sections)`,
-    `                    + cost page + tag pages with QR codes (10-up)`,
+    redacted
+      ? `                    + tag pages with QR codes (10-up)`
+      : `                    + cost page + tag pages with QR codes (10-up)`,
     `csv/schedule.csv — One row per RUN (= supply). Parallel strands under parallel_count column.`,
     `csv/tags.csv     — One row per (cable, end). 2 per cable.`,
-    `csv/cost.csv     — Cost rows per (size, conductor) + materials/VAT/grand-total trailer.`,
+    ...(redacted
+      ? []
+      : [`csv/cost.csv     — Cost rows per (size, conductor) + materials/VAT/grand-total trailer.`]),
     `csv/change_log.csv — Per-entity audit trail.`,
     ``,
     `Notes`,
@@ -95,12 +104,19 @@ function buildReadme(payload: ExportPayload, stem: string): string {
     `• Cu = copper, Al = aluminium. Mixed-metal projects price each conductor`,
     `  separately (Al is typically ~30% the price of Cu at the same size).`,
     `• ${statusLine}`,
+    ...(redacted
+      ? [`• Cost data omitted — your role does not permit cost export.`]
+      : []),
     ``,
-    `Cost calc:`,
-    `  Materials = Σ ((supply_rate + install_rate) × total_length) per (size, conductor)`,
-    `              + Σ (terminations × termination_rate)`,
-    `  Grand total = Materials × (1 + VAT/100)`,
-    `  VAT for this revision: ${vatPct}%`,
-    ``,
+    ...(redacted
+      ? []
+      : [
+          `Cost calc:`,
+          `  Materials = Σ ((supply_rate + install_rate) × total_length) per (size, conductor)`,
+          `              + Σ (terminations × termination_rate)`,
+          `  Grand total = Materials × (1 + VAT/100)`,
+          `  VAT for this revision: ${vatPct}%`,
+          ``,
+        ]),
   ].join('\r\n')
 }

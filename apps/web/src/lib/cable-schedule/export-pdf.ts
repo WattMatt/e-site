@@ -43,7 +43,9 @@ export async function renderRevisionPdf(payload: ExportPayload): Promise<Uint8Ar
 
   drawCoverPage(pdf, payload, helv, helvB, helvI)
   drawSchedulePages(pdf, payload, helv, helvB)
-  drawCostPage(pdf, payload, helv, helvB)
+  // Cost page omitted entirely for redacted (client_viewer) exports —
+  // see redactPayloadCost in export-role.ts.
+  if (!payload.costRedacted) drawCostPage(pdf, payload, helv, helvB)
   await drawTagPages(pdf, payload, helv, helvB)
 
   return pdf.save()

@@ -94,11 +94,13 @@ export async function getExportPolicy(
 /**
  * Strip cost data from an ExportPayload for client_viewer exports.
  *
- * - Empties `costLines` (drives the COST SUMMARY xlsx sheet, the PDF cost
- *   page, and the `?type=cost` CSV variant — all three render empty when
- *   the array is empty).
- * - Nulls `revision.vat_pct` so renderers don't surface a VAT % that's
- *   meaningless without rate context.
+ * Sets `costRedacted: true` so each renderer's cost section can short-
+ * circuit entirely (otherwise the renderers derive the BoM — sizes ×
+ * lengths × terminations — from `cables` and emit a fully-itemised
+ * bill with R0 rates, leaking contract scale through quantities).
+ *
+ * Also empties `costLines` and nulls `revision.vat_pct` as a defence-
+ * in-depth measure for any future renderer that forgets the flag check.
  *
  * Schedule / tag / change_log content is unaffected — client_viewers can
  * still see what cables exist, just not what they cost.
@@ -106,6 +108,7 @@ export async function getExportPolicy(
 export function redactPayloadCost<T extends ExportPayload>(payload: T): T {
   return {
     ...payload,
+    costRedacted: true,
     costLines: [],
     revision: { ...payload.revision, vat_pct: null },
   }

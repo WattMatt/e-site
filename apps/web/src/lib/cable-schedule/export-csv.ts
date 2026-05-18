@@ -136,6 +136,12 @@ function tagsCsv(payload: ExportPayload): string {
 }
 
 function costCsv(payload: ExportPayload): string {
+  // Redacted (client_viewer) exports return a single-line notice rather
+  // than an empty body — empty file looks like a bug. See redactPayloadCost
+  // in export-role.ts. Schedule / tags / change_log variants are unaffected.
+  if (payload.costRedacted) {
+    return 'REDACTED,Cost data not available for your role.' + NL
+  }
   const header = [
     'size_mm2',
     'conductor',

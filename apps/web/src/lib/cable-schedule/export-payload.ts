@@ -16,6 +16,15 @@ import {
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 export interface ExportPayload {
+  /**
+   * True when this payload has been passed through `redactPayloadCost`
+   * (client_viewer exports). Renderers MUST short-circuit their cost
+   * sections when this is set — emptying `costLines` alone is not enough,
+   * because the renderers derive the BoM (sizes × lengths × terminations)
+   * from `cables` and would otherwise emit a fully-itemised bill with
+   * R0 rates. Defaults to `false` in `getRevisionExportPayload`.
+   */
+  costRedacted?: boolean
   project: {
     id: string
     name: string
@@ -567,6 +576,7 @@ export async function getRevisionExportPayload(
   })) as ExportPayload['changeLog']
 
   return {
+    costRedacted: false,
     project: projectRow as ExportPayload['project'],
     revision: {
       id: revisionAny.id,
