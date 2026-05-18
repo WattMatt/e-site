@@ -67,6 +67,7 @@ export async function PaymentStatusBanner() {
   return (
     <div
       role="alert"
+      className="payment-status-banner"
       style={{
         display: 'flex',
         alignItems: 'flex-start',

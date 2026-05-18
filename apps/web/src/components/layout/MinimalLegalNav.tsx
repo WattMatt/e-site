@@ -7,6 +7,7 @@ import Link from 'next/link'
 export function MinimalLegalNav() {
   return (
     <div
+      className="minimal-legal-nav"
       style={{
         borderTop: '1px solid var(--c-border)',
         padding: '12px 24px',

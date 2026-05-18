@@ -178,7 +178,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
 
   return (
     <div className="animate-fadeup">
-      <div style={{ marginBottom: 16 }}>
+      <div className="no-print" style={{ marginBottom: 16 }}>
         <Link
           href={`/projects/${projectId}/cables/${revisionId}`}
           style={{
@@ -188,6 +188,27 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
         >
           ← {revision.code} · {project.name}
         </Link>
+      </div>
+
+      {/* Print-only header — gives the printed schedule a proper title +
+          context block. Replaces the screen page-header (which carries
+          action buttons that shouldn't print). */}
+      <div
+        className="print-only"
+        style={{
+          marginBottom: 18,
+          paddingBottom: 8,
+          borderBottom: '0.5pt solid #707070',
+          fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+        }}
+      >
+        <div style={{ fontSize: '12pt', fontWeight: 700, letterSpacing: '0.08em' }}>
+          CABLE TAG SCHEDULE
+        </div>
+        <div style={{ fontSize: '9pt', color: '#4a4a4a', marginTop: 3 }}>
+          {project.name} · {revision.code} ({revision.status}) · {cables.length} cable{cables.length !== 1 ? 's' : ''} · {rowsAll.length} tag{rowsAll.length !== 1 ? 's' : ''}
+          {filter === 'unprinted' && <> · filtered to unprinted</>}
+        </div>
       </div>
 
       <div className="page-header no-print">
@@ -218,11 +239,14 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
         </div>
       ) : (
         <>
-          {/* Print-path hint — keep close to the table so it's the first thing
-              a user looking for a print button sees. The admin layout chrome
-              makes browser Cmd-P unusable, so we route them to the PDF export
-              which is purpose-built for the 10-up A4 tag-page layout. */}
+          {/* Print-path hint — two valid outputs, this clarifies the choice.
+              "Print sheet" button (TagControls) triggers window.print() which
+              now produces a clean tag-schedule table thanks to the project-
+              wide @media print rules in globals.css. The PDF export is the
+              different output: a 10-up Critchley-style tag-card layout with
+              QR codes, generated server-side via pdf-lib. */}
           <div
+            className="no-print"
             style={{
               margin: '0 0 14px',
               padding: '10px 14px',
@@ -233,7 +257,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
               lineHeight: 1.5,
             }}
           >
-            🖨  <strong style={{ color: 'var(--c-text)' }}>To print tags:</strong> use the revision page's <strong>Export → PDF</strong> menu. The PDF includes a dedicated 10-up A4 tag-page section with QR codes — clean layout, no browser chrome. (In-app browser print isn't supported here; an Avery-spec label-sheet export is on the roadmap.)
+            🖨  <strong style={{ color: 'var(--c-text)' }}>Two print outputs:</strong> <em>Print sheet</em> (above) → clean A4 tag-schedule list, useful as a site checklist. <em>Export → PDF</em> (from the revision page) → 10-up tag-card layout with QR codes for fabrication. An Avery-spec label-sheet export is on the roadmap.
           </div>
           {/* Screen view: table */}
           <div className="data-panel" style={{ overflowX: 'auto' }}>

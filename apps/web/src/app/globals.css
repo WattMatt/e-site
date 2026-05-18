@@ -998,3 +998,58 @@ body {
   0%   { background-position: 100% 0; }
   100% { background-position: -100% 0; }
 }
+
+/* ─── Print rules (project-wide) ─────────────────────────────────
+   The (admin) layout wraps every page in sidebar + header + footer
+   chrome. Without these rules, browser Cmd-P (or window.print()
+   from any in-app "Print sheet" button) prints the entire app shell
+   alongside the content — unusable as a report or schedule output.
+   These rules hide the chrome and let the page content fill the
+   sheet on print only. Screen rendering is unaffected.
+
+   .no-print = hide on print (screen-only)
+   .print-only = hide on screen, show on print */
+.print-only { display: none; }
+
+@media print {
+  @page { size: A4 portrait; margin: 15mm; }
+
+  /* Hide the app chrome — sidebar, top header, status banners,
+     footer link strip, accessibility helpers. .no-print is the
+     per-page opt-out for ad-hoc elements (filter bars, action
+     buttons, screen-only diagnostics). */
+  .skip-link,
+  aside.sidebar,
+  .portal-header,
+  .payment-status-banner,
+  .minimal-legal-nav,
+  .no-print { display: none !important; }
+
+  /* Inverse of .no-print: elements that exist only for the printed
+     output (e.g. printable headers, page-context blocks). */
+  .print-only { display: block !important; }
+
+  /* Reset the shell + scroll containers so content flows naturally
+     across pages instead of being clipped to the on-screen viewport. */
+  html, body { background: #ffffff !important; color: #111 !important; }
+  .portal-shell { display: block !important; height: auto !important; overflow: visible !important; }
+  .portal-shell > div { display: block !important; height: auto !important; overflow: visible !important; min-width: 0 !important; }
+  .portal-main { padding: 0 !important; overflow: visible !important; }
+
+  /* Preserve background tints + borders that the screen design uses
+     for legibility (status badges, panel separators, etc.). Browsers
+     default to "economy" colour on print which can strip useful
+     contrast — this opts back in for the few colours that carry
+     meaning in our UI. */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+  /* Anchor styling — strip the bright web-link blue + underline that
+     browsers add on print, which is visual noise on a printed schedule. */
+  a, a:visited { color: inherit !important; text-decoration: none !important; }
+
+  /* Tables benefit from breaking between rows, not mid-row, on print. */
+  table { page-break-inside: auto; }
+  tr, td, th { page-break-inside: avoid; page-break-after: auto; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+}
