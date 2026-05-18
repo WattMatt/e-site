@@ -256,13 +256,18 @@ export async function getRevisionExportPayload(
     // column) and the inner retry drops back to the pre-00060 projection.
     // Same shape as the cost_lines.conductor tolerance below + the in-app
     // cost/page.tsx pattern (c2cfeb2). Mapper defaults vat_pct to null.
+    // The previous version of this query embedded `issued_by_profile:profiles!issued_by(full_name)`
+    // but PostgREST can't resolve that cross-schema FK (revisions lives in
+    // cable_schedule, profiles lives in public) and returned PGRST200 every
+    // time — silently masked by the route's <a download> failure shape. Now
+    // we read `issued_by` as a UUID and resolve names via a separate
+    // public.profiles batch query below.
     (async () => {
       const withVat = await (supabase as any)
         .schema('cable_schedule')
         .from('revisions')
         .select(
-          'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, vat_pct, ' +
-          'issued_by_profile:profiles!issued_by(full_name)',
+          'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, vat_pct, issued_by',
         )
         .eq('id', revisionId)
         .eq('project_id', projectId)
@@ -272,8 +277,7 @@ export async function getRevisionExportPayload(
           .schema('cable_schedule')
           .from('revisions')
           .select(
-            'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, ' +
-            'issued_by_profile:profiles!issued_by(full_name)',
+            'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, issued_by',
           )
           .eq('id', revisionId)
           .eq('project_id', projectId)
@@ -347,12 +351,14 @@ export async function getRevisionExportPayload(
       }
       return withConductor
     })(),
+    // Same cross-schema gotcha as the revisions query above: changed_by is
+    // a UUID into public.profiles which PostgREST can't embed from the
+    // cable_schedule profile. Read the raw UUID; resolve to a name below.
     (supabase as any)
       .schema('cable_schedule')
       .from('change_log')
       .select(
-        'id, entity_type, entity_id, field_name, old_value, new_value, reason, changed_at, ' +
-        'changed_by_profile:profiles!changed_by(full_name)',
+        'id, entity_type, entity_id, field_name, old_value, new_value, reason, changed_at, changed_by',
       )
       .eq('revision_id', revisionId)
       .order('changed_at', { ascending: true }),
@@ -560,8 +566,33 @@ export async function getRevisionExportPayload(
   })
 
   const revisionAny = revisionRow as any
-  const issuedByName =
-    revisionAny.issued_by_profile?.full_name?.trim?.() || null
+
+  // Batched cross-schema profile resolution. Replaces the embedded
+  // PostgREST joins above which failed PGRST200 because cable_schedule
+  // can't resolve FKs into public.profiles. Collect every distinct UUID
+  // referenced by issued_by + changed_by, look them all up in one round
+  // trip, map to full_name. Profiles RLS still applies — UUIDs the
+  // caller can't see resolve to null which keeps the existing "By: -"
+  // fallback semantics in the renderers.
+  const profileIds = new Set<string>()
+  if (revisionAny.issued_by) profileIds.add(revisionAny.issued_by)
+  for (const r of (changeLogData ?? []) as any[]) {
+    if (r.changed_by) profileIds.add(r.changed_by)
+  }
+  const nameByProfileId = new Map<string, string | null>()
+  if (profileIds.size > 0) {
+    const { data: profiles } = await (supabase as any)
+      .schema('public')
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', Array.from(profileIds))
+    for (const p of (profiles ?? []) as Array<{ id: string; full_name: string | null }>) {
+      nameByProfileId.set(p.id, p.full_name?.trim?.() || null)
+    }
+  }
+  const issuedByName = revisionAny.issued_by
+    ? nameByProfileId.get(revisionAny.issued_by) ?? null
+    : null
 
   const changeLog = ((changeLogData ?? []) as any[]).map((r) => ({
     id: r.id,
@@ -571,7 +602,9 @@ export async function getRevisionExportPayload(
     old_value: r.old_value,
     new_value: r.new_value,
     reason: r.reason,
-    changed_by_name: r.changed_by_profile?.full_name?.trim?.() || null,
+    changed_by_name: r.changed_by
+      ? nameByProfileId.get(r.changed_by) ?? null
+      : null,
     changed_at: r.changed_at,
   })) as ExportPayload['changeLog']
 
