@@ -117,7 +117,12 @@ describe('evaluateInspection', () => {
     expect(r.overallResult).toBe('fail');
   });
 
-  it('does not require hidden fields', () => {
+  it('hidden required fields are not flagged as missing', () => {
+    // When `has_x` is answered false, the conditional `x_value` field is hidden.
+    // A hidden required field should NOT appear in missingRequired (the inspector
+    // can't fill it in if it's not visible). `has_x` itself fails (answered no),
+    // so overallResult is 'fail' — but for the *right* reason (has_x failed),
+    // not because x_value was wrongly required.
     const t2: Template = {
       ...template,
       sections: [{
@@ -129,8 +134,78 @@ describe('evaluateInspection', () => {
     };
     const responses: Response[] = [{ section_id: 's', field_id: 'has_x', value_bool: false }];
     const r = evaluateInspection(t2, responses);
-    expect(r.missingRequired).toHaveLength(0);
-    expect(r.overallResult).toBe('pass');
+    expect(r.missingRequired).toHaveLength(0);          // x_value not required (hidden)
+    expect(r.visibleFieldCount).toBe(1);                 // only has_x visible
+    expect(r.failedFields).toHaveLength(1);              // has_x failed (answered no)
+    expect(r.failedFields[0].fieldId).toBe('has_x');
+    expect(r.overallResult).toBe('fail');                // because has_x is required+failed
+  });
+
+  it('reveals conditional required field when trigger flips on', () => {
+    const t2: Template = {
+      ...template,
+      sections: [{
+        section_id: 's', title: 'S', fields: [
+          { field_id: 'has_x', label: 'Has X?', type: 'pass_fail', required: true },
+          { field_id: 'x_value', label: 'X', type: 'number', required: true, conditional_on: { field_id: 'has_x', equals: true } },
+        ],
+      }],
+    };
+    // has_x = true reveals x_value, which is required and missing
+    const responses: Response[] = [{ section_id: 's', field_id: 'has_x', value_bool: true }];
+    const r = evaluateInspection(t2, responses);
+    expect(r.visibleFieldCount).toBe(2);
+    expect(r.missingRequired).toEqual([{ sectionId: 's', fieldId: 'x_value' }]);
+    expect(r.overallResult).toBe('fail');                // missing required → fail
+  });
+});
+
+describe('evaluateField — non-numeric / non-bool types', () => {
+  const baseResp = (fieldId: string) => ({ section_id: 's', field_id: fieldId });
+
+  it('text passes when filled, not_checked when empty', () => {
+    const f: Field = { field_id: 't', label: 'T', type: 'text' };
+    expect(evaluateField(f, { ...baseResp('t'), value_text: 'hi' }).passState).toBe('pass');
+    expect(evaluateField(f, baseResp('t')).passState).toBe('not_checked');
+  });
+
+  it('textarea passes when filled', () => {
+    const f: Field = { field_id: 't', label: 'T', type: 'textarea' };
+    expect(evaluateField(f, { ...baseResp('t'), value_text: 'long' }).passState).toBe('pass');
+  });
+
+  it('dropdown passes when selected', () => {
+    const f: Field = { field_id: 'd', label: 'D', type: 'dropdown', options: ['a','b'] };
+    expect(evaluateField(f, { ...baseResp('d'), value_text: 'a' }).passState).toBe('pass');
+  });
+
+  it('date passes when filled', () => {
+    const f: Field = { field_id: 'dt', label: 'DT', type: 'date' };
+    expect(evaluateField(f, { ...baseResp('dt'), value_text: '2026-05-18' }).passState).toBe('pass');
+  });
+
+  it('multi_select passes when any options selected, not_checked when empty array', () => {
+    const f: Field = { field_id: 'm', label: 'M', type: 'multi_select', options: ['a','b','c'] };
+    expect(evaluateField(f, { ...baseResp('m'), value_array: ['a','b'] }).passState).toBe('pass');
+    expect(evaluateField(f, { ...baseResp('m'), value_array: [] }).passState).toBe('not_checked');
+    expect(evaluateField(f, baseResp('m')).passState).toBe('not_checked');
+  });
+
+  it('photo / signature / file / header / computed return na (pass-state computed elsewhere)', () => {
+    for (const type of ['photo','signature','file','header','computed'] as const) {
+      const f: Field = { field_id: 'x', label: 'X', type };
+      expect(evaluateField(f, baseResp('x')).passState).toBe('na');
+    }
+  });
+
+  it('number with missing value returns not_checked', () => {
+    const f: Field = { field_id: 'n', label: 'N', type: 'number' };
+    expect(evaluateField(f, baseResp('n')).passState).toBe('not_checked');
+  });
+
+  it('number without pass_when passes when filled (advisory)', () => {
+    const f: Field = { field_id: 'n', label: 'N', type: 'number' };
+    expect(evaluateField(f, { ...baseResp('n'), value_number: 42 }).passState).toBe('pass');
   });
 });
 
