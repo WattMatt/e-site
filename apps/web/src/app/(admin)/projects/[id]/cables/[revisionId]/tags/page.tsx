@@ -159,9 +159,16 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
           // qr_payload retains the UUID bundle in the DB for any future
           // server-side scan resolver, but the printed QR exposes nothing
           // beyond what's already legible on the physical label.
+          //
+          // Wrap as a URL so phone-camera scans (iOS Camera / Android Lens)
+          // treat it as an actionable link instead of a search query. The
+          // /site/tag/[text] route is follow-up work — until it ships the
+          // scan will 404 on a known host, which is honest and recoverable.
           const qrText = r.tag!.tag_text || ''
           if (!qrText) return
-          const png = await QRCode.toDataURL(qrText, {
+          const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live').replace(/\/$/, '')
+          const qrUrl = `${siteUrl}/site/tag/${encodeURIComponent(qrText)}`
+          const png = await QRCode.toDataURL(qrUrl, {
             margin: 0, width: 96, errorCorrectionLevel: 'M',
           })
           qrByTagId.set(r.tag!.id, png)

@@ -773,14 +773,21 @@ async function drawTagPages(
       // gets only the tag text they can already read. The DB still holds
       // qr_payload with the UUID bundle for any future server-side scan
       // resolver.
+      //
+      // Wrap as a URL so phone-camera scans (iOS Camera / Android Lens)
+      // treat it as an actionable link instead of a search query. The
+      // /site/tag/[text] route is follow-up work — until it ships the
+      // scan will 404 on a known host, which is honest and recoverable.
       const qrText = tag.tag_text || ''
       if (!qrText) {
         // No tag text → skip QR; the visible tag-text print is empty too
         // so there's nothing meaningful to encode anyway.
         continue
       }
+      const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live').replace(/\/$/, '')
+      const qrUrl = `${siteUrl}/site/tag/${encodeURIComponent(qrText)}`
       try {
-        const qrBuffer = await QRCode.toBuffer(qrText, {
+        const qrBuffer = await QRCode.toBuffer(qrUrl, {
           type: 'png',
           errorCorrectionLevel: 'M',
           margin: 1,
