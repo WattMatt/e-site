@@ -4,7 +4,7 @@ import { Suspense } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import {
-  LayoutGrid, FolderOpen, AlertTriangle, BookOpen, ShieldCheck,
+  LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ClipboardList, ShoppingBag, Users, CreditCard,
   Settings, LogOut, Activity, Map, ClipboardCheck, ArrowLeft, Cloud,
   Wrench, Cable, BookMarked, HardHat,
@@ -52,7 +52,7 @@ function LogoMark() {
 const GLOBAL_NAV = [
   { href: '/dashboard',   label: 'Dashboard',   Icon: LayoutGrid },
   { href: '/projects',    label: 'Projects',    Icon: FolderOpen },
-  { href: '/compliance',  label: 'Compliance',  Icon: ShieldCheck },
+  { href: '/inspections', label: 'Inspections', Icon: ClipboardCheck },
   { href: '/marketplace', label: 'Marketplace', Icon: ShoppingBag },
 ] as const
 
@@ -64,6 +64,7 @@ function projectNav(id: string) {
     { href: `/rfis?projectId=${id}`,        label: 'RFIs',        Icon: MessageSquare, exact: false },
     { href: `/projects/${id}/schedule`,     label: 'Schedule',    Icon: Wrench,        exact: false },
     { href: `/projects/${id}/cables`,       label: 'Cables',      Icon: Cable,         exact: false },
+    { href: `/projects/${id}/inspections`,  label: 'Inspections', Icon: ClipboardCheck, exact: false },
     { href: `/procurement?projectId=${id}`, label: 'Procurement', Icon: ClipboardList, exact: false },
     { href: `/projects/${id}/floor-plans`,  label: 'Floor Plans', Icon: Map,           exact: false },
     { href: `/projects/${id}/handover`,     label: 'Handover',    Icon: ClipboardCheck, exact: false },
