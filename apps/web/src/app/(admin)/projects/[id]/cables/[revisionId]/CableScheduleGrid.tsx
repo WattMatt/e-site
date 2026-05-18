@@ -23,6 +23,7 @@ import {
   deleteCableAction,
   repointSupplyAction,
 } from '@/actions/cable-entities.actions'
+import { bulkUpdateCableLengthStatusAction } from '@/actions/cable-length.actions'
 
 const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
   .map((v) => ({ value: String(v), label: `${v} V` }))
@@ -198,6 +199,11 @@ export function CableScheduleGrid({
   const [repointing, setRepointing] = useState<{ supplyId: string; from: string; to: string; end: 'from' | 'to'; current: string } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
+  // C11 — selection model for bulk strand status update. Tracks individual
+  // cable ids (strands), not runs. Cleared on successful bulk action.
+  const [selectedCableIds, setSelectedCableIds] = useState<Set<string>>(new Set())
+  const [bulkSaving, setBulkSaving] = useState(false)
+  const [bulkError, setBulkError] = useState<string | null>(null)
   const router = useRouter()
   const [savingShared, setSavingShared] = useState<string | null>(null) // supply_id while a fan-out is in flight
   const [sharedError, setSharedError] = useState<{ supplyId: string; message: string } | null>(null)
@@ -502,6 +508,40 @@ export function CableScheduleGrid({
     })
   }
 
+  // C11 — selection helpers.
+  function toggleCableSelection(cableId: string): void {
+    setSelectedCableIds((cur) => {
+      const next = new Set(cur)
+      if (next.has(cableId)) next.delete(cableId)
+      else next.add(cableId)
+      return next
+    })
+  }
+
+  function clearSelection(): void {
+    setSelectedCableIds(new Set())
+    setBulkError(null)
+  }
+
+  async function bulkSetStatus(newStatus: 'UNMEASURED' | 'MEASURED' | 'CONFIRMED'): Promise<void> {
+    if (selectedCableIds.size === 0 || bulkSaving) return
+    setBulkSaving(true)
+    setBulkError(null)
+    const ids = Array.from(selectedCableIds)
+    const res = await bulkUpdateCableLengthStatusAction({
+      revisionId,
+      cableIds: ids,
+      newStatus,
+    })
+    setBulkSaving(false)
+    if (!res.ok) {
+      setBulkError(res.error)
+      return
+    }
+    clearSelection()
+    router.refresh()
+  }
+
   const totalStrands = useMemo(() => liveRuns.reduce((acc, r) => acc + r.parallel_count, 0), [liveRuns])
 
   return (
@@ -622,7 +662,7 @@ export function CableScheduleGrid({
                   background: run.parallel_count > 1 ? 'rgba(243, 178, 88, 0.04)' : undefined,
                 }}>
                   <Td align="center" style={{ padding: 0 }}>
-                    {isExpandable && (
+                    {isExpandable ? (
                       <button
                         type="button"
                         onClick={() => toggleExpand(run.supply_id)}
@@ -635,6 +675,18 @@ export function CableScheduleGrid({
                       >
                         {isExpanded ? '▾' : '▸'}
                       </button>
+                    ) : canEdit && !locked && (
+                      // Single-strand run = the run IS the cable. Surface
+                      // checkbox here so C11 selection works without forcing
+                      // a non-existent expand.
+                      <input
+                        type="checkbox"
+                        checked={selectedCableIds.has(head.id)}
+                        onChange={() => toggleCableSelection(head.id)}
+                        aria-label={`Select cable ${runLabel(run)} for bulk status update`}
+                        title="Select for bulk length-status update"
+                        style={{ cursor: 'pointer' }}
+                      />
                     )}
                   </Td>
                   <Td align="center" style={{ color: 'var(--c-text-dim)', fontSize: 10 }}>
@@ -878,7 +930,18 @@ export function CableScheduleGrid({
                   const sLen = activeLengthForCable(c, lengthMode)
                   return (
                     <tr key={`strand-${c.id}`} style={{ background: 'var(--c-base)', fontSize: 11 }}>
-                      <Td align="center" style={{ color: 'var(--c-text-dim)' }}>↳</Td>
+                      <Td align="center" style={{ color: 'var(--c-text-dim)', padding: 0 }}>
+                        {canEdit && !locked ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedCableIds.has(c.id)}
+                            onChange={() => toggleCableSelection(c.id)}
+                            aria-label={`Select strand #${c.cable_no} for bulk status update`}
+                            title="Select for bulk length-status update"
+                            style={{ cursor: 'pointer' }}
+                          />
+                        ) : '↳'}
+                      </Td>
                       <Td align="center" style={{ color: 'var(--c-text-dim)' }}>#{c.cable_no}</Td>
                       <Td />
                       <Td>
@@ -1034,6 +1097,83 @@ export function CableScheduleGrid({
             return res
           }}
         />
+      )}
+
+      {/* C11 — sticky bulk-action bar. Appears when any strand is selected. */}
+      {selectedCableIds.size > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk strand actions"
+          style={{
+            position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+            background: 'var(--c-panel)', border: '1px solid var(--c-amber)',
+            borderRadius: 6, padding: '10px 16px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            display: 'flex', alignItems: 'center', gap: 12, zIndex: 100,
+            fontFamily: 'var(--font-mono)', fontSize: 12, flexWrap: 'wrap', maxWidth: '92vw',
+          }}
+        >
+          <span style={{ color: 'var(--c-amber)', fontWeight: 700 }}>
+            {selectedCableIds.size} selected
+          </span>
+          <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>Mark as:</span>
+          <button
+            type="button"
+            onClick={() => bulkSetStatus('MEASURED')}
+            disabled={bulkSaving}
+            className="btn-primary-amber"
+            style={{ padding: '4px 12px', fontSize: 11, opacity: bulkSaving ? 0.5 : 1 }}
+          >
+            MEASURED
+          </button>
+          <button
+            type="button"
+            onClick={() => bulkSetStatus('CONFIRMED')}
+            disabled={bulkSaving}
+            style={{
+              background: 'var(--c-base)', border: '1px solid var(--c-border)',
+              color: 'var(--c-text)', borderRadius: 4, padding: '4px 12px',
+              fontFamily: 'var(--font-mono)', fontSize: 11, cursor: bulkSaving ? 'wait' : 'pointer',
+              opacity: bulkSaving ? 0.5 : 1,
+            }}
+          >
+            CONFIRMED
+          </button>
+          <button
+            type="button"
+            onClick={() => bulkSetStatus('UNMEASURED')}
+            disabled={bulkSaving}
+            style={{
+              background: 'var(--c-base)', border: '1px solid var(--c-border)',
+              color: 'var(--c-text-dim)', borderRadius: 4, padding: '4px 12px',
+              fontFamily: 'var(--font-mono)', fontSize: 11, cursor: bulkSaving ? 'wait' : 'pointer',
+              opacity: bulkSaving ? 0.5 : 1,
+            }}
+          >
+            UNMEASURED
+          </button>
+          <span style={{ color: 'var(--c-text-dim)' }}>|</span>
+          <button
+            type="button"
+            onClick={clearSelection}
+            disabled={bulkSaving}
+            style={{
+              background: 'transparent', border: 'none',
+              color: 'var(--c-text-mid)', padding: '4px 8px',
+              fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer',
+              textDecoration: 'underline',
+            }}
+          >
+            Clear
+          </button>
+          {bulkSaving && (
+            <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>Saving…</span>
+          )}
+          {bulkError && (
+            <span role="alert" style={{ color: '#dc2626', fontSize: 11 }}>
+              {bulkError}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )

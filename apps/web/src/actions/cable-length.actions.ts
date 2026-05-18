@@ -155,6 +155,90 @@ export async function updateMeasuredLengthAction(
   return { ok: true }
 }
 
+// ─── C11: Bulk strand length-status update ──────────────────────────
+// Engineer measures N cables on site, comes back to bulk-flip them
+// UNMEASURED → MEASURED (etc.) instead of editing each one. DRAFT-only.
+// All cable IDs are scoped to the given revisionId via .in() — an attempt
+// to bulk-edit cables from another revision is silently filtered (the
+// UPDATE just hits 0 rows). RLS already gates org membership.
+
+const bulkStatusSchema = z.object({
+  revisionId: uuid,
+  cableIds: z.array(uuid).min(1).max(500),
+  newStatus: z.enum(['UNMEASURED', 'MEASURED', 'CONFIRMED', 'DISCREPANCY']),
+})
+
+export async function bulkUpdateCableLengthStatusAction(
+  input: z.infer<typeof bulkStatusSchema>,
+): Promise<{ ok: true; updated: number } | { ok: false; error: string }> {
+  const parsed = bulkStatusSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // DRAFT-only gate — load the revision once.
+  const { data: rev } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id, organisation_id, project_id, status')
+    .eq('id', parsed.data.revisionId)
+    .single()
+  if (!rev) return { ok: false, error: 'Revision not found' }
+  if ((rev as any).status !== 'DRAFT') {
+    return { ok: false, error: 'Revision is ISSUED — start a new revision to edit lengths.' }
+  }
+  const r = rev as { id: string; organisation_id: string; project_id: string }
+
+  // Snapshot prior status values for change_log (split queries — we don't
+  // want to abandon the audit trail if it errors; the UPDATE still happens).
+  const { data: priorRows } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .select('id, length_status')
+    .eq('revision_id', parsed.data.revisionId)
+    .in('id', parsed.data.cableIds)
+  const priorById = new Map<string, string>(
+    ((priorRows ?? []) as Array<{ id: string; length_status: string }>).map((p) => [p.id, p.length_status]),
+  )
+
+  // Bulk UPDATE — scope to revisionId so a cross-revision id list cannot
+  // bleed across (RLS already blocks cross-org, this scopes within-org).
+  const { data: updated, error } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .update({ length_status: parsed.data.newStatus })
+    .eq('revision_id', parsed.data.revisionId)
+    .in('id', parsed.data.cableIds)
+    .select('id')
+  if (error) return { ok: false, error: error.message }
+
+  const updatedIds = ((updated ?? []) as Array<{ id: string }>).map((u) => u.id)
+
+  // Audit log — one row per actual status flip. Skip rows where the
+  // status didn't actually change (no-op flips don't deserve a log entry).
+  const events = updatedIds
+    .filter((id) => priorById.get(id) !== parsed.data.newStatus)
+    .map((id) => ({
+      revision_id: parsed.data.revisionId,
+      organisation_id: r.organisation_id,
+      entity_type: 'cable',
+      entity_id: id,
+      field_name: 'length_status',
+      old_value: priorById.get(id) ?? null,
+      new_value: parsed.data.newStatus,
+      reason: 'Bulk status update',
+      changed_by: user.id,
+    }))
+  if (events.length > 0) {
+    await (supabase as any).schema('cable_schedule').from('change_log').insert(events).catch(() => {})
+  }
+
+  revalidatePath(`/projects/${r.project_id}/cables/${parsed.data.revisionId}`)
+  return { ok: true, updated: updatedIds.length }
+}
+
 export async function updateConfirmedLengthAction(
   input: z.infer<typeof confirmedSchema>,
 ): Promise<{ ok?: true; error?: string; status?: string }> {
