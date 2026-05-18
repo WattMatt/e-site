@@ -15,10 +15,13 @@ const fieldSchema = z.object({
   options: z.array(z.string()).optional(),
   min_count: z.number().int().positive().optional(),
   max_count: z.number().int().positive().optional(),
-  conditional_on: z.object({
-    field_id: z.string(),
-    equals: z.union([z.string(), z.number(), z.boolean()]),
-  }).optional(),
+  conditional_on: z.union([
+    z.object({ field_id: z.string(), equals: z.union([z.string(), z.number(), z.boolean()]) }),
+    z.object({ field_id: z.string(), not_equals: z.union([z.string(), z.number(), z.boolean()]) }),
+    z.object({ field_id: z.string(), greater_than: z.number() }),
+    z.object({ field_id: z.string(), less_than: z.number() }),
+    z.object({ field_id: z.string(), in: z.array(z.union([z.string(), z.number()])).min(1) }),
+  ]).optional(),
   help_text: z.string().optional(),
   default_value: z.union([z.string(), z.number(), z.boolean()]).optional(),
   formula: z.string().optional(),

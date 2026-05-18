@@ -112,12 +112,35 @@ function evaluateMultiSelectThreshold(pw: string, vals: string[]): { passState: 
 
 export function isFieldVisible(field: Field, allResponses: Response[]): boolean {
   if (!field.conditional_on) return true;
-  const trigger = allResponses.find(r => r.field_id === field.conditional_on!.field_id);
+  const cond = field.conditional_on;
+  const trigger = allResponses.find(r => r.field_id === cond.field_id);
   if (!trigger) return false;
-  const target = field.conditional_on.equals;
-  if (typeof target === 'boolean') return trigger.value_bool === target;
-  if (typeof target === 'number') return trigger.value_number === target;
-  return trigger.value_text === target;
+
+  if ('equals' in cond) {
+    const target = cond.equals;
+    if (typeof target === 'boolean') return trigger.value_bool === target;
+    if (typeof target === 'number') return trigger.value_number === target;
+    return trigger.value_text === target;
+  }
+  if ('not_equals' in cond) {
+    const target = cond.not_equals;
+    if (typeof target === 'boolean') return trigger.value_bool !== target;
+    if (typeof target === 'number') return trigger.value_number !== target;
+    return trigger.value_text !== target;
+  }
+  if ('greater_than' in cond) {
+    return typeof trigger.value_number === 'number' && trigger.value_number > cond.greater_than;
+  }
+  if ('less_than' in cond) {
+    return typeof trigger.value_number === 'number' && trigger.value_number < cond.less_than;
+  }
+  if ('in' in cond) {
+    return cond.in.some(item =>
+      (typeof item === 'number' && trigger.value_number === item) ||
+      (typeof item === 'string' && trigger.value_text === item)
+    );
+  }
+  return false;
 }
 
 export interface InspectionAttachments {

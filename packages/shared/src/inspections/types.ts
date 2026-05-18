@@ -15,7 +15,12 @@ export type FieldType =
 export type NodeType = 'board' | 'source' | 'any';
 export type DeliverableType = 'coc' | 'inspection_only' | 'factory_test';
 
-export type ConditionalOn = { field_id: string; equals: string | number | boolean };
+export type ConditionalOn =
+  | { field_id: string; equals: string | number | boolean }
+  | { field_id: string; not_equals: string | number | boolean }
+  | { field_id: string; greater_than: number }
+  | { field_id: string; less_than: number }
+  | { field_id: string; in: (string | number)[] };
 
 export interface Field {
   field_id: string;

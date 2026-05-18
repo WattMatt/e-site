@@ -119,6 +119,40 @@ describe('isFieldVisible — conditional_on', () => {
   });
 });
 
+describe('isFieldVisible — extended conditional_on operators', () => {
+  it('not_equals: true — value false visible, value true hidden, trigger absent hidden', () => {
+    const f: Field = { field_id: 'x', label: 'X', type: 'number', conditional_on: { field_id: 'has_x', not_equals: true } };
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'has_x', value_bool: false }])).toBe(true);
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'has_x', value_bool: true }])).toBe(false);
+    expect(isFieldVisible(f, [])).toBe(false);
+  });
+
+  it('greater_than: 10 — 15 visible, 5 hidden, trigger absent hidden', () => {
+    const f: Field = { field_id: 'x', label: 'X', type: 'number', conditional_on: { field_id: 'amps', greater_than: 10 } };
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'amps', value_number: 15 }])).toBe(true);
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'amps', value_number: 5 }])).toBe(false);
+    expect(isFieldVisible(f, [])).toBe(false);
+  });
+
+  it('less_than: 100 — 50 visible, 150 hidden', () => {
+    const f: Field = { field_id: 'x', label: 'X', type: 'number', conditional_on: { field_id: 'volts', less_than: 100 } };
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'volts', value_number: 50 }])).toBe(true);
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'volts', value_number: 150 }])).toBe(false);
+  });
+
+  it('in [a,b] — value a visible, value c hidden', () => {
+    const f: Field = { field_id: 'x', label: 'X', type: 'number', conditional_on: { field_id: 'kind', in: ['a','b'] } };
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'kind', value_text: 'a' }])).toBe(true);
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'kind', value_text: 'c' }])).toBe(false);
+  });
+
+  it('in [1,2,3] numeric — value 2 visible, value 9 hidden', () => {
+    const f: Field = { field_id: 'x', label: 'X', type: 'number', conditional_on: { field_id: 'count', in: [1, 2, 3] } };
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'count', value_number: 2 }])).toBe(true);
+    expect(isFieldVisible(f, [{ section_id: 's', field_id: 'count', value_number: 9 }])).toBe(false);
+  });
+});
+
 describe('evaluateInspection', () => {
   const template: Template = {
     template_id: 'test', name: 'Test', version: '1.0',
