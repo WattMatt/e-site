@@ -325,3 +325,98 @@ export async function deleteDraftRevisionAction(
   if (r.project_id) revalidatePath(`/projects/${r.project_id}/cables`)
   return { ok: true }
 }
+
+/**
+ * Re-seed cost_lines for a DRAFT revision from the firm-wide rate_library.
+ *
+ * Useful when:
+ * - A new revision was created before the library was set up
+ * - A library entry was added/changed after revision creation
+ * - An engineer wants to discard project-specific tweaks
+ *
+ * Destructive: wipes existing cost_lines on the revision. DRAFT-only.
+ * UI wraps in confirm() before calling.
+ */
+export async function reseedCostLinesFromRateLibraryAction(
+  revisionId: string,
+): Promise<{ ok: true; seeded: number } | { ok: false; error: string }> {
+  if (!uuid.safeParse(revisionId).success) return { ok: false, error: 'Invalid id' }
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // Look up revision + project + organisation_id
+  const { data: rev } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id, status, project_id')
+    .eq('id', revisionId)
+    .maybeSingle()
+  if (!rev) return { ok: false, error: 'Revision not found' }
+  if ((rev as { status: string }).status !== 'DRAFT') {
+    return { ok: false, error: 'Re-seeding only allowed on DRAFT revisions' }
+  }
+  const revRow = rev as { id: string; status: string; project_id: string }
+
+  const { data: project } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('organisation_id')
+    .eq('id', revRow.project_id)
+    .maybeSingle()
+  if (!project) return { ok: false, error: 'Project not found' }
+  const orgId = (project as { organisation_id: string }).organisation_id
+
+  // Fetch rate library
+  const { data: libraryData } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('rate_library')
+    .select('size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
+    .eq('organisation_id', orgId)
+
+  const libraryEntries = (libraryData ?? []) as Array<{
+    size_mm2: number
+    conductor: 'CU' | 'AL'
+    supply_rate_per_m: number
+    install_rate_per_m: number
+    termination_rate_each: number
+  }>
+
+  if (libraryEntries.length === 0) {
+    return {
+      ok: false,
+      error: 'Rate library is empty for your organisation. Set rates first at /settings/cable-schedule/rates, then re-seed.',
+    }
+  }
+
+  // Wipe existing cost_lines
+  const { error: deleteErr } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cost_lines')
+    .delete()
+    .eq('revision_id', revisionId)
+  if (deleteErr) return { ok: false, error: `Failed to clear existing rates: ${deleteErr.message}` }
+
+  // Insert library rows
+  const rows = libraryEntries.map((e) => ({
+    revision_id: revisionId,
+    organisation_id: orgId,
+    size_mm2: e.size_mm2,
+    conductor: e.conductor,
+    supply_rate_per_m: e.supply_rate_per_m,
+    install_rate_per_m: e.install_rate_per_m,
+    termination_rate_each: e.termination_rate_each,
+    contingency_pct: null,
+    vat_pct: null,
+  }))
+
+  const { error: insertErr } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cost_lines')
+    .insert(rows)
+  if (insertErr) return { ok: false, error: `Failed to insert library rates: ${insertErr.message}` }
+
+  revalidatePath(`/projects/${revRow.project_id}/cables/${revisionId}/cost`)
+  return { ok: true, seeded: libraryEntries.length }
+}

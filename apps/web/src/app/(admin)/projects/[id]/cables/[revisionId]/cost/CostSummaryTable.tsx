@@ -7,6 +7,7 @@ import {
   updateCostLineAction,
   updateRevisionVatAction,
 } from '@/actions/cable-cost.actions'
+import { reseedCostLinesFromRateLibraryAction } from '@/actions/cable-revision.actions'
 
 export interface CostRow {
   id: string | null
@@ -52,6 +53,24 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
   const [, startTransition] = useTransition()
   const [ensuring, setEnsuring] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reseeding, setReseeding] = useState(false)
+  const [reseedMessage, setReseedMessage] = useState<string | null>(null)
+
+  function onReseed() {
+    if (!confirm('This will replace all current rates with the firm-wide library values. Continue?')) return
+    setReseedMessage(null)
+    setReseeding(true)
+    startTransition(async () => {
+      const r = await reseedCostLinesFromRateLibraryAction(revisionId)
+      setReseeding(false)
+      if (!r.ok) {
+        setReseedMessage(`✗ ${r.error}`)
+        return
+      }
+      setReseedMessage(`✓ Re-seeded ${r.seeded} rate${r.seeded !== 1 ? 's' : ''} from library`)
+      router.refresh()
+    })
+  }
 
   // Auto-ensure cost lines on mount when the user lands on the page for the
   // first time after creating cables.
@@ -95,6 +114,42 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
       )}
       {error && (
         <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{error}</div>
+      )}
+
+      {!locked && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+          <button
+            type="button"
+            onClick={onReseed}
+            disabled={reseeding}
+            title="Replace current rates with the firm-wide library values"
+            style={{
+              background: 'var(--c-panel)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-mid)',
+              borderRadius: 4,
+              padding: '6px 12px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              letterSpacing: '0.04em',
+              cursor: reseeding ? 'wait' : 'pointer',
+              opacity: reseeding ? 0.6 : 1,
+            }}
+          >
+            {reseeding ? 'Re-seeding…' : '↻ Re-seed from rate library'}
+          </button>
+          {reseedMessage && (
+            <span
+              role={reseedMessage.startsWith('✗') ? 'alert' : 'status'}
+              style={{
+                fontSize: 11,
+                color: reseedMessage.startsWith('✗') ? '#dc2626' : '#3DB882',
+              }}
+            >
+              {reseedMessage}
+            </span>
+          )}
+        </div>
       )}
 
       <div className="data-panel" style={{ overflowX: 'auto' }}>
