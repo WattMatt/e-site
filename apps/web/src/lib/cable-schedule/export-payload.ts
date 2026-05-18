@@ -294,12 +294,28 @@ export async function getRevisionExportPayload(
         'id, cable_id, end_position, tag_text, printed, printed_at, ' +
         'cable:cables!cable_id(revision_id)',
       ),
-    (supabase as any)
-      .schema('cable_schedule')
-      .from('cost_lines')
-      .select('id, size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
-      .eq('revision_id', revisionId)
-      .order('size_mm2'),
+    // conductor column landed in migration 00061. SELECT is tolerant —
+    // if the column isn't applied yet PostgREST returns 42703 (undefined
+    // column) and the inner retry drops back to the pre-00061 projection.
+    // The row mapper's `r.conductor ?? 'CU'` default handles the retry
+    // path. Same shape as the vat_pct tolerance in cost/page.tsx (c2cfeb2).
+    (async () => {
+      const withConductor = await (supabase as any)
+        .schema('cable_schedule')
+        .from('cost_lines')
+        .select('id, size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
+        .eq('revision_id', revisionId)
+        .order('size_mm2')
+      if (withConductor.error?.code === '42703') {
+        return await (supabase as any)
+          .schema('cable_schedule')
+          .from('cost_lines')
+          .select('id, size_mm2, supply_rate_per_m, install_rate_per_m, termination_rate_each')
+          .eq('revision_id', revisionId)
+          .order('size_mm2')
+      }
+      return withConductor
+    })(),
     (supabase as any)
       .schema('cable_schedule')
       .from('change_log')
@@ -551,7 +567,9 @@ export async function getRevisionExportPayload(
     costLines: (costData ?? []).map((r: any) => ({
       id: r.id,
       size_mm2: Number(r.size_mm2),
-      // Pre-migration-00061 rows lack the conductor column — default to CU.
+      // Default to CU on the retry path: when migration 00061 isn't
+      // applied yet the SELECT above strips the conductor column from
+      // the projection, so r.conductor is undefined here.
       conductor: (r.conductor ?? 'CU') as 'CU' | 'AL',
       supply_rate_per_m: Number(r.supply_rate_per_m ?? 0),
       install_rate_per_m: Number(r.install_rate_per_m ?? 0),
