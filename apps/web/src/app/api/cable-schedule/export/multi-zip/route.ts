@@ -6,18 +6,21 @@
  * Aggregate guard rails (separate from per-revision checkExportSize):
  *
  *   MAX_REVISIONS_PER_MULTI_ZIP
- *     A project with >20 ISSUED revisions is almost always a sign that
- *     someone wants a date-range bundle, not the whole history. 20
- *     revisions × per-revision render time (Excel + PDF + 3 CSVs) gets
- *     close to the Vercel serverless 60s timeout even on small revisions.
- *     If this fires, the right answer is usually to narrow the range
+ *     A project with >10 ISSUED revisions is almost always a sign that
+ *     someone wants a date-range bundle, not the whole history. Per-revision
+ *     render (Excel + PDF + 3 CSVs) runs sequentially at ~3–5s each, so
+ *     10 revisions sits comfortably under the Vercel serverless 60s
+ *     timeout. Per CLAUDE.md, real projects hold 5–15 issued revisions
+ *     over their lifecycle, so 10 covers nearly all valid cases.
+ *     Outliers get a clear 413 instead of an opaque timeout. If this
+ *     fires, the right answer is usually to narrow the range
  *     (TODO: ?since=YYYY-MM-DD) or upgrade the runtime.
  *
  * Memory shape: each rendered file lives in JSZip until generateAsync
  * compresses the whole archive at the end. Big projects can OOM the
  * 1 GB Vercel function. The per-revision MAX_CABLES_PER_PDF cap (300)
  * already bounds the per-file size; the revision-count cap above bounds
- * the count. Combined, the worst-case archive is ~20 × few-MB ≈ 50–80 MB
+ * the count. Combined, the worst-case archive is ~10 × few-MB ≈ 25–40 MB
  * which compresses comfortably.
  */
 
@@ -28,7 +31,7 @@ import { getExportPolicy } from '@/lib/cable-schedule/export-role'
 
 export const runtime = 'nodejs'
 
-const MAX_REVISIONS_PER_MULTI_ZIP = 20
+const MAX_REVISIONS_PER_MULTI_ZIP = 10
 
 export async function GET(req: NextRequest) {
   const projectId = req.nextUrl.searchParams.get('projectId')

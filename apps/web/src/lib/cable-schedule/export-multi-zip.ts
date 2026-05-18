@@ -82,6 +82,12 @@ export async function renderProjectAllRevisionsZip(
   for (const rev of candidates) {
     const raw = await getRevisionExportPayload(supabase, projectId, rev.id)
     if (!raw) {
+      console.warn('[multi-zip] payload load returned null', {
+        projectId,
+        revisionId: rev.id,
+        code: rev.code,
+        status: rev.status,
+      })
       skipped.push({
         code: rev.code,
         status: rev.status,
