@@ -7,6 +7,7 @@ import { AddEntityPanel } from './AddEntityPanel'
 import { type NodeOption } from './CableScheduleGrid'
 
 interface Props {
+  projectId: string
   revisionId: string
   roots: StructureTreeNode[]
   unfed: StructureTreeNode[]
@@ -29,6 +30,7 @@ interface Props {
  * the engineer's eye lands on the (often empty) table.
  */
 export function StructureSection({
+  projectId,
   revisionId,
   roots,
   unfed,
@@ -42,6 +44,7 @@ export function StructureSection({
   return (
     <>
       <StructurePanel
+        projectId={projectId}
         revisionId={revisionId}
         roots={roots}
         unfed={unfed}

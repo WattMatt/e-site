@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { StructureTreeNode } from '@esite/shared'
 import {
@@ -26,6 +27,7 @@ const TYPE_LABEL: Record<string, string> = Object.fromEntries(
 )
 
 interface Props {
+  projectId: string
   revisionId: string
   roots: StructureTreeNode[]
   unfed: StructureTreeNode[]
@@ -34,7 +36,7 @@ interface Props {
   onFeedBoard: (fromKey: string) => void
 }
 
-export function StructurePanel({ revisionId, roots, unfed, canEdit, onFeedBoard }: Props) {
+export function StructurePanel({ projectId, revisionId, roots, unfed, canEdit, onFeedBoard }: Props) {
   const router = useRouter()
   const [adding, setAdding] = useState<'source' | 'board' | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<StructureTreeNode | null>(null)
@@ -80,7 +82,7 @@ export function StructurePanel({ revisionId, roots, unfed, canEdit, onFeedBoard 
       ) : (
         <>
           {roots.map((n) => (
-            <TreeNode key={n.id} node={n} depth={0} canEdit={canEdit} pending={pending}
+            <TreeNode key={n.id} node={n} depth={0} canEdit={canEdit} pending={pending} projectId={projectId}
               onRename={onRename} onDelete={setConfirmDelete} onFeedBoard={onFeedBoard} />
           ))}
           {unfed.length > 0 && (
@@ -153,12 +155,13 @@ export function StructurePanel({ revisionId, roots, unfed, canEdit, onFeedBoard 
 }
 
 function TreeNode({
-  node, depth, canEdit, pending, onRename, onDelete, onFeedBoard,
+  node, depth, canEdit, pending, projectId, onRename, onDelete, onFeedBoard,
 }: {
   node: StructureTreeNode
   depth: number
   canEdit: boolean
   pending: boolean
+  projectId: string
   onRename: (node: StructureTreeNode, code: string) => void
   onDelete: (node: StructureTreeNode) => void
   onFeedBoard: (fromKey: string) => void
@@ -238,25 +241,36 @@ function TreeNode({
         {/* Spacer pushes the actions to the right of the row — clear visual
             separation from the node code + edge label. */}
         <div style={{ flex: 1 }} />
-        {canEdit && !editing && !node.alsoFedElsewhere && (
+        {!editing && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <button type="button" onClick={() => onFeedBoard(`${node.category}:${node.id}`)} disabled={pending}
-              style={{ ...actionBtnBase, color: 'var(--c-amber)', fontWeight: 600 }}>
-              + feed a board
-            </button>
-            <button type="button" onClick={() => setEditing(true)} disabled={pending}
-              style={{ ...actionBtnBase, color: 'var(--c-text-dim)' }}>
-              rename
-            </button>
-            <button type="button" onClick={() => onDelete(node)} disabled={pending}
-              style={{ ...actionBtnBase, color: '#dc2626' }}>
-              remove
-            </button>
+            <Link
+              href={`/projects/${projectId}/inspections/new?target_node_type=${node.category}&target_node_id=${node.id}`}
+              style={{ ...actionBtnBase, color: 'var(--c-amber)', textDecoration: 'none' }}
+              title={`Create a new inspection against this ${node.category}`}
+            >
+              + inspection
+            </Link>
+            {canEdit && !node.alsoFedElsewhere && (
+              <>
+                <button type="button" onClick={() => onFeedBoard(`${node.category}:${node.id}`)} disabled={pending}
+                  style={{ ...actionBtnBase, color: 'var(--c-amber)', fontWeight: 600 }}>
+                  + feed a board
+                </button>
+                <button type="button" onClick={() => setEditing(true)} disabled={pending}
+                  style={{ ...actionBtnBase, color: 'var(--c-text-dim)' }}>
+                  rename
+                </button>
+                <button type="button" onClick={() => onDelete(node)} disabled={pending}
+                  style={{ ...actionBtnBase, color: '#dc2626' }}>
+                  remove
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
       {!node.alsoFedElsewhere && node.children.map((child) => (
-        <TreeNode key={child.id} node={child} depth={depth + 1} canEdit={canEdit} pending={pending}
+        <TreeNode key={child.id} node={child} depth={depth + 1} canEdit={canEdit} pending={pending} projectId={projectId}
           onRename={onRename} onDelete={onDelete} onFeedBoard={onFeedBoard} />
       ))}
     </div>

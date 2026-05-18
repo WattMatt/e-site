@@ -602,6 +602,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       </div>
 
       <StructureSection
+        projectId={projectId}
         revisionId={revision.id}
         roots={structureRoots}
         unfed={structureUnfed}
