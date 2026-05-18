@@ -56,6 +56,16 @@ const sectionSchema = z.object({
   { message: 'Section must have at least one field or subsection' },
 );
 
+const brandingSchema = z.object({
+  accent_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'accent_color must be 6-char hex (e.g. #0a5f4e)').optional(),
+  cover_page: z.object({
+    title: z.string().optional(),
+    subtitle: z.string().optional(),
+    company_name: z.string().optional(),
+    logo_url: z.string().url().optional(),
+  }).optional(),
+});
+
 export const templateSchema = z.object({
   template_id: z.string().regex(/^[a-z0-9-]+$/, 'template_id must be kebab-case'),
   name: z.string().min(1),
@@ -66,6 +76,7 @@ export const templateSchema = z.object({
   deliverable_type: z.enum(['coc','inspection_only','factory_test']),
   requires_separate_verifier: z.boolean().optional(),
   sections: z.array(sectionSchema).min(1),
+  branding: brandingSchema.optional(),
 });
 
 export type ParsedTemplate = z.infer<typeof templateSchema>;

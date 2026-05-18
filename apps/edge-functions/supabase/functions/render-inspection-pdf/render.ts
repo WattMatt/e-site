@@ -96,6 +96,18 @@ function fmtDate(iso: string | null | undefined): string {
   }
 }
 
+// Parse a 6-char hex string like "#0a5f4e" into rgb. Returns null if invalid.
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const m = hex.match(/^#([0-9a-fA-F]{6})$/)
+  if (!m) return null
+  const h = m[1]
+  return {
+    r: parseInt(h.slice(0, 2), 16) / 255,
+    g: parseInt(h.slice(2, 4), 16) / 255,
+    b: parseInt(h.slice(4, 6), 16) / 255,
+  }
+}
+
 async function drawCoverPage(
   doc: PDFDocument,
   p: InspectionPayload,
@@ -104,21 +116,33 @@ async function drawCoverPage(
 ): Promise<void> {
   const page = doc.addPage([A4_WIDTH, A4_HEIGHT])
 
+  // Branding (per-template) — accent_color + cover_page.{title, subtitle, company_name}.
+  // Read from template.schema_json since `branding` lives in the JSON document, not
+  // a separate column. Missing/invalid → renderer-default colours + labels (no throws).
+  const branding = (p.template?.schema_json as { branding?: {
+    accent_color?: string
+    cover_page?: { title?: string; subtitle?: string; company_name?: string; logo_url?: string }
+  } } | undefined)?.branding
+
+  const accentRgb = branding?.accent_color ? hexToRgb(branding.accent_color) : null
+  const headerColor = accentRgb ? rgb(accentRgb.r, accentRgb.g, accentRgb.b) : HEADER_NAVY
+
   const deliverable = p.template?.deliverable_type as string | undefined
-  const headerLabel =
+  const deliverableLabel =
     deliverable === 'coc'
       ? 'CERTIFICATE OF COMPLIANCE'
       : deliverable === 'factory_test'
         ? 'FACTORY ACCEPTANCE TEST'
         : 'INSPECTION REPORT'
+  const headerLabel = branding?.cover_page?.title ?? deliverableLabel
 
-  // Top header band.
+  // Top header band — accent_color override applied here.
   page.drawRectangle({
     x: 0,
     y: A4_HEIGHT - 42,
     width: A4_WIDTH,
     height: 42,
-    color: HEADER_NAVY,
+    color: headerColor,
   })
   page.drawText(headerLabel, {
     x: MARGIN_LEFT,
@@ -129,6 +153,18 @@ async function drawCoverPage(
   })
 
   let y = A4_HEIGHT - 72
+
+  // Subtitle (optional) — sits above the data rows
+  if (branding?.cover_page?.subtitle) {
+    page.drawText(branding.cover_page.subtitle, {
+      x: MARGIN_LEFT,
+      y,
+      size: 11,
+      font: fontReg,
+      color: TEXT_DIM,
+    })
+    y -= 22
+  }
   const drawRow = (label: string, value: string) => {
     page.drawText(label, {
       x: MARGIN_LEFT,
@@ -172,6 +208,19 @@ async function drawCoverPage(
       y: 60,
       size: 10,
       font: fontReg,
+    })
+  }
+
+  // Company name (optional) — bottom-right of cover page
+  if (branding?.cover_page?.company_name) {
+    const companyText = branding.cover_page.company_name
+    const textWidth = fontBold.widthOfTextAtSize(companyText, 10)
+    page.drawText(companyText, {
+      x: A4_WIDTH - MARGIN_LEFT - textWidth,
+      y: 30,
+      size: 10,
+      font: fontBold,
+      color: TEXT_DIM,
     })
   }
 }

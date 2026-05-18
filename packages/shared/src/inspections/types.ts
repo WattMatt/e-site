@@ -54,6 +54,20 @@ export interface Section {
   conditional_on?: ConditionalOn;
 }
 
+export interface TemplateBranding {
+  // 6-char hex (e.g. "#0a5f4e"). Used as the cover-page top-band background.
+  accent_color?: string;
+  cover_page?: {
+    // Overrides the deliverable-type-driven header label
+    title?: string;
+    subtitle?: string;
+    // Replaces "WM" in the footer
+    company_name?: string;
+    // Logo URL — v1 ships without renderer support (placeholder for v2)
+    logo_url?: string;
+  };
+}
+
 export interface Template {
   template_id: string;
   name: string;
@@ -64,6 +78,7 @@ export interface Template {
   deliverable_type: DeliverableType;
   requires_separate_verifier?: boolean;
   sections: Section[];
+  branding?: TemplateBranding;
 }
 
 export interface Response {
