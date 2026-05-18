@@ -1,9 +1,14 @@
 'use client'
 
 /**
- * CableFormDrawer — four-mode form drawer covering the explicit save/cancel
+ * CableFormModal — four-mode form modal covering the explicit save/cancel
  * paths the inline EditableCell pattern can't (atomic multi-field edits,
  * cross-field validation, less-confident-user friendly, mobile-friendly).
+ *
+ * Centered popup: replaces the prior slide-in-right drawer AND the
+ * <tr colSpan> inline-row patterns. One chrome for all four modes — the
+ * spatial jump is gone, the table no longer stretches awkwardly, and the
+ * dimmed backdrop keeps focus on the form.
  *
  * Modes:
  *   • add-run      — create a NEW run (supply + its first cable strand) in one
@@ -88,12 +93,24 @@ const SECTION_OPTIONS: Array<{ value: 'NORMAL' | 'EMERGENCY' | ''; label: string
 ]
 
 /**
- * Slide-in chrome wrapper around CableFormBody. After the Flow-2 inline-drawer
- * refactor this is ONLY mounted at the page level for `mode === 'add-run'` —
- * the other three modes (add-strand / edit-strand / edit-run) render
- * `<CableFormBody />` inline as a <tr colSpan> directly in the grid.
+ * Centered modal chrome wrapper around CableFormBody. Mounted ONCE at the
+ * page level and handles all four modes (add-run, add-strand, edit-strand,
+ * edit-run) plus the Flow-3 duplicate flow (add-run + defaults). Backdrop
+ * click + Esc close; body scroll locked while open.
  */
-export function CableFormDrawer({ state, onClose, onSaved }: Props) {
+export function CableFormModal({ state, onClose, onSaved }: Props) {
+  // Esc to close + lock body scroll while open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose])
+
   return (
     <div
       role="dialog"
@@ -101,17 +118,20 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
       aria-labelledby="cable-form-title"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
       style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000,
-        display: 'flex', justifyContent: 'flex-end',
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        padding: '5vh 16px 16px', overflow: 'auto',
       }}
     >
       <div
         style={{
-          width: 460, maxWidth: '95vw', height: '100%', background: 'var(--c-panel)',
-          display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--c-border)',
+          width: '100%', maxWidth: 720, maxHeight: '85vh',
+          background: 'var(--c-panel)', borderRadius: 8,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
       >
-        <CableFormBody state={state} onClose={onClose} onSaved={onSaved} variant="drawer" />
+        <CableFormBody state={state} onClose={onClose} onSaved={onSaved} />
       </div>
     </div>
   )
@@ -119,11 +139,9 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
 
 /**
  * Form body — the field stack + validation + submit logic, without any
- * positioning chrome. Mounted inline inside a `<td colSpan>` cell for the
- * edit-strand / edit-run / add-strand modes, and inside `<CableFormDrawer>`'s
- * slide-in shell for add-run.
+ * positioning chrome. The outer chrome is supplied by `<CableFormModal>`.
  */
-export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: Props & { variant?: 'inline' | 'drawer' }) {
+export function CableFormBody({ state, onClose, onSaved }: Props) {
   const mode: Mode = state.mode
   // Narrow the discriminated union to per-mode locals — TS narrows correctly
   // inside the ternaries but not across uses of the captured `mode` variable.
@@ -408,23 +426,11 @@ export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: P
   const showPerStrandFields = mode === 'add-run' || mode === 'add-strand' || mode === 'edit-strand'
   const showSupplyFields = mode === 'add-run' || mode === 'edit-run'
 
-  // Inline variant gets a contained shell with its own border + bg.
-  // Drawer variant's outer chrome is supplied by <CableFormDrawer>.
-  const isDrawer = variant === 'drawer'
-  const bodyMaxHeight = isDrawer ? undefined : '60vh'
-  const containerStyle: React.CSSProperties = isDrawer
-    ? { display: 'contents' }
-    : {
-        background: 'var(--c-panel)',
-        border: '1px solid var(--c-amber-mid)',
-        borderRadius: 6,
-        display: 'flex',
-        flexDirection: 'column',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-      }
-
+  // Body renders into the modal card's flex column — `display: contents`
+  // lets the header / body / footer below participate in that flex layout
+  // directly without an extra wrapping div.
   return (
-    <div style={containerStyle}>
+    <div style={{ display: 'contents' }}>
         {/* Header */}
         <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
           <h2 id="cable-form-title" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--c-text)', lineHeight: 1.3 }}>
@@ -437,10 +443,9 @@ export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: P
           </button>
         </div>
 
-        {/* Body — scrollable */}
+        {/* Body — scrollable inside the modal card's max-height */}
         <div style={{
-          flex: isDrawer ? 1 : undefined,
-          maxHeight: bodyMaxHeight,
+          flex: 1,
           overflowY: 'auto',
           padding: '14px 18px',
           display: 'flex',

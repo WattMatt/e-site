@@ -13,7 +13,7 @@ import {
   ConfirmedLengthEditor,
 } from './LengthEditPopover'
 import { EditableCell } from './EditableCell'
-import { CableFormDrawer, CableFormBody, type DrawerState } from './CableFormDrawer'
+import { CableFormModal, type DrawerState } from './CableFormModal'
 import { useRouter } from 'next/navigation'
 import {
   updateSupplyAction,
@@ -206,23 +206,6 @@ export function CableScheduleGrid({
   const [repointing, setRepointing] = useState<{ supplyId: string; from: string; to: string; end: 'from' | 'to'; current: string } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
-
-  // Auto-scroll the inline form into view when one of the anchored modes
-  // (edit-strand / edit-run / add-strand) opens. add-run uses the slide-in
-  // drawer so it has no inline anchor to scroll to. The inline form renders
-  // inside a <tr> with id `inline-form-<key>` set by the grid mapping below.
-  useEffect(() => {
-    if (!drawer || drawer.mode === 'add-run') return
-    const anchorKey =
-      drawer.mode === 'edit-strand' ? `strand-${drawer.cableId}`
-      : drawer.mode === 'edit-run' ? `run-${drawer.supplyId}`
-      : `addstrand-${drawer.supplyId}` // add-strand
-    // Defer to next frame so the new <tr> is in the DOM before we scroll.
-    requestAnimationFrame(() => {
-      const el = document.getElementById(`inline-form-${anchorKey}`)
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    })
-  }, [drawer])
 
   // C11 — selection model for bulk strand status update. Tracks individual
   // cable ids (strands), not runs. Cleared on successful bulk action.
@@ -615,7 +598,7 @@ export function CableScheduleGrid({
             type="button"
             className="btn-primary-amber"
             onClick={() => setDrawer({ mode: 'add-run', revisionId, nodeOptions })}
-            title="Add a new run (supply + first cable strand) via the drawer"
+            title="Add a new run (supply + first cable strand)"
             style={{ marginLeft: 'auto' }}
           >
             + Add run
@@ -946,18 +929,6 @@ export function CableScheduleGrid({
                       onSave={(n) => saveStrandField(head.id, run.supply_id, 'notes', n)} />
                   </Td>
                 </tr>,
-                // ── Inline edit-run form (Flow-2: mounts under the run row) ─
-                ...(drawer?.mode === 'edit-run' && drawer.supplyId === run.supply_id ? [(
-                  <tr key={`edit-run-form-${run.supply_id}`} id={`inline-form-run-${run.supply_id}`}>
-                    <td colSpan={TOTAL_COLS} style={{ background: 'var(--c-base)', padding: '12px 14px', borderTop: '1px solid var(--c-amber-mid)' }}>
-                      <CableFormBody
-                        state={drawer}
-                        onClose={() => setDrawer(null)}
-                        onSaved={() => router.refresh()}
-                      />
-                    </td>
-                  </tr>
-                )] : []),
                 // ── Mixed-properties banner row (only when divergent) ─────
                 ...(run.mixed_properties.fields.length > 0 && canEdit && !locked ? [(
                   <tr key={`mixed-${run.supply_id}`}>
@@ -1095,43 +1066,20 @@ export function CableScheduleGrid({
                       </Td>
                     </tr>
                   ),
-                  // ── Inline edit-strand form (Flow-2: mounts under strand) ─
-                  ...(drawer?.mode === 'edit-strand' && drawer.cableId === c.id ? [(
-                    <tr key={`edit-strand-form-${c.id}`} id={`inline-form-strand-${c.id}`}>
-                      <td colSpan={TOTAL_COLS} style={{ background: 'var(--c-base)', padding: '12px 14px', borderTop: '1px solid var(--c-amber-mid)' }}>
-                        <CableFormBody
-                          state={drawer}
-                          onClose={() => setDrawer(null)}
-                          onSaved={() => router.refresh()}
-                        />
-                      </td>
-                    </tr>
-                  )] : []),
                   ]
                 }) : []),
                 // ── "+ Add strand" tail row, only when run is expanded ───
-                // Flow-2: the SAME tail row hosts either the button or the
-                // inline form, so opening add-strand doesn't shove the row
-                // anywhere — it just expands in place.
                 ...(isExpanded && canEdit && !locked ? [(
-                  <tr key={`add-strand-${run.supply_id}`} id={`inline-form-addstrand-${run.supply_id}`} style={{ background: 'var(--c-base)' }}>
-                    <td colSpan={TOTAL_COLS} style={{ padding: drawer?.mode === 'add-strand' && drawer.supplyId === run.supply_id ? '12px 14px' : '6px 14px', borderTop: drawer?.mode === 'add-strand' && drawer.supplyId === run.supply_id ? '1px solid var(--c-amber-mid)' : '1px dashed var(--c-border)' }}>
-                      {drawer?.mode === 'add-strand' && drawer.supplyId === run.supply_id ? (
-                        <CableFormBody
-                          state={drawer}
-                          onClose={() => setDrawer(null)}
-                          onSaved={() => router.refresh()}
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setDrawer({ mode: 'add-strand', supplyId: run.supply_id, run })}
-                          title={`Append a new strand to this run (defaults inherited from strand 1)`}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-amber)', fontSize: 11, fontFamily: 'inherit' }}
-                        >
-                          + Add strand to run ({run.parallel_count + 1} of N)
-                        </button>
-                      )}
+                  <tr key={`add-strand-${run.supply_id}`} style={{ background: 'var(--c-base)' }}>
+                    <td colSpan={TOTAL_COLS} style={{ padding: '6px 14px', borderTop: '1px dashed var(--c-border)' }}>
+                      <button
+                        type="button"
+                        onClick={() => setDrawer({ mode: 'add-strand', supplyId: run.supply_id, run })}
+                        title={`Append a new strand to this run (defaults inherited from strand 1)`}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-amber)', fontSize: 11, fontFamily: 'inherit' }}
+                      >
+                        + Add strand to run ({run.parallel_count + 1} of N)
+                      </button>
                     </td>
                   </tr>
                 )] : []),
@@ -1141,10 +1089,9 @@ export function CableScheduleGrid({
         </table>
       </div>
 
-      {/* Flow-2: slide-in drawer kept only for add-run (no anchor row exists).
-          edit-strand / edit-run / add-strand render inline above as <tr>. */}
-      {drawer?.mode === 'add-run' && (
-        <CableFormDrawer
+      {/* Single centered modal — covers all four modes plus duplicate. */}
+      {drawer && (
+        <CableFormModal
           state={drawer}
           onClose={() => setDrawer(null)}
           onSaved={() => router.refresh()}
