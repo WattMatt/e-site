@@ -433,4 +433,153 @@ CREATE TRIGGER trg_advance_on_first_response
   AFTER INSERT ON inspections.responses
   FOR EACH ROW EXECUTE FUNCTION inspections.advance_status_on_first_response();
 
+-- ============================================================================
+-- 13. Row-Level Security
+-- ============================================================================
+
+ALTER TABLE inspections.templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inspections.inspections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inspections.responses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inspections.response_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inspections.photos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inspections.signatures ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inspections.certificates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inspections.coc_number_seqs ENABLE ROW LEVEL SECURITY;
+
+-- ----- templates -----
+
+CREATE POLICY templates_select ON inspections.templates FOR SELECT TO authenticated
+  USING (organisation_id = ANY(public.get_user_org_ids()));
+
+CREATE POLICY templates_block_client_viewer ON inspections.templates AS RESTRICTIVE FOR ALL TO authenticated
+  USING (NOT public.user_is_client_viewer(organisation_id));
+
+CREATE POLICY templates_insert ON inspections.templates FOR INSERT TO authenticated
+  WITH CHECK (
+    organisation_id = ANY(public.get_user_org_ids())
+    AND EXISTS (
+      SELECT 1 FROM public.user_organisations
+      WHERE user_id = auth.uid()
+        AND organisation_id = inspections.templates.organisation_id
+        AND role IN ('owner','admin')
+    )
+  );
+
+CREATE POLICY templates_update ON inspections.templates FOR UPDATE TO authenticated
+  USING (
+    organisation_id = ANY(public.get_user_org_ids())
+    AND EXISTS (
+      SELECT 1 FROM public.user_organisations
+      WHERE user_id = auth.uid()
+        AND organisation_id = inspections.templates.organisation_id
+        AND role IN ('owner','admin')
+    )
+  );
+
+-- ----- inspections -----
+
+CREATE POLICY inspections_select_members ON inspections.inspections FOR SELECT TO authenticated
+  USING (
+    public.user_has_project_access(project_id)
+    AND NOT public.user_is_client_viewer(organisation_id)
+  );
+
+CREATE POLICY inspections_select_client_viewer ON inspections.inspections FOR SELECT TO authenticated
+  USING (
+    public.user_is_client_viewer(organisation_id)
+    AND public.user_has_project_access(project_id)
+    AND status = 'certified'
+  );
+
+CREATE POLICY inspections_insert ON inspections.inspections FOR INSERT TO authenticated
+  WITH CHECK (
+    public.user_has_project_access(project_id)
+    AND EXISTS (
+      SELECT 1 FROM public.user_organisations
+      WHERE user_id = auth.uid()
+        AND organisation_id = inspections.inspections.organisation_id
+        AND role IN ('owner','admin','project_manager')
+    )
+  );
+
+CREATE POLICY inspections_update_contributors ON inspections.inspections FOR UPDATE TO authenticated
+  USING (
+    public.user_has_project_access(project_id)
+    AND NOT public.user_is_client_viewer(organisation_id)
+  );
+
+-- ----- responses -----
+
+CREATE POLICY responses_select ON inspections.responses FOR SELECT TO authenticated
+  USING (inspections.user_has_inspection_read(inspection_id));
+
+CREATE POLICY responses_insert_contributor ON inspections.responses FOR INSERT TO authenticated
+  WITH CHECK (inspections.user_can_write_responses(inspection_id));
+
+CREATE POLICY responses_update_contributor ON inspections.responses FOR UPDATE TO authenticated
+  USING (inspections.user_can_write_responses(inspection_id))
+  WITH CHECK (inspections.user_can_write_responses(inspection_id));
+
+CREATE POLICY responses_update_verifier ON inspections.responses FOR UPDATE TO authenticated
+  USING (
+    inspections.is_inspection_verifier(inspection_id)
+    AND EXISTS (SELECT 1 FROM inspections.inspections WHERE id = inspection_id AND status = 'awaiting_verification')
+  );
+
+-- ----- response_history -----
+
+CREATE POLICY response_history_select ON inspections.response_history FOR SELECT TO authenticated
+  USING (inspections.user_has_inspection_read(inspection_id));
+
+-- ----- photos -----
+
+CREATE POLICY photos_select ON inspections.photos FOR SELECT TO authenticated
+  USING (inspections.user_has_inspection_read(inspection_id));
+
+CREATE POLICY photos_insert ON inspections.photos FOR INSERT TO authenticated
+  WITH CHECK (inspections.user_can_write_responses(inspection_id));
+
+CREATE POLICY photos_delete ON inspections.photos FOR DELETE TO authenticated
+  USING (
+    inspections.user_can_write_responses(inspection_id)
+    AND (
+      uploaded_by = auth.uid()
+      OR EXISTS (
+        SELECT 1 FROM inspections.inspections i
+        JOIN public.user_organisations uo ON uo.organisation_id = i.organisation_id AND uo.user_id = auth.uid()
+        WHERE i.id = inspection_id AND uo.role IN ('owner','admin','project_manager')
+      )
+    )
+  );
+
+-- ----- signatures -----
+
+CREATE POLICY signatures_select ON inspections.signatures FOR SELECT TO authenticated
+  USING (inspections.user_has_inspection_read(inspection_id));
+
+CREATE POLICY signatures_insert ON inspections.signatures FOR INSERT TO authenticated
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM inspections.inspections i
+      JOIN public.user_organisations uo ON uo.organisation_id = i.organisation_id AND uo.user_id = auth.uid()
+      WHERE i.id = inspection_id
+        AND uo.role <> 'client_viewer'
+        AND i.status NOT IN ('certified','abandoned')
+    )
+  );
+
+CREATE POLICY signatures_delete_own ON inspections.signatures FOR DELETE TO authenticated
+  USING (
+    signed_by = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM inspections.inspections
+      WHERE id = inspection_id AND status NOT IN ('certified','abandoned')
+    )
+  );
+
+-- ----- certificates -----
+
+CREATE POLICY certificates_select ON inspections.certificates FOR SELECT TO authenticated
+  USING (inspections.user_has_inspection_read(inspection_id));
+
 COMMIT;
