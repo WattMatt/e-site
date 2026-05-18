@@ -25,6 +25,10 @@
 import { createClient } from '@supabase/supabase-js'
 import type { RuleRunner, ResponseRow, RuleContext } from '../_shared/validation-rules/types.ts'
 import { runCocRules } from '../_shared/validation-rules/coc.ts'
+import { runGeneratorFatRules } from '../_shared/validation-rules/generator-fat.ts'
+import { runRmuRules } from '../_shared/validation-rules/rmu.ts'
+import { runMiniSubRules } from '../_shared/validation-rules/mini-sub.ts'
+import { runSolarPvRules } from '../_shared/validation-rules/solar-pv.ts'
 
 // ---------------------------------------------------------------------------
 // Dispatcher map — template_id → RuleRunner
@@ -39,18 +43,18 @@ const RULE_RUNNERS: Record<string, RuleRunner> = {
   'lv-emb-inspection':         runCocRules,
   'lv-line-shop-board-audit':  runCocRules,
 
-  // Phase 3.2 — Generator FAT (added when generator-fat.ts lands)
-  // 'generator-fat': runGeneratorFatRules,
+  // Phase 3.2 — Generator FAT
+  'generator-fat':         runGeneratorFatRules,
 
-  // Phase 3.3 — RMU snagging (added when rmu.ts lands)
-  // 'rmu-snagging': runRmuRules,
+  // Phase 3.3 — RMU snagging
+  'rmu-snagging':          runRmuRules,
 
-  // Phase 3.4 — Mini-sub inspection + pre/post FAT (added when mini-sub.ts lands)
-  // 'mini-sub-inspection':   runMiniSubRules,
-  // 'mini-sub-pre-post-fat': runMiniSubRules,
+  // Phase 3.4 — Mini-sub inspection + pre/post FAT
+  'mini-sub-inspection':   runMiniSubRules,
+  'mini-sub-pre-post-fat': runMiniSubRules,
 
-  // Phase 3.5 — Solar PV standalone (added when solar-pv.ts lands)
-  // 'solar-pv-standalone': runSolarPvRules,
+  // Phase 3.5 — Solar PV standalone
+  'solar-pv-standalone':   runSolarPvRules,
 }
 
 const CORS_HEADERS = {
