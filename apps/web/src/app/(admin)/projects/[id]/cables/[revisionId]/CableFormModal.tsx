@@ -200,6 +200,12 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
       : (head?.depth_mm == null ? '' : String(head.depth_mm)),
   )
   const [groupedWith, setGroupedWith] = useState<number>(head?.grouped_with ?? 1)
+  // T6.3.6 arrangement. Defaults to TOUCHING for add-* (conservative). For
+  // edit-* the head strand's existing value is the source of truth — pre-00064
+  // rows fall back to 'TOUCHING' which matches the historical lookup default.
+  const [groupingArrangement, setGroupingArrangement] = useState<'TOUCHING' | 'SPACING_D'>(
+    (head?.grouping_arrangement as 'TOUCHING' | 'SPACING_D' | undefined) ?? 'TOUCHING',
+  )
 
   // Per-strand fields (used by add-run + add-strand + edit-strand).
   const [measuredLengthM, setMeasuredLengthM] = useState<string>(
@@ -330,6 +336,7 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
           ambientTempC,
           thermalResistivityKmw: 1.0,
           ohmPerKmOverride: ohmVal,
+          groupingArrangement,
         })
         if (res.error) { setError(res.error); return }
       } else if (mode === 'add-strand') {
@@ -350,6 +357,7 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
           thermalResistivityKmw: 1.0,
           ohmPerKmOverride: ohmVal,
           notes: notesVal,
+          groupingArrangement,
         })
         if (res.error) { setError(res.error); return }
       } else if (mode === 'edit-strand') {
@@ -383,6 +391,7 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
               installationMethod: installVal,
               depthMm: depthVal,
               groupedWith,
+              groupingArrangement,
               measuredLengthM: measVal,
             },
           }),
@@ -536,6 +545,12 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
               </Row>
               <Row label="Grouped with (cables in same trench/duct)" error={validationErrors.groupedWith}>
                 <input className="ob-input" type="number" step="1" min={1} value={groupedWith} onChange={(e) => setGroupedWith(Math.max(1, Number(e.target.value) || 1))} disabled={saving} />
+              </Row>
+              <Row label="Arrangement" hint="T6.3.6 — spaced gives a softer derate (e.g. 0.90 vs 0.84 for 3 cables).">
+                <select className="ob-input" value={groupingArrangement} onChange={(e) => setGroupingArrangement(e.target.value as 'TOUCHING' | 'SPACING_D')} disabled={saving}>
+                  <option value="TOUCHING">Touching (conservative)</option>
+                  <option value="SPACING_D">Spaced (1× cable-diameter clearance)</option>
+                </select>
               </Row>
               {mode === 'edit-run' && (
                 <Row label="Measured length (m)" hint={`Fans out to all ${run!.parallel_count} strands. Per-strand override via expand drill-down.`} error={validationErrors.measuredLengthM}>

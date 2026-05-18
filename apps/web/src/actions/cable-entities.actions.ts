@@ -413,6 +413,7 @@ const addParallelCableSetSchema = z.object({
   ambientTempC: z.number().default(30),
   thermalResistivityKmw: z.number().default(1.0),
   ohmPerKmOverride: z.number().positive().nullable().optional(),
+  groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).default('TOUCHING'),
 })
 
 export async function addParallelCableSetAction(
@@ -463,6 +464,7 @@ export async function addParallelCableSetAction(
     thermalResistivityKmw: parsed.data.thermalResistivityKmw,
     ambientTempC: parsed.data.ambientTempC,
     groupedWith: effectiveCount,
+    groupingArrangement: parsed.data.groupingArrangement,
     ohmPerKmOverride: parsed.data.ohmPerKmOverride ?? null,
     projectId: guard.projectId,
   })
@@ -483,6 +485,7 @@ export async function addParallelCableSetAction(
     installation_method: parsed.data.installationMethod,
     depth_mm: parsed.data.depthMm ?? null,
     grouped_with: effectiveCount,
+    grouping_arrangement: parsed.data.groupingArrangement,
     ambient_temp_c: parsed.data.ambientTempC,
     thermal_resistivity_kmw: parsed.data.thermalResistivityKmw,
     ohm_per_km: elec.ohm_per_km,
@@ -550,6 +553,7 @@ const addRunSchema = z.object({
   ambientTempC: z.number().default(30),
   thermalResistivityKmw: z.number().default(1.0),
   ohmPerKmOverride: z.number().positive().nullable().optional(),
+  groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).default('TOUCHING'),
 })
 
 export async function addRunAction(
@@ -587,6 +591,7 @@ export async function addRunAction(
     ambientTempC: d.ambientTempC,
     thermalResistivityKmw: d.thermalResistivityKmw,
     ohmPerKmOverride: d.ohmPerKmOverride ?? null,
+    groupingArrangement: d.groupingArrangement,
   }).then((r) => r.error ? { error: r.error } : { supplyId: r.supplyId })
 }
 
@@ -609,6 +614,7 @@ const cableSchema = z.object({
   // Manual override of ohm_per_km — leave null to use the SANS lookup.
   ohmPerKmOverride: z.number().positive().optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
+  groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).default('TOUCHING'),
 })
 
 /**
@@ -629,6 +635,8 @@ async function resolveCableElectricals(
     thermalResistivityKmw: number
     ambientTempC: number
     groupedWith: number
+    /** T6.3.6 layout — defaults to TOUCHING (conservative). */
+    groupingArrangement?: 'TOUCHING' | 'SPACING_D'
     ohmPerKmOverride: number | null
     projectId: string
   },
@@ -666,6 +674,7 @@ async function resolveCableElectricals(
     grouped_with: args.groupedWith,
     ambient_c: args.ambientTempC,
     insulation: args.insulation,
+    grouping_arrangement: args.groupingArrangement,
   })
 
   const deratedA = deratedRating(baseRating ?? null, {
@@ -733,6 +742,7 @@ export async function addCableAction(
     thermalResistivityKmw: parsed.data.thermalResistivityKmw,
     ambientTempC: parsed.data.ambientTempC,
     groupedWith: parsed.data.groupedWith,
+    groupingArrangement: parsed.data.groupingArrangement,
     ohmPerKmOverride: parsed.data.ohmPerKmOverride ?? null,
     projectId: guard.projectId,
   })
@@ -756,6 +766,7 @@ export async function addCableAction(
       installation_method: parsed.data.installationMethod ?? null,
       depth_mm: parsed.data.depthMm ?? null,
       grouped_with: parsed.data.groupedWith,
+      grouping_arrangement: parsed.data.groupingArrangement,
       ambient_temp_c: parsed.data.ambientTempC,
       thermal_resistivity_kmw: parsed.data.thermalResistivityKmw,
       ohm_per_km: elec.ohm_per_km,
@@ -846,6 +857,7 @@ const updateCableSchema = z.object({
   installationMethod: z.enum(['DIRECT_IN_GROUND', 'DUCT', 'LADDER', 'TRAY', 'CLIPPED']).nullable().optional(),
   depthMm: z.number().int().positive().nullable().optional(),
   groupedWith: z.number().int().positive().optional(),
+  groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).optional(),
   ambientTempC: z.number().optional(),
   measuredLengthM: z.number().nonnegative().nullable().optional(),
   ohmPerKmOverride: z.number().positive().nullable().optional(),
@@ -853,7 +865,7 @@ const updateCableSchema = z.object({
   notes: z.string().trim().max(2000).nullable().optional(),
 }).refine(
   (d) => {
-    const sansSent = ['sizeMm2','cores','conductor','insulation','installationMethod','depthMm','groupedWith','ambientTempC']
+    const sansSent = ['sizeMm2','cores','conductor','insulation','installationMethod','depthMm','groupedWith','groupingArrangement','ambientTempC']
       .some((f) => (d as Record<string, unknown>)[f] !== undefined)
     return !(sansSent && d.ohmPerKmOverride !== undefined)
   },
@@ -865,7 +877,7 @@ const updateCableSchema = z.object({
 // fields whose change forces a SANS + derating re-lookup
 const SANS_FIELDS = [
   'sizeMm2', 'cores', 'conductor', 'insulation',
-  'installationMethod', 'depthMm', 'groupedWith', 'ambientTempC',
+  'installationMethod', 'depthMm', 'groupedWith', 'groupingArrangement', 'ambientTempC',
 ] as const
 
 /**
@@ -884,6 +896,7 @@ export interface RecomputeAudit {
     installationMethod: string | null
     depthMm: number | null
     groupedWith: number
+    groupingArrangement: 'TOUCHING' | 'SPACING_D'
     ambientTempC: number
   }
   /** false ⇒ no SANS row matched — `derated_current_rating_a` will be null. */
@@ -921,7 +934,7 @@ export async function updateCableAction(
     .from('cables')
     .select(
       'id, revision_id, organisation_id, size_mm2, cores, conductor, insulation, armour, ' +
-      'installation_method, depth_mm, grouped_with, ambient_temp_c, thermal_resistivity_kmw, ' +
+      'installation_method, depth_mm, grouped_with, grouping_arrangement, ambient_temp_c, thermal_resistivity_kmw, ' +
       'measured_length_m, measured_length_method, length_status, ohm_per_km, manual_override, tag_override, notes, ' +
       'revision:revisions!revision_id(status, project_id)',
     )
@@ -952,6 +965,9 @@ export async function updateCableAction(
       ? parsed.data.installationMethod : c.installation_method,
     depthMm: parsed.data.depthMm !== undefined ? parsed.data.depthMm : c.depth_mm,
     groupedWith: parsed.data.groupedWith ?? Number(c.grouped_with ?? 1),
+    groupingArrangement: (parsed.data.groupingArrangement
+      ?? (c.grouping_arrangement as 'TOUCHING' | 'SPACING_D' | undefined)
+      ?? 'TOUCHING') as 'TOUCHING' | 'SPACING_D',
     ambientTempC: parsed.data.ambientTempC ?? Number(c.ambient_temp_c ?? 30),
   }
 
@@ -977,6 +993,7 @@ export async function updateCableAction(
   if (parsed.data.installationMethod !== undefined) log('installation_method', c.installation_method, parsed.data.installationMethod)
   if (parsed.data.depthMm !== undefined) log('depth_mm', c.depth_mm == null ? null : Number(c.depth_mm), parsed.data.depthMm)
   if (parsed.data.groupedWith !== undefined) log('grouped_with', Number(c.grouped_with ?? 1), parsed.data.groupedWith)
+  if (parsed.data.groupingArrangement !== undefined) log('grouping_arrangement', c.grouping_arrangement ?? 'TOUCHING', parsed.data.groupingArrangement)
   if (parsed.data.ambientTempC !== undefined) log('ambient_temp_c', Number(c.ambient_temp_c ?? 30), parsed.data.ambientTempC)
   if (parsed.data.tagOverride !== undefined) log('tag_override', c.tag_override, parsed.data.tagOverride)
   if (parsed.data.notes !== undefined) log('notes', c.notes, parsed.data.notes)
@@ -1017,6 +1034,7 @@ export async function updateCableAction(
       grouped_with: next.groupedWith,
       ambient_c: next.ambientTempC,
       insulation: next.insulation,
+      grouping_arrangement: next.groupingArrangement,
     })
     const deratedA = deratedRating(baseRating ?? null, {
       depth: derate.depth, thermal: derate.thermal,
@@ -1039,6 +1057,7 @@ export async function updateCableAction(
         installationMethod: next.installationMethod,
         depthMm: next.depthMm,
         groupedWith: next.groupedWith,
+        groupingArrangement: next.groupingArrangement,
         ambientTempC: next.ambientTempC,
       },
       propsFound: props != null,
@@ -1238,6 +1257,7 @@ const previewParallelSchema = z.object({
   depthMm: z.number().int().positive().nullable().optional(),
   ambientTempC: z.number().default(30),
   thermalResistivityKmw: z.number().default(1.0),
+  groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).default('TOUCHING'),
 })
 
 const MAX_PARALLEL_N = 16
@@ -1282,6 +1302,7 @@ export async function previewParallelCableSet(
         grouped_with: i + 1,
         ambient_c: parsed.data.ambientTempC,
         insulation: parsed.data.insulation,
+        grouping_arrangement: parsed.data.groupingArrangement,
       }),
     ),
   )
@@ -1351,6 +1372,7 @@ const runFanOutSchema = z.object({
     installationMethod: z.string().trim().max(80).nullable().optional(),
     depthMm: z.number().nullable().optional(),
     groupedWith: z.number().int().positive().optional(),
+    groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).optional(),
     ambientTempC: z.number().optional(),
     tagOverride: z.string().trim().max(40).nullable().optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
@@ -1464,7 +1486,7 @@ export async function normaliseRunPropertiesAction(
     .from('cables')
     .select(
       'id, cable_no, size_mm2, cores, conductor, insulation, armour, ' +
-      'installation_method, depth_mm, grouped_with, ambient_temp_c',
+      'installation_method, depth_mm, grouped_with, grouping_arrangement, ambient_temp_c',
     )
     .eq('supply_id', supplyId)
     .order('cable_no', { ascending: true })
@@ -1485,6 +1507,7 @@ export async function normaliseRunPropertiesAction(
       installationMethod: head.installation_method,
       depthMm: head.depth_mm == null ? null : Number(head.depth_mm),
       groupedWith: Number(head.grouped_with ?? 1),
+      groupingArrangement: (head.grouping_arrangement ?? 'TOUCHING') as 'TOUCHING' | 'SPACING_D',
       ambientTempC: Number(head.ambient_temp_c ?? 30),
     },
   })

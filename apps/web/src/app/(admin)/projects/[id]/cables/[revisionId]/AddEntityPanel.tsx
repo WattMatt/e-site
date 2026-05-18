@@ -174,6 +174,10 @@ function CableForm({
         depthMm: depthMm ? Number(depthMm) : null,
         ambientTempC: 30,
         thermalResistivityKmw: 1.0,
+        // Legacy quick-add path doesn't surface arrangement — default to
+        // the conservative TOUCHING factor. Engineers wanting SPACING_D
+        // use the form modal (CableFormModal) which exposes the toggle.
+        groupingArrangement: 'TOUCHING',
       })
       if (cancelled) return
       if (res.error || res.count == null) {
@@ -246,6 +250,8 @@ function CableForm({
             ambientTempC: 30,
             thermalResistivityKmw: 1.0,
             ohmPerKmOverride: ohmOverride ? Number(ohmOverride) : null,
+            // Legacy quick-add path — see preview-call comment above.
+            groupingArrangement: 'TOUCHING',
           })
         },
         `${setCountNum} cable${setCountNum === 1 ? '' : 's'}`,
@@ -288,6 +294,8 @@ function CableForm({
             ambientTempC: 30,
             thermalResistivityKmw: 1.0,
             ohmPerKmOverride: ohmOverride ? Number(ohmOverride) : null,
+            // Legacy quick-add path — see preview-call comment above.
+            groupingArrangement: 'TOUCHING',
           })
         },
         'Cable',

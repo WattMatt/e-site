@@ -128,6 +128,8 @@ export interface EnrichedCable {
   installation_method: string | null
   depth_mm: number | null
   grouped_with: number
+  /** T6.3.6 layout — TOUCHING (default) uses factor_touching; SPACING_D uses factor_clearance_d. */
+  grouping_arrangement: 'TOUCHING' | 'SPACING_D'
   ambient_temp_c: number
   tag_override: string | null
   manual_override: boolean
@@ -212,6 +214,7 @@ interface RawCable extends CableForCalc {
   installation_method: string | null
   depth_mm: number | null
   grouped_with: number
+  grouping_arrangement: 'TOUCHING' | 'SPACING_D' | null
   ambient_temp_c: number
   derated_current_rating_a: number | null
   tag_override: string | null
@@ -305,22 +308,42 @@ export async function getRevisionExportPayload(
         'id, from_source_id, from_board_id, to_board_id, voltage_v, design_load_a, section',
       )
       .eq('revision_id', revisionId),
-    (supabase as any)
-      .schema('cable_schedule')
-      .from('cables')
-      .select(
-        'id, supply_id, cable_no, size_mm2, cores, conductor, insulation, armour, standard, ' +
-        'ohm_per_km, measured_length_m, confirmed_length_m, length_status, ' +
-        'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
-        'derated_current_rating_a, tag_override, manual_override, notes',
-      )
-      .eq('revision_id', revisionId)
-      // Sort by (supply_id, cable_no) so parallel cables on the same
-      // supply are guaranteed contiguous in the returned array. The
-      // previous .order('cable_no') alone interleaved parallels across
-      // supplies (A1, B1, A2, B2…), which broke the schedule grouping.
-      .order('supply_id', { ascending: true })
-      .order('cable_no', { ascending: true }),
+    // grouping_arrangement column landed in migration 00064. SELECT is
+    // tolerant — if the column isn't applied yet PostgREST returns 42703
+    // (undefined column) and the inner retry drops back to the pre-00064
+    // projection. The row mapper's `r.grouping_arrangement ?? 'TOUCHING'`
+    // default handles the retry path. Same shape as the cost_lines.conductor
+    // and revisions.vat_pct tolerances elsewhere in this file.
+    selectWithFallbackOn42703(
+      () => (supabase as any)
+        .schema('cable_schedule')
+        .from('cables')
+        .select(
+          'id, supply_id, cable_no, size_mm2, cores, conductor, insulation, armour, standard, ' +
+          'ohm_per_km, measured_length_m, confirmed_length_m, length_status, ' +
+          'installation_method, depth_mm, grouped_with, grouping_arrangement, ambient_temp_c, ' +
+          'derated_current_rating_a, tag_override, manual_override, notes',
+        )
+        .eq('revision_id', revisionId)
+        // Sort by (supply_id, cable_no) so parallel cables on the same
+        // supply are guaranteed contiguous in the returned array. The
+        // previous .order('cable_no') alone interleaved parallels across
+        // supplies (A1, B1, A2, B2…), which broke the schedule grouping.
+        .order('supply_id', { ascending: true })
+        .order('cable_no', { ascending: true }),
+      () => (supabase as any)
+        .schema('cable_schedule')
+        .from('cables')
+        .select(
+          'id, supply_id, cable_no, size_mm2, cores, conductor, insulation, armour, standard, ' +
+          'ohm_per_km, measured_length_m, confirmed_length_m, length_status, ' +
+          'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
+          'derated_current_rating_a, tag_override, manual_override, notes',
+        )
+        .eq('revision_id', revisionId)
+        .order('supply_id', { ascending: true })
+        .order('cable_no', { ascending: true }),
+    ),
     (supabase as any)
       .schema('cable_schedule')
       .from('cable_tags')
@@ -434,6 +457,11 @@ export async function getRevisionExportPayload(
       installation_method: c.installation_method,
       depth_mm: c.depth_mm == null ? null : Number(c.depth_mm),
       grouped_with: Number(c.grouped_with ?? 1),
+      // Default to TOUCHING on the retry path: when migration 00064 isn't
+      // applied yet the SELECT above strips the column from the projection,
+      // so c.grouping_arrangement is undefined here. TOUCHING also matches
+      // the historical lookup default — existing rows behave identically.
+      grouping_arrangement: (c.grouping_arrangement ?? 'TOUCHING') as 'TOUCHING' | 'SPACING_D',
       ambient_temp_c: Number(c.ambient_temp_c ?? 30),
       tag_override: c.tag_override,
       manual_override: !!c.manual_override,

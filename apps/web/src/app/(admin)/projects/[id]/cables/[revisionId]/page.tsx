@@ -454,6 +454,12 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       installation_method: r.installation_method,
       depth_mm: r.depth_mm,
       grouped_with: r.grouped_with,
+      // grouping_arrangement isn't carried on ScheduleRow today (the in-page
+      // derivation only needs it for the runs-mixed-properties check, which
+      // we don't yet flag). Default to TOUCHING — matches historic factor
+      // and the new column's DB default. CableFormModal reads/writes the
+      // real value via the strand head from the export-payload loader.
+      grouping_arrangement: 'TOUCHING',
       ambient_temp_c: r.ambient_temp_c,
       tag_override: r.tag_override,
       manual_override: r.manual_override,

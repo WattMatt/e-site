@@ -190,6 +190,14 @@ export async function lookupDeratingFactors(
     grouped_with: number
     ambient_c: number
     insulation: 'PVC' | 'XLPE' | 'PILC'
+    /**
+     * Cable layout in the trench / duct group.
+     *   TOUCHING  → T6.3.6 `factor_touching` (conservative, hardest derate)
+     *   SPACING_D → T6.3.6 `factor_clearance_d` (1× cable-diameter clearance)
+     * Defaults to TOUCHING for back-compat with callers from before
+     * migration 00064.
+     */
+    grouping_arrangement?: 'TOUCHING' | 'SPACING_D'
   },
 ): Promise<{
   depth: number | null
@@ -205,11 +213,13 @@ export async function lookupDeratingFactors(
   // (per-count, includes n = 1) rather than the 6.3.3 axial-spacing matrix,
   // since the caller supplies only a cable count, not a spacing.
   const tempFactorKey = args.insulation === 'XLPE' ? 'factor_xlpe_90c' : 'factor_pvc_70c'
+  const groupingFactorKey =
+    args.grouping_arrangement === 'SPACING_D' ? 'factor_clearance_d' : 'factor_touching'
 
   const [d, th, gr, te] = await Promise.all([
     lookupFactor(supabase, 'TABLE_6_3_1', 'depth_mm',        args.depth_mm,                'factor_direct_in_ground'),
     lookupFactor(supabase, 'TABLE_6_3_2', 'resistivity_kmw', args.thermal_resistivity_kmw, 'factor_direct_in_ground'),
-    lookupFactor(supabase, 'TABLE_6_3_6', 'n_cables',        args.grouped_with,            'factor_touching'),
+    lookupFactor(supabase, 'TABLE_6_3_6', 'n_cables',        args.grouped_with,            groupingFactorKey),
     lookupFactor(supabase, 'TABLE_6_3_4', 'ambient_c',       args.ambient_c,               tempFactorKey),
   ])
   return { depth: d, thermal: th, grouping: gr, temperature: te }
