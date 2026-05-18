@@ -269,50 +269,91 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
             </table>
           </div>
 
-          {/* Print-only Critchley-style tag grid (10-up A4 portrait) */}
+          {/* Print-only header — shows context on the printed sheet that
+              would otherwise be hidden with .no-print */}
+          <div className="print-only print-header">
+            <div className="print-header-title">CABLE TAG SCHEDULE</div>
+            <div className="print-header-meta">
+              {project.name} · {revision.code} · {filtered.filter((r) => r.tag).length} tag{filtered.filter((r) => r.tag).length !== 1 ? 's' : ''}
+            </div>
+          </div>
+
+          {/* Print-only tag grid — 10-up A4 portrait (2 cols × 5 rows).
+              Layout mirrors the PDF export at export-pdf.ts:700+ so the
+              in-app print and the bundled PDF look identical. Avery-spec
+              label-sheet sizing is a separate follow-up. */}
           <div className="print-only tag-grid">
-            {filtered.filter((r) => r.tag).map((r) => (
-              <div key={r.tag!.id} className="tag-card">
-                <div className="tag-line-1">{r.atBoardLabel}</div>
-                <div className="tag-line-2">{r.oppositeLabel}</div>
-                <div className="tag-line-3">
-                  {r.cable.size_mm2} mm² ({r.cable.cable_no} of N)
+            {filtered.filter((r) => r.tag).map((r) => {
+              const c = r.cable
+              const detail = `${c.size_mm2}mm² ${c.conductor} ${c.insulation}`
+                + (c.armour ? `/${c.armour}` : '')
+                + ` · ${r.atBoardLabel} → ${r.oppositeLabel}`
+              return (
+                <div key={r.tag!.id} className="tag-card">
+                  <div className="tag-text">{r.tag!.tag_text}</div>
+                  <div className="tag-end">END: {r.end}</div>
+                  <div className="tag-detail">{detail}</div>
+                  {qrByTagId.has(r.tag!.id) && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={qrByTagId.get(r.tag!.id)!} alt="" className="tag-qr" />
+                  )}
                 </div>
-                <div className="tag-line-4">
-                  {project.name.slice(0, 30)} / {revision.code}
-                </div>
-                {qrByTagId.has(r.tag!.id) && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={qrByTagId.get(r.tag!.id)!} alt="" className="tag-qr" />
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           <style>{`
+            .print-only { display: none; }
             @media print {
+              @page { size: A4 portrait; margin: 12mm; }
               .no-print { display: none !important; }
-              .print-only { display: grid !important; }
+              .print-only { display: block !important; }
+              .print-header {
+                font-family: ui-sans-serif, system-ui, sans-serif;
+                margin: 0 0 6mm;
+                padding-bottom: 3mm;
+                border-bottom: 0.5pt solid #707070;
+              }
+              .print-header-title {
+                font-size: 11pt; font-weight: 700; letter-spacing: 0.08em;
+              }
+              .print-header-meta {
+                font-size: 9pt; color: #4a4a4a; margin-top: 1mm;
+              }
               .tag-grid {
+                display: grid !important;
                 grid-template-columns: 1fr 1fr;
-                gap: 6mm;
-                padding: 10mm;
+                grid-auto-rows: 48mm;
+                gap: 6mm 6mm;
               }
               .tag-card {
                 page-break-inside: avoid;
-                border: 1px solid #000;
-                padding: 6mm;
-                font-family: monospace;
+                break-inside: avoid;
+                border: 0.5pt solid #707070;
+                padding: 5mm 6mm 4mm;
+                font-family: ui-sans-serif, system-ui, sans-serif;
                 position: relative;
-                min-height: 40mm;
+                overflow: hidden;
               }
-              .tag-line-1 { font-weight: 700; font-size: 12pt; }
-              .tag-line-2 { font-weight: 700; font-size: 12pt; }
-              .tag-line-3 { font-size: 10pt; margin-top: 1mm; }
-              .tag-line-4 { font-size: 8pt; color: #555; margin-top: 1mm; }
-              .tag-qr { position: absolute; top: 4mm; right: 4mm; width: 18mm; height: 18mm; }
+              .tag-text {
+                font-weight: 700; font-size: 14pt;
+                letter-spacing: 0.02em; line-height: 1.15;
+              }
+              .tag-end {
+                font-size: 8pt; color: #4a4a4a;
+                margin-top: 2mm; letter-spacing: 0.06em;
+              }
+              .tag-detail {
+                position: absolute; left: 6mm; bottom: 4mm;
+                right: 32mm;
+                font-size: 8pt; color: #5a5a5a;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+              }
+              .tag-qr {
+                position: absolute; right: 6mm; bottom: 4mm;
+                width: 25mm; height: 25mm;
+              }
             }
-            .print-only { display: none; }
           `}</style>
         </>
       )}
