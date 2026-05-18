@@ -12,6 +12,8 @@ import {
   ConfirmedLengthEditor,
 } from './LengthEditPopover'
 import { EditableCell } from './EditableCell'
+import { CableFormDrawer, type DrawerState } from './CableFormDrawer'
+import { useRouter } from 'next/navigation'
 import {
   updateSupplyAction,
   updateCableAction,
@@ -194,6 +196,8 @@ export function CableScheduleGrid({
   const [pendingDelete, setPendingDelete] = useState<EnrichedCable | null>(null)
   const [repointing, setRepointing] = useState<{ supplyId: string; from: string; to: string; end: 'from' | 'to'; current: string } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [drawer, setDrawer] = useState<DrawerState | null>(null)
+  const router = useRouter()
   const [savingShared, setSavingShared] = useState<string | null>(null) // supply_id while a fan-out is in flight
   const [sharedError, setSharedError] = useState<{ supplyId: string; message: string } | null>(null)
 
@@ -651,6 +655,17 @@ export function CableScheduleGrid({
                     {head.manual_override && run.parallel_count === 1 && (
                       <span style={{ marginLeft: 4, fontSize: 9, color: 'var(--c-amber)' }} title="Manual override">⚑</span>
                     )}
+                    {canEdit && !locked && (
+                      <button
+                        type="button"
+                        onClick={() => setDrawer({ mode: 'edit-run', supplyId: run.supply_id, run })}
+                        aria-label={`Edit run ${run.from_label} to ${run.to_label}`}
+                        title="Edit run (shared cable properties + supply fields)"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12, marginLeft: 6, padding: '0 4px' }}
+                      >
+                        ✏
+                      </button>
+                    )}
                   </Td>
                   <Td>
                     {canEdit && !locked && headRow ? (
@@ -881,22 +896,57 @@ export function CableScheduleGrid({
                       <Td colSpan={4} />
                       <Td>
                         {canEdit && !locked && (
-                          <button type="button" title={`Delete strand #${c.cable_no} — last strand deletes the run`}
-                            onClick={() => setPendingDelete(c)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 11 }}>
-                            ✕ delete strand
-                          </button>
+                          <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              title={`Edit strand #${c.cable_no} — per-strand fields (measured length, Ω override, tag, notes)`}
+                              onClick={() => setDrawer({ mode: 'edit-strand', cableId: c.id, strand: c, supplyId: run.supply_id, runLabel: `${run.from_label}–${run.to_label}` })}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-amber)', fontSize: 11 }}
+                            >
+                              ✏ edit
+                            </button>
+                            <button
+                              type="button"
+                              title={`Delete strand #${c.cable_no} — last strand deletes the run`}
+                              onClick={() => setPendingDelete(c)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 11 }}
+                            >
+                              ✕ delete
+                            </button>
+                          </span>
                         )}
                       </Td>
                     </tr>
                   )
                 }) : []),
+                // ── "+ Add strand" tail row, only when run is expanded ───
+                ...(isExpanded && canEdit && !locked ? [(
+                  <tr key={`add-strand-${run.supply_id}`} style={{ background: 'var(--c-base)' }}>
+                    <td colSpan={25} style={{ padding: '6px 14px', borderTop: '1px dashed var(--c-border)' }}>
+                      <button
+                        type="button"
+                        onClick={() => setDrawer({ mode: 'add-strand', supplyId: run.supply_id, run })}
+                        title={`Append a new strand to this run (defaults inherited from strand 1)`}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-amber)', fontSize: 11, fontFamily: 'inherit' }}
+                      >
+                        + Add strand to run ({run.parallel_count + 1} of N)
+                      </button>
+                    </td>
+                  </tr>
+                )] : []),
               ]
             })}
           </tbody>
         </table>
       </div>
 
+      {drawer && (
+        <CableFormDrawer
+          state={drawer}
+          onClose={() => setDrawer(null)}
+          onSaved={() => router.refresh()}
+        />
+      )}
       {editConfirmed && (
         <ConfirmedLengthEditor
           cableId={editConfirmed.id}
