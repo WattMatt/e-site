@@ -60,31 +60,54 @@ function buildReadme(payload: ExportPayload, stem: string): string {
   const issued = payload.revision.issued_at
     ? payload.revision.issued_at.slice(0, 10)
     : 'not issued (DRAFT)'
+  const vatPct = payload.revision.vat_pct ?? 15
+  let statusLine: string
+  if (payload.revision.status === 'DRAFT') {
+    statusLine = '⚠ DRAFT revision — not yet issued. Values may change.'
+  } else if (payload.revision.status === 'SUPERSEDED') {
+    statusLine = 'SUPERSEDED — historical revision, see latest issued.'
+  } else {
+    statusLine = 'ISSUED revision — frozen snapshot.'
+  }
   return [
     `CABLE SCHEDULE — REVISION PACK`,
     ``,
-    `Project:        ${payload.project.name}`,
-    `Revision:       ${payload.revision.code} (${payload.revision.status})`,
-    `Issued:         ${issued}`,
-    `Generated:      ${generated}`,
-    `Sources:        ${payload.sources.length}`,
-    `Boards:         ${payload.boards.length}`,
-    `Supplies:       ${payload.supplies.length}`,
-    `Cables:         ${payload.cables.length}`,
-    `Tags:           ${payload.cableTags.length}`,
+    `Project:         ${payload.project.name}`,
+    `Revision:        ${payload.revision.code} (${payload.revision.status})`,
+    `Issued:          ${issued}`,
+    `Generated:       ${generated}`,
+    `Sources:         ${payload.sources.length}`,
+    `Boards:          ${payload.boards.length}`,
+    `Supplies (runs): ${payload.supplies.length}`,
+    `Cables (strands): ${payload.cables.length}`,
+    `Tags:            ${payload.cableTags.length}`,
     ``,
     `Contents`,
     `--------`,
-    `${stem}.xlsx     — Schedule grid + cost summary + facts & figures + revision history (4 sheets)`,
-    `${stem}.pdf      — Revision pack: cover + schedule grid + cost summary + tag schedule with QR codes`,
-    `csv/schedule.csv — One row per cable`,
-    `csv/tags.csv     — One row per cable tag (each cable has FROM + TO)`,
-    `csv/cost.csv     — Cost breakdown with totals`,
-    `csv/change_log.csv — Audit trail`,
+    `${stem}.xlsx     — Excel workbook (4 sheets):`,
+    `                    • CABLE SCHEDULE — one row per run; Parallel column for strand count`,
+    `                    • COST SUMMARY — supply + install + termination rates per (size, conductor)`,
+    `                    • FACTS AND FIGURES — calc audit reference`,
+    `                    • REVISION HISTORY — change_log entries`,
+    `${stem}.pdf      — Revision pack: cover + landscape schedule (Cu/Al sections)`,
+    `                    + cost page + tag pages with QR codes (10-up)`,
+    `csv/schedule.csv — One row per RUN (= supply). Parallel strands under parallel_count column.`,
+    `csv/tags.csv     — One row per (cable, end). 2 per cable.`,
+    `csv/cost.csv     — Cost rows per (size, conductor) + materials/VAT/grand-total trailer.`,
+    `csv/change_log.csv — Per-entity audit trail.`,
     ``,
-    `The .xlsx is round-trip safe — it can be re-imported via the E-Site cable`,
-    `schedule "Import workbook" flow if you need to fork this revision into a`,
-    `new DRAFT in another project.`,
+    `Notes`,
+    `-----`,
+    `• "Parallel ×N" = number of parallel cable strands on the same logical run.`,
+    `• Cu = copper, Al = aluminium. Mixed-metal projects price each conductor`,
+    `  separately (Al is typically ~30% the price of Cu at the same size).`,
+    `• ${statusLine}`,
+    ``,
+    `Cost calc:`,
+    `  Materials = Σ ((supply_rate + install_rate) × total_length) per (size, conductor)`,
+    `              + Σ (terminations × termination_rate)`,
+    `  Grand total = Materials × (1 + VAT/100)`,
+    `  VAT for this revision: ${vatPct}%`,
     ``,
   ].join('\r\n')
 }
