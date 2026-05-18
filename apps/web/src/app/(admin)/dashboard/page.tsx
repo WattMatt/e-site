@@ -1,11 +1,20 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, formatZAR, getSlaSummary, SLA_DEFAULTS, getProcurementSummary } from '@esite/shared'
+import {
+  projectService,
+  formatZAR,
+  getSlaSummary,
+  getAwaitingVerification,
+  getReInspectRequired,
+  getStaleDraftInspections,
+  SLA_DEFAULTS,
+  getProcurementSummary,
+} from '@esite/shared'
 import { isMarketplaceEnabled } from '@/components/marketplace/InDevelopmentNotice'
 import Link from 'next/link'
 
 export const metadata: Metadata = { title: 'Dashboard' }
-import { FolderPlus, AlertTriangle, BookOpen, ShoppingBag, Clock, FileWarning, MessageSquareWarning } from 'lucide-react'
+import { FolderPlus, AlertTriangle, BookOpen, ShoppingBag, Clock, ClipboardCheck, MessageSquareWarning, RotateCcw, FileEdit } from 'lucide-react'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -20,11 +29,12 @@ export default async function DashboardPage() {
     .single()
 
   const orgId = membership?.organisation_id
+  const orgIds = orgId ? [orgId] : []
 
-  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, complianceResult, sla, procurement] = await Promise.all([
+  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, sla, procurement, awaiting, reinspect, staleDrafts] = await Promise.all([
     orgId
       ? projectService.getStats(supabase as any, orgId)
-      : Promise.resolve({ activeProjects: 0, openSnags: 0, pendingCocs: 0 }),
+      : Promise.resolve({ activeProjects: 0, openSnags: 0 }),
 
     orgId
       ? (supabase as any)
@@ -87,18 +97,9 @@ export default async function DashboardPage() {
       : Promise.resolve({ count: 0 }),
 
     orgId
-      ? (supabase as any)
-          .schema('compliance')
-          .from('subsections')
-          .select('coc_status')
-          .eq('organisation_id', orgId)
-      : Promise.resolve({ data: [] }),
-
-    orgId
       ? getSlaSummary(supabase as any, orgId)
       : Promise.resolve({
           agingSnags: { count: 0, top: [] },
-          pendingCocs: { count: 0, top: [] },
           staleRfis: { count: 0, top: [] },
         }),
 
@@ -110,6 +111,10 @@ export default async function DashboardPage() {
           deliveriesThisWeek: { count: 0, top: [] },
           committedSpend: 0,
         }),
+
+    getAwaitingVerification(supabase as any, orgIds),
+    getReInspectRequired(supabase as any, orgIds),
+    getStaleDraftInspections(supabase as any, orgIds),
   ])
 
   const activeOrders = ordersCountResult.count ?? 0
@@ -129,12 +134,6 @@ export default async function DashboardPage() {
     ? await (supabase as any).schema('projects').from('projects').select('id, name').in('id', snagProjectIds)
     : { data: [] }
   const snagProjectMap = Object.fromEntries((snagProjects ?? []).map((p: any) => [p.id, p.name]))
-
-  const allSubs = complianceResult.data ?? []
-  const compliantSubs = allSubs.filter((s: any) => s.coc_status === 'approved').length
-  const complianceHealth = allSubs.length > 0
-    ? Math.round((compliantSubs / allSubs.length) * 100)
-    : null
 
   const today = new Date()
   const orgName = (membership?.organisation as any)?.name ?? 'E-Site'
@@ -156,12 +155,6 @@ export default async function DashboardPage() {
 
   const daysUntil = (dateStr: string) =>
     Math.ceil((new Date(dateStr).getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-
-  const complianceVariant =
-    complianceHealth === null ? '' :
-    complianceHealth >= 80 ? 'kpi-success' :
-    complianceHealth >= 50 ? 'kpi-warning' :
-    'kpi-danger'
 
   return (
     <div className="animate-fadeup">
@@ -194,12 +187,12 @@ export default async function DashboardPage() {
         </Link>
 
         <Link
-          href="/compliance"
-          className={`kpi-card ${stats.pendingCocs > 0 ? 'kpi-warning' : ''}`}
+          href="/inspections?status=awaiting_verification"
+          className={`kpi-card ${awaiting.length > 0 ? 'kpi-warning' : ''}`}
           style={{ textDecoration: 'none', color: 'inherit' }}
         >
-          <div className="kpi-label">Pending COCs</div>
-          <div className="kpi-value">{stats.pendingCocs}</div>
+          <div className="kpi-label">Awaiting Verification</div>
+          <div className="kpi-value">{awaiting.length}</div>
         </Link>
 
         {isMarketplaceEnabled() && (
@@ -208,24 +201,10 @@ export default async function DashboardPage() {
             <div className="kpi-value">{activeOrders}</div>
           </Link>
         )}
-
-        <Link
-          href="/compliance"
-          className={`kpi-card ${complianceVariant}`}
-          style={{ textDecoration: 'none', color: 'inherit' }}
-        >
-          <div className="kpi-label">Compliance</div>
-          <div className="kpi-value">
-            {complianceHealth !== null ? `${complianceHealth}%` : '—'}
-          </div>
-          {allSubs.length > 0 && (
-            <div className="kpi-meta">{compliantSubs}/{allSubs.length} sections</div>
-          )}
-        </Link>
       </div>
 
       {/* Operational SLA — surfaces stuck/aging work the org needs to act on */}
-      {(sla.agingSnags.count > 0 || sla.pendingCocs.count > 0 || sla.staleRfis.count > 0) && (
+      {(sla.agingSnags.count > 0 || sla.staleRfis.count > 0 || awaiting.length > 0 || reinspect.length > 0 || staleDrafts.length > 0) && (
         <div className="animate-fadeup animate-fadeup-2" style={{ marginBottom: 16 }}>
           <div style={{
             display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
@@ -238,10 +217,133 @@ export default async function DashboardPage() {
               Action required
             </h2>
             <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>
-              snags &gt;{SLA_DEFAULTS.AGING_SNAG_DAYS}d · rfis &gt;{SLA_DEFAULTS.STALE_RFI_DAYS}d / overdue
+              snags &gt;{SLA_DEFAULTS.AGING_SNAG_DAYS}d · rfis &gt;{SLA_DEFAULTS.STALE_RFI_DAYS}d / overdue · inspections drafts &gt;14d
             </span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            {/* Awaiting verification (inspections) */}
+            <Link
+              href="/inspections?status=awaiting_verification"
+              className="data-panel"
+              style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <ClipboardCheck size={16} color={awaiting.length > 0 ? 'var(--c-amber)' : 'var(--c-text-dim)'} />
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>
+                  Awaiting verification
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 600, color: 'var(--c-text)' }}>
+                  {awaiting.length}
+                </span>
+              </div>
+              {awaiting.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+                  No inspections awaiting verifier sign-off.
+                </p>
+              ) : (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {awaiting.slice(0, 3).map((i: any) => (
+                    <li key={i.id} style={{ fontSize: 12 }}>
+                      <Link
+                        href={`/projects/${i.project_id}/inspections/${i.id}`}
+                        style={{
+                          color: 'var(--c-text)', textDecoration: 'none', display: 'block',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {i.target_label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Link>
+
+            {/* Re-inspect required */}
+            <Link
+              href="/inspections?status=re-inspect_required"
+              className="data-panel"
+              style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <RotateCcw size={16} color={reinspect.length > 0 ? 'var(--c-red)' : 'var(--c-text-dim)'} />
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>
+                  Re-inspect required
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 600, color: 'var(--c-text)' }}>
+                  {reinspect.length}
+                </span>
+              </div>
+              {reinspect.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+                  No inspections sent back for re-work.
+                </p>
+              ) : (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {reinspect.slice(0, 3).map((i: any) => (
+                    <li key={i.id} style={{ fontSize: 12 }}>
+                      <Link
+                        href={`/projects/${i.project_id}/inspections/${i.id}`}
+                        style={{
+                          color: 'var(--c-text)', textDecoration: 'none', display: 'block',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {i.target_label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Link>
+
+            {/* Stale draft inspections */}
+            <Link
+              href="/inspections?status=in_progress"
+              className="data-panel"
+              style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <FileEdit size={16} color={staleDrafts.length > 0 ? 'var(--c-amber)' : 'var(--c-text-dim)'} />
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}>
+                  Stale drafts (&gt;14d)
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 600, color: 'var(--c-text)' }}>
+                  {staleDrafts.length}
+                </span>
+              </div>
+              {staleDrafts.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+                  No stale draft inspections.
+                </p>
+              ) : (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {staleDrafts.slice(0, 3).map((i: any) => (
+                    <li key={i.id} style={{ fontSize: 12 }}>
+                      <Link
+                        href={`/projects/${i.project_id}/inspections/${i.id}`}
+                        style={{
+                          color: 'var(--c-text)', textDecoration: 'none', display: 'block',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {i.target_label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Link>
+
             {/* Aging snags */}
             <Link
               href="/snags?filter=aging"
@@ -273,44 +375,6 @@ export default async function DashboardPage() {
                       </span>
                       <span style={{ color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>
                         {s.days_open}d
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Link>
-
-            {/* Pending COCs */}
-            <Link
-              href="/compliance?filter=pending"
-              className="data-panel"
-              style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <FileWarning size={16} color={sla.pendingCocs.count > 0 ? 'var(--c-amber)' : 'var(--c-text-dim)'} />
-                <span style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)',
-                  letterSpacing: '0.06em', textTransform: 'uppercase',
-                }}>
-                  Pending COCs
-                </span>
-                <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 600, color: 'var(--c-text)' }}>
-                  {sla.pendingCocs.count}
-                </span>
-              </div>
-              {sla.pendingCocs.top.length === 0 ? (
-                <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
-                  No COCs awaiting review.
-                </p>
-              ) : (
-                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {sla.pendingCocs.top.map(c => (
-                    <li key={c.id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <span style={{ color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {c.name}
-                      </span>
-                      <span style={{ color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap' }}>
-                        {c.coc_status === 'submitted' ? 'new' : 'review'}
                       </span>
                     </li>
                   ))}

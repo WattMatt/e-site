@@ -10,10 +10,8 @@ import { SkeletonKpiCard } from '../../src/components/Skeleton'
 const QUICK_ACTIONS = [
   { label: 'Log Snag',    icon: '⚠️', route: '/snags/create',       bg: colors.redDim,    border: colors.redMid,    testID: 'quick-action-log-snag' },
   { label: 'Site Diary',  icon: '📓', route: '/diary',               bg: colors.blueDim,   border: colors.blueMid,   testID: 'quick-action-diary' },
-  { label: 'Upload COC',  icon: '📄', route: '/(tabs)/compliance',   bg: colors.greenDim,  border: colors.greenMid,  testID: 'quick-action-upload-coc' },
   { label: 'Scan QR',     icon: '📷', route: '/qr-scan',             bg: colors.elevated,  border: colors.borderMid, testID: 'quick-action-scan-qr' },
   { label: 'Marketplace', icon: '🛒', route: '/marketplace',         bg: colors.amberDim,  border: colors.amberMid,  testID: 'quick-action-marketplace' },
-  { label: 'Compliance',  icon: '✅', route: '/(tabs)/compliance',   bg: colors.greenDim,  border: colors.greenMid,  testID: 'quick-action-compliance' },
 ] as const
 
 export default function DashboardTab() {
@@ -46,7 +44,6 @@ export default function DashboardTab() {
 
   const firstName = profile?.full_name?.split(' ')[0] ?? 'there'
   const openSnags = stats?.openSnags ?? 0
-  const pendingCocs = stats?.pendingCocs ?? 0
 
   return (
     <ScrollView
@@ -75,12 +72,6 @@ export default function DashboardTab() {
                 {openSnags}
               </Text>
               <Text style={styles.kpiLabel}>Open Snags</Text>
-            </View>
-            <View style={[styles.kpiCard, pendingCocs > 0 && { borderColor: colors.amberMid }]}>
-              <Text style={[styles.kpiValue, pendingCocs > 0 && { color: colors.amber }]}>
-                {pendingCocs}
-              </Text>
-              <Text style={styles.kpiLabel}>Pending COCs</Text>
             </View>
           </>
         )}

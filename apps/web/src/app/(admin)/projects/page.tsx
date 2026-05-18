@@ -29,6 +29,28 @@ export default async function ProjectsPage() {
     ? await projectService.list(supabase as any, membership.organisation_id)
     : []
 
+  // Per-project inspections certified count (replaces compliance-health %)
+  const projectIds = projects.map((p: any) => p.id)
+  const inspectionCounts: Record<string, { total: number; certified: number }> = {}
+  if (projectIds.length > 0) {
+    const [totalsRes, certifiedRes] = await Promise.all([
+      (supabase as any).schema('inspections').from('inspections')
+        .select('project_id')
+        .in('project_id', projectIds),
+      (supabase as any).schema('inspections').from('inspections')
+        .select('project_id')
+        .in('project_id', projectIds)
+        .eq('status', 'certified'),
+    ])
+    for (const id of projectIds) inspectionCounts[id] = { total: 0, certified: 0 }
+    for (const row of (totalsRes.data ?? []) as Array<{ project_id: string }>) {
+      if (inspectionCounts[row.project_id]) inspectionCounts[row.project_id].total += 1
+    }
+    for (const row of (certifiedRes.data ?? []) as Array<{ project_id: string }>) {
+      if (inspectionCounts[row.project_id]) inspectionCounts[row.project_id].certified += 1
+    }
+  }
+
   return (
     <div className="animate-fadeup">
       <div className="page-header">
@@ -54,26 +76,34 @@ export default async function ProjectsPage() {
               {projects.length} total
             </span>
           </div>
-          {projects.map((project) => (
-            <Link key={project.id} href={`/projects/${project.id}`} className="data-panel-row">
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{project.name}</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
-                  {project.client_name ?? '—'}
-                  {project.city ? ` · ${project.city}${project.province ? `, ${project.province}` : ''}` : ''}
-                  {` · ${formatDate(project.created_at)}`}
+          {projects.map((project) => {
+            const counts = inspectionCounts[project.id] ?? { total: 0, certified: 0 }
+            return (
+              <Link key={project.id} href={`/projects/${project.id}`} className="data-panel-row">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{project.name}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                    {project.client_name ?? '—'}
+                    {project.city ? ` · ${project.city}${project.province ? `, ${project.province}` : ''}` : ''}
+                    {` · ${formatDate(project.created_at)}`}
+                  </div>
                 </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-                {project.contract_value != null && (
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--c-text-mid)' }}>
-                    {formatZAR(project.contract_value)}
-                  </span>
-                )}
-                <span className={statusBadge(project.status)}>{project.status.replace('_', ' ')}</span>
-              </div>
-            </Link>
-          ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                  {counts.total > 0 && (
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
+                      {counts.certified} of {counts.total} certified
+                    </span>
+                  )}
+                  {project.contract_value != null && (
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--c-text-mid)' }}>
+                      {formatZAR(project.contract_value)}
+                    </span>
+                  )}
+                  <span className={statusBadge(project.status)}>{project.status.replace('_', ' ')}</span>
+                </div>
+              </Link>
+            )
+          })}
         </div>
       )}
     </div>
