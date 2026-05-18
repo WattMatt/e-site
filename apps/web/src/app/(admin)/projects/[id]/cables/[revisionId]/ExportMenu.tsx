@@ -5,6 +5,17 @@ import { useEffect, useRef, useState } from 'react'
 interface Props {
   projectId: string
   revisionId: string
+  /**
+   * T12 — optional pre-encoded filter querystring to append to CSV
+   * links. Example: `&filter=panel&size=70,95&conductor=CU`. Excel /
+   * PDF / ZIP exports do NOT honour this yet (deferred), so the
+   * suffix is intentionally only appended to CSV variants — appending
+   * to other formats would silently mislead the user.
+   *
+   * Caller is responsible for URL-encoding values + including the
+   * leading `&`.
+   */
+  filterQuery?: string
 }
 
 interface MenuItem {
@@ -14,7 +25,7 @@ interface MenuItem {
   hint?: string
 }
 
-export function ExportMenu({ projectId, revisionId }: Props) {
+export function ExportMenu({ projectId, revisionId, filterQuery }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -65,19 +76,23 @@ export function ExportMenu({ projectId, revisionId }: Props) {
       emoji: '📄',
       hint: 'Cover + schedule + cost + tags with QR',
     },
+    // T12: CSV variants honour the optional filterQuery. change_log
+    // intentionally drops it — the route ignores filter params for
+    // change_log (audit trail isn't cable-scoped), but keeping the
+    // suffix off the link avoids URLs that look like they'd filter.
     {
       label: 'CSV — Schedule',
-      href: `/api/cable-schedule/export/csv${qs}&type=schedule`,
+      href: `/api/cable-schedule/export/csv${qs}&type=schedule${filterQuery ?? ''}`,
       emoji: '📑',
     },
     {
       label: 'CSV — Tags',
-      href: `/api/cable-schedule/export/csv${qs}&type=tags`,
+      href: `/api/cable-schedule/export/csv${qs}&type=tags${filterQuery ?? ''}`,
       emoji: '🏷',
     },
     {
       label: 'CSV — Cost',
-      href: `/api/cable-schedule/export/csv${qs}&type=cost`,
+      href: `/api/cable-schedule/export/csv${qs}&type=cost${filterQuery ?? ''}`,
       emoji: '💰',
     },
     {

@@ -18,13 +18,60 @@ const NL = '\r\n' // Windows-style — Excel + LibreOffice both happy
 
 export type CsvKind = 'schedule' | 'tags' | 'cost' | 'change_log'
 
-export function renderCsv(kind: CsvKind, payload: ExportPayload): string {
+/**
+ * Optional filter applied at render time (T12). Mirrors the schedule-grid
+ * UI filter state, so an export reflects the user's current view rather
+ * than the whole revision. When all fields are nullish/empty the payload
+ * is returned unchanged (zero-overhead path).
+ *
+ * change_log iterates entity history (not cables) so the filter is a
+ * no-op there — applied to schedule/tags/cost only.
+ */
+export interface CsvFilter {
+  filterText?: string | null
+  sizeFilter?: number[] | null
+  conductorFilter?: 'CU' | 'AL' | null
+}
+
+export function renderCsv(kind: CsvKind, payload: ExportPayload, filter: CsvFilter = {}): string {
   switch (kind) {
-    case 'schedule':   return scheduleCsv(payload)
-    case 'tags':       return tagsCsv(payload)
-    case 'cost':       return costCsv(payload)
+    case 'schedule':   return scheduleCsv(filterCables(payload, filter))
+    case 'tags':       return tagsCsv(filterCables(payload, filter))
+    case 'cost':       return costCsv(filterCables(payload, filter))
     case 'change_log': return changeLogCsv(payload)
   }
+}
+
+function filterCables(payload: ExportPayload, f: CsvFilter): ExportPayload {
+  const hasText = !!(f.filterText && f.filterText.length > 0)
+  const hasSize = !!(f.sizeFilter && f.sizeFilter.length > 0)
+  const hasCond = !!f.conductorFilter
+  if (!hasText && !hasSize && !hasCond) return payload
+
+  const text = hasText ? f.filterText!.toLowerCase() : null
+  const sizes = hasSize ? new Set(f.sizeFilter!) : null
+  const cond = hasCond ? f.conductorFilter! : null
+
+  const cables = payload.cables.filter((c) => {
+    if (sizes && !sizes.has(Number(c.size_mm2))) return false
+    if (cond && c.conductor !== cond) return false
+    if (text) {
+      const haystack = `${c.cable_tag} ${c.from_label} ${c.to_label} ${c.notes ?? ''}`.toLowerCase()
+      if (!haystack.includes(text)) return false
+    }
+    return true
+  })
+
+  // Scope runs + cableTags to the surviving cables so all three CSV
+  // variants stay coherent. costCsv aggregates from `cables` directly,
+  // so it inherits the filter naturally.
+  const cableIds = new Set(cables.map((c) => c.id))
+  const runs = payload.runs
+    .map((r) => ({ ...r, cables: r.cables.filter((c) => cableIds.has(c.id)) }))
+    .filter((r) => r.cables.length > 0)
+  const cableTags = payload.cableTags.filter((t) => cableIds.has(t.cable_id))
+
+  return { ...payload, cables, runs, cableTags }
 }
 
 function scheduleCsv(payload: ExportPayload): string {

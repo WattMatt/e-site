@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getRevisionExportPayload, exportFilenameStem } from '@/lib/cable-schedule/export-payload'
-import { renderCsv, type CsvKind } from '@/lib/cable-schedule/export-csv'
+import { renderCsv, type CsvKind, type CsvFilter } from '@/lib/cable-schedule/export-csv'
 import {
   getExportPolicy,
   redactPayloadCost,
@@ -55,7 +55,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: sizeCheck.reason }, { status: sizeCheck.status })
   }
 
-  const csv = renderCsv(type, effectivePayload)
+  // T12: optional filter applied at render time. Defensive parsing —
+  // query params are untrusted. Filter is applied AFTER the policy +
+  // size guards above so a redacted-cost / over-sized payload still
+  // short-circuits before any filtering work happens.
+  const filterText = req.nextUrl.searchParams.get('filter')?.trim().toLowerCase() || null
+  const rawSize = req.nextUrl.searchParams.get('size')
+  const sizeFilter = rawSize
+    ? rawSize
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    : null
+  const rawCond = req.nextUrl.searchParams.get('conductor')?.toUpperCase() ?? null
+  const conductorFilter: 'CU' | 'AL' | null =
+    rawCond === 'CU' || rawCond === 'AL' ? rawCond : null
+
+  const filter: CsvFilter = {
+    filterText,
+    sizeFilter: sizeFilter && sizeFilter.length > 0 ? sizeFilter : null,
+    conductorFilter,
+  }
+
+  const csv = renderCsv(type, effectivePayload, filter)
   const filename = `${exportFilenameStem(effectivePayload)}-${type}.csv`
 
   return new Response(csv, {
