@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getRevisionExportPayload, exportFilenameStem } from '@/lib/cable-schedule/export-payload'
 import { renderScheduleWorkbook } from '@/lib/cable-schedule/export-excel'
+import { getExportPolicy, redactPayloadCost } from '@/lib/cable-schedule/export-role'
 
 export const runtime = 'nodejs'
 
@@ -26,8 +27,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Revision not found' }, { status: 404 })
   }
 
-  const buffer = await renderScheduleWorkbook(payload)
-  const filename = `${exportFilenameStem(payload)}.xlsx`
+  const policy = await getExportPolicy(
+    supabase,
+    userData.user.id,
+    payload.project.organisation_id,
+    payload.project.id,
+  )
+  if (!policy.canExport) {
+    return NextResponse.json(
+      { error: policy.reason ?? 'Forbidden' },
+      { status: 403 },
+    )
+  }
+  const effectivePayload = policy.redactCost ? redactPayloadCost(payload) : payload
+
+  const buffer = await renderScheduleWorkbook(effectivePayload)
+  const filename = `${exportFilenameStem(effectivePayload)}.xlsx`
 
   return new Response(new Uint8Array(buffer), {
     status: 200,
