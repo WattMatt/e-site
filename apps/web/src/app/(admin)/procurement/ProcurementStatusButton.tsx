@@ -29,7 +29,7 @@ export function ProcurementStatusButton({ id, currentStatus, quotedPrice }: Prop
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [showQuoteInput, setShowQuoteInput] = useState(false)
-  const [quoteValue, setQuoteValue] = useState(quotedPrice ? String(quotedPrice / 100) : '')
+  const [quoteValue, setQuoteValue] = useState(quotedPrice ? String(quotedPrice) : '')
   const [poNumber, setPoNumber] = useState('')
 
   const nextStatuses = STATUS_FLOW[currentStatus] ?? []
@@ -42,7 +42,7 @@ export function ProcurementStatusButton({ id, currentStatus, quotedPrice }: Prop
     }
     const client = createClient()
     await procurementService.updateStatus(client as any, id, nextStatus, {
-      quotedPrice: nextStatus === 'quoted' && quoteValue ? Math.round(parseFloat(quoteValue) * 100) : undefined,
+      quotedPrice: nextStatus === 'quoted' && quoteValue ? parseFloat(quoteValue) : undefined,
       poNumber: poNumber || undefined,
     })
     startTransition(() => router.refresh())
