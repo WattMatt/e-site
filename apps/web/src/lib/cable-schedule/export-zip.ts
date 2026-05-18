@@ -16,6 +16,7 @@ import JSZip from 'jszip'
 import { renderScheduleWorkbook } from './export-excel'
 import { renderRevisionPdf } from './export-pdf'
 import { renderCsv } from './export-csv'
+import { exportFilenameStem } from './export-filename'
 import type { ExportPayload } from './export-payload'
 
 export async function renderRevisionZip(
@@ -23,7 +24,7 @@ export async function renderRevisionZip(
 ): Promise<Uint8Array> {
   const zip = new JSZip()
 
-  const stem = stemFor(payload)
+  const stem = exportFilenameStem(payload)
 
   // Run xlsx + pdf in parallel — they share no state.
   const [xlsxBuf, pdfBytes] = await Promise.all([
@@ -45,14 +46,6 @@ export async function renderRevisionZip(
   zip.file('README.txt', buildReadme(payload, stem))
 
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
-}
-
-function stemFor(payload: ExportPayload): string {
-  const proj = payload.project.name
-    .replace(/[^a-z0-9]+/gi, '-')
-    .replace(/^-+|-+$/g, '')
-  const rev = payload.revision.code.replace(/\s+/g, '').toLowerCase()
-  return `${proj}-${rev}`
 }
 
 function buildReadme(payload: ExportPayload, stem: string): string {

@@ -614,10 +614,7 @@ function autoTag(from: string, to: string, cableNo: number): string {
 }
 
 /**
- * Slug suitable for a download filename: project + rev + safe chars.
+ * Slug suitable for a download filename: project + rev + status + date.
+ * Re-exported from the dedicated module so existing callers keep working.
  */
-export function exportFilenameStem(payload: ExportPayload): string {
-  const proj = payload.project.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')
-  const rev = payload.revision.code.replace(/\s+/g, '').toLowerCase()
-  return `${proj}-${rev}-cable-schedule`
-}
+export { exportFilenameStem } from './export-filename'
