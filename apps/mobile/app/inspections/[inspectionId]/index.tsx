@@ -55,6 +55,10 @@ export default function MobileCaptureScreen() {
   const [inspection, setInspection] = useState<LocalInspection | null>(null)
   const [template, setTemplate] = useState<Template | null>(null)
   const [responses, setResponses] = useState<Response[]>([])
+  // Photos table (section_id+field_id) used for min_count enforcement at
+  // evaluation time. Signatures intentionally omitted: local schema mirrors
+  // server schema where signatures store `role` not section_id/field_id.
+  const [photos, setPhotos] = useState<{ section_id: string; field_id: string }[]>([])
   const [activeSection, setActiveSection] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -101,10 +105,24 @@ export default function MobileCaptureScreen() {
           ((respRs.rows as unknown as Array<Record<string, unknown>>) ?? [])
         const resps: Response[] = rawResps.map(hydrateResponseRow)
 
+        // Photos — metadata only; engine uses section_id+field_id for min_count
+        const photoRs = await db.execute(
+          `SELECT section_id, field_id FROM inspection_photos WHERE inspection_id = ?`,
+          [inspectionId],
+        )
+        const rawPhotos =
+          (photoRs.rows?._array as Array<Record<string, unknown>> | undefined) ??
+          ((photoRs.rows as unknown as Array<Record<string, unknown>>) ?? [])
+        const photoMeta = rawPhotos.map((p) => ({
+          section_id: String(p.section_id ?? ''),
+          field_id: String(p.field_id ?? ''),
+        }))
+
         if (cancelled) return
         setInspection(insp)
         setTemplate(schemaJson)
         setResponses(resps)
+        setPhotos(photoMeta)
         setActiveSection(schemaJson?.sections?.[0]?.section_id ?? '')
       } finally {
         if (!cancelled) setLoading(false)
@@ -116,8 +134,8 @@ export default function MobileCaptureScreen() {
   }, [db, inspectionId])
 
   const ev = useMemo(
-    () => (template ? evaluateInspection(template, responses) : null),
-    [template, responses],
+    () => (template ? evaluateInspection(template, responses, { photos }) : null),
+    [template, responses, photos],
   )
 
   const updateResponse = async (sectionId: string, fieldId: string, patch: FieldChangePatch) => {

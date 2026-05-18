@@ -41,7 +41,17 @@ export default async function CapturePage({ params }: Props) {
   if (!inspection) notFound()
 
   // Cross-schema joins via PostgREST embeds are unreliable — batch them.
-  const [{ data: template }, { data: responsesRaw }, { data: { user } }] = await Promise.all([
+  // photos load only section_id+field_id (engine uses them for min_count enforcement).
+  // Signatures intentionally omitted: inspections.signatures has `role` not
+  // section_id/field_id — signature_required validation is enforced at certify time
+  // via separate count of signatures-by-role. Wire signature attachments once a
+  // future migration adds section_id+field_id to the signatures table.
+  const [
+    { data: template },
+    { data: responsesRaw },
+    { data: photosRaw },
+    { data: { user } },
+  ] = await Promise.all([
     supabase
       .schema('inspections')
       .from('templates')
@@ -54,6 +64,11 @@ export default async function CapturePage({ params }: Props) {
       .select(
         'section_id, field_id, value_bool, value_number, value_text, value_array, value_json, pass_state, fail_reason',
       )
+      .eq('inspection_id', inspectionId),
+    supabase
+      .schema('inspections')
+      .from('photos')
+      .select('section_id, field_id')
       .eq('inspection_id', inspectionId),
     supabase.auth.getUser(),
   ])
@@ -69,6 +84,7 @@ export default async function CapturePage({ params }: Props) {
     : null
 
   const responses = (responsesRaw ?? []) as InspectionResponse[]
+  const photos = (photosRaw ?? []) as { section_id: string; field_id: string }[]
   const templateJson = template?.schema_json as Template | undefined
 
   return (
@@ -139,6 +155,7 @@ export default async function CapturePage({ params }: Props) {
           projectId={projectId}
           template={templateJson}
           initialResponses={responses}
+          initialPhotos={photos}
           status={inspection.status}
           verifierId={inspection.verifier_id}
           currentUserId={user?.id ?? null}

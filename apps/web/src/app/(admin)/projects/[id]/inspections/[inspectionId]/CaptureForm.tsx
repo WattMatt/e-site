@@ -17,6 +17,7 @@ interface Props {
   projectId?: string
   template: Template
   initialResponses: InspectionResponse[]
+  initialPhotos?: { section_id: string; field_id: string }[]
   status?: string
   verifierId?: string | null
   currentUserId: string | null
@@ -29,6 +30,7 @@ export default function CaptureForm({
   projectId,
   template,
   initialResponses,
+  initialPhotos,
   status,
   verifierId,
   currentUserId,
@@ -36,6 +38,9 @@ export default function CaptureForm({
   readOnly: readOnlyProp,
 }: Props) {
   const [responses, setResponses] = useState<InspectionResponse[]>(initialResponses)
+  // Photos are loaded server-side (no client-side mutation surface in this commit).
+  // signature_required validation is deferred — see page.tsx comment above the query.
+  const photos = initialPhotos ?? []
   const [activeSection, setActiveSection] = useState<string>(template.sections[0]?.section_id ?? '')
   const [savingFields, setSavingFields] = useState<Set<string>>(new Set())
   const [showCertify, setShowCertify] = useState(false)
@@ -49,8 +54,8 @@ export default function CaptureForm({
     readOnlyProp || isPreview || isCertifiedOrAbandoned || status === 'awaiting_verification'
 
   const evaluation = useMemo(
-    () => evaluateInspection(template, responses),
-    [template, responses],
+    () => evaluateInspection(template, responses, { photos }),
+    [template, responses, photos],
   )
 
   const sectionStats = useMemo(() => {
