@@ -22,6 +22,13 @@ export type ConditionalOn =
   | { field_id: string; less_than: number }
   | { field_id: string; in: (string | number)[] };
 
+export type SignatoryQualification =
+  | 'registered_person'
+  | 'master_installation_electrician'
+  | 'pr_eng'
+  | 'witness'
+  | 'client';
+
 export interface Field {
   field_id: string;
   label: string;
@@ -37,6 +44,10 @@ export interface Field {
   default_value?: string | number | boolean;
   formula?: string;
   sans_ref?: string;
+  // Signature fields only: at least one captured signature must claim one of
+  // these qualifications (matched heuristically against signatory_title text
+  // or registration_number presence) before certify is permitted.
+  required_qualifications?: SignatoryQualification[];
 }
 
 export interface SubSection {

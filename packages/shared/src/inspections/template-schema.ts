@@ -26,6 +26,9 @@ const fieldSchema = z.object({
   default_value: z.union([z.string(), z.number(), z.boolean()]).optional(),
   formula: z.string().optional(),
   sans_ref: z.string().optional(),
+  required_qualifications: z.array(
+    z.enum(['registered_person','master_installation_electrician','pr_eng','witness','client']),
+  ).optional(),
 });
 
 // Same union shape as field.conditional_on — both subsections and sections

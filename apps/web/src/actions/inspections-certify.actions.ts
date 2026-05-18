@@ -131,6 +131,69 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
     }
   }
 
+  // Signature required_qualifications gate. If any signature field on the
+  // template declares required_qualifications, at least one captured signature
+  // must satisfy the qualification heuristically.
+  //
+  // v1 heuristic (no formal signatories registry):
+  //   - 'registered_person' satisfied by any signature with a non-empty
+  //     registration_number (proxy: only RPs/MIEs carry a registration_number).
+  //   - other qualifications satisfied by substring match against signatory_title
+  //     (case-insensitive, underscores → spaces). e.g. required_qualifications
+  //     = ['pr_eng'] matches a signatory_title like "Senior Pr Eng".
+  //
+  // Production v2 would consult a signatories table with verified credentials.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const schemaJson = template?.schema_json as any
+  const sigRequirements: { section_id: string; field_id: string; required_quals: string[]; label: string }[] = []
+  for (const section of (schemaJson?.sections ?? []) as Array<{
+    section_id: string
+    fields?: Array<Record<string, unknown>>
+    subsections?: Array<{ fields: Array<Record<string, unknown>> }>
+  }>) {
+    const allFields = [
+      ...((section.fields ?? []) as Array<Record<string, unknown>>),
+      ...((section.subsections ?? []).flatMap((ss) => ss.fields ?? []) as Array<Record<string, unknown>>),
+    ]
+    for (const f of allFields) {
+      const quals = (f.required_qualifications as string[] | undefined) ?? []
+      if (f.type === 'signature' && quals.length > 0) {
+        sigRequirements.push({
+          section_id: section.section_id,
+          field_id: String(f.field_id),
+          required_quals: quals,
+          label: String(f.label ?? f.field_id),
+        })
+      }
+    }
+  }
+
+  if (sigRequirements.length > 0) {
+    const { data: sigs } = await supabase
+      .schema('inspections')
+      .from('signatures')
+      .select('signatory_title, registration_number')
+      .eq('inspection_id', input.inspectionId)
+    const sigList = (sigs ?? []) as Array<{ signatory_title: string | null; registration_number: string | null }>
+
+    for (const req of sigRequirements) {
+      const matched = sigList.some((s) => {
+        const title = (s.signatory_title ?? '').toLowerCase()
+        // 'registered_person' qualified by presence of a registration_number
+        if (req.required_quals.includes('registered_person') && s.registration_number && s.registration_number.trim().length > 0) {
+          return true
+        }
+        // Title heuristic — match underscore-form against space-form
+        return req.required_quals.some((q) => title.includes(q.replace(/_/g, ' ')))
+      })
+      if (!matched) {
+        throw new Error(
+          `Signature requirement not met for "${req.label}" — needs one of: ${req.required_quals.join(', ')}. None of the captured signatures satisfy this (check signatory title or registration number).`,
+        )
+      }
+    }
+  }
+
   let cocNumber: string
   if (deliverable === 'coc') {
     if (!input.cocNumber || !input.cocNumber.trim()) {
