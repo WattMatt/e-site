@@ -181,6 +181,30 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
     console.warn('render-inspection-pdf invocation failed:', (e as Error).message)
   }
 
+  // Best-effort SANS 10142-1 validation for COC deliverables. The cert is
+  // valid even if validation fails (caught + logged) — the rules can be
+  // re-run later via the certificate detail UI. INS/FAT deliverables skip
+  // this entirely; the rule set is COC-specific.
+  if (deliverable === 'coc') {
+    try {
+      const { data: cert } = await supabase
+        .schema('inspections')
+        .from('certificates')
+        .select('id')
+        .eq('inspection_id', input.inspectionId)
+        .is('superseded_at', null)
+        .maybeSingle()
+      if (cert?.id) {
+        const { error: valErr } = await supabase.functions.invoke('validate-coc', {
+          body: { certificate_id: cert.id },
+        })
+        if (valErr) console.warn('validate-coc failed (cert still valid):', valErr.message)
+      }
+    } catch (e) {
+      console.warn('validate-coc invocation failed (cert still valid):', (e as Error).message)
+    }
+  }
+
   // Best-effort notification fan-out to PMs + contributors. dispatchNotification
   // is already never-throw; the outer try is defence-in-depth so cert state
   // remains valid even if the recipient queries fail.
