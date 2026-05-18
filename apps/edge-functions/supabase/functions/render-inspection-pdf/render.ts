@@ -323,15 +323,57 @@ async function drawSectionPages(
     page.drawText(valStr, { x: MARGIN_LEFT + xIndent, y: y - 14, size: 11, font: fontBold })
     y -= 32
 
-    // Inline photos for this field id (3-up grid, max 3 thumbnails per row).
-    // When called from a repeating_group entry, `lookupId` is the synthetic
-    // `<group>[<i>].<sub>` so we automatically scope photos to the entry.
+    // Inline photos for this field id — 3-column × 3-row grid per page,
+    // max 24 photos total. When called from a repeating_group entry,
+    // `lookupId` is the synthetic `<group>[<i>].<sub>` so we automatically
+    // scope photos to the entry.
+    const MAX_PHOTOS_PER_FIELD = 24
+    const PHOTOS_PER_ROW = 3
+    const ROWS_PER_PAGE = 3
+    const PHOTO_W = 160
+    const PHOTO_H = 120
+    const COL_GAP = 8
+    const ROW_GAP = 8
+
     const fieldPhotos = p.photos.filter(
       (ph) => ph.section_id === section.section_id && ph.field_id === lookupId,
     )
-    for (const photo of fieldPhotos.slice(0, 3)) {
-      if (y < 200) newPage()
-      if (!photo.signed_url) continue
+    const photosToRender = fieldPhotos.slice(0, MAX_PHOTOS_PER_FIELD)
+
+    // Track the highest rendered row on the current page so y advances correctly.
+    let renderedRows = 0
+    let photosOnCurrentPage = 0
+
+    for (let i = 0; i < photosToRender.length; i++) {
+      const photo = photosToRender[i]
+      const colIndex = i % PHOTOS_PER_ROW
+      const rowIndexOnPage = Math.floor(photosOnCurrentPage / PHOTOS_PER_ROW) % ROWS_PER_PAGE
+
+      // Start a new page after every full 3×3 block, or if insufficient vertical space.
+      if (colIndex === 0) {
+        if (rowIndexOnPage === 0 && photosOnCurrentPage > 0) {
+          // Completed a full 3×3 block — new page
+          renderedRows += ROWS_PER_PAGE
+          newPage()
+          photosOnCurrentPage = 0
+        } else if (y < BOTTOM_MARGIN + PHOTO_H + ROW_GAP) {
+          // Insufficient space for another row mid-block — new page
+          renderedRows += rowIndexOnPage
+          newPage()
+          photosOnCurrentPage = 0
+        }
+      }
+
+      if (!photo.signed_url) {
+        photosOnCurrentPage++
+        continue
+      }
+
+      const currentColIndex = photosOnCurrentPage % PHOTOS_PER_ROW
+      const currentRowOnPage = Math.floor(photosOnCurrentPage / PHOTOS_PER_ROW) % ROWS_PER_PAGE
+      const xPos = MARGIN_LEFT + xIndent + currentColIndex * (PHOTO_W + COL_GAP)
+      const yPos = y - (currentRowOnPage + 1) * (PHOTO_H + ROW_GAP)
+
       try {
         const resp2 = await fetch(photo.signed_url)
         if (!resp2.ok) throw new Error(`HTTP ${resp2.status}`)
@@ -342,26 +384,41 @@ async function drawSectionPages(
         } catch {
           img = await doc.embedPng(bytes)
         }
-        const dims = img.scaleToFit(160, 120)
+        const dims = img.scaleToFit(PHOTO_W, PHOTO_H)
         page.drawImage(img, {
-          x: MARGIN_LEFT + xIndent,
-          y: y - dims.height,
+          x: xPos,
+          y: yPos + (PHOTO_H - dims.height), // align to top of cell
           width: dims.width,
           height: dims.height,
         })
-        y -= dims.height + 8
       } catch (e) {
         const tail = photo.signed_url.split('?')[0]?.split('/').pop() ?? photo.id
         page.drawText(`[image unavailable: ${tail}]`, {
-          x: MARGIN_LEFT + xIndent,
-          y,
+          x: xPos,
+          y: yPos + PHOTO_H - 12,
           size: 9,
           font: fontReg,
           color: TEXT_FADED,
         })
-        y -= 12
         console.warn('Photo embed failed:', (e as Error).message)
       }
+      photosOnCurrentPage++
+    }
+
+    // Advance y past all rendered rows on the current (last) page.
+    if (photosToRender.length > 0) {
+      const rowsOnLastPage = Math.ceil(photosOnCurrentPage / PHOTOS_PER_ROW)
+      y -= rowsOnLastPage * (PHOTO_H + ROW_GAP) + ROW_GAP
+    }
+
+    // Overflow notice when the field has more than MAX_PHOTOS_PER_FIELD photos.
+    if (fieldPhotos.length > MAX_PHOTOS_PER_FIELD) {
+      if (y < BOTTOM_MARGIN + 16) newPage()
+      page.drawText(
+        `(+${fieldPhotos.length - MAX_PHOTOS_PER_FIELD} additional photos omitted from PDF — view in app)`,
+        { x: MARGIN_LEFT + xIndent, y, size: 8, font: fontReg, color: TEXT_FADED },
+      )
+      y -= 14
     }
   }
 
