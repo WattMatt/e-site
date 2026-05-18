@@ -893,3 +893,171 @@ function wrapText(
   }
   return out
 }
+
+/**
+ * Tag-list PDF renderer — multi-page A4 portrait tabular document, one row
+ * per cable tag. Sibling to `drawTagPages` (which renders the 10-up Critchley
+ * card layout). Same data, different shape — this is the "schedule list"
+ * deliverable, suitable as a site-coordination checklist or contractor-side
+ * picking list.
+ *
+ * Layout: header band (project + revision + tag-count + generated-at) +
+ * gray-filled column header row that repeats every page + 40 data rows per
+ * page + footer with WM brand strip + page-N-of-M.
+ *
+ * DRAFT watermark applied per-page when revision is unissued (same diagonal
+ * stamp as the revision-pack PDF).
+ */
+export async function drawTagListPages(
+  pdf: PDFDocument,
+  payload: ExportPayload,
+  helv: PDFFont,
+  helvB: PDFFont,
+): Promise<void> {
+  if (payload.cableTags.length === 0) return
+
+  const ROWS_PER_PAGE = 40
+  const HEADER_ROW_H = 16
+  const DATA_ROW_H = 14
+
+  // Sort tags by cable_no asc, then end_position (FROM before TO) so the
+  // printed list mirrors the on-screen tag-schedule table ordering.
+  const cableById = new Map(payload.cables.map((c) => [c.id, c] as const))
+  const sortedTags = [...payload.cableTags].sort((a, b) => {
+    const ca = cableById.get(a.cable_id)
+    const cb = cableById.get(b.cable_id)
+    const noA = ca?.cable_no ?? 0
+    const noB = cb?.cable_no ?? 0
+    if (noA !== noB) return noA - noB
+    if (a.end_position === b.end_position) return 0
+    return a.end_position === 'FROM' ? -1 : 1
+  })
+
+  const totalPages = Math.max(1, Math.ceil(sortedTags.length / ROWS_PER_PAGE))
+  const generatedAt = new Date().toISOString().slice(0, 16).replace('T', ' ')
+
+  // Column geometry (left x-offset, width, alignment, header label).
+  const cols = [
+    { x: MARGIN,       w: 30,  align: 'right'  as const, label: '#' },
+    { x: MARGIN + 35,  w: 200, align: 'left'   as const, label: 'Cable Tag' },
+    { x: MARGIN + 240, w: 35,  align: 'center' as const, label: 'End' },
+    { x: MARGIN + 280, w: 120, align: 'left'   as const, label: 'At Board' },
+    { x: MARGIN + 405, w: 120, align: 'left'   as const, label: 'To Board' },
+  ]
+
+  for (let pageNo = 1; pageNo <= totalPages; pageNo++) {
+    const slice = sortedTags.slice((pageNo - 1) * ROWS_PER_PAGE, pageNo * ROWS_PER_PAGE)
+    const page = pdf.addPage([A4_W, A4_H])
+
+    // DRAFT watermark first so subsequent text renders on top
+    if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
+
+    // Header band: title + meta line + horizontal rule
+    page.drawText('CABLE TAG SCHEDULE', {
+      x: MARGIN,
+      y: A4_H - MARGIN - 16,
+      size: 12,
+      font: helvB,
+      color: TEXT_DARK,
+    })
+    const metaLine = `${payload.project.name}  ·  Rev ${payload.revision.code} (${payload.revision.status})  ·  ${sortedTags.length} tag${sortedTags.length === 1 ? '' : 's'}  ·  Page ${pageNo} of ${totalPages}  ·  Generated ${generatedAt}`
+    page.drawText(clipText(metaLine, A4_W - 2 * MARGIN, helv, 8), {
+      x: MARGIN,
+      y: A4_H - MARGIN - 32,
+      size: 8,
+      font: helv,
+      color: TEXT_MID,
+    })
+    page.drawLine({
+      start: { x: MARGIN, y: A4_H - MARGIN - 42 },
+      end:   { x: A4_W - MARGIN, y: A4_H - MARGIN - 42 },
+      thickness: 0.5,
+      color: rgb(0.7, 0.7, 0.7),
+    })
+
+    // Column-header row (gray fill)
+    const headerY = A4_H - MARGIN - 42 - HEADER_ROW_H
+    page.drawRectangle({
+      x: MARGIN,
+      y: headerY,
+      width: A4_W - 2 * MARGIN,
+      height: HEADER_ROW_H,
+      color: rgb(0.93, 0.93, 0.93),
+    })
+    for (const col of cols) {
+      const textX = col.align === 'right'  ? col.x + col.w - 4 - helvB.widthOfTextAtSize(col.label, 8)
+                  : col.align === 'center' ? col.x + col.w / 2 - helvB.widthOfTextAtSize(col.label, 8) / 2
+                  : col.x + 4
+      page.drawText(col.label, {
+        x: textX,
+        y: headerY + 5,
+        size: 8,
+        font: helvB,
+        color: TEXT_DARK,
+      })
+    }
+
+    // Data rows
+    for (let i = 0; i < slice.length; i++) {
+      const tag = slice[i]
+      const globalIdx = (pageNo - 1) * ROWS_PER_PAGE + i + 1
+      const cable = cableById.get(tag.cable_id)
+      const rowY = headerY - DATA_ROW_H * (i + 1)
+
+      // Alternating row stripe for legibility on long lists
+      if (i % 2 === 1) {
+        page.drawRectangle({
+          x: MARGIN,
+          y: rowY,
+          width: A4_W - 2 * MARGIN,
+          height: DATA_ROW_H,
+          color: rgb(0.97, 0.97, 0.97),
+        })
+      }
+
+      // Resolve from/to board labels from cable + supply + (source|from_board)|to_board
+      const fromLabel = cable?.from_label ?? '?'
+      const toLabel = cable?.to_label ?? '?'
+      const atBoard = tag.end_position === 'FROM' ? fromLabel : toLabel
+      const opposite = tag.end_position === 'FROM' ? toLabel : fromLabel
+
+      const cells = [
+        { value: String(globalIdx),           col: cols[0] },
+        { value: tag.tag_text,                col: cols[1] },
+        { value: tag.end_position,            col: cols[2] },
+        { value: atBoard,                     col: cols[3] },
+        { value: opposite,                    col: cols[4] },
+      ]
+      for (const { value, col } of cells) {
+        const clipped = clipText(value, col.w - 8, helv, 8)
+        const textX = col.align === 'right'  ? col.x + col.w - 4 - helv.widthOfTextAtSize(clipped, 8)
+                    : col.align === 'center' ? col.x + col.w / 2 - helv.widthOfTextAtSize(clipped, 8) / 2
+                    : col.x + 4
+        page.drawText(clipped, {
+          x: textX,
+          y: rowY + 4,
+          size: 8,
+          font: helv,
+          color: TEXT_DARK,
+        })
+      }
+    }
+
+    // Footer band
+    page.drawText('WM Consulting Electrical Engineer (Pty) Ltd  ·  E-Site v2', {
+      x: MARGIN,
+      y: 20,
+      size: 7,
+      font: helv,
+      color: TEXT_DIM,
+    })
+    const pageLabel = `Page ${pageNo} of ${totalPages}`
+    page.drawText(pageLabel, {
+      x: A4_W - MARGIN - helv.widthOfTextAtSize(pageLabel, 7),
+      y: 20,
+      size: 7,
+      font: helv,
+      color: TEXT_DIM,
+    })
+  }
+}
