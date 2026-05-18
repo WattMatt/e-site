@@ -1061,3 +1061,141 @@ export async function drawTagListPages(
     })
   }
 }
+
+/**
+ * Avery L7173 label-sheet PDF renderer — A4 portrait, 2 cols × 5 rows,
+ * 99.1mm × 57mm labels. Designed for printing onto Avery L7173 sticker
+ * sheets that get applied as cable laminate wraps.
+ *
+ * Hardcoded for L7173 SKU; adding more SKUs (L7159 24-up, Brady B-498
+ * 25×50mm, etc.) is a follow-up via a SKU registry pattern.
+ *
+ * Each label = tag_text (compact form, requires short_codes via T1-T6),
+ * END marker, cable detail one-liner, QR code (35mm). Thin gray cut-
+ * guide border around each label.
+ */
+async function drawAveryL7173Pages(
+  pdf: PDFDocument,
+  payload: ExportPayload,
+  helv: PDFFont,
+  helvB: PDFFont,
+): Promise<void> {
+  if (payload.cableTags.length === 0) return
+
+  // Avery L7173 geometry in pt (1mm = 2.8346pt)
+  const PAGE_W = 595.28
+  const PAGE_H = 841.89
+  const LABEL_W = 280.85   // 99.1mm
+  const LABEL_H = 161.57   // 57mm
+  const HMARGIN = 13.32    // 4.7mm
+  const VMARGIN = 38.27    // 13.5mm — top + bottom equal
+  const COLS = 2
+  const ROWS = 5
+  const PER_PAGE = COLS * ROWS  // 10
+
+  const QR_SIZE = 99.21    // 35mm
+  const PAD = 8            // 2.8mm inner label padding
+
+  const SITE_URL_BASE = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live').replace(/\/$/, '')
+
+  const cableById = new Map(payload.cables.map((c) => [c.id, c] as const))
+
+  // Sort tags: cable_no asc, then FROM before TO (matches the on-screen
+  // table order + the tag-list PDF order)
+  const sortedTags = [...payload.cableTags].sort((a, b) => {
+    const ca = cableById.get(a.cable_id)
+    const cb = cableById.get(b.cable_id)
+    const noA = ca?.cable_no ?? 0
+    const noB = cb?.cable_no ?? 0
+    if (noA !== noB) return noA - noB
+    if (a.end_position === b.end_position) return 0
+    return a.end_position === 'FROM' ? -1 : 1
+  })
+
+  const totalPages = Math.max(1, Math.ceil(sortedTags.length / PER_PAGE))
+
+  for (let pageNo = 1; pageNo <= totalPages; pageNo++) {
+    const slice = sortedTags.slice((pageNo - 1) * PER_PAGE, pageNo * PER_PAGE)
+    const page = pdf.addPage([PAGE_W, PAGE_H])
+
+    if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
+
+    for (let i = 0; i < slice.length; i++) {
+      const tag = slice[i]
+      const cable = cableById.get(tag.cable_id)
+      const col = i % COLS
+      const row = Math.floor(i / COLS)
+
+      // Label origin (lower-left) in PDF coordinates
+      const x = HMARGIN + col * LABEL_W
+      const y = PAGE_H - VMARGIN - LABEL_H - row * LABEL_H
+
+      // Thin gray cut-guide border
+      page.drawRectangle({
+        x, y, width: LABEL_W, height: LABEL_H,
+        borderColor: rgb(0.8, 0.8, 0.8),
+        borderWidth: 0.25,
+      })
+
+      // Tag text (top-left, bold)
+      const tagText = clipText(tag.tag_text, LABEL_W - QR_SIZE - PAD * 3, helvB, 12)
+      page.drawText(tagText, {
+        x: x + PAD,
+        y: y + LABEL_H - PAD - 10,
+        size: 12,
+        font: helvB,
+        color: TEXT_DARK,
+      })
+
+      // END marker (below tag_text)
+      page.drawText(`END: ${tag.end_position}`, {
+        x: x + PAD,
+        y: y + LABEL_H - PAD - 26,
+        size: 8,
+        font: helv,
+        color: TEXT_MID,
+      })
+
+      // Cable detail (bottom-left, one-line ellipsis)
+      if (cable) {
+        const detail = `${cable.size_mm2}mm² ${cable.conductor} ${cable.insulation}`
+          + (cable.armour ? `/${cable.armour}` : '')
+          + ` · ${cable.from_label} → ${cable.to_label}`
+        const clipped = clipText(detail, LABEL_W - 2 * PAD, helv, 7)
+        page.drawText(clipped, {
+          x: x + PAD,
+          y: y + PAD,
+          size: 7,
+          font: helv,
+          color: TEXT_DIM,
+        })
+      }
+
+      // QR (top-right of label) — encode tag_text as a URL like the
+      // existing QR pages, so phone-camera scans treat it as a link
+      const qrText = tag.tag_text || ''
+      if (qrText) {
+        try {
+          const qrUrl = `${SITE_URL_BASE}/site/tag/${encodeURIComponent(qrText)}`
+          const qrBuffer = await QRCode.toBuffer(qrUrl, {
+            type: 'png',
+            errorCorrectionLevel: 'M',
+            margin: 1,
+            width: 280,
+          })
+          const png = await pdf.embedPng(qrBuffer)
+          page.drawImage(png, {
+            x: x + LABEL_W - QR_SIZE - PAD,
+            y: y + LABEL_H - QR_SIZE - PAD,
+            width: QR_SIZE,
+            height: QR_SIZE,
+          })
+        } catch {
+          // Skip QR on render failure; text still visible
+        }
+      }
+    }
+  }
+}
+
+export { drawAveryL7173Pages }
