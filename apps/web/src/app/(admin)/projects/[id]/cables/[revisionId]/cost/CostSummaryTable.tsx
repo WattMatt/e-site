@@ -8,6 +8,7 @@ import {
   updateRevisionVatAction,
 } from '@/actions/cable-cost.actions'
 import { reseedCostLinesFromRateLibraryAction } from '@/actions/cable-revision.actions'
+import { BulkPasteRatesButton } from './BulkPasteRatesButton'
 
 export interface CostRow {
   id: string | null
@@ -138,6 +139,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
           >
             {reseeding ? 'Re-seeding…' : '↻ Re-seed from rate library'}
           </button>
+          <BulkPasteRatesButton revisionId={revisionId} disabled={reseeding} />
           {reseedMessage && (
             <span
               role={reseedMessage.startsWith('✗') ? 'alert' : 'status'}

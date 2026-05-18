@@ -175,6 +175,97 @@ const updateRevisionVatSchema = z.object({
   vatPct: z.number().min(0).max(100),
 })
 
+// ─── C10: Bulk paste rates ──────────────────────────────────────────
+// Engineers receive supplier price lists as Excel/CSV (size + conductor
+// + rates). Bulk paste avoids typing each row individually on the cost
+// page. Upsert via PostgREST onConflict (revision_id, size_mm2, conductor).
+// DRAFT-only.
+
+const bulkPasteEntrySchema = z.object({
+  size_mm2: z.number().positive(),
+  conductor: z.enum(['CU', 'AL']),
+  supply_rate_per_m: z.number().nonnegative(),
+  install_rate_per_m: z.number().nonnegative(),
+  termination_rate_each: z.number().nonnegative(),
+})
+
+const bulkPasteSchema = z.object({
+  revisionId: uuid,
+  entries: z.array(bulkPasteEntrySchema).min(1).max(200),
+})
+
+export async function bulkPasteCostLinesAction(
+  input: z.infer<typeof bulkPasteSchema>,
+): Promise<{ ok: true; upserted: number } | { ok: false; error: string }> {
+  const parsed = bulkPasteSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated' }
+
+  const { data: rev } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id, organisation_id, project_id, status')
+    .eq('id', parsed.data.revisionId)
+    .single()
+  if (!rev) return { ok: false, error: 'Revision not found' }
+  if ((rev as any).status !== 'DRAFT') {
+    return { ok: false, error: 'Revision is ISSUED — cost lines are read-only.' }
+  }
+  const r = rev as { id: string; organisation_id: string; project_id: string }
+
+  // Deduplicate within the paste payload itself (last entry wins).
+  const byKey = new Map<string, z.infer<typeof bulkPasteEntrySchema>>()
+  for (const e of parsed.data.entries) {
+    byKey.set(`${e.size_mm2}|${e.conductor}`, e)
+  }
+  const rows = Array.from(byKey.values()).map((e) => ({
+    revision_id: parsed.data.revisionId,
+    organisation_id: r.organisation_id,
+    size_mm2: e.size_mm2,
+    conductor: e.conductor,
+    supply_rate_per_m: e.supply_rate_per_m,
+    install_rate_per_m: e.install_rate_per_m,
+    termination_rate_each: e.termination_rate_each,
+  }))
+
+  // Try conductor-aware upsert first (post-migration 00061).
+  const primary = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cost_lines')
+    .upsert(rows, { onConflict: 'revision_id,size_mm2,conductor' })
+
+  if (primary.error) {
+    // Pre-migration-00061 fallback: no conductor column / no compound
+    // UNIQUE. Collapse to size-only and re-upsert. CU entries win over AL
+    // (we have no way to keep both without the column).
+    if (primary.error.code === '42703' || primary.error.code === '42P10') {
+      const collapsed = new Map<number, typeof rows[number]>()
+      for (const row of rows) {
+        // Prefer CU when both present at the same size in legacy mode.
+        const existing = collapsed.get(row.size_mm2)
+        if (!existing || (existing.conductor === 'AL' && row.conductor === 'CU')) {
+          collapsed.set(row.size_mm2, row)
+        }
+      }
+      const legacyRows = Array.from(collapsed.values()).map(({ conductor: _drop, ...rest }) => rest)
+      const retry = await (supabase as any)
+        .schema('cable_schedule')
+        .from('cost_lines')
+        .upsert(legacyRows, { onConflict: 'revision_id,size_mm2' })
+      if (retry.error) return { ok: false, error: retry.error.message }
+      revalidatePath(`/projects/${r.project_id}/cables/${parsed.data.revisionId}/cost`)
+      return { ok: true, upserted: legacyRows.length }
+    }
+    return { ok: false, error: primary.error.message }
+  }
+
+  revalidatePath(`/projects/${r.project_id}/cables/${parsed.data.revisionId}/cost`)
+  return { ok: true, upserted: rows.length }
+}
+
 export async function updateRevisionVatAction(
   input: z.infer<typeof updateRevisionVatSchema>,
 ): Promise<{ ok?: true; error?: string }> {
