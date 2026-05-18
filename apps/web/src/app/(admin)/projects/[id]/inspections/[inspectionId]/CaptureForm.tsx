@@ -246,6 +246,8 @@ export default function CaptureForm({
                       readOnly={readOnly && !isVerifier}
                       verifierFlipMode={isVerifier}
                       onChange={(patch) => updateResponse(section.section_id, field.field_id, patch)}
+                      allResponses={responses}
+                      onUpsert={(fid, patch) => updateResponse(section.section_id, fid, patch)}
                     />
                     {savingFields.has(key) && (
                       <span style={{ fontSize: 10, color: 'var(--c-text-dim)' }}>Saving…</span>

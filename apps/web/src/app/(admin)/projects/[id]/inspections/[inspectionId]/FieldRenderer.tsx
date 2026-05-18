@@ -11,6 +11,7 @@ import SignatureField from './fields/SignatureField'
 import FileField from './fields/FileField'
 import HeaderField from './fields/HeaderField'
 import ComputedField from './fields/ComputedField'
+import RepeatingGroupField from './fields/RepeatingGroupField'
 
 export interface RendererProps {
   field: Field
@@ -20,6 +21,13 @@ export interface RendererProps {
   readOnly: boolean
   verifierFlipMode: boolean
   onChange: (patch: Partial<InspectionResponse>) => void
+  // Optional escape hatch for repeating_group: when provided, the renderer
+  // can read sibling sub-field responses (to render hydrated entries on
+  // reload) and can write to synthetic field_ids without going through the
+  // parent's `onChange` (which is keyed to the group field_id, not the
+  // synthetic id).
+  allResponses?: InspectionResponse[]
+  onUpsert?: (fieldId: string, patch: Partial<InspectionResponse>) => void
 }
 
 export default function FieldRenderer(p: RendererProps) {
@@ -46,6 +54,8 @@ export default function FieldRenderer(p: RendererProps) {
       return <HeaderField {...p} />
     case 'computed':
       return <ComputedField {...p} />
+    case 'repeating_group':
+      return <RepeatingGroupField {...p} />
     default:
       return null
   }

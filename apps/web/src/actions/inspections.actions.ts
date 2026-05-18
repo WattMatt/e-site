@@ -373,6 +373,43 @@ export async function upsertResponseAction(input: UpsertResponseInput): Promise<
   if (error) throw error
 }
 
+// ─── deleteRepeatingGroupEntryAction ────────────────────────────────────
+
+/**
+ * Hard-delete every response row for a single entry of a repeating_group.
+ * Synthetic field_id pattern: `<group_field_id>[<index>].<sub_field_id>`.
+ *
+ * Used by the web/mobile UIs when the user removes an entry from a repeating
+ * group. Photos/signatures uploaded under the synthetic field_id are NOT
+ * cascade-deleted here in v1 — the storage rows simply orphan (RLS still
+ * scopes them per inspection, so they're invisible to the renderer and the
+ * PDF appendix). A follow-up GC sweep can clean them up if needed.
+ */
+export async function deleteRepeatingGroupEntryAction(input: {
+  inspectionId: string
+  sectionId: string
+  groupFieldId: string
+  index: number
+}): Promise<void> {
+  const supabase = (await createClient()) as AnyClient
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Unauthenticated')
+
+  // Use a LIKE filter to match every sub-field response for this entry.
+  // The synthetic pattern guarantees `<group>[<index>].` uniquely scopes
+  // the entry — different indices/groups don't collide.
+  const prefix = `${input.groupFieldId}[${input.index}].`
+  const { error } = await supabase
+    .schema('inspections')
+    .from('responses')
+    .delete()
+    .eq('inspection_id', input.inspectionId)
+    .eq('section_id', input.sectionId)
+    .like('field_id', `${prefix}%`)
+
+  if (error) throw error
+}
+
 // ─── submitInspectionAction ─────────────────────────────────────────────
 
 /**
