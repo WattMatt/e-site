@@ -114,6 +114,32 @@ export default async function SettingsPage() {
           </div>
         )}
 
+        {/* Cable schedule rates (admin/owner only — page itself re-checks role). */}
+        {isAdmin && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Cable schedule rates</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>Firm-wide</span>
+            </div>
+            <div style={{ padding: '16px 18px' }}>
+              <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+                Manage firm-wide cable rates (supply, install, termination by size + conductor) that seed new revisions automatically.
+              </p>
+              <Link
+                href="/settings/cable-schedule/rates"
+                style={{
+                  display: 'inline-block',
+                  fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                  border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                  textDecoration: 'none',
+                }}
+              >
+                Manage rates →
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Danger zone */}
         <div className="data-panel" style={{ borderColor: '#6b1e1e' }}>
           <div className="data-panel-header" style={{ borderColor: '#6b1e1e' }}>

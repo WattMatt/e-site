@@ -97,12 +97,59 @@ export async function createRevisionAction(
   }
   const newRevisionId = (row as { id: string }).id
 
-  // ── Seed cost_lines rates from latest ISSUED revision (B6 — 2026-05-18) ─
-  // If an ISSUED revision exists on this project, copy its cost_lines rates
-  // forward. Engineer doesn't have to re-type 17 sizes × 2 conductors on
-  // every new revision. Best-effort: any failure is non-fatal — the new
-  // revision is already created.
+  // ── Seed cost_lines rates (B5-T4 — 2026-05-18) ───────────────────────────
+  // Priority order:
+  //   1. Firm-wide rate_library (authoritative source — wins when present)
+  //   2. Previous ISSUED revision on this project (legacy behavior from
+  //      6715a58; may carry project-specific overrides we don't want to
+  //      propagate by default — so only used when library is empty)
+  //   3. Empty → engineer enters rates manually on the cost page
+  //
+  // Best-effort: any seed failure is non-fatal — the new revision is already
+  // created and the engineer can always fall back to manual entry.
   try {
+    const orgId = (project as { organisation_id: string }).organisation_id
+
+    // Priority 1: firm-wide rate library
+    const { data: libraryRates } = await (supabase as any)
+      .schema('cable_schedule')
+      .from('rate_library')
+      .select('size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
+      .eq('organisation_id', orgId)
+
+    const libraryEntries = (libraryRates ?? []) as Array<{
+      size_mm2: number
+      conductor: 'CU' | 'AL'
+      supply_rate_per_m: number
+      install_rate_per_m: number
+      termination_rate_each: number
+    }>
+
+    if (libraryEntries.length > 0) {
+      const libraryRows = libraryEntries.map((e) => ({
+        revision_id: newRevisionId,
+        organisation_id: orgId,
+        size_mm2: e.size_mm2,
+        conductor: e.conductor,
+        supply_rate_per_m: e.supply_rate_per_m,
+        install_rate_per_m: e.install_rate_per_m,
+        termination_rate_each: e.termination_rate_each,
+        contingency_pct: null,
+        vat_pct: null,
+      }))
+      // Best-effort insert — duplicate-key errors silenced (race against
+      // ensureCostLinesAction firing first on cost-page load).
+      await (supabase as any)
+        .schema('cable_schedule')
+        .from('cost_lines')
+        .insert(libraryRows)
+        .then(() => {})
+        .catch(() => {})
+    }
+
+    // Priority 2: fall back to previous-revision copy when library is empty.
+    // Also runs the VAT-copy step regardless (vat_pct lives on revisions,
+    // not in the library).
     const { data: prevIssued } = await (supabase as any)
       .schema('cable_schedule')
       .from('revisions')
@@ -112,7 +159,7 @@ export async function createRevisionAction(
       .order('issued_at', { ascending: false, nullsFirst: false })
       .limit(1)
     const prev = (prevIssued?.[0] as { id: string } | undefined)?.id
-    if (prev) {
+    if (prev && libraryEntries.length === 0) {
       // Try the conductor-aware columns first (post-migration 00061).
       // Tolerant fallback: pre-migration schema lacks `conductor` column.
       let prevRates: Array<{
@@ -140,7 +187,6 @@ export async function createRevisionAction(
         prevRates = (withCond.data ?? []) as typeof prevRates
       }
       if (prevRates.length > 0) {
-        const orgId = (project as { organisation_id: string }).organisation_id
         const clonedRows = prevRates.map((r) => {
           const base: Record<string, unknown> = {
             revision_id: newRevisionId,
@@ -165,7 +211,13 @@ export async function createRevisionAction(
           .then(() => {})
           .catch(() => {})
       }
-      // Also copy VAT % across if the column exists (migration 00060).
+    }
+
+    // Copy VAT % from previous ISSUED revision regardless of which seed path
+    // ran for cost_lines. VAT lives on `revisions.vat_pct` (migration 00060),
+    // not in `rate_library`, so library-seeded revisions still benefit from
+    // the previous-revision VAT inheritance.
+    if (prev) {
       const { data: prevRev } = await (supabase as any)
         .schema('cable_schedule')
         .from('revisions')
