@@ -1,4 +1,4 @@
-import type { Field, Response } from './types';
+import type { Field, Response, Template, EvaluationResult } from './types';
 
 type PassState = 'pass' | 'fail' | 'na' | 'not_checked';
 
@@ -59,4 +59,68 @@ function evaluateNumberThreshold(pw: string, val: number): { passState: PassStat
   }
 
   return { passState: 'pass' };
+}
+
+export function isFieldVisible(field: Field, allResponses: Response[]): boolean {
+  if (!field.conditional_on) return true;
+  const trigger = allResponses.find(r => r.field_id === field.conditional_on!.field_id);
+  if (!trigger) return false;
+  const target = field.conditional_on.equals;
+  if (typeof target === 'boolean') return trigger.value_bool === target;
+  if (typeof target === 'number') return trigger.value_number === target;
+  return trigger.value_text === target;
+}
+
+export function evaluateInspection(template: Template, responses: Response[]): EvaluationResult {
+  const failedFields: { sectionId: string; fieldId: string; reason: string }[] = [];
+  const missingRequired: { sectionId: string; fieldId: string }[] = [];
+  let visibleFieldCount = 0;
+  let answeredFieldCount = 0;
+
+  for (const section of template.sections) {
+    for (const field of section.fields) {
+      if (field.type === 'header' || field.type === 'computed') continue;
+      if (!isFieldVisible(field, responses)) continue;
+
+      visibleFieldCount++;
+      const response = responses.find(r => r.section_id === section.section_id && r.field_id === field.field_id);
+      const hasAnswer = !!response && (
+        (response.value_bool !== undefined && response.value_bool !== null) ||
+        (response.value_number !== undefined && response.value_number !== null) ||
+        (!!response.value_text && response.value_text.length > 0) ||
+        (!!response.value_array && response.value_array.length > 0)
+      );
+
+      if (hasAnswer) answeredFieldCount++;
+
+      if (field.required && !hasAnswer) {
+        missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
+        continue;
+      }
+
+      if (response) {
+        const ev = evaluateField(field, response);
+        if (ev.passState === 'fail') {
+          failedFields.push({ sectionId: section.section_id, fieldId: field.field_id, reason: ev.reason ?? 'failed' });
+        }
+      }
+    }
+  }
+
+  let overallResult: EvaluationResult['overallResult'];
+  if (missingRequired.length > 0) {
+    overallResult = 'fail';
+  } else {
+    const requiredFailed = failedFields.some(ff =>
+      template.sections.some(s =>
+        s.section_id === ff.sectionId &&
+        s.fields.some(f => f.field_id === ff.fieldId && f.required)
+      )
+    );
+    if (requiredFailed) overallResult = 'fail';
+    else if (failedFields.length > 0) overallResult = 'conditional_pass';
+    else overallResult = 'pass';
+  }
+
+  return { overallResult, failedFields, missingRequired, visibleFieldCount, answeredFieldCount };
 }
