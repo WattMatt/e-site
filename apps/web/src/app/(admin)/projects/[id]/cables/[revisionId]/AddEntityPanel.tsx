@@ -343,6 +343,18 @@ function CableForm({
           <option value="AL">Al</option>
         </select>
       </Field>
+      {/* Insulation is PRIMARY, not "more detail" — it picks the SANS rating
+          table (T6.2/T6.3 for PVC, T6.4/T6.5 for XLPE) so the preview rating
+          changes ~30% across the dropdown. Hiding it behind +More meant
+          engineers picked Size with the XLPE default and saw inflated ratings
+          they couldn't explain. */}
+      <Field label="Insulation *">
+        <select className="ob-input" value={insulation} onChange={(e) => setInsulation(e.target.value as any)}>
+          <option value="XLPE">XLPE</option>
+          <option value="PVC">PVC</option>
+          <option value="PILC">PILC</option>
+        </select>
+      </Field>
       <div style={{ gridColumn: '1 / -1' }}>
         <button type="button" onClick={() => setShowMore((v) => !v)} aria-expanded={showMore}
           style={{ background: 'none', border: 'none', cursor: 'pointer',
@@ -365,13 +377,6 @@ function CableForm({
               <option value="3">3</option>
               <option value="3+E">3+E</option>
               <option value="4">4</option>
-            </select>
-          </Field>
-          <Field label="Insulation">
-            <select className="ob-input" value={insulation} onChange={(e) => setInsulation(e.target.value as any)}>
-              <option value="XLPE">XLPE</option>
-              <option value="PVC">PVC</option>
-              <option value="PILC">PILC</option>
             </select>
           </Field>
           <Field label="Length (m)">
@@ -411,7 +416,7 @@ function CableForm({
             ? `⚠ Even 16 in parallel won't carry ${Number(load)} A at this size — pick a larger cable.`
             : preview.mode === 'add-single'
               ? `This supply already has cables — Add will add 1 more. (≈${preview.count} recommended for ${Number(load)} A.)`
-              : `${preview.count} × ${sizeMm2}mm² ${conductor === 'CU' ? 'Cu' : 'Al'} → combined ${Math.round(preview.combinedRatingA)} A (≥ ${Number(load)} A design load)`}
+              : `${preview.count} × ${sizeMm2}mm² ${conductor === 'CU' ? 'Cu' : 'Al'} ${insulation} → combined ${Math.round(preview.combinedRatingA)} A (≥ ${Number(load)} A design load)`}
         </div>
       )}
       {preview && preview.mode === 'create-set' && !preview.insufficient && (
