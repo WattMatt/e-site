@@ -44,48 +44,76 @@ export async function ensureCostLinesAction(
   }
   const r = rev as { id: string; organisation_id: string; project_id: string }
 
-  // Distinct sizes from cables in the revision
+  // Distinct (size, conductor) tuples from cables in the revision.
+  // Pre-migration-00061 schema only has `size_mm2` keyed UNIQUE — tolerant
+  // fallback below ensures the action works either side of that migration.
   const { data: cables } = await (supabase as any)
     .schema('cable_schedule')
     .from('cables')
-    .select('size_mm2')
+    .select('size_mm2, conductor')
     .eq('revision_id', revisionId)
-  const sizes = new Set<number>()
-  for (const c of (cables ?? []) as Array<{ size_mm2: number }>) {
-    if (Number(c.size_mm2) > 0) sizes.add(Number(c.size_mm2))
+  type Tuple = { size: number; conductor: 'CU' | 'AL' }
+  const tuples = new Map<string, Tuple>()
+  for (const c of (cables ?? []) as Array<{ size_mm2: number; conductor: 'CU' | 'AL' }>) {
+    const size = Number(c.size_mm2)
+    if (size <= 0) continue
+    const conductor: 'CU' | 'AL' = c.conductor === 'AL' ? 'AL' : 'CU'
+    tuples.set(`${size}|${conductor}`, { size, conductor })
   }
-  // NOTE: previously this added a sentinel RATES_HEADER_SIZE = 0 row to
-  // store revision-level VAT %, but cost_lines has CHECK (size_mm2 > 0)
-  // — every insert attempt failed with cost_lines_size_mm2_check violation
-  // (migration 00051, line 288). The action's swallowed error left rate
-  // cells disabled (the originally-reported bug). VAT is now display-only
-  // at the page's `header?.vat_pct ?? 15` default until a follow-up
-  // migration moves vat_pct to `cable_schedule.revisions` as a column.
+  // VAT moved off the sentinel row to revisions.vat_pct (migration 00060).
+  // Contingency removed entirely (2026-05-17).
 
-  // Existing cost line sizes
-  const { data: existing } = await (supabase as any)
+  // Existing cost lines — read both size_mm2 + conductor. Pre-migration
+  // -00061 schema doesn't have conductor; fallback to size-only matching
+  // (treat existing rows as 'CU' implicitly, matching the migration backfill).
+  let have: Set<string>
+  const withConductor = await (supabase as any)
     .schema('cable_schedule')
     .from('cost_lines')
-    .select('size_mm2')
+    .select('size_mm2, conductor')
     .eq('revision_id', revisionId)
-  const have = new Set(((existing ?? []) as Array<{ size_mm2: number }>).map((e) => Number(e.size_mm2)))
+  if (withConductor.error) {
+    // Pre-migration schema — fall back to size-only and treat all as CU.
+    const sizeOnly = await (supabase as any)
+      .schema('cable_schedule')
+      .from('cost_lines')
+      .select('size_mm2')
+      .eq('revision_id', revisionId)
+    have = new Set(((sizeOnly.data ?? []) as Array<{ size_mm2: number }>).map((e) => `${Number(e.size_mm2)}|CU`))
+  } else {
+    have = new Set(((withConductor.data ?? []) as Array<{ size_mm2: number; conductor: 'CU' | 'AL' }>)
+      .map((e) => `${Number(e.size_mm2)}|${e.conductor === 'AL' ? 'AL' : 'CU'}`))
+  }
 
-  const missing = [...sizes].filter((s) => !have.has(s))
+  const missing = [...tuples.values()].filter((t) => !have.has(`${t.size}|${t.conductor}`))
   if (missing.length === 0) return { created: 0 }
 
-  const rows = missing.map((size) => ({
-    revision_id: revisionId,
-    organisation_id: r.organisation_id,
-    size_mm2: size,
-    supply_rate_per_m: 0,
-    install_rate_per_m: 0,
-    termination_rate_each: 0,
-    // contingency_pct intentionally NULL on new rows (2026-05-17 removal).
-    // vat_pct also NULL — VAT is per-revision, not per-size; page falls
-    // back to 15% default until the follow-up migration lands.
-    contingency_pct: null,
-    vat_pct: null,
-  }))
+  // Pre-migration-00061: schema has no conductor column. Insert without
+  // it (the old UNIQUE on (revision, size) will block dup CU+AL pairs
+  // anyway, so we collapse to size-only insert in the legacy branch).
+  const preMigration = !!withConductor.error
+  const rows = preMigration
+    ? Array.from(new Set(missing.map((t) => t.size))).map((size) => ({
+        revision_id: revisionId,
+        organisation_id: r.organisation_id,
+        size_mm2: size,
+        supply_rate_per_m: 0,
+        install_rate_per_m: 0,
+        termination_rate_each: 0,
+        contingency_pct: null,
+        vat_pct: null,
+      }))
+    : missing.map((t) => ({
+        revision_id: revisionId,
+        organisation_id: r.organisation_id,
+        size_mm2: t.size,
+        conductor: t.conductor,
+        supply_rate_per_m: 0,
+        install_rate_per_m: 0,
+        termination_rate_each: 0,
+        contingency_pct: null,
+        vat_pct: null,
+      }))
   const { error } = await (supabase as any)
     .schema('cable_schedule')
     .from('cost_lines')

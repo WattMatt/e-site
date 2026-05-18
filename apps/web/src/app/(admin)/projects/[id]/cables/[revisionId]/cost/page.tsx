@@ -30,6 +30,7 @@ interface Props {
 interface CableRow {
   id: string
   size_mm2: number
+  conductor: 'CU' | 'AL'
   measured_length_m: number | null
   confirmed_length_m: number | null
   length_status: CableForCalc['length_status']
@@ -44,6 +45,7 @@ interface CableRow {
 interface CostLine {
   id: string
   size_mm2: number
+  conductor?: 'CU' | 'AL'  // optional pre-migration-00061
   supply_rate_per_m: number
   install_rate_per_m: number
   termination_rate_each: number
@@ -109,14 +111,14 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
       .schema('cable_schedule')
       .from('cables')
       .select(
-        'id, size_mm2, measured_length_m, confirmed_length_m, length_status, supply_id, ohm_per_km, ' +
+        'id, size_mm2, conductor, measured_length_m, confirmed_length_m, length_status, supply_id, ohm_per_km, ' +
         'derate_depth, derate_thermal, derate_grouping, derate_temp',
       )
       .eq('revision_id', revisionId),
     (supabase as any)
       .schema('cable_schedule')
       .from('cost_lines')
-      .select('id, size_mm2, supply_rate_per_m, install_rate_per_m, termination_rate_each, contingency_pct, vat_pct')
+      .select('id, size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each, contingency_pct, vat_pct')
       .eq('revision_id', revisionId)
       .order('size_mm2'),
   ])
@@ -125,28 +127,42 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
 
   const hasConfirmedLengths = cables.some((c) => c.confirmed_length_m != null)
 
-  // Aggregate cable totals per size
-  const totalsBySize = new Map<number, { totalLength: number; count: number }>()
+  // Aggregate cable totals per (size, conductor) — conductor-aware rates
+  // since migration 00061. Key shape: "<size>|CU" or "<size>|AL".
+  const totalsByKey = new Map<string, { size: number; conductor: 'CU' | 'AL'; totalLength: number; count: number }>()
   for (const c of cables) {
     const len = activeLengthM(c as unknown as CableForCalc, lengthMode) ?? 0
-    const agg = totalsBySize.get(Number(c.size_mm2)) ?? { totalLength: 0, count: 0 }
+    const size = Number(c.size_mm2)
+    const conductor: 'CU' | 'AL' = c.conductor === 'AL' ? 'AL' : 'CU'
+    const key = `${size}|${conductor}`
+    const agg = totalsByKey.get(key) ?? { size, conductor, totalLength: 0, count: 0 }
     agg.totalLength += len
     agg.count += 1
-    totalsBySize.set(Number(c.size_mm2), agg)
+    totalsByKey.set(key, agg)
   }
 
-  // Find rates header row (size = 0) and per-size lines
+  // Find rates header row (size = 0 legacy sentinel) and per-size lines.
   const header = costLines.find((c) => Number(c.size_mm2) === 0) ?? null
   const sizeLines = costLines.filter((c) => Number(c.size_mm2) > 0)
 
-  // Build merged display rows: for every size present in cables OR cost_lines.
-  const allSizes = new Set<number>([
-    ...sizeLines.map((c) => Number(c.size_mm2)),
-    ...Array.from(totalsBySize.keys()),
+  // Build merged display rows: for every (size, conductor) present in
+  // cables OR cost_lines. Pre-migration cost_lines have no conductor —
+  // treat them as 'CU' (matches the migration backfill default).
+  const allKeys = new Set<string>([
+    ...sizeLines.map((c) => `${Number(c.size_mm2)}|${c.conductor === 'AL' ? 'AL' : 'CU'}`),
+    ...Array.from(totalsByKey.keys()),
   ])
-  const rows: CostRow[] = [...allSizes].sort((a, b) => a - b).map((size) => {
-    const cl = sizeLines.find((c) => Number(c.size_mm2) === size)
-    const agg = totalsBySize.get(size)
+  const rows: CostRow[] = [...allKeys].sort((a, b) => {
+    const [sa, ca] = a.split('|'); const [sb, cb] = b.split('|')
+    const sn = Number(sa) - Number(sb); if (sn !== 0) return sn
+    return ca.localeCompare(cb)  // CU before AL alphabetically (AL, CU) → reverse for CU first
+  }).map((key) => {
+    const [sizeStr, conductor] = key.split('|') as [string, 'CU' | 'AL']
+    const size = Number(sizeStr)
+    const cl = sizeLines.find((c) =>
+      Number(c.size_mm2) === size && ((c.conductor ?? 'CU') === conductor)
+    )
+    const agg = totalsByKey.get(key)
     const totalLength = agg?.totalLength ?? 0
     const cablesOfSize = agg?.count ?? 0
     const supplyRate = cl ? Number(cl.supply_rate_per_m) : 0
@@ -155,6 +171,7 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
     return {
       id: cl?.id ?? null,
       size_mm2: size,
+      conductor,
       total_length_m: totalLength,
       supply_rate_per_m: supplyRate,
       install_rate_per_m: installRate,

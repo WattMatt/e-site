@@ -11,6 +11,7 @@ import {
 export interface CostRow {
   id: string | null
   size_mm2: number
+  conductor: 'CU' | 'AL'   // since migration 00061; pre-migration rows default to CU
   total_length_m: number
   supply_rate_per_m: number
   install_rate_per_m: number
@@ -101,6 +102,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
               <Th align="right">Size (mm²)</Th>
+              <Th align="right">Cond</Th>
               <Th align="right">Total length (m)</Th>
               <Th align="right">Supply (R/m)</Th>
               <Th align="right">Install (R/m)</Th>
@@ -112,8 +114,11 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={`${r.size_mm2}`} style={{ borderTop: '1px solid var(--c-border)' }}>
+              <tr key={`${r.size_mm2}-${r.conductor}`} style={{ borderTop: '1px solid var(--c-border)' }}>
                 <Td align="right" mono><strong>{r.size_mm2}</strong></Td>
+                <Td align="right" mono style={{ color: r.conductor === 'AL' ? 'var(--c-amber)' : 'var(--c-text)' }}>
+                  {r.conductor === 'CU' ? 'Cu' : 'Al'}
+                </Td>
                 <Td align="right" mono>{r.total_length_m.toFixed(1)}</Td>
                 <Td align="right">
                   <Editable
@@ -147,7 +152,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
                 no contingency. DB column `contingency_pct` kept for archived
                 revisions; new edits never set it. VAT remains. */}
             <tr style={{ borderTop: '2px solid var(--c-border)' }}>
-              <Td align="right" mono colSpan={6} style={{ color: 'var(--c-text-dim)' }}>
+              <Td align="right" mono colSpan={7} style={{ color: 'var(--c-text-dim)' }}>
                 VAT
                 {' '}
                 <Editable
@@ -162,7 +167,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
               <Td />
             </tr>
             <tr style={{ borderTop: '2px solid var(--c-amber)', background: 'var(--c-amber-dim)' }}>
-              <Td align="right" mono colSpan={6}>
+              <Td align="right" mono colSpan={7}>
                 <strong style={{ fontSize: 14 }}>Grand total</strong>
               </Td>
               <Td align="right" mono>
@@ -180,7 +185,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
 function SubtotalRow({ label, value }: { label: string; value: number }) {
   return (
     <tr style={{ background: 'var(--c-base)' }}>
-      <Td align="right" mono colSpan={6} style={{ color: 'var(--c-text-dim)' }}>
+      <Td align="right" mono colSpan={7} style={{ color: 'var(--c-text-dim)' }}>
         {label}
       </Td>
       <Td align="right" mono><strong>{fmtZAR(value)}</strong></Td>
