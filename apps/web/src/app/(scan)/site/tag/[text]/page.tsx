@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
+import NodeInspectionsPanel from '@/components/inspections/NodeInspectionsPanel'
 
 export const metadata: Metadata = { title: 'Cable tag lookup' }
 
@@ -22,9 +23,9 @@ interface TagMatch {
     insulation: 'PVC' | 'XLPE' | 'PILC'
     armour: string | null
     supply: {
-      from_board: { code: string; short_code: string | null } | null
-      to_board: { code: string; short_code: string | null } | null
-      source: { code: string } | null
+      from_board: { id: string; code: string; short_code: string | null } | null
+      to_board: { id: string; code: string; short_code: string | null } | null
+      source: { id: string; code: string } | null
     } | null
     revision: {
       id: string
@@ -67,9 +68,9 @@ export default async function ScanTagPage({ params }: Props) {
       'cable:cables!cable_id(' +
         'id, cable_no, size_mm2, conductor, insulation, armour, ' +
         'supply:supplies!supply_id(' +
-          'from_board:boards!from_board_id(code, short_code), ' +
-          'to_board:boards!to_board_id(code, short_code), ' +
-          'source:sources!from_source_id(code)' +
+          'from_board:boards!from_board_id(id, code, short_code), ' +
+          'to_board:boards!to_board_id(id, code, short_code), ' +
+          'source:sources!from_source_id(id, code)' +
         '), ' +
         'revision:revisions!revision_id(id, code, status, project_id)' +
       ')'
@@ -253,6 +254,15 @@ export default async function ScanTagPage({ params }: Props) {
       >
         Open in cable schedule →
       </Link>
+
+      {/* Surface inspections linked to the destination board this cable terminates at. */}
+      {c.supply?.to_board?.id && (
+        <NodeInspectionsPanel
+          projectId={c.revision.project_id}
+          nodeType="board"
+          nodeId={c.supply.to_board.id}
+        />
+      )}
     </div>
   )
 }
