@@ -3,11 +3,15 @@
 import type { RendererProps } from '../FieldRenderer'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { PhotoLightbox, type LightboxPhoto } from '../PhotoLightbox'
 
 interface PhotoItem {
   id: string
   storage_path: string
   signed_url?: string
+  taken_at?: string | null
+  gps_lat?: number | null
+  gps_lng?: number | null
 }
 
 export default function PhotoField({ field, inspectionId, sectionId, readOnly }: RendererProps) {
@@ -15,6 +19,7 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
   const [photos, setPhotos] = useState<PhotoItem[]>([])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [lightbox, setLightbox] = useState<{ index: number } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -23,7 +28,7 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
       const { data } = await (supabase as any)
         .schema('inspections')
         .from('photos')
-        .select('id, storage_path')
+        .select('id, storage_path, taken_at, gps_lat, gps_lng')
         .eq('inspection_id', inspectionId)
         .eq('section_id', sectionId)
         .eq('field_id', field.field_id)
@@ -34,7 +39,7 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
           const { data: sig } = await supabase.storage
             .from('inspection-photos')
             .createSignedUrl(p.storage_path, 3600)
-          return { ...p, signed_url: sig?.signedUrl }
+          return { ...p, signed_url: sig?.signedUrl ?? undefined }
         }),
       )
       if (!cancelled) setPhotos(withUrls)
@@ -81,21 +86,36 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
         {photos.map(
-          (p) =>
+          (p, i) =>
             p.signed_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              <button
                 key={p.id}
-                src={p.signed_url}
-                alt=""
+                type="button"
+                onClick={() => setLightbox({ index: i })}
                 style={{
-                  width: '100%',
-                  height: 96,
-                  objectFit: 'cover',
+                  padding: 0,
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'zoom-in',
                   borderRadius: 6,
-                  border: '1px solid var(--c-border)',
+                  overflow: 'hidden',
                 }}
-              />
+                aria-label="View photo full size"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={p.signed_url}
+                  alt=""
+                  style={{
+                    width: '100%',
+                    height: 96,
+                    objectFit: 'cover',
+                    borderRadius: 6,
+                    border: '1px solid var(--c-border)',
+                    display: 'block',
+                  }}
+                />
+              </button>
             ),
         )}
         {!readOnly && (
@@ -127,6 +147,34 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
       {error && (
         <p style={{ fontSize: 11, color: 'var(--c-red)', margin: 0 }}>{error}</p>
       )}
+      {lightbox !== null && (() => {
+        const lightboxPhotos: LightboxPhoto[] = photos
+          .filter((p): p is PhotoItem & { signed_url: string } => !!p.signed_url)
+          .map((p) => ({
+            id: p.id,
+            signed_url: p.signed_url,
+            taken_at: p.taken_at,
+            gps_lat: p.gps_lat,
+            gps_lng: p.gps_lng,
+          }))
+        // Map lightbox.index (into photos[]) to the index in lightboxPhotos (signed_url-only subset)
+        const signedIndex = lightboxPhotos.findIndex(
+          (lp) => lp.id === photos[lightbox.index]?.id,
+        )
+        const safeIndex = signedIndex >= 0 ? signedIndex : 0
+        return (
+          <PhotoLightbox
+            photos={lightboxPhotos}
+            activeIndex={safeIndex}
+            onChange={(i) => {
+              const targetId = lightboxPhotos[i]?.id
+              const originalIndex = photos.findIndex((p) => p.id === targetId)
+              setLightbox({ index: originalIndex >= 0 ? originalIndex : i })
+            }}
+            onClose={() => setLightbox(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
