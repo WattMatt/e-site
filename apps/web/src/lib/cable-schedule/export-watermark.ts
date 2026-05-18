@@ -12,6 +12,10 @@ import type ExcelJS from 'exceljs'
 import type { PDFPage, PDFFont } from 'pdf-lib'
 import { degrees, rgb } from 'pdf-lib'
 
+// Tailwind red-600 in two notations so Excel + PDF stamps stay in sync.
+const DRAFT_RED_ARGB = 'FFDC2626' as const
+const DRAFT_RED_RGB = rgb(0.86, 0.15, 0.15)
+
 /**
  * Add a DRAFT watermark to an Excel sheet. Places a red bold text cell
  * in row 1, plus tints the sheet's tab red so the unissued state is
@@ -32,10 +36,10 @@ export function stampExcelDraft(ws: ExcelJS.Worksheet): void {
     // No existing merge — fine.
   }
   ws.getCell('A1').value = '⚠ DRAFT — NOT FOR CONSTRUCTION'
-  ws.getCell('A1').font = { bold: true, color: { argb: 'FFDC2626' }, size: 12 }
+  ws.getCell('A1').font = { bold: true, color: { argb: DRAFT_RED_ARGB }, size: 12 }
   ws.getCell('A1').alignment = { horizontal: 'left', vertical: 'middle' }
   ws.mergeCells('A1:E1')
-  ws.properties.tabColor = { argb: 'FFDC2626' }
+  ws.properties.tabColor = { argb: DRAFT_RED_ARGB }
 }
 
 /**
@@ -53,7 +57,7 @@ export function stampPdfDraft(page: PDFPage, font: PDFFont): void {
     y: height / 2 - 50,
     size: 160,
     font,
-    color: rgb(0.86, 0.15, 0.15),
+    color: DRAFT_RED_RGB,
     opacity: 0.18,
     rotate: degrees(45),
   })

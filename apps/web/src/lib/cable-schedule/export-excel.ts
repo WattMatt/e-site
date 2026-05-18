@@ -39,6 +39,7 @@ export async function renderScheduleWorkbook(
 
   // DRAFT watermark on every sheet for unissued revisions. Overrides
   // existing A1 title cells (option (a) — see export-watermark.ts).
+  // KEEP LAST — stamps every sheet added by builders above. Add new sheets ABOVE this loop.
   if (payload.revision.status === 'DRAFT') {
     for (const ws of wb.worksheets) {
       stampExcelDraft(ws)
