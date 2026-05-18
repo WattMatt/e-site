@@ -15,6 +15,8 @@ import {
 } from '@esite/shared'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { selectWithFallbackOn42703 } from './postgrest-fallback'
+
 export interface ExportPayload {
   /**
    * True when this payload has been passed through `redactPayloadCost`
@@ -262,8 +264,8 @@ export async function getRevisionExportPayload(
     // time — silently masked by the route's <a download> failure shape. Now
     // we read `issued_by` as a UUID and resolve names via a separate
     // public.profiles batch query below.
-    (async () => {
-      const withVat = await (supabase as any)
+    selectWithFallbackOn42703(
+      () => (supabase as any)
         .schema('cable_schedule')
         .from('revisions')
         .select(
@@ -271,20 +273,17 @@ export async function getRevisionExportPayload(
         )
         .eq('id', revisionId)
         .eq('project_id', projectId)
-        .single()
-      if (withVat.error?.code === '42703') {
-        return await (supabase as any)
-          .schema('cable_schedule')
-          .from('revisions')
-          .select(
-            'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, issued_by',
-          )
-          .eq('id', revisionId)
-          .eq('project_id', projectId)
-          .single()
-      }
-      return withVat
-    })(),
+        .single(),
+      () => (supabase as any)
+        .schema('cable_schedule')
+        .from('revisions')
+        .select(
+          'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, issued_by',
+        )
+        .eq('id', revisionId)
+        .eq('project_id', projectId)
+        .single(),
+    ),
     (supabase as any)
       .schema('cable_schedule')
       .from('sources')
@@ -334,23 +333,20 @@ export async function getRevisionExportPayload(
     // column) and the inner retry drops back to the pre-00061 projection.
     // The row mapper's `r.conductor ?? 'CU'` default handles the retry
     // path. Same shape as the vat_pct tolerance in cost/page.tsx (c2cfeb2).
-    (async () => {
-      const withConductor = await (supabase as any)
+    selectWithFallbackOn42703(
+      () => (supabase as any)
         .schema('cable_schedule')
         .from('cost_lines')
         .select('id, size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
         .eq('revision_id', revisionId)
-        .order('size_mm2')
-      if (withConductor.error?.code === '42703') {
-        return await (supabase as any)
-          .schema('cable_schedule')
-          .from('cost_lines')
-          .select('id, size_mm2, supply_rate_per_m, install_rate_per_m, termination_rate_each')
-          .eq('revision_id', revisionId)
-          .order('size_mm2')
-      }
-      return withConductor
-    })(),
+        .order('size_mm2'),
+      () => (supabase as any)
+        .schema('cable_schedule')
+        .from('cost_lines')
+        .select('id, size_mm2, supply_rate_per_m, install_rate_per_m, termination_rate_each')
+        .eq('revision_id', revisionId)
+        .order('size_mm2'),
+    ),
     // Same cross-schema gotcha as the revisions query above: changed_by is
     // a UUID into public.profiles which PostgREST can't embed from the
     // cable_schedule profile. Read the raw UUID; resolve to a name below.
