@@ -18,6 +18,7 @@
 
 import ExcelJS from 'exceljs'
 import type { ExportPayload, EnrichedCable } from './export-payload'
+import { stampExcelDraft } from './export-watermark'
 
 const WM_AMBER = 'FFE69500'
 const HEADER_GREY = 'FF2A2A2A'
@@ -35,6 +36,14 @@ export async function renderScheduleWorkbook(
   buildCostSheet(wb, payload)
   buildFactsSheet(wb, payload)
   buildHistorySheet(wb, payload)
+
+  // DRAFT watermark on every sheet for unissued revisions. Overrides
+  // existing A1 title cells (option (a) — see export-watermark.ts).
+  if (payload.revision.status === 'DRAFT') {
+    for (const ws of wb.worksheets) {
+      stampExcelDraft(ws)
+    }
+  }
 
   const out = await wb.xlsx.writeBuffer()
   return Buffer.from(out)

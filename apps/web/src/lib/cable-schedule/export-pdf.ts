@@ -12,6 +12,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import QRCode from 'qrcode'
 import type { EnrichedCable, ExportPayload } from './export-payload'
+import { stampPdfDraft } from './export-watermark'
 
 const A4_W = 595.28
 const A4_H = 841.89
@@ -56,6 +57,7 @@ function drawCoverPage(
   helvI: PDFFont,
 ): void {
   const page = pdf.addPage([A4_W, A4_H])
+  if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
 
   // Header band — full-width dark
   page.drawRectangle({
@@ -357,6 +359,7 @@ function drawSchedulePages(
 
   pages.forEach((items, pageIdx) => {
     const page = pdf.addPage([LAND_W, LAND_H])
+    if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
     drawLandscapeHeader(page, payload, helv, helvB, pageIdx + 1, pages.length)
     drawScheduleColumnHeader(page, cols, startX, LAND_H - HEADER_BAND, helvB)
     let y = LAND_H - HEADER_BAND - ROW_H
@@ -516,6 +519,7 @@ function drawCostPage(
   helvB: PDFFont,
 ): void {
   const page = pdf.addPage([A4_W, A4_H])
+  if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
   drawPortraitHeader(page, payload, helv, helvB, 'COST SUMMARY')
 
   // Body — Mat (Cu/Al) column added 2026-05-18: cost_lines split by
@@ -707,6 +711,7 @@ async function drawTagPages(
   for (let i = 0; i < payload.cableTags.length; i += PER_PAGE) {
     const slice = payload.cableTags.slice(i, i + PER_PAGE)
     const page = pdf.addPage([A4_W, A4_H])
+    if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
     drawPortraitHeader(page, payload, helv, helvB, 'TAG SCHEDULE')
 
     for (let j = 0; j < slice.length; j++) {
