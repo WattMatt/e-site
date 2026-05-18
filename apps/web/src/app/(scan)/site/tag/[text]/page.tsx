@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
@@ -38,6 +39,16 @@ export default async function ScanTagPage({ params }: Props) {
   const { text: rawText } = await params
   const tagText = decodeURIComponent(rawText)
   const supabase = await createClient()
+
+  // Auth gate lives here (not in (scan)/layout.tsx) so the actual
+  // scanned path survives the sign-in round-trip — otherwise the user
+  // lands on /site after login and has to re-scan. rawText is preserved
+  // unmodified so the /login redirect's ?next= contains the same bytes
+  // the QR encoded.
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    redirect(`/login?next=${encodeURIComponent(`/site/tag/${rawText}`)}`)
+  }
 
   // Case-insensitive match across all cable_tags visible to the caller via
   // RLS. The tag_text isn't globally unique (a "MS1-DB1-240-1" can exist
