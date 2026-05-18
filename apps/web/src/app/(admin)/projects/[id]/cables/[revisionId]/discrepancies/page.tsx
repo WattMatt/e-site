@@ -4,6 +4,7 @@ import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
 import { DiscrepancyTable, type DiscRow } from './DiscrepancyTable'
+import { RevisionStatusBadge } from '../RevisionStatusBadge'
 
 export const metadata: Metadata = { title: 'Length discrepancy report' }
 
@@ -107,7 +108,7 @@ export default async function DiscrepancyReportPage({ params }: Props) {
 
       <div className="page-header">
         <div>
-          <h1 className="page-title">Length discrepancy report</h1>
+          <h1 className="page-title">Length discrepancy report<RevisionStatusBadge status={rev.status} /></h1>
           <p className="page-subtitle">
             {rev.code} ·{' '}
             <span style={{ color: '#dc2626' }}><strong>{discrepancies.length}</strong> over threshold</span> ·{' '}

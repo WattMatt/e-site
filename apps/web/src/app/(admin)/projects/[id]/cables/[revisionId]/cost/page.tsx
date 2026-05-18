@@ -10,6 +10,7 @@ import {
 } from '@esite/shared'
 import { CostSummaryTable, type CostRow, type CostHeader } from './CostSummaryTable'
 import { LengthModeToggle } from '../LengthModeToggle'
+import { RevisionStatusBadge } from '../RevisionStatusBadge'
 import { ensureCostLinesAction } from '@/actions/cable-cost.actions'
 
 export const metadata: Metadata = { title: 'Cable cost summary' }
@@ -220,7 +221,7 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
 
       <div className="page-header">
         <div>
-          <h1 className="page-title">Cost summary</h1>
+          <h1 className="page-title">Cost summary<RevisionStatusBadge status={revision.status} /></h1>
           <p className="page-subtitle">
             {revision.code} · {rows.length} size{rows.length !== 1 ? 's' : ''} ·
             {' '}{cables.length} cable{cables.length !== 1 ? 's' : ''} ·

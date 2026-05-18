@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
 import { activeLengthM, type CableForCalc } from '@esite/shared'
 import { TagControls } from './TagControls'
+import { RevisionStatusBadge } from '../RevisionStatusBadge'
 
 export const metadata: Metadata = { title: 'Cable tag schedule' }
 
@@ -70,12 +71,12 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
   const { data: revisionRow } = await (supabase as any)
     .schema('cable_schedule')
     .from('revisions')
-    .select('id, code, project_id')
+    .select('id, code, status, project_id')
     .eq('id', revisionId)
     .eq('project_id', projectId)
     .single()
   if (!revisionRow) notFound()
-  const revision = revisionRow as { id: string; code: string; project_id: string }
+  const revision = revisionRow as { id: string; code: string; status: string; project_id: string }
 
   const [cablesRes, tagsRes] = await Promise.all([
     (supabase as any)
@@ -178,7 +179,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
 
       <div className="page-header no-print">
         <div>
-          <h1 className="page-title">Cable tag schedule</h1>
+          <h1 className="page-title">Cable tag schedule<RevisionStatusBadge status={revision.status} /></h1>
           <p className="page-subtitle">
             {revision.code} · {cables.length} cable{cables.length !== 1 ? 's' : ''} ·
             {' '}{rowsAll.length} tag{rowsAll.length !== 1 ? 's' : ''}
