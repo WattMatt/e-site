@@ -218,8 +218,25 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
         </div>
       ) : (
         <>
+          {/* Print-path hint — keep close to the table so it's the first thing
+              a user looking for a print button sees. The admin layout chrome
+              makes browser Cmd-P unusable, so we route them to the PDF export
+              which is purpose-built for the 10-up A4 tag-page layout. */}
+          <div
+            style={{
+              margin: '0 0 14px',
+              padding: '10px 14px',
+              borderLeft: '3px solid var(--c-accent, #e8923a)',
+              background: 'var(--c-base, #f7f7f5)',
+              fontSize: 12,
+              color: 'var(--c-text-dim)',
+              lineHeight: 1.5,
+            }}
+          >
+            🖨  <strong style={{ color: 'var(--c-text)' }}>To print tags:</strong> use the revision page's <strong>Export → PDF</strong> menu. The PDF includes a dedicated 10-up A4 tag-page section with QR codes — clean layout, no browser chrome. (In-app browser print isn't supported here; an Avery-spec label-sheet export is on the roadmap.)
+          </div>
           {/* Screen view: table */}
-          <div className="data-panel no-print" style={{ overflowX: 'auto' }}>
+          <div className="data-panel" style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
               <thead>
                 <tr style={{ background: 'var(--c-base)' }}>
@@ -269,92 +286,11 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
             </table>
           </div>
 
-          {/* Print-only header — shows context on the printed sheet that
-              would otherwise be hidden with .no-print */}
-          <div className="print-only print-header">
-            <div className="print-header-title">CABLE TAG SCHEDULE</div>
-            <div className="print-header-meta">
-              {project.name} · {revision.code} · {filtered.filter((r) => r.tag).length} tag{filtered.filter((r) => r.tag).length !== 1 ? 's' : ''}
-            </div>
-          </div>
-
-          {/* Print-only tag grid — 10-up A4 portrait (2 cols × 5 rows).
-              Layout mirrors the PDF export at export-pdf.ts:700+ so the
-              in-app print and the bundled PDF look identical. Avery-spec
-              label-sheet sizing is a separate follow-up. */}
-          <div className="print-only tag-grid">
-            {filtered.filter((r) => r.tag).map((r) => {
-              const c = r.cable
-              const detail = `${c.size_mm2}mm² ${c.conductor} ${c.insulation}`
-                + (c.armour ? `/${c.armour}` : '')
-                + ` · ${r.atBoardLabel} → ${r.oppositeLabel}`
-              return (
-                <div key={r.tag!.id} className="tag-card">
-                  <div className="tag-text">{r.tag!.tag_text}</div>
-                  <div className="tag-end">END: {r.end}</div>
-                  <div className="tag-detail">{detail}</div>
-                  {qrByTagId.has(r.tag!.id) && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={qrByTagId.get(r.tag!.id)!} alt="" className="tag-qr" />
-                  )}
-                </div>
-              )
-            })}
-          </div>
-
-          <style>{`
-            .print-only { display: none; }
-            @media print {
-              @page { size: A4 portrait; margin: 12mm; }
-              .no-print { display: none !important; }
-              .print-only { display: block !important; }
-              .print-header {
-                font-family: ui-sans-serif, system-ui, sans-serif;
-                margin: 0 0 6mm;
-                padding-bottom: 3mm;
-                border-bottom: 0.5pt solid #707070;
-              }
-              .print-header-title {
-                font-size: 11pt; font-weight: 700; letter-spacing: 0.08em;
-              }
-              .print-header-meta {
-                font-size: 9pt; color: #4a4a4a; margin-top: 1mm;
-              }
-              .tag-grid {
-                display: grid !important;
-                grid-template-columns: 1fr 1fr;
-                grid-auto-rows: 48mm;
-                gap: 6mm 6mm;
-              }
-              .tag-card {
-                page-break-inside: avoid;
-                break-inside: avoid;
-                border: 0.5pt solid #707070;
-                padding: 5mm 6mm 4mm;
-                font-family: ui-sans-serif, system-ui, sans-serif;
-                position: relative;
-                overflow: hidden;
-              }
-              .tag-text {
-                font-weight: 700; font-size: 14pt;
-                letter-spacing: 0.02em; line-height: 1.15;
-              }
-              .tag-end {
-                font-size: 8pt; color: #4a4a4a;
-                margin-top: 2mm; letter-spacing: 0.06em;
-              }
-              .tag-detail {
-                position: absolute; left: 6mm; bottom: 4mm;
-                right: 32mm;
-                font-size: 8pt; color: #5a5a5a;
-                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-              }
-              .tag-qr {
-                position: absolute; right: 6mm; bottom: 4mm;
-                width: 25mm; height: 25mm;
-              }
-            }
-          `}</style>
+          {/* No in-app print view: the admin layout chrome (sidebar +
+              header) can't be cleanly excluded from @media print, so any
+              attempt to Cmd-P from here renders the wrong shape. Use the
+              ZIP/PDF export instead — it generates a clean 10-up A4 tag-
+              page section server-side with no chrome to escape. */}
         </>
       )}
     </div>
