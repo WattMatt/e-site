@@ -130,22 +130,10 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
             ))}
             <SubtotalRow label="Subtotal cables" value={header.subtotalCables} />
             <SubtotalRow label="Subtotal terminations" value={header.subtotalTerminations} />
+            {/* Contingency row removed 2026-05-17: these contracts are net,
+                no contingency. DB column `contingency_pct` kept for archived
+                revisions; new edits never set it. VAT remains. */}
             <tr style={{ borderTop: '2px solid var(--c-border)' }}>
-              <Td align="right" mono colSpan={6} style={{ color: 'var(--c-text-dim)' }}>
-                Contingency
-                {' '}
-                <Editable
-                  value={header.contingency_pct}
-                  disabled={locked || !header.id}
-                  width={50}
-                  suffix="%"
-                  onSave={(v) => patch(header.id, { contingencyPct: v })}
-                />
-              </Td>
-              <Td align="right" mono>{fmtZAR(header.contingencyAmt)}</Td>
-              <Td />
-            </tr>
-            <tr>
               <Td align="right" mono colSpan={6} style={{ color: 'var(--c-text-dim)' }}>
                 VAT
                 {' '}

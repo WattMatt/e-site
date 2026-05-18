@@ -186,15 +186,13 @@ function costCsv(payload: ExportPayload): string {
   }
 
   // Totals block as trailing rows — same column layout, label in size col.
-  const contingency = materialsTotal * 0.1
-  const subTotal = materialsTotal + contingency
-  const vat = subTotal * 0.15
+  // Contingency removed 2026-05-17 (net contracts). VAT applied directly to
+  // materials+install subtotal.
+  const vat = materialsTotal * 0.15
   lines.push('')
   lines.push(['MATERIALS_TOTAL', '', '', '', '', '', round2(materialsTotal)].map(esc).join(','))
-  lines.push(['CONTINGENCY_10PCT', '', '', '', '', '', round2(contingency)].map(esc).join(','))
-  lines.push(['SUB_TOTAL', '', '', '', '', '', round2(subTotal)].map(esc).join(','))
   lines.push(['VAT_15PCT', '', '', '', '', '', round2(vat)].map(esc).join(','))
-  lines.push(['GRAND_TOTAL', '', '', '', '', '', round2(subTotal + vat)].map(esc).join(','))
+  lines.push(['GRAND_TOTAL', '', '', '', '', '', round2(materialsTotal + vat)].map(esc).join(','))
 
   return lines.join(NL) + NL
 }

@@ -611,11 +611,10 @@ function drawCostPage(
     y -= 18
   }
 
-  // Totals
-  const contingency = materialsTotal * 0.1
-  const subTotal = materialsTotal + contingency
-  const vat = subTotal * 0.15
-  const grand = subTotal + vat
+  // Totals — contingency removed 2026-05-17 (net contracts, no contingency).
+  // VAT applied directly to materials+install subtotal.
+  const vat = materialsTotal * 0.15
+  const grand = materialsTotal + vat
 
   y -= 20
   function totalLine(label: string, value: number, big = false): void {
@@ -644,8 +643,6 @@ function drawCostPage(
     y -= big ? 22 : 16
   }
   totalLine('Materials + install', materialsTotal)
-  totalLine('+ 10% contingency', contingency)
-  totalLine('Sub-total', subTotal)
   totalLine('+ 15% VAT', vat)
   totalLine('GRAND TOTAL', grand, true)
 }

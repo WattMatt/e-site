@@ -92,7 +92,8 @@ const updateRateSchema = z.object({
   supplyRatePerM: z.number().nonnegative().optional(),
   installRatePerM: z.number().nonnegative().optional(),
   terminationRateEach: z.number().nonnegative().optional(),
-  contingencyPct: z.number().nonnegative().optional(),
+  // contingencyPct removed 2026-05-17 — net contracts have no contingency.
+  // DB column kept (archived revisions). New writes never set it.
   vatPct: z.number().nonnegative().optional(),
 })
 
@@ -109,7 +110,6 @@ export async function updateCostLineAction(
   if (parsed.data.supplyRatePerM !== undefined)       patch.supply_rate_per_m = parsed.data.supplyRatePerM
   if (parsed.data.installRatePerM !== undefined)      patch.install_rate_per_m = parsed.data.installRatePerM
   if (parsed.data.terminationRateEach !== undefined)  patch.termination_rate_each = parsed.data.terminationRateEach
-  if (parsed.data.contingencyPct !== undefined)       patch.contingency_pct = parsed.data.contingencyPct
   if (parsed.data.vatPct !== undefined)               patch.vat_pct = parsed.data.vatPct
 
   const { data, error } = await (supabase as any)

@@ -424,11 +424,10 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
     rowIdx++
   }
 
-  // Totals block
+  // Totals block — contingency removed 2026-05-17 (net contracts).
+  // VAT applied directly to materials+install subtotal.
   rowIdx++
-  const contingency = grandTotal * 0.1
-  const subTotal = grandTotal + contingency
-  const vat = subTotal * 0.15
+  const vat = grandTotal * 0.15
 
   function totalRow(label: string, val: number, bold = false): void {
     ws.getCell(`F${rowIdx}`).value = label
@@ -441,10 +440,8 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
     rowIdx++
   }
   totalRow('Materials + install', grandTotal)
-  totalRow('+ 10% contingency', contingency)
-  totalRow('Sub-total', subTotal)
   totalRow('+ 15% VAT', vat)
-  totalRow('Grand total', subTotal + vat, true)
+  totalRow('Grand total', grandTotal + vat, true)
 }
 
 function buildFactsSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {

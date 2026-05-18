@@ -130,19 +130,18 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
   const subtotalCables       = rows.reduce((s, r) => s + r.cable_total, 0)
   const subtotalTerminations = rows.reduce((s, r) => s + r.termination_total, 0)
   const beforeAdj            = subtotalCables + subtotalTerminations
-  const contPct              = header?.contingency_pct ?? 10
+  // Contingency removed 2026-05-17 (contracts are net). VAT is applied
+  // directly to the materials+terminations subtotal.
   const vatPct               = header?.vat_pct ?? 15
-  const contAmt              = (beforeAdj * Number(contPct)) / 100
-  const grossBeforeVat       = beforeAdj + contAmt
-  const vatAmt               = (grossBeforeVat * Number(vatPct)) / 100
-  const grandTotal           = grossBeforeVat + vatAmt
+  const vatAmt               = (beforeAdj * Number(vatPct)) / 100
+  const grandTotal           = beforeAdj + vatAmt
 
   const headerRow: CostHeader = {
     id: header?.id ?? null,
-    contingency_pct: contPct == null ? 10 : Number(contPct),
+    contingency_pct: 0,
     vat_pct: vatPct == null ? 15 : Number(vatPct),
     subtotalCables, subtotalTerminations, beforeAdj,
-    contingencyAmt: contAmt, vatAmt, grandTotal,
+    contingencyAmt: 0, vatAmt, grandTotal,
   }
 
   return (
