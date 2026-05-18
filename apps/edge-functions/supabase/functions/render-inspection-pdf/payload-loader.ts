@@ -97,14 +97,17 @@ export async function loadInspectionPayload(
   const { data: photoRows } = await supabase
     .schema('inspections')
     .from('photos')
-    .select('id, section_id, field_id, storage_path, caption, gps_lat, gps_lng, taken_at, captured_by_profile_id, file_size_bytes')
+    .select('id, section_id, field_id, storage_path, original_path, caption, gps_lat, gps_lng, taken_at, captured_by_profile_id, file_size_bytes, original_size_bytes')
     .eq('inspection_id', inspectionId)
   const photos = await Promise.all(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ((photoRows ?? []) as any[]).map(async (p: any) => {
+      // Prefer original_path (4096px, court-grade) for PDF rendering; fall back
+      // to storage_path (800px thumb) for older rows captured before dual-upload.
+      const pathForSigning = p.original_path ?? p.storage_path
       const { data: sig } = await supabase.storage
         .from('inspection-photos')
-        .createSignedUrl(p.storage_path, 3600)
+        .createSignedUrl(pathForSigning, 3600)
       return { ...p, signed_url: sig?.signedUrl ?? '' }
     }),
   )

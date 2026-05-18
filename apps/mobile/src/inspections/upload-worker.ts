@@ -19,6 +19,7 @@
 // a future settings screen can surface them for manual intervention.
 
 import * as FileSystem from 'expo-file-system'
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
 import {
   type PendingAttachment,
   lookupProjectId,
@@ -75,18 +76,6 @@ async function processOne(item: PendingAttachment): Promise<void> {
       remotePath = projectId + remotePath.slice('__placeholder__'.length)
     }
 
-    const base64 = await FileSystem.readAsStringAsync(item.local_path, {
-      encoding: FileSystem.EncodingType.Base64,
-    })
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
-    const contentType =
-      item.bucket === 'inspection-signatures' ? 'image/png' : 'image/jpeg'
-
-    const { error: upErr } = await supabase.storage
-      .from(item.bucket)
-      .upload(remotePath, bytes, { contentType, upsert: false })
-    if (upErr) throw upErr
-
     // The generated Database type doesn't enumerate the `inspections` schema
     // yet (it isn't in packages/db/src/types.ts at the time of this commit),
     // so we cast to any here. Regenerating Database types in a follow-up will
@@ -100,15 +89,60 @@ async function processOne(item: PendingAttachment): Promise<void> {
     }
 
     if (item.bucket === 'inspection-photos') {
+      // Dual-resolution upload: 4096px original (PDF/audit) + 800px thumb (UI grids).
+      // Both produced from the local file; uploaded in parallel.
+      const localUri = `file://${item.local_path}`
+      const originalResult = await manipulateAsync(
+        localUri,
+        [{ resize: { width: 4096 } }],
+        { compress: 0.92, format: SaveFormat.JPEG },
+      )
+      const thumbResult = await manipulateAsync(
+        localUri,
+        [{ resize: { width: 800 } }],
+        { compress: 0.7, format: SaveFormat.JPEG },
+      )
+
+      const [originalB64, thumbB64] = await Promise.all([
+        FileSystem.readAsStringAsync(originalResult.uri, { encoding: FileSystem.EncodingType.Base64 }),
+        FileSystem.readAsStringAsync(thumbResult.uri, { encoding: FileSystem.EncodingType.Base64 }),
+      ])
+      const originalBytes = Uint8Array.from(atob(originalB64), (c) => c.charCodeAt(0))
+      const thumbBytes = Uint8Array.from(atob(thumbB64), (c) => c.charCodeAt(0))
+
+      // Derive sibling paths: original alongside thumb in the same folder.
+      const thumbPath = remotePath
+      const originalPath = remotePath.replace(/(\.[^.]+)$/, '-original$1')
+
+      const [upOriginal, upThumb] = await Promise.all([
+        supabase.storage.from('inspection-photos').upload(originalPath, originalBytes, { contentType: 'image/jpeg', upsert: false }),
+        supabase.storage.from('inspection-photos').upload(thumbPath, thumbBytes, { contentType: 'image/jpeg', upsert: false }),
+      ])
+      if (upOriginal.error) throw upOriginal.error
+      if (upThumb.error) throw upThumb.error
+
       const { error: insErr } = await supa.schema('inspections').from('photos').insert({
         inspection_id: item.inspection_id,
         section_id: item.section_id,
         field_id: item.field_id,
-        storage_path: remotePath,
+        storage_path: thumbPath,
+        file_size_bytes: thumbBytes.byteLength,
+        original_path: originalPath,
+        original_size_bytes: originalBytes.byteLength,
         caption: item.caption,
       })
       if (insErr) throw new Error(insErr.message)
     } else if (item.bucket === 'inspection-signatures') {
+      const base64 = await FileSystem.readAsStringAsync(item.local_path, {
+        encoding: FileSystem.EncodingType.Base64,
+      })
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+      const contentType = 'image/png'
+
+      const { error: upErr } = await supabase.storage
+        .from(item.bucket)
+        .upload(remotePath, bytes, { contentType, upsert: false })
+      if (upErr) throw upErr
       const { error: insErr } = await supa.schema('inspections').from('signatures').insert({
         inspection_id: item.inspection_id,
         role: item.signature_role,
