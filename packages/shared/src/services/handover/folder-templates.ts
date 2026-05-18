@@ -182,6 +182,8 @@ export const FOLDER_TEMPLATES: Record<HandoverCategory, FolderTemplateNode[]> = 
     { name: 'High Voltage Tests' },
     { name: 'Functional Tests' },
     { name: 'Witness Test Records' },
+    { name: 'Inspections' },
+    { name: 'Factory Acceptance Tests' },
   ],
 
   commissioning_docs: [
@@ -212,6 +214,7 @@ export const FOLDER_TEMPLATES: Record<HandoverCategory, FolderTemplateNode[]> = 
     { name: 'ECSA Certificates' },
     { name: 'Occupancy Certificates' },
     { name: 'Fire Clearance Certificates' },
+    { name: 'CoC Pack' },
   ],
 }
 
