@@ -14,6 +14,9 @@
 import { useState } from 'react'
 import {
   Alert,
+  FlatList,
+  Image,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -38,6 +41,7 @@ import {
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme'
 import { enqueueAttachment } from './attachment-queue'
 import { SignaturePadModal, type SignaturePayload } from './SignaturePadModal'
+import { PhotoLightbox, type LightboxPhoto } from './PhotoLightbox'
 import { supabase } from '../lib/supabase'
 
 export type FieldChangePatch = Partial<Response> & {
@@ -322,7 +326,11 @@ function PhotoField({
   sectionId: string
 }) {
   const [enqueueing, setEnqueueing] = useState(false)
-  const [lastEnqueued, setLastEnqueued] = useState<number>(0)
+  // localPhotos holds the file:// URI + a stable id for each captured photo.
+  // We use local URIs for thumbnails so they display immediately, even offline,
+  // without needing a signed storage URL.
+  const [localPhotos, setLocalPhotos] = useState<LightboxPhoto[]>([])
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
 
   const onPick = async () => {
     try {
@@ -369,7 +377,12 @@ function PhotoField({
         registration_number: null,
         caption: null,
       })
-      setLastEnqueued((n) => n + 1)
+
+      // Add to local thumbnail list (taken_at = now since EXIF isn't extracted in v1)
+      setLocalPhotos((prev) => [
+        ...prev,
+        { id, uri: localCopy, taken_at: new Date().toISOString() },
+      ])
     } catch (e) {
       Alert.alert('Photo capture failed', (e as Error).message ?? 'Unknown error')
     } finally {
@@ -389,11 +402,30 @@ function PhotoField({
           {enqueueing ? 'Saving...' : 'Take photo'}
         </Text>
       </Pressable>
-      {lastEnqueued > 0 ? (
-        <Text style={styles.helper}>
-          {lastEnqueued} photo{lastEnqueued === 1 ? '' : 's'} queued for upload
-        </Text>
+
+      {/* Thumbnail grid — 3-column, square thumbs, tap to open lightbox */}
+      {localPhotos.length > 0 ? (
+        <View style={styles.photoGrid}>
+          {localPhotos.map((photo, idx) => (
+            <TouchableOpacity
+              key={photo.id}
+              style={styles.photoThumb}
+              onPress={() => setLightboxIndex(idx)}
+              activeOpacity={0.8}
+            >
+              <Image source={{ uri: photo.uri }} style={styles.photoThumbImg} resizeMode="cover" />
+            </TouchableOpacity>
+          ))}
+        </View>
       ) : null}
+
+      {/* Full-screen lightbox */}
+      <PhotoLightbox
+        photos={localPhotos}
+        activeIndex={lightboxIndex ?? 0}
+        visible={lightboxIndex !== null}
+        onClose={() => setLightboxIndex(null)}
+      />
     </View>
   )
 }
@@ -750,6 +782,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   photoBtnText: { color: colors.amber, fontWeight: fontWeight.semibold, fontSize: fontSize.md },
+  photoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  photoThumb: {
+    width: '31%',
+    aspectRatio: 1,
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+    backgroundColor: colors.surface,
+  },
+  photoThumbImg: { width: '100%', height: '100%' },
   sectionHeader: {
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,
