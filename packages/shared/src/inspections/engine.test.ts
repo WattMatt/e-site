@@ -48,6 +48,57 @@ describe('evaluateField — number with pass_when', () => {
   });
 });
 
+describe('evaluateField — text/dropdown/multi_select with pass_when DSL', () => {
+  const textField = (pw?: string): Field => ({ field_id: 't', label: 'T', type: 'text', pass_when: pw });
+  const ddField = (pw?: string): Field => ({ field_id: 'd', label: 'D', type: 'dropdown', options: ['a','b','c','d'], pass_when: pw });
+  const msField = (pw?: string): Field => ({ field_id: 'm', label: 'M', type: 'multi_select', options: ['a','b','c','d'], pass_when: pw });
+
+  it('in [a, b, c] (unquoted) — match passes, miss fails, empty not_checked', () => {
+    const f = ddField('in [a, b, c]');
+    expect(evaluateField(f, { section_id: 's', field_id: 'd', value_text: 'a' }).passState).toBe('pass');
+    expect(evaluateField(f, { section_id: 's', field_id: 'd', value_text: 'd' }).passState).toBe('fail');
+    expect(evaluateField(f, { section_id: 's', field_id: 'd', value_text: '' }).passState).toBe('not_checked');
+  });
+
+  it('in ["a","b","c"] (quoted) — same behaviour', () => {
+    const f = ddField('in ["a","b","c"]');
+    expect(evaluateField(f, { section_id: 's', field_id: 'd', value_text: 'a' }).passState).toBe('pass');
+    expect(evaluateField(f, { section_id: 's', field_id: 'd', value_text: 'd' }).passState).toBe('fail');
+  });
+
+  it('in [...] is case-insensitive', () => {
+    const f = ddField('in [Red, Green, Blue]');
+    expect(evaluateField(f, { section_id: 's', field_id: 'd', value_text: 'red' }).passState).toBe('pass');
+    expect(evaluateField(f, { section_id: 's', field_id: 'd', value_text: 'GREEN' }).passState).toBe('pass');
+  });
+
+  it('matches /^[A-Z]{3}-\\d+$/ — match passes, miss fails, empty not_checked', () => {
+    const f = textField('matches /^[A-Z]{3}-\\d+$/');
+    expect(evaluateField(f, { section_id: 's', field_id: 't', value_text: 'ABC-123' }).passState).toBe('pass');
+    expect(evaluateField(f, { section_id: 's', field_id: 't', value_text: 'abc' }).passState).toBe('fail');
+    expect(evaluateField(f, { section_id: 's', field_id: 't', value_text: '' }).passState).toBe('not_checked');
+  });
+
+  it('matches /.../i case-insensitive flag', () => {
+    const f = textField('matches /^[a-z]+$/i');
+    expect(evaluateField(f, { section_id: 's', field_id: 't', value_text: 'FOO' }).passState).toBe('pass');
+  });
+
+  it('multi_select with in [a,b,c] — all-subset passes, any-outside fails', () => {
+    const f = msField('in [a,b,c]');
+    expect(evaluateField(f, { section_id: 's', field_id: 'm', value_array: ['a','b'] }).passState).toBe('pass');
+    expect(evaluateField(f, { section_id: 's', field_id: 'm', value_array: ['a','d'] }).passState).toBe('fail');
+  });
+
+  it('text without pass_when + filled — pass (existing behaviour preserved)', () => {
+    expect(evaluateField(textField(), { section_id: 's', field_id: 't', value_text: 'anything' }).passState).toBe('pass');
+  });
+
+  it('unparseable text pass_when on filled value — advisory pass', () => {
+    expect(evaluateField(textField('gibberish'), { section_id: 's', field_id: 't', value_text: 'whatever' }).passState).toBe('pass');
+  });
+});
+
 describe('isFieldVisible — conditional_on', () => {
   const trigger: Field = { field_id: 'has_rcd', label: 'Has RCD?', type: 'pass_fail' };
   const dependent: Field = { field_id: 'rcd_trip_ms', label: 'RCD trip', type: 'number', conditional_on: { field_id: 'has_rcd', equals: true } };

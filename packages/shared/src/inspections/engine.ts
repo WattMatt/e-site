@@ -18,12 +18,14 @@ export function evaluateField(field: Field, value: Response): { passState: PassS
     case 'textarea':
     case 'dropdown':
     case 'date':
-      if (value.value_text && value.value_text.length > 0) return { passState: 'pass' };
-      return { passState: 'not_checked' };
+      if (!value.value_text || value.value_text.length === 0) return { passState: 'not_checked' };
+      if (field.pass_when) return evaluateTextThreshold(field.pass_when, value.value_text);
+      return { passState: 'pass' };
 
     case 'multi_select':
-      if (value.value_array && value.value_array.length > 0) return { passState: 'pass' };
-      return { passState: 'not_checked' };
+      if (!value.value_array || value.value_array.length === 0) return { passState: 'not_checked' };
+      if (field.pass_when) return evaluateMultiSelectThreshold(field.pass_when, value.value_array);
+      return { passState: 'pass' };
 
     case 'photo':
     case 'signature':
@@ -58,6 +60,53 @@ function evaluateNumberThreshold(pw: string, val: number): { passState: PassStat
     return ok ? { passState: 'pass' } : { passState: 'fail', reason: `value ${val} fails ${op} ${target}` };
   }
 
+  return { passState: 'pass' };
+}
+
+// Parse 'in [a, b, c]' or 'in ["a","b","c"]' into the list of allowed values.
+// Returns null if the pass_when isn't an `in [...]` expression.
+function parseInList(pw: string): string[] | null {
+  const m = pw.trim().match(/^in\s*\[(.*)\]$/i);
+  if (!m) return null;
+  return m[1]
+    .split(',')
+    .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(s => s.length > 0);
+}
+
+// Parse 'matches /regex/' or 'matches /regex/i' into a RegExp.
+// Returns null if the pass_when isn't a `matches /.../` expression OR the regex doesn't compile.
+function parseMatchesRegex(pw: string): RegExp | null {
+  const m = pw.trim().match(/^matches\s+\/(.+)\/([gimsuy]*)$/i);
+  if (!m) return null;
+  try { return new RegExp(m[1], m[2]); } catch { return null; }
+}
+
+function evaluateTextThreshold(pw: string, val: string): { passState: PassState; reason?: string } {
+  const list = parseInList(pw);
+  if (list) {
+    const ok = list.some(item => item.toLowerCase() === val.toLowerCase());
+    return ok ? { passState: 'pass' } : { passState: 'fail', reason: `value "${val}" not in [${list.join(', ')}]` };
+  }
+  const re = parseMatchesRegex(pw);
+  if (re) {
+    return re.test(val)
+      ? { passState: 'pass' }
+      : { passState: 'fail', reason: `value "${val}" does not match ${re.toString()}` };
+  }
+  // Unparseable pass_when on a filled text field → advisory pass (consistent with numeric path)
+  return { passState: 'pass' };
+}
+
+function evaluateMultiSelectThreshold(pw: string, vals: string[]): { passState: PassState; reason?: string } {
+  const list = parseInList(pw);
+  if (list) {
+    const allowed = new Set(list.map(s => s.toLowerCase()));
+    const offending = vals.filter(v => !allowed.has(v.toLowerCase()));
+    return offending.length === 0
+      ? { passState: 'pass' }
+      : { passState: 'fail', reason: `values [${offending.join(', ')}] not in [${list.join(', ')}]` };
+  }
   return { passState: 'pass' };
 }
 
