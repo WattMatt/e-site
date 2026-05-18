@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { requireRoleForRevision, ROLES_ENGINEER } from '@/lib/cable-schedule/require-role'
 
 interface ShortCodeUpdate {
   boardId: string
@@ -27,6 +28,10 @@ export async function updateBoardShortCodesAction(
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // C12: role gate — only engineers can edit board short codes.
+  const roleCheck = await requireRoleForRevision(supabase, revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { ok: false, error: roleCheck.error }
 
   // Status gate
   const { data: rev } = await (supabase as any)

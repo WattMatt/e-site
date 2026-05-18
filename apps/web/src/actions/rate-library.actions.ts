@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { requireRole, ROLES_ENGINEER } from '@/lib/cable-schedule/require-role'
 
 interface RateLibraryEntry {
   id: string
@@ -70,6 +71,10 @@ export async function upsertRateLibraryEntriesAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not authenticated' }
 
+  // C12: role gate — defense-in-depth alongside RLS policies (migration 00063).
+  const roleCheck = await requireRole(supabase, organisationId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { ok: false, error: roleCheck.error }
+
   // Validate
   for (const e of entries) {
     if (!(e.size_mm2 > 0)) {
@@ -123,6 +128,21 @@ export async function deleteRateLibraryEntryAction(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // C12: role gate — resolve org from the row, then check.
+  const { data: row } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('rate_library')
+    .select('organisation_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (!row) return { ok: false, error: 'Rate-library entry not found' }
+  const roleCheck = await requireRole(
+    supabase,
+    (row as { organisation_id: string }).organisation_id,
+    ROLES_ENGINEER,
+  )
+  if (!roleCheck.ok) return { ok: false, error: roleCheck.error }
 
   const { error } = await (supabase as any)
     .schema('cable_schedule')

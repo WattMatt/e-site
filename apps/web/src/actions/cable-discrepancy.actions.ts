@@ -22,6 +22,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
+import { requireRoleForRevision, ROLES_ENGINEER } from '@/lib/cable-schedule/require-role'
 
 const uuid = z.string().uuid()
 
@@ -63,6 +64,10 @@ export async function acceptVarianceAction(
   if ('error' in ctx) return { error: ctx.error }
   if (ctx.revisionStatus !== 'DRAFT') return { error: 'Revision is not DRAFT' }
   if (ctx.status !== 'DISCREPANCY') return { error: 'Cable is not in DISCREPANCY state' }
+
+  // C12: coarse org-role gate — discrepancy resolution is engineer-only.
+  const roleCheck = await requireRoleForRevision(supabase, ctx.revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   const role = await lookupCableRole(supabase, user.id, ctx.organisationId)
   if (!ROLE_CAPS[role].acceptVariance) {
@@ -110,6 +115,10 @@ export async function requestRemeasureAction(
   const ctx = await loadCtx(supabase, input.cableId)
   if ('error' in ctx) return { error: ctx.error }
   if (ctx.revisionStatus !== 'DRAFT') return { error: 'Revision is not DRAFT' }
+
+  // C12: coarse org-role gate — discrepancy resolution is engineer-only.
+  const roleCheck = await requireRoleForRevision(supabase, ctx.revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   const role = await lookupCableRole(supabase, user.id, ctx.organisationId)
   if (!ROLE_CAPS[role].requestRemeasure) {
@@ -159,6 +168,10 @@ export async function requestDesignReviewAction(
 
   const ctx = await loadCtx(supabase, input.cableId)
   if ('error' in ctx) return { error: ctx.error }
+
+  // C12: coarse org-role gate — design review is engineer-only.
+  const roleCheck = await requireRoleForRevision(supabase, ctx.revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   const role = await lookupCableRole(supabase, user.id, ctx.organisationId)
   if (!ROLE_CAPS[role].requestDesignReview) {

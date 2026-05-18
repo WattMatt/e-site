@@ -19,6 +19,7 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { lookupCableProperties, lookupDeratingFactors, deratedRating, requiredParallelSet } from '@esite/shared'
 import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
+import { requireRole, ROLES_ENGINEER, type OrgRole } from '@/lib/cable-schedule/require-role'
 
 const uuid = z.string().uuid()
 
@@ -27,6 +28,7 @@ const uuid = z.string().uuid()
 async function assertDraft(
   supabase: any,
   revisionId: string,
+  allowedRoles: readonly OrgRole[] = ROLES_ENGINEER,
 ): Promise<{ orgId: string; projectId: string } | { error: string }> {
   const { data: rev, error } = await supabase
     .schema('cable_schedule')
@@ -36,6 +38,12 @@ async function assertDraft(
     .single()
   if (error || !rev) return { error: 'Revision not found' }
   if (rev.status !== 'DRAFT') return { error: 'Revision is ISSUED — start a new revision to make changes.' }
+
+  // C12: role gate — entity CRUD is engineer-only by default. Callers may
+  // pass a wider allowedRoles set if needed.
+  const roleCheck = await requireRole(supabase, rev.organisation_id, allowedRoles)
+  if (!roleCheck.ok) return { error: roleCheck.error }
+
   return { orgId: rev.organisation_id, projectId: rev.project_id }
 }
 
@@ -291,6 +299,10 @@ export async function updateSupplyAction(
   if (s.revision?.status !== 'DRAFT') {
     return { error: 'Revision is ISSUED — start a new revision to make changes.' }
   }
+
+  // C12: coarse org-role gate — entity edits are engineer-only.
+  const orgRoleCheck = await requireRole(supabase, s.organisation_id, ROLES_ENGINEER)
+  if (!orgRoleCheck.ok) return { error: orgRoleCheck.error }
 
   const role = await lookupCableRole(supabase, user.id, s.organisation_id)
   if (!ROLE_CAPS[role].editDesignFields) {
@@ -921,6 +933,10 @@ export async function updateCableAction(
     return { error: 'Revision is ISSUED — start a new revision to make changes.' }
   }
 
+  // C12: coarse org-role gate — entity edits are engineer-only.
+  const orgRoleCheck = await requireRole(supabase, c.organisation_id, ROLES_ENGINEER)
+  if (!orgRoleCheck.ok) return { error: orgRoleCheck.error }
+
   const role = await lookupCableRole(supabase, user.id, c.organisation_id)
   if (!ROLE_CAPS[role].editDesignFields) {
     return { error: `Your role (${role}) cannot edit the schedule.` }
@@ -1102,6 +1118,10 @@ export async function repointSupplyAction(
   if (s.revision?.status !== 'DRAFT') {
     return { error: 'Revision is ISSUED — start a new revision to make changes.' }
   }
+
+  // C12: coarse org-role gate — re-pointing a supply is engineer-only.
+  const orgRoleCheck = await requireRole(supabase, s.organisation_id, ROLES_ENGINEER)
+  if (!orgRoleCheck.ok) return { error: orgRoleCheck.error }
 
   const role = await lookupCableRole(supabase, user.id, s.organisation_id)
   if (!ROLE_CAPS[role].editDesignFields) {

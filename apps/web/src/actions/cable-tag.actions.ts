@@ -17,6 +17,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
+import { requireRoleForRevision, ROLES_ENGINEER_AND_FIELD } from '@/lib/cable-schedule/require-role'
 
 const uuid = z.string().uuid()
 
@@ -61,6 +62,10 @@ export async function generateTagsAction(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
+
+  // C12: role gate — engineers + field workers can generate tags.
+  const roleCheck = await requireRoleForRevision(supabase, revisionId, ROLES_ENGINEER_AND_FIELD)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   // Project info for revalidation + the QR payload
   const { data: rev, error: revErr } = await (supabase as any)
@@ -149,6 +154,10 @@ export async function regenerateTagTextAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not authenticated' }
 
+  // C12: role gate — engineers + field workers can regenerate tags.
+  const roleCheck = await requireRoleForRevision(supabase, revisionId, ROLES_ENGINEER_AND_FIELD)
+  if (!roleCheck.ok) return { ok: false, error: roleCheck.error }
+
   // Status gate
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -224,6 +233,20 @@ export async function markTagsPrintedAction(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
+
+  // C12: role gate — engineers + field workers can mark tags printed.
+  // Derive revisionId via the first tag's cable -> revision_id chain.
+  const firstTagId = parsed.data.tagIds[0]!
+  const { data: tagRow } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cable_tags')
+    .select('cable:cables!cable_id(revision_id)')
+    .eq('id', firstTagId)
+    .maybeSingle()
+  const tagRevId = (tagRow as { cable?: { revision_id?: string } } | null)?.cable?.revision_id
+  if (!tagRevId) return { error: 'Tag not found' }
+  const roleCheck = await requireRoleForRevision(supabase, tagRevId, ROLES_ENGINEER_AND_FIELD)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   const now = new Date().toISOString()
   const { data: updated, error } = await (supabase as any)

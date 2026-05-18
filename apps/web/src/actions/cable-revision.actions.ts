@@ -22,6 +22,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
+import { requireRole, requireRoleForRevision, ROLES_ENGINEER } from '@/lib/cable-schedule/require-role'
 
 const uuid = z.string().uuid()
 
@@ -55,6 +56,14 @@ export async function createRevisionAction(
     .eq('id', parsed.data.projectId)
     .single()
   if (projErr || !project) return { error: 'Project not found' }
+
+  // C12: role gate — only engineers can create revisions.
+  const roleCheck = await requireRole(
+    supabase,
+    (project as { organisation_id: string }).organisation_id,
+    ROLES_ENGINEER,
+  )
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   // Determine the next revision code. Pulls the existing rev codes and
   // picks the smallest integer N not yet used (so "Rev 0", "Rev 1", "Rev 2"
@@ -252,6 +261,10 @@ export async function issueRevisionAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
+  // C12: role gate — only engineers can issue revisions.
+  const roleCheck = await requireRoleForRevision(supabase, parsed.data.revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { error: roleCheck.error }
+
   const { data: rev, error } = await (supabase as any)
     .schema('cable_schedule')
     .from('revisions')
@@ -304,6 +317,10 @@ export async function deleteDraftRevisionAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
+  // C12: role gate — only engineers can discard drafts.
+  const roleCheck = await requireRoleForRevision(supabase, revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { error: roleCheck.error }
+
   // Only DRAFT revisions can be discarded.
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -345,6 +362,10 @@ export async function reseedCostLinesFromRateLibraryAction(
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // C12: role gate — only engineers can re-seed cost lines.
+  const roleCheck = await requireRoleForRevision(supabase, revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { ok: false, error: roleCheck.error }
 
   // Look up revision + project + organisation_id
   const { data: rev } = await (supabase as any)

@@ -20,6 +20,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
+import { requireRoleForRevision, ROLES_ENGINEER } from '@/lib/cable-schedule/require-role'
 
 const uuid = z.string().uuid()
 const RATES_HEADER_SIZE = 0          // sentinel row for revision-level rates
@@ -31,6 +32,10 @@ export async function ensureCostLinesAction(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
+
+  // C12: role gate — only engineers can ensure cost lines.
+  const roleCheck = await requireRoleForRevision(supabase, revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -144,6 +149,22 @@ export async function updateCostLineAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
+  // C12: role gate — only engineers can edit rates. Resolve revisionId
+  // from the cost_line being updated.
+  const { data: costLine } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cost_lines')
+    .select('revision_id')
+    .eq('id', parsed.data.id)
+    .maybeSingle()
+  if (!costLine) return { error: 'Cost line not found' }
+  const roleCheck = await requireRoleForRevision(
+    supabase,
+    (costLine as { revision_id: string }).revision_id,
+    ROLES_ENGINEER,
+  )
+  if (!roleCheck.ok) return { error: roleCheck.error }
+
   const patch: Record<string, unknown> = {}
   if (parsed.data.supplyRatePerM !== undefined)       patch.supply_rate_per_m = parsed.data.supplyRatePerM
   if (parsed.data.installRatePerM !== undefined)      patch.install_rate_per_m = parsed.data.installRatePerM
@@ -203,6 +224,10 @@ export async function bulkPasteCostLinesAction(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // C12: role gate — only engineers can bulk-paste rates.
+  const roleCheck = await requireRoleForRevision(supabase, parsed.data.revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { ok: false, error: roleCheck.error }
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -275,6 +300,10 @@ export async function updateRevisionVatAction(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
+
+  // C12: role gate — only engineers can edit VAT.
+  const roleCheck = await requireRoleForRevision(supabase, parsed.data.revisionId, ROLES_ENGINEER)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   // DRAFT-only gate (consistent with the rest of cost editing).
   const { data: rev } = await (supabase as any)

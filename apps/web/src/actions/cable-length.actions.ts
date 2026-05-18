@@ -25,6 +25,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
+import { requireRoleForRevision, ROLES_ENGINEER_AND_FIELD } from '@/lib/cable-schedule/require-role'
 
 const uuid = z.string().uuid()
 
@@ -99,6 +100,11 @@ export async function updateMeasuredLengthAction(
 
   const ctx = await loadCableContext(supabase, parsed.data.cableId)
   if ('error' in ctx) return { error: ctx.error }
+
+  // C12: coarse org-role gate — blocks client_viewer entirely (and any
+  // unassigned user). Fine-grained editMeasured cap below still applies.
+  const roleCheck = await requireRoleForRevision(supabase, ctx.revisionId, ROLES_ENGINEER_AND_FIELD)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   const role = await lookupCableRole(supabase, user.id, ctx.organisationId)
   if (!ROLE_CAPS[role].editMeasured) {
@@ -178,6 +184,10 @@ export async function bulkUpdateCableLengthStatusAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not authenticated' }
 
+  // C12: role gate — engineers + field workers can bulk-flip statuses.
+  const roleCheck = await requireRoleForRevision(supabase, parsed.data.revisionId, ROLES_ENGINEER_AND_FIELD)
+  if (!roleCheck.ok) return { ok: false, error: roleCheck.error }
+
   // DRAFT-only gate — load the revision once.
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -251,6 +261,11 @@ export async function updateConfirmedLengthAction(
 
   const ctx = await loadCableContext(supabase, parsed.data.cableId)
   if ('error' in ctx) return { error: ctx.error }
+
+  // C12: coarse org-role gate — blocks client_viewer entirely. Fine-grained
+  // caps below still apply (e.g. signOff requires Verifier/Admin).
+  const roleCheck = await requireRoleForRevision(supabase, ctx.revisionId, ROLES_ENGINEER_AND_FIELD)
+  if (!roleCheck.ok) return { error: roleCheck.error }
 
   const role = await lookupCableRole(supabase, user.id, ctx.organisationId)
   const caps = ROLE_CAPS[role]
