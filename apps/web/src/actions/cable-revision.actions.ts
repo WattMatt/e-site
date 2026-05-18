@@ -95,9 +95,99 @@ export async function createRevisionAction(
     }
     return { error: error?.message ?? 'Failed to create revision' }
   }
+  const newRevisionId = (row as { id: string }).id
+
+  // ── Seed cost_lines rates from latest ISSUED revision (B6 — 2026-05-18) ─
+  // If an ISSUED revision exists on this project, copy its cost_lines rates
+  // forward. Engineer doesn't have to re-type 17 sizes × 2 conductors on
+  // every new revision. Best-effort: any failure is non-fatal — the new
+  // revision is already created.
+  try {
+    const { data: prevIssued } = await (supabase as any)
+      .schema('cable_schedule')
+      .from('revisions')
+      .select('id')
+      .eq('project_id', parsed.data.projectId)
+      .eq('status', 'ISSUED')
+      .order('issued_at', { ascending: false, nullsFirst: false })
+      .limit(1)
+    const prev = (prevIssued?.[0] as { id: string } | undefined)?.id
+    if (prev) {
+      // Try the conductor-aware columns first (post-migration 00061).
+      // Tolerant fallback: pre-migration schema lacks `conductor` column.
+      let prevRates: Array<{
+        size_mm2: number
+        conductor?: 'CU' | 'AL'
+        supply_rate_per_m: number | null
+        install_rate_per_m: number | null
+        termination_rate_each: number | null
+      }> = []
+      const withCond = await (supabase as any)
+        .schema('cable_schedule')
+        .from('cost_lines')
+        .select('size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
+        .eq('revision_id', prev)
+        .gt('size_mm2', 0)  // skip the legacy size=0 sentinel
+      if (withCond.error) {
+        const sizeOnly = await (supabase as any)
+          .schema('cable_schedule')
+          .from('cost_lines')
+          .select('size_mm2, supply_rate_per_m, install_rate_per_m, termination_rate_each')
+          .eq('revision_id', prev)
+          .gt('size_mm2', 0)
+        prevRates = (sizeOnly.data ?? []) as typeof prevRates
+      } else {
+        prevRates = (withCond.data ?? []) as typeof prevRates
+      }
+      if (prevRates.length > 0) {
+        const orgId = (project as { organisation_id: string }).organisation_id
+        const clonedRows = prevRates.map((r) => {
+          const base: Record<string, unknown> = {
+            revision_id: newRevisionId,
+            organisation_id: orgId,
+            size_mm2: r.size_mm2,
+            supply_rate_per_m: r.supply_rate_per_m ?? 0,
+            install_rate_per_m: r.install_rate_per_m ?? 0,
+            termination_rate_each: r.termination_rate_each ?? 0,
+            contingency_pct: null,
+            vat_pct: null,
+          }
+          if (r.conductor) base.conductor = r.conductor
+          return base
+        })
+        // Best-effort insert — duplicate-key errors are silenced (means the
+        // user opened the cost page on the new revision before this clone
+        // finished, ensureCostLinesAction created the rows first).
+        await (supabase as any)
+          .schema('cable_schedule')
+          .from('cost_lines')
+          .insert(clonedRows)
+          .then(() => {})
+          .catch(() => {})
+      }
+      // Also copy VAT % across if the column exists (migration 00060).
+      const { data: prevRev } = await (supabase as any)
+        .schema('cable_schedule')
+        .from('revisions')
+        .select('vat_pct')
+        .eq('id', prev)
+        .maybeSingle()
+      if (prevRev && (prevRev as any).vat_pct != null) {
+        await (supabase as any)
+          .schema('cable_schedule')
+          .from('revisions')
+          .update({ vat_pct: (prevRev as any).vat_pct })
+          .eq('id', newRevisionId)
+          .then(() => {})
+          .catch(() => {})
+      }
+    }
+  } catch {
+    // best-effort; never block revision creation on seed failure
+  }
 
   revalidatePath(`/projects/${parsed.data.projectId}/cables`)
-  return { id: (row as { id: string; code: string }).id, code: (row as { code: string }).code }
+  return { id: newRevisionId, code: (row as { code: string }).code }
 }
 
 export async function issueRevisionAction(
