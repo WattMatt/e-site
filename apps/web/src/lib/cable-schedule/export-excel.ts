@@ -405,12 +405,11 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
 
   // Also seed keys from costLines so rows-with-rates but no cables still appear.
   for (const l of payload.costLines) {
-    const cond = ((l as { conductor?: string }).conductor ?? 'CU') as 'CU' | 'AL'
-    const key = `${l.size_mm2}|${cond}`
+    const key = `${l.size_mm2}|${l.conductor}`
     if (!totalsByKey.has(key)) {
       totalsByKey.set(key, {
         size: l.size_mm2,
-        conductor: cond,
+        conductor: l.conductor,
         totalLength: 0,
         terms: 0,
       })
@@ -419,7 +418,8 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
 
   let rowIdx = 4
   let grandTotal = 0
-  // Sort by size ascending, then conductor (AL before CU alphabetically)
+  // Sort by size ascending, then conductor (AL before CU alphabetically).
+  // Al rows render above Cu at same size for visual grouping.
   const sortedKeys = [...totalsByKey.keys()].sort((a, b) => {
     const [sa, ca] = a.split('|')
     const [sb, cb] = b.split('|')
@@ -434,9 +434,7 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
     // fall back to size-only for legacy rows missing the conductor column.
     const line =
       payload.costLines.find(
-        (l) =>
-          l.size_mm2 === agg.size &&
-          (((l as { conductor?: string }).conductor ?? 'CU') === agg.conductor),
+        (l) => l.size_mm2 === agg.size && l.conductor === agg.conductor,
       ) ?? payload.costLines.find((l) => l.size_mm2 === agg.size)
     const supplyRate = Number(line?.supply_rate_per_m ?? 0)
     const installRate = Number(line?.install_rate_per_m ?? 0)

@@ -79,6 +79,7 @@ export interface ExportPayload {
   costLines: Array<{
     id: string
     size_mm2: number
+    conductor: 'CU' | 'AL'
     supply_rate_per_m: number
     install_rate_per_m: number
     termination_rate_each: number
@@ -296,7 +297,7 @@ export async function getRevisionExportPayload(
     (supabase as any)
       .schema('cable_schedule')
       .from('cost_lines')
-      .select('id, size_mm2, supply_rate_per_m, install_rate_per_m, termination_rate_each')
+      .select('id, size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
       .eq('revision_id', revisionId)
       .order('size_mm2'),
     (supabase as any)
@@ -550,6 +551,8 @@ export async function getRevisionExportPayload(
     costLines: (costData ?? []).map((r: any) => ({
       id: r.id,
       size_mm2: Number(r.size_mm2),
+      // Pre-migration-00061 rows lack the conductor column — default to CU.
+      conductor: (r.conductor ?? 'CU') as 'CU' | 'AL',
       supply_rate_per_m: Number(r.supply_rate_per_m ?? 0),
       install_rate_per_m: Number(r.install_rate_per_m ?? 0),
       termination_rate_each: Number(r.termination_rate_each ?? 0),
