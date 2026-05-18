@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "pdf-lib": "https://cdn.skypack.dev/pdf-lib@^1.17.1",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
+  }
+}
