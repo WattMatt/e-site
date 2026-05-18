@@ -39,6 +39,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-payload'
 import type { NodeOption } from './CableScheduleGrid'
 import {
@@ -100,7 +101,10 @@ const SECTION_OPTIONS: Array<{ value: 'NORMAL' | 'EMERGENCY' | ''; label: string
  */
 export function CableFormModal({ state, onClose, onSaved }: Props) {
   // Esc to close + lock body scroll while open.
+  // Track mount so SSR doesn't call createPortal (document undefined).
+  const [mounted, setMounted] = useState(false)
   useEffect(() => {
+    setMounted(true)
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', onKey)
     const prevOverflow = document.body.style.overflow
@@ -111,7 +115,21 @@ export function CableFormModal({ state, onClose, onSaved }: Props) {
     }
   }, [onClose])
 
-  return (
+  if (!mounted) return null
+
+  // Portal to document.body. Without the portal, the modal's
+  // `position: fixed` resolves against the nearest ancestor that
+  // establishes a containing block — which includes any ancestor with
+  // a `transform`. The cable schedule page is wrapped in
+  // `<div className="animate-fadeup">`, whose fadeUp keyframe leaves a
+  // `transform: translateY(0)` on the element when the animation
+  // completes (`animation-fill-mode: both`). That transform breaks
+  // `position: fixed`, anchoring the modal to the page content instead
+  // of the viewport. Result: scroll deep into the grid, click ✏ on row
+  // 50, modal renders at the top of the document — off-screen above
+  // you. Portaling to body bypasses every ancestor and the modal
+  // anchors to the actual viewport as intended.
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -133,7 +151,8 @@ export function CableFormModal({ state, onClose, onSaved }: Props) {
       >
         <CableFormBody state={state} onClose={onClose} onSaved={onSaved} />
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
