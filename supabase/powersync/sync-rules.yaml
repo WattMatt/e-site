@@ -65,3 +65,59 @@ bucket_definitions:
                source_path, synced_at, uploaded_by, created_at, updated_at
         FROM tenants.documents
         WHERE organisation_id = bucket.org_id
+
+  # inspections.templates — active templates only; field workers need
+  # the schema_json offline to render the capture form. Drafts + archived
+  # versions stay server-side.
+  org_inspection_templates:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT *
+        FROM inspections.templates
+        WHERE organisation_id = bucket.org_id
+          AND is_active = true
+
+  # inspections.inspections — every in-flight inspection (assigned, in_progress,
+  # awaiting_verification, re-inspect_required). Certified + abandoned drop off
+  # the device once they're terminal.
+  org_inspections:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT *
+        FROM inspections.inspections
+        WHERE organisation_id = bucket.org_id
+          AND status NOT IN ('certified','abandoned')
+
+  # inspections.responses — captured field values for in-flight inspections.
+  # Joined via inspection_id so the bucket scope mirrors org_inspections.
+  org_inspection_responses:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT r.*
+        FROM inspections.responses r
+        JOIN inspections.inspections i ON i.id = r.inspection_id
+        WHERE i.organisation_id = bucket.org_id
+          AND i.status NOT IN ('certified','abandoned')
+
+  # inspections.photos — metadata only (no binary). Files themselves live in
+  # Supabase Storage bucket `inspection-photos` and are fetched on demand via
+  # signed URL. Mobile-side captures go through the local attachment_uploads
+  # queue and only land in this table once the upload worker has succeeded.
+  org_inspection_photos_meta:
+    parameters:
+      - name: org_id
+        token_parameter: org_id
+    data:
+      - SELECT p.id, p.inspection_id, p.section_id, p.field_id,
+               p.storage_path, p.caption, p.taken_at, p.gps_lat, p.gps_lng,
+               p.uploaded_by, p.created_at
+        FROM inspections.photos p
+        JOIN inspections.inspections i ON i.id = p.inspection_id
+        WHERE i.organisation_id = bucket.org_id
+          AND i.status NOT IN ('certified','abandoned')
