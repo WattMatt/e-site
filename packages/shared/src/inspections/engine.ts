@@ -32,8 +32,44 @@ export function evaluateField(field: Field, value: Response): { passState: PassS
     case 'file':
     case 'header':
     case 'computed':
+    case 'repeating_group':
+      // repeating_group has no per-row pass/fail of its own — the group is
+      // evaluated by iterating entries in evaluateInspection.
       return { passState: 'na' };
   }
+}
+
+// Synthetic field_id pattern for repeating_group entries:
+//   `<group_field_id>[<index>].<inner_field_id>`
+// E.g. `snags[0].description`, `snags[1].risk_level`.
+const RG_ENTRY_PATTERN = /^([a-z0-9_]+)\[(\d+)\]\.([a-z0-9_]+)$/;
+
+export function parseRepeatingGroupKey(fieldId: string): { group: string; index: number; sub: string } | null {
+  const m = fieldId.match(RG_ENTRY_PATTERN);
+  if (!m) return null;
+  return { group: m[1], index: parseInt(m[2], 10), sub: m[3] };
+}
+
+// Return the synthetic field_id for a single sub-field response within
+// a repeating_group entry at the given index.
+export function buildRepeatingGroupKey(groupFieldId: string, index: number, subFieldId: string): string {
+  return `${groupFieldId}[${index}].${subFieldId}`;
+}
+
+// Given the group field plus all responses, return the de-duplicated set
+// of entry indices that have at least one sub-field response. Used by the
+// renderer to know how many entry blocks to draw, and by evaluateInspection
+// to count visible sub-fields. Indices returned in ascending order.
+export function listRepeatingGroupEntryIndices(
+  groupFieldId: string,
+  allResponses: Response[],
+): number[] {
+  const set = new Set<number>();
+  for (const r of allResponses) {
+    const parsed = parseRepeatingGroupKey(r.field_id);
+    if (parsed && parsed.group === groupFieldId) set.add(parsed.index);
+  }
+  return [...set].sort((a, b) => a - b);
 }
 
 function evaluateNumberThreshold(pw: string, val: number): { passState: PassState; reason?: string } {
@@ -196,6 +232,73 @@ export function evaluateInspection(
     if (field.type === 'header' || field.type === 'computed') continue;
     if (!isFieldVisible(field, responses, { section, subsection })) continue;
 
+    // repeating_group: iterate entries, evaluate each sub-field with the
+    // synthetic field_id `<group>[<i>].<sub>`. Counts entries against
+    // min_count/max_count (entry count, not response count).
+    if (field.type === 'repeating_group') {
+      const subFields = field.fields ?? [];
+      const indices = listRepeatingGroupEntryIndices(field.field_id, responses);
+      const entryCount = indices.length;
+
+      // entry-count bookkeeping at the group level
+      if (field.required || (field.min_count ?? 0) > 0) {
+        const minEntries = Math.max(field.min_count ?? (field.required ? 1 : 0), field.required ? 1 : 0);
+        if (entryCount < minEntries) {
+          missingRequired.push({ sectionId: section.section_id, fieldId: field.field_id });
+        }
+      }
+      if (field.max_count != null && entryCount > field.max_count) {
+        failedFields.push({
+          sectionId: section.section_id,
+          fieldId: field.field_id,
+          reason: `${entryCount} entries exceeds max_count ${field.max_count}`,
+        });
+      }
+
+      // visibility/answered metrics: each entry contributes (visible sub-fields, answered sub-fields).
+      // Sub-field photos/signatures/files are counted via the same attachments lookup
+      // but keyed on the synthetic field_id; for v1 we treat them as legacy (no min_count enforcement).
+      for (const i of indices) {
+        for (const sub of subFields) {
+          if (sub.type === 'header' || sub.type === 'computed') continue;
+          visibleFieldCount++;
+          const syntheticId = buildRepeatingGroupKey(field.field_id, i, sub.field_id);
+          const r = responses.find(
+            (rr) => rr.section_id === section.section_id && rr.field_id === syntheticId,
+          );
+          const has = !!r && (
+            (r.value_bool !== undefined && r.value_bool !== null) ||
+            (r.value_number !== undefined && r.value_number !== null) ||
+            (!!r.value_text && r.value_text.length > 0) ||
+            (!!r.value_array && r.value_array.length > 0)
+          );
+          // attachments — check the synthetic field_id against the photo/signature collections
+          const isAttachmentSub = sub.type === 'photo' || sub.type === 'signature' || sub.type === 'file';
+          if (isAttachmentSub && attachments) {
+            const collection =
+              sub.type === 'signature'
+                ? (attachments.signatures ?? []).filter((s) => s.field_id === syntheticId && s.section_id === section.section_id)
+                : (attachments.photos ?? []).filter((ph) => ph.field_id === syntheticId && ph.section_id === section.section_id);
+            if (collection.length > 0) answeredFieldCount++;
+            if (sub.required && collection.length === 0) {
+              missingRequired.push({ sectionId: section.section_id, fieldId: syntheticId });
+            }
+            continue;
+          }
+          if (has) answeredFieldCount++;
+          if (sub.required && !has) {
+            missingRequired.push({ sectionId: section.section_id, fieldId: syntheticId });
+          } else if (r) {
+            const ev = evaluateField(sub, r);
+            if (ev.passState === 'fail') {
+              failedFields.push({ sectionId: section.section_id, fieldId: syntheticId, reason: ev.reason ?? 'failed' });
+            }
+          }
+        }
+      }
+      continue;
+    }
+
     visibleFieldCount++;
 
     // Attachment-backed field types (photo/signature/file) — count uploads instead of response values
@@ -260,9 +363,28 @@ export function evaluateInspection(
   } else {
     // A failed field counts as a "required failure" iff its template definition is required.
     // Look up across both direct-fields and subsection-fields to catch every shape.
+    // For repeating_group synthetic IDs (`<group>[<i>].<sub>`), resolve to the
+    // sub-field definition via the group field's `fields[]`.
     const requiredFailed = failedFields.some(ff => {
+      const parsed = parseRepeatingGroupKey(ff.fieldId);
+      if (parsed) {
+        for (const { section, field } of iterateAllFields(template)) {
+          if (section.section_id !== ff.sectionId) continue;
+          if (field.field_id !== parsed.group || field.type !== 'repeating_group') continue;
+          const sub = (field.fields ?? []).find((sf) => sf.field_id === parsed.sub);
+          if (sub?.required) return true;
+        }
+        return false;
+      }
       for (const { section, field } of iterateAllFields(template)) {
         if (section.section_id === ff.sectionId && field.field_id === ff.fieldId && field.required) return true;
+        // group-level overflow failures (max_count exceeded) count as required failures iff the group itself is required
+        if (
+          section.section_id === ff.sectionId &&
+          field.field_id === ff.fieldId &&
+          field.type === 'repeating_group' &&
+          field.required
+        ) return true;
       }
       return false;
     });

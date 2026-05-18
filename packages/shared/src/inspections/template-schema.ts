@@ -1,35 +1,52 @@
 import { z } from 'zod';
+import type { Field } from './types';
 
 const fieldTypeEnum = z.enum([
   'pass_fail','number','text','textarea','dropdown','multi_select','date',
-  'photo','signature','file','header','computed',
+  'photo','signature','file','header','computed','repeating_group',
 ]);
 
-const fieldSchema = z.object({
-  field_id: z.string().regex(/^[a-z0-9_]+$/, 'field_id must be snake_case'),
-  label: z.string().min(1),
-  type: fieldTypeEnum,
-  required: z.boolean().optional(),
-  unit: z.string().optional(),
-  pass_when: z.string().optional(),
-  options: z.array(z.string()).optional(),
-  min_count: z.number().int().positive().optional(),
-  max_count: z.number().int().positive().optional(),
-  conditional_on: z.union([
-    z.object({ field_id: z.string(), equals: z.union([z.string(), z.number(), z.boolean()]) }),
-    z.object({ field_id: z.string(), not_equals: z.union([z.string(), z.number(), z.boolean()]) }),
-    z.object({ field_id: z.string(), greater_than: z.number() }),
-    z.object({ field_id: z.string(), less_than: z.number() }),
-    z.object({ field_id: z.string(), in: z.array(z.union([z.string(), z.number()])).min(1) }),
-  ]).optional(),
-  help_text: z.string().optional(),
-  default_value: z.union([z.string(), z.number(), z.boolean()]).optional(),
-  formula: z.string().optional(),
-  sans_ref: z.string().optional(),
-  required_qualifications: z.array(
-    z.enum(['registered_person','master_installation_electrician','pr_eng','witness','client']),
-  ).optional(),
-});
+// fieldSchema is z.lazy so the `fields` array on a repeating_group field
+// can recursively reference fieldSchema itself. The refine block below
+// enforces two repeating_group invariants: (1) non-empty fields[],
+// (2) no nested repeating_groups (single level only in v1).
+const fieldSchema: z.ZodType<Field> = z.lazy(() =>
+  z.object({
+    field_id: z.string().regex(/^[a-z0-9_]+$/, 'field_id must be snake_case'),
+    label: z.string().min(1),
+    type: fieldTypeEnum,
+    required: z.boolean().optional(),
+    unit: z.string().optional(),
+    pass_when: z.string().optional(),
+    options: z.array(z.string()).optional(),
+    min_count: z.number().int().positive().optional(),
+    max_count: z.number().int().positive().optional(),
+    conditional_on: z.union([
+      z.object({ field_id: z.string(), equals: z.union([z.string(), z.number(), z.boolean()]) }),
+      z.object({ field_id: z.string(), not_equals: z.union([z.string(), z.number(), z.boolean()]) }),
+      z.object({ field_id: z.string(), greater_than: z.number() }),
+      z.object({ field_id: z.string(), less_than: z.number() }),
+      z.object({ field_id: z.string(), in: z.array(z.union([z.string(), z.number()])).min(1) }),
+    ]).optional(),
+    help_text: z.string().optional(),
+    default_value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+    formula: z.string().optional(),
+    sans_ref: z.string().optional(),
+    required_qualifications: z.array(
+      z.enum(['registered_person','master_installation_electrician','pr_eng','witness','client']),
+    ).optional(),
+    fields: z.array(fieldSchema).optional(),
+    item_label_template: z.string().optional(),
+  }).refine((f) => {
+    if (f.type !== 'repeating_group') return true;
+    if (!f.fields || f.fields.length === 0) return false;
+    // v1: disallow nested repeating_groups
+    if (f.fields.some((sf) => sf.type === 'repeating_group')) return false;
+    return true;
+  }, {
+    message: 'repeating_group requires non-empty fields[] and may not contain nested repeating_group entries',
+  }),
+);
 
 // Same union shape as field.conditional_on — both subsections and sections
 // can be conditionally hidden by an upstream answer.

@@ -1,3 +1,11 @@
 export * from './types';
 export * from './template-schema';
-export { evaluateField, evaluateInspection, isFieldVisible, computeDerivedField } from './engine';
+export {
+  evaluateField,
+  evaluateInspection,
+  isFieldVisible,
+  computeDerivedField,
+  parseRepeatingGroupKey,
+  buildRepeatingGroupKey,
+  listRepeatingGroupEntryIndices,
+} from './engine';

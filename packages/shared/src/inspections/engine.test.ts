@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateField, isFieldVisible, evaluateInspection, computeDerivedField } from './engine';
+import {
+  evaluateField,
+  isFieldVisible,
+  evaluateInspection,
+  computeDerivedField,
+  parseRepeatingGroupKey,
+  buildRepeatingGroupKey,
+  listRepeatingGroupEntryIndices,
+} from './engine';
 import type { Field, Section, SubSection, Template, Response } from './types';
 
 const passFailField: Field = { field_id: 'x', label: 'X', type: 'pass_fail', required: true };
@@ -560,5 +568,144 @@ describe('computeDerivedField', () => {
   it('no formula_kind and no formula string returns null', () => {
     const f: Field = { field_id: 'x', label: 'X', type: 'computed' };
     expect(computeDerivedField(f, [])).toBe(null);
+  });
+});
+
+describe('repeating_group — synthetic field_id helpers', () => {
+  it('parseRepeatingGroupKey extracts group / index / sub for a valid synthetic id', () => {
+    expect(parseRepeatingGroupKey('snags[0].description')).toEqual({ group: 'snags', index: 0, sub: 'description' });
+    expect(parseRepeatingGroupKey('snag_list[12].risk_level')).toEqual({ group: 'snag_list', index: 12, sub: 'risk_level' });
+  });
+  it('parseRepeatingGroupKey returns null for non-synthetic ids', () => {
+    expect(parseRepeatingGroupKey('plain_field')).toBeNull();
+    expect(parseRepeatingGroupKey('snags[abc].description')).toBeNull();
+    expect(parseRepeatingGroupKey('snags.description')).toBeNull();
+  });
+  it('buildRepeatingGroupKey roundtrips through parseRepeatingGroupKey', () => {
+    const k = buildRepeatingGroupKey('snags', 3, 'photo');
+    expect(k).toBe('snags[3].photo');
+    expect(parseRepeatingGroupKey(k)).toEqual({ group: 'snags', index: 3, sub: 'photo' });
+  });
+  it('listRepeatingGroupEntryIndices returns dedup, sorted indices for the matching group only', () => {
+    const responses: Response[] = [
+      { section_id: 's', field_id: 'snags[2].description', value_text: 'a' },
+      { section_id: 's', field_id: 'snags[2].risk_level', value_text: 'low' },
+      { section_id: 's', field_id: 'snags[0].description', value_text: 'b' },
+      { section_id: 's', field_id: 'other_group[5].x', value_text: 'noise' },
+      { section_id: 's', field_id: 'plain', value_text: 'noise' },
+    ];
+    expect(listRepeatingGroupEntryIndices('snags', responses)).toEqual([0, 2]);
+    expect(listRepeatingGroupEntryIndices('other_group', responses)).toEqual([5]);
+    expect(listRepeatingGroupEntryIndices('missing', responses)).toEqual([]);
+  });
+});
+
+describe('evaluateInspection — repeating_group', () => {
+  const groupField: Field = {
+    field_id: 'snags',
+    label: 'Snag list',
+    type: 'repeating_group',
+    item_label_template: '{{description}} ({{risk_level}})',
+    fields: [
+      { field_id: 'description', label: 'Description', type: 'textarea', required: true },
+      { field_id: 'risk_level', label: 'Risk', type: 'dropdown', options: ['low','medium','high','critical'], required: true },
+      { field_id: 'photo', label: 'Photo', type: 'photo' },
+    ],
+  };
+  const baseTemplate: Template = {
+    template_id: 'tpl-rg', name: 'RG', version: '1.0',
+    applies_to_node_types: ['board'], deliverable_type: 'inspection_only',
+    sections: [{ section_id: 'obs', title: 'Observations', fields: [groupField] }],
+  };
+
+  it('2 entries each with both required sub-fields answered → overall pass', () => {
+    const responses: Response[] = [
+      { section_id: 'obs', field_id: 'snags[0].description', value_text: 'Loose terminal' },
+      { section_id: 'obs', field_id: 'snags[0].risk_level', value_text: 'medium' },
+      { section_id: 'obs', field_id: 'snags[1].description', value_text: 'Damaged label' },
+      { section_id: 'obs', field_id: 'snags[1].risk_level', value_text: 'low' },
+    ];
+    const r = evaluateInspection(baseTemplate, responses);
+    expect(r.overallResult).toBe('pass');
+    expect(r.missingRequired).toHaveLength(0);
+    // 2 entries × 3 visible sub-fields (description, risk_level, photo) = 6 visible.
+    // photo sub is type='photo' and (with no attachments arg) is counted as visible
+    // via the inner-loop's `visibleFieldCount++` and not flagged because it's optional.
+    expect(r.visibleFieldCount).toBe(6);
+    expect(r.answeredFieldCount).toBe(4); // 4 text answers; photos optional, none uploaded
+  });
+
+  it('min_count: 1 on optional repeating_group + 0 entries → flagged in missingRequired', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{ section_id: 'obs', title: 'Observations', fields: [{ ...groupField, required: false, min_count: 1 }] }],
+    };
+    const r = evaluateInspection(t, []);
+    expect(r.missingRequired).toContainEqual({ sectionId: 'obs', fieldId: 'snags' });
+  });
+
+  it('required repeating_group with 0 entries → flagged in missingRequired', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{ section_id: 'obs', title: 'Observations', fields: [{ ...groupField, required: true }] }],
+    };
+    const r = evaluateInspection(t, []);
+    expect(r.missingRequired).toContainEqual({ sectionId: 'obs', fieldId: 'snags' });
+    expect(r.overallResult).toBe('fail');
+  });
+
+  it('max_count: 2 exceeded → overflow flagged in failedFields', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{ section_id: 'obs', title: 'Observations', fields: [{ ...groupField, max_count: 2 }] }],
+    };
+    const responses: Response[] = [
+      { section_id: 'obs', field_id: 'snags[0].description', value_text: 'a' },
+      { section_id: 'obs', field_id: 'snags[0].risk_level', value_text: 'low' },
+      { section_id: 'obs', field_id: 'snags[1].description', value_text: 'b' },
+      { section_id: 'obs', field_id: 'snags[1].risk_level', value_text: 'low' },
+      { section_id: 'obs', field_id: 'snags[2].description', value_text: 'c' },
+      { section_id: 'obs', field_id: 'snags[2].risk_level', value_text: 'low' },
+    ];
+    const r = evaluateInspection(t, responses);
+    expect(r.failedFields.some((f) => f.fieldId === 'snags' && /exceeds max_count 2/.test(f.reason))).toBe(true);
+  });
+
+  it('entry with a missing required sub-field → flagged with synthetic field_id', () => {
+    const responses: Response[] = [
+      { section_id: 'obs', field_id: 'snags[0].description', value_text: 'Loose terminal' },
+      // risk_level missing for entry 0
+    ];
+    const r = evaluateInspection(baseTemplate, responses);
+    expect(r.missingRequired).toContainEqual({ sectionId: 'obs', fieldId: 'snags[0].risk_level' });
+    expect(r.overallResult).toBe('fail');
+  });
+
+  it('photo sub-field with attachments → matched against synthetic field_id', () => {
+    const t: Template = {
+      ...baseTemplate,
+      sections: [{
+        section_id: 'obs', title: 'Observations', fields: [{
+          ...groupField,
+          fields: [
+            { field_id: 'description', label: 'Description', type: 'textarea', required: true },
+            { field_id: 'photo', label: 'Photo', type: 'photo', required: true, min_count: 1 },
+          ],
+        }],
+      }],
+    };
+    const responses: Response[] = [
+      { section_id: 'obs', field_id: 'snags[0].description', value_text: 'x' },
+    ];
+    // No photo attached for entry 0 → required missing flagged with synthetic id
+    const r1 = evaluateInspection(t, responses, { photos: [] });
+    expect(r1.missingRequired).toContainEqual({ sectionId: 'obs', fieldId: 'snags[0].photo' });
+
+    // Photo attached for entry 0 → no missing
+    const r2 = evaluateInspection(t, responses, {
+      photos: [{ section_id: 'obs', field_id: 'snags[0].photo' }],
+    });
+    expect(r2.missingRequired).toHaveLength(0);
+    expect(r2.overallResult).toBe('pass');
   });
 });

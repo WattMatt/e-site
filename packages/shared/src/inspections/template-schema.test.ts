@@ -31,4 +31,56 @@ describe('templateSchema', () => {
   it('rejects empty sections array', () => {
     expect(() => templateSchema.parse({ ...validTemplate, sections: [] })).toThrow();
   });
+  it('accepts repeating_group with non-empty fields[]', () => {
+    const t = {
+      ...validTemplate,
+      sections: [{
+        section_id: 'obs', title: 'Observations',
+        fields: [{
+          field_id: 'snags', label: 'Snag list', type: 'repeating_group',
+          fields: [
+            { field_id: 'description', label: 'Description', type: 'textarea', required: true },
+            { field_id: 'risk_level', label: 'Risk', type: 'dropdown', options: ['low','high'] },
+          ],
+        }],
+      }],
+    };
+    expect(() => templateSchema.parse(t)).not.toThrow();
+  });
+  it('rejects repeating_group with missing fields[]', () => {
+    const t = {
+      ...validTemplate,
+      sections: [{
+        section_id: 'obs', title: 'Observations',
+        fields: [{ field_id: 'snags', label: 'Snags', type: 'repeating_group' }],
+      }],
+    };
+    expect(() => templateSchema.parse(t)).toThrow(/repeating_group requires/);
+  });
+  it('rejects repeating_group with empty fields[]', () => {
+    const t = {
+      ...validTemplate,
+      sections: [{
+        section_id: 'obs', title: 'Observations',
+        fields: [{ field_id: 'snags', label: 'Snags', type: 'repeating_group', fields: [] }],
+      }],
+    };
+    expect(() => templateSchema.parse(t)).toThrow();
+  });
+  it('rejects nested repeating_group inside a repeating_group', () => {
+    const t = {
+      ...validTemplate,
+      sections: [{
+        section_id: 'obs', title: 'Observations',
+        fields: [{
+          field_id: 'snags', label: 'Snags', type: 'repeating_group',
+          fields: [{
+            field_id: 'inner', label: 'Inner', type: 'repeating_group',
+            fields: [{ field_id: 'x', label: 'X', type: 'text' }],
+          }],
+        }],
+      }],
+    };
+    expect(() => templateSchema.parse(t)).toThrow(/repeating_group/);
+  });
 });

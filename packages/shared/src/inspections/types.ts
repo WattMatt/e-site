@@ -10,7 +10,8 @@ export type FieldType =
   | 'signature'
   | 'file'
   | 'header'
-  | 'computed';
+  | 'computed'
+  | 'repeating_group';
 
 export type NodeType = 'board' | 'source' | 'any';
 export type DeliverableType = 'coc' | 'inspection_only' | 'factory_test';
@@ -48,6 +49,14 @@ export interface Field {
   // these qualifications (matched heuristically against signatory_title text
   // or registration_number presence) before certify is permitted.
   required_qualifications?: SignatoryQualification[];
+  // repeating_group only: the sub-fields that repeat per entry. Storage layer
+  // writes entries as sibling responses with synthetic field_id
+  // `<group_field_id>[<index>].<inner_field_id>` (e.g. `snags[0].description`).
+  // Single level only in v1 — nested repeating_groups rejected by Zod.
+  fields?: Field[];
+  // repeating_group only: optional template used for the nav/header label of
+  // each entry. Supports `{{index}}` and `{{<sub_field_id>}}` placeholders.
+  item_label_template?: string;
 }
 
 export interface SubSection {
