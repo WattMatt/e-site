@@ -45,16 +45,17 @@ export async function POST(req: NextRequest) {
     .upload(path, file, { contentType: file.type })
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
 
+  // Per spec §4.4: file attachments re-use inspections.photos with a different bucket.
+  // The filename is stored in caption (mime can be inferred from the storage object).
   const { data: row, error: rowErr } = await supabase
     .schema('inspections')
-    .from('attachments')
+    .from('photos')
     .insert({
       inspection_id: inspectionId,
       section_id: sectionId,
       field_id: fieldId,
       storage_path: path,
-      filename: file.name,
-      mime_type: file.type || null,
+      caption: file.name,
       uploaded_by: user.id,
     })
     .select('id')
