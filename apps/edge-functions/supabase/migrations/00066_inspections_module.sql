@@ -311,4 +311,126 @@ GRANT EXECUTE ON FUNCTION inspections.user_can_write_responses(UUID) TO authenti
 GRANT EXECUTE ON FUNCTION inspections.user_has_inspection_read(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION inspections.allocate_coc_number(UUID) TO service_role;
 
+-- ============================================================================
+-- 12. Triggers
+-- ============================================================================
+
+-- 12.1 Validate polymorphic target_node_id
+CREATE OR REPLACE FUNCTION inspections.validate_target_node() RETURNS TRIGGER
+  LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF NEW.target_node_type = 'board' THEN
+    IF NEW.target_node_id IS NULL THEN
+      RAISE EXCEPTION 'target_node_id must be set for target_node_type = board';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM cable_schedule.boards WHERE id = NEW.target_node_id) THEN
+      RAISE EXCEPTION 'target_node_id % does not exist in cable_schedule.boards', NEW.target_node_id;
+    END IF;
+  ELSIF NEW.target_node_type = 'source' THEN
+    IF NEW.target_node_id IS NULL THEN
+      RAISE EXCEPTION 'target_node_id must be set for target_node_type = source';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM cable_schedule.sources WHERE id = NEW.target_node_id) THEN
+      RAISE EXCEPTION 'target_node_id % does not exist in cable_schedule.sources', NEW.target_node_id;
+    END IF;
+  ELSIF NEW.target_node_type = 'adhoc' THEN
+    IF NEW.target_node_id IS NOT NULL THEN
+      RAISE EXCEPTION 'target_node_id must be NULL for target_node_type = adhoc';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+CREATE TRIGGER trg_validate_target_node
+  BEFORE INSERT OR UPDATE OF target_node_type, target_node_id ON inspections.inspections
+  FOR EACH ROW EXECUTE FUNCTION inspections.validate_target_node();
+
+-- 12.2 Block DELETE on cable-schedule nodes referenced by active inspections
+CREATE OR REPLACE FUNCTION inspections.guard_node_delete() RETURNS TRIGGER
+  LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM inspections.inspections
+    WHERE target_node_type = TG_ARGV[0]
+      AND target_node_id = OLD.id
+      AND status NOT IN ('certified','abandoned')
+  ) THEN
+    RAISE EXCEPTION 'Cannot delete %: active inspection(s) reference this node. Abandon or complete first.', TG_ARGV[0];
+  END IF;
+  RETURN OLD;
+END $fn$;
+
+CREATE TRIGGER trg_guard_inspection_refs
+  BEFORE DELETE ON cable_schedule.boards
+  FOR EACH ROW EXECUTE FUNCTION inspections.guard_node_delete('board');
+
+CREATE TRIGGER trg_guard_inspection_refs
+  BEFORE DELETE ON cable_schedule.sources
+  FOR EACH ROW EXECUTE FUNCTION inspections.guard_node_delete('source');
+
+-- 12.3 Template schema_json immutability
+CREATE OR REPLACE FUNCTION inspections.enforce_template_immutability() RETURNS TRIGGER
+  LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF NEW.schema_json IS DISTINCT FROM OLD.schema_json THEN
+    RAISE EXCEPTION 'schema_json is immutable; create a new template row with a bumped version instead';
+  END IF;
+  RETURN NEW;
+END $fn$;
+
+CREATE TRIGGER trg_template_immutability
+  BEFORE UPDATE ON inspections.templates
+  FOR EACH ROW EXECUTE FUNCTION inspections.enforce_template_immutability();
+
+-- 12.4 Auto-append to response_history on responses INSERT or UPDATE
+CREATE OR REPLACE FUNCTION inspections.append_response_history() RETURNS TRIGGER
+  LANGUAGE plpgsql AS $fn$
+BEGIN
+  INSERT INTO inspections.response_history (
+    inspection_id, section_id, field_id,
+    value_bool, value_number, value_text, value_array, value_json,
+    pass_state, fail_reason, responded_by, responded_at
+  ) VALUES (
+    NEW.inspection_id, NEW.section_id, NEW.field_id,
+    NEW.value_bool, NEW.value_number, NEW.value_text, NEW.value_array, NEW.value_json,
+    NEW.pass_state, NEW.fail_reason, NEW.latest_responded_by, NEW.latest_responded_at
+  );
+  RETURN NEW;
+END $fn$;
+
+CREATE TRIGGER trg_append_response_history
+  AFTER INSERT OR UPDATE ON inspections.responses
+  FOR EACH ROW EXECUTE FUNCTION inspections.append_response_history();
+
+-- 12.5 Auto-maintain updated_at
+CREATE OR REPLACE FUNCTION inspections.set_updated_at() RETURNS TRIGGER
+  LANGUAGE plpgsql AS $fn$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END $fn$;
+
+CREATE TRIGGER trg_inspections_updated_at
+  BEFORE UPDATE ON inspections.inspections
+  FOR EACH ROW EXECUTE FUNCTION inspections.set_updated_at();
+
+CREATE TRIGGER trg_templates_updated_at
+  BEFORE UPDATE ON inspections.templates
+  FOR EACH ROW EXECUTE FUNCTION inspections.set_updated_at();
+
+-- 12.6 Auto-set started_at on first response
+CREATE OR REPLACE FUNCTION inspections.advance_status_on_first_response() RETURNS TRIGGER
+  LANGUAGE plpgsql AS $fn$
+BEGIN
+  UPDATE inspections.inspections
+    SET status = 'in_progress', started_at = COALESCE(started_at, now())
+    WHERE id = NEW.inspection_id
+      AND status IN ('assigned','re-inspect_required');
+  RETURN NEW;
+END $fn$;
+
+CREATE TRIGGER trg_advance_on_first_response
+  AFTER INSERT ON inspections.responses
+  FOR EACH ROW EXECUTE FUNCTION inspections.advance_status_on_first_response();
+
 COMMIT;
