@@ -210,4 +210,105 @@ CREATE TABLE inspections.coc_number_seqs (
   PRIMARY KEY (project_id, year, prefix)
 );
 
+-- ============================================================================
+-- 10. RLS helper functions
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION inspections.user_can_verify(_project_id UUID) RETURNS BOOLEAN
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
+  SELECT EXISTS (
+    SELECT 1 FROM public.project_members pm
+    JOIN public.user_organisations uo
+      ON uo.user_id = pm.user_id AND uo.organisation_id = pm.organisation_id
+    WHERE pm.project_id = _project_id
+      AND pm.user_id = auth.uid()
+      AND uo.role IN ('owner','admin','project_manager')
+  );
+$fn$;
+
+CREATE OR REPLACE FUNCTION inspections.is_inspection_verifier(_inspection_id UUID) RETURNS BOOLEAN
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
+  SELECT EXISTS (
+    SELECT 1 FROM inspections.inspections
+    WHERE id = _inspection_id AND verifier_id = auth.uid()
+  );
+$fn$;
+
+CREATE OR REPLACE FUNCTION inspections.user_can_write_responses(_inspection_id UUID) RETURNS BOOLEAN
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
+  SELECT EXISTS (
+    SELECT 1 FROM inspections.inspections i
+    JOIN public.project_members pm ON pm.project_id = i.project_id AND pm.user_id = auth.uid()
+    JOIN public.user_organisations uo
+      ON uo.user_id = auth.uid() AND uo.organisation_id = i.organisation_id
+    WHERE i.id = _inspection_id
+      AND uo.role <> 'client_viewer'
+      AND i.status IN ('assigned','in_progress','re-inspect_required')
+  );
+$fn$;
+
+CREATE OR REPLACE FUNCTION inspections.user_has_inspection_read(_inspection_id UUID) RETURNS BOOLEAN
+  LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $fn$
+  SELECT EXISTS (
+    SELECT 1 FROM inspections.inspections i
+    JOIN public.project_members pm ON pm.project_id = i.project_id AND pm.user_id = auth.uid()
+    JOIN public.user_organisations uo
+      ON uo.user_id = auth.uid() AND uo.organisation_id = i.organisation_id
+    WHERE i.id = _inspection_id
+      AND (
+        uo.role <> 'client_viewer'
+        OR (uo.role = 'client_viewer' AND i.status = 'certified')
+      )
+  );
+$fn$;
+
+-- ============================================================================
+-- 11. COC number allocator (INS / FAT only — COC is manually entered)
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION inspections.allocate_coc_number(_inspection_id UUID)
+RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  pcode  TEXT;
+  pid    UUID;
+  ptype  TEXT;
+  yr     INT := EXTRACT(YEAR FROM now());
+  seq    INT;
+  prefix TEXT;
+BEGIN
+  SELECT i.project_id, p.code, t.deliverable_type
+    INTO pid, pcode, ptype
+    FROM inspections.inspections i
+    JOIN projects.projects p ON p.id = i.project_id
+    JOIN inspections.templates t ON t.id = i.template_id
+    WHERE i.id = _inspection_id;
+
+  IF pid IS NULL THEN
+    RAISE EXCEPTION 'Inspection % not found', _inspection_id;
+  END IF;
+
+  IF ptype = 'coc' THEN
+    RAISE EXCEPTION 'COC numbers must be entered manually for deliverable_type = coc';
+  END IF;
+
+  prefix := CASE ptype
+    WHEN 'inspection_only' THEN 'INS'
+    WHEN 'factory_test' THEN 'FAT'
+  END;
+
+  INSERT INTO inspections.coc_number_seqs (project_id, year, prefix, last_seq)
+    VALUES (pid, yr, prefix, 1)
+    ON CONFLICT (project_id, year, prefix)
+      DO UPDATE SET last_seq = inspections.coc_number_seqs.last_seq + 1
+    RETURNING last_seq INTO seq;
+
+  RETURN format('%s-%s-%s-%s', prefix, pcode, yr, lpad(seq::text, 4, '0'));
+END $fn$;
+
+GRANT EXECUTE ON FUNCTION inspections.user_can_verify(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION inspections.is_inspection_verifier(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION inspections.user_can_write_responses(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION inspections.user_has_inspection_read(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION inspections.allocate_coc_number(UUID) TO service_role;
+
 COMMIT;
