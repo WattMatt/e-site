@@ -132,6 +132,86 @@ export async function generateTagsAction(
   return { created: rows.length, alreadyPresent: have.size }
 }
 
+/**
+ * Recompute tag_text for every existing cable_tag on the revision
+ * using current board.short_code values. Use after backfilling short
+ * codes via the bulk-edit screen so existing tags pick up the new
+ * abbreviated form.
+ *
+ * DRAFT-only. Per-row UPDATE since tag_text values differ.
+ */
+export async function regenerateTagTextAction(
+  revisionId: string,
+): Promise<{ ok: true; updated: number } | { ok: false; error: string }> {
+  if (!uuid.safeParse(revisionId).success) return { ok: false, error: 'Invalid revision id' }
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // Status gate
+  const { data: rev } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id, status, project_id')
+    .eq('id', revisionId)
+    .maybeSingle()
+  if (!rev) return { ok: false, error: 'Revision not found' }
+  if (rev.status !== 'DRAFT') {
+    return { ok: false, error: 'Tag regeneration only allowed on DRAFT revisions' }
+  }
+
+  // Fetch all cables + tags on the revision, with board codes + short_codes.
+  // Loader shape matches CableJoin so we can reuse cableTagText().
+  const [cablesRes, tagsRes] = await Promise.all([
+    (supabase as any)
+      .schema('cable_schedule')
+      .from('cables')
+      .select(
+        'id, cable_no, size_mm2, cores, conductor, insulation, armour, tag_override, ' +
+        'supply:supplies!supply_id(' +
+          'id, from_source_id, from_board_id, to_board_id, ' +
+          'source:sources!from_source_id(code), ' +
+          'from_board:boards!from_board_id(code, short_code), ' +
+          'to_board:boards!to_board_id(code, short_code))',
+      )
+      .eq('revision_id', revisionId),
+    (supabase as any)
+      .schema('cable_schedule')
+      .from('cable_tags')
+      .select('id, cable_id, end_position'),
+  ])
+
+  const cables = (cablesRes.data ?? []) as unknown as CableJoin[]
+  const tags = (tagsRes.data ?? []) as Array<{
+    id: string
+    cable_id: string
+    end_position: 'FROM' | 'TO'
+  }>
+
+  const cableById = new Map(cables.map((c) => [c.id, c] as const))
+
+  let updated = 0
+  for (const tag of tags) {
+    const c = cableById.get(tag.cable_id)
+    if (!c) continue
+    const newTagText = cableTagText(c)
+
+    const { error } = await (supabase as any)
+      .schema('cable_schedule')
+      .from('cable_tags')
+      .update({ tag_text: newTagText })
+      .eq('id', tag.id)
+    if (error) {
+      return { ok: false, error: `Update failed for tag ${tag.id}: ${error.message}` }
+    }
+    updated += 1
+  }
+
+  revalidatePath(`/projects/${rev.project_id}/cables/${revisionId}/tags`)
+  return { ok: true, updated }
+}
+
 const markPrintedSchema = z.object({
   tagIds: z.array(uuid).min(1),
 })
