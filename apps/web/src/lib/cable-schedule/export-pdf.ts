@@ -1087,8 +1087,13 @@ async function drawAveryL7173Pages(
   const PAGE_H = 841.89
   const LABEL_W = 280.85   // 99.1mm
   const LABEL_H = 161.57   // 57mm
-  const HMARGIN = 13.32    // 4.7mm
-  const VMARGIN = 38.27    // 13.5mm — top + bottom equal
+  // Geometry note: 2 cols × 99.1mm = 198.2mm fits in 210mm with 5.9mm
+  // margins each side. 5 rows × 57mm = 285mm fits in 297mm with 6mm
+  // margins top + bottom (symmetric). The original 13.5mm top-only
+  // margin from the Avery spec sheet would overflow A4 by 1.5mm at the
+  // bottom row — symmetric layout keeps every label fully on-page.
+  const HMARGIN = 16.7     // 5.9mm
+  const VMARGIN = 17.0     // 6mm — symmetric top + bottom
   const COLS = 2
   const ROWS = 5
   const PER_PAGE = COLS * ROWS  // 10
