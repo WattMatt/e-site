@@ -222,6 +222,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
         </div>
         <TagControls
           revisionId={revisionId}
+          projectId={projectId}
           missingTagsCount={cables.length * 2 - allTags.length}
           totalUnprinted={allTags.filter((t) => !t.printed).length}
           basePath={`/projects/${projectId}/cables/${revisionId}/tags`}
@@ -257,7 +258,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
               lineHeight: 1.5,
             }}
           >
-            🖨  <strong style={{ color: 'var(--c-text)' }}>Two print outputs:</strong> <em>Print sheet</em> (above) → clean A4 tag-schedule list, useful as a site checklist. <em>Export → PDF</em> (from the revision page) → 10-up tag-card layout with QR codes for fabrication. An Avery-spec label-sheet export is on the roadmap.
+            🖨  <strong style={{ color: 'var(--c-text)' }}>Two PDF outputs:</strong> <em>Download list (PDF)</em> (above) → multi-page A4 tag-schedule list, suitable as a site-coordination checklist. <em>Export → PDF</em> (from the revision page) → 10-up tag-card layout with QR codes for fabrication. An Avery-spec label-sheet export is on the roadmap. Browser Cmd-P also works for a quick screen-table print.
           </div>
           {/* Screen view: table */}
           <div className="data-panel" style={{ overflowX: 'auto' }}>

@@ -7,6 +7,7 @@ import { generateTagsAction } from '@/actions/cable-tag.actions'
 
 interface Props {
   revisionId: string
+  projectId: string  // ← NEW: needed for the tag-list PDF download URL
   missingTagsCount: number
   totalUnprinted: number
   basePath: string
@@ -16,7 +17,7 @@ interface Props {
 }
 
 export function TagControls({
-  revisionId, missingTagsCount, totalUnprinted, basePath, currentFilter, currentSize, sizes,
+  revisionId, projectId, missingTagsCount, totalUnprinted, basePath, currentFilter, currentSize, sizes,
 }: Props) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -80,18 +81,22 @@ export function TagControls({
         {pending ? 'Generating…' : missingTagsCount === 0 ? 'All generated' : `+ Generate (${missingTagsCount})`}
       </button>
 
-      <button
-        type="button"
+      <a
+        href={`/api/cable-schedule/export/tag-list/pdf?projectId=${projectId}&revisionId=${revisionId}`}
+        download
         className="btn-primary-amber"
-        onClick={() => window.print()}
         style={{
           background: 'var(--c-panel)',
           border: '1px solid var(--c-border)',
           color: 'var(--c-text-mid)',
+          textDecoration: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
         }}
       >
-        ↳ Print sheet
-      </button>
+        ↓ Download list (PDF)
+      </a>
 
       {error && (
         <div role="alert" style={{ color: '#dc2626', fontSize: 11, marginLeft: 6 }}>{error}</div>
