@@ -25,7 +25,13 @@ import * as ImagePicker from 'expo-image-picker'
 import * as ImageManipulator from 'expo-image-manipulator'
 import * as FileSystem from 'expo-file-system'
 import * as Crypto from 'expo-crypto'
-import { evaluateField, type Field, type Response } from '@esite/shared'
+import {
+  evaluateField,
+  buildRepeatingGroupKey,
+  listRepeatingGroupEntryIndices,
+  type Field,
+  type Response,
+} from '@esite/shared'
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme'
 import { enqueueAttachment } from './attachment-queue'
 
@@ -45,6 +51,16 @@ export interface RendererProps {
   inspectionId: string
   sectionId: string
   onChange: (patch: FieldChangePatch) => void
+  // Optional escape hatches for repeating_group entries — see web FieldRenderer for the
+  // mirror shape. `allResponses` lets the renderer rehydrate existing entries on mount;
+  // `onUpsert` lets sub-fields write to the synthetic `<group>[<i>].<sub>` field_id
+  // rather than the group id (which is what the parent's `onChange` targets).
+  // `onDeleteEntry` deletes every sibling response for a given entry (server round-trip
+  // in v1 — no offline support yet; the caller's hook decides whether to skip when
+  // offline or queue).
+  allResponses?: Response[]
+  onUpsert?: (fieldId: string, patch: FieldChangePatch) => void
+  onDeleteEntry?: (groupFieldId: string, index: number) => Promise<void>
 }
 
 export function Renderer(props: RendererProps): JSX.Element | null {
@@ -76,6 +92,8 @@ export function Renderer(props: RendererProps): JSX.Element | null {
       return (
         <StubField label={props.field.label} note="Signature capture — use web for v1" />
       )
+    case 'repeating_group':
+      return <RepeatingGroupField {...props} />
     case 'computed':
     case 'file':
       return <StubField label={props.field.label} note="Not supported on mobile yet" />
@@ -333,6 +351,159 @@ function PhotoField({
   )
 }
 
+// ─── Repeating group (snag lists, per-entry tables) ─────────────────
+
+// Minimum viable mobile renderer: a list of entries, each one collapsed to
+// its computed label by default. Tap to expand → renders the sub-fields
+// recursively via `Renderer`. Long-press on the header → confirm + delete
+// the entry (server round-trip; offline behaviour is the caller's problem
+// for v1). `+ Add` appends a new index at max+1.
+function RepeatingGroupField(props: RendererProps) {
+  const { field, allResponses, onUpsert, onDeleteEntry, inspectionId, sectionId } = props
+  const subFields = (field.fields ?? []) as Field[]
+  const seedIndices = allResponses
+    ? listRepeatingGroupEntryIndices(field.field_id, allResponses)
+    : []
+  const [indices, setIndices] = useState<number[]>(seedIndices)
+  const [expanded, setExpanded] = useState<Set<number>>(new Set(seedIndices))
+  const [deletingIdx, setDeletingIdx] = useState<number | null>(null)
+
+  const entries = [...indices].sort((a, b) => a - b)
+
+  const addEntry = () => {
+    const next = entries.length === 0 ? 0 : Math.max(...entries) + 1
+    setIndices((prev) => [...prev, next])
+    setExpanded((prev) => new Set(prev).add(next))
+  }
+
+  const removeEntry = async (idx: number) => {
+    if (!onDeleteEntry) {
+      Alert.alert('Cannot remove', 'Remove not wired in this view yet.')
+      return
+    }
+    setDeletingIdx(idx)
+    try {
+      await onDeleteEntry(field.field_id, idx)
+      setIndices((prev) => prev.filter((i) => i !== idx))
+      setExpanded((prev) => {
+        const n = new Set(prev)
+        n.delete(idx)
+        return n
+      })
+    } catch (e) {
+      Alert.alert('Remove failed', (e as Error).message ?? 'Unknown error')
+    } finally {
+      setDeletingIdx(null)
+    }
+  }
+
+  const confirmRemove = (idx: number) => {
+    Alert.alert(
+      `Remove entry ${idx + 1}?`,
+      'This will delete every sub-field answer for this entry.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => removeEntry(idx) },
+      ],
+    )
+  }
+
+  const findResponse = (syntheticId: string): Response | undefined =>
+    allResponses?.find((r) => r.section_id === sectionId && r.field_id === syntheticId)
+
+  const labelFor = (i: number): string => {
+    const template = field.item_label_template
+    if (!template) return `Entry ${i + 1}`
+    return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key) => {
+      if (key === 'index') return String(i + 1)
+      const sub = subFields.find((s) => s.field_id === key)
+      if (!sub) return '—'
+      const syntheticId = buildRepeatingGroupKey(field.field_id, i, sub.field_id)
+      const r = findResponse(syntheticId)
+      if (!r) return '—'
+      if (r.value_text) return r.value_text.length > 24 ? r.value_text.slice(0, 21) + '…' : r.value_text
+      if (r.value_number != null) return String(r.value_number)
+      if (r.value_bool != null) return r.value_bool ? '✓' : '✗'
+      return '—'
+    })
+  }
+
+  const atMax = field.max_count != null && entries.length >= field.max_count
+
+  return (
+    <View>
+      <FieldLabel field={field} />
+      <View style={{ gap: spacing.xs }}>
+        {entries.map((idx) => {
+          const isOpen = expanded.has(idx)
+          return (
+            <View key={idx} style={styles.rgEntryWrap}>
+              <Pressable
+                onPress={() =>
+                  setExpanded((prev) => {
+                    const n = new Set(prev)
+                    if (n.has(idx)) n.delete(idx)
+                    else n.add(idx)
+                    return n
+                  })
+                }
+                onLongPress={() => confirmRemove(idx)}
+                style={styles.rgEntryHeader}
+              >
+                <Text style={styles.rgEntryChevron}>{isOpen ? '▾' : '▸'}</Text>
+                <Text style={styles.rgEntryLabel} numberOfLines={1}>
+                  {labelFor(idx)}
+                </Text>
+                <Text style={[styles.rgEntryAction, deletingIdx === idx && { opacity: 0.4 }]}>
+                  {deletingIdx === idx ? '…' : '✕'}
+                </Text>
+              </Pressable>
+              {isOpen && (
+                <View style={styles.rgEntryBody}>
+                  {subFields.map((sub) => {
+                    const syntheticId = buildRepeatingGroupKey(field.field_id, idx, sub.field_id)
+                    const subFieldProxy: Field = { ...sub, field_id: syntheticId }
+                    return (
+                      <Renderer
+                        key={syntheticId}
+                        field={subFieldProxy}
+                        response={findResponse(syntheticId)}
+                        inspectionId={inspectionId}
+                        sectionId={sectionId}
+                        onChange={(patch) => {
+                          if (onUpsert) onUpsert(syntheticId, patch)
+                        }}
+                        allResponses={allResponses}
+                        onUpsert={onUpsert}
+                        onDeleteEntry={onDeleteEntry}
+                      />
+                    )
+                  })}
+                </View>
+              )}
+            </View>
+          )
+        })}
+        {entries.length === 0 ? (
+          <Text style={styles.rgEmpty}>No entries yet.</Text>
+        ) : null}
+      </View>
+      <Pressable
+        onPress={addEntry}
+        disabled={atMax}
+        style={[styles.rgAddBtn, atMax && { opacity: 0.4 }]}
+      >
+        <Text style={styles.rgAddBtnText}>+ Add {field.label.toLowerCase()}</Text>
+      </Pressable>
+      {atMax ? (
+        <Text style={[styles.helper, { color: colors.amber }]}>
+          Maximum {field.max_count} entries reached.
+        </Text>
+      ) : null}
+    </View>
+  )
+}
+
 // ─── Header (sub-heading inside a section) ──────────────────────────
 
 function HeaderField({ field }: { field: Field }) {
@@ -421,4 +592,32 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   stubNote: { color: colors.textMid, fontSize: fontSize.small, fontStyle: 'italic' },
+  rgEntryWrap: {
+    borderWidth: 1,
+    borderColor: colors.borderMid,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  rgEntryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.sm,
+    backgroundColor: colors.surface,
+    gap: spacing.xs,
+  },
+  rgEntryChevron: { color: colors.textMid, fontSize: fontSize.bodyLg },
+  rgEntryLabel: { flex: 1, color: colors.text, fontSize: fontSize.md, fontWeight: fontWeight.medium },
+  rgEntryAction: { color: colors.red, fontSize: fontSize.bodyLg, paddingHorizontal: spacing.xs },
+  rgEntryBody: { padding: spacing.sm, gap: spacing.md },
+  rgEmpty: { color: colors.textMid, fontSize: fontSize.small, fontStyle: 'italic', padding: spacing.xs },
+  rgAddBtn: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.borderMid,
+    alignItems: 'center',
+  },
+  rgAddBtnText: { color: colors.amber, fontSize: fontSize.small, fontWeight: fontWeight.semibold },
 })
