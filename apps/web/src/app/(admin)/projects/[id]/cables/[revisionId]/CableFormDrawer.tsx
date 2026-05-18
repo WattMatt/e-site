@@ -67,7 +67,43 @@ const SECTION_OPTIONS: Array<{ value: 'NORMAL' | 'EMERGENCY' | ''; label: string
   { value: 'EMERGENCY', label: 'Emergency' },
 ]
 
+/**
+ * Slide-in chrome wrapper around CableFormBody. After the Flow-2 inline-drawer
+ * refactor this is ONLY mounted at the page level for `mode === 'add-run'` —
+ * the other three modes (add-strand / edit-strand / edit-run) render
+ * `<CableFormBody />` inline as a <tr colSpan> directly in the grid.
+ */
 export function CableFormDrawer({ state, onClose, onSaved }: Props) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cable-form-title"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000,
+        display: 'flex', justifyContent: 'flex-end',
+      }}
+    >
+      <div
+        style={{
+          width: 460, maxWidth: '95vw', height: '100%', background: 'var(--c-panel)',
+          display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--c-border)',
+        }}
+      >
+        <CableFormBody state={state} onClose={onClose} onSaved={onSaved} variant="drawer" />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Form body — the field stack + validation + submit logic, without any
+ * positioning chrome. Mounted inline inside a `<td colSpan>` cell for the
+ * edit-strand / edit-run / add-strand modes, and inside `<CableFormDrawer>`'s
+ * slide-in shell for add-run.
+ */
+export function CableFormBody({ state, onClose, onSaved, variant = 'inline' }: Props & { variant?: 'inline' | 'drawer' }) {
   const mode: Mode = state.mode
   // Narrow the discriminated union to per-mode locals — TS narrows correctly
   // inside the ternaries but not across uses of the captured `mode` variable.
@@ -325,23 +361,23 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
   const showPerStrandFields = mode === 'add-run' || mode === 'add-strand' || mode === 'edit-strand'
   const showSupplyFields = mode === 'add-run' || mode === 'edit-run'
 
+  // Inline variant gets a contained shell with its own border + bg.
+  // Drawer variant's outer chrome is supplied by <CableFormDrawer>.
+  const isDrawer = variant === 'drawer'
+  const bodyMaxHeight = isDrawer ? undefined : '60vh'
+  const containerStyle: React.CSSProperties = isDrawer
+    ? { display: 'contents' }
+    : {
+        background: 'var(--c-panel)',
+        border: '1px solid var(--c-amber-mid)',
+        borderRadius: 6,
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+      }
+
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="cable-form-title"
-      onClick={(e) => { if (e.target === e.currentTarget && !saving) onClose() }}
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000,
-        display: 'flex', justifyContent: 'flex-end',
-      }}
-    >
-      <div
-        style={{
-          width: 460, maxWidth: '95vw', height: '100%', background: 'var(--c-panel)',
-          display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--c-border)',
-        }}
-      >
+    <div style={containerStyle}>
         {/* Header */}
         <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--c-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
           <h2 id="cable-form-title" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--c-text)', lineHeight: 1.3 }}>
@@ -355,7 +391,15 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
         </div>
 
         {/* Body — scrollable */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{
+          flex: isDrawer ? 1 : undefined,
+          maxHeight: bodyMaxHeight,
+          overflowY: 'auto',
+          padding: '14px 18px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 14,
+        }}>
           {showFromToFields && (
             <FieldGroup title="Route">
               <Row label="From (source or board)" error={validationErrors.fromNodeId}>
@@ -506,7 +550,6 @@ export function CableFormDrawer({ state, onClose, onSaved }: Props) {
             {submitLabel}
           </button>
         </div>
-      </div>
     </div>
   )
 }
