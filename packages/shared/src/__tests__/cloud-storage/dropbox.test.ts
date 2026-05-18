@@ -95,9 +95,15 @@ describe('DropboxProvider', () => {
     })
   })
 
+  // listFolder + downloadFile probe /users/get_current_account once per access
+  // token to detect team-namespace divergence (see dropbox.provider.ts comment
+  // block "Team-namespace plumbing"). Tests below prepend a {email}-only stub
+  // (no root_info → personal-account shape → path-root header omitted) and use
+  // unique tokens per test to bypass the module-level rootInfoCache.
   describe('listFolder', () => {
     it('lists root and maps entries, dropping deleted', async () => {
       scriptFetch([
+        { url: '/users/get_current_account', method: 'POST', json: { email: 'u@d.com' } },
         {
           url: '/files/list_folder',
           method: 'POST',
@@ -115,7 +121,7 @@ describe('DropboxProvider', () => {
           },
         },
       ])
-      const r = await provider.listFolder({ folderId: null, accessToken: 'AT' })
+      const r = await provider.listFolder({ folderId: null, accessToken: 'AT-list-root' })
       expect(r.items).toHaveLength(2)
       expect(r.items[0]).toMatchObject({ id: 'id:f1', type: 'folder', name: 'Drawings' })
       expect(r.items[1]).toMatchObject({
@@ -127,6 +133,7 @@ describe('DropboxProvider', () => {
 
     it('paginates via /list_folder/continue', async () => {
       scriptFetch([
+        { url: '/users/get_current_account', method: 'POST', json: { email: 'u@d.com' } },
         {
           url: '/files/list_folder/continue',
           method: 'POST',
@@ -134,7 +141,7 @@ describe('DropboxProvider', () => {
           json: { entries: [], cursor: 'C2', has_more: false },
         },
       ])
-      const r = await provider.listFolder({ folderId: null, accessToken: 'AT', pageToken: 'PAGE2' })
+      const r = await provider.listFolder({ folderId: null, accessToken: 'AT-list-page', pageToken: 'PAGE2' })
       expect(r.items).toHaveLength(0)
       expect(r.nextPageToken).toBeUndefined()
     })
@@ -143,6 +150,7 @@ describe('DropboxProvider', () => {
   describe('downloadFile', () => {
     it('streams body and parses Dropbox-API-Result header for filename', async () => {
       scriptFetch([
+        { url: '/users/get_current_account', method: 'POST', json: { email: 'u@d.com' } },
         {
           url: 'content.dropboxapi.com/2/files/download',
           method: 'POST',
@@ -154,7 +162,7 @@ describe('DropboxProvider', () => {
           },
         },
       ])
-      const r = await provider.downloadFile({ fileId: 'id:p1', accessToken: 'AT' })
+      const r = await provider.downloadFile({ fileId: 'id:p1', accessToken: 'AT-dl-named' })
       expect(r.filename).toBe('spec.pdf')
       expect(r.contentLength).toBe(11)
       expect(r.contentType).toBe('application/pdf')
@@ -165,13 +173,14 @@ describe('DropboxProvider', () => {
 
     it('falls back to "unknown" when header is missing', async () => {
       scriptFetch([
+        { url: '/users/get_current_account', method: 'POST', json: { email: 'u@d.com' } },
         {
           url: 'files/download',
           status: 200,
           text: 'x',
         },
       ])
-      const r = await provider.downloadFile({ fileId: 'id:p1', accessToken: 'AT' })
+      const r = await provider.downloadFile({ fileId: 'id:p1', accessToken: 'AT-dl-unnamed' })
       expect(r.filename).toBe('unknown')
     })
   })

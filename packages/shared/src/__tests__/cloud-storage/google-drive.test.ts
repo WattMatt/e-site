@@ -16,7 +16,8 @@ describe('GoogleDriveProvider', () => {
       expect(u.pathname).toBe('/o/oauth2/v2/auth')
       expect(u.searchParams.get('access_type')).toBe('offline')
       expect(u.searchParams.get('prompt')).toBe('consent')
-      expect(u.searchParams.get('scope')).toContain('drive.readonly')
+      // Full drive scope (read+write) since Session 25 (handover cloud-mirror).
+      expect(u.searchParams.get('scope')).toMatch(/\/auth\/drive(?:\s|$)/)
       expect(u.searchParams.get('state')).toBe('S')
     })
   })

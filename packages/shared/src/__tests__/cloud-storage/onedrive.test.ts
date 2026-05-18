@@ -15,7 +15,8 @@ describe('OneDriveProvider', () => {
       expect(u.host).toBe('login.microsoftonline.com')
       expect(u.pathname).toBe('/common/oauth2/v2.0/authorize')
       expect(u.searchParams.get('scope')).toContain('offline_access')
-      expect(u.searchParams.get('scope')).toContain('Files.Read.All')
+      // Files.ReadWrite.All since Session 25 (handover cloud-mirror writes).
+      expect(u.searchParams.get('scope')).toContain('Files.ReadWrite.All')
       expect(u.searchParams.get('state')).toBe('S')
     })
   })
