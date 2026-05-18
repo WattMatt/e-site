@@ -139,8 +139,18 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
   rowsAll.sort((a, b) => a.sortKey.localeCompare(b.sortKey))
 
   // Apply filters
+  // 'unprinted' is the special status filter; any other non-empty filter
+  // value is treated as a case-insensitive substring match against
+  // tag_text. This makes the page honour ?filter=<tag_text> redirects
+  // coming from the /site/tag/[text] QR resolver — without this the scan
+  // landed on the unfiltered table.
   const filtered = rowsAll.filter((r) => {
     if (filter === 'unprinted' && r.tag?.printed) return false
+    if (filter && filter !== 'unprinted') {
+      const needle = filter.toLowerCase()
+      const haystack = (r.tag?.tag_text ?? '').toLowerCase()
+      if (!haystack.includes(needle)) return false
+    }
     if (size && Number(size) > 0 && r.cable.size_mm2 !== Number(size)) return false
     return true
   })
@@ -208,6 +218,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
         <div style={{ fontSize: '9pt', color: '#4a4a4a', marginTop: 3 }}>
           {project.name} · {revision.code} ({revision.status}) · {cables.length} cable{cables.length !== 1 ? 's' : ''} · {rowsAll.length} tag{rowsAll.length !== 1 ? 's' : ''}
           {filter === 'unprinted' && <> · filtered to unprinted</>}
+          {filter && filter !== 'unprinted' && <> · filtered to "{filter}"</>}
         </div>
       </div>
 
@@ -218,6 +229,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
             {revision.code} · {cables.length} cable{cables.length !== 1 ? 's' : ''} ·
             {' '}{rowsAll.length} tag{rowsAll.length !== 1 ? 's' : ''}
             {filter === 'unprinted' && <> · filtered to unprinted</>}
+            {filter && filter !== 'unprinted' && <> · filtered to "{filter}"</>}
           </p>
         </div>
         <TagControls
