@@ -74,7 +74,9 @@ export async function ensureCostLinesAction(
     supply_rate_per_m: 0,
     install_rate_per_m: 0,
     termination_rate_each: 0,
-    contingency_pct: size === RATES_HEADER_SIZE ? 10 : null,
+    // contingency_pct intentionally NULL on new rows (2026-05-17 removal).
+    // VAT default 15% on the sentinel header row only.
+    contingency_pct: null,
     vat_pct: size === RATES_HEADER_SIZE ? 15 : null,
   }))
   const { error } = await (supabase as any)

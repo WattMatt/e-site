@@ -10,6 +10,7 @@ import {
 } from '@esite/shared'
 import { CostSummaryTable, type CostRow, type CostHeader } from './CostSummaryTable'
 import { LengthModeToggle } from '../LengthModeToggle'
+import { ensureCostLinesAction } from '@/actions/cable-cost.actions'
 
 export const metadata: Metadata = { title: 'Cable cost summary' }
 
@@ -65,6 +66,16 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
     .single()
   if (!revisionRow) notFound()
   const revision = revisionRow as { id: string; code: string; status: string; project_id: string }
+
+  // Auto-pre-create cost_lines for every size present in the schedule but
+  // missing from cost_lines. Without this, rate cells render disabled (the
+  // CostSummaryTable gates EditableCell on `!r.id`) — the user sees rows
+  // but can't type in them. Idempotent; only writes on DRAFT revisions.
+  // Failure is non-fatal — the page still renders; user just sees disabled
+  // cells and can retry by refreshing.
+  if (revision.status === 'DRAFT') {
+    await ensureCostLinesAction(revisionId).catch(() => {})
+  }
 
   const [cablesRes, costRes] = await Promise.all([
     (supabase as any)
