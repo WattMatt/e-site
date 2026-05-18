@@ -120,19 +120,38 @@ export async function renderProjectAllRevisionsZip(
       continue
     }
 
-    const [xlsx, pdf] = await Promise.all([
-      renderScheduleWorkbook(payload),
-      renderRevisionPdf(payload),
-    ])
-    folder.file(`${stem}.xlsx`, xlsx)
-    folder.file(`${stem}.pdf`, pdf)
-    folder.file('schedule.csv', renderCsv('schedule', payload))
-    if (!payload.costRedacted) {
-      folder.file('cost.csv', renderCsv('cost', payload))
-    }
-    folder.file('change_log.csv', renderCsv('change_log', payload))
+    try {
+      const [xlsx, pdf] = await Promise.all([
+        renderScheduleWorkbook(payload),
+        renderRevisionPdf(payload),
+      ])
+      folder.file(`${stem}.xlsx`, xlsx)
+      folder.file(`${stem}.pdf`, pdf)
+      folder.file('schedule.csv', renderCsv('schedule', payload))
+      if (!payload.costRedacted) {
+        folder.file('cost.csv', renderCsv('cost', payload))
+      }
+      folder.file('change_log.csv', renderCsv('change_log', payload))
 
-    included.push({ code: rev.code, status: rev.status })
+      included.push({ code: rev.code, status: rev.status })
+    } catch (err) {
+      // A single revision's render failure (corrupt row, PDF font edge
+      // case, etc.) must not abort the whole pack. Record + warn + carry
+      // on. The partially-populated folder is removed from the ZIP so
+      // the README's "Included" list stays consistent with what shipped.
+      console.warn('[multi-zip] render failed', {
+        projectId,
+        revisionId: rev.id,
+        code: rev.code,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      skipped.push({
+        code: rev.code,
+        status: rev.status,
+        reason: 'Render failed',
+      })
+      zip.remove(stem)
+    }
   }
 
   if (included.length === 0) {
