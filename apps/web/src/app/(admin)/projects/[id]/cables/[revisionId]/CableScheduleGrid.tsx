@@ -261,9 +261,13 @@ export function CableScheduleGrid({
   }
 
   // ── Run-level shared field (fan-out to every parallel cable on the supply) ─
+  // measured_length_m IS shared (the 90% case: parallels share a route + length)
+  // but is NOT included in mixed_properties divergence detection — the badge
+  // would be noisy because strand-by-strand length variation is normal.
   type SharedField =
     | 'size_mm2' | 'cores' | 'conductor' | 'insulation'
     | 'installation_method' | 'depth_mm' | 'grouped_with'
+    | 'measured_length_m'
 
   async function saveRunSharedField(
     supplyId: string,
@@ -282,6 +286,7 @@ export function CableScheduleGrid({
       if (field === 'size_mm2') patch.size_mm2 = Number(next)
       else if (field === 'depth_mm') patch.depth_mm = next == null ? null : Number(next)
       else if (field === 'grouped_with') patch.grouped_with = Number(next)
+      else if (field === 'measured_length_m') patch.measured_length_m = next == null ? null : Number(next)
       else patch[field] = next
       return { ...c, ...patch } as CableForCalc
     })
@@ -299,6 +304,13 @@ export function CableScheduleGrid({
         else if (field === 'installation_method') patch.installation_method = next as string | null
         else if (field === 'depth_mm') patch.depth_mm = next == null ? null : Number(next)
         else if (field === 'grouped_with') patch.grouped_with = Number(next)
+        else if (field === 'measured_length_m') {
+          patch.measured_length_m = next == null ? null : Number(next)
+          // Mirror the strand-level status auto-flip from updateCableAction so
+          // the optimistic state matches what the server will return.
+          if (next != null && c.length_status === 'UNMEASURED') patch.length_status = 'MEASURED'
+          else if (next == null && c.length_status === 'MEASURED') patch.length_status = 'UNMEASURED'
+        }
         return { ...c, ...patch }
       })
       const headPatch: Partial<EnrichedRun> = {}
@@ -309,6 +321,16 @@ export function CableScheduleGrid({
       else if (field === 'installation_method') headPatch.installation_method = next as string | null
       else if (field === 'depth_mm') headPatch.depth_mm = next == null ? null : Number(next)
       else if (field === 'grouped_with') headPatch.grouped_with = Number(next)
+      else if (field === 'measured_length_m') {
+        headPatch.active_length_m = next == null ? null : Number(next)
+        // Recompute run-level worst status from the (now-patched) strands.
+        const ranks = { CONFIRMED: 0, MEASURED: 1, DISCREPANCY: 2, UNMEASURED: 3 }
+        let worst: EnrichedCable['length_status'] = headCables[0].length_status
+        for (const c of headCables) {
+          if (ranks[c.length_status] > ranks[worst]) worst = c.length_status
+        }
+        headPatch.length_status = worst
+      }
       return {
         ...r,
         ...headPatch,
@@ -328,6 +350,7 @@ export function CableScheduleGrid({
     else if (field === 'installation_method') patch.installationMethod = next as string | null
     else if (field === 'depth_mm') patch.depthMm = next == null ? null : Number(next)
     else if (field === 'grouped_with') patch.groupedWith = Number(next)
+    else if (field === 'measured_length_m') patch.measuredLengthM = next == null ? null : Number(next)
 
     const res = await updateRunCableFieldsAction({ supplyId, patch })
     setSavingShared(null)
@@ -689,7 +712,34 @@ export function CableScheduleGrid({
                   <Td align="center" style={{ fontWeight: run.parallel_count > 1 ? 700 : 400 }}>
                     {run.parallel_count > 1 ? `×${run.parallel_count}` : '×1'}
                   </Td>
-                  <Td>{fmt(len, 1)}</Td>
+                  <Td>
+                    {(() => {
+                      // Per-strand length distribution surfaces in the cell's
+                      // tooltip so a PM about to overwrite a divergent run
+                      // sees what they're about to flatten. Cell pre-fills
+                      // with the run's worst (longest) length — matches the
+                      // displayed value in collapsed rows.
+                      const strandLens = run.cables.map((c) => c.measured_length_m)
+                      const distinct = new Set(strandLens.map((l) => l == null ? '∅' : String(l)))
+                      const strandsDiffer = distinct.size > 1
+                      const tip = strandsDiffer
+                        ? `Strands differ: ${strandLens.map((l) => l == null ? '—' : `${l}m`).join(' / ')}. Click to overwrite all; expand to edit each.`
+                        : run.parallel_count > 1
+                          ? `Same on all ${run.parallel_count} strands. Click to overwrite all; expand to edit each.`
+                          : 'Click to edit'
+                      return (
+                        <span title={tip} style={strandsDiffer ? { color: 'var(--c-amber)' } : undefined}>
+                          <EditableCell
+                            type="number"
+                            disabled={locked || !canEdit || isSaving}
+                            value={len}
+                            format={(v) => fmt(typeof v === 'number' ? v : null, 1)}
+                            onSave={(n) => saveRunSharedField(run.supply_id, 'measured_length_m', n)}
+                          />
+                        </span>
+                      )
+                    })()}
+                  </Td>
                   <Td>
                     <span className={`badge ${LENGTH_STATUS_TONE[run.length_status]}`}>
                       {run.length_status}

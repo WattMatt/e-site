@@ -1263,6 +1263,15 @@ const runFanOutSchema = z.object({
     ambientTempC: z.number().optional(),
     tagOverride: z.string().trim().max(40).nullable().optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
+    /**
+     * Design length in metres. When set, fans the value out to every strand
+     * on the supply (overwrites — matches the 90% reality where parallels
+     * share a route + length). Confirmed lengths on individual strands are
+     * deliberately LEFT UNTOUCHED — the existing length_status='DISCREPANCY'
+     * auto-flip surfaces any divergence without destroying site-verified
+     * data. Per-strand override is still reachable via the expand drill-down.
+     */
+    measuredLengthM: z.number().nonnegative().nullable().optional(),
   }).refine((p) => Object.keys(p).length > 0, 'No fields to update'),
 })
 
