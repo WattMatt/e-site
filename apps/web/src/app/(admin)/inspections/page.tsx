@@ -48,7 +48,7 @@ export default async function PortfolioRollupPage({ searchParams }: Props) {
 
   const { status } = await searchParams
 
-  let q = (supabase as any).schema('inspections').from('inspections')
+  let q = supabase.schema('inspections').from('inspections')
     .select('id, project_id, target_label, target_node_type, status, coc_number, certified_at, template_id, verifier_id, updated_at')
     .in('organisation_id', orgIds)
     .order('updated_at', { ascending: false })
@@ -65,7 +65,7 @@ export default async function PortfolioRollupPage({ searchParams }: Props) {
 
   const [templatesRes, verifiersRes, projectsRes] = await Promise.all([
     tids.length
-      ? (supabase as any).schema('inspections').from('templates')
+      ? supabase.schema('inspections').from('templates')
           .select('id, name, deliverable_type')
           .in('id', tids)
       : Promise.resolve({ data: [] }),

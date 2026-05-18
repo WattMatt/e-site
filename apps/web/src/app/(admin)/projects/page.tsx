@@ -34,10 +34,10 @@ export default async function ProjectsPage() {
   const inspectionCounts: Record<string, { total: number; certified: number }> = {}
   if (projectIds.length > 0) {
     const [totalsRes, certifiedRes] = await Promise.all([
-      (supabase as any).schema('inspections').from('inspections')
+      supabase.schema('inspections').from('inspections')
         .select('project_id')
         .in('project_id', projectIds),
-      (supabase as any).schema('inspections').from('inspections')
+      supabase.schema('inspections').from('inspections')
         .select('project_id')
         .in('project_id', projectIds)
         .eq('status', 'certified'),
