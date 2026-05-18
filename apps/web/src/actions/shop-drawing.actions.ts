@@ -108,13 +108,13 @@ export async function uploadShopDrawingAction(
     userIds: recipients,
     title: 'Shop drawing submitted',
     body: `${pi.description} — rev ${nextRevision} awaiting review`,
-    route: `/procurement/${pi.id}`,
+    route: `/projects/${pi.project_id}/materials`,
     type: 'shop_drawing_submitted',
     entityType: 'shop_drawing',
     entityId: (row as { id: string }).id,
   })
 
-  revalidatePath(`/procurement/${pi.id}`)
+  revalidatePath(`/projects/${pi.project_id}/materials`)
   return { id: (row as { id: string }).id, revision: nextRevision }
 }
 
@@ -176,13 +176,13 @@ export async function decideShopDrawingAction(
     userIds: recipients,
     title: `Shop drawing ${verb}`,
     body: `${d.title} (rev ${d.revision})`,
-    route: `/procurement/${d.procurement_item_id}`,
+    route: `/projects/${d.project_id}/materials`,
     type: 'shop_drawing_decided',
     entityType: 'shop_drawing',
     entityId: parsed.data.shopDrawingId,
   })
 
-  revalidatePath(`/procurement/${d.procurement_item_id}`)
+  revalidatePath(`/projects/${d.project_id}/materials`)
   return { ok: true }
 }
 
@@ -197,10 +197,15 @@ export async function deleteShopDrawingAction(
   const { data: drawing } = await (supabase as any)
     .schema('projects')
     .from('shop_drawings')
-    .select('id, procurement_item_id, file_path')
+    .select('id, procurement_item_id, project_id, file_path')
     .eq('id', id)
     .single()
-  const d = drawing as { id?: string; procurement_item_id?: string; file_path?: string | null } | null
+  const d = drawing as {
+    id?: string
+    procurement_item_id?: string
+    project_id?: string
+    file_path?: string | null
+  } | null
 
   const { error } = await (supabase as any)
     .schema('projects')
@@ -212,8 +217,8 @@ export async function deleteShopDrawingAction(
   if (d?.file_path) {
     await supabase.storage.from('shop-drawings').remove([d.file_path]).catch(() => {})
   }
-  if (d?.procurement_item_id) {
-    revalidatePath(`/procurement/${d.procurement_item_id}`)
+  if (d?.project_id) {
+    revalidatePath(`/projects/${d.project_id}/materials`)
   }
   return { ok: true }
 }

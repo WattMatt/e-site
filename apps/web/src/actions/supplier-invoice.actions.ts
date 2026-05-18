@@ -114,13 +114,13 @@ export async function recordSupplierInvoiceAction(
     userIds: recipients,
     title: 'Supplier invoice received',
     body: `${pi.description} — R${i.amount}${varianceTag}`,
-    route: `/procurement/${pi.id}`,
+    route: `/projects/${pi.project_id}/materials`,
     type: 'supplier_invoice_received',
     entityType: 'supplier_invoice',
     entityId: (row as { id: string }).id,
   })
 
-  revalidatePath(`/procurement/${pi.id}`)
+  revalidatePath(`/projects/${pi.project_id}/materials`)
   return { id: (row as { id: string }).id }
 }
 
@@ -149,7 +149,16 @@ export async function updateSupplierInvoiceStatusAction(
     .single()
   if (error) return { error: error.message }
   const pid = (row as { procurement_item_id?: string } | null)?.procurement_item_id
-  if (pid) revalidatePath(`/procurement/${pid}`)
+  if (pid) {
+    const { data: parentItem } = await (supabase as any)
+      .schema('projects')
+      .from('procurement_items')
+      .select('project_id')
+      .eq('id', pid)
+      .single()
+    const projectId = (parentItem as { project_id?: string } | null)?.project_id
+    if (projectId) revalidatePath(`/projects/${projectId}/materials`)
+  }
   return { ok: true }
 }
 
@@ -176,7 +185,14 @@ export async function markSupplierInvoicePaidAction(
     .single()
   if (error || !row) return { error: error?.message ?? 'Failed to mark paid' }
   const r = row as { procurement_item_id: string; invoice_number: string }
-  revalidatePath(`/procurement/${r.procurement_item_id}`)
+  const { data: parentItem } = await (supabase as any)
+    .schema('projects')
+    .from('procurement_items')
+    .select('project_id')
+    .eq('id', r.procurement_item_id)
+    .single()
+  const projectId = (parentItem as { project_id?: string } | null)?.project_id
+  if (projectId) revalidatePath(`/projects/${projectId}/materials`)
   return { ok: true }
 }
 
@@ -207,7 +223,14 @@ export async function deleteSupplierInvoiceAction(
     await supabase.storage.from('quotes').remove([e.file_path]).catch(() => {})
   }
   if (e?.procurement_item_id) {
-    revalidatePath(`/procurement/${e.procurement_item_id}`)
+    const { data: parentItem } = await (supabase as any)
+      .schema('projects')
+      .from('procurement_items')
+      .select('project_id')
+      .eq('id', e.procurement_item_id)
+      .single()
+    const projectId = (parentItem as { project_id?: string } | null)?.project_id
+    if (projectId) revalidatePath(`/projects/${projectId}/materials`)
   }
   return { ok: true }
 }

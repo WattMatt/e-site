@@ -78,6 +78,7 @@ export async function recordQuoteAction(
     .eq('id', parsed.data.procurementItemId)
     .single()
   if (itemErr || !item) return { error: 'Procurement item not found' }
+  const itemProjectId = (item as { project_id: string }).project_id
 
   const i = parsed.data
   const { data: row, error } = await (supabase as any)
@@ -109,7 +110,7 @@ export async function recordQuoteAction(
     supplier_id: i.supplierId ?? null,
   }).catch(() => {})
 
-  revalidatePath(`/procurement/${i.procurementItemId}`)
+  revalidatePath(`/projects/${itemProjectId}/materials`)
   return { id: (row as { id: string }).id }
 }
 
@@ -222,14 +223,14 @@ export async function selectQuoteAction(
       userIds: recipients,
       title: 'Procurement quote selected',
       body: `${pj.description ?? 'Procurement item'} — winner picked at R${c.quoted_price}`,
-      route: `/procurement/${procurementItemId}`,
+      route: `/projects/${pj.project_id}/materials`,
       type: 'procurement_quote_selected',
       entityType: 'procurement_item',
       entityId: procurementItemId,
     })
+    revalidatePath(`/projects/${pj.project_id}/materials`)
   }
 
-  revalidatePath(`/procurement/${procurementItemId}`)
   return { ok: true }
 }
 
@@ -257,6 +258,18 @@ export async function deleteQuoteAction(
   const file_path = (quote as { file_path?: string | null } | null)?.file_path
   const procurement_item_id = (quote as { procurement_item_id?: string } | null)?.procurement_item_id
 
+  // Look up project_id so we can revalidate the materials hub after deletion.
+  let projectId: string | null = null
+  if (procurement_item_id) {
+    const { data: parentItem } = await (supabase as any)
+      .schema('projects')
+      .from('procurement_items')
+      .select('project_id')
+      .eq('id', procurement_item_id)
+      .single()
+    projectId = (parentItem as { project_id?: string } | null)?.project_id ?? null
+  }
+
   // If we're deleting the selected quote, clear the item's pointer first
   // to avoid a dangling FK after the row is gone (FK has ON DELETE SET NULL
   // but better to be explicit about the side effect on status).
@@ -280,8 +293,8 @@ export async function deleteQuoteAction(
       .catch(() => {})  // best-effort
   }
 
-  if (procurement_item_id) {
-    revalidatePath(`/procurement/${procurement_item_id}`)
+  if (projectId) {
+    revalidatePath(`/projects/${projectId}/materials`)
   }
   return { ok: true }
 }

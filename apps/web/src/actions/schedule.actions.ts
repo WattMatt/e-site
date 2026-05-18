@@ -112,7 +112,7 @@ export async function createScheduleItemAction(
     shop_drawing_required: i.shopDrawingRequired,
   }).catch(() => {})
 
-  revalidatePath(`/projects/${i.projectId}/schedule`)
+  revalidatePath(`/projects/${i.projectId}/materials/plan`)
   return { id: (row as { id: string }).id }
 }
 
@@ -150,7 +150,7 @@ export async function updateScheduleItemAction(
 
   if (error) return { error: error.message }
   const projectId = (data as { project_id?: string } | null)?.project_id
-  if (projectId) revalidatePath(`/projects/${projectId}/schedule`)
+  if (projectId) revalidatePath(`/projects/${projectId}/materials/plan`)
   return { ok: true }
 }
 
@@ -174,7 +174,7 @@ export async function updateScheduleStatusAction(
 
   if (error) return { error: error.message }
   const projectId = (data as { project_id?: string } | null)?.project_id
-  if (projectId) revalidatePath(`/projects/${projectId}/schedule`)
+  if (projectId) revalidatePath(`/projects/${projectId}/materials/plan`)
   return { ok: true }
 }
 
@@ -202,6 +202,6 @@ export async function deleteScheduleItemAction(
 
   if (error) return { error: error.message }
   const projectId = (existing as { project_id?: string } | null)?.project_id
-  if (projectId) revalidatePath(`/projects/${projectId}/schedule`)
+  if (projectId) revalidatePath(`/projects/${projectId}/materials/plan`)
   return { ok: true }
 }

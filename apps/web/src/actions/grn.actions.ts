@@ -115,13 +115,13 @@ export async function recordGRNAction(
     userIds: recipients,
     title: fulfilled ? 'Delivery received — order fulfilled' : 'Delivery received',
     body: `${pi.description} — ${i.quantityReceived} received (${i.condition})`,
-    route: `/procurement/${pi.id}`,
+    route: `/projects/${pi.project_id}/materials`,
     type: 'grn_recorded',
     entityType: 'procurement_item',
     entityId: pi.id,
   })
 
-  revalidatePath(`/procurement/${pi.id}`)
+  revalidatePath(`/projects/${pi.project_id}/materials`)
   return { id: (row as { id: string }).id, itemFulfilled: fulfilled }
 }
 
@@ -168,10 +168,10 @@ export async function deleteGRNAction(
     const { data: item } = await (supabase as any)
       .schema('projects')
       .from('procurement_items')
-      .select('id, quantity, status')
+      .select('id, project_id, quantity, status')
       .eq('id', g.procurement_item_id)
       .single()
-    const pi = item as { quantity: number | null; status: string } | null
+    const pi = item as { project_id: string; quantity: number | null; status: string } | null
     if (pi?.status === 'fulfilled' && pi.quantity != null) {
       const { data: rest } = await (supabase as any)
         .schema('projects')
@@ -188,7 +188,9 @@ export async function deleteGRNAction(
           .eq('id', g.procurement_item_id)
       }
     }
-    revalidatePath(`/procurement/${g.procurement_item_id}`)
+    if (pi?.project_id) {
+      revalidatePath(`/projects/${pi.project_id}/materials`)
+    }
   }
   return { ok: true }
 }
