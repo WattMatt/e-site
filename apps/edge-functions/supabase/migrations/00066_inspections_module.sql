@@ -1,0 +1,213 @@
+-- 00066_inspections_module.sql
+-- Replaces compliance.* with project-scoped, template-driven inspections.
+-- See: SPEC DOCS/2026-05-18-inspections-module-design.md
+
+BEGIN;
+
+-- ============================================================================
+-- 1. Schema
+-- ============================================================================
+
+CREATE SCHEMA IF NOT EXISTS inspections;
+GRANT USAGE ON SCHEMA inspections TO authenticated, service_role;
+
+-- ============================================================================
+-- 2. Templates
+-- ============================================================================
+
+CREATE TABLE inspections.templates (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organisation_id          UUID NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
+  template_id              TEXT NOT NULL,
+  version                  TEXT NOT NULL,
+  name                     TEXT NOT NULL,
+  applies_to_node_types    TEXT[] NOT NULL CHECK (array_length(applies_to_node_types, 1) > 0),
+  node_subtypes            TEXT[] NULL,
+  sans_reference           TEXT NULL,
+  deliverable_type         TEXT NOT NULL CHECK (deliverable_type IN ('coc','inspection_only','factory_test')),
+  schema_json              JSONB NOT NULL,
+  is_active                BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by               UUID NULL REFERENCES auth.users(id),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (organisation_id, template_id, version)
+);
+
+CREATE INDEX idx_templates_org_active ON inspections.templates (organisation_id, is_active);
+CREATE INDEX idx_templates_deliverable ON inspections.templates (deliverable_type);
+
+-- ============================================================================
+-- 3. Inspections (assignment instances)
+-- ============================================================================
+
+CREATE TABLE inspections.inspections (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organisation_id          UUID NOT NULL REFERENCES public.organisations(id),
+  project_id               UUID NOT NULL REFERENCES projects.projects(id) ON DELETE CASCADE,
+  template_id              UUID NOT NULL REFERENCES inspections.templates(id),
+
+  target_node_type         TEXT NOT NULL CHECK (target_node_type IN ('board','source','adhoc')),
+  target_node_id           UUID NULL,
+  target_label             TEXT NOT NULL,
+  target_location          TEXT NULL,
+
+  assigned_to_id           UUID NULL REFERENCES auth.users(id),
+  verifier_id              UUID NULL REFERENCES auth.users(id),
+
+  status                   TEXT NOT NULL DEFAULT 'assigned' CHECK (status IN (
+    'assigned','in_progress','awaiting_verification','certified','re-inspect_required','abandoned'
+  )),
+  overall_result           TEXT NULL CHECK (overall_result IN ('pass','fail','conditional_pass')),
+
+  scheduled_at             TIMESTAMPTZ NULL,
+  started_at               TIMESTAMPTZ NULL,
+  completed_at             TIMESTAMPTZ NULL,
+  certified_at             TIMESTAMPTZ NULL,
+  abandoned_at             TIMESTAMPTZ NULL,
+  abandon_reason           TEXT NULL,
+
+  coc_number               TEXT NULL,
+  parent_inspection_id     UUID NULL REFERENCES inspections.inspections(id),
+  reinspection_notes       TEXT NULL,
+
+  created_by               UUID NOT NULL REFERENCES auth.users(id),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  UNIQUE (organisation_id, coc_number)
+);
+
+CREATE INDEX idx_inspections_project_status ON inspections.inspections (project_id, status);
+CREATE INDEX idx_inspections_assigned ON inspections.inspections (assigned_to_id, status);
+CREATE INDEX idx_inspections_verifier ON inspections.inspections (verifier_id, status);
+CREATE INDEX idx_inspections_target ON inspections.inspections (target_node_type, target_node_id);
+CREATE INDEX idx_inspections_org_status ON inspections.inspections (organisation_id, status);
+
+-- ============================================================================
+-- 4. Responses (current state, upserted on autosave)
+-- ============================================================================
+
+CREATE TABLE inspections.responses (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inspection_id            UUID NOT NULL REFERENCES inspections.inspections(id) ON DELETE CASCADE,
+  section_id               TEXT NOT NULL,
+  field_id                 TEXT NOT NULL,
+
+  value_bool               BOOLEAN NULL,
+  value_number             NUMERIC NULL,
+  value_text               TEXT NULL,
+  value_array              TEXT[] NULL,
+  value_json               JSONB NULL,
+
+  pass_state               TEXT NULL CHECK (pass_state IN ('pass','fail','na','not_checked')),
+  fail_reason              TEXT NULL,
+
+  latest_responded_by      UUID NOT NULL REFERENCES auth.users(id),
+  latest_responded_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  UNIQUE (inspection_id, section_id, field_id)
+);
+
+CREATE INDEX idx_responses_inspection ON inspections.responses (inspection_id);
+
+-- ============================================================================
+-- 5. Response history (append-only audit)
+-- ============================================================================
+
+CREATE TABLE inspections.response_history (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inspection_id            UUID NOT NULL REFERENCES inspections.inspections(id) ON DELETE CASCADE,
+  section_id               TEXT NOT NULL,
+  field_id                 TEXT NOT NULL,
+
+  value_bool               BOOLEAN NULL,
+  value_number             NUMERIC NULL,
+  value_text               TEXT NULL,
+  value_array              TEXT[] NULL,
+  value_json               JSONB NULL,
+
+  pass_state               TEXT NULL,
+  fail_reason              TEXT NULL,
+
+  responded_by             UUID NOT NULL REFERENCES auth.users(id),
+  responded_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_response_history_inspection ON inspections.response_history (inspection_id, responded_at);
+CREATE INDEX idx_response_history_contributor ON inspections.response_history (responded_by);
+
+-- ============================================================================
+-- 6. Photos
+-- ============================================================================
+
+CREATE TABLE inspections.photos (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inspection_id            UUID NOT NULL REFERENCES inspections.inspections(id) ON DELETE CASCADE,
+  section_id               TEXT NOT NULL,
+  field_id                 TEXT NOT NULL,
+  storage_path             TEXT NOT NULL,
+  caption                  TEXT NULL,
+  gps_lat                  NUMERIC(9,6) NULL,
+  gps_lng                  NUMERIC(9,6) NULL,
+  taken_at                 TIMESTAMPTZ NULL,
+  width_px                 INT NULL,
+  height_px                INT NULL,
+  uploaded_by              UUID NOT NULL REFERENCES auth.users(id),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_photos_inspection ON inspections.photos (inspection_id);
+
+-- ============================================================================
+-- 7. Signatures
+-- ============================================================================
+
+CREATE TABLE inspections.signatures (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inspection_id            UUID NOT NULL REFERENCES inspections.inspections(id) ON DELETE CASCADE,
+  role                     TEXT NOT NULL CHECK (role IN ('inspector','verifier','client','witness')),
+  signatory_name           TEXT NOT NULL,
+  signatory_title          TEXT NULL,
+  registration_number      TEXT NULL,
+  storage_path             TEXT NOT NULL,
+  signed_by                UUID NOT NULL REFERENCES auth.users(id),
+  signed_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_signatures_inspection ON inspections.signatures (inspection_id);
+
+-- ============================================================================
+-- 8. Certificates (generated PDFs)
+-- ============================================================================
+
+CREATE TABLE inspections.certificates (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  inspection_id            UUID NOT NULL REFERENCES inspections.inspections(id) ON DELETE CASCADE,
+  coc_number               TEXT NOT NULL,
+  storage_path             TEXT NOT NULL,
+  generated_by             UUID NOT NULL REFERENCES auth.users(id),
+  generated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  superseded_at            TIMESTAMPTZ NULL,
+  share_token              TEXT NULL UNIQUE,
+  share_expires_at         TIMESTAMPTZ NULL,
+  revoked_at               TIMESTAMPTZ NULL,
+  revoked_by               UUID NULL REFERENCES auth.users(id),
+  revoke_reason            TEXT NULL
+);
+
+CREATE INDEX idx_certificates_inspection ON inspections.certificates (inspection_id);
+CREATE INDEX idx_certificates_share_token ON inspections.certificates (share_token) WHERE share_token IS NOT NULL;
+
+-- ============================================================================
+-- 9. COC number sequences (INS / FAT only — COC type is manually entered)
+-- ============================================================================
+
+CREATE TABLE inspections.coc_number_seqs (
+  project_id               UUID NOT NULL REFERENCES projects.projects(id) ON DELETE CASCADE,
+  year                     INT NOT NULL,
+  prefix                   TEXT NOT NULL CHECK (prefix IN ('INS','FAT')),
+  last_seq                 INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, year, prefix)
+);
+
+COMMIT;
