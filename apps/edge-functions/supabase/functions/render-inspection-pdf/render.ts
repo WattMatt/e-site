@@ -334,6 +334,7 @@ async function drawSectionPages(
     const PHOTO_H = 120
     const COL_GAP = 8
     const ROW_GAP = 8
+    const CAPTION_BAND_H = 12 // pt reserved below each photo row for EXIF caption text
 
     const fieldPhotos = p.photos.filter(
       (ph) => ph.section_id === section.section_id && ph.field_id === lookupId,
@@ -356,7 +357,7 @@ async function drawSectionPages(
           renderedRows += ROWS_PER_PAGE
           newPage()
           photosOnCurrentPage = 0
-        } else if (y < BOTTOM_MARGIN + PHOTO_H + ROW_GAP) {
+        } else if (y < BOTTOM_MARGIN + PHOTO_H + CAPTION_BAND_H + ROW_GAP) {
           // Insufficient space for another row mid-block — new page
           renderedRows += rowIndexOnPage
           newPage()
@@ -391,6 +392,36 @@ async function drawSectionPages(
           width: dims.width,
           height: dims.height,
         })
+
+        // EXIF caption band — renders directly below the photo cell.
+        const captionParts: string[] = []
+        if (photo.taken_at) {
+          try {
+            captionParts.push(new Date(photo.taken_at).toLocaleString('en-ZA'))
+          } catch {
+            captionParts.push(photo.taken_at)
+          }
+        }
+        if (photo.gps_lat != null && photo.gps_lng != null) {
+          captionParts.push(`${(photo.gps_lat as number).toFixed(5)}, ${(photo.gps_lng as number).toFixed(5)}`)
+        }
+        const capturedByName = p.capturedByLookup.get((photo.captured_by_profile_id as string | null | undefined) ?? '')
+        if (capturedByName) captionParts.push(`by ${capturedByName}`)
+        if (captionParts.length > 0) {
+          const captionText = captionParts.join(' · ')
+          // Truncate to avoid pdf-lib overflow (approx 3.5 chars per pt at size 6, PHOTO_W=160)
+          const maxChars = Math.floor(PHOTO_W / 3.5)
+          const displayCaption = captionText.length > maxChars
+            ? captionText.slice(0, maxChars - 1) + '…'
+            : captionText
+          page.drawText(displayCaption, {
+            x: xPos,
+            y: yPos - 2, // 2pt gap below the bottom edge of the photo cell (yPos = bottom of cell)
+            size: 6,
+            font: fontReg,
+            color: TEXT_DIM,
+          })
+        }
       } catch (e) {
         const tail = photo.signed_url.split('?')[0]?.split('/').pop() ?? photo.id
         page.drawText(`[image unavailable: ${tail}]`, {
@@ -406,9 +437,10 @@ async function drawSectionPages(
     }
 
     // Advance y past all rendered rows on the current (last) page.
+    // Each row now occupies PHOTO_H + CAPTION_BAND_H + ROW_GAP.
     if (photosToRender.length > 0) {
       const rowsOnLastPage = Math.ceil(photosOnCurrentPage / PHOTOS_PER_ROW)
-      y -= rowsOnLastPage * (PHOTO_H + ROW_GAP) + ROW_GAP
+      y -= rowsOnLastPage * (PHOTO_H + CAPTION_BAND_H + ROW_GAP) + ROW_GAP
     }
 
     // Overflow notice when the field has more than MAX_PHOTOS_PER_FIELD photos.

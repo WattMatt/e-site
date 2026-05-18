@@ -38,7 +38,10 @@ export interface InspectionPayload {
     gps_lat?: number
     gps_lng?: number
     taken_at?: string
+    captured_by_profile_id?: string | null
+    file_size_bytes?: number | null
   }[]
+  capturedByLookup: Map<string, string>
   signatures: {
     id: string
     role: string
@@ -94,7 +97,7 @@ export async function loadInspectionPayload(
   const { data: photoRows } = await supabase
     .schema('inspections')
     .from('photos')
-    .select('id, section_id, field_id, storage_path, caption, gps_lat, gps_lng, taken_at')
+    .select('id, section_id, field_id, storage_path, caption, gps_lat, gps_lng, taken_at, captured_by_profile_id, file_size_bytes')
     .eq('inspection_id', inspectionId)
   const photos = await Promise.all(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -105,6 +108,26 @@ export async function loadInspectionPayload(
       return { ...p, signed_url: sig?.signedUrl ?? '' }
     }),
   )
+
+  // Build capturedByLookup: batch-fetch profiles for unique captured_by_profile_id values.
+  // Avoids PostgREST cross-schema embed (PGRST200 risk) — same pattern as cable-schedule
+  // export-payload.ts batched profile lookup.
+  const capturedByIds = Array.from(
+    new Set(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      photos.map((ph: any) => ph.captured_by_profile_id).filter((id: string | null) => !!id),
+    ),
+  ) as string[]
+  const capturedByLookup = new Map<string, string>()
+  if (capturedByIds.length > 0) {
+    const { data: capturedProfiles } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', capturedByIds)
+    for (const prof of (capturedProfiles ?? []) as Array<{ id: string; full_name: string | null }>) {
+      if (prof.full_name) capturedByLookup.set(prof.id, prof.full_name)
+    }
+  }
 
   const { data: sigRows } = await supabase
     .schema('inspections')
@@ -161,6 +184,7 @@ export async function loadInspectionPayload(
     signatures,
     contributors,
     verifier,
+    capturedByLookup,
   }
 }
 
