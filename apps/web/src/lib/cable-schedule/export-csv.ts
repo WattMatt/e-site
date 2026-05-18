@@ -57,7 +57,12 @@ function filterCables(payload: ExportPayload, f: CsvFilter): ExportPayload {
     if (sizes && !sizes.has(Number(c.size_mm2))) return false
     if (cond && c.conductor !== cond) return false
     if (text) {
-      const haystack = `${c.cable_tag} ${c.from_label} ${c.to_label} ${c.notes ?? ''}`.toLowerCase()
+      // Haystack mirrors the in-app grid's free-text filter
+      // (CableScheduleGrid.tsx `filtered` useMemo): cable_tag (covers
+      // tag_override + auto-tag with from/to/cable_no), from_label, to_label,
+      // notes, AND size_mm2 — the grid's strandTag includes the size token, so
+      // searching e.g. "150" must match the same rows on both surfaces.
+      const haystack = `${c.cable_tag} ${c.from_label} ${c.to_label} ${c.size_mm2} ${c.notes ?? ''}`.toLowerCase()
       if (!haystack.includes(text)) return false
     }
     return true
