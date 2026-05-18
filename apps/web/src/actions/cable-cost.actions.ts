@@ -52,9 +52,15 @@ export async function ensureCostLinesAction(
     .eq('revision_id', revisionId)
   const sizes = new Set<number>()
   for (const c of (cables ?? []) as Array<{ size_mm2: number }>) {
-    sizes.add(Number(c.size_mm2))
+    if (Number(c.size_mm2) > 0) sizes.add(Number(c.size_mm2))
   }
-  sizes.add(RATES_HEADER_SIZE)         // ensure header row exists
+  // NOTE: previously this added a sentinel RATES_HEADER_SIZE = 0 row to
+  // store revision-level VAT %, but cost_lines has CHECK (size_mm2 > 0)
+  // — every insert attempt failed with cost_lines_size_mm2_check violation
+  // (migration 00051, line 288). The action's swallowed error left rate
+  // cells disabled (the originally-reported bug). VAT is now display-only
+  // at the page's `header?.vat_pct ?? 15` default until a follow-up
+  // migration moves vat_pct to `cable_schedule.revisions` as a column.
 
   // Existing cost line sizes
   const { data: existing } = await (supabase as any)
@@ -75,9 +81,10 @@ export async function ensureCostLinesAction(
     install_rate_per_m: 0,
     termination_rate_each: 0,
     // contingency_pct intentionally NULL on new rows (2026-05-17 removal).
-    // VAT default 15% on the sentinel header row only.
+    // vat_pct also NULL — VAT is per-revision, not per-size; page falls
+    // back to 15% default until the follow-up migration lands.
     contingency_pct: null,
-    vat_pct: size === RATES_HEADER_SIZE ? 15 : null,
+    vat_pct: null,
   }))
   const { error } = await (supabase as any)
     .schema('cable_schedule')
