@@ -582,4 +582,81 @@ CREATE POLICY signatures_delete_own ON inspections.signatures FOR DELETE TO auth
 CREATE POLICY certificates_select ON inspections.certificates FOR SELECT TO authenticated
   USING (inspections.user_has_inspection_read(inspection_id));
 
+-- ============================================================================
+-- 14. Storage buckets
+-- ============================================================================
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES
+  ('inspection-photos',       'inspection-photos',       FALSE, 10485760,   ARRAY['image/jpeg','image/png','image/heic']),
+  ('inspection-signatures',   'inspection-signatures',   FALSE,   512000,   ARRAY['image/png']),
+  ('inspection-attachments',  'inspection-attachments',  FALSE, 26214400,   ARRAY['application/pdf','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']),
+  ('inspection-certificates', 'inspection-certificates', FALSE, 52428800,   ARRAY['application/pdf'])
+ON CONFLICT (id) DO NOTHING;
+
+-- Bucket RLS — gated by access to the inspection (key pattern is {project_id}/{inspection_id}/...)
+CREATE POLICY "inspection-photos read"   ON storage.objects FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'inspection-photos'
+    AND inspections.user_has_inspection_read((storage.foldername(name))[2]::UUID)
+  );
+
+CREATE POLICY "inspection-signatures read" ON storage.objects FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'inspection-signatures'
+    AND inspections.user_has_inspection_read((storage.foldername(name))[2]::UUID)
+  );
+
+CREATE POLICY "inspection-attachments read" ON storage.objects FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'inspection-attachments'
+    AND inspections.user_has_inspection_read((storage.foldername(name))[2]::UUID)
+  );
+
+CREATE POLICY "inspection-certificates read" ON storage.objects FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'inspection-certificates'
+    AND inspections.user_has_inspection_read((storage.foldername(name))[2]::UUID)
+  );
+
+-- All writes go through service_role (server actions + edge function) — no authenticated INSERT policies
+
+-- ============================================================================
+-- 15. Extend public.notifications.type CHECK constraint
+--     Pre-existing types audited live before this migration: code emits
+--     grn_recorded, rfi_assigned, rfi_closed, rfi_response, snag_status_changed
+--     (no prior CHECK constraint was in place — adding one here to harden).
+-- ============================================================================
+
+ALTER TABLE public.notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
+ALTER TABLE public.notifications ADD CONSTRAINT notifications_type_check CHECK (
+  type IN (
+    -- pre-existing types found in code
+    'snag_status_changed',
+    'rfi_assigned',
+    'rfi_closed',
+    'rfi_response',
+    'grn_recorded',
+    -- new inspection types
+    'inspection_assigned',
+    'inspection_awaiting_verification',
+    'inspection_certified',
+    'inspection_re_inspect_required',
+    'inspection_revoked'
+  )
+);
+
+-- ============================================================================
+-- 16. DROP old compliance schema (greenfield assumption — see spec §14)
+--     Staging row counts confirmed 0 across all 5 tables before this operation.
+-- ============================================================================
+
+DROP SCHEMA IF EXISTS compliance CASCADE;
+
+-- ============================================================================
+-- 17. Reload PostgREST schema cache
+-- ============================================================================
+
+NOTIFY pgrst, 'reload schema';
+
 COMMIT;
