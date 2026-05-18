@@ -25,8 +25,11 @@ import * as ImagePicker from 'expo-image-picker'
 import * as ImageManipulator from 'expo-image-manipulator'
 import * as FileSystem from 'expo-file-system'
 import * as Crypto from 'expo-crypto'
+import * as DocumentPicker from 'expo-document-picker'
+import DateTimePicker from '@react-native-community/datetimepicker'
 import {
   evaluateField,
+  computeDerivedField,
   buildRepeatingGroupKey,
   listRepeatingGroupEntryIndices,
   type Field,
@@ -34,6 +37,8 @@ import {
 } from '@esite/shared'
 import { colors, fontSize, fontWeight, radius, spacing } from '../theme'
 import { enqueueAttachment } from './attachment-queue'
+import { SignaturePadModal, type SignaturePayload } from './SignaturePadModal'
+import { supabase } from '../lib/supabase'
 
 export type FieldChangePatch = Partial<Response> & {
   value_bool?: boolean | null
@@ -73,8 +78,6 @@ export function Renderer(props: RendererProps): JSX.Element | null {
     case 'text':
     case 'textarea':
       return <TextField {...props} />
-    case 'date':
-      return <DateField {...props} />
     case 'dropdown':
     case 'multi_select':
       return <ChoiceField {...props} />
@@ -90,13 +93,39 @@ export function Renderer(props: RendererProps): JSX.Element | null {
       return <HeaderField field={props.field} />
     case 'signature':
       return (
-        <StubField label={props.field.label} note="Signature capture — use web for v1" />
+        <SignatureField
+          field={props.field}
+          value={props.response?.value_json as SignaturePayload | undefined}
+          onChange={(v) => props.onChange({ value_json: v as unknown as Record<string, unknown> })}
+          inspectionId={props.inspectionId}
+        />
       )
     case 'repeating_group':
       return <RepeatingGroupField {...props} />
-    case 'computed':
+    case 'date':
+      return (
+        <DateField
+          field={props.field}
+          value={props.response?.value_text ?? undefined}
+          onChange={(v) => props.onChange({ value_text: v })}
+        />
+      )
     case 'file':
-      return <StubField label={props.field.label} note="Not supported on mobile yet" />
+      return (
+        <FileField
+          field={props.field}
+          value={props.response?.value_json as { remotePath: string; filename: string } | undefined}
+          onChange={(v) => props.onChange({ value_json: v as Record<string, unknown> })}
+          inspectionId={props.inspectionId}
+        />
+      )
+    case 'computed':
+      return (
+        <ComputedField
+          field={props.field}
+          allResponses={props.allResponses ?? []}
+        />
+      )
     default:
       return null
   }
@@ -209,17 +238,35 @@ function TextField({ field, response, onChange }: RendererProps) {
 
 // ─── Date (text-input v1) ────────────────────────────────────────────
 
-function DateField({ field, response, onChange }: RendererProps) {
+function DateField({
+  field,
+  value,
+  onChange,
+}: {
+  field: Field
+  value?: string
+  onChange: (v: string) => void
+}) {
+  const [showPicker, setShowPicker] = useState(false)
+  const date = value ? new Date(value) : new Date()
   return (
     <View>
       <FieldLabel field={field} />
-      <TextInput
-        placeholder="YYYY-MM-DD"
-        placeholderTextColor={colors.textDim}
-        value={response?.value_text ?? ''}
-        onChangeText={(t) => onChange({ value_text: t })}
-        style={styles.input}
-      />
+      <Pressable onPress={() => setShowPicker(true)} style={styles.dateButton}>
+        <Text style={value ? { color: colors.text } : { color: colors.textDim }}>
+          {value ? new Date(value).toLocaleDateString() : 'Pick a date'}
+        </Text>
+      </Pressable>
+      {showPicker && (
+        <DateTimePicker
+          value={date}
+          mode="date"
+          onChange={(_event, selected) => {
+            setShowPicker(false)
+            if (selected) onChange(selected.toISOString().slice(0, 10))
+          }}
+        />
+      )}
     </View>
   )
 }
@@ -504,6 +551,125 @@ function RepeatingGroupField(props: RendererProps) {
   )
 }
 
+// ─── Signature ───────────────────────────────────────────────────────
+
+function SignatureField({
+  field,
+  value,
+  onChange,
+  inspectionId,
+}: {
+  field: Field
+  value?: SignaturePayload
+  onChange: (v: SignaturePayload) => void
+  inspectionId: string
+}) {
+  const [modalOpen, setModalOpen] = useState(false)
+
+  const handleCapture = async (payload: SignaturePayload) => {
+    const base64 = payload.base64DataUrl.replace(/^data:image\/png;base64,/, '')
+    const filename = `${Crypto.randomUUID()}.png`
+    const dir = `${FileSystem.documentDirectory}signatures/`
+    const localPath = `${dir}${filename}`
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true })
+    await FileSystem.writeAsStringAsync(localPath, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    })
+    const remotePath = `${inspectionId}/${field.field_id}/${filename}`
+    const blob = await (await fetch(`data:image/png;base64,${base64}`)).blob()
+    await supabase.storage
+      .from('inspection-signatures')
+      .upload(remotePath, blob, { contentType: 'image/png' })
+    onChange({ ...payload, base64DataUrl: remotePath })
+    setModalOpen(false)
+  }
+
+  return (
+    <View>
+      <FieldLabel field={field} />
+      <Pressable onPress={() => setModalOpen(true)} style={styles.signaturePadButton}>
+        <Text style={value ? { color: colors.text } : { color: colors.textDim }}>
+          {value ? `Signed by ${value.signatoryName}` : 'Tap to sign'}
+        </Text>
+      </Pressable>
+      <SignaturePadModal
+        visible={modalOpen}
+        requiredQualifications={
+          (field as Field & { required_qualifications?: string[] }).required_qualifications
+        }
+        onCapture={handleCapture}
+        onCancel={() => setModalOpen(false)}
+      />
+    </View>
+  )
+}
+
+// ─── File attachment ─────────────────────────────────────────────────
+
+function FileField({
+  field,
+  value,
+  onChange,
+  inspectionId,
+}: {
+  field: Field
+  value?: { remotePath: string; filename: string }
+  onChange: (v: { remotePath: string; filename: string }) => void
+  inspectionId: string
+}) {
+  const handlePick = async () => {
+    const acceptedMimes =
+      (field as Field & { accepted_mime_types?: string }).accepted_mime_types ?? '*/*'
+    const result = await DocumentPicker.getDocumentAsync({
+      type: acceptedMimes,
+      copyToCacheDirectory: true,
+    })
+    if (result.canceled) return
+    const asset = result.assets[0]
+    const remotePath = `${inspectionId}/${field.field_id}/${asset.name}`
+    const blob = await (await fetch(asset.uri)).blob()
+    const { error } = await supabase.storage
+      .from('inspection-attachments')
+      .upload(remotePath, blob, {
+        contentType: asset.mimeType ?? 'application/octet-stream',
+      })
+    if (error) {
+      console.warn('File upload failed', error)
+      return
+    }
+    onChange({ remotePath, filename: asset.name })
+  }
+
+  return (
+    <View>
+      <FieldLabel field={field} />
+      <Pressable onPress={handlePick} style={styles.fileButton}>
+        <Text style={value ? { color: colors.text } : { color: colors.textDim }}>
+          {value ? `📎 ${value.filename}` : 'Tap to attach file'}
+        </Text>
+      </Pressable>
+    </View>
+  )
+}
+
+// ─── Computed (read-only display) ────────────────────────────────────
+
+function ComputedField({
+  field,
+  allResponses,
+}: {
+  field: Field
+  allResponses: Response[]
+}) {
+  const computed = computeDerivedField(field, allResponses)
+  return (
+    <View style={styles.computedBox}>
+      <Text style={styles.computedLabel}>{field.label}</Text>
+      <Text style={styles.computedValue}>{computed === null || computed === undefined ? '—' : String(computed)}</Text>
+    </View>
+  )
+}
+
 // ─── Header (sub-heading inside a section) ──────────────────────────
 
 function HeaderField({ field }: { field: Field }) {
@@ -592,6 +758,39 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   stubNote: { color: colors.textMid, fontSize: fontSize.small, fontStyle: 'italic' },
+  signaturePadButton: {
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderMid,
+    borderRadius: radius.md,
+    alignItems: 'center' as const,
+    backgroundColor: colors.surface,
+  },
+  dateButton: {
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderMid,
+    borderRadius: radius.md,
+    alignItems: 'center' as const,
+    backgroundColor: colors.surface,
+  },
+  fileButton: {
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderMid,
+    borderRadius: radius.md,
+    alignItems: 'center' as const,
+    backgroundColor: colors.surface,
+  },
+  computedBox: {
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderMid,
+  },
+  computedLabel: { fontSize: fontSize.caption, color: colors.textMid, marginBottom: spacing.xs },
+  computedValue: { fontSize: fontSize.lg, fontWeight: fontWeight.semibold, color: colors.text },
   rgEntryWrap: {
     borderWidth: 1,
     borderColor: colors.borderMid,
