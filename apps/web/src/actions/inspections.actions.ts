@@ -1,0 +1,451 @@
+'use server'
+
+/**
+ * Inspection lifecycle server actions — assignment, response capture, and
+ * verifier-side state transitions.
+ *
+ * Mirrors the existing patterns:
+ *   - `inspections-template.actions.ts` for the schema('inspections') cast +
+ *     org-role gating shape.
+ *   - `rfi.actions.ts` for the assignee notification dispatch via the
+ *     `dispatchNotification` helper (best-effort, never throws).
+ *
+ * The `inspections` schema is not in the generated DB types yet, so the
+ * supabase client is cast to `any` at each call site — same convention used
+ * across the cable-schedule and template-library actions.
+ *
+ * Schema reality check (verified against migration 00066):
+ *   - `cable_schedule.boards` + `.sources` are scoped by REVISION, not
+ *     project_id. Listing nodes for a project goes via the most-recent
+ *     non-superseded revision (ISSUED preferred, else DRAFT).
+ *   - `projects.project_members.role` is a project-level enum
+ *     (`project_manager|contractor|inspector|supplier|client_viewer`);
+ *     verifier-eligibility filtering uses ORG-level role from
+ *     `public.user_organisations` (`owner|admin|project_manager`).
+ */
+
+import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
+import { dispatchNotification } from '@/lib/notifications'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+type AnyClient = SupabaseClient<any, any, any>
+
+// ─── helpers ────────────────────────────────────────────────────────────
+
+async function requirePmOrAbove(supabase: AnyClient, orgId: string) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data } = await supabase
+    .from('user_organisations')
+    .select('role')
+    .eq('user_id', user.id)
+    .eq('organisation_id', orgId)
+    .eq('is_active', true)
+    .single()
+
+  if (!data || !['owner', 'admin', 'project_manager'].includes(data.role as string)) {
+    throw new Error('Forbidden: project_manager or above only')
+  }
+  return user
+}
+
+async function getOrgIdForProject(supabase: AnyClient, projectId: string): Promise<string> {
+  const { data } = await supabase
+    .schema('projects')
+    .from('projects')
+    .select('organisation_id')
+    .eq('id', projectId)
+    .single()
+  if (!data) throw new Error('Project not found')
+  return (data as { organisation_id: string }).organisation_id
+}
+
+/**
+ * Resolve the "current" cable-schedule revision for a project so we can
+ * enumerate its boards + sources. Prefers ISSUED (the canonical built
+ * version), falls back to DRAFT, ignores SUPERSEDED.
+ *
+ * Returns null when the project has no revision at all yet — the new
+ * inspection form will then fall back to ad-hoc target entry.
+ */
+async function getCurrentRevisionId(supabase: AnyClient, projectId: string): Promise<string | null> {
+  const { data: issued } = await supabase
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id, issued_at')
+    .eq('project_id', projectId)
+    .eq('status', 'ISSUED')
+    .order('issued_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (issued?.id) return issued.id as string
+
+  const { data: draft } = await supabase
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('status', 'DRAFT')
+    .limit(1)
+    .maybeSingle()
+
+  return (draft?.id as string | undefined) ?? null
+}
+
+// ─── listProjectNodesAction ─────────────────────────────────────────────
+
+/**
+ * List boards + sources available as inspection targets on a project.
+ *
+ * Pulls from the current cable-schedule revision (ISSUED→DRAFT preference).
+ * Empty list is a valid result — the caller should also offer ad-hoc entry.
+ */
+export async function listProjectNodesAction(projectId: string) {
+  const supabase = (await createClient()) as AnyClient
+  const revisionId = await getCurrentRevisionId(supabase, projectId)
+  if (!revisionId) return [] as Array<{ type: 'board' | 'source'; id: string; label: string }>
+
+  const [{ data: boards }, { data: sources }] = await Promise.all([
+    supabase
+      .schema('cable_schedule')
+      .from('boards')
+      .select('id, code')
+      .eq('revision_id', revisionId),
+    supabase
+      .schema('cable_schedule')
+      .from('sources')
+      .select('id, code')
+      .eq('revision_id', revisionId),
+  ])
+
+  // boards.short_code lookup — Session 28 added the column with PostgREST
+  // 42703 tolerance pattern; try fully then fall back if the column is
+  // absent on this DB.
+  let shortCodeMap = new Map<string, string | null>()
+  const { data: shortRows, error: shortErr } = await supabase
+    .schema('cable_schedule')
+    .from('boards')
+    .select('id, short_code')
+    .eq('revision_id', revisionId)
+  if (!shortErr && shortRows) {
+    shortCodeMap = new Map(
+      (shortRows as Array<{ id: string; short_code: string | null }>).map((r) => [r.id, r.short_code]),
+    )
+  }
+
+  const nodes: Array<{ type: 'board' | 'source'; id: string; label: string }> = [
+    ...((boards as Array<{ id: string; code: string }> | null) ?? []).map((b) => ({
+      type: 'board' as const,
+      id: b.id,
+      label: shortCodeMap.get(b.id) ?? b.code,
+    })),
+    ...((sources as Array<{ id: string; code: string }> | null) ?? []).map((s) => ({
+      type: 'source' as const,
+      id: s.id,
+      label: s.code,
+    })),
+  ]
+
+  return nodes.sort((a, b) => a.label.localeCompare(b.label))
+}
+
+// ─── listProjectMembersAction ───────────────────────────────────────────
+
+/**
+ * List active members of a project with their org-level role hydrated.
+ *
+ * Cross-schema profile + user_organisations joins via PostgREST embed are
+ * unreliable (Session 28 PGRST200 saga), so we fetch the IDs first then
+ * batch-hydrate from public.profiles + public.user_organisations.
+ */
+export async function listProjectMembersAction(projectId: string) {
+  const supabase = (await createClient()) as AnyClient
+
+  const { data: rows } = await supabase
+    .schema('projects')
+    .from('project_members')
+    .select('user_id')
+    .eq('project_id', projectId)
+    .eq('is_active', true)
+
+  const members = (rows as Array<{ user_id: string }> | null) ?? []
+  if (members.length === 0) {
+    return [] as Array<{ user_id: string; full_name: string | null; email: string | null; role: string | null }>
+  }
+
+  const userIds = members.map((m) => m.user_id)
+  const [{ data: profiles }, { data: roles }] = await Promise.all([
+    supabase.from('profiles').select('id, full_name, email').in('id', userIds),
+    supabase.from('user_organisations').select('user_id, role').in('user_id', userIds).eq('is_active', true),
+  ])
+
+  const profileMap = new Map(
+    (profiles ?? []).map((p) => [p.id, p as { id: string; full_name: string | null; email: string | null }]),
+  )
+  const roleMap = new Map((roles ?? []).map((r) => [r.user_id, r.role as string]))
+
+  return members.map((m) => {
+    const p = profileMap.get(m.user_id)
+    return {
+      user_id: m.user_id,
+      full_name: p?.full_name ?? null,
+      email: p?.email ?? null,
+      role: roleMap.get(m.user_id) ?? null,
+    }
+  })
+}
+
+// ─── createInspectionAction ─────────────────────────────────────────────
+
+export interface CreateInspectionInput {
+  organisationId: string
+  projectId: string
+  templateId: string
+  targetNodeType: 'board' | 'source' | 'adhoc'
+  targetNodeId: string | null
+  targetLabel: string
+  targetLocation: string | null
+  assignedToId: string | null
+  verifierId: string | null
+  scheduledAt: string | null
+}
+
+export async function createInspectionAction(input: CreateInspectionInput): Promise<string> {
+  const supabase = (await createClient()) as AnyClient
+  const user = await requirePmOrAbove(supabase, input.organisationId)
+
+  const { data, error } = await supabase
+    .schema('inspections')
+    .from('inspections')
+    .insert({
+      organisation_id: input.organisationId,
+      project_id: input.projectId,
+      template_id: input.templateId,
+      target_node_type: input.targetNodeType,
+      target_node_id: input.targetNodeId,
+      target_label: input.targetLabel,
+      target_location: input.targetLocation,
+      assigned_to_id: input.assignedToId,
+      verifier_id: input.verifierId,
+      scheduled_at: input.scheduledAt,
+      created_by: user.id,
+    })
+    .select('id')
+    .single()
+
+  if (error) throw error
+  const inspectionId = (data as { id: string }).id
+
+  // Best-effort notification to the assignee (skip if they assigned themselves).
+  if (input.assignedToId && input.assignedToId !== user.id) {
+    await dispatchNotification({
+      userIds: [input.assignedToId],
+      title: 'New inspection assigned to you',
+      body: `"${input.targetLabel}"${input.scheduledAt ? ` — scheduled ${input.scheduledAt}` : ''}`,
+      route: `/projects/${input.projectId}/inspections/${inspectionId}`,
+      type: 'inspection_assigned',
+      entityType: 'inspection',
+      entityId: inspectionId,
+    })
+  }
+
+  revalidatePath(`/projects/${input.projectId}/inspections`)
+  return inspectionId
+}
+
+// ─── listInspectionsAction ──────────────────────────────────────────────
+
+export async function listInspectionsAction(
+  projectId: string,
+  filters?: { status?: string },
+) {
+  const supabase = (await createClient()) as AnyClient
+  let query = supabase
+    .schema('inspections')
+    .from('inspections')
+    .select(
+      'id, target_label, target_node_type, status, overall_result, coc_number, scheduled_at, started_at, certified_at, template_id, verifier_id, assigned_to_id',
+    )
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+
+  if (filters?.status) query = query.eq('status', filters.status)
+  const { data, error } = await query
+  if (error) throw error
+
+  const items =
+    (data as Array<{
+      id: string
+      target_label: string
+      target_node_type: string
+      status: string
+      overall_result: string | null
+      coc_number: string | null
+      scheduled_at: string | null
+      started_at: string | null
+      certified_at: string | null
+      template_id: string
+      verifier_id: string | null
+      assigned_to_id: string | null
+    }> | null) ?? []
+
+  if (items.length === 0) return []
+
+  // Hydrate template + user names (cross-schema joins via embed are unreliable).
+  const templateIds = [...new Set(items.map((i) => i.template_id))]
+  const userIds = [
+    ...new Set(
+      items
+        .flatMap((i) => [i.verifier_id, i.assigned_to_id])
+        .filter((v): v is string => Boolean(v)),
+    ),
+  ]
+
+  const [{ data: templates }, { data: profiles }] = await Promise.all([
+    templateIds.length
+      ? supabase
+          .schema('inspections')
+          .from('templates')
+          .select('id, name, deliverable_type')
+          .in('id', templateIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; name: string; deliverable_type: string }> }),
+    userIds.length
+      ? supabase.from('profiles').select('id, full_name, email').in('id', userIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; full_name: string | null; email: string | null }> }),
+  ])
+
+  const templateMap = new Map(
+    ((templates ?? []) as Array<{ id: string; name: string; deliverable_type: string }>).map((t) => [t.id, t]),
+  )
+  const userMap = new Map(
+    ((profiles ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>).map((p) => [p.id, p]),
+  )
+
+  return items.map((i) => ({
+    ...i,
+    template: templateMap.get(i.template_id) ?? null,
+    verifier: i.verifier_id ? userMap.get(i.verifier_id) ?? null : null,
+    assigned_to: i.assigned_to_id ? userMap.get(i.assigned_to_id) ?? null : null,
+  }))
+}
+
+// ─── upsertResponseAction ───────────────────────────────────────────────
+
+export interface UpsertResponseInput {
+  inspectionId: string
+  sectionId: string
+  fieldId: string
+  value: {
+    value_bool?: boolean | null
+    value_number?: number | null
+    value_text?: string | null
+    value_array?: string[] | null
+    value_json?: unknown
+    pass_state?: 'pass' | 'fail' | 'na' | 'not_checked'
+    fail_reason?: string | null
+  }
+}
+
+export async function upsertResponseAction(input: UpsertResponseInput): Promise<void> {
+  const supabase = (await createClient()) as AnyClient
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Unauthenticated')
+
+  const { error } = await supabase
+    .schema('inspections')
+    .from('responses')
+    .upsert(
+      {
+        inspection_id: input.inspectionId,
+        section_id: input.sectionId,
+        field_id: input.fieldId,
+        ...input.value,
+        latest_responded_by: user.id,
+        latest_responded_at: new Date().toISOString(),
+      },
+      { onConflict: 'inspection_id,section_id,field_id' },
+    )
+
+  if (error) throw error
+}
+
+// ─── submitInspectionAction ─────────────────────────────────────────────
+
+/**
+ * Move an inspection from in_progress (or re-inspect_required) to
+ * awaiting_verification and notify the assigned verifier.
+ */
+export async function submitInspectionAction(
+  inspectionId: string,
+  projectId: string,
+): Promise<void> {
+  const supabase = (await createClient()) as AnyClient
+
+  const { error } = await supabase
+    .schema('inspections')
+    .from('inspections')
+    .update({ status: 'awaiting_verification', completed_at: new Date().toISOString() })
+    .eq('id', inspectionId)
+    .in('status', ['in_progress', 're-inspect_required'])
+  if (error) throw error
+
+  const { data: insp } = await supabase
+    .schema('inspections')
+    .from('inspections')
+    .select('verifier_id, target_label')
+    .eq('id', inspectionId)
+    .single()
+
+  const verifierId = (insp as { verifier_id: string | null } | null)?.verifier_id ?? null
+  const targetLabel = (insp as { target_label: string } | null)?.target_label ?? 'inspection'
+
+  if (verifierId) {
+    await dispatchNotification({
+      userIds: [verifierId],
+      title: 'Inspection awaiting your verification',
+      body: `"${targetLabel}" is ready for sign-off`,
+      route: `/projects/${projectId}/inspections/${inspectionId}`,
+      type: 'inspection_awaiting_verification',
+      entityType: 'inspection',
+      entityId: inspectionId,
+    })
+  }
+
+  revalidatePath(`/projects/${projectId}/inspections/${inspectionId}`)
+  revalidatePath(`/projects/${projectId}/inspections`)
+}
+
+// ─── abandonInspectionAction ────────────────────────────────────────────
+
+/**
+ * Cancel an in-flight inspection. Reason required (audit trail). Only
+ * PM-or-above on the parent org may abandon.
+ */
+export async function abandonInspectionAction(
+  inspectionId: string,
+  projectId: string,
+  reason: string,
+): Promise<void> {
+  if (!reason || reason.trim().length === 0) throw new Error('Reason required')
+
+  const supabase = (await createClient()) as AnyClient
+  const orgId = await getOrgIdForProject(supabase, projectId)
+  await requirePmOrAbove(supabase, orgId)
+
+  const { error } = await supabase
+    .schema('inspections')
+    .from('inspections')
+    .update({
+      status: 'abandoned',
+      abandoned_at: new Date().toISOString(),
+      abandon_reason: reason.trim(),
+    })
+    .eq('id', inspectionId)
+  if (error) throw error
+
+  revalidatePath(`/projects/${projectId}/inspections`)
+}
