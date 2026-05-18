@@ -14,6 +14,14 @@ import { ensureCostLinesAction } from '@/actions/cable-cost.actions'
 
 export const metadata: Metadata = { title: 'Cable cost summary' }
 
+// Per-request render (no static caching). Required so ensureCostLinesAction
+// fires on every visit — without this, the action runs once (on the first
+// render that produced the cache) and never again. Subsequent visits served
+// the cached HTML, no cost_lines rows ever got created, rate cells stayed
+// disabled (the bug we chased for three iterations). Same pattern as the
+// auth routes in Session 19 commit 0f99054.
+export const dynamic = 'force-dynamic'
+
 interface Props {
   params: Promise<{ id: string; revisionId: string }>
   searchParams: Promise<{ view?: string }>
