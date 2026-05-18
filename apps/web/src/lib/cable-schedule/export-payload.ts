@@ -31,6 +31,8 @@ export interface ExportPayload {
     fault_level_ka: number | null
     change_notes: string | null
     created_at: string
+    /** VAT % per migration 00060. Null when migration not yet applied; renderers default to 15. */
+    vat_pct: number | null
   }
   sources: Array<{
     id: string
@@ -240,16 +242,36 @@ export async function getRevisionExportPayload(
       .select('id, name, organisation_id')
       .eq('id', projectId)
       .single(),
-    (supabase as any)
-      .schema('cable_schedule')
-      .from('revisions')
-      .select(
-        'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, ' +
-        'issued_by_profile:profiles!issued_by(full_name)',
-      )
-      .eq('id', revisionId)
-      .eq('project_id', projectId)
-      .single(),
+    // vat_pct landed on revisions in migration 00060. SELECT is tolerant —
+    // if the column isn't applied yet PostgREST returns 42703 (undefined
+    // column) and the inner retry drops back to the pre-00060 projection.
+    // Same shape as the cost_lines.conductor tolerance below + the in-app
+    // cost/page.tsx pattern (c2cfeb2). Mapper defaults vat_pct to null.
+    (async () => {
+      const withVat = await (supabase as any)
+        .schema('cable_schedule')
+        .from('revisions')
+        .select(
+          'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, vat_pct, ' +
+          'issued_by_profile:profiles!issued_by(full_name)',
+        )
+        .eq('id', revisionId)
+        .eq('project_id', projectId)
+        .single()
+      if (withVat.error?.code === '42703') {
+        return await (supabase as any)
+          .schema('cable_schedule')
+          .from('revisions')
+          .select(
+            'id, code, description, status, issued_at, fault_level_ka, change_notes, created_at, ' +
+            'issued_by_profile:profiles!issued_by(full_name)',
+          )
+          .eq('id', revisionId)
+          .eq('project_id', projectId)
+          .single()
+      }
+      return withVat
+    })(),
     (supabase as any)
       .schema('cable_schedule')
       .from('sources')
@@ -557,6 +579,9 @@ export async function getRevisionExportPayload(
         revisionAny.fault_level_ka == null ? null : Number(revisionAny.fault_level_ka),
       change_notes: revisionAny.change_notes,
       created_at: revisionAny.created_at,
+      // Defaults to null on the retry path (column not projected → undefined).
+      // Excel + PDF renderers default null → 15.
+      vat_pct: revisionAny.vat_pct == null ? null : Number(revisionAny.vat_pct),
     },
     sources,
     boards,

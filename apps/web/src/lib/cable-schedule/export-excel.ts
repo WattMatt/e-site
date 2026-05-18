@@ -466,8 +466,10 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
 
   // Totals block — contingency removed 2026-05-17 (net contracts).
   // VAT applied directly to materials+install subtotal.
+  // VAT % reads from revision.vat_pct (migration 00060) with 15 fallback.
   rowIdx++
-  const vat = grandTotal * 0.15
+  const vatPct = Number(payload.revision.vat_pct ?? 15) / 100
+  const vat = grandTotal * vatPct
 
   function totalRow(label: string, val: number, bold = false): void {
     ws.getCell(`G${rowIdx}`).value = label
@@ -480,7 +482,7 @@ function buildCostSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void {
     rowIdx++
   }
   totalRow('Materials + install', grandTotal)
-  totalRow('+ 15% VAT', vat)
+  totalRow(`+ ${(vatPct * 100).toFixed(0)}% VAT`, vat)
   totalRow('Grand total', grandTotal + vat, true)
 }
 

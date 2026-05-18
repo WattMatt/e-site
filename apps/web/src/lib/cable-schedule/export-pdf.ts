@@ -654,7 +654,9 @@ function drawCostPage(
 
   // Totals — contingency removed 2026-05-17 (net contracts, no contingency).
   // VAT applied directly to materials+install subtotal.
-  const vat = materialsTotal * 0.15
+  // VAT % reads from revision.vat_pct (migration 00060) with 15 fallback.
+  const vatPct = Number(payload.revision.vat_pct ?? 15) / 100
+  const vat = materialsTotal * vatPct
   const grand = materialsTotal + vat
 
   y -= 20
@@ -684,7 +686,7 @@ function drawCostPage(
     y -= big ? 22 : 16
   }
   totalLine('Materials + install', materialsTotal)
-  totalLine('+ 15% VAT', vat)
+  totalLine(`+ ${(vatPct * 100).toFixed(0)}% VAT`, vat)
   totalLine('GRAND TOTAL', grand, true)
 }
 
