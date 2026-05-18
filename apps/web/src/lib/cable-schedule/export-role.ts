@@ -113,3 +113,43 @@ export function redactPayloadCost<T extends ExportPayload>(payload: T): T {
     revision: { ...payload.revision, vat_pct: null },
   }
 }
+
+/**
+ * Vercel serverless functions have hard memory + execution-time budgets.
+ * Rendering a multi-MB PDF or workbook for a revision with thousands of
+ * cables can OOM the function or trip the timeout, leaving the client with
+ * an opaque 500. Pre-check the cable count up-front so we can return a
+ * clean 413 with actionable guidance.
+ *
+ * Limits are deliberately conservative for v1 — tune up once we have real
+ * profiling data on the prod renderer. PDF/ZIP get a tighter cap because
+ * PDF rendering (per-cable rows + per-cable QR tags) dominates memory.
+ */
+export const MAX_CABLES_PER_EXPORT = 500
+export const MAX_CABLES_PER_PDF = 300
+
+export type SizeCheck = { ok: true } | { ok: false; reason: string; status: number }
+
+export function checkExportSize(
+  payload: { cables: unknown[] },
+  format: 'excel' | 'pdf' | 'csv' | 'zip',
+): SizeCheck {
+  const count = payload.cables.length
+  if (format === 'pdf' || format === 'zip') {
+    if (count > MAX_CABLES_PER_PDF) {
+      return {
+        ok: false,
+        status: 413,
+        reason: `Revision has ${count} cables. PDF/ZIP export is capped at ${MAX_CABLES_PER_PDF}. Use Excel or CSV for large revisions, or contact support.`,
+      }
+    }
+  }
+  if (count > MAX_CABLES_PER_EXPORT) {
+    return {
+      ok: false,
+      status: 413,
+      reason: `Revision has ${count} cables. Export is capped at ${MAX_CABLES_PER_EXPORT}.`,
+    }
+  }
+  return { ok: true }
+}

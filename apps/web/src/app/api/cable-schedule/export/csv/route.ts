@@ -2,7 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getRevisionExportPayload, exportFilenameStem } from '@/lib/cable-schedule/export-payload'
 import { renderCsv, type CsvKind } from '@/lib/cable-schedule/export-csv'
-import { getExportPolicy, redactPayloadCost } from '@/lib/cable-schedule/export-role'
+import {
+  getExportPolicy,
+  redactPayloadCost,
+  checkExportSize,
+} from '@/lib/cable-schedule/export-role'
 
 export const runtime = 'nodejs'
 
@@ -45,6 +49,11 @@ export async function GET(req: NextRequest) {
     )
   }
   const effectivePayload = policy.redactCost ? redactPayloadCost(payload) : payload
+
+  const sizeCheck = checkExportSize(effectivePayload, 'csv')
+  if (!sizeCheck.ok) {
+    return NextResponse.json({ error: sizeCheck.reason }, { status: sizeCheck.status })
+  }
 
   const csv = renderCsv(type, effectivePayload)
   const filename = `${exportFilenameStem(effectivePayload)}-${type}.csv`

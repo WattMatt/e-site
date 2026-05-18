@@ -2,7 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getRevisionExportPayload, exportFilenameStem } from '@/lib/cable-schedule/export-payload'
 import { renderRevisionPdf } from '@/lib/cable-schedule/export-pdf'
-import { getExportPolicy, redactPayloadCost } from '@/lib/cable-schedule/export-role'
+import {
+  getExportPolicy,
+  redactPayloadCost,
+  checkExportSize,
+} from '@/lib/cable-schedule/export-role'
 
 export const runtime = 'nodejs'
 
@@ -40,6 +44,11 @@ export async function GET(req: NextRequest) {
     )
   }
   const effectivePayload = policy.redactCost ? redactPayloadCost(payload) : payload
+
+  const sizeCheck = checkExportSize(effectivePayload, 'pdf')
+  if (!sizeCheck.ok) {
+    return NextResponse.json({ error: sizeCheck.reason }, { status: sizeCheck.status })
+  }
 
   const bytes = await renderRevisionPdf(effectivePayload)
   const filename = `${exportFilenameStem(effectivePayload)}.pdf`
