@@ -155,7 +155,13 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
       .filter((r) => r.tag)
       .map(async (r) => {
         try {
-          const png = await QRCode.toDataURL(JSON.stringify(r.tag!.qr_payload), {
+          // Encode the human-visible tag text only — never UUIDs.
+          // qr_payload retains the UUID bundle in the DB for any future
+          // server-side scan resolver, but the printed QR exposes nothing
+          // beyond what's already legible on the physical label.
+          const qrText = r.tag!.tag_text || ''
+          if (!qrText) return
+          const png = await QRCode.toDataURL(qrText, {
             margin: 0, width: 96, errorCorrectionLevel: 'M',
           })
           qrByTagId.set(r.tag!.id, png)

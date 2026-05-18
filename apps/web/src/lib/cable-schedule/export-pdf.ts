@@ -766,16 +766,21 @@ async function drawTagPages(
         })
       }
 
-      // QR — generate PNG inline, embed
-      const qrPayload = {
-        v: 1,
-        cable_id: tag.cable_id,
-        tag_id: tag.id,
-        end: tag.end_position,
-        text: tag.tag_text,
+      // QR — generate PNG inline, embed.
+      // Encode the human-visible tag text only — never UUIDs, org IDs, or
+      // anything not already legible on the physical printed label. Anyone
+      // with a phone camera at a job site (subbie, visitor, future auditor)
+      // gets only the tag text they can already read. The DB still holds
+      // qr_payload with the UUID bundle for any future server-side scan
+      // resolver.
+      const qrText = tag.tag_text || ''
+      if (!qrText) {
+        // No tag text → skip QR; the visible tag-text print is empty too
+        // so there's nothing meaningful to encode anyway.
+        continue
       }
       try {
-        const qrBuffer = await QRCode.toBuffer(JSON.stringify(qrPayload), {
+        const qrBuffer = await QRCode.toBuffer(qrText, {
           type: 'png',
           errorCorrectionLevel: 'M',
           margin: 1,
