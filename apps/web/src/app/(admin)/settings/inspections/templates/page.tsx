@@ -56,7 +56,7 @@ export default async function TemplateLibraryPage() {
           <p className="page-subtitle">Versioned schemas powering the inspector capture flow.</p>
         </div>
         <Link href="/settings/inspections/templates/new" style={{ textDecoration: 'none' }}>
-          <Button>+ Import Template (JSON)</Button>
+          <Button>+ New template</Button>
         </Link>
       </div>
 
@@ -66,9 +66,8 @@ export default async function TemplateLibraryPage() {
             <div style={{ padding: '40px 12px', textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13 }}>
               No templates yet.{' '}
               <Link href="/settings/inspections/templates/new" style={{ color: 'var(--c-amber)', textDecoration: 'underline' }}>
-                Import one
-              </Link>{' '}
-              by pasting JSON.
+                → Use the builder to create your first template
+              </Link>
             </div>
           </CardBody>
         </Card>
@@ -121,6 +120,12 @@ export default async function TemplateLibraryPage() {
                             style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline', marginRight: 12 }}
                           >
                             View
+                          </Link>
+                          <Link
+                            href={`/settings/inspections/templates/${v.id}/clone`}
+                            style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline', marginRight: 12 }}
+                          >
+                            Edit
                           </Link>
                           {v.is_active && <DeprecateButton templateId={v.id} organisationId={orgId} />}
                         </td>
