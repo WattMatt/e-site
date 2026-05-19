@@ -5,6 +5,7 @@ import { MetadataHeader } from './MetadataHeader';
 import { SectionsList } from './SectionsList';
 import { SectionEditor } from './SectionEditor';
 import { JsonPreviewPanel } from './JsonPreviewPanel';
+import { PreviewPane } from './PreviewPane';
 import { SavePanel } from './SavePanel';
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 
 export function BuilderShell({ builder, onSave }: Props) {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  const [rightTab, setRightTab] = useState<'preview' | 'json'>('preview');
   const sections = builder.state.sections ?? [];
 
   // Auto-select first section when sections become non-empty and nothing is selected.
@@ -56,7 +58,27 @@ export function BuilderShell({ builder, onSave }: Props) {
           />
         </main>
         <aside className="w-96 border-l p-4 overflow-y-auto">
-          <JsonPreviewPanel draft={builder.state} />
+          <div className="flex gap-2 mb-3">
+            <button
+              type="button"
+              onClick={() => setRightTab('preview')}
+              className={`px-3 py-1 text-sm rounded ${rightTab === 'preview' ? 'bg-blue-100 text-blue-700' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+            >
+              Live preview
+            </button>
+            <button
+              type="button"
+              onClick={() => setRightTab('json')}
+              className={`px-3 py-1 text-sm rounded ${rightTab === 'json' ? 'bg-blue-100 text-blue-700' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+            >
+              JSON
+            </button>
+          </div>
+          {rightTab === 'preview' ? (
+            <PreviewPane draft={builder.state} />
+          ) : (
+            <JsonPreviewPanel draft={builder.state} />
+          )}
         </aside>
       </div>
       <SavePanel draft={builder.state} onSave={onSave} />
