@@ -239,6 +239,7 @@ export function SectionEditor({ sections, selectedSectionId, builder }: Props) {
                       <FieldEditor
                         sectionId={section.section_id}
                         field={selectedField}
+                        sectionFields={section.fields as Field[]}
                         onChange={(patch) => handleFieldChange(field.field_id, patch)}
                         onRemove={() => handleFieldRemove(field.field_id)}
                       />

@@ -162,20 +162,6 @@ export function PhotoFieldEditor({ field, onChange, onRemove }: Props) {
         </div>
       )}
 
-      {/* conditional_on — Phase C.1 placeholder */}
-      <div className="pt-1">
-        <button
-          type="button"
-          disabled
-          title="Phase C.1 wires this"
-          className="text-xs text-gray-400 border border-gray-200 rounded px-3 py-1.5 cursor-not-allowed"
-        >
-          + Conditional on field (Phase C.1)
-        </button>
-        <p className="text-xs text-gray-400 mt-1">
-          conditional_on logic is wired in Phase C.1.
-        </p>
-      </div>
     </div>
   );
 }
