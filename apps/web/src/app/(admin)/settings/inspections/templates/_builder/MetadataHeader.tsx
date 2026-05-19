@@ -70,6 +70,28 @@ export function MetadataHeader({ state, onChange }: Props) {
         className="border rounded px-3 py-2 text-sm flex-1 min-w-48"
         aria-label="SANS / IEC reference"
       />
+      <label className="flex items-center gap-2 text-sm">
+        <span className="text-gray-600">Accent</span>
+        <input
+          type="color"
+          value={state.branding?.accent_color ?? '#005EB8'}
+          onChange={(e) =>
+            onChange({ branding: { ...(state.branding ?? {}), accent_color: e.target.value } })
+          }
+          className="h-9 w-12 border rounded cursor-pointer"
+          aria-label="Accent color"
+        />
+        <input
+          type="text"
+          value={state.branding?.accent_color ?? '#005EB8'}
+          onChange={(e) =>
+            onChange({ branding: { ...(state.branding ?? {}), accent_color: e.target.value } })
+          }
+          className="border rounded px-2 py-1 w-24 font-mono text-xs"
+          aria-label="Accent color hex"
+          placeholder="#005EB8"
+        />
+      </label>
     </header>
   );
 }
