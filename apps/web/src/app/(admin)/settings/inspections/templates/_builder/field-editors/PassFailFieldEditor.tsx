@@ -53,20 +53,6 @@ export function PassFailFieldEditor({ field, onChange, onRemove }: Props) {
         />
         Required
       </label>
-
-      <div className="pt-1">
-        <button
-          type="button"
-          disabled
-          title="Phase F will wire this up"
-          className="text-xs text-gray-400 border border-gray-200 rounded px-3 py-1.5 cursor-not-allowed"
-        >
-          + Add paired evidence photos (auto)
-        </button>
-        <p className="text-xs text-gray-400 mt-1">
-          Paired photo fields are generated automatically in Phase F.
-        </p>
-      </div>
     </div>
   );
 }

@@ -69,7 +69,7 @@ interface Props {
   selectedSectionId: string | null;
   builder: Pick<
     ReturnType<typeof useBuilderState>,
-    'updateSection' | 'addField' | 'removeField' | 'moveField' | 'updateField'
+    'updateSection' | 'addField' | 'removeField' | 'moveField' | 'updateField' | 'insertFieldsAfter'
   >;
 }
 
@@ -242,6 +242,9 @@ export function SectionEditor({ sections, selectedSectionId, builder }: Props) {
                         sectionFields={section.fields as Field[]}
                         onChange={(patch) => handleFieldChange(field.field_id, patch)}
                         onRemove={() => handleFieldRemove(field.field_id)}
+                        onInsertAfter={(fields) =>
+                          builder.insertFieldsAfter(section.section_id, field.field_id, fields as SectionField[])
+                        }
                       />
                       <button
                         type="button"

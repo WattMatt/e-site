@@ -14,52 +14,20 @@ import { FileFieldEditor }       from './field-editors/FileFieldEditor';
 import { ComputedFieldEditor }   from './field-editors/ComputedFieldEditor';
 import { RepeatingGroupEditor }  from './field-editors/RepeatingGroupEditor';
 import { ConditionalOnEditor }   from './ConditionalOnEditor';
+import { PhotoEvidenceSuggestion } from './PhotoEvidenceSuggestion';
 
 interface Props {
   sectionId: string;
   field: Field;
-  /** All fields in the same section — used by ConditionalOnEditor for the field_id dropdown. */
+  /** All fields in the same section — used by ConditionalOnEditor and PhotoEvidenceSuggestion. */
   sectionFields: Field[];
   onChange: (patch: Partial<Field>) => void;
   onRemove?: () => void;
+  /** Insert fields immediately after this field in the section. */
+  onInsertAfter?: (fields: Field[]) => void;
 }
 
-/** Wraps the per-type editor with a shared "Conditional visibility" collapsible section. */
-function withConditionalWrapper(
-  editor: React.ReactNode,
-  field: Field,
-  sectionFields: Field[],
-  onChange: (patch: Partial<Field>) => void,
-): React.ReactNode {
-  return (
-    <div className="space-y-3">
-      {editor}
-      <details className="border-t pt-2">
-        <summary
-          className="text-sm cursor-pointer select-none"
-          style={{ color: 'var(--c-text-dim, #6b7280)' }}
-        >
-          Conditional visibility
-          {field.conditional_on && (
-            <span className="ml-2 text-xs font-medium" style={{ color: 'var(--c-amber, #f59e0b)' }}>
-              ● active
-            </span>
-          )}
-        </summary>
-        <div className="mt-2">
-          <ConditionalOnEditor
-            sectionFields={sectionFields}
-            currentFieldId={field.field_id}
-            value={field.conditional_on}
-            onChange={(next) => onChange({ conditional_on: next })}
-          />
-        </div>
-      </details>
-    </div>
-  );
-}
-
-export function FieldEditor({ sectionId, field, sectionFields, onChange, onRemove }: Props) {
+export function FieldEditor({ sectionId, field, sectionFields, onChange, onRemove, onInsertAfter }: Props) {
   const shared = { sectionId, onChange, onRemove };
 
   let editor: React.ReactNode;
@@ -149,5 +117,37 @@ export function FieldEditor({ sectionId, field, sectionFields, onChange, onRemov
     }
   }
 
-  return withConditionalWrapper(editor, field, sectionFields, onChange);
+  return (
+    <div className="space-y-3">
+      {editor}
+      {onInsertAfter && (
+        <PhotoEvidenceSuggestion
+          sourceField={field}
+          sectionFields={sectionFields}
+          onInsert={onInsertAfter}
+        />
+      )}
+      <details className="border-t pt-2">
+        <summary
+          className="text-sm cursor-pointer select-none"
+          style={{ color: 'var(--c-text-dim, #6b7280)' }}
+        >
+          Conditional visibility
+          {field.conditional_on && (
+            <span className="ml-2 text-xs font-medium" style={{ color: 'var(--c-amber, #f59e0b)' }}>
+              ● active
+            </span>
+          )}
+        </summary>
+        <div className="mt-2">
+          <ConditionalOnEditor
+            sectionFields={sectionFields}
+            currentFieldId={field.field_id}
+            value={field.conditional_on}
+            onChange={(next) => onChange({ conditional_on: next })}
+          />
+        </div>
+      </details>
+    </div>
+  );
 }
