@@ -17,6 +17,9 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { templateSchema } from '@esite/shared'
+import { bumpSemver } from '@/lib/inspections/bump-semver'
+
+export { bumpSemver } from '@/lib/inspections/bump-semver'
 
 type AnyClient = SupabaseClient<any, any, any>
 
@@ -167,6 +170,120 @@ export async function updateTemplateMetadataAction(
   if (error) throw error
   revalidatePath('/settings/inspections/templates')
   revalidatePath(`/settings/inspections/templates/${id}`)
+}
+
+// ─── cloneTemplateToNewVersionAction ────────────────────────────────────
+
+/**
+ * Load an existing template row, bump its version, and return the
+ * in-memory draft — WITHOUT persisting it.
+ *
+ * The caller (builder UI) hydrates its local state with this draft.
+ * The user saves explicitly via createTemplateAction / newTemplateVersionAction.
+ *
+ * Collision loop: if the immediately-bumped version already exists (rare —
+ * multiple drafts in flight), we keep bumping until we find a free slot.
+ * This prevents the builder opening on a version string that would 23505 on
+ * save without any obvious explanation.
+ */
+export async function cloneTemplateToNewVersionAction(
+  templateId: string,
+  currentVersion: string,
+): Promise<
+  | {
+      ok: true
+      draft: {
+        template_id: string
+        version: string
+        name: string
+        deliverable_type: string
+        sans_reference?: string
+        schema_json: Record<string, unknown>
+      }
+    }
+  | { ok: false; error: string }
+> {
+  try {
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return { ok: false, error: 'Not authenticated' }
+
+    // Resolve the user's org (takes the first active org they belong to).
+    const { data: memberships } = await (supabase as AnyClient)
+      .from('user_organisations')
+      .select('organisation_id')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .limit(1)
+    const orgId = memberships?.[0]?.organisation_id as string | undefined
+    if (!orgId) return { ok: false, error: 'No active organisation' }
+
+    // Fetch source row.
+    const { data: source, error: fetchErr } = await (supabase as AnyClient)
+      .schema('inspections')
+      .from('templates')
+      .select('template_id, version, name, deliverable_type, sans_reference, schema_json')
+      .eq('organisation_id', orgId)
+      .eq('template_id', templateId)
+      .eq('version', currentVersion)
+      .single()
+
+    if (fetchErr || !source) {
+      return { ok: false, error: 'Template not found' }
+    }
+
+    const row = source as {
+      template_id: string
+      version: string
+      name: string
+      deliverable_type: string
+      sans_reference?: string
+      schema_json: Record<string, unknown>
+    }
+
+    // Bump version, then loop until a free slot is found.
+    let candidate: string
+    try {
+      candidate = bumpSemver(currentVersion)
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+
+    // Collision check loop (usually exits on first iteration).
+    let attempts = 0
+    while (attempts < 20) {
+      const { data: collision } = await (supabase as AnyClient)
+        .schema('inspections')
+        .from('templates')
+        .select('id')
+        .eq('organisation_id', orgId)
+        .eq('template_id', templateId)
+        .eq('version', candidate)
+        .maybeSingle()
+
+      if (!collision) break // free slot found
+      candidate = bumpSemver(candidate)
+      attempts++
+    }
+
+    const draft = {
+      template_id: row.template_id,
+      version: candidate,
+      name: row.name,
+      deliverable_type: row.deliverable_type,
+      ...(row.sans_reference ? { sans_reference: row.sans_reference } : {}),
+      schema_json: {
+        ...(row.schema_json as Record<string, unknown>),
+        version: candidate, // keep schema_json.version in sync
+      },
+    }
+
+    return { ok: true, draft }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
 }
 
 // ─── newTemplateVersionAction ───────────────────────────────────────────
