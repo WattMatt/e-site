@@ -4,12 +4,15 @@ import type { useBuilderState } from './useBuilderState';
 import { MetadataHeader } from './MetadataHeader';
 import { SectionsList } from './SectionsList';
 import { SectionEditor } from './SectionEditor';
+import { JsonPreviewPanel } from './JsonPreviewPanel';
+import { SavePanel } from './SavePanel';
 
 interface Props {
   builder: ReturnType<typeof useBuilderState>;
+  onSave?: (draft: unknown) => Promise<{ ok: boolean; error?: string }>;
 }
 
-export function BuilderShell({ builder }: Props) {
+export function BuilderShell({ builder, onSave }: Props) {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const sections = builder.state.sections ?? [];
 
@@ -53,12 +56,10 @@ export function BuilderShell({ builder }: Props) {
           />
         </main>
         <aside className="w-96 border-l p-4 overflow-y-auto">
-          {/* PreviewPane — placeholder until D.2 */}
-          <div className="text-sm" style={{ color: 'var(--c-muted, #6b7280)' }}>
-            Live preview (D.2 will fill this)
-          </div>
+          <JsonPreviewPanel draft={builder.state} />
         </aside>
       </div>
+      <SavePanel draft={builder.state} onSave={onSave} />
     </div>
   );
 }
