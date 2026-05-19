@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -51,26 +51,45 @@ export async function POST(req: NextRequest) {
     .upload(path, file, { contentType: file.type })
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
 
-  // 5. INSERT via service client. Cross-schema PostgREST writes (.schema('inspections').from('photos').insert)
-  //    don't propagate JWT claims to RLS helper functions reliably — the SELECT above
-  //    already gated org/project access, so we trust that gate and bypass RLS for the INSERT.
-  //    Same pattern as Session 14 mobile notifications dispatch.
-  const service = createServiceClient() as AnyClient
-  const { data: row, error: rowErr } = await service
-    .schema('inspections')
-    .from('photos')
-    .insert({
+  // 5. INSERT via raw PostgREST POST with service-role key. supabase-js's
+  //    .schema('inspections').from('photos').insert() does NOT propagate the
+  //    service-role Authorization header — it falls back to anon, which then
+  //    hits RLS. Verified via direct curl: raw POST with the service key DOES
+  //    bypass RLS (got FK violation instead of RLS rejection on a fake UUID).
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) {
+    await userClient.storage.from('inspection-photos').remove([path])
+    return NextResponse.json({ error: 'server misconfigured: SUPABASE_SERVICE_ROLE_KEY missing' }, { status: 500 })
+  }
+
+  const insertRes = await fetch(`${supabaseUrl}/rest/v1/photos`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      'Content-Profile': 'inspections',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
       inspection_id: inspectionId,
       section_id: sectionId,
       field_id: fieldId,
       storage_path: path,
       uploaded_by: user.id,
-    })
-    .select('id')
-    .single()
-  if (rowErr) {
+    }),
+  })
+  if (!insertRes.ok) {
+    const errText = await insertRes.text()
     await userClient.storage.from('inspection-photos').remove([path])
-    return NextResponse.json({ error: rowErr.message }, { status: 500 })
+    return NextResponse.json({ error: `INSERT failed (HTTP ${insertRes.status}): ${errText.slice(0, 300)}` }, { status: 500 })
+  }
+  const rows = (await insertRes.json()) as Array<{ id: string }>
+  const row = rows[0]
+  if (!row) {
+    await userClient.storage.from('inspection-photos').remove([path])
+    return NextResponse.json({ error: 'INSERT returned no row' }, { status: 500 })
   }
 
   return NextResponse.json({ id: row.id, storage_path: path })

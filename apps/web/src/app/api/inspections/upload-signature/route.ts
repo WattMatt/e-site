@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -54,12 +54,24 @@ export async function POST(req: NextRequest) {
     .upload(path, file, { contentType: 'image/png' })
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
 
-  // 5. INSERT via service client (same JWT-cross-schema RLS quirk as photos).
-  const service = createServiceClient() as AnyClient
-  const { error: rowErr } = await service
-    .schema('inspections')
-    .from('signatures')
-    .insert({
+  // 5. INSERT via raw PostgREST (supabase-js .schema() strips service-role auth).
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) {
+    await userClient.storage.from('inspection-signatures').remove([path])
+    return NextResponse.json({ error: 'server misconfigured: SUPABASE_SERVICE_ROLE_KEY missing' }, { status: 500 })
+  }
+
+  const insertRes = await fetch(`${supabaseUrl}/rest/v1/signatures`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      'Content-Profile': 'inspections',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({
       inspection_id: inspectionId,
       role,
       signatory_name: signatoryName,
@@ -67,10 +79,12 @@ export async function POST(req: NextRequest) {
       registration_number: registrationNumber || null,
       storage_path: path,
       signed_by: user.id,
-    })
-  if (rowErr) {
+    }),
+  })
+  if (!insertRes.ok) {
+    const errText = await insertRes.text()
     await userClient.storage.from('inspection-signatures').remove([path])
-    return NextResponse.json({ error: rowErr.message }, { status: 500 })
+    return NextResponse.json({ error: `INSERT failed (HTTP ${insertRes.status}): ${errText.slice(0, 300)}` }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })

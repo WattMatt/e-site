@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any
@@ -54,24 +54,42 @@ export async function POST(req: NextRequest) {
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
 
   // Per spec §4.4: file attachments re-use inspections.photos with a different bucket.
-  // Filename in caption. INSERT via service client — same JWT-cross-schema RLS quirk.
-  const service = createServiceClient() as AnyClient
-  const { data: row, error: rowErr } = await service
-    .schema('inspections')
-    .from('photos')
-    .insert({
+  // INSERT via raw PostgREST (supabase-js .schema() strips service-role auth).
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) {
+    await userClient.storage.from('inspection-attachments').remove([path])
+    return NextResponse.json({ error: 'server misconfigured: SUPABASE_SERVICE_ROLE_KEY missing' }, { status: 500 })
+  }
+
+  const insertRes = await fetch(`${supabaseUrl}/rest/v1/photos`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      'Content-Profile': 'inspections',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
       inspection_id: inspectionId,
       section_id: sectionId,
       field_id: fieldId,
       storage_path: path,
       caption: file.name,
       uploaded_by: user.id,
-    })
-    .select('id')
-    .single()
-  if (rowErr) {
+    }),
+  })
+  if (!insertRes.ok) {
+    const errText = await insertRes.text()
     await userClient.storage.from('inspection-attachments').remove([path])
-    return NextResponse.json({ error: rowErr.message }, { status: 500 })
+    return NextResponse.json({ error: `INSERT failed (HTTP ${insertRes.status}): ${errText.slice(0, 300)}` }, { status: 500 })
+  }
+  const rows = (await insertRes.json()) as Array<{ id: string }>
+  const row = rows[0]
+  if (!row) {
+    await userClient.storage.from('inspection-attachments').remove([path])
+    return NextResponse.json({ error: 'INSERT returned no row' }, { status: 500 })
   }
 
   return NextResponse.json({ id: row.id, storage_path: path, filename: file.name })
