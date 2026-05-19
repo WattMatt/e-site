@@ -461,28 +461,161 @@ export async function submitInspectionAction(
 /**
  * Cancel an in-flight inspection. Reason required (audit trail). Only
  * PM-or-above on the parent org may abandon.
+ *
+ * Returns { ok: true } on success or { ok: false, error: string } on failure
+ * so the client can surface the error without throwing.
  */
 export async function abandonInspectionAction(
   inspectionId: string,
   projectId: string,
   reason: string,
-): Promise<void> {
-  if (!reason || reason.trim().length === 0) throw new Error('Reason required')
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!reason || reason.trim().length === 0) {
+    return { ok: false, error: 'Reason is required' }
+  }
 
-  const supabase = (await createClient()) as AnyClient
-  const orgId = await getOrgIdForProject(supabase, projectId)
-  await requirePmOrAbove(supabase, orgId)
+  try {
+    const supabase = (await createClient()) as AnyClient
+    const orgId = await getOrgIdForProject(supabase, projectId)
+    const user = await requirePmOrAbove(supabase, orgId)
 
-  const { error } = await supabase
-    .schema('inspections')
-    .from('inspections')
-    .update({
-      status: 'abandoned',
-      abandoned_at: new Date().toISOString(),
-      abandon_reason: reason.trim(),
-    })
-    .eq('id', inspectionId)
-  if (error) throw error
+    // Fetch inspection to validate status and collect notification recipients.
+    const { data: insp } = await supabase
+      .schema('inspections')
+      .from('inspections')
+      .select('id, status, target_label, assigned_to_id, verifier_id, organisation_id')
+      .eq('id', inspectionId)
+      .single()
 
-  revalidatePath(`/projects/${projectId}/inspections`)
+    if (!insp) return { ok: false, error: 'Inspection not found' }
+
+    const inspection = insp as {
+      id: string
+      status: string
+      target_label: string
+      assigned_to_id: string | null
+      verifier_id: string | null
+      organisation_id: string
+    }
+
+    if (['certified', 'abandoned'].includes(inspection.status)) {
+      return {
+        ok: false,
+        error: `Cannot abandon an inspection with status "${inspection.status}"`,
+      }
+    }
+
+    const { error } = await supabase
+      .schema('inspections')
+      .from('inspections')
+      .update({
+        status: 'abandoned',
+        abandoned_at: new Date().toISOString(),
+        abandoned_by: user.id,
+        abandoned_reason: reason.trim(),
+      })
+      .eq('id', inspectionId)
+
+    if (error) return { ok: false, error: error.message }
+
+    // Best-effort notification to assignee + verifier (skip self-notifications).
+    const notifyIds = [
+      ...new Set(
+        [inspection.assigned_to_id, inspection.verifier_id]
+          .filter((id): id is string => Boolean(id) && id !== user.id),
+      ),
+    ]
+    if (notifyIds.length > 0) {
+      try {
+        await dispatchNotification({
+          userIds: notifyIds,
+          title: 'Inspection abandoned',
+          body: `"${inspection.target_label}" was marked abandoned: ${reason.trim().slice(0, 100)}`,
+          route: `/projects/${projectId}/inspections/${inspectionId}`,
+          type: 'inspection_abandoned',
+          entityType: 'inspection',
+          entityId: inspectionId,
+        })
+      } catch {
+        // Notification failure is non-fatal.
+      }
+    }
+
+    revalidatePath(`/projects/${projectId}/inspections/${inspectionId}`)
+    revalidatePath(`/projects/${projectId}/inspections`)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+}
+
+// ─── deleteInspectionAction ──────────────────────────────────────────────
+
+/**
+ * Permanently hard-delete an inspection and all child rows (responses,
+ * photos, signatures, certificates, response_history). Cascades are wired
+ * in the DB schema via FK ON DELETE CASCADE.
+ *
+ * Gated: owner role only. Blocked if status='certified' (legal document).
+ * Type-to-confirm: caller must pass the exact string
+ * `delete-inspection-{id.slice(0,8)}` as confirmText.
+ */
+export async function deleteInspectionAction(
+  inspectionId: string,
+  projectId: string,
+  confirmText: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const expectedConfirm = `delete-inspection-${inspectionId.slice(0, 8)}`
+  if (confirmText !== expectedConfirm) {
+    return { ok: false, error: 'Confirmation text does not match' }
+  }
+
+  try {
+    const supabase = (await createClient()) as AnyClient
+    const orgId = await getOrgIdForProject(supabase, projectId)
+
+    // Owner only.
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) redirect('/login')
+    const { data: membership } = await supabase
+      .from('user_organisations')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('organisation_id', orgId)
+      .eq('is_active', true)
+      .single()
+    if (!membership || membership.role !== 'owner') {
+      return { ok: false, error: 'Only the organisation owner can delete inspections' }
+    }
+
+    // Fetch to validate status.
+    const { data: insp } = await supabase
+      .schema('inspections')
+      .from('inspections')
+      .select('id, status')
+      .eq('id', inspectionId)
+      .single()
+
+    if (!insp) return { ok: false, error: 'Inspection not found' }
+
+    if ((insp as { status: string }).status === 'certified') {
+      return {
+        ok: false,
+        error: 'Certified inspections are legal documents and cannot be deleted',
+      }
+    }
+
+    const { error } = await supabase
+      .schema('inspections')
+      .from('inspections')
+      .delete()
+      .eq('id', inspectionId)
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath(`/projects/${projectId}/inspections`)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
 }

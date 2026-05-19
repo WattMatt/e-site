@@ -1,11 +1,17 @@
 import Link from 'next/link'
-import { getTemplateAction } from '@/actions/inspections-template.actions'
+import { redirect } from 'next/navigation'
+import {
+  getTemplateAction,
+  getTemplateInspectionCountAction,
+} from '@/actions/inspections-template.actions'
+import { createClient } from '@/lib/supabase/server'
 import type { ParsedTemplate } from '@esite/shared'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import MonacoView from '../MonacoView'
 import TemplatePreviewPane from './TemplatePreviewPane'
+import DeleteTemplateButton from '../DeleteTemplateButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,6 +21,23 @@ interface Props {
 
 export default async function ViewTemplatePage({ params }: Props) {
   const { id } = await params
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  const { data: orgData } = await supabase
+    .from('user_organisations')
+    .select('organisation_id, role')
+    .eq('user_id', user.id)
+    .eq('is_active', true)
+    .limit(1)
+    .single()
+  if (!orgData) redirect('/onboarding')
+
+  const orgId = orgData.organisation_id as string
+  const isOwner = (orgData.role as string) === 'owner'
+
   const t = await getTemplateAction(id) as {
     id: string
     template_id: string
@@ -25,6 +48,10 @@ export default async function ViewTemplatePage({ params }: Props) {
     is_active: boolean
     schema_json: ParsedTemplate
   }
+
+  const inspectionCount = isOwner
+    ? await getTemplateInspectionCountAction(t.template_id, t.version, orgId)
+    : 0
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 1200 }}>
@@ -83,6 +110,32 @@ export default async function ViewTemplatePage({ params }: Props) {
           </CardBody>
         </Card>
       </div>
+
+      {isOwner && (
+        <div
+          className="data-panel animate-fadeup animate-fadeup-4"
+          style={{ marginTop: 24, borderColor: 'var(--c-red, #dc2626)' }}
+        >
+          <div className="data-panel-header" style={{ borderColor: 'var(--c-red, #dc2626)' }}>
+            <span className="data-panel-title" style={{ color: 'var(--c-red, #dc2626)' }}>
+              Danger zone (owner only)
+            </span>
+          </div>
+          <div style={{ padding: '14px 18px' }}>
+            <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+              Permanently delete this template version. Blocked if any inspection references it.
+            </p>
+            <DeleteTemplateButton
+              id={t.id}
+              organisationId={orgId}
+              templateId={t.template_id}
+              version={t.version}
+              inspectionCount={inspectionCount}
+              redirectTo="/settings/inspections/templates"
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

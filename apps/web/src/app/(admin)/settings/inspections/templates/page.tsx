@@ -1,36 +1,58 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { listTemplatesAction } from '@/actions/inspections-template.actions'
+import {
+  listTemplatesAction,
+  getTemplateInspectionCountAction,
+} from '@/actions/inspections-template.actions'
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import DeprecateButton from './DeprecateButton'
+import ReactivateButton from './ReactivateButton'
+import DeleteTemplateButton from './DeleteTemplateButton'
 
 export const dynamic = 'force-dynamic'
 
-async function getOrgId() {
+async function getOrgContext() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
   const { data: org } = await supabase
     .from('user_organisations')
-    .select('organisation_id')
+    .select('organisation_id, role')
     .eq('user_id', user.id)
     .eq('is_active', true)
     .limit(1)
     .single()
 
   if (!org) redirect('/onboarding')
-  return org.organisation_id as string
+  return {
+    orgId: org.organisation_id as string,
+    role: org.role as string,
+  }
 }
 
 type TemplateRow = Awaited<ReturnType<typeof listTemplatesAction>>[number]
 
 export default async function TemplateLibraryPage() {
-  const orgId = await getOrgId()
+  const { orgId, role } = await getOrgContext()
+  const isOwner = role === 'owner'
   const templates = await listTemplatesAction(orgId)
+
+  // For owner-only delete: pre-fetch inspection counts for all templates.
+  // This runs in parallel across all versions so the page doesn't slow down
+  // for non-owner users (the condition short-circuits the fetches).
+  const inspectionCountMap = new Map<string, number>()
+  if (isOwner && templates.length > 0) {
+    await Promise.all(
+      templates.map(async (t) => {
+        const count = await getTemplateInspectionCountAction(t.template_id, t.version, orgId)
+        inspectionCountMap.set(t.id, count)
+      }),
+    )
+  }
 
   // Group by template_id so multiple versions cluster under one header.
   const grouped = new Map<string, TemplateRow[]>()
@@ -127,7 +149,20 @@ export default async function TemplateLibraryPage() {
                           >
                             Edit
                           </Link>
-                          {v.is_active && <DeprecateButton templateId={v.id} organisationId={orgId} />}
+                          {v.is_active ? (
+                            <DeprecateButton templateId={v.id} organisationId={orgId} />
+                          ) : (
+                            <ReactivateButton templateId={v.id} organisationId={orgId} />
+                          )}
+                          {isOwner && (
+                            <DeleteTemplateButton
+                              id={v.id}
+                              organisationId={orgId}
+                              templateId={v.template_id}
+                              version={v.version}
+                              inspectionCount={inspectionCountMap.get(v.id) ?? 0}
+                            />
+                          )}
                         </td>
                       </tr>
                     ))}

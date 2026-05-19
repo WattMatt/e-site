@@ -286,6 +286,178 @@ export async function cloneTemplateToNewVersionAction(
   }
 }
 
+// ─── deactivateTemplateAction ────────────────────────────────────────────
+
+/**
+ * Flip is_active → false for a specific template version.
+ * Hides it from the new-inspection picker; existing inspections still render.
+ * Owner or admin only (delegates to updateTemplateMetadataAction pattern).
+ */
+export async function deactivateTemplateAction(
+  id: string,
+  organisationId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const supabase = await createClient()
+    await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+
+    const { error } = await (supabase as AnyClient)
+      .schema('inspections')
+      .from('templates')
+      .update({ is_active: false })
+      .eq('id', id)
+      .eq('organisation_id', organisationId)
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/settings/inspections/templates')
+    revalidatePath(`/settings/inspections/templates/${id}`)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+}
+
+// ─── reactivateTemplateAction ─────────────────────────────────────────────
+
+/**
+ * Flip is_active → true for a previously deactivated template version.
+ * Owner or admin only.
+ */
+export async function reactivateTemplateAction(
+  id: string,
+  organisationId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const supabase = await createClient()
+    await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+
+    const { error } = await (supabase as AnyClient)
+      .schema('inspections')
+      .from('templates')
+      .update({ is_active: true })
+      .eq('id', id)
+      .eq('organisation_id', organisationId)
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/settings/inspections/templates')
+    revalidatePath(`/settings/inspections/templates/${id}`)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+}
+
+// ─── deleteTemplateAction ─────────────────────────────────────────────────
+
+/**
+ * Permanently delete a specific template version.
+ *
+ * Gated: owner ONLY.
+ * Blocked if any inspection references (template_id, version) — those must
+ * be deleted or abandoned first.
+ * Type-to-confirm: caller must pass the exact string
+ * `delete-template-{template_id}-{version}` as confirmText.
+ */
+export async function deleteTemplateAction(
+  id: string,
+  organisationId: string,
+  confirmText: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const supabase = await createClient()
+
+    // Owner only.
+    const { data: { user } } = await (supabase as AnyClient).auth.getUser()
+    if (!user) redirect('/login')
+
+    const { data: membership } = await (supabase as AnyClient)
+      .from('user_organisations')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('organisation_id', organisationId)
+      .eq('is_active', true)
+      .single()
+
+    if (!membership || membership.role !== 'owner') {
+      return { ok: false, error: 'Only the organisation owner can delete templates' }
+    }
+
+    // Fetch the template row to validate existence + build confirm string.
+    const { data: template } = await (supabase as AnyClient)
+      .schema('inspections')
+      .from('templates')
+      .select('id, template_id, version')
+      .eq('id', id)
+      .eq('organisation_id', organisationId)
+      .single()
+
+    if (!template) return { ok: false, error: 'Template not found' }
+
+    const row = template as { id: string; template_id: string; version: string }
+    const expectedConfirm = `delete-template-${row.template_id}-${row.version}`
+
+    if (confirmText !== expectedConfirm) {
+      return { ok: false, error: 'Confirmation text does not match' }
+    }
+
+    // Referential integrity check — block if any inspection references this version.
+    const { count } = await (supabase as AnyClient)
+      .schema('inspections')
+      .from('inspections')
+      .select('id', { count: 'exact', head: true })
+      .eq('template_id', row.template_id)
+      .eq('template_version', row.version)
+      .eq('organisation_id', organisationId)
+
+    const refCount = (count as number | null) ?? 0
+    if (refCount > 0) {
+      return {
+        ok: false,
+        error: `${refCount} inspection${refCount === 1 ? '' : 's'} reference${refCount === 1 ? 's' : ''} this template version — delete or abandon those first`,
+      }
+    }
+
+    const { error } = await (supabase as AnyClient)
+      .schema('inspections')
+      .from('templates')
+      .delete()
+      .eq('id', id)
+      .eq('organisation_id', organisationId)
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/settings/inspections/templates')
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+}
+
+// ─── getTemplateInspectionCountAction ────────────────────────────────────
+
+/**
+ * Return the number of inspections that reference a specific template version.
+ * Used by the delete modal to show a blocking message before the user types
+ * the confirmation string.
+ */
+export async function getTemplateInspectionCountAction(
+  templateId: string,
+  version: string,
+  organisationId: string,
+): Promise<number> {
+  const supabase = await createClient()
+  const { count } = await (supabase as AnyClient)
+    .schema('inspections')
+    .from('inspections')
+    .select('id', { count: 'exact', head: true })
+    .eq('template_id', templateId)
+    .eq('template_version', version)
+    .eq('organisation_id', organisationId)
+  return (count as number | null) ?? 0
+}
+
 // ─── newTemplateVersionAction ───────────────────────────────────────────
 
 export async function newTemplateVersionAction(

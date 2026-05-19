@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Badge } from '@/components/ui/Badge'
 import CaptureForm from './CaptureForm'
+import InspectionActions from './InspectionActions'
 import type { Template, Response as InspectionResponse } from '@esite/shared'
 
 export const dynamic = 'force-dynamic'
@@ -82,6 +83,16 @@ export default async function CapturePage({ params }: Props) {
           .single()
       ).data
     : null
+
+  // Resolve the user's org-level role for showing danger-zone controls.
+  const { data: orgRole } = await supabase
+    .from('user_organisations')
+    .select('role')
+    .eq('user_id', user?.id ?? '')
+    .eq('organisation_id', inspection.organisation_id)
+    .eq('is_active', true)
+    .single()
+  const userOrgRole = (orgRole as { role: string } | null)?.role ?? null
 
   const responses = (responsesRaw ?? []) as InspectionResponse[]
   const photos = (photosRaw ?? []) as { section_id: string; field_id: string }[]
@@ -163,6 +174,13 @@ export default async function CapturePage({ params }: Props) {
           readOnly={false}
         />
       )}
+
+      <InspectionActions
+        inspectionId={inspectionId}
+        projectId={projectId}
+        status={inspection.status}
+        role={userOrgRole}
+      />
     </div>
   )
 }
