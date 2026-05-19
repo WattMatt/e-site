@@ -12,6 +12,7 @@ import { PhotoFieldEditor }      from './field-editors/PhotoFieldEditor';
 import { SignatureFieldEditor }  from './field-editors/SignatureFieldEditor';
 import { FileFieldEditor }       from './field-editors/FileFieldEditor';
 import { ComputedFieldEditor }   from './field-editors/ComputedFieldEditor';
+import { RepeatingGroupEditor }  from './field-editors/RepeatingGroupEditor';
 import { ConditionalOnEditor }   from './ConditionalOnEditor';
 
 interface Props {
@@ -129,31 +130,13 @@ export function FieldEditor({ sectionId, field, sectionFields, onChange, onRemov
       break;
 
     case 'repeating_group':
-      // RepeatingGroupEditor will be wired in Phase C.2.
       editor = (
-        <div
-          className="p-3 border rounded text-sm"
-          style={{ borderColor: 'var(--c-border, #e5e7eb)', color: 'var(--c-text-dim, #6b7280)' }}
-        >
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wide">🔁 Repeating group</span>
-            {onRemove && (
-              <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">
-                Remove
-              </button>
-            )}
-          </div>
-          <input
-            type="text"
-            placeholder="Group label"
-            value={field.label ?? ''}
-            onChange={(e) => onChange({ label: e.target.value })}
-            className="border rounded px-3 py-2 w-full text-sm mb-2"
-          />
-          <p className="text-xs" style={{ color: 'var(--c-text-dim, #6b7280)' }}>
-            Sub-field editing for repeating groups arrives in Phase C.2.
-          </p>
-        </div>
+        <RepeatingGroupEditor
+          sectionId={sectionId}
+          field={field as Field & { type: 'repeating_group'; fields: Field[] }}
+          onChange={onChange}
+          onRemove={onRemove}
+        />
       );
       break;
 
