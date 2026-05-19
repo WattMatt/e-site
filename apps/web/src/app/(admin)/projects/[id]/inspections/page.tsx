@@ -4,6 +4,8 @@ import { listInspectionsAction } from '@/actions/inspections.actions'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { createClient } from '@/lib/supabase/server'
+import InspectionRowDeleteButton from './InspectionRowDeleteButton'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Inspections' }
@@ -38,6 +40,34 @@ export default async function InspectionsListPage({ params, searchParams }: Prop
   const { id: projectId } = await params
   const { status } = await searchParams
   const items = await listInspectionsAction(projectId, status ? { status } : undefined)
+
+  // Resolve user's org-level role to gate the inline Delete button (owner only).
+  // Use the project's org_id (lookup once, not per row).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = (await createClient()) as any
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  let userOrgRole: string | null = null
+  if (user) {
+    const { data: project } = await supabase
+      .schema('projects')
+      .from('projects')
+      .select('organisation_id')
+      .eq('id', projectId)
+      .single()
+    if (project?.organisation_id) {
+      const { data: roleRow } = await supabase
+        .from('user_organisations')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('organisation_id', project.organisation_id)
+        .eq('is_active', true)
+        .single()
+      userOrgRole = (roleRow as { role: string } | null)?.role ?? null
+    }
+  }
+  const canDelete = userOrgRole === 'owner'
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 1100 }}>
@@ -139,13 +169,21 @@ export default async function InspectionsListPage({ params, searchParams }: Prop
                   <td style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                     {i.scheduled_at ? new Date(i.scheduled_at).toLocaleDateString() : '—'}
                   </td>
-                  <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                  <td style={{ padding: '10px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <Link
                       href={`/projects/${projectId}/inspections/${i.id}`}
                       style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline' }}
                     >
                       Open
                     </Link>
+                    {canDelete && (
+                      <InspectionRowDeleteButton
+                        inspectionId={i.id}
+                        projectId={projectId}
+                        status={i.status}
+                        label={i.target_label ?? i.template?.name ?? 'inspection'}
+                      />
+                    )}
                   </td>
                 </tr>
               ))}
