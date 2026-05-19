@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import ImportForm from './ImportForm'
+import { NewTemplateTabbed } from './NewTemplateTabbed'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,11 +22,11 @@ async function getOrgId() {
   return org.organisation_id as string
 }
 
-export default async function ImportTemplatePage() {
+export default async function NewTemplatePage() {
   const orgId = await getOrgId()
 
   return (
-    <div className="animate-fadeup" style={{ maxWidth: 960 }}>
+    <div className="animate-fadeup" style={{ maxWidth: 1200 }}>
       <div style={{ marginBottom: 16 }}>
         <Link
           href="/settings/inspections/templates"
@@ -38,14 +38,14 @@ export default async function ImportTemplatePage() {
 
       <div className="page-header">
         <div>
-          <h1 className="page-title">Import Inspection Template</h1>
+          <h1 className="page-title">New Inspection Template</h1>
           <p className="page-subtitle">
-            Paste a template JSON. The server validates against the schema and rejects malformed templates.
+            Build visually or paste JSON directly. The server validates against the schema before saving.
           </p>
         </div>
       </div>
 
-      <ImportForm organisationId={orgId} />
+      <NewTemplateTabbed organisationId={orgId} />
     </div>
   )
 }
