@@ -105,7 +105,7 @@ export async function deleteAccountAction(formData: FormData): Promise<{
     if (orgsLeftOrphaned.length > 0) {
       return {
         ok: false,
-        error: 'You are the sole owner of an organisation. Transfer ownership in Settings → Team before deleting your account.',
+        error: 'You are the sole owner of an organisation. Transfer ownership in Settings → Users before deleting your account.',
       }
     }
 

@@ -29,9 +29,6 @@ export type ExportPolicy = {
  * must be redacted.
  *
  * - owner / admin / project_manager: full export.
- * - field_worker: full project access (org-wide, no project_members check),
- *   cost data redacted. Site operators need cable schedules + tag sheets in
- *   the field but have no business reason to see project pricing.
  * - client_viewer: project-scoped — must be active in project_members for
  *   the project. Cost data always redacted.
  * - Anyone else (no membership / unknown role): blocked.
@@ -61,10 +58,6 @@ export async function getExportPolicy(
 
   if (role === 'owner' || role === 'admin' || role === 'project_manager') {
     return { canExport: true, redactCost: false }
-  }
-
-  if (role === 'field_worker') {
-    return { canExport: true, redactCost: true }
   }
 
   if (role === 'client_viewer') {

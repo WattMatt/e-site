@@ -74,7 +74,7 @@ const FOOTER_ITEMS = [
   { href: '/site',                   label: 'Site capture', Icon: HardHat },
   { href: '/cable-schedule/sans',    label: 'SANS ref',     Icon: BookMarked },
   { href: '/admin/health',           label: 'Health',       Icon: Activity },
-  { href: '/settings/team',          label: 'Team',         Icon: Users },
+  { href: '/settings/users',         label: 'Users',        Icon: Users },
   { href: '/settings/billing',       label: 'Billing',      Icon: CreditCard },
   { href: '/settings/integrations',  label: 'Integrations', Icon: Cloud },
   { href: '/settings',               label: 'Settings',     Icon: Settings },

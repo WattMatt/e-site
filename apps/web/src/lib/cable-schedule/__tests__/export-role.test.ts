@@ -23,7 +23,6 @@ type MockOpts = {
     | 'owner'
     | 'admin'
     | 'project_manager'
-    | 'field_worker'
     | 'client_viewer'
     | 'mystery_role'
     | null
@@ -69,7 +68,6 @@ describe('getExportPolicy', () => {
     ['owner', true, false],
     ['admin', true, false],
     ['project_manager', true, false],
-    ['field_worker', true, true],
   ] as const)(
     '%s -> canExport=%s redactCost=%s (no project_members check)',
     async (role, canExport, redactCost) => {

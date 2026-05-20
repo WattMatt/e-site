@@ -20,14 +20,13 @@
  * design and verification seats.
  */
 
+import type { OrgRole } from '@esite/shared'
+
 export type CableScheduleRole = 'Designer' | 'SiteOperator' | 'Verifier' | 'Admin' | 'Viewer'
 
-export type OrgRole =
-  | 'owner'
-  | 'admin'
-  | 'project_manager'
-  | 'field_worker'
-  | 'client_viewer'
+// OrgRole — canonical shared vocabulary (packages/shared/src/types). Re-exported
+// so existing cable-schedule importers (export-role.ts) keep their import path.
+export type { OrgRole }
 
 export function cableRoleFor(orgRole: OrgRole | null | undefined): CableScheduleRole {
   switch (orgRole) {
@@ -37,8 +36,6 @@ export function cableRoleFor(orgRole: OrgRole | null | undefined): CableSchedule
     case 'project_manager':
       // PMs do both design + sign-off in this firm's working model.
       return 'Verifier'
-    case 'field_worker':
-      return 'SiteOperator'
     case 'client_viewer':
       return 'Viewer'
     default:

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ORG_ROLES } from '../types'
 
 export const createOrgSchema = z.object({
   name: z.string().min(2, 'Organisation name required').max(200),
@@ -9,10 +10,7 @@ export const createOrgSchema = z.object({
   registrationNo: z.string().max(50).optional(),
 })
 
-export const inviteMemberSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  role: z.enum(['admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer']),
-})
+/** Runtime validator for OrgRole — derives from the canonical ORG_ROLES tuple. */
+export const orgRoleSchema = z.enum(ORG_ROLES)
 
 export type CreateOrgInput = z.infer<typeof createOrgSchema>
-export type InviteMemberInput = z.infer<typeof inviteMemberSchema>

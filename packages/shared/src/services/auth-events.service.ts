@@ -11,6 +11,7 @@ export type AuthEventType =
   | 'mfa_unenrolled'
   | 'account_deleted'
   | 'account_email_changed'
+  | 'user_created'
 
 export interface LogAuthEventArgs {
   userId:     string | null

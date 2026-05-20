@@ -5,15 +5,13 @@ import { useRouter } from 'next/navigation'
 import {
   createOrganisationAction,
   createFirstProjectAction,
-  inviteTeamMemberAction,
 } from '@/actions/onboarding.actions'
 
-type Step = 'org' | 'project' | 'invite' | 'done'
+type Step = 'org' | 'project' | 'done'
 
 const STEPS: { key: Step; label: string }[] = [
   { key: 'org',     label: 'Organisation' },
   { key: 'project', label: 'First Project' },
-  { key: 'invite',  label: 'Invite Team' },
   { key: 'done',    label: 'Done' },
 ]
 
@@ -33,7 +31,6 @@ export default function OnboardingPage() {
   const [orgId, setOrgId] = useState('')
   const [projectId, setProjectId] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [invites, setInvites] = useState<string[]>([])
   const [isPending, startTransition] = useTransition()
 
   const stepIndex = STEPS.findIndex(s => s.key === step)
@@ -58,20 +55,7 @@ export default function OnboardingPage() {
       const result = await createFirstProjectAction(orgId, fd)
       if ('error' in result) { setError(result.error ?? null); return }
       setProjectId(result.projectId!)
-      setStep('invite')
-    })
-  }
-
-  function handleInviteSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setError(null)
-    const fd = new FormData(e.currentTarget)
-    const email = fd.get('email') as string
-    startTransition(async () => {
-      const result = await inviteTeamMemberAction(orgId, fd)
-      if ('error' in result) { setError(result.error ?? null); return }
-      setInvites(prev => [...prev, email])
-      ;(e.target as HTMLFormElement).reset()
+      setStep('done')
     })
   }
 
@@ -163,7 +147,7 @@ export default function OnboardingPage() {
               <div style={{ display: 'flex', gap: 10 }}>
                 <button
                   type="button"
-                  onClick={() => setStep('invite')}
+                  onClick={() => setStep('done')}
                   className="ob-btn-secondary"
                 >
                   Skip
@@ -180,72 +164,7 @@ export default function OnboardingPage() {
             </form>
           )}
 
-          {/* Step 3: Invite team */}
-          {step === 'invite' && (
-            <div>
-              <div className="onboarding-card-title">Invite your team</div>
-              <div className="onboarding-card-sub">Add project managers, supervisors, or field workers</div>
-
-              <form onSubmit={handleInviteSubmit} style={{ marginBottom: 16 }}>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                  <input
-                    name="email"
-                    type="email"
-                    className="ob-input"
-                    placeholder="colleague@company.co.za"
-                    style={{ flex: 1 }}
-                  />
-                  <select
-                    name="role"
-                    className="ob-select"
-                    style={{ width: 'auto', flexShrink: 0 }}
-                  >
-                    <option value="project_manager">PM</option>
-                    <option value="supervisor">Supervisor</option>
-                    <option value="field_worker">Field</option>
-                    <option value="viewer">Viewer</option>
-                  </select>
-                  <button
-                    type="submit"
-                    disabled={isPending}
-                    className="ob-btn-primary"
-                    style={{ width: 'auto', padding: '10px 16px', flexShrink: 0 }}
-                  >
-                    {isPending ? '…' : 'Invite'}
-                  </button>
-                </div>
-              </form>
-
-              {invites.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
-                  {invites.map(email => (
-                    <div key={email} className="invite-chip">
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" width="12" height="12">
-                        <polyline points="2,8 6,12 14,4" />
-                      </svg>
-                      {email}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-                <button type="button" onClick={() => setStep('done')} className="ob-btn-secondary">
-                  Skip
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStep('done')}
-                  className="ob-btn-primary"
-                  style={{ flex: 2 }}
-                >
-                  Continue →
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 4: Done */}
+          {/* Step 3: Done */}
           {step === 'done' && (
             <div>
               <div style={{ textAlign: 'center', marginBottom: 28 }}>
@@ -274,9 +193,6 @@ export default function OnboardingPage() {
                   { label: 'Log a snag on site',      href: '/snags',          icon: '⚠', done: false },
                   ...(projectId
                     ? [{ label: 'View your project', href: `/projects/${projectId}`, icon: '📁', done: true }]
-                    : []),
-                  ...(invites.length > 0
-                    ? [{ label: `${invites.length} invite${invites.length > 1 ? 's' : ''} sent`, href: '#', icon: '👥', done: true }]
                     : []),
                 ].map(({ label, href, icon, done }) => (
                   <a key={label} href={href} className={`checklist-item${done ? ' done' : ''}`}>

@@ -3,7 +3,6 @@
 import { redirect } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
-import { rateLimit } from '@/lib/rate-limit'
 import { z } from 'zod'
 
 const createOrgSchema = z.object({
@@ -18,11 +17,6 @@ const createProjectSchema = z.object({
   address:    z.string().max(500).optional(),
   city:       z.string().max(100).optional(),
   clientName: z.string().max(200).optional(),
-})
-
-const inviteSchema = z.object({
-  email: z.string().email('Valid email address required.'),
-  role:  z.string().optional(),
 })
 
 export async function createOrganisationAction(formData: FormData) {
@@ -141,35 +135,4 @@ export async function createFirstProjectAction(orgId: string, formData: FormData
   })
 
   return { projectId: project.id }
-}
-
-export async function inviteTeamMemberAction(orgId: string, formData: FormData) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  if (!rateLimit(`invite:${user.id}`, 10, 60 * 60_000)) {
-    return { error: 'Too many invites. Please wait before sending more.' }
-  }
-
-  const parsed = inviteSchema.safeParse({
-    email: formData.get('email'),
-    role:  formData.get('role') ?? undefined,
-  })
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
-  }
-  const { email, role } = parsed.data
-
-  const { error } = await supabase.auth.admin.inviteUserByEmail(email.trim(), {
-    data: {
-      invited_to_org: orgId,
-      invited_role: role ?? 'member',
-    },
-    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/join`,
-  })
-
-  if (error) return { error: error.message }
-
-  return { invited: true }
 }

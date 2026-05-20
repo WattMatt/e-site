@@ -18,13 +18,11 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { OrgRole } from '@esite/shared'
 
-export type OrgRole =
-  | 'owner'
-  | 'admin'
-  | 'project_manager'
-  | 'field_worker'
-  | 'client_viewer'
+// OrgRole — canonical shared vocabulary (packages/shared/src/types). Re-exported
+// so existing cable-schedule importers keep their import path.
+export type { OrgRole }
 
 export type RequireRoleResult =
   | { ok: true; role: OrgRole }
@@ -90,4 +88,6 @@ export async function requireRoleForRevision(
 
 /** Common role groups for write actions */
 export const ROLES_ENGINEER = ['owner', 'admin', 'project_manager'] as const satisfies readonly OrgRole[]
-export const ROLES_ENGINEER_AND_FIELD = ['owner', 'admin', 'project_manager', 'field_worker'] as const satisfies readonly OrgRole[]
+// 'field_worker' removed — it was never a DB-legal user_organisations.role and
+// so was unreachable. Constant name retained for call-site stability.
+export const ROLES_ENGINEER_AND_FIELD = ['owner', 'admin', 'project_manager'] as const satisfies readonly OrgRole[]

@@ -147,7 +147,7 @@ export default async function HealthDashboardPage(props: {
                   <tr key={row.organisation_id} style={{ borderBottom: '1px solid var(--c-border)' }}>
                     <Td>
                       <Link
-                        href={`/settings/team?org=${row.organisation_id}`}
+                        href={`/settings/users?org=${row.organisation_id}`}
                         style={{ color: 'var(--c-text)', textDecoration: 'none', fontWeight: 600 }}
                       >
                         {row.organisation?.name ?? row.organisation_id.slice(0, 8)}

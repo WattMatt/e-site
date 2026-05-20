@@ -5,6 +5,8 @@ const ORG_ROLE_HIERARCHY: Record<OrgRole, number> = {
   admin: 90,
   project_manager: 70,
   contractor: 50,
+  inspector: 40,
+  supplier: 30,
   client_viewer: 10,
 }
 
