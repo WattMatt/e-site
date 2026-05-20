@@ -11,19 +11,13 @@ import type {
   ImportUpdated,
   ImportDecommissioned,
 } from '@esite/shared'
+import type { CommitResult } from '@/app/api/tenant-schedule/commit/route'
 
 interface Props {
   projectId: string
 }
 
 type Stage = 'idle' | 'parsing' | 'preview' | 'committing' | 'done' | 'error'
-
-interface CommitResult {
-  created: number
-  updated: number
-  decommissioned: number
-  write_errors: string[]
-}
 
 export function ImportFlow({ projectId }: Props) {
   const router = useRouter()
@@ -126,24 +120,20 @@ export function ImportFlow({ projectId }: Props) {
   // ── Parsing spinner ──────────────────────────────────────────────────────
   if (stage === 'parsing') {
     return (
-      <Card>
-        <CardBody>
-          <p style={{ color: 'var(--c-text-mid)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-            Parsing {file?.name ?? 'file'}…
-          </p>
-        </CardBody>
-      </Card>
+      <Button variant="secondary" isLoading disabled>
+        Parsing {file?.name ?? 'file'}…
+      </Button>
     )
   }
 
   // ── Error state ──────────────────────────────────────────────────────────
   if (stage === 'error') {
     return (
-      <div style={{ border: '1px solid #7f1d1d', borderRadius: 8, background: 'var(--c-panel)' }}>
+      <div style={{ border: '1px solid var(--c-red)', borderRadius: 8, background: 'var(--c-panel)' }}>
         <CardBody>
-          <p style={{ color: '#dc2626', fontWeight: 600, marginBottom: 8 }}>Import failed</p>
+          <p style={{ color: 'var(--c-red)', fontWeight: 600, marginBottom: 8 }}>Import failed</p>
           <p style={{ fontSize: 13, color: 'var(--c-text-mid)', marginBottom: 12 }}>{errorMsg}</p>
-          <Button onClick={reset}>Try again</Button>
+          <Button variant="danger" onClick={reset}>Try again</Button>
         </CardBody>
       </div>
     )
@@ -152,13 +142,15 @@ export function ImportFlow({ projectId }: Props) {
   // ── Done ─────────────────────────────────────────────────────────────────
   if (stage === 'done' && commitResult) {
     const hasWriteErrors = commitResult.write_errors.length > 0
+    const hasSkipped = commitResult.skipped_parse_errors > 0
+    const hasWarnings = hasWriteErrors || hasSkipped
     return (
-      <div style={{ border: hasWriteErrors ? '1px solid var(--c-amber-mid)' : '1px solid #14532d', borderRadius: 8, background: 'var(--c-panel)' }}>
+      <div style={{ border: hasWarnings ? '1px solid var(--c-amber-mid)' : '1px solid var(--c-green)', borderRadius: 8, background: 'var(--c-panel)' }}>
         <CardBody>
-          <p style={{ fontWeight: 600, marginBottom: 8, color: hasWriteErrors ? 'var(--c-amber)' : 'var(--c-text)' }}>
-            {hasWriteErrors ? 'Import completed with warnings' : 'Import complete'}
+          <p style={{ fontWeight: 600, marginBottom: 8, color: hasWarnings ? 'var(--c-amber)' : 'var(--c-text)' }}>
+            {hasWarnings ? 'Import completed with warnings' : 'Import complete'}
           </p>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: hasWriteErrors ? 12 : 0 }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: hasWarnings ? 12 : 0 }}>
             {commitResult.created > 0 && (
               <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
                 <strong style={{ color: 'var(--c-text)' }}>{commitResult.created}</strong> added
@@ -175,6 +167,13 @@ export function ImportFlow({ projectId }: Props) {
               </span>
             )}
           </div>
+          {hasSkipped && (
+            <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-amber-dim)', borderRadius: 4 }}>
+              <p style={{ fontSize: 12, color: 'var(--c-amber)' }}>
+                {commitResult.skipped_parse_errors} row{commitResult.skipped_parse_errors !== 1 ? 's' : ''} skipped — had parse errors, not committed.
+              </p>
+            </div>
+          )}
           {hasWriteErrors && (
             <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-amber-dim)', borderRadius: 4 }}>
               <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-amber)', marginBottom: 6 }}>
@@ -188,7 +187,7 @@ export function ImportFlow({ projectId }: Props) {
             </div>
           )}
           <div style={{ marginTop: 12 }}>
-            <Button onClick={reset} style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}>
+            <Button variant="secondary" onClick={reset}>
               Import again
             </Button>
           </div>
@@ -200,13 +199,9 @@ export function ImportFlow({ projectId }: Props) {
   // ── Committing spinner ───────────────────────────────────────────────────
   if (stage === 'committing') {
     return (
-      <Card>
-        <CardBody>
-          <p style={{ color: 'var(--c-text-mid)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-            Committing changes…
-          </p>
-        </CardBody>
-      </Card>
+      <Button isLoading disabled>
+        Committing changes…
+      </Button>
     )
   }
 
@@ -230,7 +225,7 @@ export function ImportFlow({ projectId }: Props) {
                 {file?.name}
               </p>
             </div>
-            <Button onClick={reset} style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}>
+            <Button variant="secondary" onClick={reset}>
               Cancel
             </Button>
           </div>
@@ -248,11 +243,11 @@ export function ImportFlow({ projectId }: Props) {
             <div style={{
               padding: '12px 14px',
               marginBottom: 16,
-              background: 'rgba(220,38,38,0.08)',
-              border: '1.5px solid #dc2626',
+              background: 'var(--c-red-dim)',
+              border: '1.5px solid var(--c-red)',
               borderRadius: 6,
             }}>
-              <p style={{ fontWeight: 700, color: '#dc2626', marginBottom: 6, fontSize: 14 }}>
+              <p style={{ fontWeight: 700, color: 'var(--c-red)', marginBottom: 6, fontSize: 14 }}>
                 ⚠ {decomCount} shop{decomCount !== 1 ? 's' : ''} will be DECOMMISSIONED
               </p>
               <p style={{ fontSize: 12, color: 'var(--c-text-mid)', marginBottom: 10 }}>
@@ -268,12 +263,12 @@ export function ImportFlow({ projectId }: Props) {
                       display: 'flex',
                       gap: 12,
                       padding: '5px 8px',
-                      background: 'rgba(220,38,38,0.07)',
+                      background: 'var(--c-red-dim)',
                       borderRadius: 4,
                       fontSize: 13,
                     }}
                   >
-                    <span style={{ fontFamily: 'var(--font-mono)', color: '#dc2626', minWidth: 80 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-red)', minWidth: 80 }}>
                       {e.existing.shop_number}
                     </span>
                     <span style={{ color: 'var(--c-text)' }}>{e.existing.shop_name ?? e.existing.name ?? '—'}</span>

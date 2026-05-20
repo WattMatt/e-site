@@ -68,28 +68,22 @@ export default async function TenantSchedulePage({ params }: Props) {
         <ImportFlow projectId={projectId} />
       </div>
 
-      {/* Schema not exposed warning */}
+      {/* Fetch error */}
       {loadError && (
         <div
           style={{
             padding: '12px 16px',
             marginBottom: 16,
-            background: 'var(--c-amber-dim)',
-            border: '1px solid var(--c-amber-mid)',
+            background: 'var(--c-red-dim)',
+            border: '1px solid var(--c-red)',
             borderRadius: 6,
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Could not load tenant data</div>
+          <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--c-red)' }}>
+            Could not load the tenant schedule.
+          </div>
           <div style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
-            {loadError.includes('schema') || loadError.includes('PGRST') ? (
-              <>
-                The <code>structure</code> schema may not be exposed via the REST API yet. Open the
-                Supabase dashboard → Project Settings → API → &ldquo;Exposed schemas&rdquo; → add{' '}
-                <code>structure</code> and save. Reload this page.
-              </>
-            ) : (
-              loadError
-            )}
+            {loadError}
           </div>
         </div>
       )}
