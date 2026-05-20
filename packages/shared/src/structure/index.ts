@@ -5,3 +5,11 @@ export { listNodes, getNode, createNode, updateNode, decommissionNode } from './
 export { parseTenantSchedule } from './tenant-import-parser';
 export type { TenantImportRow, TenantImportError, TenantImportResult } from './tenant-import-parser';
 export { deriveDbCode } from './derive-db-code';
+export { diffTenantSchedule } from './import-preview';
+export type {
+  ImportPreview,
+  ImportNew,
+  ImportUpdated,
+  ImportDecommissioned,
+  ImportDiffEntry,
+} from './import-preview';
