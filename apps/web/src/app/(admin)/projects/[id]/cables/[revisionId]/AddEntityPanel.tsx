@@ -9,9 +9,14 @@ import {
   addParallelCableSetAction,
   addBoardAction,
 } from '@/actions/cable-entities.actions'
+import { createEquipmentNodeAction } from '@/actions/equipment.actions'
+import { EquipmentForm, type EquipmentFormValues } from '@/app/(admin)/projects/[id]/equipment-schedule/_components/EquipmentForm'
 import { type NodeOption } from './CableScheduleGrid'
 
+type PanelMode = 'cable' | 'equipment'
+
 interface Props {
+  projectId: string
   revisionId: string
   sources: NodeOption[]
   boards: NodeOption[]
@@ -32,9 +37,10 @@ const BOARD_KIND_OPTIONS = [
   { value: 'CONSUMER_RMU', label: 'Consumer RMU' },
 ]
 
-export function AddEntityPanel({ revisionId, sources, boards, feedFromKey, onFeedConsumed, defaultOpen = false }: Props) {
+export function AddEntityPanel({ projectId, revisionId, sources, boards, feedFromKey, onFeedConsumed, defaultOpen = false }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(defaultOpen)
+  const [mode, setMode] = useState<PanelMode>('cable')
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
@@ -42,6 +48,13 @@ export function AddEntityPanel({ revisionId, sources, boards, feedFromKey, onFee
   useEffect(() => {
     if (feedFromKey) setOpen(true)
   }, [feedFromKey])
+
+  // When switching modes, clear messages so stale errors don't bleed across.
+  function switchMode(next: PanelMode) {
+    setMode(next)
+    setError(null)
+    setFlash(null)
+  }
 
   function submit(fn: () => Promise<{ error?: string }>, label: string) {
     setError(null); setFlash(null)
@@ -54,6 +67,19 @@ export function AddEntityPanel({ revisionId, sources, boards, feedFromKey, onFee
     })
   }
 
+  async function handleEquipmentSubmit(values: EquipmentFormValues) {
+    const result = await createEquipmentNodeAction(
+      projectId,
+      values.kind,
+      values.code,
+      values.name,
+      values.coc_required,
+    )
+    if ('error' in result) throw new Error(result.error)
+    setFlash(`Equipment node "${values.code}" added.`)
+    router.refresh()
+  }
+
   if (!open) {
     return (
       <div style={{ marginBottom: 14 }}>
@@ -64,12 +90,29 @@ export function AddEntityPanel({ revisionId, sources, boards, feedFromKey, onFee
     )
   }
 
+  const modeTabStyle = (active: boolean): React.CSSProperties => ({
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-mono)',
+    fontSize: 11,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: active ? 'var(--c-amber)' : 'var(--c-text-dim)',
+    padding: '0 10px 0 0',
+    borderBottom: active ? '2px solid var(--c-amber)' : '2px solid transparent',
+    paddingBottom: 4,
+  })
+
   return (
     <div className="data-panel" style={{ padding: 16, marginBottom: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 14, borderBottom: '1px solid var(--c-border)', paddingBottom: 10 }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--c-amber)' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', marginBottom: 14, borderBottom: '1px solid var(--c-border)', paddingBottom: 10 }}>
+        <button type="button" style={modeTabStyle(mode === 'cable')} onClick={() => switchMode('cable')}>
           ─ Add cable
-        </span>
+        </button>
+        <button type="button" style={modeTabStyle(mode === 'equipment')} onClick={() => switchMode('equipment')}>
+          ─ Add equipment
+        </button>
         <div style={{ flex: 1 }} />
         <button
           type="button"
@@ -92,7 +135,16 @@ export function AddEntityPanel({ revisionId, sources, boards, feedFromKey, onFee
         </div>
       )}
 
-      <CableForm revisionId={revisionId} sources={sources} boards={boards} pending={pending} onSubmit={submit} feedFromKey={feedFromKey} />
+      {mode === 'cable' ? (
+        <CableForm revisionId={revisionId} sources={sources} boards={boards} pending={pending} onSubmit={submit} feedFromKey={feedFromKey} />
+      ) : (
+        <EquipmentForm
+          existingCodes={boards.map((b) => b.code)}
+          onSubmit={handleEquipmentSubmit}
+          onCancel={() => switchMode('cable')}
+          isLoading={pending}
+        />
+      )}
     </div>
   )
 }

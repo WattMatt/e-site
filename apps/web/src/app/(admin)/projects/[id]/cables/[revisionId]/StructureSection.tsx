@@ -54,6 +54,7 @@ export function StructureSection({
       {children}
       {canEdit && (
         <AddEntityPanel
+          projectId={projectId}
           revisionId={revisionId}
           sources={sources}
           boards={boards}
