@@ -9,55 +9,57 @@ const decorate = {
 }
 
 describe('buildStructureTree', () => {
-  it('nests boards under the source/board that feeds them', () => {
+  it('nests nodes under the source/node that feeds them', () => {
     const sources = [{ id: 'S1', code: 'RMU', type: 'COUNCIL_RMU' }]
-    const boards = [
-      { id: 'B1', code: 'MAIN', kind: 'MAIN_BOARD' },
-      { id: 'B2', code: 'DB-1', kind: 'SUB_BOARD' },
+    const nodes = [
+      { id: 'B1', code: 'MAIN', kind: 'main_board' },
+      { id: 'B2', code: 'DB-1', kind: 'main_board' },
     ]
     const supplies = [
-      { id: 'sup1', from_source_id: 'S1', from_board_id: null, to_board_id: 'B1' },
-      { id: 'sup2', from_source_id: null, from_board_id: 'B1', to_board_id: 'B2' },
+      { id: 'sup1', from_source_id: 'S1', from_node_id: null, to_node_id: 'B1' },
+      { id: 'sup2', from_source_id: null, from_node_id: 'B1', to_node_id: 'B2' },
     ]
-    const { roots, unfed } = buildStructureTree(sources, boards, supplies, decorate)
+    const { roots, unfed } = buildStructureTree(sources, nodes, supplies, decorate)
     expect(unfed).toEqual([])
     expect(roots).toHaveLength(1)
     expect(roots[0]!.id).toBe('S1')
     expect(roots[0]!.feedSummary).toBeNull()        // sources have no incoming feed
     expect(roots[0]!.children).toHaveLength(1)
     expect(roots[0]!.children[0]!.id).toBe('B1')
+    expect(roots[0]!.children[0]!.category).toBe('node')
     expect(roots[0]!.children[0]!.feedSummary).toEqual(summary)
     expect(roots[0]!.children[0]!.children[0]!.id).toBe('B2')
   })
 
-  it('flags a board fed by two supplies as alsoFedElsewhere on the 2nd occurrence', () => {
+  it('flags a node fed by two supplies as alsoFedElsewhere on the 2nd occurrence', () => {
     const sources = [
       { id: 'S1', code: 'COUNCIL', type: 'COUNCIL_RMU' },
       { id: 'S2', code: 'STANDBY', type: 'STANDBY' },
     ]
-    const boards = [{ id: 'B1', code: 'DB-3', kind: 'SUB_BOARD' }]
+    const nodes = [{ id: 'B1', code: 'DB-3', kind: 'tenant_db' }]
     const supplies = [
-      { id: 'sup1', from_source_id: 'S1', from_board_id: null, to_board_id: 'B1' },
-      { id: 'sup2', from_source_id: 'S2', from_board_id: null, to_board_id: 'B1' },
+      { id: 'sup1', from_source_id: 'S1', from_node_id: null, to_node_id: 'B1' },
+      { id: 'sup2', from_source_id: 'S2', from_node_id: null, to_node_id: 'B1' },
     ]
-    const { roots } = buildStructureTree(sources, boards, supplies, decorate)
+    const { roots } = buildStructureTree(sources, nodes, supplies, decorate)
     expect(roots[0]!.children[0]!.alsoFedElsewhere).toBe(false)  // 1st occurrence — full
     expect(roots[1]!.children[0]!.alsoFedElsewhere).toBe(true)   // 2nd occurrence — marker
   })
 
-  it('puts a board with no incoming supply in the unfed group, with its own subtree', () => {
+  it('puts a node with no incoming supply in the unfed group, with its own subtree', () => {
     const sources: { id: string; code: string; type: string }[] = []
-    const boards = [
-      { id: 'B1', code: 'ORPHAN', kind: 'MAIN_BOARD' },
-      { id: 'B2', code: 'DB-9', kind: 'SUB_BOARD' },
+    const nodes = [
+      { id: 'B1', code: 'ORPHAN', kind: 'main_board' },
+      { id: 'B2', code: 'DB-9', kind: 'tenant_db' },
     ]
     const supplies = [
-      { id: 'sup1', from_source_id: null, from_board_id: 'B1', to_board_id: 'B2' },
+      { id: 'sup1', from_source_id: null, from_node_id: 'B1', to_node_id: 'B2' },
     ]
-    const { roots, unfed } = buildStructureTree(sources, boards, supplies, decorate)
+    const { roots, unfed } = buildStructureTree(sources, nodes, supplies, decorate)
     expect(roots).toEqual([])
     expect(unfed).toHaveLength(1)
     expect(unfed[0]!.id).toBe('B1')
+    expect(unfed[0]!.category).toBe('node')
     expect(unfed[0]!.children[0]!.id).toBe('B2')
   })
 
@@ -69,31 +71,32 @@ describe('buildStructureTree', () => {
     // engineering convention is to render the 5 transformers as peers on the
     // ring under the Consumer RMU, with the closing cable annotated on T5.
     const sources = [{ id: 'SRC', code: 'COUNCIL', type: 'COUNCIL_RMU' }]
-    const boards = [
-      { id: 'CRMU', code: 'CONSUMER',  kind: 'CONSUMER_RMU' },
-      { id: 'T1',   code: 'T1', kind: 'TRANSFORMER' },
-      { id: 'T2',   code: 'T2', kind: 'TRANSFORMER' },
-      { id: 'T3',   code: 'T3', kind: 'TRANSFORMER' },
-      { id: 'T4',   code: 'T4', kind: 'TRANSFORMER' },
-      { id: 'T5',   code: 'T5', kind: 'TRANSFORMER' },
-      { id: 'MB',   code: 'MB1', kind: 'MAIN_BOARD' }, // T1's non-ring branch
+    const nodes = [
+      { id: 'CRMU', code: 'CONSUMER',  kind: 'rmu' },
+      { id: 'T1',   code: 'T1', kind: 'mini_sub' },
+      { id: 'T2',   code: 'T2', kind: 'mini_sub' },
+      { id: 'T3',   code: 'T3', kind: 'mini_sub' },
+      { id: 'T4',   code: 'T4', kind: 'mini_sub' },
+      { id: 'T5',   code: 'T5', kind: 'mini_sub' },
+      { id: 'MB',   code: 'MB1', kind: 'main_board' }, // T1's non-ring branch
     ]
     const supplies = [
-      { id: 's0',  from_source_id: 'SRC',  from_board_id: null,   to_board_id: 'CRMU' },
-      { id: 's1',  from_source_id: null,   from_board_id: 'CRMU', to_board_id: 'T1' },
-      { id: 's2',  from_source_id: null,   from_board_id: 'T1',   to_board_id: 'T2' },
-      { id: 's3',  from_source_id: null,   from_board_id: 'T2',   to_board_id: 'T3' },
-      { id: 's4',  from_source_id: null,   from_board_id: 'T3',   to_board_id: 'T4' },
-      { id: 's5',  from_source_id: null,   from_board_id: 'T4',   to_board_id: 'T5' },
-      { id: 's6',  from_source_id: null,   from_board_id: 'T5',   to_board_id: 'CRMU' }, // ring closure
-      { id: 'sMB', from_source_id: null,   from_board_id: 'T1',   to_board_id: 'MB' },   // non-ring branch
+      { id: 's0',  from_source_id: 'SRC',  from_node_id: null,   to_node_id: 'CRMU' },
+      { id: 's1',  from_source_id: null,   from_node_id: 'CRMU', to_node_id: 'T1' },
+      { id: 's2',  from_source_id: null,   from_node_id: 'T1',   to_node_id: 'T2' },
+      { id: 's3',  from_source_id: null,   from_node_id: 'T2',   to_node_id: 'T3' },
+      { id: 's4',  from_source_id: null,   from_node_id: 'T3',   to_node_id: 'T4' },
+      { id: 's5',  from_source_id: null,   from_node_id: 'T4',   to_node_id: 'T5' },
+      { id: 's6',  from_source_id: null,   from_node_id: 'T5',   to_node_id: 'CRMU' }, // ring closure
+      { id: 'sMB', from_source_id: null,   from_node_id: 'T1',   to_node_id: 'MB' },   // non-ring branch
     ]
-    const { roots, unfed } = buildStructureTree(sources, boards, supplies, decorate)
+    const { roots, unfed } = buildStructureTree(sources, nodes, supplies, decorate)
     expect(unfed).toEqual([])
     expect(roots).toHaveLength(1)
 
     const consumer = roots[0]!.children[0]!
     expect(consumer.id).toBe('CRMU')
+    expect(consumer.category).toBe('node')
     // CONSUMER RMU should have all 5 transformers as direct children — in
     // cable order — and NOT have a duplicate "also fed elsewhere" entry from
     // the ring closure (that's annotated on T5 instead).
@@ -117,7 +120,7 @@ describe('buildStructureTree', () => {
     expect(t5.ringClosesBackTo).toBe('CONSUMER')
 
     // Ring members are NOT flagged as alsoFedElsewhere — that flag is reserved
-    // for genuinely multi-fed boards (e.g. normal + standby).
+    // for genuinely multi-fed nodes (e.g. normal + standby).
     for (const m of consumer.children) expect(m.alsoFedElsewhere).toBe(false)
   })
 
@@ -125,19 +128,20 @@ describe('buildStructureTree', () => {
     // The simplest ring: A feeds B, B feeds A. After flattening, B is a
     // child of A and A annotates the closure. No recursion explosion.
     const sources = [{ id: 'S1', code: 'RMU', type: 'COUNCIL_RMU' }]
-    const boards = [
-      { id: 'B1', code: 'A', kind: 'MAIN_BOARD' },
-      { id: 'B2', code: 'B', kind: 'SUB_BOARD' },
+    const nodes = [
+      { id: 'B1', code: 'A', kind: 'main_board' },
+      { id: 'B2', code: 'B', kind: 'tenant_db' },
     ]
     const supplies = [
-      { id: 'sup0', from_source_id: 'S1', from_board_id: null, to_board_id: 'B1' },
-      { id: 'sup1', from_source_id: null, from_board_id: 'B1', to_board_id: 'B2' },
-      { id: 'sup2', from_source_id: null, from_board_id: 'B2', to_board_id: 'B1' }, // ring B2 → B1
+      { id: 'sup0', from_source_id: 'S1', from_node_id: null, to_node_id: 'B1' },
+      { id: 'sup1', from_source_id: null, from_node_id: 'B1', to_node_id: 'B2' },
+      { id: 'sup2', from_source_id: null, from_node_id: 'B2', to_node_id: 'B1' }, // ring B2 → B1
     ]
-    const { roots } = buildStructureTree(sources, boards, supplies, decorate)
+    const { roots } = buildStructureTree(sources, nodes, supplies, decorate)
     expect(roots).toHaveLength(1)
     const b1 = roots[0]!.children[0]!
     expect(b1.id).toBe('B1')
+    expect(b1.category).toBe('node')
     // Ring members are B2 only (path was S1 → B1 → B2, then B2 → B1 back-edge).
     // B2 sits as a child of B1 (B1 is the ring entry parent).
     expect(b1.children).toHaveLength(1)

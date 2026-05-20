@@ -2,10 +2,10 @@
  * Cable Schedule structure tree — pure functions over raw row data.
  *
  * The "structure" of a revision is its supply graph: each `supply` row is a
- * feed edge from a source/board to a board. `buildStructureTree` turns the
- * flat sources/boards/supplies into a forest:
+ * feed edge from a source/node to a node. `buildStructureTree` turns the
+ * flat sources/nodes/supplies into a forest:
  *   - roots  = every source, with its fed subtree
- *   - unfed  = boards with no incoming supply, each with its own subtree
+ *   - unfed  = nodes with no incoming supply, each with their own subtree
  *
  * ### Ring topology
  *
@@ -49,8 +49,8 @@ export interface StructureFeedSummary {
 export interface StructureTreeNode {
   id: string
   code: string
-  category: 'source' | 'board'
-  /** source.type or board.kind */
+  category: 'source' | 'node'
+  /** source.type or structure.nodes.kind */
   nodeType: string
   /** The supply edge feeding this node — null for sources and unfed-board roots. */
   feedSummary: StructureFeedSummary | null
@@ -73,32 +73,32 @@ export interface StructureTreeNode {
 }
 
 interface TreeSource { id: string; code: string; type: string }
-interface TreeBoard { id: string; code: string; kind: string }
+interface TreeNode { id: string; code: string; kind: string }
 interface TreeSupply {
   id: string
   from_source_id: string | null
-  from_board_id: string | null
-  to_board_id: string
+  from_node_id: string | null
+  to_node_id: string
 }
 
 export function buildStructureTree(
   sources: TreeSource[],
-  boards: TreeBoard[],
+  nodes: TreeNode[],
   supplies: TreeSupply[],
   decorate: {
     feedSummaryFor: (supplyId: string) => StructureFeedSummary | null
-    blastFor: (id: string, category: 'source' | 'board') => { blastSupplies: number; blastCables: number }
+    blastFor: (id: string, category: 'source' | 'node') => { blastSupplies: number; blastCables: number }
   },
 ): { roots: StructureTreeNode[]; unfed: StructureTreeNode[] } {
-  const boardById = new Map(boards.map((b) => [b.id, b] as const))
+  const nodeById = new Map(nodes.map((n) => [n.id, n] as const))
   const sourceById = new Map(sources.map((s) => [s.id, s] as const))
   const nameOf = (id: string): string =>
-    sourceById.get(id)?.code ?? boardById.get(id)?.code ?? '?'
+    sourceById.get(id)?.code ?? nodeById.get(id)?.code ?? '?'
 
-  // supplies grouped by their from-node id (source XOR board)
+  // supplies grouped by their from-id (source XOR node)
   const suppliesByFrom = new Map<string, TreeSupply[]>()
   for (const s of supplies) {
-    const fromId = s.from_source_id ?? s.from_board_id
+    const fromId = s.from_source_id ?? s.from_node_id
     if (!fromId) continue
     const list = suppliesByFrom.get(fromId) ?? []
     list.push(s)
@@ -136,7 +136,7 @@ export function buildStructureTree(
       pathSet.add(currentId)
 
       for (const sup of suppliesByFrom.get(currentId) ?? []) {
-        const to = sup.to_board_id
+        const to = sup.to_node_id
         if (pathSet.has(to)) {
           // Back-edge → ring closure cable.
           closureSupplyIds.add(sup.id)
@@ -176,12 +176,12 @@ export function buildStructureTree(
   // Pass 2 — Build the tree, applying ring flattening.
   // -------------------------------------------------------------------------
 
-  // The first supply whose to_board_id == X — used as the "feeding supply"
+  // The first supply whose to_node_id == X — used as the "feeding supply"
   // when a ring member is added under its entry parent instead of its
   // immediate supply-graph parent.
   const firstSupplyTo = new Map<string, string>()
   for (const s of supplies) {
-    if (!firstSupplyTo.has(s.to_board_id)) firstSupplyTo.set(s.to_board_id, s.id)
+    if (!firstSupplyTo.has(s.to_node_id)) firstSupplyTo.set(s.to_node_id, s.id)
   }
 
   // Boards whose subtree has already been emitted (cross-tree dedupe).
@@ -190,12 +190,12 @@ export function buildStructureTree(
   function build(
     id: string,
     code: string,
-    category: 'source' | 'board',
+    category: 'source' | 'node',
     nodeType: string,
     feedingSupplyId: string | null,
     visiting: Set<string>,
   ): StructureTreeNode {
-    const isRepeat = category === 'board' && (expanded.has(id) || visiting.has(id))
+    const isRepeat = category === 'node' && (expanded.has(id) || visiting.has(id))
     const node: StructureTreeNode = {
       id,
       code,
@@ -208,7 +208,7 @@ export function buildStructureTree(
       ...decorate.blastFor(id, category),
     }
     if (isRepeat) return node
-    if (category === 'board') expanded.add(id)
+    if (category === 'node') expanded.add(id)
 
     const nextVisiting = new Set(visiting)
     nextVisiting.add(id)
@@ -220,12 +220,12 @@ export function buildStructureTree(
     //     targets it (the first cable in firstSupplyTo).
     for (const memberId of ringEntry.get(id) ?? []) {
       if (childrenAdded.has(memberId)) continue
-      const memberBoard = boardById.get(memberId)
-      if (!memberBoard) continue
+      const memberNode = nodeById.get(memberId)
+      if (!memberNode) continue
       childrenAdded.add(memberId)
       const feedId = firstSupplyTo.get(memberId) ?? null
       node.children.push(build(
-        memberBoard.id, memberBoard.code, 'board', memberBoard.kind,
+        memberNode.id, memberNode.code, 'node', memberNode.kind,
         feedId, nextVisiting,
       ))
     }
@@ -235,18 +235,18 @@ export function buildStructureTree(
       // Skip the ring-closure cable from this ring member back to the entry
       // parent — already annotated via `ringClosesBackTo`.
       if (closureSupplyIds.has(sup.id)) continue
-      const childId = sup.to_board_id
+      const childId = sup.to_node_id
       if (childrenAdded.has(childId)) continue
       // If childId is a ring member whose entry parent isn't us, skip — its
       // entry parent already added it (or will). This breaks the daisy-chain
       // edge from one ring member to the next.
       const childRing = ringMember.get(childId)
       if (childRing && childRing.entryParent !== id) continue
-      const child = boardById.get(childId)
+      const child = nodeById.get(childId)
       if (!child) continue
       childrenAdded.add(childId)
       node.children.push(build(
-        child.id, child.code, 'board', child.kind, sup.id, nextVisiting,
+        child.id, child.code, 'node', child.kind, sup.id, nextVisiting,
       ))
     }
 
@@ -255,12 +255,12 @@ export function buildStructureTree(
 
   const roots = sources.map((s) => build(s.id, s.code, 'source', s.type, null, new Set()))
 
-  const fedBoardIds = new Set(supplies.map((s) => s.to_board_id))
+  const fedNodeIds = new Set(supplies.map((s) => s.to_node_id))
   const unfed: StructureTreeNode[] = []
-  for (const b of boards) {
-    if (fedBoardIds.has(b.id)) continue
-    if (expanded.has(b.id)) continue
-    unfed.push(build(b.id, b.code, 'board', b.kind, null, new Set()))
+  for (const n of nodes) {
+    if (fedNodeIds.has(n.id)) continue
+    if (expanded.has(n.id)) continue
+    unfed.push(build(n.id, n.code, 'node', n.kind, null, new Set()))
   }
 
   return { roots, unfed }
