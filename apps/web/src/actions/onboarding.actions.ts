@@ -56,7 +56,8 @@ export async function createOrganisationAction(formData: FormData) {
     .insert({
       user_id: user.id,
       organisation_id: org.id,
-      role: 'admin',
+      // Founder owns the org they create — owner-gated paths must be reachable.
+      role: 'owner',
       is_active: true,
     })
 
