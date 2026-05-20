@@ -36,11 +36,13 @@ export default async function BoardShortCodesPage({ params }: Props) {
   if (!revisionRow) notFound()
   const revision = revisionRow as { id: string; code: string; status: string; project_id: string }
 
+  // structure.nodes is project-scoped (not revision-scoped); fetch all nodes
+  // for this project so short codes can be edited independently of the current revision.
   const { data: boardsData } = await (supabase as any)
-    .schema('cable_schedule')
-    .from('boards')
+    .schema('structure')
+    .from('nodes')
     .select('id, code, short_code')
-    .eq('revision_id', revisionId)
+    .eq('project_id', projectId)
     .order('code')
 
   const boards = ((boardsData ?? []) as BoardRow[]).map((b) => ({

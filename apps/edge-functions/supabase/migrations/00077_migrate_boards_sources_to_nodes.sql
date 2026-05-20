@@ -25,6 +25,12 @@
 -- =============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Preserve short_code: cable_schedule.boards had a short_code column (an
+-- abbreviated label used for cable tags and Avery label sheets, because full
+-- board names are too long to fit physical tags). The collapse carries it over.
+ALTER TABLE structure.nodes ADD COLUMN short_code TEXT;
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- Part A — boards → structure.nodes
 -- ─────────────────────────────────────────────────────────────────────────────
 -- One row per distinct (project_id, code). Latest revision's board row wins.
@@ -47,7 +53,8 @@ INSERT INTO structure.nodes (
     breaker_rating_a,
     pole_config,
     section,
-    notes
+    notes,
+    short_code
 )
 SELECT DISTINCT ON (r.project_id, b.code)
     r.project_id,
@@ -80,7 +87,8 @@ SELECT DISTINCT ON (r.project_id, b.code)
     b.breaker_rating_a,
     b.pole_config,
     b.section,
-    b.notes
+    b.notes,
+    b.short_code
 FROM cable_schedule.boards  b
 JOIN cable_schedule.revisions r ON r.id = b.revision_id
 ORDER BY r.project_id, b.code, r.created_at DESC;

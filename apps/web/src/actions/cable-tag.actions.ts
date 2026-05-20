@@ -36,8 +36,8 @@ interface CableJoin {
     from_node_id: string | null
     to_node_id: string | null
     source?: { code: string } | null
-    from_node?: { code: string } | null
-    to_node?: { code: string } | null
+    from_node?: { code: string; short_code: string | null } | null
+    to_node?: { code: string; short_code: string | null } | null
   }
 }
 
@@ -45,11 +45,12 @@ function cableTagText(c: CableJoin): string {
   if (c.tag_override) return c.tag_override
   const from =
     c.supply.source?.code
-    ?? c.supply.from_node?.code
+    ?? (c.supply.from_node ? (c.supply.from_node.short_code ?? c.supply.from_node.code) : null)
     ?? '?'
   const to =
-    c.supply.to_node?.code
-    ?? '?'
+    c.supply.to_node
+      ? (c.supply.to_node.short_code ?? c.supply.to_node.code)
+      : '?'
   return `${from}-${to}-${c.size_mm2}-${c.cable_no}`
 }
 
@@ -103,14 +104,14 @@ export async function generateTagsAction(
       rawList.flatMap((c) => [c.supply.from_node_id, c.supply.to_node_id].filter((id): id is string => Boolean(id))),
     ),
   ]
-  const nodeById = new Map<string, { code: string }>()
+  const nodeById = new Map<string, { code: string; short_code: string | null }>()
   if (nodeIds.length > 0) {
     const { data: nodeRows } = await (supabase as any)
       .schema('structure')
       .from('nodes')
-      .select('id, code')
+      .select('id, code, short_code')
       .in('id', nodeIds)
-    for (const n of (nodeRows ?? []) as Array<{ id: string; code: string }>) {
+    for (const n of (nodeRows ?? []) as Array<{ id: string; code: string; short_code: string | null }>) {
       nodeById.set(n.id, n)
     }
   }
@@ -239,14 +240,14 @@ export async function regenerateTagTextAction(
       rawCables.flatMap((c) => [c.supply.from_node_id, c.supply.to_node_id].filter((id): id is string => Boolean(id))),
     ),
   ]
-  const regenNodeById = new Map<string, { code: string }>()
+  const regenNodeById = new Map<string, { code: string; short_code: string | null }>()
   if (regenNodeIds.length > 0) {
     const { data: nodeRows } = await (supabase as any)
       .schema('structure')
       .from('nodes')
-      .select('id, code')
+      .select('id, code, short_code')
       .in('id', regenNodeIds)
-    for (const n of (nodeRows ?? []) as Array<{ id: string; code: string }>) {
+    for (const n of (nodeRows ?? []) as Array<{ id: string; code: string; short_code: string | null }>) {
       regenNodeById.set(n.id, n)
     }
   }

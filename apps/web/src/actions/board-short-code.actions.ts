@@ -68,16 +68,18 @@ export async function updateBoardShortCodesAction(
   // different values per row, so we issue one UPDATE per row. For ~50
   // boards per project this is acceptable; if we ever cross 500 boards
   // per project, lift to a server-side function.)
+  // structure.nodes is project-scoped (not revision-scoped), so scope by
+  // project_id + id only.
   let updated = 0
   for (const u of normalised) {
     const { error } = await (supabase as any)
-      .schema('cable_schedule')
-      .from('boards')
+      .schema('structure')
+      .from('nodes')
       .update({ short_code: u.shortCode })
       .eq('id', u.boardId)
-      .eq('revision_id', revisionId)
+      .eq('project_id', projectId)
     if (error) {
-      return { ok: false, error: `Update failed for board ${u.boardId}: ${error.message}` }
+      return { ok: false, error: `Update failed for node ${u.boardId}: ${error.message}` }
     }
     updated += 1
   }
