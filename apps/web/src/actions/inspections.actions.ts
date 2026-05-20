@@ -109,12 +109,23 @@ export async function listProjectNodesAction(projectId: string) {
   const revisionId = await getCurrentRevisionId(supabase, projectId)
   if (!revisionId) return [] as Array<{ type: 'board' | 'source'; id: string; label: string }>
 
-  const [{ data: boards }, { data: sources }] = await Promise.all([
+  // Boards are now structure.nodes (migration 00077). Cross-schema PostgREST
+  // embeds are unreliable (PGRST200), so we read structure.nodes directly
+  // scoped by project_id. Sources remain in cable_schedule.
+  const { data: revRow } = await supabase
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('project_id')
+    .eq('id', revisionId)
+    .single()
+  const revProjectId = (revRow as { project_id: string } | null)?.project_id ?? ''
+
+  const [{ data: structureNodes }, { data: sources }] = await Promise.all([
     supabase
-      .schema('cable_schedule')
-      .from('boards')
-      .select('id, code')
-      .eq('revision_id', revisionId),
+      .schema('structure')
+      .from('nodes')
+      .select('id, code, name')
+      .eq('project_id', revProjectId),
     supabase
       .schema('cable_schedule')
       .from('sources')
@@ -122,26 +133,11 @@ export async function listProjectNodesAction(projectId: string) {
       .eq('revision_id', revisionId),
   ])
 
-  // boards.short_code lookup — Session 28 added the column with PostgREST
-  // 42703 tolerance pattern; try fully then fall back if the column is
-  // absent on this DB.
-  let shortCodeMap = new Map<string, string | null>()
-  const { data: shortRows, error: shortErr } = await supabase
-    .schema('cable_schedule')
-    .from('boards')
-    .select('id, short_code')
-    .eq('revision_id', revisionId)
-  if (!shortErr && shortRows) {
-    shortCodeMap = new Map(
-      (shortRows as Array<{ id: string; short_code: string | null }>).map((r) => [r.id, r.short_code]),
-    )
-  }
-
   const nodes: Array<{ type: 'board' | 'source'; id: string; label: string }> = [
-    ...((boards as Array<{ id: string; code: string }> | null) ?? []).map((b) => ({
+    ...((structureNodes as Array<{ id: string; code: string; name: string | null }> | null) ?? []).map((b) => ({
       type: 'board' as const,
       id: b.id,
-      label: shortCodeMap.get(b.id) ?? b.code,
+      label: b.code,
     })),
     ...((sources as Array<{ id: string; code: string }> | null) ?? []).map((s) => ({
       type: 'source' as const,

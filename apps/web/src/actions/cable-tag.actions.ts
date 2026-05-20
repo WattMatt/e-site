@@ -33,11 +33,11 @@ interface CableJoin {
   supply: {
     id: string
     from_source_id: string | null
-    from_board_id: string | null
-    to_board_id: string
+    from_node_id: string | null
+    to_node_id: string | null
     source?: { code: string } | null
-    from_board?: { code: string; short_code?: string | null } | null
-    to_board?: { code: string; short_code?: string | null } | null
+    from_node?: { code: string } | null
+    to_node?: { code: string } | null
   }
 }
 
@@ -45,12 +45,10 @@ function cableTagText(c: CableJoin): string {
   if (c.tag_override) return c.tag_override
   const from =
     c.supply.source?.code
-    ?? c.supply.from_board?.short_code
-    ?? c.supply.from_board?.code
+    ?? c.supply.from_node?.code
     ?? '?'
   const to =
-    c.supply.to_board?.short_code
-    ?? c.supply.to_board?.code
+    c.supply.to_node?.code
     ?? '?'
   return `${from}-${to}-${c.size_mm2}-${c.cable_no}`
 }
@@ -76,21 +74,56 @@ export async function generateTagsAction(
     .single()
   if (revErr || !rev) return { error: 'Revision not found' }
 
-  // Load all cables with supply + endpoint codes resolved
+  // Load all cables + their supply edge IDs. Cross-schema embeds don't work
+  // (PGRST200), so nodes are fetched separately and joined in JS below.
   const { data: cables, error: cabErr } = await (supabase as any)
     .schema('cable_schedule')
     .from('cables')
     .select(
       'id, cable_no, size_mm2, cores, conductor, insulation, armour, tag_override, ' +
       'supply:supplies!supply_id(' +
-        'id, from_source_id, from_board_id, to_board_id, ' +
-        'source:sources!from_source_id(code), ' +
-        'from_board:boards!from_board_id(code, short_code), ' +
-        'to_board:boards!to_board_id(code, short_code))',
+        'id, from_source_id, from_node_id, to_node_id, ' +
+        'source:sources!from_source_id(code))',
     )
     .eq('revision_id', revisionId)
   if (cabErr) return { error: cabErr.message }
-  const list = (cables ?? []) as unknown as CableJoin[]
+  const rawList = (cables ?? []) as unknown as Array<Omit<CableJoin, 'supply'> & {
+    supply: {
+      id: string
+      from_source_id: string | null
+      from_node_id: string | null
+      to_node_id: string | null
+      source?: { code: string } | null
+    }
+  }>
+
+  // Collect all referenced node IDs and fetch structure.nodes in one query.
+  const nodeIds = [
+    ...new Set(
+      rawList.flatMap((c) => [c.supply.from_node_id, c.supply.to_node_id].filter((id): id is string => Boolean(id))),
+    ),
+  ]
+  const nodeById = new Map<string, { code: string }>()
+  if (nodeIds.length > 0) {
+    const { data: nodeRows } = await (supabase as any)
+      .schema('structure')
+      .from('nodes')
+      .select('id, code')
+      .in('id', nodeIds)
+    for (const n of (nodeRows ?? []) as Array<{ id: string; code: string }>) {
+      nodeById.set(n.id, n)
+    }
+  }
+
+  // Attach node references so cableTagText() can resolve codes.
+  const list: CableJoin[] = rawList.map((c) => ({
+    ...c,
+    supply: {
+      ...c.supply,
+      from_node: c.supply.from_node_id ? (nodeById.get(c.supply.from_node_id) ?? null) : null,
+      to_node: c.supply.to_node_id ? (nodeById.get(c.supply.to_node_id) ?? null) : null,
+    },
+  }))
 
   // Load existing tags for this revision's cables to skip duplicates
   const cableIds = list.map((c) => c.id)
@@ -170,8 +203,8 @@ export async function regenerateTagTextAction(
     return { ok: false, error: 'Tag regeneration only allowed on DRAFT revisions' }
   }
 
-  // Fetch all cables + tags on the revision, with board codes + short_codes.
-  // Loader shape matches CableJoin so we can reuse cableTagText().
+  // Fetch all cables + tags. Cross-schema embeds don't work (PGRST200), so
+  // nodes are fetched separately and joined in JS — mirrors generateTagsAction.
   const [cablesRes, tagsRes] = await Promise.all([
     (supabase as any)
       .schema('cable_schedule')
@@ -179,10 +212,8 @@ export async function regenerateTagTextAction(
       .select(
         'id, cable_no, size_mm2, cores, conductor, insulation, armour, tag_override, ' +
         'supply:supplies!supply_id(' +
-          'id, from_source_id, from_board_id, to_board_id, ' +
-          'source:sources!from_source_id(code), ' +
-          'from_board:boards!from_board_id(code, short_code), ' +
-          'to_board:boards!to_board_id(code, short_code))',
+          'id, from_source_id, from_node_id, to_node_id, ' +
+          'source:sources!from_source_id(code))',
       )
       .eq('revision_id', revisionId),
     (supabase as any)
@@ -191,7 +222,44 @@ export async function regenerateTagTextAction(
       .select('id, cable_id, end_position'),
   ])
 
-  const cables = (cablesRes.data ?? []) as unknown as CableJoin[]
+  type RawCable = Omit<CableJoin, 'supply'> & {
+    supply: {
+      id: string
+      from_source_id: string | null
+      from_node_id: string | null
+      to_node_id: string | null
+      source?: { code: string } | null
+    }
+  }
+  const rawCables = (cablesRes.data ?? []) as unknown as RawCable[]
+
+  // Fetch node codes for all referenced node IDs.
+  const regenNodeIds = [
+    ...new Set(
+      rawCables.flatMap((c) => [c.supply.from_node_id, c.supply.to_node_id].filter((id): id is string => Boolean(id))),
+    ),
+  ]
+  const regenNodeById = new Map<string, { code: string }>()
+  if (regenNodeIds.length > 0) {
+    const { data: nodeRows } = await (supabase as any)
+      .schema('structure')
+      .from('nodes')
+      .select('id, code')
+      .in('id', regenNodeIds)
+    for (const n of (nodeRows ?? []) as Array<{ id: string; code: string }>) {
+      regenNodeById.set(n.id, n)
+    }
+  }
+
+  const cables: CableJoin[] = rawCables.map((c) => ({
+    ...c,
+    supply: {
+      ...c.supply,
+      from_node: c.supply.from_node_id ? (regenNodeById.get(c.supply.from_node_id) ?? null) : null,
+      to_node: c.supply.to_node_id ? (regenNodeById.get(c.supply.to_node_id) ?? null) : null,
+    },
+  }))
+
   const tags = (tagsRes.data ?? []) as Array<{
     id: string
     cable_id: string
