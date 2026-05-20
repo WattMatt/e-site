@@ -13,3 +13,5 @@ export type {
   ImportDecommissioned,
   ImportDiffEntry,
 } from './import-preview';
+export { suggestEquipmentCode, EQUIPMENT_KINDS } from './suggest-equipment-code';
+export type { EquipmentKind } from './suggest-equipment-code';
