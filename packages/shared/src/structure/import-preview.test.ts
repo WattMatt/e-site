@@ -133,4 +133,39 @@ describe('diffTenantSchedule', () => {
     const preview = diffTenantSchedule(rows, [], existing);
     expect(preview.decommissioned_entries).toHaveLength(0);
   });
+
+  it('last-one-wins when two existing nodes share the same shop_number (Map.set behaviour)', () => {
+    // Data anomaly: two tenant_db rows in the DB with the same shop_number.
+    // existingByShopNumber is built with Map.set, so the second node replaces
+    // the first.  The first node silently drops out of the diff.
+    // This test documents the CURRENT behaviour so it is not a silent surprise.
+    const nodeA = makeNode({ shop_number: 'SHOP 9', id: 'node-A', shop_name: 'First', shop_area_m2: 100 });
+    const nodeB = makeNode({ shop_number: 'SHOP 9', id: 'node-B', shop_name: 'Second', shop_area_m2: 200 });
+    const rows: TenantImportRow[] = [makeRow('SHOP 9', 'Second', 200)];
+
+    const preview = diffTenantSchedule(rows, [], [nodeA, nodeB]);
+
+    // nodeB wins (last set), incoming matches nodeB exactly → no field changes
+    expect(preview.updated_entries).toHaveLength(1);
+    expect(preview.updated_entries[0].existing.id).toBe('node-B');
+    expect(preview.updated_entries[0].changes).toEqual({});
+    // nodeA is not reachable from the map, so it does NOT appear as decommissioned
+    expect(preview.decommissioned_entries).toHaveLength(0);
+    expect(preview.new_entries).toHaveLength(0);
+  });
+
+  it('detects shop_area_m2 change from null to a value, but not 0 vs 0', () => {
+    // null → number: change detected
+    const rowWithArea = makeRow('SHOP 10', 'Edgars', 0);
+    const nodeNull = makeNode({ shop_number: 'SHOP 10', shop_area_m2: null });
+    const previewNull = diffTenantSchedule([rowWithArea], [], [nodeNull]);
+    expect(previewNull.updated_entries).toHaveLength(1);
+    expect(previewNull.updated_entries[0].changes.shop_area_m2).toEqual({ from: null, to: 0 });
+
+    // 0 → 0: no change
+    const nodeZero = makeNode({ shop_number: 'SHOP 10', shop_area_m2: 0 });
+    const previewZero = diffTenantSchedule([rowWithArea], [], [nodeZero]);
+    expect(previewZero.updated_entries).toHaveLength(1);
+    expect(previewZero.updated_entries[0].changes.shop_area_m2).toBeUndefined();
+  });
 });

@@ -9,6 +9,7 @@
 
 import type { Node } from './types';
 import type { TenantImportRow, TenantImportError } from './tenant-import-parser';
+import { deriveDbCode } from './derive-db-code';
 
 // ---------------------------------------------------------------------------
 // Per-row diff entries
@@ -76,8 +77,6 @@ export interface ImportPreview {
 // ---------------------------------------------------------------------------
 // Pure diff function — extract here so the route + commit step + tests can share
 // ---------------------------------------------------------------------------
-
-import { deriveDbCode } from './derive-db-code';
 
 /**
  * Compute an {@link ImportPreview} from parsed rows + the current DB state.

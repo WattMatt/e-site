@@ -77,11 +77,15 @@ export async function POST(req: Request): Promise<NextResponse<ImportPreview | {
   // ------------------------------------------------------------------
   const buffer = Buffer.from(await file.arrayBuffer());
   let parseResult: Awaited<ReturnType<typeof parseTenantSchedule>>;
+  // Normal parse failures (bad rows, wrong columns, non-xlsx content) are NOT
+  // thrown — parseTenantSchedule returns them as a normal result with
+  // parse_errors populated (HTTP 200).  This catch only fires on an unexpected
+  // crash inside the parser (e.g. out-of-memory, unhandled workbook edge case).
   try {
     parseResult = await parseTenantSchedule(buffer);
   } catch (e: any) {
     return NextResponse.json(
-      { error: `Parse failed: ${e?.message ?? 'unknown'}` },
+      { error: `Unexpected parser error: ${e?.message ?? 'unknown'}` },
       { status: 422 },
     );
   }
