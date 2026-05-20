@@ -53,7 +53,9 @@ async function logDeletion(
   args: {
     revisionId: string
     organisationId: string
-    entityType: 'source' | 'board' | 'supply' | 'cable'
+    // 'node' covers the equipment kinds that used to be cable_schedule.boards
+    // (and the RMU/mini-sub source types) — now structure.nodes rows.
+    entityType: 'source' | 'node' | 'supply' | 'cable'
     entityId: string
     label: string
     userId: string | null
@@ -75,7 +77,54 @@ async function logDeletion(
   }
 }
 
+/**
+ * Resolve the revision context for a structure.nodes write (delete / rename).
+ *
+ * Boards used to be revision-scoped, so their writes naturally had a revision
+ * for the DRAFT gate + change_log. Nodes are project-scoped — they belong to
+ * no single revision. We recover a revision by inspecting the supplies that
+ * reference the node:
+ *   - if a DRAFT revision references it  → return that revision (gate + audit there)
+ *   - if ONLY ISSUED revisions reference it → block (those designs are frozen)
+ *   - if no supply references it at all  → allow, with revisionId = null
+ *     (the node isn't wired into any cabling design — nothing to lock or audit)
+ *
+ * When several DRAFT revisions reference the node, the first is used; the
+ * change_log entry lands on that revision. Role gating still applies — it's
+ * enforced by the caller via assertDraft / requireRole on the resolved id, or
+ * for the no-revision case the structure.nodes RLS policy is the gate.
+ */
+async function resolveNodeRevisionContext(
+  supabase: any,
+  nodeId: string,
+): Promise<{ revisionId: string | null } | { error: string }> {
+  const { data: supplies } = await supabase
+    .schema('cable_schedule')
+    .from('supplies')
+    .select('revision_id, revision:revisions!revision_id(status)')
+    .or(`from_node_id.eq.${nodeId},to_node_id.eq.${nodeId}`)
+
+  const rows = (supplies ?? []) as Array<{
+    revision_id: string
+    revision: { status?: string } | null
+  }>
+  if (rows.length === 0) return { revisionId: null }
+
+  const draft = rows.find((r) => r.revision?.status === 'DRAFT')
+  if (draft) return { revisionId: draft.revision_id }
+
+  return { error: 'This board is used by an issued revision — start a new revision to change it.' }
+}
+
 // ─── sources ─────────────────────────────────────────────────────────
+//
+// Unified-node model (migration 00077): RMU / mini-sub source types are now
+// `structure.nodes` rows — only `UTILITY` / `PV` / `STANDBY` stay in
+// `cable_schedule.sources`. addSourceAction splits on `type`:
+//   COUNCIL_RMU → structure.nodes (kind='rmu')
+//   UTILITY / PV / STANDBY → cable_schedule.sources (unchanged)
+// addSourceAction returns { id, isNode } so callers can re-point the new id
+// at the supply's from_node_id vs from_source_id correctly.
 
 const sourceSchema = z.object({
   revisionId: uuid,
@@ -88,12 +137,35 @@ const sourceSchema = z.object({
 
 export async function addSourceAction(
   input: z.infer<typeof sourceSchema>,
-): Promise<{ id?: string; error?: string }> {
+): Promise<{ id?: string; isNode?: boolean; error?: string }> {
   const parsed = sourceSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
   const supabase = await createClient()
   const guard = await assertDraft(supabase, parsed.data.revisionId)
   if ('error' in guard) return { error: guard.error }
+
+  // COUNCIL_RMU is equipment in the unified-node model — it lives in
+  // structure.nodes (project-scoped), not cable_schedule.sources.
+  if (parsed.data.type === 'COUNCIL_RMU') {
+    const { data, error } = await (supabase as any)
+      .schema('structure')
+      .from('nodes')
+      .insert({
+        project_id: guard.projectId,
+        organisation_id: guard.orgId,
+        kind: 'rmu',
+        code: parsed.data.code,
+        name: parsed.data.code,
+        rating_kva: parsed.data.ratingKva ?? null,
+        voltage_v: parsed.data.voltageV ?? null,
+        notes: parsed.data.notes ?? null,
+      })
+      .select('id')
+      .single()
+    if (error) return { error: error.message }
+    revalidatePath(`/projects/${guard.projectId}/cables/${parsed.data.revisionId}`)
+    return { id: (data as { id: string }).id, isNode: true }
+  }
 
   const { data, error } = await (supabase as any)
     .schema('cable_schedule')
@@ -111,7 +183,7 @@ export async function addSourceAction(
     .single()
   if (error) return { error: error.message }
   revalidatePath(`/projects/${guard.projectId}/cables/${parsed.data.revisionId}`)
-  return { id: (data as { id: string }).id }
+  return { id: (data as { id: string }).id, isNode: false }
 }
 
 export async function deleteSourceAction(id: string): Promise<{ ok?: true; error?: string }> {
@@ -148,17 +220,35 @@ export async function deleteSourceAction(id: string): Promise<{ ok?: true; error
   return { ok: true }
 }
 
-// ─── boards ──────────────────────────────────────────────────────────
+// ─── boards (now structure.nodes) ────────────────────────────────────
+//
+// Unified-node model (migrations 00074 / 00077): cable_schedule.boards is
+// replaced by structure.nodes. A "board" created from the cable schedule is
+// an equipment node — the cable schedule never creates `tenant_db` nodes
+// (those come only from the Tenant Schedule's Excel import, design §6).
+//
+// Nodes are PROJECT-scoped, not revision-scoped: addBoardAction derives
+// project_id from the revision (via assertDraft) and writes that, not a
+// revision_id. Delete- and rename-board now target structure.nodes.
+//
+// `parent_board_id` is gone — the supply graph is the sole hierarchy
+// (design §9). The legacy board `kind` enum maps onto the node-kind
+// taxonomy below; absent kind defaults to `main_board`.
+
+const BOARD_KIND_TO_NODE_KIND = {
+  CONSUMER_RMU: 'rmu',
+  TRANSFORMER: 'mini_sub',
+  MAIN_BOARD: 'main_board',
+  SUB_BOARD: 'common_area_board',
+} as const
 
 const boardSchema = z.object({
   revisionId: uuid,
   code: z.string().trim().min(1).max(80),
   kind: z.enum(['CONSUMER_RMU','TRANSFORMER','MAIN_BOARD','SUB_BOARD']).optional().nullable(),
-  tenantName: z.string().trim().max(200).optional().nullable(),
   breakerRatingA: z.number().positive().optional().nullable(),
   poleConfig: z.enum(['SP','TP']).optional().nullable(),
   section: z.enum(['NORMAL','EMERGENCY','MIXED']).optional().nullable(),
-  parentBoardId: uuid.optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
 })
 
@@ -171,19 +261,24 @@ export async function addBoardAction(
   const guard = await assertDraft(supabase, parsed.data.revisionId)
   if ('error' in guard) return { error: guard.error }
 
+  // Map the legacy board kind onto the node-kind taxonomy. Equipment nodes
+  // only — the cable schedule never creates tenant_db nodes (design §6).
+  const nodeKind = parsed.data.kind
+    ? BOARD_KIND_TO_NODE_KIND[parsed.data.kind]
+    : 'main_board'
+
   const { data, error } = await (supabase as any)
-    .schema('cable_schedule')
-    .from('boards')
+    .schema('structure')
+    .from('nodes')
     .insert({
-      revision_id: parsed.data.revisionId,
+      project_id: guard.projectId,
       organisation_id: guard.orgId,
+      kind: nodeKind,
       code: parsed.data.code,
-      kind: parsed.data.kind ?? null,
-      tenant_name: parsed.data.tenantName ?? null,
+      name: parsed.data.code,
       breaker_rating_a: parsed.data.breakerRatingA ?? null,
       pole_config: parsed.data.poleConfig ?? null,
       section: parsed.data.section ?? null,
-      parent_board_id: parsed.data.parentBoardId ?? null,
       notes: parsed.data.notes ?? null,
     })
     .select('id')
@@ -193,36 +288,49 @@ export async function addBoardAction(
   return { id: (data as { id: string }).id }
 }
 
+// Deleting a board-node needs the revision context (DRAFT gate + change_log)
+// that nodes — being project-scoped — no longer carry. We resolve it from the
+// supplies that reference the node: a DRAFT supply touching the node tells us
+// which revision the delete is happening against. A node with no supplies in
+// any DRAFT revision can be deleted freely (no design to lock).
 export async function deleteBoardAction(id: string): Promise<{ ok?: true; error?: string }> {
   if (!uuid.safeParse(id).success) return { error: 'Invalid id' }
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const { data: b } = await (supabase as any)
-    .schema('cable_schedule')
-    .from('boards')
-    .select('revision_id, organisation_id, code')
+
+  const { data: n } = await (supabase as any)
+    .schema('structure')
+    .from('nodes')
+    .select('id, project_id, organisation_id, code')
     .eq('id', id)
     .single()
-  const board = b as { revision_id?: string; organisation_id?: string; code?: string } | null
-  const revId = board?.revision_id
-  if (!revId) return { error: 'Board not found' }
-  const guard = await assertDraft(supabase, revId)
-  if ('error' in guard) return { error: guard.error }
+  const node = n as { id?: string; project_id?: string; organisation_id?: string; code?: string } | null
+  if (!node?.id) return { error: 'Board not found' }
+
+  // Find a DRAFT revision that references this node so the delete can be
+  // DRAFT-gated + audited. ISSUED revisions are immutable; if the node is
+  // only referenced by ISSUED revisions, block the delete.
+  const ctx = await resolveNodeRevisionContext(supabase, node.id)
+  if ('error' in ctx) return { error: ctx.error }
+
   const { error } = await (supabase as any)
-    .schema('cable_schedule')
-    .from('boards')
+    .schema('structure')
+    .from('nodes')
     .delete()
     .eq('id', id)
   if (error) return { error: error.message }
-  await logDeletion(supabase, {
-    revisionId: revId,
-    organisationId: board!.organisation_id!,
-    entityType: 'board',
-    entityId: id,
-    label: `Board "${board!.code ?? '?'}"`,
-    userId: user?.id ?? null,
-  })
-  revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
+
+  if (ctx.revisionId) {
+    await logDeletion(supabase, {
+      revisionId: ctx.revisionId,
+      organisationId: node.organisation_id!,
+      entityType: 'node',
+      entityId: id,
+      label: `Board "${node.code ?? '?'}"`,
+      userId: user?.id ?? null,
+    })
+  }
+  revalidatePath(`/projects/${node.project_id}/cables`, 'layout')
   return { ok: true }
 }
 
@@ -340,8 +448,8 @@ export async function updateSupplyAction(
 const findOrCreateSupplySchema = z.object({
   revisionId: uuid,
   fromSourceId: uuid.nullable().optional(),
-  fromBoardId: uuid.nullable().optional(),
-  toBoardId: uuid,
+  fromNodeId: uuid.nullable().optional(),
+  toNodeId: uuid,
   voltageV: z.number().positive(),
   designLoadA: z.number().positive(),
   section: z.enum(['NORMAL', 'EMERGENCY']).nullable().optional(),
@@ -366,8 +474,8 @@ export async function findOrCreateSupplyAction(
       revision_id: parsed.data.revisionId,
       organisation_id: guard.orgId,
       from_source_id: parsed.data.fromSourceId ?? null,
-      from_board_id: parsed.data.fromBoardId ?? null,
-      to_board_id: parsed.data.toBoardId,
+      from_node_id: parsed.data.fromNodeId ?? null,
+      to_node_id: parsed.data.toNodeId,
       voltage_v: parsed.data.voltageV,
       design_load_a: parsed.data.designLoadA,
       section: parsed.data.section ?? null,
@@ -380,10 +488,10 @@ export async function findOrCreateSupplyAction(
   // that the 00055 unique indexes guarantee at most one match.
   let q = (supabase as any).schema('cable_schedule').from('supplies')
     .select('id').eq('revision_id', parsed.data.revisionId)
-    .eq('to_board_id', parsed.data.toBoardId)
+    .eq('to_node_id', parsed.data.toNodeId)
   q = parsed.data.fromSourceId
     ? q.eq('from_source_id', parsed.data.fromSourceId)
-    : q.eq('from_board_id', parsed.data.fromBoardId)
+    : q.eq('from_node_id', parsed.data.fromNodeId)
   const { data: existing, error: findErr } = await q.maybeSingle()
   if (findErr || !existing) {
     return { error: `Could not look up existing supply: ${findErr?.message ?? 'not found'}` }
@@ -396,8 +504,8 @@ export async function findOrCreateSupplyAction(
 const addParallelCableSetSchema = z.object({
   revisionId: uuid,
   fromSourceId: uuid.nullable().optional(),
-  fromBoardId: uuid.nullable().optional(),
-  toBoardId: uuid,
+  fromNodeId: uuid.nullable().optional(),
+  toNodeId: uuid,
   voltageV: z.number().positive(),
   designLoadA: z.number().positive(),
   section: z.enum(['NORMAL', 'EMERGENCY']).nullable().optional(),
@@ -431,8 +539,8 @@ export async function addParallelCableSetAction(
   const supplyResult = await findOrCreateSupplyAction({
     revisionId: parsed.data.revisionId,
     fromSourceId: parsed.data.fromSourceId ?? null,
-    fromBoardId: parsed.data.fromBoardId ?? null,
-    toBoardId: parsed.data.toBoardId,
+    fromNodeId: parsed.data.fromNodeId ?? null,
+    toNodeId: parsed.data.toNodeId,
     voltageV: parsed.data.voltageV,
     designLoadA: parsed.data.designLoadA,
     section: parsed.data.section ?? null,
@@ -529,15 +637,15 @@ export async function addParallelCableSetAction(
 // edit-strand / edit-run). Creates one supply + its first cable strand in a
 // single call. Subsequent strands go through add-strand.
 //
-// Exactly one of fromSourceId / fromBoardId must be set (the supply schema
+// Exactly one of fromSourceId / fromNodeId must be set (the supply schema
 // enforces this with a CHECK constraint, but we surface a friendlier error
 // here). DRAFT-only + role gating live inside addParallelCableSetAction.
 
 const addRunSchema = z.object({
   revisionId: uuid,
   fromSourceId: uuid.nullable().optional(),
-  fromBoardId: uuid.nullable().optional(),
-  toBoardId: uuid,
+  fromNodeId: uuid.nullable().optional(),
+  toNodeId: uuid,
   voltageV: z.number().positive(),
   designLoadA: z.number().positive(),
   section: z.enum(['NORMAL', 'EMERGENCY']).nullable().optional(),
@@ -566,16 +674,16 @@ export async function addRunAction(
   // FROM exactly-one guard (mirrors the supplies table CHECK constraint with a
   // friendlier message than the DB error would produce).
   const hasSource = !!d.fromSourceId
-  const hasBoard = !!d.fromBoardId
-  if (hasSource === hasBoard) {
+  const hasNode = !!d.fromNodeId
+  if (hasSource === hasNode) {
     return { error: 'FROM must be exactly one source or one board.' }
   }
 
   return addParallelCableSetAction({
     revisionId: d.revisionId,
     fromSourceId: d.fromSourceId ?? null,
-    fromBoardId: d.fromBoardId ?? null,
-    toBoardId: d.toBoardId,
+    fromNodeId: d.fromNodeId ?? null,
+    toNodeId: d.toNodeId,
     voltageV: d.voltageV,
     designLoadA: d.designLoadA,
     section: d.section ?? null,
@@ -1109,8 +1217,8 @@ export async function updateCableAction(
 const repointSchema = z.object({
   supplyId: uuid,
   fromSourceId: uuid.nullable().optional(),
-  fromBoardId: uuid.nullable().optional(),
-  toBoardId: uuid.optional(),
+  fromNodeId: uuid.nullable().optional(),
+  toNodeId: uuid.optional(),
 })
 
 export async function repointSupplyAction(
@@ -1127,7 +1235,7 @@ export async function repointSupplyAction(
     .schema('cable_schedule')
     .from('supplies')
     .select(
-      'id, revision_id, organisation_id, from_source_id, from_board_id, to_board_id, ' +
+      'id, revision_id, organisation_id, from_source_id, from_node_id, to_node_id, ' +
       'revision:revisions!revision_id(status, project_id)',
     )
     .eq('id', parsed.data.supplyId)
@@ -1149,19 +1257,19 @@ export async function repointSupplyAction(
 
   // Effective new origin/destination
   const nextFromSource = parsed.data.fromSourceId !== undefined ? parsed.data.fromSourceId : s.from_source_id
-  const nextFromBoard = parsed.data.fromBoardId !== undefined ? parsed.data.fromBoardId : s.from_board_id
-  const nextTo = parsed.data.toBoardId ?? s.to_board_id
+  const nextFromNode = parsed.data.fromNodeId !== undefined ? parsed.data.fromNodeId : s.from_node_id
+  const nextTo = parsed.data.toNodeId ?? s.to_node_id
 
   // XOR: exactly one origin
-  if ((nextFromSource ? 1 : 0) + (nextFromBoard ? 1 : 0) !== 1) {
+  if ((nextFromSource ? 1 : 0) + (nextFromNode ? 1 : 0) !== 1) {
     return { error: 'Pick exactly one origin: a source OR a board.' }
   }
   if (!nextTo) return { error: 'A destination board is required.' }
 
   const patch = {
     from_source_id: nextFromSource ?? null,
-    from_board_id: nextFromBoard ?? null,
-    to_board_id: nextTo,
+    from_node_id: nextFromNode ?? null,
+    to_node_id: nextTo,
   }
   const { error } = await (supabase as any)
     .schema('cable_schedule').from('supplies')
@@ -1176,11 +1284,11 @@ export async function repointSupplyAction(
   if ((s.from_source_id ?? null) !== patch.from_source_id) {
     events.push({ ...baseEvent, field_name: 'from_source_id', old_value: s.from_source_id, new_value: patch.from_source_id })
   }
-  if ((s.from_board_id ?? null) !== patch.from_board_id) {
-    events.push({ ...baseEvent, field_name: 'from_board_id', old_value: s.from_board_id, new_value: patch.from_board_id })
+  if ((s.from_node_id ?? null) !== patch.from_node_id) {
+    events.push({ ...baseEvent, field_name: 'from_node_id', old_value: s.from_node_id, new_value: patch.from_node_id })
   }
-  if (s.to_board_id !== patch.to_board_id) {
-    events.push({ ...baseEvent, field_name: 'to_board_id', old_value: s.to_board_id, new_value: patch.to_board_id })
+  if (s.to_node_id !== patch.to_node_id) {
+    events.push({ ...baseEvent, field_name: 'to_node_id', old_value: s.to_node_id, new_value: patch.to_node_id })
   }
   if (events.length > 0) {
     await (supabase as any).schema('cable_schedule').from('change_log').insert(events)
@@ -1217,27 +1325,35 @@ export async function renameSourceAction(id: string, code: string): Promise<{ ok
   return { ok: true }
 }
 
+// Boards are structure.nodes now. Rename writes the node's `code`; the
+// audit entry needs a revision (change_log is revision-scoped), recovered
+// from the supplies that reference the node — see resolveNodeRevisionContext.
 export async function renameBoardAction(id: string, code: string): Promise<{ ok?: true; error?: string }> {
   const parsed = renameSchema.safeParse({ id, code })
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
   const supabase = await createClient()
-  const { data: brd } = await (supabase as any)
-    .schema('cable_schedule').from('boards')
-    .select('revision_id, organisation_id, code').eq('id', id).single()
-  const b = brd as { revision_id?: string; organisation_id?: string; code?: string } | null
-  if (!b?.revision_id) return { error: 'Board not found' }
-  const guard = await assertDraft(supabase, b.revision_id)
-  if ('error' in guard) return { error: guard.error }
+  const { data: nd } = await (supabase as any)
+    .schema('structure').from('nodes')
+    .select('id, project_id, organisation_id, code').eq('id', id).single()
+  const node = nd as { id?: string; project_id?: string; organisation_id?: string; code?: string } | null
+  if (!node?.id) return { error: 'Board not found' }
+
+  const ctx = await resolveNodeRevisionContext(supabase, node.id)
+  if ('error' in ctx) return { error: ctx.error }
+
   const { data: { user } } = await supabase.auth.getUser()
   const { error } = await (supabase as any)
-    .schema('cable_schedule').from('boards').update({ code: parsed.data.code }).eq('id', id)
+    .schema('structure').from('nodes').update({ code: parsed.data.code }).eq('id', id)
   if (error) return { error: error.message }
-  await (supabase as any).schema('cable_schedule').from('change_log').insert({
-    revision_id: b.revision_id, organisation_id: b.organisation_id,
-    entity_type: 'board', entity_id: id, field_name: 'code',
-    old_value: b.code, new_value: parsed.data.code, changed_by: user?.id ?? null,
-  })
-  revalidatePath(`/projects/${guard.projectId}/cables/${b.revision_id}`)
+
+  if (ctx.revisionId) {
+    await (supabase as any).schema('cable_schedule').from('change_log').insert({
+      revision_id: ctx.revisionId, organisation_id: node.organisation_id,
+      entity_type: 'node', entity_id: id, field_name: 'code',
+      old_value: node.code, new_value: parsed.data.code, changed_by: user?.id ?? null,
+    })
+  }
+  revalidatePath(`/projects/${node.project_id}/cables`, 'layout')
   return { ok: true }
 }
 
@@ -1246,8 +1362,8 @@ export async function renameBoardAction(id: string, code: string): Promise<{ ok?
 const previewParallelSchema = z.object({
   revisionId: uuid,
   fromSourceId: uuid.nullable().optional(),
-  fromBoardId: uuid.nullable().optional(),
-  toBoardId: uuid,
+  fromNodeId: uuid.nullable().optional(),
+  toNodeId: uuid,
   designLoadA: z.number().positive(),
   sizeMm2: z.number().positive(),
   cores: z.enum(['3', '3+E', '4']),
@@ -1325,10 +1441,10 @@ export async function previewParallelCableSet(
   // mode: does a supply already exist for this (from, to) pair, and does it have cables?
   let q = (supabase as any).schema('cable_schedule').from('supplies')
     .select('id').eq('revision_id', parsed.data.revisionId)
-    .eq('to_board_id', parsed.data.toBoardId)
+    .eq('to_node_id', parsed.data.toNodeId)
   q = parsed.data.fromSourceId
     ? q.eq('from_source_id', parsed.data.fromSourceId)
-    : q.eq('from_board_id', parsed.data.fromBoardId)
+    : q.eq('from_node_id', parsed.data.fromNodeId)
   const { data: existingSupply } = await q.maybeSingle()
   let mode: 'create-set' | 'add-single' = 'create-set'
   if (existingSupply) {
