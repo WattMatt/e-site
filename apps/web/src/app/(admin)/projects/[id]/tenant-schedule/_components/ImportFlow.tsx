@@ -129,12 +129,10 @@ export function ImportFlow({ projectId }: Props) {
   // ── Error state ──────────────────────────────────────────────────────────
   if (stage === 'error') {
     return (
-      <div style={{ border: '1px solid var(--c-red)', borderRadius: 8, background: 'var(--c-panel)' }}>
-        <CardBody>
-          <p style={{ color: 'var(--c-red)', fontWeight: 600, marginBottom: 8 }}>Import failed</p>
-          <p style={{ fontSize: 13, color: 'var(--c-text-mid)', marginBottom: 12 }}>{errorMsg}</p>
-          <Button variant="danger" onClick={reset}>Try again</Button>
-        </CardBody>
+      <div style={{ border: '1px solid var(--c-red)', borderRadius: 8, background: 'var(--c-panel)', padding: '14px 18px' }}>
+        <p style={{ color: 'var(--c-red)', fontWeight: 600, marginBottom: 8 }}>Import failed</p>
+        <p style={{ fontSize: 13, color: 'var(--c-text-mid)', marginBottom: 12 }}>{errorMsg}</p>
+        <Button variant="danger" onClick={reset}>Try again</Button>
       </div>
     )
   }
@@ -145,53 +143,51 @@ export function ImportFlow({ projectId }: Props) {
     const hasSkipped = commitResult.skipped_parse_errors > 0
     const hasWarnings = hasWriteErrors || hasSkipped
     return (
-      <div style={{ border: hasWarnings ? '1px solid var(--c-amber-mid)' : '1px solid var(--c-green)', borderRadius: 8, background: 'var(--c-panel)' }}>
-        <CardBody>
-          <p style={{ fontWeight: 600, marginBottom: 8, color: hasWarnings ? 'var(--c-amber)' : 'var(--c-text)' }}>
-            {hasWarnings ? 'Import completed with warnings' : 'Import complete'}
-          </p>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: hasWarnings ? 12 : 0 }}>
-            {commitResult.created > 0 && (
-              <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
-                <strong style={{ color: 'var(--c-text)' }}>{commitResult.created}</strong> added
-              </span>
-            )}
-            {commitResult.updated > 0 && (
-              <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
-                <strong style={{ color: 'var(--c-text)' }}>{commitResult.updated}</strong> updated
-              </span>
-            )}
-            {commitResult.decommissioned > 0 && (
-              <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
-                <strong style={{ color: 'var(--c-text)' }}>{commitResult.decommissioned}</strong> decommissioned
-              </span>
-            )}
-          </div>
-          {hasSkipped && (
-            <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-amber-dim)', borderRadius: 4 }}>
-              <p style={{ fontSize: 12, color: 'var(--c-amber)' }}>
-                {commitResult.skipped_parse_errors} row{commitResult.skipped_parse_errors !== 1 ? 's' : ''} skipped — had parse errors, not committed.
-              </p>
-            </div>
+      <div style={{ border: hasWarnings ? '1px solid var(--c-amber-mid)' : '1px solid var(--c-green)', borderRadius: 8, background: 'var(--c-panel)', padding: '14px 18px' }}>
+        <p style={{ fontWeight: 600, marginBottom: 8, color: hasWarnings ? 'var(--c-amber)' : 'var(--c-text)' }}>
+          {hasWarnings ? 'Import completed with warnings' : 'Import complete'}
+        </p>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: hasWarnings ? 12 : 0 }}>
+          {commitResult.created > 0 && (
+            <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
+              <strong style={{ color: 'var(--c-text)' }}>{commitResult.created}</strong> added
+            </span>
           )}
-          {hasWriteErrors && (
-            <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-amber-dim)', borderRadius: 4 }}>
-              <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-amber)', marginBottom: 6 }}>
-                {commitResult.write_errors.length} write error{commitResult.write_errors.length !== 1 ? 's' : ''}
-              </p>
-              <ul style={{ margin: 0, paddingLeft: 16 }}>
-                {commitResult.write_errors.map((e, i) => (
-                  <li key={i} style={{ fontSize: 12, color: 'var(--c-text-mid)', marginBottom: 2 }}>{e}</li>
-                ))}
-              </ul>
-            </div>
+          {commitResult.updated > 0 && (
+            <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
+              <strong style={{ color: 'var(--c-text)' }}>{commitResult.updated}</strong> updated
+            </span>
           )}
-          <div style={{ marginTop: 12 }}>
-            <Button variant="secondary" onClick={reset}>
-              Import again
-            </Button>
+          {commitResult.decommissioned > 0 && (
+            <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
+              <strong style={{ color: 'var(--c-text)' }}>{commitResult.decommissioned}</strong> decommissioned
+            </span>
+          )}
+        </div>
+        {hasSkipped && (
+          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-amber-dim)', borderRadius: 4 }}>
+            <p style={{ fontSize: 12, color: 'var(--c-amber)' }}>
+              {commitResult.skipped_parse_errors} row{commitResult.skipped_parse_errors !== 1 ? 's' : ''} skipped — had parse errors, not committed.
+            </p>
           </div>
-        </CardBody>
+        )}
+        {hasWriteErrors && (
+          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-amber-dim)', borderRadius: 4 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-amber)', marginBottom: 6 }}>
+              {commitResult.write_errors.length} write error{commitResult.write_errors.length !== 1 ? 's' : ''}
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 16 }}>
+              {commitResult.write_errors.map((e, i) => (
+                <li key={i} style={{ fontSize: 12, color: 'var(--c-text-mid)', marginBottom: 2 }}>{e}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <Button variant="secondary" onClick={reset}>
+            Import again
+          </Button>
+        </div>
       </div>
     )
   }
