@@ -21,7 +21,8 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, deriveTenantNodeOrder } from '@esite/shared'
+import { projectService, deriveTenantNodeOrder, planTenantOrderReconcile } from '@esite/shared'
+import type { NodeOrderStatus } from '@esite/shared'
 
 // ---------------------------------------------------------------------------
 // Shared helpers — mirror the commit route's structureHeaders / structurePatch
@@ -152,8 +153,17 @@ const setScopeItemPartySchema = z.object({
 export type SetScopeItemPartyResult = { ok: true } | { error: string }
 
 /**
- * Upsert a tenant_scope_items row for (nodeId, scopeItemTypeId) with the given party.
- * Uses ON CONFLICT (node_id, scope_item_type_id) DO UPDATE to flip the party in-place.
+ * Upsert a tenant_scope_items row for (nodeId, scopeItemTypeId) with the given party,
+ * then reconcile the corresponding node_order (§3, §5).
+ *
+ * Node-order reconciliation uses a read-then-decide pattern rather than an unconditional
+ * merge-duplicates upsert. merge-duplicates overwrites EVERY payload column on conflict,
+ * so including `status` in the payload would regress an order already at 'ordered' or
+ * 'received' back to 'required'/'by_tenant', destroying procurement progress.
+ * Instead: read the existing order status → call planTenantOrderReconcile() → act on plan:
+ *   insert        → POST a new node_order row (on_conflict do-nothing as a race guard)
+ *   update_status → PATCH the existing row's status only
+ *   skip          → leave the order fully intact (ordered/received are preserved)
  */
 export async function setScopeItemPartyAction(
   projectId: string,
@@ -195,46 +205,72 @@ export async function setScopeItemPartyAction(
     if (!patch.ok) return { error: patch.error ?? 'Failed to update scope item' }
   }
 
-  // ── Derive / re-derive the corresponding node_order (§3 of design doc) ──
-  // Fetch the scope item type's label so node_orders.label is human-readable.
-  // Reads via .schema() are safe — the cross-schema service-role gotcha applies
-  // to writes only.
-  const { data: scopeType } = await (guard.supabase as any)
-    .schema('structure')
-    .from('scope_item_types')
-    .select('label')
-    .eq('id', scopeItemTypeId)
-    .maybeSingle()
+  // ── Reconcile the corresponding node_order (§3, §5) ──
+  // Read both the scope item type label AND the existing order status in parallel.
+  // Reads via .schema() are safe — the cross-schema service-role gotcha applies to writes only.
+  const [{ data: scopeType }, { data: existingOrder }] = await Promise.all([
+    (guard.supabase as any)
+      .schema('structure')
+      .from('scope_item_types')
+      .select('label')
+      .eq('id', scopeItemTypeId)
+      .maybeSingle(),
+    (guard.supabase as any)
+      .schema('structure')
+      .from('node_orders')
+      .select('status')
+      .eq('node_id', nodeId)
+      .eq('scope_item_type_id', scopeItemTypeId)
+      .maybeSingle(),
+  ])
 
   if (scopeType?.label) {
-    const orderPayload = deriveTenantNodeOrder(nodeId, projectId, guard.orgId, {
-      scopeItemTypeId,
-      label: scopeType.label as string,
-      party,
-    })
+    const existingStatus = (existingOrder as { status: NodeOrderStatus } | null)?.status ?? null
+    const plan = planTenantOrderReconcile(existingStatus, party)
 
-    // Upsert on partial unique index: (node_id, scope_item_type_id) WHERE scope_item_type_id IS NOT NULL.
-    // DO UPDATE SET status=EXCLUDED.status only — preserves ordered_at / received_at / notes
-    // if the engineer has already progressed the order.
-    const orderRes = await fetch(
-      `${supabaseUrl}/rest/v1/node_orders?on_conflict=node_id%2Cscope_item_type_id`,
-      {
-        method: 'POST',
-        headers: {
-          apikey: serviceKey,
-          Authorization: `Bearer ${serviceKey}`,
-          'Content-Type': 'application/json',
-          'Content-Profile': 'structure',
-          Prefer: 'resolution=merge-duplicates,return=minimal',
+    if (plan.action === 'insert') {
+      // No existing order — INSERT a new row.
+      // on_conflict=ignore-duplicates is a race guard only (the read above may
+      // lose a concurrent insert); the primary path is always INSERT.
+      const orderPayload = deriveTenantNodeOrder(nodeId, projectId, guard.orgId, {
+        scopeItemTypeId,
+        label: scopeType.label as string,
+        party,
+      })
+      const orderRes = await fetch(
+        `${supabaseUrl}/rest/v1/node_orders?on_conflict=node_id%2Cscope_item_type_id`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+            'Content-Type': 'application/json',
+            'Content-Profile': 'structure',
+            Prefer: 'resolution=ignore-duplicates,return=minimal',
+          },
+          body: JSON.stringify(orderPayload),
         },
-        body: JSON.stringify(orderPayload),
-      },
-    )
-    if (!orderRes.ok) {
-      const text = await orderRes.text()
-      // Derivation failure is reported but does NOT roll back the primary scope write.
-      return { error: `Scope item saved but node order derivation failed (HTTP ${orderRes.status}): ${text.slice(0, 400)}` }
+      )
+      if (!orderRes.ok) {
+        const text = await orderRes.text()
+        // Derivation failure is reported but does NOT roll back the primary scope write.
+        return { error: `Scope item saved but node order derivation failed (HTTP ${orderRes.status}): ${text.slice(0, 400)}` }
+      }
+    } else if (plan.action === 'update_status') {
+      // Existing order is at required/by_tenant — safe to flip status. PATCH only
+      // `status` and `label`; ordered_at, received_at, notes are left untouched.
+      const patchRes = await structurePatch(
+        supabaseUrl,
+        serviceKey,
+        'node_orders',
+        `node_id=eq.${nodeId}&scope_item_type_id=eq.${scopeItemTypeId}`,
+        { status: plan.status, label: scopeType.label as string },
+      )
+      if (!patchRes.ok) {
+        return { error: `Scope item saved but node order status update failed: ${patchRes.error}` }
+      }
     }
+    // plan.action === 'skip': order is at ordered/received — leave it fully intact.
   }
 
   revalidatePath(`/projects/${projectId}/tenant-schedule`)

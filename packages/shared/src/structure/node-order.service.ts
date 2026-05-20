@@ -8,18 +8,25 @@
  *   1. Tenant orders — one per scope item (§3).
  *      Scope party = landlord → status 'required'
  *      Scope party = tenant   → status 'by_tenant'
- *      Re-derivation on a scope flip: ONLY status is updated; ordered_at /
- *      received_at / notes are preserved (safe default — the design doc says
- *      "flips its order between required and by_tenant" but does not say to
- *      destroy existing procurement progress data).
+ *      Re-derivation on a scope flip (§5 — monotonic lifecycle):
+ *        - No existing order   → INSERT with derived status.
+ *        - Existing at required/by_tenant → UPDATE status to new derived value.
+ *        - Existing at ordered/received   → SKIP — procurement progress is preserved.
+ *      The caller MUST read the existing status first and call
+ *      planTenantOrderReconcile() to decide the correct action.
+ *      A plain merge-duplicates upsert MUST NOT be used for re-derivation because
+ *      it overwrites every payload column on conflict, including status — which
+ *      would regress an order already at 'ordered' or 'received' back to
+ *      'required'/'by_tenant', destroying procurement progress.
  *
  *   2. Equipment orders — one per equipment node, auto-created status 'required' (§4).
  *      scope_item_type_id = null; label = equipment code.
+ *      Equipment orders are always INSERTs on a brand-new node; the on_conflict
+ *      guard is purely defensive for retries. merge-duplicates is safe here
+ *      because it cannot clobber an existing order at ordered/received.
  *
  * These functions return plain objects (no DB calls). The caller owns the
- * upsert — use the partial unique indexes as ON CONFLICT targets:
- *   Tenant:    (node_id, scope_item_type_id) WHERE scope_item_type_id IS NOT NULL
- *   Equipment: (node_id)                     WHERE scope_item_type_id IS NULL
+ * persistence logic.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,13 +81,61 @@ export function deriveTenantOrderStatus(party: ScopeParty): 'required' | 'by_ten
   return party === 'landlord' ? 'required' : 'by_tenant';
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Scope-flip reconciliation (§5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Result of planTenantOrderReconcile — tells the caller what DB operation to run.
+ *
+ * - insert:        No existing order row; INSERT with `status`.
+ * - update_status: Existing row is at required/by_tenant; PATCH its `status` (and
+ *                  optionally refresh `label`). Dates, notes, etc. are untouched.
+ * - skip:          Existing row is at ordered/received — procurement progress must
+ *                  NOT be regressed. Leave the row completely unchanged.
+ */
+export type TenantOrderReconcilePlan =
+  | { action: 'insert'; status: 'required' | 'by_tenant' }
+  | { action: 'update_status'; status: 'required' | 'by_tenant' }
+  | { action: 'skip' };
+
+/**
+ * Decide what DB operation is needed when a scope item's party is set or flipped.
+ *
+ * This is the safe alternative to an unconditional merge-duplicates upsert.
+ * merge-duplicates overwrites EVERY payload column on conflict, so a status
+ * column included in the upsert body would unconditionally overwrite 'ordered'
+ * or 'received' with 'required'/'by_tenant' — destroying procurement progress.
+ *
+ * §5 defines a monotonic lifecycle: required → ordered → received.
+ * ordered and received are terminal states for the purpose of scope flips.
+ *
+ * @param existingStatus - The current `status` value from the DB, or null if no
+ *   node_order row yet exists for (node_id, scope_item_type_id).
+ * @param party - The new scope party being set.
+ */
+export function planTenantOrderReconcile(
+  existingStatus: NodeOrderStatus | null,
+  party: ScopeParty,
+): TenantOrderReconcilePlan {
+  const newStatus = deriveTenantOrderStatus(party);
+  if (existingStatus === null) {
+    return { action: 'insert', status: newStatus };
+  }
+  if (existingStatus === 'ordered' || existingStatus === 'received') {
+    return { action: 'skip' };
+  }
+  // existingStatus is 'required' or 'by_tenant'
+  return { action: 'update_status', status: newStatus };
+}
+
 /**
  * Derive a single tenant node-order row from one scope item.
  *
- * The returned object is the upsert payload. The caller should POST to
- * `node_orders?on_conflict=node_id,scope_item_type_id` with
- * `Prefer: resolution=merge-duplicates` and
- * `DO UPDATE SET status = EXCLUDED.status` (only status flips; dates preserved).
+ * The returned object is the INSERT payload. For re-derivation on a scope flip,
+ * the caller must first call planTenantOrderReconcile() to determine the correct
+ * DB action — a plain merge-duplicates upsert with this payload is NOT safe for
+ * re-derivation because it overwrites status unconditionally on conflict.
  */
 export function deriveTenantNodeOrder(
   nodeId: string,

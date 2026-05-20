@@ -9,6 +9,7 @@ import {
   deriveTenantNodeOrder,
   deriveTenantNodeOrders,
   deriveEquipmentNodeOrder,
+  planTenantOrderReconcile,
 } from './node-order.service';
 import type { TenantScopeItem } from './node-order.service';
 
@@ -143,6 +144,54 @@ describe('scope flip re-derivation', () => {
     const a = deriveTenantNodeOrder(NODE_ID, PROJECT_ID, ORG_ID, dbItem);
     const b = deriveTenantNodeOrder(NODE_ID, PROJECT_ID, ORG_ID, dbItem);
     expect(a).toEqual(b);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// planTenantOrderReconcile — §5 monotonic lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('planTenantOrderReconcile', () => {
+  // ── null (no existing order) → insert ─────────────────────────────────────
+
+  it('null existingStatus + landlord → insert with required', () => {
+    const plan = planTenantOrderReconcile(null, 'landlord');
+    expect(plan).toEqual({ action: 'insert', status: 'required' });
+  });
+
+  it('null existingStatus + tenant → insert with by_tenant', () => {
+    const plan = planTenantOrderReconcile(null, 'tenant');
+    expect(plan).toEqual({ action: 'insert', status: 'by_tenant' });
+  });
+
+  // ── required/by_tenant → update_status ────────────────────────────────────
+
+  it('existingStatus=required + tenant → update_status to by_tenant', () => {
+    const plan = planTenantOrderReconcile('required', 'tenant');
+    expect(plan).toEqual({ action: 'update_status', status: 'by_tenant' });
+  });
+
+  it('existingStatus=by_tenant + landlord → update_status to required', () => {
+    const plan = planTenantOrderReconcile('by_tenant', 'landlord');
+    expect(plan).toEqual({ action: 'update_status', status: 'required' });
+  });
+
+  it('existingStatus=required + landlord (same party) → update_status to required', () => {
+    // Idempotent re-derivation: same party, still flippable.
+    const plan = planTenantOrderReconcile('required', 'landlord');
+    expect(plan).toEqual({ action: 'update_status', status: 'required' });
+  });
+
+  // ── ordered/received → skip (procurement progress preserved) ──────────────
+
+  it('existingStatus=ordered → skip regardless of party', () => {
+    expect(planTenantOrderReconcile('ordered', 'landlord')).toEqual({ action: 'skip' });
+    expect(planTenantOrderReconcile('ordered', 'tenant')).toEqual({ action: 'skip' });
+  });
+
+  it('existingStatus=received → skip regardless of party', () => {
+    expect(planTenantOrderReconcile('received', 'landlord')).toEqual({ action: 'skip' });
+    expect(planTenantOrderReconcile('received', 'tenant')).toEqual({ action: 'skip' });
   });
 });
 

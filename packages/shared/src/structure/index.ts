@@ -20,10 +20,12 @@ export {
   deriveTenantNodeOrder,
   deriveTenantNodeOrders,
   deriveEquipmentNodeOrder,
+  planTenantOrderReconcile,
 } from './node-order.service';
 export type {
   ScopeParty,
   NodeOrderStatus,
   TenantScopeItem,
   DerivedNodeOrder,
+  TenantOrderReconcilePlan,
 } from './node-order.service';
