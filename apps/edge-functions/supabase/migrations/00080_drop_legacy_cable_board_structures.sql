@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 00079 — drop legacy cable-schedule board structures
+-- Migration 00080 — drop legacy cable-schedule board structures
 -- =============================================================================
 -- Background:
 --   Final migration of the structure re-point. Migrations 00077/00078 collapsed
@@ -40,7 +40,7 @@ BEGIN
 
     IF _dangling > 0 THEN
         RAISE EXCEPTION
-            '00079 aborted: % supply row(s) still reference an RMU/MINISUB '
+            '00080 aborted: % supply row(s) still reference an RMU/MINISUB '
             'source via from_source_id. Migration 00078 must null these first — '
             'deleting the sources now would ON DELETE CASCADE the supplies.',
             _dangling;
@@ -72,7 +72,7 @@ DROP TABLE cable_schedule.boards;
 
 DO $$
 BEGIN
-    RAISE NOTICE '00079 complete: legacy cable_schedule.boards dropped, '
+    RAISE NOTICE '00080 complete: legacy cable_schedule.boards dropped, '
                  'RMU/MINISUB sources removed, supplies origin XOR re-based '
                  'on structure.nodes.';
 END $$;
