@@ -605,13 +605,48 @@ export async function deleteInspectionAction(
       }
     }
 
-    const { error } = await supabase
-      .schema('inspections')
-      .from('inspections')
-      .delete()
-      .eq('id', inspectionId)
+    // Hard-delete via raw PostgREST with the service-role key. supabase-js's
+    // .schema('inspections').from('inspections').delete() runs under the
+    // caller's RLS context, and inspections.inspections has no DELETE policy —
+    // so the delete silently matches 0 rows and returns no error. Same fix
+    // pattern as the inspection upload routes (commit bd0b0dc). Owner-only and
+    // not-certified are already enforced above, so bypassing RLS is safe here.
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    if (!serviceKey || !supabaseUrl) {
+      return { ok: false, error: 'Server misconfigured: SUPABASE_SERVICE_ROLE_KEY missing' }
+    }
 
-    if (error) return { ok: false, error: error.message }
+    const delRes = await fetch(
+      `${supabaseUrl}/rest/v1/inspections?id=eq.${encodeURIComponent(inspectionId)}`,
+      {
+        method: 'DELETE',
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          'Content-Profile': 'inspections',
+          Prefer: 'return=representation',
+        },
+      },
+    )
+
+    if (!delRes.ok) {
+      const errText = await delRes.text()
+      return {
+        ok: false,
+        error: `Delete failed (HTTP ${delRes.status}): ${errText.slice(0, 300)}`,
+      }
+    }
+
+    // return=representation echoes the deleted rows — verify one was actually
+    // removed so the action can never again report a false success.
+    const deletedRows = (await delRes.json()) as Array<{ id: string }>
+    if (deletedRows.length === 0) {
+      return {
+        ok: false,
+        error: 'Delete removed no rows — the inspection may have already been deleted.',
+      }
+    }
 
     revalidatePath(`/projects/${projectId}/inspections`)
     return { ok: true }
