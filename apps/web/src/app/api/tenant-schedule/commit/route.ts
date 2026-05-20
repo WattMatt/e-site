@@ -29,8 +29,10 @@
  *   normal (the gotcha is writes-only).
  *
  * Auth: cookie session → verify user + project access before any write.
- * Idempotent: re-running the same file is safe. New rows already present are
- * no-ops (INSERT ... ON CONFLICT DO NOTHING for tenant_details).
+ * Idempotent: re-running the same file is safe. tenant_details rows are
+ * upserted with ON CONFLICT (node_id) DO NOTHING — existing rows are left
+ * untouched. Orphaned nodes (node exists, details row missing) are healed on
+ * every commit run regardless of whether the node is new or pre-existing.
  */
 
 import { NextResponse } from 'next/server';
@@ -91,6 +93,38 @@ async function structureInsert(
 }
 
 /**
+ * Upsert-ignore a tenant_details row for the given node_id.
+ * Uses ON CONFLICT (node_id) DO NOTHING so an existing row is left untouched.
+ * Throws on HTTP error.
+ */
+async function ensureTenantDetails(
+  supabaseUrl: string,
+  serviceKey: string,
+  nodeId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`,
+    {
+      method: 'POST',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        'Content-Profile': 'structure',
+        Prefer: 'resolution=ignore-duplicates,return=representation',
+      },
+      body: JSON.stringify({ node_id: nodeId }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `tenant_details upsert failed for node ${nodeId} (HTTP ${res.status}): ${text.slice(0, 400)}`,
+    );
+  }
+}
+
+/**
  * PATCH rows in a structure.* table via raw PostgREST.
  * `filterQuery` is appended to the URL (e.g. `id=eq.some-uuid`).
  * Returns the patched row(s).  Throws on HTTP error.
@@ -119,7 +153,8 @@ async function structurePatch(
 // ---------------------------------------------------------------------------
 
 export interface CommitResult {
-  ok: true;
+  /** true when every write succeeded; false on any partial failure. */
+  ok: boolean;
   created: number;
   updated: number;
   decommissioned: number;
@@ -246,21 +281,14 @@ export async function POST(
         continue;
       }
 
-      // INSERT a tenant_details row (1:1 with the node — T3).
-      // Design-doc §4 is silent on this, but:
-      //   - tenant_details has NOT NULL columns (scope_status, layout_status)
-      //   - The migration comment says "seed at tenant-schedule import / scope-UI time"
-      //   - NOT creating it here would force every later read to handle missing rows.
-      // Defaults: scope_status='awaited', layout_status='not_issued' (migration defaults).
-      // ON CONFLICT idempotency: we use a separate INSERT with a guard below.
+      // Ensure the 1:1 tenant_details row exists (idempotent upsert-ignore).
+      // See ensureTenantDetails() — uses ON CONFLICT (node_id) DO NOTHING.
       try {
-        await structureInsert(supabaseUrl, serviceKey, 'tenant_details', {
-          node_id: nodeId,
-        });
+        await ensureTenantDetails(supabaseUrl, serviceKey, nodeId);
       } catch (tdErr: any) {
         // Non-fatal: details row failed but node was created. Flag it.
         writeErrors.push(
-          `Shop ${entry.row.shop_number}: tenant_details INSERT failed — ${(tdErr as Error).message.slice(0, 200)}`,
+          `Shop ${entry.row.shop_number}: tenant_details upsert failed — ${(tdErr as Error).message.slice(0, 200)}`,
         );
       }
 
@@ -301,6 +329,53 @@ export async function POST(
     }
   }
 
+  // ── 8b-heal. Self-heal orphaned tenant_details rows ──────────────────────
+  // A prior commit may have created a node but failed to create its
+  // tenant_details row. That node is now an orphan: every subsequent import
+  // sees it as `updated`, never `new`, so the 8a path above never touches it.
+  // Fix: for all pre-existing tenant_db nodes (new AND pre-existing), ensure a
+  // tenant_details row exists. Read is via supabase-js (no cross-schema write
+  // gotcha for SELECTs). Only genuinely-missing rows get a POST.
+  {
+    // Collect all tenant_db node ids we know about after this run.
+    const allTenantNodeIds = new Set<string>([
+      // Newly created nodes (ids returned by 8a inserts — we don't have them
+      // here because 8a already called ensureTenantDetails for each new node).
+      // Pre-existing nodes from the diff (updated + decommissioned + already-decommissioned).
+      ...(preview.updated_entries as ImportUpdated[]).map(
+        (e) => e.existing.id as string,
+      ),
+      ...(preview.decommissioned_entries as ImportDecommissioned[]).map(
+        (e) => e.existing.id as string,
+      ),
+    ]);
+
+    if (allTenantNodeIds.size > 0) {
+      // Read which of these already have a tenant_details row.
+      const { data: existingDetails } = await (supabase as any)
+        .schema('structure')
+        .from('tenant_details')
+        .select('node_id')
+        .in('node_id', Array.from(allTenantNodeIds));
+
+      const existingDetailNodeIds = new Set<string>(
+        (existingDetails ?? []).map((r: { node_id: string }) => r.node_id),
+      );
+
+      // For each pre-existing node that lacks a details row, upsert one.
+      for (const nodeId of allTenantNodeIds) {
+        if (existingDetailNodeIds.has(nodeId)) continue;
+        try {
+          await ensureTenantDetails(supabaseUrl, serviceKey, nodeId);
+        } catch (tdErr: any) {
+          writeErrors.push(
+            `tenant_details heal for node ${nodeId}: ${(tdErr as Error).message.slice(0, 200)}`,
+          );
+        }
+      }
+    }
+  }
+
   // ── 8c. DECOMMISSION missing nodes ────────────────────────────────────────
   for (const entry of preview.decommissioned_entries as ImportDecommissioned[]) {
     // Skip nodes already decommissioned — no-op, keeps idempotency clean.
@@ -327,12 +402,18 @@ export async function POST(
   // 9. Revalidate the tenant schedule page so the next server render is fresh
   revalidatePath(`/projects/${projectId}/tenant-schedule`);
 
-  return NextResponse.json({
-    ok: true,
-    created,
-    updated,
-    decommissioned,
-    skipped_parse_errors: preview.parse_errors.length,
-    write_errors: writeErrors,
-  });
+  const ok = writeErrors.length === 0;
+  return NextResponse.json(
+    {
+      ok,
+      created,
+      updated,
+      decommissioned,
+      skipped_parse_errors: preview.parse_errors.length,
+      write_errors: writeErrors,
+    },
+    // 207 Multi-Status when at least one write failed (partial success);
+    // 200 OK only when every write succeeded.
+    { status: ok ? 200 : 207 },
+  );
 }
