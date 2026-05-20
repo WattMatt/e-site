@@ -1,0 +1,448 @@
+'use server'
+
+/**
+ * tenant-scope.actions.ts — server actions for scope-of-work tracking.
+ *
+ * Covers:
+ *   - setScopeItemPartyAction   — set Landlord/Tenant for a (node, scope_item_type) pair
+ *   - addScopeItemTypeAction    — add a new org-level scope item type to the registry
+ *   - setScopeStatusAction      — set scope_status (awaited | received) on tenant_details
+ *   - attachScopeDocumentAction — record scope_document_path after client-side upload
+ *   - clearScopeDocumentAction  — remove scope_document_path from tenant_details
+ *   - getScopeSignedUrlAction   — get a short-lived signed URL for preview/download
+ *
+ * Cross-schema write pattern (CLAUDE.md 2026-05-18 gotcha):
+ *   supabase-js `.schema('structure').from(...).insert()` silently strips the
+ *   service-role auth header → RLS denies. All writes to structure.* tables use
+ *   raw fetch to PostgREST with Content-Profile: structure + service-role key.
+ *   Reads go through the cookie-authenticated supabase-js client as normal.
+ */
+
+import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
+import { createClient } from '@/lib/supabase/server'
+import { projectService } from '@esite/shared'
+
+// ---------------------------------------------------------------------------
+// Shared helpers — mirror the commit route's structureHeaders / structurePatch
+// ---------------------------------------------------------------------------
+
+function structureHeaders(serviceKey: string): HeadersInit {
+  return {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+    'Content-Profile': 'structure',
+    Prefer: 'return=representation',
+  }
+}
+
+async function structurePost(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  body: Record<string, unknown>,
+  queryString = '',
+): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  const url = `${supabaseUrl}/rest/v1/${table}${queryString ? `?${queryString}` : ''}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: structureHeaders(serviceKey),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `INSERT structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 400)}` }
+  }
+  return { ok: true, data: await res.json() }
+}
+
+async function structurePatch(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  filterQuery: string,
+  patch: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterQuery}`, {
+    method: 'PATCH',
+    headers: structureHeaders(serviceKey),
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `PATCH structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 400)}` }
+  }
+  return { ok: true }
+}
+
+async function structureDelete(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  filterQuery: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterQuery}`, {
+    method: 'DELETE',
+    headers: structureHeaders(serviceKey),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `DELETE structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 400)}` }
+  }
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// Auth + project-access guard
+// ---------------------------------------------------------------------------
+
+const uuidSchema = z.string().uuid()
+
+/** Returns { user, orgId, supabase } or { error: string } */
+async function guardProjectAccess(projectId: string): Promise<
+  | { error: string; orgId?: undefined; supabase?: undefined }
+  | { error?: undefined; user: object; orgId: string; supabase: Awaited<ReturnType<typeof createClient>> }
+> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const project = await projectService.getById(supabase as never, projectId)
+  if (!project) return { error: 'Project not found' }
+
+  return { user, orgId: project.organisation_id as string, supabase }
+}
+
+// ---------------------------------------------------------------------------
+// setScopeItemPartyAction
+// ---------------------------------------------------------------------------
+
+const setScopeItemPartySchema = z.object({
+  projectId: uuidSchema,
+  nodeId: uuidSchema,
+  scopeItemTypeId: uuidSchema,
+  party: z.enum(['landlord', 'tenant']),
+})
+
+export type SetScopeItemPartyResult = { ok: true } | { error: string }
+
+/**
+ * Upsert a tenant_scope_items row for (nodeId, scopeItemTypeId) with the given party.
+ * Uses ON CONFLICT (node_id, scope_item_type_id) DO UPDATE to flip the party in-place.
+ */
+export async function setScopeItemPartyAction(
+  projectId: string,
+  nodeId: string,
+  scopeItemTypeId: string,
+  party: 'landlord' | 'tenant',
+): Promise<SetScopeItemPartyResult> {
+  const parsed = setScopeItemPartySchema.safeParse({ projectId, nodeId, scopeItemTypeId, party })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // Upsert: insert or update party on conflict (node_id, scope_item_type_id)
+  const result = await structurePost(
+    supabaseUrl,
+    serviceKey,
+    'tenant_scope_items',
+    { node_id: nodeId, scope_item_type_id: scopeItemTypeId, party },
+    'on_conflict=node_id%2Cscope_item_type_id',
+  )
+
+  if (!result.ok) {
+    // If upsert isn't working (older PostgREST), fall back to PATCH
+    const patch = await structurePatch(
+      supabaseUrl,
+      serviceKey,
+      'tenant_scope_items',
+      `node_id=eq.${nodeId}&scope_item_type_id=eq.${scopeItemTypeId}`,
+      { party },
+    )
+    if (!patch.ok) return { error: patch.error ?? 'Failed to update scope item' }
+  }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// addScopeItemTypeAction
+// ---------------------------------------------------------------------------
+
+const addScopeItemTypeSchema = z.object({
+  projectId: uuidSchema,
+  orgId: uuidSchema,
+  key: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9_-]+$/, 'Key must be lowercase letters, numbers, hyphens, or underscores'),
+  label: z.string().min(1).max(100),
+})
+
+export type AddScopeItemTypeResult = { ok: true; id: string } | { error: string }
+
+/**
+ * Insert a new scope_item_type for the org.
+ * Idempotent: if (org, key) already exists returns the existing row's id.
+ */
+export async function addScopeItemTypeAction(
+  projectId: string,
+  orgId: string,
+  key: string,
+  label: string,
+): Promise<AddScopeItemTypeResult> {
+  const parsed = addScopeItemTypeSchema.safeParse({ projectId, orgId, key: key.trim().toLowerCase(), label: label.trim() })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+  const { key: safeKey, label: safeLabel } = parsed.data
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  // Verify the orgId matches the project's org (belt-and-suspenders)
+  if (guard.orgId !== orgId)
+    return { error: 'Organisation mismatch' }
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // Check existing sort_order max so new item goes to end
+  const { supabase } = guard
+  const { data: existing } = await (supabase as any)
+    .schema('structure')
+    .from('scope_item_types')
+    .select('id, sort_order')
+    .eq('organisation_id', orgId)
+    .order('sort_order', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const nextSortOrder = existing ? (existing.sort_order as number) + 1 : 10
+
+  const result = await structurePost(
+    supabaseUrl,
+    serviceKey,
+    'scope_item_types',
+    {
+      organisation_id: orgId,
+      key: safeKey,
+      label: safeLabel,
+      sort_order: nextSortOrder,
+    },
+    'on_conflict=organisation_id%2Ckey&Prefer=resolution%3Dmerge-duplicates',
+  )
+
+  if (!result.ok) return { error: result.error ?? 'Failed to add scope item type' }
+
+  const rows = result.data as Array<{ id: string }>
+  const id = rows?.[0]?.id
+  if (!id) return { error: 'INSERT returned no row' }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true, id }
+}
+
+// ---------------------------------------------------------------------------
+// setScopeStatusAction
+// ---------------------------------------------------------------------------
+
+const setScopeStatusSchema = z.object({
+  projectId: uuidSchema,
+  nodeId: uuidSchema,
+  status: z.enum(['awaited', 'received']),
+})
+
+export type SetScopeStatusResult = { ok: true } | { error: string }
+
+/**
+ * Update tenant_details.scope_status for a tenant node.
+ * Also ensures the tenant_details row exists (upsert-ignore if missing).
+ */
+export async function setScopeStatusAction(
+  projectId: string,
+  nodeId: string,
+  status: 'awaited' | 'received',
+): Promise<SetScopeStatusResult> {
+  const parsed = setScopeStatusSchema.safeParse({ projectId, nodeId, status })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // Ensure the row exists first (upsert-ignore)
+  await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      'Content-Profile': 'structure',
+      Prefer: 'resolution=ignore-duplicates',
+    },
+    body: JSON.stringify({ node_id: nodeId }),
+  })
+
+  const result = await structurePatch(
+    supabaseUrl,
+    serviceKey,
+    'tenant_details',
+    `node_id=eq.${nodeId}`,
+    { scope_status: status },
+  )
+
+  if (!result.ok) return { error: result.error ?? 'Failed to update scope status' }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// attachScopeDocumentAction
+// ---------------------------------------------------------------------------
+
+const attachScopeDocumentSchema = z.object({
+  projectId: uuidSchema,
+  nodeId: uuidSchema,
+  storagePath: z.string().min(1),
+})
+
+export type AttachScopeDocumentResult = { ok: true } | { error: string }
+
+/**
+ * Record a scope_document_path on tenant_details after the client has
+ * uploaded the file to the tenant-documents bucket.
+ */
+export async function attachScopeDocumentAction(
+  projectId: string,
+  nodeId: string,
+  storagePath: string,
+): Promise<AttachScopeDocumentResult> {
+  const parsed = attachScopeDocumentSchema.safeParse({ projectId, nodeId, storagePath })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // Ensure row exists
+  await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      'Content-Profile': 'structure',
+      Prefer: 'resolution=ignore-duplicates',
+    },
+    body: JSON.stringify({ node_id: nodeId }),
+  })
+
+  const result = await structurePatch(
+    supabaseUrl,
+    serviceKey,
+    'tenant_details',
+    `node_id=eq.${nodeId}`,
+    { scope_document_path: storagePath, scope_status: 'received' },
+  )
+
+  if (!result.ok) return { error: result.error ?? 'Failed to attach scope document' }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// clearScopeDocumentAction
+// ---------------------------------------------------------------------------
+
+export type ClearScopeDocumentResult = { ok: true } | { error: string }
+
+/**
+ * Remove the scope_document_path from tenant_details.
+ * Also removes the file from the tenant-documents bucket.
+ */
+export async function clearScopeDocumentAction(
+  projectId: string,
+  nodeId: string,
+  storagePath: string,
+): Promise<ClearScopeDocumentResult> {
+  const parsed = z
+    .object({ projectId: uuidSchema, nodeId: uuidSchema, storagePath: z.string().min(1) })
+    .safeParse({ projectId, nodeId, storagePath })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const { supabase } = guard
+
+  // Remove from storage (best-effort)
+  await supabase.storage.from('tenant-documents').remove([storagePath])
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  const result = await structurePatch(
+    supabaseUrl,
+    serviceKey,
+    'tenant_details',
+    `node_id=eq.${nodeId}`,
+    { scope_document_path: null },
+  )
+
+  if (!result.ok) return { error: result.error ?? 'Failed to clear scope document' }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// getScopeSignedUrlAction
+// ---------------------------------------------------------------------------
+
+export type GetScopeSignedUrlResult = { url: string } | { error: string }
+
+/**
+ * Create a short-lived (300 s) signed URL for a scope document.
+ * Used for inline preview and the download link.
+ */
+export async function getScopeSignedUrlAction(
+  projectId: string,
+  storagePath: string,
+): Promise<GetScopeSignedUrlResult> {
+  const parsed = z
+    .object({ projectId: uuidSchema, storagePath: z.string().min(1) })
+    .safeParse({ projectId, storagePath })
+  if (!parsed.success) return { error: 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const { supabase } = guard
+
+  const { data, error } = await supabase.storage
+    .from('tenant-documents')
+    .createSignedUrl(storagePath, 300)
+
+  if (error || !data?.signedUrl) return { error: error?.message ?? 'Could not generate signed URL' }
+
+  return { url: data.signedUrl }
+}

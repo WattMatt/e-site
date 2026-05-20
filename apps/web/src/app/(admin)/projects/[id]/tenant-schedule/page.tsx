@@ -6,6 +6,7 @@ import { projectService, listNodes } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { ScheduleTable } from './_components/ScheduleTable'
 import { ImportFlow } from './_components/ImportFlow'
+import type { ScopeItemType, TenantScopeItem, TenantDetails } from './_components/ScopeOfWorkPanel'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Tenant Schedule' }
@@ -23,9 +24,11 @@ export default async function TenantSchedulePage({ params }: Props) {
     .catch(() => null)
   if (!project) notFound()
 
-  // Load all tenant_db nodes for this project — both active and decommissioned.
-  // listNodes does a .schema('structure').from('nodes') SELECT (read-only via
-  // cookie client; no cross-schema write gotcha for SELECTs).
+  const orgId = project.organisation_id as string
+
+  // ── Load nodes ────────────────────────────────────────────────────────────
+  // listNodes reads via .schema('structure') SELECT (read-only — no cross-schema
+  // write gotcha for SELECTs, only writes are affected).
   let nodes: Awaited<ReturnType<typeof listNodes>> = []
   let loadError: string | null = null
 
@@ -33,6 +36,65 @@ export default async function TenantSchedulePage({ params }: Props) {
     nodes = await listNodes(supabase as never, projectId, { kind: 'tenant_db' })
   } catch (err: unknown) {
     loadError = err instanceof Error ? err.message : 'Could not load tenant schedule data'
+  }
+
+  // ── Load scope data (best-effort; failures show the table without scope) ──
+  let scopeItemTypes: ScopeItemType[] = []
+  let allScopeItems: TenantScopeItem[] = []
+  let allTenantDetails: TenantDetails[] = []
+
+  const nodeIds = nodes.map((n) => n.id)
+
+  try {
+    // scope_item_types — org-level; READ via supabase-js .schema('structure') is fine
+    const { data: types } = await (supabase as any)
+      .schema('structure')
+      .from('scope_item_types')
+      .select('id, key, label, sort_order')
+      .eq('organisation_id', orgId)
+      .order('sort_order', { ascending: true })
+
+    if (types) scopeItemTypes = types as ScopeItemType[]
+  } catch {
+    // Non-fatal: table may not exist on older staging, show empty columns
+  }
+
+  if (nodeIds.length > 0) {
+    try {
+      const { data: items } = await (supabase as any)
+        .schema('structure')
+        .from('tenant_scope_items')
+        .select('id, node_id, scope_item_type_id, party')
+        .in('node_id', nodeIds)
+
+      if (items) allScopeItems = items as TenantScopeItem[]
+    } catch {
+      // Non-fatal
+    }
+
+    try {
+      const { data: details } = await (supabase as any)
+        .schema('structure')
+        .from('tenant_details')
+        .select('node_id, scope_status, scope_document_path')
+        .in('node_id', nodeIds)
+
+      if (details) allTenantDetails = details as TenantDetails[]
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  // Build lookup maps for the client component
+  const scopeItemsByNode: Record<string, TenantScopeItem[]> = {}
+  for (const item of allScopeItems) {
+    if (!scopeItemsByNode[item.node_id]) scopeItemsByNode[item.node_id] = []
+    scopeItemsByNode[item.node_id].push(item)
+  }
+
+  const tenantDetailsByNode: Record<string, TenantDetails> = {}
+  for (const d of allTenantDetails) {
+    tenantDetailsByNode[d.node_id] = d
   }
 
   const activeCount = nodes.filter((n) => n.status !== 'decommissioned').length
@@ -62,7 +124,8 @@ export default async function TenantSchedulePage({ params }: Props) {
           <h1 className="page-title">Tenant Schedule</h1>
           <p className="page-subtitle">
             {project.name}
-            {totalCount > 0 && ` · ${activeCount} active shop${activeCount !== 1 ? 's' : ''}${totalCount !== activeCount ? ` (${totalCount} total)` : ''}`}
+            {totalCount > 0 &&
+              ` · ${activeCount} active shop${activeCount !== 1 ? 's' : ''}${totalCount !== activeCount ? ` (${totalCount} total)` : ''}`}
           </p>
         </div>
         <ImportFlow projectId={projectId} />
@@ -82,16 +145,21 @@ export default async function TenantSchedulePage({ params }: Props) {
           <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--c-red)' }}>
             Could not load the tenant schedule.
           </div>
-          <div style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
-            {loadError}
-          </div>
+          <div style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>{loadError}</div>
         </div>
       )}
 
       {/* Schedule table */}
       <Card>
         <CardBody>
-          <ScheduleTable nodes={nodes} />
+          <ScheduleTable
+            nodes={nodes}
+            projectId={projectId}
+            orgId={orgId}
+            scopeItemTypes={scopeItemTypes}
+            scopeItemsByNode={scopeItemsByNode}
+            tenantDetailsByNode={tenantDetailsByNode}
+          />
         </CardBody>
       </Card>
     </div>
