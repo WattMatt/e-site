@@ -346,21 +346,13 @@ CREATE POLICY tenant_scope_items_delete ON structure.tenant_scope_items
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 8. Grants
---    Mirror 00075 — extend the existing structure schema grants to cover
---    the three new tables and future tables added to the schema.
+--    No explicit GRANTs are needed here. Migration 00075 ran
+--    `ALTER DEFAULT PRIVILEGES IN SCHEMA structure` for authenticated,
+--    service_role and anon, so every table created in `structure` AFTER
+--    00075 — these three included — inherits those grants automatically.
+--    (RLS still governs row visibility; schema grants only open the table
+--    to the role.)
 -- ─────────────────────────────────────────────────────────────────────────────
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON structure.scope_item_types  TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON structure.tenant_details     TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON structure.tenant_scope_items TO authenticated;
-
-GRANT ALL ON structure.scope_item_types  TO service_role;
-GRANT ALL ON structure.tenant_details    TO service_role;
-GRANT ALL ON structure.tenant_scope_items TO service_role;
-
-GRANT SELECT ON structure.scope_item_types  TO anon;
-GRANT SELECT ON structure.tenant_details    TO anon;
-GRANT SELECT ON structure.tenant_scope_items TO anon;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 9. Storage bucket — tenant-documents
@@ -378,12 +370,29 @@ VALUES (
   NULL      -- accept any MIME type (layout drawings can be PDF, DWG, DXF, etc.)
 );
 
+-- Helper: first path segment of an object name as a UUID, or NULL when that
+-- segment is not a well-formed UUID. A bare `::uuid` cast on a malformed path
+-- raises SQLSTATE 22P08, which makes an RLS policy ERROR (HTTP 500) instead of
+-- cleanly DENYING. Routing every policy through this guard makes them fail
+-- closed: a non-UUID first segment yields NULL and the policy denies.
+CREATE FUNCTION structure.tenant_doc_project_id(object_name TEXT)
+RETURNS UUID
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT CASE
+    WHEN (storage.foldername(object_name))[1] ~
+         '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    THEN ((storage.foldername(object_name))[1])::UUID
+  END
+$$;
+
 -- SELECT: org members with project access see their project's documents.
 CREATE POLICY "tenant-documents read" ON storage.objects
   FOR SELECT TO authenticated
   USING (
     bucket_id = 'tenant-documents'
-    AND public.user_has_project_access((storage.foldername(name))[1]::UUID)
+    AND public.user_has_project_access(structure.tenant_doc_project_id(name))
   );
 
 -- INSERT: owner/admin/project_manager with project access.
@@ -391,14 +400,14 @@ CREATE POLICY "tenant-documents write" ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'tenant-documents'
-    AND public.user_has_project_access((storage.foldername(name))[1]::UUID)
+    AND public.user_has_project_access(structure.tenant_doc_project_id(name))
     AND EXISTS (
       SELECT 1 FROM projects.projects p
       JOIN public.user_organisations uo
         ON uo.user_id = auth.uid()
         AND uo.organisation_id = p.organisation_id
         AND uo.role IN ('owner', 'admin', 'project_manager')
-      WHERE p.id = (storage.foldername(name))[1]::UUID
+      WHERE p.id = structure.tenant_doc_project_id(name)
     )
   );
 
@@ -407,13 +416,13 @@ CREATE POLICY "tenant-documents delete" ON storage.objects
   FOR DELETE TO authenticated
   USING (
     bucket_id = 'tenant-documents'
-    AND public.user_has_project_access((storage.foldername(name))[1]::UUID)
+    AND public.user_has_project_access(structure.tenant_doc_project_id(name))
     AND EXISTS (
       SELECT 1 FROM projects.projects p
       JOIN public.user_organisations uo
         ON uo.user_id = auth.uid()
         AND uo.organisation_id = p.organisation_id
         AND uo.role IN ('owner', 'admin', 'project_manager')
-      WHERE p.id = (storage.foldername(name))[1]::UUID
+      WHERE p.id = structure.tenant_doc_project_id(name)
     )
   );
