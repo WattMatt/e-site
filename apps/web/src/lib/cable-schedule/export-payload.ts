@@ -45,6 +45,11 @@ export interface ExportPayload {
     /** VAT % per migration 00060. Null when migration not yet applied; renderers default to 15. */
     vat_pct: number | null
   }
+  /**
+   * Cable-schedule feed roots — `utility` / `pv` / `standby` only. RMU and
+   * mini-sub source types migrated to `structure.nodes` in the unified-node
+   * model (migration 00077); they are now `nodes` rows, not sources.
+   */
   sources: Array<{
     id: string
     code: string
@@ -53,21 +58,37 @@ export interface ExportPayload {
     voltage_v: number | null
     notes: string | null
   }>
-  boards: Array<{
+  /**
+   * Project-level structure registry — every board, RMU, mini-sub and
+   * generator on the project. Replaces the old revision-scoped
+   * `cable_schedule.boards`. NOT revision-scoped: nodes persist for the
+   * life of the project and are referenced (not copied) by each revision.
+   */
+  nodes: Array<{
     id: string
+    kind: 'tenant_db' | 'main_board' | 'common_area_board' | 'rmu' | 'mini_sub' | 'generator'
     code: string
-    tenant_name: string | null
-    area_m2: number | null
+    name: string | null
+    coc_required: boolean
+    status: 'active' | 'decommissioned'
+    shop_number: string | null
+    shop_name: string | null
+    shop_area_m2: number | null
     breaker_rating_a: number | null
     pole_config: string | null
     section: string | null
-    parent_board_id: string | null
+    rating_kva: number | null
+    voltage_v: number | null
+    notes: string | null
   }>
   supplies: Array<{
     id: string
+    /** Feed origin when it's a cable-schedule source (utility/pv/standby). XOR with from_node_id. */
     from_source_id: string | null
-    from_board_id: string | null
-    to_board_id: string | null
+    /** Feed origin when it's a structure node. XOR with from_source_id. */
+    from_node_id: string | null
+    /** Feed destination — always a structure node. */
+    to_node_id: string | null
     voltage_v: number
     design_load_a: number | null
     section: string | null
@@ -243,7 +264,7 @@ export async function getRevisionExportPayload(
     { data: projectRow },
     { data: revisionRow },
     { data: sourcesData },
-    { data: boardsData },
+    { data: nodesData },
     { data: suppliesData },
     { data: cablesData },
     { data: tagsData },
@@ -287,25 +308,37 @@ export async function getRevisionExportPayload(
         .eq('project_id', projectId)
         .single(),
     ),
+    // sources now holds only utility/pv/standby — RMU + mini-sub source
+    // types migrated to structure.nodes (migration 00077).
     (supabase as any)
       .schema('cable_schedule')
       .from('sources')
       .select('id, code, type, rating_kva, voltage_v, notes')
       .eq('revision_id', revisionId)
       .order('code'),
+    // Boards became structure.nodes (unified-node model). Nodes are
+    // PROJECT-scoped, not revision-scoped — filter by project_id. Queried
+    // as a separate cross-schema query: PostgREST embeds across schemas
+    // fail PGRST200 in this codebase, so the join into supplies/cables is
+    // done in JS below via nodeById.
     (supabase as any)
-      .schema('cable_schedule')
-      .from('boards')
+      .schema('structure')
+      .from('nodes')
       .select(
-        'id, code, tenant_name, area_m2, breaker_rating_a, pole_config, section, parent_board_id',
+        'id, kind, code, name, coc_required, status, shop_number, shop_name, ' +
+        'shop_area_m2, breaker_rating_a, pole_config, section, rating_kva, voltage_v, notes',
       )
-      .eq('revision_id', revisionId)
+      .eq('project_id', projectId)
       .order('code'),
+    // supplies feed edges — origin is from_node_id (structure.nodes) XOR
+    // from_source_id (cable_schedule.sources); destination is always
+    // to_node_id. The legacy from_board_id/to_board_id columns still exist
+    // on the table but are abandoned — not read here.
     (supabase as any)
       .schema('cable_schedule')
       .from('supplies')
       .select(
-        'id, from_source_id, from_board_id, to_board_id, voltage_v, design_load_a, section',
+        'id, from_source_id, from_node_id, to_node_id, voltage_v, design_load_a, section',
       )
       .eq('revision_id', revisionId),
     // grouping_arrangement column landed in migration 00064. SELECT is
@@ -387,7 +420,7 @@ export async function getRevisionExportPayload(
   if (!projectRow || !revisionRow) return null
 
   const sources = (sourcesData ?? []) as ExportPayload['sources']
-  const boards = (boardsData ?? []) as ExportPayload['boards']
+  const nodes = (nodesData ?? []) as ExportPayload['nodes']
   const supplies = (suppliesData ?? []) as ExportPayload['supplies']
   const rawCables = (cablesData ?? []) as RawCable[]
 
@@ -418,22 +451,22 @@ export async function getRevisionExportPayload(
     )
   }
 
-  // FROM / TO labels via source + board lookup
+  // FROM / TO labels via source + node lookup
   const sourceById = new Map(sources.map((s) => [s.id, s] as const))
-  const boardById = new Map(boards.map((b) => [b.id, b] as const))
+  const nodeById = new Map(nodes.map((n) => [n.id, n] as const))
   const supplyById = new Map(supplies.map((s) => [s.id, s] as const))
 
-  function nodeLabel(id: string | null | undefined): string {
+  function entityLabel(id: string | null | undefined): string {
     if (!id) return '?'
-    return sourceById.get(id)?.code ?? boardById.get(id)?.code ?? '?'
+    return sourceById.get(id)?.code ?? nodeById.get(id)?.code ?? '?'
   }
 
   const cables: EnrichedCable[] = rawCables.map((c) => {
     const supply = supplyById.get(c.supply_id)
     const fromLabel = supply
-      ? nodeLabel(supply.from_source_id ?? supply.from_board_id)
+      ? entityLabel(supply.from_source_id ?? supply.from_node_id)
       : '?'
-    const toLabel = supply ? nodeLabel(supply.to_board_id) : '?'
+    const toLabel = supply ? entityLabel(supply.to_node_id) : '?'
 
     return {
       id: c.id,
@@ -651,7 +684,7 @@ export async function getRevisionExportPayload(
       vat_pct: revisionAny.vat_pct == null ? null : Number(revisionAny.vat_pct),
     },
     sources,
-    boards,
+    nodes,
     supplies,
     cables,
     runs,
