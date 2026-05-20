@@ -58,9 +58,8 @@ interface NodeRow {
 }
 
 // supplies now route via from_node_id / to_node_id (→ structure.nodes);
-// from_source_id stays (→ cable_schedule.sources). The shared SupplyForCalc
-// type still names these from_board_id / to_board_id — supplyForCalc below
-// maps the node ids onto those names for the calc functions.
+// from_source_id stays (→ cable_schedule.sources). SupplyForCalc uses
+// the same field names so no aliasing is needed.
 interface SupplyRow {
   id: string
   from_source_id: string | null
@@ -161,16 +160,9 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   const supplies = (suppliesRes?.data ?? []) as unknown as SupplyRow[]
   const cables   = (cablesRes?.data   ?? []) as unknown as CableRow[]
 
-  // The shared cable-calc functions still expect from_board_id / to_board_id —
-  // map the node-id columns onto those names so cumulative VD walks correctly.
-  const suppliesForCalc: SupplyForCalc[] = supplies.map((s) => ({
-    id: s.id,
-    from_source_id: s.from_source_id,
-    from_board_id: s.from_node_id,
-    to_board_id: s.to_node_id,
-    voltage_v: s.voltage_v,
-    design_load_a: s.design_load_a,
-  }))
+  // SupplyRow and SupplyForCalc now share the same from_node_id / to_node_id
+  // field names — pass supplies through directly.
+  const suppliesForCalc = supplies as SupplyForCalc[]
 
   const hasConfirmedLengths = cables.some((c) => c.confirmed_length_m != null)
 

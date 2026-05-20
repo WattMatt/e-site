@@ -439,7 +439,7 @@ export async function getRevisionExportPayload(
     })) as ExportPayload['cableTags']
 
   // Per-supply VD + cumulative VD
-  const supplyForCalc = supplies as unknown as SupplyForCalc[]
+  const supplyForCalc = supplies as SupplyForCalc[]
   const cableForCalc = rawCables as unknown as CableForCalc[]
   const cumulativeMap = computeCumulativeVdMap(supplyForCalc, cableForCalc, 'as-built')
 
@@ -447,7 +447,7 @@ export async function getRevisionExportPayload(
   for (const s of supplies) {
     supplyVdById.set(
       s.id,
-      voltDropPctForSupply(s as unknown as SupplyForCalc, cableForCalc, 'as-built'),
+      voltDropPctForSupply(s as SupplyForCalc, cableForCalc, 'as-built'),
     )
   }
 

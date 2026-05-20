@@ -32,8 +32,8 @@ export interface CableForCalc {
 export interface SupplyForCalc {
   id: string
   from_source_id: string | null
-  from_board_id: string | null
-  to_board_id: string
+  from_node_id: string | null
+  to_node_id: string
   voltage_v: number
   design_load_a: number
 }
@@ -141,7 +141,7 @@ function avgActiveLength(cables: CableForCalc[], mode: LengthMode = 'as-built'):
 /**
  * Cumulative VD% from every Source through the supply tree to every leaf
  * board. Returns a map keyed by supply_id of the cumulative percentage at
- * the supply's `to_board_id` node.
+ * the supply's `to_node_id` node.
  *
  * Walks downwards from supplies whose origin is a Source; recurses through
  * each board's outgoing supplies. Detects cycles (shouldn't happen but
@@ -154,12 +154,12 @@ export function computeCumulativeVdMap(
   mode: LengthMode = 'as-built',
 ): Map<string, number> {
   const out = new Map<string, number>()
-  const supplyByFromBoard = new Map<string, SupplyForCalc[]>()
+  const supplyByFromNode = new Map<string, SupplyForCalc[]>()
   for (const s of supplies) {
-    if (s.from_board_id) {
-      const list = supplyByFromBoard.get(s.from_board_id) ?? []
+    if (s.from_node_id) {
+      const list = supplyByFromNode.get(s.from_node_id) ?? []
       list.push(s)
-      supplyByFromBoard.set(s.from_board_id, list)
+      supplyByFromNode.set(s.from_node_id, list)
     }
   }
 
@@ -171,7 +171,7 @@ export function computeCumulativeVdMap(
     visiting.add(supply.id)
     const here = accumulatedVd + voltDropPctForSupply(supply, cables, mode)
     out.set(supply.id, here)
-    const downstream = supplyByFromBoard.get(supply.to_board_id) ?? []
+    const downstream = supplyByFromNode.get(supply.to_node_id) ?? []
     for (const down of downstream) walk(down, here)
     visiting.delete(supply.id)
   }
