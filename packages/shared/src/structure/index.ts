@@ -4,3 +4,4 @@ export type { NodeInput } from './node-schema';
 export { listNodes, getNode, createNode, updateNode, decommissionNode } from './node.service';
 export { parseTenantSchedule } from './tenant-import-parser';
 export type { TenantImportRow, TenantImportError, TenantImportResult } from './tenant-import-parser';
+export { deriveDbCode } from './derive-db-code';
