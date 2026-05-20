@@ -490,3 +490,237 @@ export async function getScopeSignedUrlAction(
 
   return { url: data.signedUrl }
 }
+
+// ---------------------------------------------------------------------------
+// setLayoutStatusAction
+// ---------------------------------------------------------------------------
+
+const setLayoutStatusSchema = z.object({
+  projectId: uuidSchema,
+  nodeId: uuidSchema,
+  status: z.enum(['not_issued', 'issued']),
+  issuedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+})
+
+export type SetLayoutStatusResult = { ok: true } | { error: string }
+
+/**
+ * Update tenant_details.layout_status + layout_issued_at for a tenant node.
+ * Also ensures the tenant_details row exists (upsert-ignore if missing).
+ * issuedAt is a YYYY-MM-DD string; pass null to clear it.
+ */
+export async function setLayoutStatusAction(
+  projectId: string,
+  nodeId: string,
+  status: 'not_issued' | 'issued',
+  issuedAt: string | null,
+): Promise<SetLayoutStatusResult> {
+  const parsed = setLayoutStatusSchema.safeParse({ projectId, nodeId, status, issuedAt })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const nodeErr = await guardNodeBelongsToProject(guard.supabase, nodeId, projectId)
+  if (nodeErr) return nodeErr
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // Ensure the row exists first (upsert-ignore)
+  const ensureRes = await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      'Content-Profile': 'structure',
+      Prefer: 'resolution=ignore-duplicates',
+    },
+    body: JSON.stringify({ node_id: nodeId }),
+  })
+  if (!ensureRes.ok) {
+    const text = await ensureRes.text()
+    return { error: `Failed to ensure tenant_details row (HTTP ${ensureRes.status}): ${text.slice(0, 200)}` }
+  }
+
+  const result = await structurePatch(
+    supabaseUrl,
+    serviceKey,
+    'tenant_details',
+    `node_id=eq.${nodeId}`,
+    { layout_status: status, layout_issued_at: issuedAt },
+  )
+
+  if (!result.ok) return { error: result.error ?? 'Failed to update layout status' }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// attachLayoutDrawingAction
+// ---------------------------------------------------------------------------
+
+const attachLayoutDrawingSchema = z.object({
+  projectId: uuidSchema,
+  nodeId: uuidSchema,
+  storagePath: z.string().min(1),
+})
+
+export type AttachLayoutDrawingResult = { ok: true } | { error: string }
+
+/**
+ * Record a layout_drawing_path on tenant_details after the client has
+ * uploaded the file to the tenant-documents bucket.
+ * Also sets layout_status = 'issued' and layout_issued_at = today if not already set.
+ */
+export async function attachLayoutDrawingAction(
+  projectId: string,
+  nodeId: string,
+  storagePath: string,
+): Promise<AttachLayoutDrawingResult> {
+  const parsed = attachLayoutDrawingSchema.safeParse({ projectId, nodeId, storagePath })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const nodeErr = await guardNodeBelongsToProject(guard.supabase, nodeId, projectId)
+  if (nodeErr) return nodeErr
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // Ensure the row exists
+  const ensureRes = await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      'Content-Profile': 'structure',
+      Prefer: 'resolution=ignore-duplicates',
+    },
+    body: JSON.stringify({ node_id: nodeId }),
+  })
+  if (!ensureRes.ok) {
+    const text = await ensureRes.text()
+    return { error: `Failed to ensure tenant_details row (HTTP ${ensureRes.status}): ${text.slice(0, 200)}` }
+  }
+
+  // Read the current layout_issued_at so we don't clobber an existing date
+  const { data: existing } = await (guard.supabase as any)
+    .schema('structure')
+    .from('tenant_details')
+    .select('layout_issued_at')
+    .eq('node_id', nodeId)
+    .maybeSingle()
+
+  const today = new Date().toISOString().slice(0, 10)
+  const issuedAt = (existing as { layout_issued_at: string | null } | null)?.layout_issued_at ?? today
+
+  const result = await structurePatch(
+    supabaseUrl,
+    serviceKey,
+    'tenant_details',
+    `node_id=eq.${nodeId}`,
+    {
+      layout_drawing_path: storagePath,
+      layout_status: 'issued',
+      layout_issued_at: issuedAt,
+    },
+  )
+
+  if (!result.ok) return { error: result.error ?? 'Failed to attach layout drawing' }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// clearLayoutDrawingAction
+// ---------------------------------------------------------------------------
+
+export type ClearLayoutDrawingResult = { ok: true } | { error: string }
+
+/**
+ * Remove the layout_drawing_path from tenant_details.
+ * Also removes the file from the tenant-documents bucket (best-effort).
+ * Does NOT clear layout_status or layout_issued_at — those stay set.
+ */
+export async function clearLayoutDrawingAction(
+  projectId: string,
+  nodeId: string,
+  storagePath: string,
+): Promise<ClearLayoutDrawingResult> {
+  const parsed = z
+    .object({ projectId: uuidSchema, nodeId: uuidSchema, storagePath: z.string().min(1) })
+    .safeParse({ projectId, nodeId, storagePath })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const { supabase } = guard
+
+  const nodeErr = await guardNodeBelongsToProject(supabase, nodeId, projectId)
+  if (nodeErr) return nodeErr
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // Clear the DB path FIRST (source of truth). Only then remove from storage
+  // so a storage failure never leaves the row pointing at a deleted file.
+  const result = await structurePatch(
+    supabaseUrl,
+    serviceKey,
+    'tenant_details',
+    `node_id=eq.${nodeId}`,
+    { layout_drawing_path: null },
+  )
+
+  if (!result.ok) return { error: result.error ?? 'Failed to clear layout drawing' }
+
+  // Remove from storage (best-effort — row is already cleared)
+  await supabase.storage.from('tenant-documents').remove([storagePath])
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// getLayoutSignedUrlAction
+// ---------------------------------------------------------------------------
+
+export type GetLayoutSignedUrlResult = { url: string } | { error: string }
+
+/**
+ * Create a short-lived (300 s) signed URL for a layout drawing.
+ * Used for inline preview and the download link.
+ */
+export async function getLayoutSignedUrlAction(
+  projectId: string,
+  storagePath: string,
+): Promise<GetLayoutSignedUrlResult> {
+  const parsed = z
+    .object({ projectId: uuidSchema, storagePath: z.string().min(1) })
+    .safeParse({ projectId, storagePath })
+  if (!parsed.success) return { error: 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const { supabase } = guard
+
+  const { data, error } = await supabase.storage
+    .from('tenant-documents')
+    .createSignedUrl(storagePath, 300)
+
+  if (error || !data?.signedUrl) return { error: error?.message ?? 'Could not generate signed URL' }
+
+  return { url: data.signedUrl }
+}

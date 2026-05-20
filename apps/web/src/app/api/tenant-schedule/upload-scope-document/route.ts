@@ -1,20 +1,23 @@
 /**
  * POST /api/tenant-schedule/upload-scope-document
  *
- * Uploads an .xlsx or .pdf scope document to the `tenant-documents` bucket.
+ * Unified upload route for both scope documents and layout drawings.
+ * Accepts an optional `kind` field in the form data:
+ *   - kind = 'scope'  (default) — PDF / Excel only; 50 MB cap
+ *   - kind = 'layout'           — any MIME type; no size cap (T1 spec requirement)
+ *
  * Path convention: {projectId}/{nodeId}/{timestamp}-{sanitisedFilename}
  *
  * Returns { storagePath, filename } on success.
- * Callers should then invoke attachScopeDocumentAction with the returned path.
+ * Callers should then invoke attachScopeDocumentAction or attachLayoutDrawingAction.
  *
  * Auth: cookie session — verified before any storage write.
  * Storage write uses the authenticated user client (bucket RLS allows
  * org members with write access — see migration 00080 bucket policies).
  *
- * Note: the companion DB write (attachScopeDocumentAction) goes through the
- * service-role key via raw PostgREST fetch, bypassing RLS. The authorization
- * gate for that write is the explicit node-ownership check performed here and
- * inside attachScopeDocumentAction — NOT RLS on the DB write itself.
+ * Note: the companion DB write goes through the service-role key via raw
+ * PostgREST fetch, bypassing RLS. The authorization gate for that write is
+ * the explicit node-ownership check performed here — NOT RLS on the DB write.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -25,13 +28,14 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const BUCKET = 'tenant-documents'
-const MAX_BYTES = 50 * 1024 * 1024 // 50 MB (no imposed cap per spec T1/T2)
-
-const ALLOWED_MIME = new Set([
+// Scope documents: PDF or Excel only
+const SCOPE_MAX_BYTES = 50 * 1024 * 1024 // 50 MB
+const SCOPE_ALLOWED_MIME = new Set([
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
 ])
+// Layout drawings: any MIME type, no imposed size cap (T1)
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // 1. Auth
@@ -52,6 +56,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const projectId = formData.get('projectId')
   const nodeId = formData.get('nodeId')
   const file = formData.get('file')
+  const kindRaw = formData.get('kind')
+  const kind: 'scope' | 'layout' =
+    kindRaw === 'layout' ? 'layout' : 'scope'
 
   if (typeof projectId !== 'string' || typeof nodeId !== 'string') {
     return NextResponse.json({ error: 'projectId and nodeId are required' }, { status: 400 })
@@ -66,29 +73,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Invalid projectId or nodeId' }, { status: 400 })
   }
 
-  // 4. MIME check
-  if (!ALLOWED_MIME.has(file.type)) {
-    return NextResponse.json(
-      { error: 'Only PDF and Excel (.xlsx/.xls) files are accepted.' },
-      { status: 415 },
-    )
+  // 4. Kind-specific validation
+  if (kind === 'scope') {
+    if (!SCOPE_ALLOWED_MIME.has(file.type)) {
+      return NextResponse.json(
+        { error: 'Only PDF and Excel (.xlsx/.xls) files are accepted.' },
+        { status: 415 },
+      )
+    }
+    if (file.size > SCOPE_MAX_BYTES) {
+      return NextResponse.json(
+        { error: `File exceeds the ${SCOPE_MAX_BYTES / 1024 / 1024} MB limit.` },
+        { status: 413 },
+      )
+    }
   }
+  // layout: accept any MIME, no size cap (T1)
 
-  // 5. Size check
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json(
-      { error: `File exceeds the ${MAX_BYTES / 1024 / 1024} MB limit.` },
-      { status: 413 },
-    )
-  }
-
-  // 6. Verify project access (RLS will also enforce, but fail fast here)
+  // 5. Verify project access (RLS will also enforce, but fail fast here)
   const project = await projectService.getById(supabase as never, projectId)
   if (!project) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
 
-  // 6b. Validate the nodeId belongs to this project.
+  // 5b. Validate the nodeId belongs to this project.
   // The cookie client is RLS-gated so a node from another org returns null.
   // Reads through .schema() are safe — the cross-schema service-role gotcha
   // applies to writes only.
@@ -103,7 +111,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Node not found' }, { status: 404 })
   }
 
-  // 7. Build storage path and upload
+  // 6. Build storage path and upload
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
   const storagePath = `${projectId}/${nodeId}/${Date.now()}-${safeName}`
 

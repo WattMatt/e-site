@@ -5,8 +5,10 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import type { Node } from '@esite/shared'
 import { ScopeOfWorkPanel } from './ScopeOfWorkPanel'
+import { LayoutIssuedPanel } from './LayoutIssuedPanel'
 import { AddScopeItemModal } from './AddScopeItemModal'
 import type { ScopeItemType, TenantScopeItem, TenantDetails } from './ScopeOfWorkPanel'
+import type { LayoutDetails } from './LayoutIssuedPanel'
 
 interface Props {
   nodes: Node[]
@@ -15,6 +17,7 @@ interface Props {
   scopeItemTypes: ScopeItemType[]
   scopeItemsByNode: Record<string, TenantScopeItem[]>   // node_id → items
   tenantDetailsByNode: Record<string, TenantDetails>    // node_id → details
+  layoutDetailsByNode: Record<string, LayoutDetails>    // node_id → layout details
 }
 
 export function ScheduleTable({
@@ -24,10 +27,13 @@ export function ScheduleTable({
   scopeItemTypes: initialScopeItemTypes,
   scopeItemsByNode,
   tenantDetailsByNode,
+  layoutDetailsByNode,
 }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   // node_id of the currently-expanded scope panel (one at a time)
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
+  // node_id of the currently-expanded layout panel (one at a time, independent of scope)
+  const [expandedLayoutNodeId, setExpandedLayoutNodeId] = useState<string | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   // Local copy of scope item types so adding a new one reflects immediately
   const [scopeItemTypes, setScopeItemTypes] = useState<ScopeItemType[]>(initialScopeItemTypes)
@@ -45,6 +51,14 @@ export function ScheduleTable({
 
   function toggleScope(nodeId: string) {
     setExpandedNodeId((prev) => (prev === nodeId ? null : nodeId))
+    // Close layout panel for this node if scope opens (keep one panel open per row)
+    if (expandedLayoutNodeId === nodeId) setExpandedLayoutNodeId(null)
+  }
+
+  function toggleLayout(nodeId: string) {
+    setExpandedLayoutNodeId((prev) => (prev === nodeId ? null : nodeId))
+    // Close scope panel for this node if layout opens
+    if (expandedNodeId === nodeId) setExpandedNodeId(null)
   }
 
   function handleScopeItemAdded(id: string, key: string, label: string) {
@@ -133,6 +147,7 @@ export function ScheduleTable({
               {scopeItemTypes.map((t) => (
                 <Th key={t.id}>{t.label}</Th>
               ))}
+              <Th>Layout Status</Th>
               <Th>Node Status</Th>
               <Th><span className="sr-only">Actions</span></Th>
             </tr>
@@ -143,14 +158,16 @@ export function ScheduleTable({
               const details = tenantDetailsByNode[node.id] ?? null
               const nodeItems = scopeItemsByNode[node.id] ?? []
               const isExpanded = expandedNodeId === node.id
+              const isLayoutExpanded = expandedLayoutNodeId === node.id
+              const layoutDetails = layoutDetailsByNode[node.id] ?? null
 
               return (
                 <Fragment key={node.id}>
                   <tr
                     style={{
-                      borderBottom: isExpanded ? 'none' : '1px solid var(--c-border)',
+                      borderBottom: (isExpanded || isLayoutExpanded) ? 'none' : '1px solid var(--c-border)',
                       opacity: decommissioned ? 0.45 : 1,
-                      background: isExpanded ? 'var(--c-bg)' : undefined,
+                      background: (isExpanded || isLayoutExpanded) ? 'var(--c-bg)' : undefined,
                     }}
                   >
                     <Td mono>{node.shop_number ?? '—'}</Td>
@@ -189,6 +206,19 @@ export function ScheduleTable({
                       )
                     })}
 
+                    {/* Layout status */}
+                    <Td>
+                      {layoutDetails ? (
+                        <Badge
+                          variant={layoutDetails.layout_status === 'issued' ? 'success' : 'ghost'}
+                        >
+                          {layoutDetails.layout_status === 'issued' ? 'issued' : 'not issued'}
+                        </Badge>
+                      ) : (
+                        <Badge variant="ghost">—</Badge>
+                      )}
+                    </Td>
+
                     {/* Node status */}
                     <Td>
                       {decommissioned ? (
@@ -198,27 +228,47 @@ export function ScheduleTable({
                       )}
                     </Td>
 
-                    {/* Scope action */}
+                    {/* Actions: scope + layout buttons */}
                     <Td>
                       {!decommissioned && (
-                        <button
-                          onClick={() => toggleScope(node.id)}
-                          style={{
-                            background: isExpanded ? 'var(--c-amber-dim)' : 'none',
-                            border: '1px solid',
-                            borderColor: isExpanded ? 'var(--c-amber)' : 'var(--c-border)',
-                            borderRadius: 5,
-                            cursor: 'pointer',
-                            padding: '4px 10px',
-                            fontSize: 11,
-                            color: isExpanded ? 'var(--c-amber)' : 'var(--c-text-dim)',
-                            fontWeight: 600,
-                            transition: 'all 0.15s',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {isExpanded ? 'Close' : 'Scope ↓'}
-                        </button>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            onClick={() => toggleScope(node.id)}
+                            style={{
+                              background: isExpanded ? 'var(--c-amber-dim)' : 'none',
+                              border: '1px solid',
+                              borderColor: isExpanded ? 'var(--c-amber)' : 'var(--c-border)',
+                              borderRadius: 5,
+                              cursor: 'pointer',
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              color: isExpanded ? 'var(--c-amber)' : 'var(--c-text-dim)',
+                              fontWeight: 600,
+                              transition: 'all 0.15s',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {isExpanded ? 'Close' : 'Scope ↓'}
+                          </button>
+                          <button
+                            onClick={() => toggleLayout(node.id)}
+                            style={{
+                              background: isLayoutExpanded ? 'var(--c-blue-dim)' : 'none',
+                              border: '1px solid',
+                              borderColor: isLayoutExpanded ? 'var(--c-blue)' : 'var(--c-border)',
+                              borderRadius: 5,
+                              cursor: 'pointer',
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              color: isLayoutExpanded ? 'var(--c-blue)' : 'var(--c-text-dim)',
+                              fontWeight: 600,
+                              transition: 'all 0.15s',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {isLayoutExpanded ? 'Close' : 'Layout ↓'}
+                          </button>
+                        </div>
                       )}
                     </Td>
                   </tr>
@@ -227,7 +277,7 @@ export function ScheduleTable({
                   {isExpanded && (
                     <tr>
                       <td
-                        colSpan={7 + scopeItemTypes.length}
+                        colSpan={8 + scopeItemTypes.length}
                         style={{ padding: 0 }}
                       >
                         <ScopeOfWorkPanel
@@ -238,6 +288,24 @@ export function ScheduleTable({
                           scopeItems={nodeItems}
                           tenantDetails={details}
                           onClose={() => setExpandedNodeId(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+
+                  {/* Expanded layout-issued panel */}
+                  {isLayoutExpanded && (
+                    <tr>
+                      <td
+                        colSpan={8 + scopeItemTypes.length}
+                        style={{ padding: 0 }}
+                      >
+                        <LayoutIssuedPanel
+                          projectId={projectId}
+                          nodeId={node.id}
+                          shopName={node.shop_name ?? node.name}
+                          layoutDetails={layoutDetails}
+                          onClose={() => setExpandedLayoutNodeId(null)}
                         />
                       </td>
                     </tr>

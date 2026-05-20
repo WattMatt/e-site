@@ -7,6 +7,7 @@ import { Card, CardBody } from '@/components/ui/Card'
 import { ScheduleTable } from './_components/ScheduleTable'
 import { ImportFlow } from './_components/ImportFlow'
 import type { ScopeItemType, TenantScopeItem, TenantDetails } from './_components/ScopeOfWorkPanel'
+import type { LayoutDetails } from './_components/LayoutIssuedPanel'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Tenant Schedule' }
@@ -38,10 +39,11 @@ export default async function TenantSchedulePage({ params }: Props) {
     loadError = err instanceof Error ? err.message : 'Could not load tenant schedule data'
   }
 
-  // ── Load scope data (best-effort; failures show the table without scope) ──
+  // ── Load scope + layout data (best-effort; failures show the table without these) ──
   let scopeItemTypes: ScopeItemType[] = []
   let allScopeItems: TenantScopeItem[] = []
   let allTenantDetails: TenantDetails[] = []
+  let allLayoutDetails: LayoutDetails[] = []
 
   const nodeIds = nodes.map((n) => n.id)
 
@@ -73,13 +75,26 @@ export default async function TenantSchedulePage({ params }: Props) {
     }
 
     try {
+      // Fetch both scope and layout columns in one query to avoid two round-trips
       const { data: details } = await (supabase as any)
         .schema('structure')
         .from('tenant_details')
-        .select('node_id, scope_status, scope_document_path')
+        .select('node_id, scope_status, scope_document_path, layout_status, layout_issued_at, layout_drawing_path')
         .in('node_id', nodeIds)
 
-      if (details) allTenantDetails = details as TenantDetails[]
+      if (details) {
+        allTenantDetails = (details as Array<TenantDetails & LayoutDetails>).map((d) => ({
+          node_id: d.node_id,
+          scope_status: d.scope_status,
+          scope_document_path: d.scope_document_path,
+        }))
+        allLayoutDetails = (details as Array<TenantDetails & LayoutDetails>).map((d) => ({
+          node_id: d.node_id,
+          layout_status: d.layout_status ?? 'not_issued',
+          layout_issued_at: d.layout_issued_at ?? null,
+          layout_drawing_path: d.layout_drawing_path ?? null,
+        }))
+      }
     } catch {
       // Non-fatal
     }
@@ -95,6 +110,11 @@ export default async function TenantSchedulePage({ params }: Props) {
   const tenantDetailsByNode: Record<string, TenantDetails> = {}
   for (const d of allTenantDetails) {
     tenantDetailsByNode[d.node_id] = d
+  }
+
+  const layoutDetailsByNode: Record<string, LayoutDetails> = {}
+  for (const d of allLayoutDetails) {
+    layoutDetailsByNode[d.node_id] = d
   }
 
   const activeCount = nodes.filter((n) => n.status !== 'decommissioned').length
@@ -159,6 +179,7 @@ export default async function TenantSchedulePage({ params }: Props) {
             scopeItemTypes={scopeItemTypes}
             scopeItemsByNode={scopeItemsByNode}
             tenantDetailsByNode={tenantDetailsByNode}
+            layoutDetailsByNode={layoutDetailsByNode}
           />
         </CardBody>
       </Card>
