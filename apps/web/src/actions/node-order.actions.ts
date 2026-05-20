@@ -130,6 +130,7 @@ function revalidateOrderPaths(projectId: string): void {
   revalidatePath(`/projects/${projectId}/tenant-schedule`)
   revalidatePath(`/projects/${projectId}/equipment-schedule`)
   revalidatePath(`/projects/${projectId}/materials`)
+  revalidatePath(`/projects/${projectId}/materials/orders`)
 }
 
 // ---------------------------------------------------------------------------

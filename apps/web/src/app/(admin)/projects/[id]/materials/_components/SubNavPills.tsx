@@ -40,6 +40,9 @@ export function SubNavPills({
           </Link>
         )
       })}
+      <Link href={`${base}/orders`} className={linkClass(`${base}/orders`)}>
+        Node Orders
+      </Link>
     </nav>
   )
 }
