@@ -47,18 +47,27 @@ interface SourceRow {
   voltage_v: number | null
 }
 
-interface BoardRow {
+// Board-equivalent rows now come from structure.nodes (unified-node model,
+// migration 00074/00077). Project-scoped, not revision-scoped.
+interface NodeRow {
   id: string
   code: string
   kind: string
-  tenant_name: string | null
-  area_m2: number | null
   breaker_rating_a: number | null
   section: string | null
-  parent_board_id: string | null
 }
 
-interface SupplyRow extends SupplyForCalc {
+// supplies now route via from_node_id / to_node_id (→ structure.nodes);
+// from_source_id stays (→ cable_schedule.sources). The shared SupplyForCalc
+// type still names these from_board_id / to_board_id — supplyForCalc below
+// maps the node ids onto those names for the calc functions.
+interface SupplyRow {
+  id: string
+  from_source_id: string | null
+  from_node_id: string | null
+  to_node_id: string
+  voltage_v: number
+  design_load_a: number
   section: string | null
 }
 
@@ -121,16 +130,17 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       .select('id, code, type, rating_kva, voltage_v')
       .eq('revision_id', revisionId)
       .order('code'),
+    // Boards became structure.nodes — PROJECT-scoped, not revision-scoped.
     (supabase as any)
-      .schema('cable_schedule')
-      .from('boards')
-      .select('id, code, kind, tenant_name, area_m2, breaker_rating_a, section, parent_board_id')
-      .eq('revision_id', revisionId)
+      .schema('structure')
+      .from('nodes')
+      .select('id, code, kind, breaker_rating_a, section')
+      .eq('project_id', projectId)
       .order('code'),
     (supabase as any)
       .schema('cable_schedule')
       .from('supplies')
-      .select('id, from_source_id, from_board_id, to_board_id, voltage_v, design_load_a, section')
+      .select('id, from_source_id, from_node_id, to_node_id, voltage_v, design_load_a, section')
       .eq('revision_id', revisionId),
     (supabase as any)
       .schema('cable_schedule')
@@ -147,18 +157,30 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   ])
 
   const sources  = (sourcesRes?.data  ?? []) as unknown as SourceRow[]
-  const boards   = (boardsRes?.data   ?? []) as unknown as BoardRow[]
+  const boards   = (boardsRes?.data   ?? []) as unknown as NodeRow[]
   const supplies = (suppliesRes?.data ?? []) as unknown as SupplyRow[]
   const cables   = (cablesRes?.data   ?? []) as unknown as CableRow[]
 
+  // The shared cable-calc functions still expect from_board_id / to_board_id —
+  // map the node-id columns onto those names so cumulative VD walks correctly.
+  const suppliesForCalc: SupplyForCalc[] = supplies.map((s) => ({
+    id: s.id,
+    from_source_id: s.from_source_id,
+    from_board_id: s.from_node_id,
+    to_board_id: s.to_node_id,
+    voltage_v: s.voltage_v,
+    design_load_a: s.design_load_a,
+  }))
+
   const hasConfirmedLengths = cables.some((c) => c.confirmed_length_m != null)
 
-  // Blast-radius counts: how many supplies and cables cascade-delete if a node is removed.
-  function blastFor(nodeId: string, category: 'source' | 'board') {
+  // Blast-radius counts: how many supplies and cables cascade-delete if a node
+  // is removed. `node` covers the structure.nodes rows that used to be boards.
+  function blastFor(nodeId: string, category: 'source' | 'node') {
     const hit = supplies.filter((s) =>
       category === 'source'
         ? s.from_source_id === nodeId
-        : (s.from_board_id === nodeId || s.to_board_id === nodeId))
+        : (s.from_node_id === nodeId || s.to_node_id === nodeId))
     const supplyIds = new Set(hit.map((s) => s.id))
     const cableCount = cables.filter((c) => supplyIds.has(c.supply_id)).length
     return { blastSupplies: hit.length, blastCables: cableCount }
@@ -171,23 +193,38 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   let revCloudAdded = new Set<string>()
   let revCloudChanged = new Set<string>()
   if (priorIssued) {
-    const [priorCablesRes] = await Promise.all([
+    // The supply→source embed stays (same schema). The board side moved to
+    // structure.nodes — PostgREST can't embed cross-schema, so from/to codes
+    // are resolved in JS against the project's nodes (loaded once below).
+    const cableDiffSelect =
+      'id, cable_no, size_mm2, cores, conductor, insulation, ' +
+      'measured_length_m, confirmed_length_m, length_status, ohm_per_km, ' +
+      'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
+      'derated_current_rating_a, tag_override, notes, ' +
+      'supply:supplies!supply_id(' +
+        'voltage_v, design_load_a, from_source_id, from_node_id, to_node_id)'
+    const [priorCablesRes, { data: priorNodesData }] = await Promise.all([
       (supabase as any)
         .schema('cable_schedule')
         .from('cables')
-        .select(
-          'id, cable_no, size_mm2, cores, conductor, insulation, ' +
-          'measured_length_m, confirmed_length_m, length_status, ohm_per_km, ' +
-          'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
-          'derated_current_rating_a, tag_override, notes, ' +
-          'supply:supplies!supply_id(' +
-            'voltage_v, design_load_a, ' +
-            'source:sources!from_source_id(code), ' +
-            'from_board:boards!from_board_id(code), ' +
-            'to_board:boards!to_board_id(code))',
-        )
+        .select(cableDiffSelect)
         .eq('revision_id', priorIssued.id),
+      // Project-scoped nodes — the same set serves both revisions for label
+      // resolution (a node referenced by an ISSUED revision still exists).
+      (supabase as any)
+        .schema('structure')
+        .from('nodes')
+        .select('id, code')
+        .eq('project_id', projectId),
     ])
+    // Label resolver: source codes (loaded above) + node codes (just fetched).
+    const diffLabelById = new Map<string, string>()
+    for (const s of sources) diffLabelById.set(s.id, s.code)
+    for (const n of (priorNodesData ?? []) as Array<{ id: string; code: string }>) {
+      diffLabelById.set(n.id, n.code)
+    }
+    const diffLabel = (id: string | null | undefined): string =>
+      (id && diffLabelById.get(id)) || '?'
     const toDiffable = (rows: any[]): DiffableCable[] => rows.map((c) => ({
       id: c.id,
       cable_no: c.cable_no,
@@ -208,8 +245,8 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         : Number(c.derated_current_rating_a),
       tag_override: c.tag_override,
       notes: c.notes,
-      from_label: c.supply?.source?.code ?? c.supply?.from_board?.code ?? '?',
-      to_label: c.supply?.to_board?.code ?? '?',
+      from_label: diffLabel(c.supply?.from_source_id ?? c.supply?.from_node_id),
+      to_label: diffLabel(c.supply?.to_node_id),
       voltage_v: c.supply?.voltage_v == null ? null : Number(c.supply.voltage_v),
       load_a: c.supply?.design_load_a == null ? null : Number(c.supply.design_load_a),
     }))
@@ -217,17 +254,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     const { data: currentRich } = await (supabase as any)
       .schema('cable_schedule')
       .from('cables')
-      .select(
-        'id, cable_no, size_mm2, cores, conductor, insulation, ' +
-        'measured_length_m, confirmed_length_m, length_status, ohm_per_km, ' +
-        'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
-        'derated_current_rating_a, tag_override, notes, ' +
-        'supply:supplies!supply_id(' +
-          'voltage_v, design_load_a, ' +
-          'source:sources!from_source_id(code), ' +
-          'from_board:boards!from_board_id(code), ' +
-          'to_board:boards!to_board_id(code))',
-      )
+      .select(cableDiffSelect)
       .eq('revision_id', revisionId)
     const { added, changed } = changedCableIds(
       toDiffable((priorCablesRes?.data ?? []) as any[]),
@@ -239,7 +266,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
 
   // Pre-compute volt drop + cumulative VD so the grid renders synchronously.
   const cumulativeMap = computeCumulativeVdMap(
-    supplies as SupplyForCalc[],
+    suppliesForCalc,
     cables as CableForCalc[],
     lengthMode,
   )
@@ -271,7 +298,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   const supplyById = new Map(supplies.map((s) => [s.id, s] as const))
   const cumulativeBySupply = cumulativeMap
   const supplyVdById = new Map<string, number>()
-  for (const s of supplies) {
+  for (const s of suppliesForCalc) {
     supplyVdById.set(s.id, voltDropPctForSupply(s, cables as CableForCalc[], lengthMode))
   }
 
@@ -307,7 +334,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     sources.map((s) => ({ id: s.id, code: s.code, type: s.type })),
     boards.map((b) => ({ id: b.id, code: b.code, kind: b.kind })),
     supplies.map((s) => ({
-      id: s.id, from_source_id: s.from_source_id, from_board_id: s.from_board_id, to_board_id: s.to_board_id,
+      id: s.id, from_source_id: s.from_source_id, from_node_id: s.from_node_id, to_node_id: s.to_node_id,
     })),
     {
       feedSummaryFor: (id) => feedSummaryBySupply.get(id) ?? null,
@@ -377,8 +404,8 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     return {
       id: c.id,
       cable_no: c.cable_no,
-      from_label: nodeLabel(supply.from_source_id ?? supply.from_board_id),
-      to_label: nodeLabel(supply.to_board_id),
+      from_label: nodeLabel(supply.from_source_id ?? supply.from_node_id),
+      to_label: nodeLabel(supply.to_node_id),
       voltage_v: supply.voltage_v,
       load_a: supply.design_load_a,
       per_cable_load_a: (() => {
@@ -410,8 +437,8 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
               : null,
       cloud_letter: revLetter,
       supply_id: c.supply_id,
-      from_node_id: supply.from_source_id ?? supply.from_board_id ?? '',
-      to_node_id: supply.to_board_id,
+      from_node_id: supply.from_source_id ?? supply.from_node_id ?? '',
+      to_node_id: supply.to_node_id,
       armour: c.armour,
       section: supply.section,
       ambient_temp_c: Number(c.ambient_temp_c ?? 30),
@@ -632,7 +659,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             revisionId={revisionId}
             rows={rows}
             runs={runs}
-            supplies={supplies as SupplyForCalc[]}
+            supplies={suppliesForCalc}
             cables={cables as CableForCalc[]}
             nodeOptions={[
               ...sources.map((s) => ({ id: s.id, code: s.code, kind: 'source' as const })),

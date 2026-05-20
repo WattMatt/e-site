@@ -163,8 +163,8 @@ function CableForm({
       const res = await previewParallelCableSet({
         revisionId,
         fromSourceId: kind === 'source' ? id! : null,
-        fromBoardId: kind === 'board' ? id! : null,
-        toBoardId,
+        fromNodeId: kind === 'board' ? id! : null,
+        toNodeId: toBoardId,
         designLoadA: loadNum,
         sizeMm2: Number(sizeMm2),
         cores,
@@ -234,8 +234,8 @@ function CableForm({
           return addParallelCableSetAction({
             revisionId,
             fromSourceId: kind === 'source' ? id! : null,
-            fromBoardId: kind === 'board' ? id! : null,
-            toBoardId: resolvedToBoardId,
+            fromNodeId: kind === 'board' ? id! : null,
+            toNodeId: resolvedToBoardId,
             voltageV: Number(voltage),
             designLoadA: Number(load),
             section: (section || null) as 'NORMAL' | 'EMERGENCY' | null | undefined,
@@ -274,8 +274,8 @@ function CableForm({
           const supplyResult = await findOrCreateSupplyAction({
             revisionId,
             fromSourceId: kind === 'source' ? id! : null,
-            fromBoardId: kind === 'board' ? id! : null,
-            toBoardId: resolvedToBoardId,
+            fromNodeId: kind === 'board' ? id! : null,
+            toNodeId: resolvedToBoardId,
             voltageV: Number(voltage),
             designLoadA: Number(load),
             section: (section || null) as 'NORMAL' | 'EMERGENCY' | null | undefined,

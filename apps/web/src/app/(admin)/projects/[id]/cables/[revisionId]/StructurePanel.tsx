@@ -92,7 +92,7 @@ export function StructurePanel({ projectId, revisionId, roots, unfed, canEdit, o
                 Unfed — not yet on any feed
               </div>
               {unfed.map((n) => (
-                <TreeNode key={n.id} node={n} depth={0} canEdit={canEdit} pending={pending}
+                <TreeNode key={n.id} node={n} depth={0} canEdit={canEdit} pending={pending} projectId={projectId}
                   onRename={onRename} onDelete={setConfirmDelete} onFeedBoard={onFeedBoard} />
               ))}
             </div>
@@ -127,12 +127,13 @@ export function StructurePanel({ projectId, revisionId, roots, unfed, canEdit, o
             display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div className="data-panel" style={{ padding: 16, minWidth: 340, maxWidth: 460,
             display: 'flex', flexDirection: 'column', gap: 10, background: 'var(--c-panel)' }}>
-            <h3 id="structure-del-title" style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Remove {confirmDelete.category}</h3>
+            <h3 id="structure-del-title" style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
+              Remove {confirmDelete.category === 'source' ? 'source' : 'board'}
+            </h3>
             <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: 0 }}>
               Removing <strong>{confirmDelete.code}</strong> ({TYPE_LABEL[confirmDelete.nodeType] ?? confirmDelete.nodeType}) will also
               delete <strong>{confirmDelete.blastSupplies}</strong> suppl{confirmDelete.blastSupplies === 1 ? 'y' : 'ies'} and{' '}
-              <strong>{confirmDelete.blastCables}</strong> cable{confirmDelete.blastCables === 1 ? '' : 's'}.
-              {confirmDelete.category === 'board' && ' Child boards re-parent to top-level.'} Continue?
+              <strong>{confirmDelete.blastCables}</strong> cable{confirmDelete.blastCables === 1 ? '' : 's'}. Continue?
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button type="button" onClick={() => setConfirmDelete(null)} className="btn-primary-amber"

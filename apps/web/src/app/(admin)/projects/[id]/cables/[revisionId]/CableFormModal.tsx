@@ -331,14 +331,16 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
 
       if (mode === 'add-run') {
         // Resolve FROM kind from the picked node so we set fromSourceId XOR
-        // fromBoardId per the supplies-table CHECK constraint.
+        // fromNodeId per the supplies-table CHECK constraint. A 'board'-kind
+        // NodeOption is a structure.nodes row; a 'source'-kind one is a
+        // cable_schedule.sources row.
         const fromOpt = fromOptions.find((o) => o.id === fromNodeId)
         if (!fromOpt) { setError('FROM node not found'); return }
         const res = await addRunAction({
           revisionId: revisionId!,
           fromSourceId: fromOpt.kind === 'source' ? fromNodeId : null,
-          fromBoardId: fromOpt.kind === 'board' ? fromNodeId : null,
-          toBoardId: toNodeId,
+          fromNodeId: fromOpt.kind === 'board' ? fromNodeId : null,
+          toNodeId: toNodeId,
           voltageV,
           designLoadA: Number(designLoadA),
           section: section === '' ? null : section,

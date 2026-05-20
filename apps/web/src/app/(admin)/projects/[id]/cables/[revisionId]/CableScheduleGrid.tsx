@@ -1125,9 +1125,11 @@ export function CableScheduleGrid({
             const { supplyId, end } = repointing
             const res = await repointSupplyAction({
               supplyId,
+              // A 'board'-kind NodeOption is a structure.nodes row → from_node_id;
+              // a 'source'-kind one is a cable_schedule.sources row → from_source_id.
               ...(end === 'from'
-                ? { fromSourceId: kind === 'source' ? nodeId : null, fromBoardId: kind === 'board' ? nodeId : null }
-                : { toBoardId: nodeId }),
+                ? { fromSourceId: kind === 'source' ? nodeId : null, fromNodeId: kind === 'board' ? nodeId : null }
+                : { toNodeId: nodeId }),
             })
             if (!res.error) setRepointing(null)
             return res
