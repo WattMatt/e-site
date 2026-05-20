@@ -52,9 +52,9 @@ interface CableJoin {
   derate_temp: number | null
   supply: {
     id: string
-    source?: { code: string } | null
-    from_board?: { code: string } | null
-    to_board?: { code: string } | null
+    from_source_id: string | null
+    from_node_id: string | null
+    to_node_id: string | null
   }
 }
 
@@ -78,7 +78,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
   if (!revisionRow) notFound()
   const revision = revisionRow as { id: string; code: string; status: string; project_id: string }
 
-  const [cablesRes, tagsRes] = await Promise.all([
+  const [cablesRes, tagsRes, sourcesRes, nodesRes] = await Promise.all([
     (supabase as any)
       .schema('cable_schedule')
       .from('cables')
@@ -86,8 +86,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
         'id, cable_no, size_mm2, cores, conductor, insulation, armour, ' +
         'measured_length_m, confirmed_length_m, length_status, ohm_per_km, supply_id, ' +
         'derate_depth, derate_thermal, derate_grouping, derate_temp, ' +
-        'supply:supplies!supply_id(' +
-          'id, source:sources!from_source_id(code), from_board:boards!from_board_id(code), to_board:boards!to_board_id(code))',
+        'supply:supplies!supply_id(id, from_source_id, from_node_id, to_node_id)',
       )
       .eq('revision_id', revisionId)
       .order('cable_no'),
@@ -95,9 +94,31 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
       .schema('cable_schedule')
       .from('cable_tags')
       .select('id, cable_id, end_position, tag_text, qr_payload, printed, printed_at, notes'),
+    // Sources + nodes for label resolution — cross-schema embeds fail (PGRST200)
+    (supabase as any)
+      .schema('cable_schedule')
+      .from('sources')
+      .select('id, code')
+      .eq('revision_id', revisionId),
+    (supabase as any)
+      .schema('structure')
+      .from('nodes')
+      .select('id, code')
+      .eq('project_id', projectId),
   ])
   const cables = (cablesRes?.data ?? []) as unknown as CableJoin[]
   const allTags = (tagsRes?.data ?? []) as unknown as TagRow[]
+
+  // Build label map: source codes + node codes
+  const labelById = new Map<string, string>()
+  for (const s of (sourcesRes?.data ?? []) as Array<{ id: string; code: string }>) {
+    labelById.set(s.id, s.code)
+  }
+  for (const n of (nodesRes?.data ?? []) as Array<{ id: string; code: string }>) {
+    labelById.set(n.id, n.code)
+  }
+  const label = (id: string | null | undefined): string =>
+    (id && labelById.get(id)) || '?'
   const tagsByCable = new Map<string, TagRow[]>()
   for (const t of allTags) {
     if (!tagsByCable.has(t.cable_id)) tagsByCable.set(t.cable_id, [])
@@ -120,8 +141,8 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
     const cableTags = (tagsByCable.get(c.id) ?? []).filter((t) => cableIdSet.has(t.cable_id))
     const fromTag = cableTags.find((t) => t.end_position === 'FROM') ?? null
     const toTag   = cableTags.find((t) => t.end_position === 'TO')   ?? null
-    const fromLabel = c.supply.source?.code ?? c.supply.from_board?.code ?? '?'
-    const toLabel = c.supply.to_board?.code ?? '?'
+    const fromLabel = label(c.supply.from_source_id ?? c.supply.from_node_id)
+    const toLabel = label(c.supply.to_node_id)
     const len = activeLengthM(c as unknown as CableForCalc, 'as-built')
     rowsAll.push({
       sortKey: `${c.cable_no.toString().padStart(6, '0')}|${c.id}|FROM`,

@@ -25,9 +25,9 @@ interface CableJoin {
   confirmation_notes: string | null
   supply: {
     id: string
-    source?: { code: string } | null
-    from_board?: { code: string } | null
-    to_board?: { code: string } | null
+    from_source_id: string | null
+    from_node_id: string | null
+    to_node_id: string | null
   }
   verifier?: { full_name: string | null; email: string | null } | null
 }
@@ -52,19 +52,44 @@ export default async function DiscrepancyReportPage({ params }: Props) {
 
   // All cables with EITHER confirmed_length set + discrepancy
   // OR confirmed-pending (status MEASURED + confirmed_length_m IS NOT NULL)
-  const { data: cables } = await (supabase as any)
-    .schema('cable_schedule')
-    .from('cables')
-    .select(
-      'id, cable_no, size_mm2, measured_length_m, confirmed_length_m, length_status, ' +
-      'confirmed_length_method, confirmed_length_at, confirmed_length_by, confirmation_notes, ' +
-      'supply:supplies!supply_id(id, source:sources!from_source_id(code), from_board:boards!from_board_id(code), to_board:boards!to_board_id(code)), ' +
-      'verifier:profiles!confirmed_length_by(full_name, email)',
-    )
-    .eq('revision_id', revisionId)
-    .not('confirmed_length_m', 'is', null)
-    .order('cable_no')
+  // Cross-schema PostgREST embeds fail (PGRST200) — fetch nodes separately
+  // and resolve from/to labels in JS.
+  const [cablesRes, sourcesRes, nodesRes] = await Promise.all([
+    (supabase as any)
+      .schema('cable_schedule')
+      .from('cables')
+      .select(
+        'id, cable_no, size_mm2, measured_length_m, confirmed_length_m, length_status, ' +
+        'confirmed_length_method, confirmed_length_at, confirmed_length_by, confirmation_notes, ' +
+        'supply:supplies!supply_id(id, from_source_id, from_node_id, to_node_id), ' +
+        'verifier:profiles!confirmed_length_by(full_name, email)',
+      )
+      .eq('revision_id', revisionId)
+      .not('confirmed_length_m', 'is', null)
+      .order('cable_no'),
+    (supabase as any)
+      .schema('cable_schedule')
+      .from('sources')
+      .select('id, code')
+      .eq('revision_id', revisionId),
+    (supabase as any)
+      .schema('structure')
+      .from('nodes')
+      .select('id, code')
+      .eq('project_id', projectId),
+  ])
+  const cables = cablesRes?.data
   const list = (cables ?? []) as unknown as CableJoin[]
+
+  const labelById = new Map<string, string>()
+  for (const s of (sourcesRes?.data ?? []) as Array<{ id: string; code: string }>) {
+    labelById.set(s.id, s.code)
+  }
+  for (const n of (nodesRes?.data ?? []) as Array<{ id: string; code: string }>) {
+    labelById.set(n.id, n.code)
+  }
+  const label = (id: string | null | undefined): string =>
+    (id && labelById.get(id)) || '?'
 
   const rows: DiscRow[] = list.map((c) => {
     const measured = c.measured_length_m == null ? null : Number(c.measured_length_m)
@@ -75,7 +100,7 @@ export default async function DiscrepancyReportPage({ params }: Props) {
       : null
     return {
       id: c.id,
-      tag: `${c.supply.source?.code ?? c.supply.from_board?.code ?? '?'}-${c.supply.to_board?.code ?? '?'}-${c.size_mm2}-${c.cable_no}`,
+      tag: `${label(c.supply.from_source_id ?? c.supply.from_node_id)}-${label(c.supply.to_node_id)}-${c.size_mm2}-${c.cable_no}`,
       measured,
       confirmed,
       delta,
