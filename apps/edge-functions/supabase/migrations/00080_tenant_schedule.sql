@@ -108,23 +108,25 @@ CREATE TRIGGER tenant_scope_items_updated_at
     FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 4. Seed scope_item_types
---    These rows are org-independent seeds for the two built-in item types.
---    They are NOT inserted here because scope_item_types is org-scoped —
---    there is no global/null org_id to use.
+-- 4. Seed scope_item_types — the two built-in item types ('db', 'lighting').
+--    scope_item_types is org-scoped (organisation_id NOT NULL), so there is no
+--    single global seed row — seed both built-ins for every EXISTING
+--    organisation. ON CONFLICT keeps this idempotent.
 --
---    Instead, the application layer inserts these two rows when an org is
---    created (or when the first tenant schedule import runs for an org that
---    lacks them), using the org's own ID.
---
---    NOTE: The task spec says "seed 'db' and 'lighting'" — but the table
---    requires a non-null organisation_id FK, making a DB-level seed without
---    a real org UUID impossible. The seed is deferred to the application
---    layer. This is documented here so future implementers don't attempt a
---    NULL-org seed row. See design doc §5.1 and §9 item T4.
+--    Future organisations get these two types seeded by the application layer
+--    (an idempotent ensure at tenant-schedule import / scope-UI time) — a
+--    migration cannot seed organisations that do not exist yet.
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- (No INSERT here — see note above.)
+INSERT INTO structure.scope_item_types (organisation_id, key, label, sort_order)
+SELECT id, 'db', 'DB', 0
+FROM   public.organisations
+ON CONFLICT (organisation_id, key) DO NOTHING;
+
+INSERT INTO structure.scope_item_types (organisation_id, key, label, sort_order)
+SELECT id, 'lighting', 'Lighting', 1
+FROM   public.organisations
+ON CONFLICT (organisation_id, key) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5. RLS — scope_item_types
