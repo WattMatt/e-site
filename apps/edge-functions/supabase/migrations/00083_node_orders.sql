@@ -25,6 +25,8 @@
 --   + structure.node_orders
 --   + index on (project_id, status)   — Materials view query
 --   + index on (node_id)              — schedule-integration joins
+--   + unique partial index — one tenant order per (node, scope_item_type) (§3)
+--   + unique partial index — one equipment order per node (§4)
 --   + BEFORE UPDATE trigger → public.set_updated_at()
 --
 -- RLS: mirrors 00080 (structure.tenant_details / tenant_scope_items) —
@@ -95,6 +97,20 @@ CREATE INDEX idx_node_orders_project_status
 -- Schedule-integration joins traverse from node → orders (design §7).
 CREATE INDEX idx_node_orders_node
     ON structure.node_orders (node_id);
+
+-- Enforce the design's 1:1 cardinality (§3, §4) at the DB level — this also
+-- gives the Task 4.2 derivation service a conflict target for idempotent
+-- upserts (re-derivation must never create duplicate order lines).
+-- Tenant orders: one per (node, scope_item_type).
+CREATE UNIQUE INDEX idx_node_orders_tenant_unique
+    ON structure.node_orders (node_id, scope_item_type_id)
+    WHERE scope_item_type_id IS NOT NULL;
+
+-- Equipment orders: one per node. scope_item_type_id is NULL, and NULLs are
+-- distinct in a plain UNIQUE — so a partial index on node_id alone is required.
+CREATE UNIQUE INDEX idx_node_orders_equipment_unique
+    ON structure.node_orders (node_id)
+    WHERE scope_item_type_id IS NULL;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3. updated_at trigger
