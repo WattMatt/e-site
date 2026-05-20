@@ -147,7 +147,7 @@ export async function addSourceAction(
   // COUNCIL_RMU is equipment in the unified-node model — it lives in
   // structure.nodes (project-scoped), not cable_schedule.sources.
   if (parsed.data.type === 'COUNCIL_RMU') {
-    const { data, error } = await (supabase as any)
+    const { data, error } = await supabase
       .schema('structure')
       .from('nodes')
       .insert({
@@ -267,7 +267,7 @@ export async function addBoardAction(
     ? BOARD_KIND_TO_NODE_KIND[parsed.data.kind]
     : 'main_board'
 
-  const { data, error } = await (supabase as any)
+  const { data, error } = await supabase
     .schema('structure')
     .from('nodes')
     .insert({
@@ -298,7 +298,7 @@ export async function deleteBoardAction(id: string): Promise<{ ok?: true; error?
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: n } = await (supabase as any)
+  const { data: n } = await supabase
     .schema('structure')
     .from('nodes')
     .select('id, project_id, organisation_id, code')
@@ -313,7 +313,7 @@ export async function deleteBoardAction(id: string): Promise<{ ok?: true; error?
   const ctx = await resolveNodeRevisionContext(supabase, node.id)
   if ('error' in ctx) return { error: ctx.error }
 
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .schema('structure')
     .from('nodes')
     .delete()
@@ -1332,7 +1332,7 @@ export async function renameBoardAction(id: string, code: string): Promise<{ ok?
   const parsed = renameSchema.safeParse({ id, code })
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
   const supabase = await createClient()
-  const { data: nd } = await (supabase as any)
+  const { data: nd } = await supabase
     .schema('structure').from('nodes')
     .select('id, project_id, organisation_id, code').eq('id', id).single()
   const node = nd as { id?: string; project_id?: string; organisation_id?: string; code?: string } | null
@@ -1342,7 +1342,7 @@ export async function renameBoardAction(id: string, code: string): Promise<{ ok?
   if ('error' in ctx) return { error: ctx.error }
 
   const { data: { user } } = await supabase.auth.getUser()
-  const { error } = await (supabase as any)
+  const { error } = await supabase
     .schema('structure').from('nodes').update({ code: parsed.data.code }).eq('id', id)
   if (error) return { error: error.message }
 

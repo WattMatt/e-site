@@ -100,7 +100,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // The cookie client is RLS-gated so a node from another org returns null.
   // Reads through .schema() are safe — the cross-schema service-role gotcha
   // applies to writes only.
-  const { data: node } = await (supabase as any)
+  const { data: node } = await supabase
     .schema('structure')
     .from('nodes')
     .select('id')

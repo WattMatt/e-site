@@ -130,7 +130,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       .eq('revision_id', revisionId)
       .order('code'),
     // Boards became structure.nodes — PROJECT-scoped, not revision-scoped.
-    (supabase as any)
+    supabase
       .schema('structure')
       .from('nodes')
       .select('id, code, kind, breaker_rating_a, section')
@@ -203,7 +203,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         .eq('revision_id', priorIssued.id),
       // Project-scoped nodes — the same set serves both revisions for label
       // resolution (a node referenced by an ISSUED revision still exists).
-      (supabase as any)
+      supabase
         .schema('structure')
         .from('nodes')
         .select('id, code')

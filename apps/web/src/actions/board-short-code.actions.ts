@@ -72,7 +72,7 @@ export async function updateBoardShortCodesAction(
   // project_id + id only.
   let updated = 0
   for (const u of normalised) {
-    const { error } = await (supabase as any)
+    const { error } = await supabase
       .schema('structure')
       .from('nodes')
       .update({ short_code: u.shortCode })

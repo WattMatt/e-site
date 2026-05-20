@@ -106,7 +106,7 @@ export async function generateTagsAction(
   ]
   const nodeById = new Map<string, { code: string; short_code: string | null }>()
   if (nodeIds.length > 0) {
-    const { data: nodeRows } = await (supabase as any)
+    const { data: nodeRows } = await supabase
       .schema('structure')
       .from('nodes')
       .select('id, code, short_code')
@@ -242,7 +242,7 @@ export async function regenerateTagTextAction(
   ]
   const regenNodeById = new Map<string, { code: string; short_code: string | null }>()
   if (regenNodeIds.length > 0) {
-    const { data: nodeRows } = await (supabase as any)
+    const { data: nodeRows } = await supabase
       .schema('structure')
       .from('nodes')
       .select('id, code, short_code')

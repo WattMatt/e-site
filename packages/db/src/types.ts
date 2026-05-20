@@ -812,6 +812,7 @@ export type Database = {
           created_at: string
           design_load_a: number
           from_board_id: string | null
+          from_node_id: string | null
           from_source_id: string | null
           id: string
           notes: string | null
@@ -819,6 +820,7 @@ export type Database = {
           revision_id: string
           section: string | null
           to_board_id: string
+          to_node_id: string | null
           updated_at: string
           voltage_v: number
         }
@@ -826,6 +828,7 @@ export type Database = {
           created_at?: string
           design_load_a: number
           from_board_id?: string | null
+          from_node_id?: string | null
           from_source_id?: string | null
           id?: string
           notes?: string | null
@@ -833,6 +836,7 @@ export type Database = {
           revision_id: string
           section?: string | null
           to_board_id: string
+          to_node_id?: string | null
           updated_at?: string
           voltage_v: number
         }
@@ -840,6 +844,7 @@ export type Database = {
           created_at?: string
           design_load_a?: number
           from_board_id?: string | null
+          from_node_id?: string | null
           from_source_id?: string | null
           id?: string
           notes?: string | null
@@ -847,6 +852,7 @@ export type Database = {
           revision_id?: string
           section?: string | null
           to_board_id?: string
+          to_node_id?: string | null
           updated_at?: string
           voltage_v?: number
         }
@@ -1284,10 +1290,72 @@ export type Database = {
         }
         Relationships: []
       }
+      coc_validations: {
+        Row: {
+          certificate_id: string
+          failure_reason: string | null
+          id: string
+          inspection_id: string
+          measured_value: string | null
+          result: string
+          rule_code: string
+          rule_label: string
+          sans_clause: string | null
+          threshold: string | null
+          validated_at: string
+          validator_version: string
+        }
+        Insert: {
+          certificate_id: string
+          failure_reason?: string | null
+          id?: string
+          inspection_id: string
+          measured_value?: string | null
+          result: string
+          rule_code: string
+          rule_label: string
+          sans_clause?: string | null
+          threshold?: string | null
+          validated_at?: string
+          validator_version?: string
+        }
+        Update: {
+          certificate_id?: string
+          failure_reason?: string | null
+          id?: string
+          inspection_id?: string
+          measured_value?: string | null
+          result?: string
+          rule_code?: string
+          rule_label?: string
+          sans_clause?: string | null
+          threshold?: string | null
+          validated_at?: string
+          validator_version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coc_validations_certificate_id_fkey"
+            columns: ["certificate_id"]
+            isOneToOne: false
+            referencedRelation: "certificates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coc_validations_inspection_id_fkey"
+            columns: ["inspection_id"]
+            isOneToOne: false
+            referencedRelation: "inspections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       inspections: {
         Row: {
           abandon_reason: string | null
           abandoned_at: string | null
+          abandoned_by: string | null
+          abandoned_reason: string | null
           assigned_to_id: string | null
           certified_at: string | null
           coc_number: string | null
@@ -1314,6 +1382,8 @@ export type Database = {
         Insert: {
           abandon_reason?: string | null
           abandoned_at?: string | null
+          abandoned_by?: string | null
+          abandoned_reason?: string | null
           assigned_to_id?: string | null
           certified_at?: string | null
           coc_number?: string | null
@@ -1340,6 +1410,8 @@ export type Database = {
         Update: {
           abandon_reason?: string | null
           abandoned_at?: string | null
+          abandoned_by?: string | null
+          abandoned_reason?: string | null
           assigned_to_id?: string | null
           certified_at?: string | null
           coc_number?: string | null
@@ -1390,6 +1462,8 @@ export type Database = {
           height_px: number | null
           id: string
           inspection_id: string
+          original_path: string | null
+          original_size_bytes: number | null
           section_id: string
           storage_path: string
           taken_at: string | null
@@ -1405,6 +1479,8 @@ export type Database = {
           height_px?: number | null
           id?: string
           inspection_id: string
+          original_path?: string | null
+          original_size_bytes?: number | null
           section_id: string
           storage_path: string
           taken_at?: string | null
@@ -1420,6 +1496,8 @@ export type Database = {
           height_px?: number | null
           id?: string
           inspection_id?: string
+          original_path?: string | null
+          original_size_bytes?: number | null
           section_id?: string
           storage_path?: string
           taken_at?: string | null
@@ -3268,57 +3346,6 @@ export type Database = {
           },
         ]
       }
-      org_invites: {
-        Row: {
-          accepted_at: string | null
-          created_at: string
-          email: string
-          expires_at: string
-          id: string
-          invited_by: string
-          organisation_id: string
-          role: string
-          token: string
-        }
-        Insert: {
-          accepted_at?: string | null
-          created_at?: string
-          email: string
-          expires_at?: string
-          id?: string
-          invited_by: string
-          organisation_id: string
-          role?: string
-          token?: string
-        }
-        Update: {
-          accepted_at?: string | null
-          created_at?: string
-          email?: string
-          expires_at?: string
-          id?: string
-          invited_by?: string
-          organisation_id?: string
-          role?: string
-          token?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "org_invites_invited_by_fkey"
-            columns: ["invited_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "org_invites_organisation_id_fkey"
-            columns: ["organisation_id"]
-            isOneToOne: false
-            referencedRelation: "organisations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       org_storage_connections: {
         Row: {
           access_token_enc: string
@@ -3704,6 +3731,273 @@ export type Database = {
         | "weather"
         | "workforce"
         | "general"
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
+  structure: {
+    Tables: {
+      node_orders: {
+        Row: {
+          created_at: string
+          id: string
+          label: string
+          node_id: string
+          notes: string | null
+          ordered_at: string | null
+          organisation_id: string
+          project_id: string
+          received_at: string | null
+          scope_item_type_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label: string
+          node_id: string
+          notes?: string | null
+          ordered_at?: string | null
+          organisation_id: string
+          project_id: string
+          received_at?: string | null
+          scope_item_type_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string
+          node_id?: string
+          notes?: string | null
+          ordered_at?: string | null
+          organisation_id?: string
+          project_id?: string
+          received_at?: string | null
+          scope_item_type_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "node_orders_node_id_fkey"
+            columns: ["node_id"]
+            isOneToOne: false
+            referencedRelation: "nodes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "node_orders_scope_item_type_id_fkey"
+            columns: ["scope_item_type_id"]
+            isOneToOne: false
+            referencedRelation: "scope_item_types"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      nodes: {
+        Row: {
+          breaker_rating_a: number | null
+          coc_required: boolean
+          code: string
+          created_at: string
+          created_by: string | null
+          decommission_reason: string | null
+          id: string
+          kind: string
+          name: string | null
+          notes: string | null
+          organisation_id: string
+          pole_config: string | null
+          project_id: string
+          rating_kva: number | null
+          section: string | null
+          shop_area_m2: number | null
+          shop_name: string | null
+          shop_number: string | null
+          short_code: string | null
+          status: string
+          updated_at: string
+          voltage_v: number | null
+        }
+        Insert: {
+          breaker_rating_a?: number | null
+          coc_required?: boolean
+          code: string
+          created_at?: string
+          created_by?: string | null
+          decommission_reason?: string | null
+          id?: string
+          kind: string
+          name?: string | null
+          notes?: string | null
+          organisation_id: string
+          pole_config?: string | null
+          project_id: string
+          rating_kva?: number | null
+          section?: string | null
+          shop_area_m2?: number | null
+          shop_name?: string | null
+          shop_number?: string | null
+          short_code?: string | null
+          status?: string
+          updated_at?: string
+          voltage_v?: number | null
+        }
+        Update: {
+          breaker_rating_a?: number | null
+          coc_required?: boolean
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          decommission_reason?: string | null
+          id?: string
+          kind?: string
+          name?: string | null
+          notes?: string | null
+          organisation_id?: string
+          pole_config?: string | null
+          project_id?: string
+          rating_kva?: number | null
+          section?: string | null
+          shop_area_m2?: number | null
+          shop_name?: string | null
+          shop_number?: string | null
+          short_code?: string | null
+          status?: string
+          updated_at?: string
+          voltage_v?: number | null
+        }
+        Relationships: []
+      }
+      scope_item_types: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          label: string
+          organisation_id: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          label: string
+          organisation_id: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          label?: string
+          organisation_id?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tenant_details: {
+        Row: {
+          created_at: string
+          id: string
+          layout_drawing_path: string | null
+          layout_issued_at: string | null
+          layout_status: string
+          node_id: string
+          scope_document_path: string | null
+          scope_status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          layout_drawing_path?: string | null
+          layout_issued_at?: string | null
+          layout_status?: string
+          node_id: string
+          scope_document_path?: string | null
+          scope_status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          layout_drawing_path?: string | null
+          layout_issued_at?: string | null
+          layout_status?: string
+          node_id?: string
+          scope_document_path?: string | null
+          scope_status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_details_node_id_fkey"
+            columns: ["node_id"]
+            isOneToOne: true
+            referencedRelation: "nodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenant_scope_items: {
+        Row: {
+          created_at: string
+          id: string
+          node_id: string
+          party: string
+          scope_item_type_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          node_id: string
+          party: string
+          scope_item_type_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          node_id?: string
+          party?: string
+          scope_item_type_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_scope_items_node_id_fkey"
+            columns: ["node_id"]
+            isOneToOne: false
+            referencedRelation: "nodes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tenant_scope_items_scope_item_type_id_fkey"
+            columns: ["scope_item_type_id"]
+            isOneToOne: false
+            referencedRelation: "scope_item_types"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      tenant_doc_project_id: { Args: { object_name: string }; Returns: string }
+    }
+    Enums: {
+      [_ in never]: never
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4282,6 +4576,9 @@ export const Constants = {
         "general",
       ],
     },
+  },
+  structure: {
+    Enums: {},
   },
   suppliers: {
     Enums: {},

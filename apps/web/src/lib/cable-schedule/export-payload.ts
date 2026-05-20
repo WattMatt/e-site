@@ -321,7 +321,7 @@ export async function getRevisionExportPayload(
     // as a separate cross-schema query: PostgREST embeds across schemas
     // fail PGRST200 in this codebase, so the join into supplies/cables is
     // done in JS below via nodeById.
-    (supabase as any)
+    supabase
       .schema('structure')
       .from('nodes')
       .select(
@@ -420,7 +420,7 @@ export async function getRevisionExportPayload(
   if (!projectRow || !revisionRow) return null
 
   const sources = (sourcesData ?? []) as ExportPayload['sources']
-  const nodes = (nodesData ?? []) as ExportPayload['nodes']
+  const nodes = (nodesData ?? []) as unknown as ExportPayload['nodes']
   const supplies = (suppliesData ?? []) as ExportPayload['supplies']
   const rawCables = (cablesData ?? []) as RawCable[]
 

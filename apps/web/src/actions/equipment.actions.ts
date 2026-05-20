@@ -105,7 +105,7 @@ async function guardNodeBelongsToProject(
   nodeId: string,
   projectId: string,
 ): Promise<{ error: string } | null> {
-  const { data: node } = await (supabase as any)
+  const { data: node } = await supabase
     .schema('structure')
     .from('nodes')
     .select('id')

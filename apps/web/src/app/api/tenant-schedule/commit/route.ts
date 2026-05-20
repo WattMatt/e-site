@@ -352,7 +352,7 @@ export async function POST(
 
     if (allTenantNodeIds.size > 0) {
       // Read which of these already have a tenant_details row.
-      const { data: existingDetails } = await (supabase as any)
+      const { data: existingDetails } = await supabase
         .schema('structure')
         .from('tenant_details')
         .select('node_id')

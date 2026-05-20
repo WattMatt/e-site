@@ -50,7 +50,7 @@ export default async function TenantSchedulePage({ params }: Props) {
 
   try {
     // scope_item_types — org-level; READ via supabase-js .schema('structure') is fine
-    const { data: types } = await (supabase as any)
+    const { data: types } = await supabase
       .schema('structure')
       .from('scope_item_types')
       .select('id, key, label, sort_order')
@@ -64,7 +64,7 @@ export default async function TenantSchedulePage({ params }: Props) {
 
   if (nodeIds.length > 0) {
     try {
-      const { data: items } = await (supabase as any)
+      const { data: items } = await supabase
         .schema('structure')
         .from('tenant_scope_items')
         .select('id, node_id, scope_item_type_id, party')
@@ -77,7 +77,7 @@ export default async function TenantSchedulePage({ params }: Props) {
 
     try {
       // Fetch both scope and layout columns in one query to avoid two round-trips
-      const { data: details } = await (supabase as any)
+      const { data: details } = await supabase
         .schema('structure')
         .from('tenant_details')
         .select('node_id, scope_status, scope_document_path, layout_status, layout_issued_at, layout_drawing_path')
@@ -109,7 +109,7 @@ export default async function TenantSchedulePage({ params }: Props) {
 
   if (nodeIds.length > 0) {
     try {
-      const { data: tenantOrders } = await (supabase as any)
+      const { data: tenantOrders } = await supabase
         .schema('structure')
         .from('node_orders')
         .select('id, node_id, scope_item_type_id, status')

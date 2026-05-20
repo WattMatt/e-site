@@ -100,7 +100,7 @@ async function guardOrderBelongsToProject(
   | { error: string; currentStatus?: undefined }
   | { error?: undefined; currentStatus: string }
 > {
-  const { data: order, error } = await (supabase as any)
+  const { data: order, error } = await supabase
     .schema('structure')
     .from('node_orders')
     .select('id, status')

@@ -38,7 +38,7 @@ export default async function BoardShortCodesPage({ params }: Props) {
 
   // structure.nodes is project-scoped (not revision-scoped); fetch all nodes
   // for this project so short codes can be edited independently of the current revision.
-  const { data: boardsData } = await (supabase as any)
+  const { data: boardsData } = await supabase
     .schema('structure')
     .from('nodes')
     .select('id, code, short_code')

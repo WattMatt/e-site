@@ -128,7 +128,7 @@ export default async function RevisionDiffPage({ params, searchParams }: Props) 
       .from('sources')
       .select('id, code')
       .in('revision_id', [compareRev.id, current.id]),
-    (supabase as any)
+    supabase
       .schema('structure')
       .from('nodes')
       .select('id, code')

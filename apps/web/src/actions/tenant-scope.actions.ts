@@ -128,7 +128,7 @@ async function guardNodeBelongsToProject(
   nodeId: string,
   projectId: string,
 ): Promise<{ error: string } | null> {
-  const { data: node } = await (supabase as any)
+  const { data: node } = await supabase
     .schema('structure')
     .from('nodes')
     .select('id')
@@ -333,7 +333,7 @@ export async function addScopeItemTypeAction(
 
   // Check existing sort_order max so new item goes to end
   const { supabase } = guard
-  const { data: existing } = await (supabase as any)
+  const { data: existing } = await supabase
     .schema('structure')
     .from('scope_item_types')
     .select('id, sort_order')

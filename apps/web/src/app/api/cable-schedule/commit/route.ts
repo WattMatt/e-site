@@ -207,7 +207,7 @@ export async function POST(req: Request) {
   const allNodeLabels = [...nodeSources, ...boardLabels]
   if (allNodeLabels.length > 0) {
     // Fetch existing nodes for this project matching any of the codes
-    const { data: existing, error: fetchErr } = await (supabase as any)
+    const { data: existing, error: fetchErr } = await supabase
       .schema('structure')
       .from('nodes')
       .select('id, code')
@@ -235,7 +235,7 @@ export async function POST(req: Request) {
           status: 'active',
         }
       })
-      const { data: created, error: createErr } = await (supabase as any)
+      const { data: created, error: createErr } = await supabase
         .schema('structure')
         .from('nodes')
         .insert(rows)

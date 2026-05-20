@@ -1,9 +1,9 @@
 /**
  * node.service.ts — query-builder service for structure.nodes.
  *
- * IMPORTANT: All table access goes through `client.schema('structure').from('nodes')`.
- * The `structure` schema is not yet in the generated DB types, so we cast the
- * `.schema()` call as `any` — the same pattern used in the inspections module.
+ * All table access goes through `client.schema('structure').from('nodes')`.
+ * The `structure` schema is now included in the generated DB types (packages/db),
+ * so no `as any` cast is needed on the schema call.
  *
  * Cross-schema write gotcha (CLAUDE.md 2026-05-18):
  * supabase-js `.schema('structure')` can silently drop the service-role auth
@@ -14,6 +14,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@esite/db';
 import { nodeSchema } from './node-schema';
 import type { Node, NodeKind, NodeStatus } from './types';
 import type { NodeInput } from './node-schema';
@@ -24,12 +25,12 @@ import type { NodeInput } from './node-schema';
 
 /** Returns the `structure.nodes` PostgREST builder for the given client. */
 function nodesTable(client: SupabaseClient) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (client as any).schema('structure').from('nodes');
+  return (client as SupabaseClient<Database>).schema('structure').from('nodes');
 }
 
 /** Unwrap a PostgREST result; throws if error is non-null. */
-function unwrap<T>(result: { data: T | null; error: unknown }): T {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function unwrap<T>(result: { data: any; error: unknown }): T {
   if (result.error) throw result.error;
   return result.data as T;
 }

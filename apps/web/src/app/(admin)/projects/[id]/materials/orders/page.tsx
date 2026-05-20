@@ -121,7 +121,7 @@ export default async function NodeOrdersPage({ params, searchParams }: Props) {
   const orgId = project.organisation_id as string
   let scopeItemTypes: Array<{ id: string; key: string; label: string }> = []
   try {
-    const { data } = await (supabase as any)
+    const { data } = await supabase
       .schema('structure')
       .from('scope_item_types')
       .select('id, key, label')
@@ -138,7 +138,7 @@ export default async function NodeOrdersPage({ params, searchParams }: Props) {
   let rawOrders: RawNodeOrder[] = []
   let loadError: string | null = null
   try {
-    const { data, error } = await (supabase as any)
+    const { data, error } = await supabase
       .schema('structure')
       .from('node_orders')
       .select('id, node_id, label, scope_item_type_id, status, ordered_at, received_at, notes')

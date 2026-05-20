@@ -72,7 +72,7 @@ export default async function DiscrepancyReportPage({ params }: Props) {
       .from('sources')
       .select('id, code')
       .eq('revision_id', revisionId),
-    (supabase as any)
+    supabase
       .schema('structure')
       .from('nodes')
       .select('id, code')

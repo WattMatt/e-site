@@ -45,7 +45,7 @@ export default async function EquipmentSchedulePage({ params }: Props) {
 
   if (equipmentNodeIds.length > 0) {
     try {
-      const { data: orders } = await (supabase as any)
+      const { data: orders } = await supabase
         .schema('structure')
         .from('node_orders')
         .select('id, node_id, status')
