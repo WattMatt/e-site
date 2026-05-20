@@ -57,7 +57,6 @@ describe('parseTenantSchedule — happy path', () => {
     expect(row).toBeDefined();
     expect(row!.shop_name).toBe('HUNGRY LION');
     expect(row!.shop_area_m2).toBe(185);
-    expect(row!.derived_code).toBe('DB-4');
     expect(row!.source_row).toBe(4); // header=1, SHOP 1/2=2, SHOP 3=3, SHOP 4=4
   });
 
@@ -65,7 +64,6 @@ describe('parseTenantSchedule — happy path', () => {
     const result = await parseTenantSchedule(baseBuffer);
     const row = result.rows.find((r) => r.shop_number === 'SHOP 1/2');
     expect(row).toBeDefined();
-    expect(row!.derived_code).toBe('DB-1/2');
     expect(row!.shop_area_m2).toBe(1000);
   });
 
@@ -73,21 +71,18 @@ describe('parseTenantSchedule — happy path', () => {
     const result = await parseTenantSchedule(baseBuffer);
     const row = result.rows.find((r) => r.shop_number === 'SHOP 23/24');
     expect(row).toBeDefined();
-    expect(row!.derived_code).toBe('DB-23/24');
   });
 
   it('handles SHOP 61/61A (complex slash variant)', async () => {
     const result = await parseTenantSchedule(baseBuffer);
     const row = result.rows.find((r) => r.shop_number === 'SHOP 61/61A');
     expect(row).toBeDefined();
-    expect(row!.derived_code).toBe('DB-61/61A');
   });
 
   it('handles SHOP 4A (alphanumeric suffix)', async () => {
     const result = await parseTenantSchedule(baseBuffer);
     const row = result.rows.find((r) => r.shop_number === 'SHOP 4A');
     expect(row).toBeDefined();
-    expect(row!.derived_code).toBe('DB-4A');
   });
 
   it('handles SHOP 11A with VACANT tenant', async () => {
@@ -95,7 +90,6 @@ describe('parseTenantSchedule — happy path', () => {
     const row = result.rows.find((r) => r.shop_number === 'SHOP 11A');
     expect(row).toBeDefined();
     expect(row!.shop_name).toBe('VACANT');
-    expect(row!.derived_code).toBe('DB-11A');
   });
 
   it('keeps VACANT as the shop_name (not null, not error)', async () => {
@@ -116,7 +110,6 @@ describe('parseTenantSchedule — happy path', () => {
     expect(row).toBeDefined();
     // Should NOT be stored with trailing space
     expect(row!.shop_number).toBe('SHOP 29');
-    expect(row!.derived_code).toBe('DB-29');
   });
 
   it('sets source_row to the 1-based row number in the workbook', async () => {
@@ -124,43 +117,6 @@ describe('parseTenantSchedule — happy path', () => {
     // header=1, first data row=2
     expect(result.rows[0].source_row).toBe(2);
     expect(result.rows[1].source_row).toBe(3);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Code derivation rules
-// ---------------------------------------------------------------------------
-
-describe('derived_code — code derivation', () => {
-  it('derives DB-N from SHOP N', async () => {
-    const buf = await buildFixtureWorkbook([['SHOP 3', 'TENANT A', 250]]);
-    const { rows } = await parseTenantSchedule(buf);
-    expect(rows[0].derived_code).toBe('DB-3');
-  });
-
-  it('derives DB-4A from SHOP 4A', async () => {
-    const buf = await buildFixtureWorkbook([['SHOP 4A', 'TENANT A', 100]]);
-    const { rows } = await parseTenantSchedule(buf);
-    expect(rows[0].derived_code).toBe('DB-4A');
-  });
-
-  it('derives DB-1/2 from SHOP 1/2', async () => {
-    const buf = await buildFixtureWorkbook([['SHOP 1/2', 'TENANT A', 500]]);
-    const { rows } = await parseTenantSchedule(buf);
-    expect(rows[0].derived_code).toBe('DB-1/2');
-  });
-
-  it('is case-insensitive: derives from "shop 3" same as "SHOP 3"', async () => {
-    const buf = await buildFixtureWorkbook([['shop 3', 'TENANT A', 250]]);
-    const { rows } = await parseTenantSchedule(buf);
-    expect(rows[0].derived_code).toBe('DB-3');
-  });
-
-  it('handles shop number without SHOP prefix (bare number)', async () => {
-    const buf = await buildFixtureWorkbook([['10', 'TENANT A', 150]]);
-    const { rows } = await parseTenantSchedule(buf);
-    // No "SHOP " prefix to strip → use as-is
-    expect(rows[0].derived_code).toBe('DB-10');
   });
 });
 
@@ -201,19 +157,20 @@ describe('parseTenantSchedule — validation errors', () => {
     expect(result.errors[0].message).toMatch(/gla|numeric/i);
   });
 
-  it('rejects a row where TOTAL GLA is negative', async () => {
+  it('accepts a row where TOTAL GLA is negative (numeric, no positivity requirement)', async () => {
     const buf = await buildFixtureWorkbook([['SHOP 1', 'TENANT A', -5]]);
     const result = await parseTenantSchedule(buf);
-    expect(result.rows).toHaveLength(0);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].message).toMatch(/gla|positive/i);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].shop_area_m2).toBe(-5);
+    expect(result.errors).toHaveLength(0);
   });
 
-  it('rejects a row where TOTAL GLA is zero', async () => {
+  it('accepts a row where TOTAL GLA is zero (numeric, no positivity requirement)', async () => {
     const buf = await buildFixtureWorkbook([['SHOP 1', 'TENANT A', 0]]);
     const result = await parseTenantSchedule(buf);
-    expect(result.rows).toHaveLength(0);
-    expect(result.errors).toHaveLength(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].shop_area_m2).toBe(0);
+    expect(result.errors).toHaveLength(0);
   });
 
   it('rejects duplicate SHOP NO. within the same file', async () => {
@@ -262,7 +219,6 @@ describe('TenantImportRow shape', () => {
     // Required fields
     expect(typeof row.source_row).toBe('number');
     expect(typeof row.shop_number).toBe('string');
-    expect(typeof row.derived_code).toBe('string');
     expect(typeof row.shop_area_m2).toBe('number');
     // shop_name may be string or null
     expect(row.shop_name === null || typeof row.shop_name === 'string').toBe(true);

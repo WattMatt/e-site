@@ -26,11 +26,9 @@ export interface TenantImportRow {
   source_row: number;
   /** Raw shop identifier from the `SHOP NO.` column (trimmed). */
   shop_number: string;
-  /** Auto-derived DB code: strip leading "SHOP " (case-insensitive), prefix "DB-". */
-  derived_code: string;
   /** Tenant name from the `TENANT` column; `null` when blank; `"VACANT"` when explicitly so. */
   shop_name: string | null;
-  /** Gross Lettable Area in m² from the `TOTAL GLA` column (positive number). */
+  /** Gross Lettable Area in m² from the `TOTAL GLA` column. */
   shop_area_m2: number;
 }
 
@@ -59,12 +57,6 @@ const EXPECTED_HEADERS = ['SHOP NO.', 'TENANT', 'TOTAL GLA'] as const;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Strip leading "SHOP " (case-insensitive) and trim; prefix "DB-". */
-function deriveCode(shopNumber: string): string {
-  const stripped = shopNumber.replace(/^shop\s+/i, '').trim();
-  return `DB-${stripped}`;
-}
 
 /** Coerce an exceljs cell value to a trimmed string, or null if empty. */
 function cellToString(value: ExcelJS.CellValue): string | null {
@@ -175,25 +167,14 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
       });
       return;
     }
-    if (gla <= 0) {
-      errors.push({
-        source_row: rowNumber,
-        message: `Row ${rowNumber}: TOTAL GLA must be a positive number (got ${gla}).`,
-      });
-      return;
-    }
 
     // --- TENANT (blank → null; "VACANT" → kept as-is) ---
     const tenantStr = cellToString(rawTenant);
     const shop_name = tenantStr && tenantStr.length > 0 ? tenantStr : null;
 
-    // --- Derived code ---
-    const derived_code = deriveCode(shop_number);
-
     rows.push({
       source_row: rowNumber,
       shop_number,
-      derived_code,
       shop_name,
       shop_area_m2: gla,
     });
