@@ -19,8 +19,6 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { templateSchema } from '@esite/shared'
 import { bumpSemver } from '@/lib/inspections/bump-semver'
 
-export { bumpSemver } from '@/lib/inspections/bump-semver'
-
 type AnyClient = SupabaseClient<any, any, any>
 
 async function requireOwnerOrAdmin(
