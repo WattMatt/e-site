@@ -7,7 +7,7 @@
  * Handles Add / Edit / Decommission / Reactivate via inline modals.
  */
 
-import { useState, useTransition } from 'react'
+import { Fragment, useState, useMemo, useTransition } from 'react'
 import { Button } from '@/components/ui/Button'
 import { FormField, TextInput } from '@/components/ui/FormField'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
@@ -293,7 +293,8 @@ function KindGroup({
   const [collapsed, setCollapsed] = useState(false)
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   const [decommissioningNodeId, setDecommissioningNodeId] = useState<string | null>(null)
-  const [reactivatePending, startReactivate] = useTransition()
+  const [, startReactivate] = useTransition()
+  const [reactivatingId, setReactivatingId] = useState<string | null>(null)
   const [reactivateError, setReactivateError] = useState<string | null>(null)
 
   const visible = showDecommissioned ? nodes : nodes.filter((n) => n.status === 'active')
@@ -303,9 +304,11 @@ function KindGroup({
 
   function handleReactivate(nodeId: string) {
     setReactivateError(null)
+    setReactivatingId(nodeId)
     startReactivate(async () => {
       const result = await reactivateEquipmentNodeAction(projectId, nodeId)
       if ('error' in result) setReactivateError(result.error)
+      setReactivatingId(null)
     })
   }
 
@@ -381,9 +384,8 @@ function KindGroup({
                   </thead>
                   <tbody>
                     {visible.map((node) => (
-                      <>
+                      <Fragment key={node.id}>
                         <tr
-                          key={node.id}
                           style={{
                             borderBottom: editingNodeId === node.id ? 'none' : '1px solid var(--c-border)',
                             opacity: node.status === 'decommissioned' ? 0.5 : 1,
@@ -470,8 +472,8 @@ function KindGroup({
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  isLoading={reactivatePending}
-                                  disabled={reactivatePending}
+                                  isLoading={reactivatingId === node.id}
+                                  disabled={reactivatingId === node.id}
                                   onClick={() => handleReactivate(node.id)}
                                 >
                                   Reactivate
@@ -481,7 +483,7 @@ function KindGroup({
                           </td>
                         </tr>
                         {editingNodeId === node.id && (
-                          <tr key={`${node.id}-edit`}>
+                          <tr>
                             <td colSpan={5} style={{ padding: 0, borderBottom: '1px solid var(--c-border)' }}>
                               <EditForm
                                 node={node}
@@ -492,7 +494,7 @@ function KindGroup({
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -550,7 +552,7 @@ export function EquipmentTable({ nodes, projectId }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   const [addingKind, setAddingKind] = useState<EquipmentKind | null>(null)
 
-  const existingCodes = nodes.map((n) => n.code)
+  const existingCodes = useMemo(() => nodes.map((n) => n.code), [nodes])
 
   // Only equipment kinds (exclude tenant_db)
   const equipmentNodes = nodes.filter((n) => n.kind !== 'tenant_db')
