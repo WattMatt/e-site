@@ -116,6 +116,28 @@ async function guardProjectAccess(projectId: string): Promise<
   return { user, orgId: project.organisation_id as string, supabase }
 }
 
+/**
+ * Validate that nodeId belongs to projectId using the RLS-gated cookie client.
+ * The cookie client is org-scoped via RLS, so a node outside the user's org
+ * returns null even if the UUID is valid. Reads through .schema() are safe —
+ * the cross-schema service-role gotcha applies to writes only.
+ */
+async function guardNodeBelongsToProject(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  nodeId: string,
+  projectId: string,
+): Promise<{ error: string } | null> {
+  const { data: node } = await (supabase as any)
+    .schema('structure')
+    .from('nodes')
+    .select('id')
+    .eq('id', nodeId)
+    .eq('project_id', projectId)
+    .maybeSingle()
+  if (!node) return { error: 'Node not found' }
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // setScopeItemPartyAction
 // ---------------------------------------------------------------------------
@@ -144,6 +166,9 @@ export async function setScopeItemPartyAction(
 
   const guard = await guardProjectAccess(projectId)
   if (guard.error !== undefined) return { error: guard.error }
+
+  const nodeErr = await guardNodeBelongsToProject(guard.supabase, nodeId, projectId)
+  if (nodeErr) return nodeErr
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -279,12 +304,15 @@ export async function setScopeStatusAction(
   const guard = await guardProjectAccess(projectId)
   if (guard.error !== undefined) return { error: guard.error }
 
+  const nodeErr = await guardNodeBelongsToProject(guard.supabase, nodeId, projectId)
+  if (nodeErr) return nodeErr
+
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
 
   // Ensure the row exists first (upsert-ignore)
-  await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
+  const ensureRes = await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
     method: 'POST',
     headers: {
       apikey: serviceKey,
@@ -295,6 +323,10 @@ export async function setScopeStatusAction(
     },
     body: JSON.stringify({ node_id: nodeId }),
   })
+  if (!ensureRes.ok) {
+    const text = await ensureRes.text()
+    return { error: `Failed to ensure tenant_details row (HTTP ${ensureRes.status}): ${text.slice(0, 200)}` }
+  }
 
   const result = await structurePatch(
     supabaseUrl,
@@ -337,12 +369,15 @@ export async function attachScopeDocumentAction(
   const guard = await guardProjectAccess(projectId)
   if (guard.error !== undefined) return { error: guard.error }
 
+  const nodeErr = await guardNodeBelongsToProject(guard.supabase, nodeId, projectId)
+  if (nodeErr) return nodeErr
+
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
 
   // Ensure row exists
-  await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
+  const ensureRes = await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
     method: 'POST',
     headers: {
       apikey: serviceKey,
@@ -353,6 +388,10 @@ export async function attachScopeDocumentAction(
     },
     body: JSON.stringify({ node_id: nodeId }),
   })
+  if (!ensureRes.ok) {
+    const text = await ensureRes.text()
+    return { error: `Failed to ensure tenant_details row (HTTP ${ensureRes.status}): ${text.slice(0, 200)}` }
+  }
 
   const result = await structurePatch(
     supabaseUrl,
@@ -393,13 +432,15 @@ export async function clearScopeDocumentAction(
 
   const { supabase } = guard
 
-  // Remove from storage (best-effort)
-  await supabase.storage.from('tenant-documents').remove([storagePath])
+  const nodeErr = await guardNodeBelongsToProject(supabase, nodeId, projectId)
+  if (nodeErr) return nodeErr
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
 
+  // Clear the DB path FIRST (source of truth). Only then remove from storage
+  // so a storage failure never leaves the row pointing at a deleted file.
   const result = await structurePatch(
     supabaseUrl,
     serviceKey,
@@ -409,6 +450,9 @@ export async function clearScopeDocumentAction(
   )
 
   if (!result.ok) return { error: result.error ?? 'Failed to clear scope document' }
+
+  // Remove from storage (best-effort — row is already cleared)
+  await supabase.storage.from('tenant-documents').remove([storagePath])
 
   revalidatePath(`/projects/${projectId}/tenant-schedule`)
   return { ok: true }

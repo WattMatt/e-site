@@ -10,6 +10,11 @@
  * Auth: cookie session — verified before any storage write.
  * Storage write uses the authenticated user client (bucket RLS allows
  * org members with write access — see migration 00080 bucket policies).
+ *
+ * Note: the companion DB write (attachScopeDocumentAction) goes through the
+ * service-role key via raw PostgREST fetch, bypassing RLS. The authorization
+ * gate for that write is the explicit node-ownership check performed here and
+ * inside attachScopeDocumentAction — NOT RLS on the DB write itself.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -83,6 +88,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
 
+  // 6b. Validate the nodeId belongs to this project.
+  // The cookie client is RLS-gated so a node from another org returns null.
+  // Reads through .schema() are safe — the cross-schema service-role gotcha
+  // applies to writes only.
+  const { data: node } = await (supabase as any)
+    .schema('structure')
+    .from('nodes')
+    .select('id')
+    .eq('id', nodeId)
+    .eq('project_id', projectId)
+    .maybeSingle()
+  if (!node) {
+    return NextResponse.json({ error: 'Node not found' }, { status: 404 })
+  }
+
   // 7. Build storage path and upload
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
   const storagePath = `${projectId}/${nodeId}/${Date.now()}-${safeName}`
@@ -96,4 +116,35 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   return NextResponse.json({ storagePath, filename: file.name })
+}
+
+/**
+ * DELETE /api/tenant-schedule/upload-scope-document
+ *
+ * Best-effort cleanup of an orphaned storage object when the DB attach step
+ * fails after a successful upload. Accepts { storagePath: string } as JSON.
+ * Uses the cookie client so RLS on the bucket prevents cross-org deletes.
+ */
+export async function DELETE(req: NextRequest): Promise<NextResponse> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 })
+
+  let body: { storagePath?: unknown }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  if (typeof body.storagePath !== 'string' || !body.storagePath) {
+    return NextResponse.json({ error: 'storagePath required' }, { status: 400 })
+  }
+
+  // Best-effort — ignore storage errors (caller already surfaced the real error)
+  await supabase.storage.from(BUCKET).remove([body.storagePath])
+
+  return NextResponse.json({ ok: true })
 }

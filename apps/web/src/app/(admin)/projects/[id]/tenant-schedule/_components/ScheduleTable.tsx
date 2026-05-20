@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import type { Node } from '@esite/shared'
@@ -134,7 +134,7 @@ export function ScheduleTable({
                 <Th key={t.id}>{t.label}</Th>
               ))}
               <Th>Node Status</Th>
-              <Th>{''}</Th>
+              <Th><span className="sr-only">Actions</span></Th>
             </tr>
           </thead>
           <tbody>
@@ -145,9 +145,8 @@ export function ScheduleTable({
               const isExpanded = expandedNodeId === node.id
 
               return (
-                <>
+                <Fragment key={node.id}>
                   <tr
-                    key={node.id}
                     style={{
                       borderBottom: isExpanded ? 'none' : '1px solid var(--c-border)',
                       opacity: decommissioned ? 0.45 : 1,
@@ -205,7 +204,7 @@ export function ScheduleTable({
                         <button
                           onClick={() => toggleScope(node.id)}
                           style={{
-                            background: isExpanded ? 'var(--c-amber-dim, rgba(245,158,11,0.15))' : 'none',
+                            background: isExpanded ? 'var(--c-amber-dim)' : 'none',
                             border: '1px solid',
                             borderColor: isExpanded ? 'var(--c-amber)' : 'var(--c-border)',
                             borderRadius: 5,
@@ -226,9 +225,9 @@ export function ScheduleTable({
 
                   {/* Expanded scope-of-work panel */}
                   {isExpanded && (
-                    <tr key={`${node.id}-scope`}>
+                    <tr>
                       <td
-                        colSpan={6 + scopeItemTypes.length + 2}
+                        colSpan={7 + scopeItemTypes.length}
                         style={{ padding: 0 }}
                       >
                         <ScopeOfWorkPanel
@@ -243,7 +242,7 @@ export function ScheduleTable({
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               )
             })}
           </tbody>

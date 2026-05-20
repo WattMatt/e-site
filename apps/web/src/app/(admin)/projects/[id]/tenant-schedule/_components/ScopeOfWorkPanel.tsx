@@ -12,7 +12,6 @@
  */
 
 import { useState, useTransition, useRef } from 'react'
-import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import {
   setScopeItemPartyAction,
@@ -89,7 +88,9 @@ export function ScopeOfWorkPanel({
 
   function handlePartyChange(typeId: string, party: 'landlord' | 'tenant') {
     setError(null)
-    // Optimistic update
+    // Snapshot current state BEFORE the optimistic mutation so we can revert
+    // to it (not to the stale mount-time prop) if the action fails.
+    const snapshot = scopeItems
     setScopeItems((prev) => {
       const exists = prev.find((s) => s.scope_item_type_id === typeId)
       if (exists) {
@@ -105,8 +106,8 @@ export function ScopeOfWorkPanel({
       const res = await setScopeItemPartyAction(projectId, nodeId, typeId, party)
       if ('error' in res) {
         setError(res.error)
-        // Revert optimistic update on failure
-        setScopeItems(initialScopeItems)
+        // Revert to the pre-mutation state, not the stale initial prop
+        setScopeItems(snapshot)
       }
     })
   }
@@ -157,7 +158,16 @@ export function ScopeOfWorkPanel({
 
       // Persist path to DB and flip status to received
       const attach = await attachScopeDocumentAction(projectId, nodeId, storagePath)
-      if ('error' in attach) throw new Error(attach.error)
+      if ('error' in attach) {
+        // Upload succeeded but DB attach failed — delete the orphaned storage
+        // object best-effort so the bucket doesn't accumulate dangling files.
+        await fetch('/api/tenant-schedule/upload-scope-document', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ storagePath }),
+        }).catch(() => {/* best-effort */})
+        throw new Error(attach.error)
+      }
 
       setDetails((d) => ({ ...d, scope_document_path: storagePath, scope_status: 'received' }))
     } catch (err: unknown) {
@@ -312,7 +322,7 @@ export function ScopeOfWorkPanel({
                     details.scope_status === s
                       ? s === 'received'
                         ? 'var(--c-green-dim)'
-                        : 'var(--c-amber-dim, rgba(245,158,11,0.15))'
+                        : 'var(--c-amber-dim)'
                       : 'var(--c-panel)',
                   borderColor:
                     details.scope_status === s
@@ -526,19 +536,19 @@ export function ScopeOfWorkPanel({
                           background:
                             party === p
                               ? p === 'landlord'
-                                ? 'var(--c-blue-dim, rgba(59,130,246,0.15))'
-                                : 'var(--c-amber-dim, rgba(245,158,11,0.15))'
+                                ? 'var(--c-blue-dim)'
+                                : 'var(--c-amber-dim)'
                               : 'transparent',
                           borderColor:
                             party === p
                               ? p === 'landlord'
-                                ? 'var(--c-blue, #3b82f6)'
+                                ? 'var(--c-blue)'
                                 : 'var(--c-amber)'
                               : 'var(--c-border)',
                           color:
                             party === p
                               ? p === 'landlord'
-                                ? 'var(--c-blue, #3b82f6)'
+                                ? 'var(--c-blue)'
                                 : 'var(--c-amber)'
                               : 'var(--c-text-dim)',
                         }}
