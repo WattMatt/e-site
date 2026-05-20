@@ -65,7 +65,9 @@ interface CommitPayload {
   cables: ImportedCablePayload[]
 }
 
-function isLikelySource(code: string): { is: boolean; type: 'MINISUB' | 'RMU' | 'STANDBY' | 'UTILITY' | 'PV' } {
+type SourceType = 'MINISUB' | 'RMU' | 'STANDBY' | 'UTILITY' | 'PV'
+
+function isLikelySource(code: string): { is: boolean; type: SourceType } {
   const c = code.toUpperCase()
   if (/MINI\s*SUB/.test(c)) return { is: true, type: 'MINISUB' }
   if (/^RMU$/.test(c) || /CONSUMER\s*RMU/.test(c)) return { is: true, type: 'RMU' }
@@ -73,6 +75,16 @@ function isLikelySource(code: string): { is: boolean; type: 'MINISUB' | 'RMU' | 
   if (/UTILITY|ESKOM|MUNICIPAL/.test(c)) return { is: true, type: 'UTILITY' }
   if (/^PV($|\W)/.test(c) || /PV\s*PLANT/.test(c)) return { is: true, type: 'PV' }
   return { is: false, type: 'MINISUB' }
+}
+
+/** MINISUB and RMU are now structure.nodes (kind='mini_sub'/'rmu').
+ *  UTILITY, PV, STANDBY stay in cable_schedule.sources. */
+function sourceTypeIsNode(type: SourceType): boolean {
+  return type === 'MINISUB' || type === 'RMU'
+}
+
+function sourceTypeToNodeKind(type: 'MINISUB' | 'RMU'): 'mini_sub' | 'rmu' {
+  return type === 'MINISUB' ? 'mini_sub' : 'rmu'
 }
 
 export async function POST(req: Request) {
@@ -151,26 +163,35 @@ export async function POST(req: Request) {
     revisionId = (revRow as { id: string }).id
   }
 
-  // 2. Collect distinct nodes; promote source-like labels to Sources
+  // 2. Collect distinct labels; classify into cable_schedule.sources or structure.nodes
   const labels = new Set<string>()
   for (const c of body.cables) {
     if (c.from_label) labels.add(c.from_label)
     if (c.to_label)   labels.add(c.to_label)
   }
-  const sources = [...labels].filter((l) => isLikelySource(l).is)
-  const boards = [...labels].filter((l) => !isLikelySource(l).is)
 
+  // UTILITY / PV / STANDBY → cable_schedule.sources (revision-scoped)
+  const csSources = [...labels].filter((l) => {
+    const cls = isLikelySource(l)
+    return cls.is && !sourceTypeIsNode(cls.type)
+  })
+  // MINISUB / RMU → structure.nodes (project-scoped)
+  const nodeSources = [...labels].filter((l) => {
+    const cls = isLikelySource(l)
+    return cls.is && sourceTypeIsNode(cls.type)
+  })
+  // Everything else → structure.nodes with kind='main_board'
+  const boardLabels = [...labels].filter((l) => !isLikelySource(l).is)
+
+  // source IDs map (label → cable_schedule.sources.id)
   const sourceIds = new Map<string, string>()
-  if (sources.length > 0) {
-    const rows = sources.map((code) => {
-      const cls = isLikelySource(code)
-      return {
-        revision_id: revisionId,
-        organisation_id: orgId,
-        code,
-        type: cls.type,
-      }
-    })
+  if (csSources.length > 0) {
+    const rows = csSources.map((code) => ({
+      revision_id: revisionId,
+      organisation_id: orgId,
+      code,
+      type: isLikelySource(code).type,
+    }))
     const { data: ins, error } = await (supabase as any)
       .schema('cable_schedule')
       .from('sources')
@@ -180,28 +201,58 @@ export async function POST(req: Request) {
     for (const r of ins as Array<{ id: string; code: string }>) sourceIds.set(r.code, r.id)
   }
 
-  const boardIds = new Map<string, string>()
-  if (boards.length > 0) {
-    const rows = boards.map((code) => ({
-      revision_id: revisionId,
-      organisation_id: orgId,
-      code,
-    }))
-    const { data: ins, error } = await (supabase as any)
-      .schema('cable_schedule')
-      .from('boards')
-      .insert(rows)
+  // node IDs map (label → structure.nodes.id) — find-or-create by (project_id, code)
+  // Uses user-client .schema('structure') which is safe for a normal authenticated user.
+  const nodeIds = new Map<string, string>()
+  const allNodeLabels = [...nodeSources, ...boardLabels]
+  if (allNodeLabels.length > 0) {
+    // Fetch existing nodes for this project matching any of the codes
+    const { data: existing, error: fetchErr } = await (supabase as any)
+      .schema('structure')
+      .from('nodes')
       .select('id, code')
-    if (error) return NextResponse.json({ error: `Board insert: ${error.message}` }, { status: 422 })
-    for (const r of ins as Array<{ id: string; code: string }>) boardIds.set(r.code, r.id)
+      .eq('project_id', projectId)
+      .in('code', allNodeLabels)
+    if (fetchErr) return NextResponse.json({ error: `Node fetch: ${fetchErr.message}` }, { status: 422 })
+    for (const r of (existing ?? []) as Array<{ id: string; code: string }>) {
+      nodeIds.set(r.code, r.id)
+    }
+
+    // Create any that don't exist yet
+    const toCreate = allNodeLabels.filter((code) => !nodeIds.has(code))
+    if (toCreate.length > 0) {
+      const rows = toCreate.map((code) => {
+        const cls = isLikelySource(code)
+        const kind = (cls.is && sourceTypeIsNode(cls.type as 'MINISUB' | 'RMU'))
+          ? sourceTypeToNodeKind(cls.type as 'MINISUB' | 'RMU')
+          : 'main_board'
+        return {
+          project_id: projectId,
+          organisation_id: orgId,
+          code,
+          name: code,
+          kind,
+          status: 'active',
+        }
+      })
+      const { data: created, error: createErr } = await (supabase as any)
+        .schema('structure')
+        .from('nodes')
+        .insert(rows)
+        .select('id, code')
+      if (createErr) return NextResponse.json({ error: `Node create: ${createErr.message}` }, { status: 422 })
+      for (const r of (created ?? []) as Array<{ id: string; code: string }>) {
+        nodeIds.set(r.code, r.id)
+      }
+    }
   }
 
   // 3. Group cables by (FROM, TO) into supplies
   type GroupKey = string
   interface PendingSupply {
     fromSourceId: string | null
-    fromBoardId: string | null
-    toBoardId: string
+    fromNodeId: string | null
+    toNodeId: string
     voltage_v: number
     design_load_a: number
     section: 'NORMAL' | 'EMERGENCY' | null
@@ -211,23 +262,23 @@ export async function POST(req: Request) {
   const errors: string[] = []
 
   for (const c of body.cables) {
-    const fromIsSource = sourceIds.has(c.from_label)
-    const fromBoard = boardIds.get(c.from_label)
-    const toBoard = boardIds.get(c.to_label)
-    if (!toBoard) {
+    const fromIsCsSource = sourceIds.has(c.from_label)
+    const fromNode = nodeIds.get(c.from_label)
+    const toNode = nodeIds.get(c.to_label)
+    if (!toNode) {
       errors.push(`Row ${c.source_row}: TO node "${c.to_label}" couldn't be resolved`)
       continue
     }
-    if (!fromIsSource && !fromBoard) {
+    if (!fromIsCsSource && !fromNode) {
       errors.push(`Row ${c.source_row}: FROM node "${c.from_label}" couldn't be resolved`)
       continue
     }
     const key = `${c.from_label}||${c.to_label}`
     if (!supplyByKey.has(key)) {
       supplyByKey.set(key, {
-        fromSourceId: fromIsSource ? sourceIds.get(c.from_label)! : null,
-        fromBoardId:  fromIsSource ? null : fromBoard!,
-        toBoardId:    toBoard,
+        fromSourceId: fromIsCsSource ? sourceIds.get(c.from_label)! : null,
+        fromNodeId:   fromIsCsSource ? null : (fromNode ?? null),
+        toNodeId:     toNode,
         voltage_v:    c.voltage_v ?? 400,
         design_load_a: c.load_a ?? 1,
         section:      c.section,
@@ -245,8 +296,8 @@ export async function POST(req: Request) {
     revision_id: revisionId,
     organisation_id: orgId,
     from_source_id: s.fromSourceId,
-    from_board_id:  s.fromBoardId,
-    to_board_id:    s.toBoardId,
+    from_node_id:   s.fromNodeId,
+    to_node_id:     s.toNodeId,
     voltage_v:      s.voltage_v,
     design_load_a:  s.design_load_a,
     section:        s.section,
@@ -255,7 +306,7 @@ export async function POST(req: Request) {
     .schema('cable_schedule')
     .from('supplies')
     .insert(supplyRows)
-    .select('id, from_source_id, from_board_id, to_board_id')
+    .select('id, from_source_id, from_node_id, to_node_id')
   if (supErr) return NextResponse.json({ error: `Supply insert: ${supErr.message}` }, { status: 422 })
 
   // Build supply lookup back to its grouping key
@@ -326,7 +377,7 @@ export async function POST(req: Request) {
     revisionId,
     inserted: {
       sources: sourceIds.size,
-      boards: boardIds.size,
+      nodes: nodeIds.size,
       supplies: supplyInserted?.length ?? 0,
       cables: cableRows.length,
     },

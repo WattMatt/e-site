@@ -73,7 +73,7 @@ function buildReadme(payload: ExportPayload, stem: string): string {
     `Issued:          ${issued}`,
     `Generated:       ${generated}`,
     `Sources:         ${payload.sources.length}`,
-    `Boards:          ${payload.boards.length}`,
+    `Boards:          ${payload.nodes.length}`,
     `Supplies (runs): ${payload.supplies.length}`,
     `Cables (strands): ${payload.cables.length}`,
     `Tags:            ${payload.cableTags.length}`,

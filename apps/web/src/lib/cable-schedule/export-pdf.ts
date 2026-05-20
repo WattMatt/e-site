@@ -154,7 +154,7 @@ function drawCoverPage(
         : '—',
     ],
     ['Sources', String(payload.sources.length)],
-    ['Boards', String(payload.boards.length)],
+    ['Boards', String(payload.nodes.length)],
     ['Supplies (runs)', String(payload.supplies.length)],
     ['Cables (strands)', String(payload.cables.length)],
     ['Tags', String(payload.cableTags.length)],
