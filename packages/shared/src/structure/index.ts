@@ -15,3 +15,15 @@ export type {
 } from './import-preview';
 export { suggestEquipmentCode, EQUIPMENT_KINDS } from './suggest-equipment-code';
 export type { EquipmentKind } from './suggest-equipment-code';
+export {
+  deriveTenantOrderStatus,
+  deriveTenantNodeOrder,
+  deriveTenantNodeOrders,
+  deriveEquipmentNodeOrder,
+} from './node-order.service';
+export type {
+  ScopeParty,
+  NodeOrderStatus,
+  TenantScopeItem,
+  DerivedNodeOrder,
+} from './node-order.service';

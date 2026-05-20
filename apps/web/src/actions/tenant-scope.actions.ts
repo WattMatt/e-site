@@ -21,7 +21,7 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
+import { projectService, deriveTenantNodeOrder } from '@esite/shared'
 
 // ---------------------------------------------------------------------------
 // Shared helpers — mirror the commit route's structureHeaders / structurePatch
@@ -193,6 +193,48 @@ export async function setScopeItemPartyAction(
       { party },
     )
     if (!patch.ok) return { error: patch.error ?? 'Failed to update scope item' }
+  }
+
+  // ── Derive / re-derive the corresponding node_order (§3 of design doc) ──
+  // Fetch the scope item type's label so node_orders.label is human-readable.
+  // Reads via .schema() are safe — the cross-schema service-role gotcha applies
+  // to writes only.
+  const { data: scopeType } = await (guard.supabase as any)
+    .schema('structure')
+    .from('scope_item_types')
+    .select('label')
+    .eq('id', scopeItemTypeId)
+    .maybeSingle()
+
+  if (scopeType?.label) {
+    const orderPayload = deriveTenantNodeOrder(nodeId, projectId, guard.orgId, {
+      scopeItemTypeId,
+      label: scopeType.label as string,
+      party,
+    })
+
+    // Upsert on partial unique index: (node_id, scope_item_type_id) WHERE scope_item_type_id IS NOT NULL.
+    // DO UPDATE SET status=EXCLUDED.status only — preserves ordered_at / received_at / notes
+    // if the engineer has already progressed the order.
+    const orderRes = await fetch(
+      `${supabaseUrl}/rest/v1/node_orders?on_conflict=node_id%2Cscope_item_type_id`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          'Content-Type': 'application/json',
+          'Content-Profile': 'structure',
+          Prefer: 'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify(orderPayload),
+      },
+    )
+    if (!orderRes.ok) {
+      const text = await orderRes.text()
+      // Derivation failure is reported but does NOT roll back the primary scope write.
+      return { error: `Scope item saved but node order derivation failed (HTTP ${orderRes.status}): ${text.slice(0, 400)}` }
+    }
   }
 
   revalidatePath(`/projects/${projectId}/tenant-schedule`)

@@ -19,7 +19,7 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
+import { projectService, deriveEquipmentNodeOrder } from '@esite/shared'
 import type { EquipmentKind } from '@esite/shared'
 
 // ---------------------------------------------------------------------------
@@ -168,9 +168,41 @@ export async function createEquipmentNodeAction(
     return { error: result.error ?? 'Failed to create equipment node' }
   }
 
-  revalidatePath(`/projects/${projectId}/equipment-schedule`)
   const rows = result.data as Array<{ id: string }>
-  return { id: rows[0]?.id ?? '' }
+  const nodeId = rows[0]?.id ?? ''
+
+  // ── Auto-create equipment node_order (§4 of design doc) ──
+  // One required order per equipment node; scope_item_type_id = null; label = code.
+  if (nodeId) {
+    const orderPayload = deriveEquipmentNodeOrder(nodeId, projectId, guard.orgId, code.trim())
+
+    // Upsert on partial unique index: (node_id) WHERE scope_item_type_id IS NULL.
+    // For a brand-new node this is always an INSERT; the on_conflict guard is
+    // purely defensive (idempotency — e.g. retry after network error).
+    const orderRes = await fetch(
+      `${supabaseUrl}/rest/v1/node_orders?on_conflict=node_id`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          'Content-Type': 'application/json',
+          'Content-Profile': 'structure',
+          Prefer: 'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify(orderPayload),
+      },
+    )
+    if (!orderRes.ok) {
+      const text = await orderRes.text()
+      // Node was created; derivation failure is surfaced but does NOT undo the node.
+      revalidatePath(`/projects/${projectId}/equipment-schedule`)
+      return { error: `Equipment node created but order derivation failed (HTTP ${orderRes.status}): ${text.slice(0, 400)}` }
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}/equipment-schedule`)
+  return { id: nodeId }
 }
 
 // ---------------------------------------------------------------------------
