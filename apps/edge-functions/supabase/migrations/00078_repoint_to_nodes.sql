@@ -64,7 +64,11 @@ WHERE  b.id = s.from_board_id;
 --   UTILITY / PV / STANDBY sources are not nodes; their supplies keep
 --   from_node_id = NULL (they continue using from_source_id).
 UPDATE cable_schedule.supplies s
-SET    from_node_id = n.id
+SET    from_node_id   = n.id,
+       -- Clear from_source_id: the supply is now fed by the RMU/MINISUB *node*.
+       -- 00079 deletes those source rows; supplies.from_source_id has
+       -- ON DELETE CASCADE, so leaving it set would cascade-delete this supply.
+       from_source_id = NULL
 FROM   cable_schedule.sources    src
 JOIN   cable_schedule.revisions  r   ON r.id = src.revision_id
 JOIN   structure.nodes           n   ON n.project_id = r.project_id
