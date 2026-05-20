@@ -93,4 +93,9 @@ describe('suggestEquipmentCode — edge cases', () => {
     const codes = Array.from({ length: 10 }, (_, i) => `MB-${i + 1}`);
     expect(suggestEquipmentCode('main_board', codes)).toBe('MB-11');
   });
+
+  it('handles duplicate codes in existingCodes gracefully', () => {
+    // RMU-1 appears twice → should still suggest RMU-2, not RMU-1
+    expect(suggestEquipmentCode('rmu', ['RMU-1', 'RMU-1'])).toBe('RMU-2');
+  });
 });

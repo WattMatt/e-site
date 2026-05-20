@@ -21,6 +21,7 @@
 
 import { useState, useTransition, useEffect } from 'react'
 import { Button } from '@/components/ui/Button'
+import { FormField, TextInput, Select } from '@/components/ui/FormField'
 import {
   suggestEquipmentCode,
   EQUIPMENT_KINDS,
@@ -61,30 +62,6 @@ const KIND_LABEL: Record<EquipmentKind, string> = {
   rmu: 'Ring Main Unit (RMU)',
   mini_sub: 'Mini-Substation',
   generator: 'Generator',
-}
-
-const LABEL_STYLE: React.CSSProperties = {
-  display: 'block',
-  fontFamily: 'var(--font-mono)',
-  fontSize: 10,
-  letterSpacing: '0.07em',
-  textTransform: 'uppercase',
-  color: 'var(--c-text-dim)',
-  marginBottom: 4,
-}
-
-const INPUT_STYLE: React.CSSProperties = {
-  display: 'block',
-  width: '100%',
-  padding: '8px 10px',
-  background: 'var(--c-bg)',
-  border: '1px solid var(--c-border)',
-  borderRadius: 6,
-  fontSize: 13,
-  color: 'var(--c-text)',
-  fontFamily: 'var(--font-sans)',
-  outline: 'none',
-  boxSizing: 'border-box',
 }
 
 const FIELD_GAP: React.CSSProperties = { marginBottom: 14 }
@@ -165,59 +142,52 @@ export function EquipmentForm({
     <form onSubmit={handleSubmit}>
       {/* Kind */}
       <div style={FIELD_GAP}>
-        <label style={LABEL_STYLE}>Equipment Type</label>
-        <select
-          value={kind}
-          onChange={handleKindChange}
-          disabled={busy}
-          style={{ ...INPUT_STYLE, cursor: busy ? 'not-allowed' : 'pointer' }}
-        >
-          {EQUIPMENT_KINDS.map((k) => (
-            <option key={k} value={k}>
-              {KIND_LABEL[k]}
-            </option>
-          ))}
-        </select>
+        <FormField label="Equipment Type" htmlFor="eq-kind">
+          <Select
+            id="eq-kind"
+            value={kind}
+            onChange={handleKindChange}
+            disabled={busy}
+          >
+            {EQUIPMENT_KINDS.map((k) => (
+              <option key={k} value={k}>
+                {KIND_LABEL[k]}
+              </option>
+            ))}
+          </Select>
+        </FormField>
       </div>
 
       {/* Code */}
       <div style={FIELD_GAP}>
-        <label style={LABEL_STYLE}>Code</label>
-        <input
-          type="text"
-          value={code}
-          onChange={handleCodeChange}
-          placeholder="e.g. RMU-1"
-          maxLength={50}
-          disabled={busy}
-          style={INPUT_STYLE}
-          autoCapitalize="characters"
-          spellCheck={false}
-        />
-        <div
-          style={{
-            fontSize: 11,
-            color: 'var(--c-text-dim)',
-            fontFamily: 'var(--font-mono)',
-            marginTop: 3,
-          }}
-        >
-          Must be unique per project
-        </div>
+        <FormField label="Code" htmlFor="eq-code" required hint="Must be unique per project">
+          <TextInput
+            id="eq-code"
+            type="text"
+            value={code}
+            onChange={handleCodeChange}
+            placeholder="e.g. RMU-1"
+            maxLength={50}
+            disabled={busy}
+            autoCapitalize="characters"
+            spellCheck={false}
+          />
+        </FormField>
       </div>
 
       {/* Name */}
       <div style={FIELD_GAP}>
-        <label style={LABEL_STYLE}>Name (optional)</label>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => { setName(e.target.value); setError(null) }}
-          placeholder="e.g. Main Substation"
-          maxLength={120}
-          disabled={busy}
-          style={INPUT_STYLE}
-        />
+        <FormField label="Name (optional)" htmlFor="eq-name">
+          <TextInput
+            id="eq-name"
+            type="text"
+            value={name}
+            onChange={(e) => { setName(e.target.value); setError(null) }}
+            placeholder="e.g. Main Substation"
+            maxLength={120}
+            disabled={busy}
+          />
+        </FormField>
       </div>
 
       {/* COC Required */}
@@ -270,7 +240,7 @@ export function EquipmentForm({
             Cancel
           </Button>
         )}
-        <Button type="submit" variant="primary" size="sm" isLoading={isPending} disabled={busy}>
+        <Button type="submit" variant="primary" size="sm" isLoading={busy} disabled={busy}>
           Add equipment
         </Button>
       </div>
