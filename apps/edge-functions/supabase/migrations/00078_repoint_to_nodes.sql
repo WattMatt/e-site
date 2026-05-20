@@ -87,7 +87,7 @@ WHERE  src.id = s.from_source_id
 --   cable_schedule.boards / cable_schedule.sources directly. It will be
 --   superseded by the FK added at the end of Part D and by updated application
 --   logic that references structure.nodes.
-DROP TRIGGER IF EXISTS validate_target_node_trigger
+DROP TRIGGER IF EXISTS trg_validate_target_node
     ON inspections.inspections;
 
 DROP FUNCTION IF EXISTS inspections.validate_target_node();
