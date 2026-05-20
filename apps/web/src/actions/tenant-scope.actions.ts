@@ -208,7 +208,7 @@ export async function setScopeItemPartyAction(
   // ── Reconcile the corresponding node_order (§3, §5) ──
   // Read both the scope item type label AND the existing order status in parallel.
   // Reads via .schema() are safe — the cross-schema service-role gotcha applies to writes only.
-  const [{ data: scopeType }, { data: existingOrder }] = await Promise.all([
+  const [{ data: scopeType, error: scopeTypeErr }, { data: existingOrder, error: existingOrderErr }] = await Promise.all([
     (guard.supabase as any)
       .schema('structure')
       .from('scope_item_types')
@@ -224,7 +224,19 @@ export async function setScopeItemPartyAction(
       .maybeSingle(),
   ])
 
-  if (scopeType?.label) {
+  // Fix 2: a failed node_orders read must not collapse to null (which would
+  // trigger a spurious INSERT and silently mask the failure).
+  if (existingOrderErr) {
+    return { error: 'Scope item saved, but order derivation failed: could not read the existing order.' }
+  }
+
+  // Fix 1: a valid scopeItemTypeId must always resolve a scope_item_types row —
+  // treat a missing/errored row as a genuine fault rather than silently skipping.
+  if (scopeTypeErr || !scopeType) {
+    return { error: 'Scope item saved, but order derivation failed: scope item type could not be loaded.' }
+  }
+
+  if (scopeType.label) {
     const existingStatus = (existingOrder as { status: NodeOrderStatus } | null)?.status ?? null
     const plan = planTenantOrderReconcile(existingStatus, party)
 

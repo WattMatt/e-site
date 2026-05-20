@@ -177,10 +177,9 @@ export async function createEquipmentNodeAction(
     const orderPayload = deriveEquipmentNodeOrder(nodeId, projectId, guard.orgId, code.trim())
 
     // Upsert on partial unique index: (node_id) WHERE scope_item_type_id IS NULL.
-    // For a brand-new node this is always an INSERT; merge-duplicates is used only
-    // as an idempotency guard (e.g. retry after a network error). Unlike the tenant
-    // re-derivation path, this cannot clobber an order already at ordered/received
-    // because equipment nodes are new at this point — no prior order can exist.
+    // For a brand-new node this is always an INSERT; ignore-duplicates is used only
+    // as a race guard (e.g. retry after a network error). A retry must never overwrite
+    // an existing order, so ignore-duplicates is strictly safer than merge-duplicates.
     const orderRes = await fetch(
       `${supabaseUrl}/rest/v1/node_orders?on_conflict=node_id`,
       {
@@ -190,7 +189,7 @@ export async function createEquipmentNodeAction(
           Authorization: `Bearer ${serviceKey}`,
           'Content-Type': 'application/json',
           'Content-Profile': 'structure',
-          Prefer: 'resolution=merge-duplicates,return=minimal',
+          Prefer: 'resolution=ignore-duplicates,return=minimal',
         },
         body: JSON.stringify(orderPayload),
       },
