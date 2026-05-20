@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { projectService, listNodes } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { EquipmentTable } from './_components/EquipmentTable'
+import type { NodeOrderData } from './_components/NodeOrderCell'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Equipment Schedule' }
@@ -34,6 +35,31 @@ export default async function EquipmentSchedulePage({ params }: Props) {
     nodes = await listNodes(supabase as never, projectId)
   } catch (err: unknown) {
     loadError = err instanceof Error ? err.message : 'Could not load equipment data'
+  }
+
+  // ── Load node_orders for equipment nodes (best-effort) ────────────────────
+  // Equipment orders have scope_item_type_id = NULL (design-doc §4).
+  // READ via .schema('structure') is safe — cross-schema gotcha is writes-only.
+  const ordersByNodeId: Record<string, NodeOrderData> = {}
+  const equipmentNodeIds = nodes.filter((n) => n.kind !== 'tenant_db').map((n) => n.id)
+
+  if (equipmentNodeIds.length > 0) {
+    try {
+      const { data: orders } = await (supabase as any)
+        .schema('structure')
+        .from('node_orders')
+        .select('id, node_id, status')
+        .in('node_id', equipmentNodeIds)
+        .is('scope_item_type_id', null)
+
+      if (orders) {
+        for (const o of orders as Array<{ id: string; node_id: string; status: NodeOrderData['status'] }>) {
+          ordersByNodeId[o.node_id] = { id: o.id, status: o.status }
+        }
+      }
+    } catch {
+      // Non-fatal: order status column simply shows "—" if unavailable
+    }
   }
 
   const equipmentNodes = nodes.filter((n) => n.kind !== 'tenant_db')
@@ -89,7 +115,7 @@ export default async function EquipmentSchedulePage({ params }: Props) {
       )}
 
       {/* Equipment table — grouped by kind, all CRUD inline */}
-      <EquipmentTable nodes={nodes} projectId={projectId} />
+      <EquipmentTable nodes={nodes} projectId={projectId} ordersByNodeId={ordersByNodeId} />
     </div>
   )
 }

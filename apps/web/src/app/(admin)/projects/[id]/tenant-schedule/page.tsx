@@ -8,6 +8,7 @@ import { ScheduleTable } from './_components/ScheduleTable'
 import { ImportFlow } from './_components/ImportFlow'
 import type { ScopeItemType, TenantScopeItem, TenantDetails } from './_components/ScopeOfWorkPanel'
 import type { LayoutDetails } from './_components/LayoutIssuedPanel'
+import type { NodeOrderData } from '../equipment-schedule/_components/NodeOrderCell'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Tenant Schedule' }
@@ -100,6 +101,31 @@ export default async function TenantSchedulePage({ params }: Props) {
     }
   }
 
+  // ── Load node_orders for tenant nodes (best-effort) ──────────────────────
+  // Tenant orders have scope_item_type_id set (design-doc §3).
+  // Key: `${node_id}:${scope_item_type_id}` → NodeOrderData
+  // READ via .schema('structure') is safe — cross-schema gotcha is writes-only.
+  const ordersByNodeAndScope: Record<string, NodeOrderData> = {}
+
+  if (nodeIds.length > 0) {
+    try {
+      const { data: tenantOrders } = await (supabase as any)
+        .schema('structure')
+        .from('node_orders')
+        .select('id, node_id, scope_item_type_id, status')
+        .in('node_id', nodeIds)
+        .not('scope_item_type_id', 'is', null)
+
+      if (tenantOrders) {
+        for (const o of tenantOrders as Array<{ id: string; node_id: string; scope_item_type_id: string; status: NodeOrderData['status'] }>) {
+          ordersByNodeAndScope[`${o.node_id}:${o.scope_item_type_id}`] = { id: o.id, status: o.status }
+        }
+      }
+    } catch {
+      // Non-fatal: order status cells simply show "—" if unavailable
+    }
+  }
+
   // Build lookup maps for the client component
   const scopeItemsByNode: Record<string, TenantScopeItem[]> = {}
   for (const item of allScopeItems) {
@@ -180,6 +206,7 @@ export default async function TenantSchedulePage({ params }: Props) {
             scopeItemsByNode={scopeItemsByNode}
             tenantDetailsByNode={tenantDetailsByNode}
             layoutDetailsByNode={layoutDetailsByNode}
+            ordersByNodeAndScope={ordersByNodeAndScope}
           />
         </CardBody>
       </Card>

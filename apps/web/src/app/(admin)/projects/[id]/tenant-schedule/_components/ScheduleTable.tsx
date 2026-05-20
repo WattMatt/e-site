@@ -9,6 +9,8 @@ import { LayoutIssuedPanel } from './LayoutIssuedPanel'
 import { AddScopeItemModal } from './AddScopeItemModal'
 import type { ScopeItemType, TenantScopeItem, TenantDetails } from './ScopeOfWorkPanel'
 import type { LayoutDetails } from './LayoutIssuedPanel'
+import { NodeOrderCell } from '../../equipment-schedule/_components/NodeOrderCell'
+import type { NodeOrderData } from '../../equipment-schedule/_components/NodeOrderCell'
 
 interface Props {
   nodes: Node[]
@@ -18,6 +20,8 @@ interface Props {
   scopeItemsByNode: Record<string, TenantScopeItem[]>   // node_id → items
   tenantDetailsByNode: Record<string, TenantDetails>    // node_id → details
   layoutDetailsByNode: Record<string, LayoutDetails>    // node_id → layout details
+  // `${node_id}:${scope_item_type_id}` → order — from node_orders for tenant scope items
+  ordersByNodeAndScope: Record<string, NodeOrderData>
 }
 
 export function ScheduleTable({
@@ -28,6 +32,7 @@ export function ScheduleTable({
   scopeItemsByNode,
   tenantDetailsByNode,
   layoutDetailsByNode,
+  ordersByNodeAndScope,
 }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   // node_id of the currently-expanded scope panel (one at a time)
@@ -143,9 +148,12 @@ export function ScheduleTable({
               <Th>GLA (m²)</Th>
               <Th>DB Code</Th>
               <Th>Scope Status</Th>
-              {/* One column per scope item type */}
+              {/* One party column + one order-status column per scope item type */}
               {scopeItemTypes.map((t) => (
                 <Th key={t.id}>{t.label}</Th>
+              ))}
+              {scopeItemTypes.map((t) => (
+                <Th key={`order-${t.id}`}>{t.label} Order</Th>
               ))}
               <Th>Layout Status</Th>
               <Th>Node Status</Th>
@@ -205,6 +213,16 @@ export function ScheduleTable({
                         </Td>
                       )
                     })}
+
+                    {/* Per-scope-item order-status cells */}
+                    {scopeItemTypes.map((t) => (
+                      <Td key={`order-${t.id}`}>
+                        <NodeOrderCell
+                          order={ordersByNodeAndScope[`${node.id}:${t.id}`] ?? null}
+                          projectId={projectId}
+                        />
+                      </Td>
+                    ))}
 
                     {/* Layout status */}
                     <Td>
@@ -277,7 +295,7 @@ export function ScheduleTable({
                   {isExpanded && (
                     <tr>
                       <td
-                        colSpan={8 + scopeItemTypes.length}
+                        colSpan={8 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <ScopeOfWorkPanel
@@ -297,7 +315,7 @@ export function ScheduleTable({
                   {isLayoutExpanded && (
                     <tr>
                       <td
-                        colSpan={8 + scopeItemTypes.length}
+                        colSpan={8 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <LayoutIssuedPanel

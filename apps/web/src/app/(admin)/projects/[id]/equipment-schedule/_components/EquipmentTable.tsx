@@ -21,6 +21,8 @@ import {
   decommissionEquipmentNodeAction,
   reactivateEquipmentNodeAction,
 } from '@/actions/equipment.actions'
+import { NodeOrderCell } from './NodeOrderCell'
+import type { NodeOrderData } from './NodeOrderCell'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -278,6 +280,7 @@ interface KindGroupProps {
   onAddClick: (kind: EquipmentKind) => void
   addingKind: EquipmentKind | null
   onAddDone: () => void
+  ordersByNodeId: Record<string, NodeOrderData>
 }
 
 function KindGroup({
@@ -289,6 +292,7 @@ function KindGroup({
   onAddClick,
   addingKind,
   onAddDone,
+  ordersByNodeId,
 }: KindGroupProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
@@ -367,7 +371,7 @@ function KindGroup({
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-sans)', fontSize: 13 }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--c-border)', background: 'var(--c-surface-raised)' }}>
-                      {['Code', 'Name', 'COC Required', 'Status', ''].map((h) => (
+                      {['Code', 'Name', 'COC Required', 'Status', 'Order', ''].map((h) => (
                         <th
                           key={h}
                           style={{
@@ -444,6 +448,13 @@ function KindGroup({
                               </div>
                             )}
                           </td>
+                          {/* Order status */}
+                          <td style={{ padding: '10px 12px' }}>
+                            <NodeOrderCell
+                              order={ordersByNodeId[node.id] ?? null}
+                              projectId={projectId}
+                            />
+                          </td>
                           {/* Actions */}
                           <td style={{ padding: '6px 12px', whiteSpace: 'nowrap', textAlign: 'right' }}>
                             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
@@ -484,7 +495,7 @@ function KindGroup({
                         </tr>
                         {editingNodeId === node.id && (
                           <tr>
-                            <td colSpan={5} style={{ padding: 0, borderBottom: '1px solid var(--c-border)' }}>
+                            <td colSpan={6} style={{ padding: 0, borderBottom: '1px solid var(--c-border)' }}>
                               <EditForm
                                 node={node}
                                 existingCodes={existingCodes.filter((c) => c !== node.code)}
@@ -546,9 +557,10 @@ function KindGroup({
 interface Props {
   nodes: Node[]
   projectId: string
+  ordersByNodeId: Record<string, NodeOrderData>
 }
 
-export function EquipmentTable({ nodes, projectId }: Props) {
+export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   const [addingKind, setAddingKind] = useState<EquipmentKind | null>(null)
 
@@ -619,6 +631,7 @@ export function EquipmentTable({ nodes, projectId }: Props) {
             onAddClick={handleAddClick}
             addingKind={addingKind}
             onAddDone={handleAddDone}
+            ordersByNodeId={ordersByNodeId}
           />
         )
       })}
