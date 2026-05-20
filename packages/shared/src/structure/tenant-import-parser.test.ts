@@ -208,6 +208,93 @@ describe('parseTenantSchedule — validation errors', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Edge cases: empty / header-only workbook (Fix 2)
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — empty / header-only workbook', () => {
+  it('returns empty rows and no errors for a header-only workbook', async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.addRow(['SHOP NO.', 'TENANT', 'TOTAL GLA']); // header only, no data rows
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    const result = await parseTenantSchedule(buf);
+    expect(result.rows).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('returns a clean error result for a workbook with no sheets', async () => {
+    // ExcelJS requires at least one sheet, so build one, write it, then test the
+    // no-sheet branch indirectly via the corrupt-buffer path which also returns
+    // a clean error. To reach the ws===undefined branch we use a genuine empty wb.
+    const wb = new ExcelJS.Workbook();
+    // Do not add any worksheet — wb.worksheets will be [].
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    const result = await parseTenantSchedule(buf);
+    // Either: empty sheet list → clean error, or parse-error → clean error.
+    // Either way: no throw, rows empty, at least one error.
+    expect(result.rows).toHaveLength(0);
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Corrupt buffer (Fix 1 + Fix 4 test)
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — corrupt buffer', () => {
+  it('returns a clean error result for a corrupt buffer (not a zip)', async () => {
+    const buf = Buffer.from('not a zip');
+    const result = await parseTenantSchedule(buf);
+    expect(result.rows).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].source_row).toBe(1);
+    expect(result.errors[0].message).toMatch(/readable|xlsx|workbook/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blank row between data rows (Fix 3)
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — blank row skipping', () => {
+  it('parses both data rows when a blank row sits between them, preserving real row numbers', async () => {
+    // Build workbook manually so we can insert a genuine blank row at row 3.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.addRow(['SHOP NO.', 'TENANT', 'TOTAL GLA']); // row 1 — header
+    ws.addRow(['SHOP 1', 'BUTCHERY', 100]);           // row 2 — data
+    ws.addRow([null, null, null]);                     // row 3 — blank (eachRow skips)
+    ws.addRow(['SHOP 2', 'DISCHEM', 200]);             // row 4 — data
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0].source_row).toBe(2);
+    expect(result.rows[1].source_row).toBe(4); // gap: row 3 was blank, skipped
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Extra columns ignored (Fix 4 test)
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — extra columns', () => {
+  it('ignores a 4th column and still parses the 3 known columns correctly', async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.addRow(['SHOP NO.', 'TENANT', 'TOTAL GLA', 'NOTES']); // 4th col in header
+    ws.addRow(['SHOP 1', 'WOOLWORTHS', 500, 'anchor tenant']); // 4th col in data
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    const result = await parseTenantSchedule(buf);
+    expect(result.rows).toHaveLength(1);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows[0].shop_number).toBe('SHOP 1');
+    expect(result.rows[0].shop_name).toBe('WOOLWORTHS');
+    expect(result.rows[0].shop_area_m2).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Result shape
 // ---------------------------------------------------------------------------
 

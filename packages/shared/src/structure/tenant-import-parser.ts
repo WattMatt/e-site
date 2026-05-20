@@ -91,7 +91,15 @@ function cellToNumber(value: ExcelJS.CellValue): number | null {
  */
 export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportResult> {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+  // Fix 1: catch corrupt / non-xlsx buffers and return a clean error result.
+  try {
+    await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+  } catch {
+    return {
+      rows: [],
+      errors: [{ source_row: 1, message: 'File is not a readable .xlsx workbook.' }],
+    };
+  }
 
   const rows: TenantImportRow[] = [];
   const errors: TenantImportError[] = [];
@@ -127,6 +135,8 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
 
   const seenShopNumbers = new Map<string, number>(); // shop_number → first source_row
 
+  // Fix 3: eachRow skips fully-blank rows by default, so source_row numbers may
+  // have gaps when the sheet contains blank rows between data rows — expected.
   ws.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return; // skip header
 
@@ -169,8 +179,9 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
     }
 
     // --- TENANT (blank → null; "VACANT" → kept as-is) ---
-    const tenantStr = cellToString(rawTenant);
-    const shop_name = tenantStr && tenantStr.length > 0 ? tenantStr : null;
+    // Fix 4: cellToString already returns null for empty/whitespace, so no
+    // redundant length check is needed.
+    const shop_name = cellToString(rawTenant);
 
     rows.push({
       source_row: rowNumber,
