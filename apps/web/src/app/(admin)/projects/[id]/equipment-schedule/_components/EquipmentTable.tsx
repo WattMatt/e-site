@@ -425,14 +425,21 @@ function KindGroup({
                                 Active
                               </span>
                             ) : (
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: 4,
-                                padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-                                background: 'var(--c-surface-raised)', color: 'var(--c-text-dim)',
-                                border: '1px solid var(--c-border)',
-                              }}>
-                                Decommissioned
-                              </span>
+                              <div>
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                                  padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                                  background: 'var(--c-surface-raised)', color: 'var(--c-text-dim)',
+                                  border: '1px solid var(--c-border)',
+                                }}>
+                                  Decommissioned
+                                </span>
+                                {node.decommission_reason && (
+                                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)', fontStyle: 'italic' }}>
+                                    {node.decommission_reason}
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </td>
                           {/* Actions */}

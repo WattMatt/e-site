@@ -33,6 +33,7 @@ const nodeBaseSchema = z.object({
   voltage_v: z.number().nullable().optional(),
   // General
   notes: z.string().nullable().optional(),
+  decommission_reason: z.string().nullable().optional(),
   created_by: z.string().uuid().nullable().optional(),
 });
 

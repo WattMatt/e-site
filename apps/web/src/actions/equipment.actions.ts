@@ -6,8 +6,8 @@
  * Covers:
  *   - createEquipmentNodeAction    — add a new equipment node to a project
  *   - editEquipmentNodeAction      — update code/name/coc_required on an existing node
- *   - decommissionEquipmentNodeAction — set status='decommissioned', store reason in notes
- *   - reactivateEquipmentNodeAction   — set status='active', clear decommission notes
+ *   - decommissionEquipmentNodeAction — set status='decommissioned', store reason in decommission_reason
+ *   - reactivateEquipmentNodeAction   — set status='active', clear decommission_reason
  *
  * Cross-schema write pattern (CLAUDE.md 2026-05-18 gotcha):
  *   supabase-js `.schema('structure').from(...).insert()/.update()` silently strips
@@ -253,9 +253,9 @@ export async function decommissionEquipmentNodeAction(
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
 
-  const patch: Record<string, unknown> = { status: 'decommissioned' }
-  if (reason && reason.trim()) {
-    patch.notes = `[Decommissioned] ${reason.trim()}`
+  const patch: Record<string, unknown> = {
+    status: 'decommissioned',
+    decommission_reason: (reason && reason.trim()) ? reason.trim() : null,
   }
 
   const result = await structurePatch(supabaseUrl, serviceKey, 'nodes', `id=eq.${nodeId}`, patch)
@@ -290,7 +290,7 @@ export async function reactivateEquipmentNodeAction(
 
   const result = await structurePatch(supabaseUrl, serviceKey, 'nodes', `id=eq.${nodeId}`, {
     status: 'active',
-    notes: null,
+    decommission_reason: null,
   })
   if (!result.ok) return { error: result.error ?? 'Failed to reactivate node' }
 

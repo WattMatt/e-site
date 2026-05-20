@@ -33,5 +33,6 @@ export interface Node {
   voltage_v: number | null;
   // General
   notes: string | null;
+  decommission_reason: string | null;
   created_by: string | null;
 }
