@@ -156,6 +156,9 @@ export default async function UsersPage() {
                 </div>
                 <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
                 {!m.is_active && <span className="badge badge-muted">inactive</span>}
+                {m.is_active && !lastSeen.has(m.user_id) && (
+                  <span className="badge badge-amber">pending</span>
+                )}
                 <div style={{ textAlign: 'right', minWidth: 96 }}>
                   <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                     {lastSeen.has(m.user_id)
@@ -171,6 +174,7 @@ export default async function UsersPage() {
                   role={m.role}
                   isActive={m.is_active}
                   isSelf={m.user_id === ctx.userId}
+                  hasSignedIn={lastSeen.has(m.user_id)}
                   callerRole={ctx.role}
                 />
               </div>

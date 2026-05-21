@@ -11,21 +11,23 @@ import { useRouter } from 'next/navigation'
 import { Select } from '@/components/ui/FormField'
 import { Button } from '@/components/ui/Button'
 import { ORG_ROLES, ORG_ROLE_LABELS, type OrgRole } from '@esite/shared'
-import { updateUserAction, removeUserAction } from '@/actions/users.actions'
+import { updateUserAction, removeUserAction, resendInviteAction } from '@/actions/users.actions'
 
 interface Props {
-  userId:     string
-  role:       string
-  isActive:   boolean
-  isSelf:     boolean
-  callerRole: OrgRole
+  userId:      string
+  role:        string
+  isActive:    boolean
+  isSelf:      boolean
+  hasSignedIn: boolean
+  callerRole:  OrgRole
 }
 
-export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: Props) {
+export function UserRowActions({ userId, role, isActive, isSelf, hasSignedIn, callerRole }: Props) {
   const router = useRouter()
   const [roleVal, setRoleVal] = useState(role)
   const [error, setError] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [resent, setResent] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   // Cannot edit your own row (self-lockout guard); a non-owner cannot touch an
@@ -41,6 +43,7 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
     const prev = roleVal
     setRoleVal(next)
     setError(null)
+    setResent(false)
     startTransition(async () => {
       const result = await updateUserAction({ userId, role: next })
       if (!result.ok) {
@@ -54,6 +57,7 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
 
   function run(fn: () => Promise<{ ok: boolean; error?: string }>) {
     setError(null)
+    setResent(false)
     startTransition(async () => {
       const result = await fn()
       if (!result.ok) {
@@ -65,11 +69,36 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
     })
   }
 
+  function resendInvite() {
+    setError(null)
+    setResent(false)
+    startTransition(async () => {
+      const result = await resendInviteAction({ userId })
+      if (!result.ok) {
+        setError(result.error ?? 'Could not resend the invite.')
+        return
+      }
+      setResent(true)
+      router.refresh()
+    })
+  }
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
       flexWrap: 'wrap', justifyContent: 'flex-end', width: 280,
     }}>
+      {!hasSignedIn && isActive && (
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={isPending}
+          onClick={resendInvite}
+        >
+          Resend invite
+        </Button>
+      )}
+
       <Select
         aria-label="Change role"
         value={roleVal}
@@ -114,6 +143,12 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
       {error && (
         <span role="alert" style={{ fontSize: 11, color: 'var(--c-red)', width: '100%', textAlign: 'right' }}>
           {error}
+        </span>
+      )}
+
+      {resent && (
+        <span role="status" style={{ fontSize: 11, color: 'var(--c-green)', width: '100%', textAlign: 'right' }}>
+          Set-password email sent.
         </span>
       )}
     </div>

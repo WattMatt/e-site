@@ -34,6 +34,10 @@ const updateUserSchema = z.object({
 
 const removeUserSchema = z.object({ userId: z.string().uuid() })
 
+/** Return URL embedded in admin-sent "set your password" emails. */
+const SET_PASSWORD_EMAIL_REDIRECT =
+  `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback?next=/reset-password/confirm`
+
 /** Create an organisation member directly and email them a set-password link. */
 export async function createUserAction(input: {
   email: string
@@ -101,7 +105,7 @@ export async function createUserAction(input: {
   // 2. Send the "set your password" email via the standard recovery flow.
   let warning: string | undefined
   const { error: mailErr } = await service.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
+    redirectTo: SET_PASSWORD_EMAIL_REDIRECT,
   })
   if (mailErr) {
     console.error('createUserAction: set-password email failed', { newUserId, error: mailErr })
@@ -119,6 +123,66 @@ export async function createUserAction(input: {
 
   revalidatePath('/settings/users')
   return warning ? { ok: true, warning } : { ok: true }
+}
+
+/** Re-send the "set your password" email to a member who has not signed in yet. */
+export async function resendInviteAction(input: { userId: string }): Promise<ActionResult> {
+  const h = await headers()
+  const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ua = h.get('user-agent') ?? null
+
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+  if (!isOrgAdmin(ctx.role)) return { ok: false, error: 'Only an admin or owner can resend invites.' }
+
+  if (!rateLimit(`resend-invite:${ctx.userId}`, 30, 60 * 60_000)) {
+    return { ok: false, error: 'Too many invites resent recently. Please wait before trying again.' }
+  }
+
+  const parsed = z.object({ userId: z.string().uuid() }).safeParse(input)
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid input.' }
+  }
+  const { userId } = parsed.data
+
+  const service = createServiceClient()
+
+  // The target must be a member of the caller's organisation.
+  const { data: target, error: targetErr } = await service
+    .from('user_organisations')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('organisation_id', ctx.organisationId)
+    .maybeSingle()
+  if (targetErr) return { ok: false, error: targetErr.message }
+  if (!target) return { ok: false, error: 'That user is not a member of your organisation.' }
+
+  const { data: authData, error: authErr } = await service.auth.admin.getUserById(userId)
+  if (authErr || !authData?.user?.email) {
+    return { ok: false, error: 'Could not find that user’s email address.' }
+  }
+  if (authData.user.last_sign_in_at) {
+    return { ok: false, error: 'That user has already signed in — no invite is needed.' }
+  }
+
+  const { error: mailErr } = await service.auth.resetPasswordForEmail(authData.user.email, {
+    redirectTo: SET_PASSWORD_EMAIL_REDIRECT,
+  })
+  if (mailErr) {
+    console.error('resendInviteAction: set-password email failed', { userId, error: mailErr })
+    return { ok: false, error: 'The email could not be sent. Please try again shortly.' }
+  }
+
+  await logAuthEvent(service, {
+    userId,
+    eventType: 'user_updated',
+    ipAddress: ip === 'unknown' ? null : ip,
+    userAgent: ua,
+    metadata:  { action: 'invite_resent', resent_by: ctx.userId, organisation_id: ctx.organisationId },
+  })
+
+  revalidatePath('/settings/users')
+  return { ok: true }
 }
 
 /** Change a member's role and/or active status. */
