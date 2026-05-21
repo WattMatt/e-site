@@ -52,7 +52,7 @@ function LogoMark() {
 const GLOBAL_NAV = [
   { href: '/dashboard',   label: 'Dashboard',   Icon: LayoutGrid },
   { href: '/projects',    label: 'Projects',    Icon: FolderOpen },
-  { href: '/inspections', label: 'Inspections', Icon: ClipboardCheck },
+  { href: '/inspections/templates', label: 'Inspection Templates', Icon: ClipboardCheck },
   { href: '/marketplace', label: 'Marketplace', Icon: ShoppingBag },
 ] as const
 

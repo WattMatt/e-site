@@ -176,14 +176,10 @@ export default async function DashboardPage() {
           {stats.openSnags > 0 && <div className="kpi-meta">Needs attention</div>}
         </Link>
 
-        <Link
-          href="/inspections?status=awaiting_verification"
-          className={`kpi-card ${awaiting.length > 0 ? 'kpi-warning' : ''}`}
-          style={{ textDecoration: 'none', color: 'inherit' }}
-        >
+        <div className={`kpi-card ${awaiting.length > 0 ? 'kpi-warning' : ''}`}>
           <div className="kpi-label">Awaiting Verification</div>
           <div className="kpi-value">{awaiting.length}</div>
-        </Link>
+        </div>
 
         {isMarketplaceEnabled() && (
           <Link href="/marketplace/orders" className="kpi-card" style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -212,8 +208,7 @@ export default async function DashboardPage() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
             {/* Awaiting verification (inspections) */}
-            <Link
-              href="/inspections?status=awaiting_verification"
+            <div
               className="data-panel"
               style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
             >
@@ -250,11 +245,10 @@ export default async function DashboardPage() {
                   ))}
                 </ul>
               )}
-            </Link>
+            </div>
 
             {/* Re-inspect required */}
-            <Link
-              href="/inspections?status=re-inspect_required"
+            <div
               className="data-panel"
               style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
             >
@@ -291,11 +285,10 @@ export default async function DashboardPage() {
                   ))}
                 </ul>
               )}
-            </Link>
+            </div>
 
             {/* Stale draft inspections */}
-            <Link
-              href="/inspections?status=in_progress"
+            <div
               className="data-panel"
               style={{ textDecoration: 'none', color: 'inherit', display: 'block', padding: 16 }}
             >
@@ -332,7 +325,7 @@ export default async function DashboardPage() {
                   ))}
                 </ul>
               )}
-            </Link>
+            </div>
 
             {/* Aging snags */}
             <Link

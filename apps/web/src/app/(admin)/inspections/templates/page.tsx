@@ -8,7 +8,6 @@ import { createClient } from '@/lib/supabase/server'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { InspectionsTabs } from '../InspectionsTabs'
 import DeprecateButton from './DeprecateButton'
 import ReactivateButton from './ReactivateButton'
 import DeleteTemplateButton from './DeleteTemplateButton'
@@ -64,8 +63,6 @@ export default async function TemplateLibraryPage() {
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 960 }}>
-      <InspectionsTabs active="templates" />
-
       <div className="page-header">
         <div>
           <h1 className="page-title">Inspection Templates</h1>

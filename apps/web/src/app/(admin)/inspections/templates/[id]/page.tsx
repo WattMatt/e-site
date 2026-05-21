@@ -9,7 +9,6 @@ import type { ParsedTemplate } from '@esite/shared'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import MonacoView from '../MonacoView'
 import TemplatePreviewPane from './TemplatePreviewPane'
 import DeleteTemplateButton from '../DeleteTemplateButton'
 
@@ -85,31 +84,14 @@ export default async function ViewTemplatePage({ params }: Props) {
         </Link>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-          gap: 16,
-        }}
-      >
-        <Card>
-          <CardHeader>
-            <span className="data-panel-title">JSON (read-only)</span>
-          </CardHeader>
-          <CardBody>
-            <MonacoView value={JSON.stringify(t.schema_json, null, 2)} readOnly />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <span className="data-panel-title">Preview as inspector sees it</span>
-          </CardHeader>
-          <CardBody>
-            <TemplatePreviewPane template={t.schema_json} />
-          </CardBody>
-        </Card>
-      </div>
+      <Card>
+        <CardHeader>
+          <span className="data-panel-title">Preview as inspector sees it</span>
+        </CardHeader>
+        <CardBody>
+          <TemplatePreviewPane template={t.schema_json} />
+        </CardBody>
+      </Card>
 
       {isOwner && (
         <div

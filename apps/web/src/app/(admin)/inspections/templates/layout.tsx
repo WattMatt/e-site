@@ -5,8 +5,7 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Owner/admin gate for the whole `/inspections/templates` subtree.
- * Non-admins (PM, field worker) are bounced to the inspection portfolio —
- * they never see the Templates tab, and the URL is closed to them too.
+ * Non-admins (PM, field worker) are bounced to the dashboard.
  */
 export default async function InspectionTemplatesLayout({
   children,
@@ -26,7 +25,7 @@ export default async function InspectionTemplatesLayout({
   const isAdmin = (memberships ?? []).some(
     (m: { role: string }) => m.role === 'owner' || m.role === 'admin',
   )
-  if (!isAdmin) redirect('/inspections')
+  if (!isAdmin) redirect('/dashboard')
 
   return <>{children}</>
 }
