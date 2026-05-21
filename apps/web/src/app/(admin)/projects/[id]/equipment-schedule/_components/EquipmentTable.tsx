@@ -3,8 +3,8 @@
 /**
  * EquipmentTable — client component for the Equipment Schedule page.
  *
- * Renders nodes grouped by kind, each group collapsible.
- * Handles Add / Edit / Decommission / Reactivate via inline modals.
+ * Renders nodes grouped by kind, each group collapsible. Add opens a modal
+ * dialog; Edit is inline per-row; Decommission is a modal; Reactivate is inline.
  */
 
 import { Fragment, useState, useMemo, useTransition } from 'react'
@@ -228,17 +228,17 @@ function DecommissionModal({ node, projectId, onDone, onCancel }: DecommissionMo
 }
 
 // ---------------------------------------------------------------------------
-// Add panel — wraps EquipmentForm for the page create flow
+// Add-equipment modal — wraps EquipmentForm in a dialog
 // ---------------------------------------------------------------------------
 
-interface AddPanelProps {
+interface AddEquipmentModalProps {
   projectId: string
   existingCodes: string[]
-  defaultKind?: EquipmentKind
-  onDone: () => void
+  defaultKind: EquipmentKind
+  onClose: () => void
 }
 
-function AddPanel({ projectId, existingCodes, defaultKind, onDone }: AddPanelProps) {
+function AddEquipmentModal({ projectId, existingCodes, defaultKind, onClose }: AddEquipmentModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -256,7 +256,7 @@ function AddPanel({ projectId, existingCodes, defaultKind, onDone }: AddPanelPro
         if ('error' in result) {
           reject(new Error(result.error))
         } else {
-          onDone()
+          onClose()
           resolve()
         }
       })
@@ -264,22 +264,47 @@ function AddPanel({ projectId, existingCodes, defaultKind, onDone }: AddPanelPro
   }
 
   return (
-    <div style={{ padding: '16px', background: 'var(--c-surface-raised)', borderTop: '1px solid var(--c-border)' }}>
-      <div style={{ marginBottom: 12, fontFamily: 'var(--font-sans)', fontSize: 13, fontWeight: 600, color: 'var(--c-text-mid)' }}>
-        Add equipment
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add equipment"
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.55)', padding: 16,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget && !isPending) onClose() }}
+    >
+      <div style={{
+        background: 'var(--c-surface)',
+        border: '1px solid var(--c-border)',
+        borderRadius: 8,
+        padding: 24,
+        width: '100%',
+        maxWidth: 460,
+        maxHeight: '90vh',
+        overflowY: 'auto',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+      }}>
+        <h2 style={{ margin: '0 0 4px', fontFamily: 'var(--font-sans)', fontSize: 16, fontWeight: 600, color: 'var(--c-text)' }}>
+          Add equipment
+        </h2>
+        <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--c-text-mid)', fontFamily: 'var(--font-sans)' }}>
+          Pick the equipment type — a type with no items yet starts its own group.
+        </p>
+        <EquipmentForm
+          existingCodes={existingCodes}
+          defaultKind={defaultKind}
+          onSubmit={handleSubmit}
+          onCancel={onClose}
+          isLoading={isPending}
+        />
+        {error && (
+          <div style={{ marginTop: 8, fontSize: 13, color: 'var(--c-red)', fontFamily: 'var(--font-sans)' }} role="alert">
+            {error}
+          </div>
+        )}
       </div>
-      <EquipmentForm
-        existingCodes={existingCodes}
-        defaultKind={defaultKind}
-        onSubmit={handleSubmit}
-        onCancel={onDone}
-        isLoading={isPending}
-      />
-      {error && (
-        <div style={{ marginTop: 8, fontSize: 13, color: 'var(--c-red)', fontFamily: 'var(--font-sans)' }} role="alert">
-          {error}
-        </div>
-      )}
     </div>
   )
 }
@@ -295,8 +320,6 @@ interface KindGroupProps {
   existingCodes: string[]
   showDecommissioned: boolean
   onAddClick: (kind: EquipmentKind) => void
-  addingKind: EquipmentKind | null
-  onAddDone: () => void
   ordersByNodeId: Record<string, NodeOrderData>
 }
 
@@ -307,8 +330,6 @@ function KindGroup({
   existingCodes,
   showDecommissioned,
   onAddClick,
-  addingKind,
-  onAddDone,
   ordersByNodeId,
 }: KindGroupProps) {
   const [collapsed, setCollapsed] = useState(false)
@@ -319,9 +340,8 @@ function KindGroup({
   const [reactivateError, setReactivateError] = useState<string | null>(null)
 
   const visible = showDecommissioned ? nodes : nodes.filter((n) => n.status === 'active')
-  const isAdding = addingKind === kind
 
-  if (visible.length === 0 && !isAdding) return null
+  if (visible.length === 0) return null
 
   function handleReactivate(nodeId: string) {
     setReactivateError(null)
@@ -372,7 +392,7 @@ function KindGroup({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => { setCollapsed(false); onAddClick(kind) }}
+                onClick={() => onAddClick(kind)}
               >
                 + Add
               </Button>
@@ -529,35 +549,11 @@ function KindGroup({
               </div>
             )}
 
-            {/* Empty state within group */}
-            {visible.length === 0 && !isAdding && (
-              <div style={{ padding: '20px 16px', color: 'var(--c-text-dim)', fontSize: 13, fontFamily: 'var(--font-sans)', textAlign: 'center' }}>
-                No {KIND_LABEL[kind].toLowerCase()} yet.{' '}
-                <button
-                  type="button"
-                  onClick={() => onAddClick(kind)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-amber)', fontFamily: 'var(--font-sans)', fontSize: 13, padding: 0, textDecoration: 'underline' }}
-                >
-                  Add one.
-                </button>
-              </div>
-            )}
-
             {/* Reactivate error */}
             {reactivateError && (
               <div style={{ padding: '8px 12px', fontSize: 13, color: 'var(--c-red)', fontFamily: 'var(--font-sans)' }} role="alert">
                 {reactivateError}
               </div>
-            )}
-
-            {/* Add form */}
-            {isAdding && (
-              <AddPanel
-                projectId={projectId}
-                existingCodes={existingCodes}
-                defaultKind={kind}
-                onDone={onAddDone}
-              />
             )}
           </CardBody>
         )}
@@ -596,11 +592,7 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
   }
 
   function handleAddClick(kind: EquipmentKind) {
-    setAddingKind((prev) => (prev === kind ? null : kind))
-  }
-
-  function handleAddDone() {
-    setAddingKind(null)
+    setAddingKind(kind)
   }
 
   return (
@@ -611,12 +603,7 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
           type="button"
           variant="primary"
           size="sm"
-          onClick={() => {
-            // Open first kind's add panel
-            const firstKind = KIND_ORDER[0]
-            setAddingKind(firstKind)
-            window.scrollTo({ top: 0, behavior: 'smooth' })
-          }}
+          onClick={() => setAddingKind(EQUIPMENT_KINDS[0])}
         >
           + Add equipment
         </Button>
@@ -646,15 +633,13 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
             existingCodes={existingCodes}
             showDecommissioned={showDecommissioned}
             onAddClick={handleAddClick}
-            addingKind={addingKind}
-            onAddDone={handleAddDone}
             ordersByNodeId={ordersByNodeId}
           />
         )
       })}
 
       {/* Empty state — no equipment at all */}
-      {equipmentNodes.length === 0 && addingKind === null && (
+      {equipmentNodes.length === 0 && (
         <Card>
           <CardBody>
             <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)' }}>
@@ -665,6 +650,16 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
             </div>
           </CardBody>
         </Card>
+      )}
+
+      {/* Add-equipment modal */}
+      {addingKind && (
+        <AddEquipmentModal
+          projectId={projectId}
+          existingCodes={existingCodes}
+          defaultKind={addingKind}
+          onClose={() => setAddingKind(null)}
+        />
       )}
     </div>
   )
