@@ -3,7 +3,7 @@ import { View, Text, Image, TouchableOpacity, StyleSheet, Modal, Linking, Scroll
 import { diaryService } from '@esite/shared'
 import type { DiaryAttachment } from '@esite/shared'
 import { useSupabase } from '../../providers/SupabaseProvider'
-import { colors, radius, spacing } from '../../theme'
+import { colors, fontSize, radius, spacing } from '../../theme'
 
 interface Props { entryId: string }
 
@@ -24,7 +24,7 @@ export function DiaryAttachmentStrip({ entryId }: Props) {
         .createSignedUrls(rows.map(r => r.file_path), 3600)).data ?? []
       const urlByPath = new Map(signed.map(s => [s.path, s.signedUrl]))
       if (active) setItems(rows.map(r => ({ ...r, url: urlByPath.get(r.file_path) ?? '' })))
-    })().catch(() => { /* non-blocking */ })
+    })().catch((err) => { console.warn('Failed to load diary attachments', err) })
     return () => { active = false }
   }, [entryId, client])
 
@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
   tile: { marginRight: spacing.sm },
   thumb: { width: 72, height: 72, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border },
   fileTile: { width: 72, height: 72, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.elevated, alignItems: 'center', justifyContent: 'center' },
-  fileIcon: { fontSize: 26, color: colors.textMid },
+  fileIcon: { fontSize: fontSize.xxl, color: colors.textMid },
   viewerBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', alignItems: 'center', justifyContent: 'center' },
   viewerImg: { width: '100%', height: '100%' },
 })
