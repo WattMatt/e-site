@@ -201,6 +201,8 @@ export const diaryService = {
       .in('diary_entry_id', entryIds)
       .order('sort_order', { ascending: true })
     if (error) throw error
+    // TypedSupabaseClient does not carry the `projects` schema types; this cast
+    // can be removed after the next packages/db type regen (see node.service.ts).
     return (data ?? []) as unknown as DiaryAttachment[]
   },
 
