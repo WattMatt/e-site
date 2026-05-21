@@ -18,7 +18,7 @@ export function TemplateBuilderClient({ organisationId, initialDraft }: Props) {
     try {
       const jsonText = JSON.stringify(validatedDraft)
       const newId = await createTemplateAction(organisationId, jsonText)
-      router.push(`/settings/inspections/templates/${newId}`)
+      router.push(`/inspections/templates/${newId}`)
       return { ok: true as const }
     } catch (e) {
       return { ok: false as const, error: (e as Error).message }

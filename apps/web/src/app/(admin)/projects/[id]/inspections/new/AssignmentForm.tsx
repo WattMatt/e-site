@@ -158,8 +158,8 @@ export default function AssignmentForm({
             {templates.length === 0 && (
               <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 6 }}>
                 No active templates. Import one in{' '}
-                <a href="/settings/inspections/templates" style={{ color: 'var(--c-amber)' }}>
-                  Settings → Inspection Templates
+                <a href="/inspections/templates" style={{ color: 'var(--c-amber)' }}>
+                  Inspections → Templates
                 </a>
                 .
               </p>

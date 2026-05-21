@@ -139,7 +139,7 @@ export async function createTemplateAction(
     throw error
   }
 
-  revalidatePath('/settings/inspections/templates')
+  revalidatePath('/inspections/templates')
   return (data as { id: string }).id
 }
 
@@ -166,8 +166,8 @@ export async function updateTemplateMetadataAction(
     .eq('id', id)
 
   if (error) throw error
-  revalidatePath('/settings/inspections/templates')
-  revalidatePath(`/settings/inspections/templates/${id}`)
+  revalidatePath('/inspections/templates')
+  revalidatePath(`/inspections/templates/${id}`)
 }
 
 // ─── cloneTemplateToNewVersionAction ────────────────────────────────────
@@ -308,8 +308,8 @@ export async function deactivateTemplateAction(
 
     if (error) return { ok: false, error: error.message }
 
-    revalidatePath('/settings/inspections/templates')
-    revalidatePath(`/settings/inspections/templates/${id}`)
+    revalidatePath('/inspections/templates')
+    revalidatePath(`/inspections/templates/${id}`)
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e as Error).message }
@@ -339,8 +339,8 @@ export async function reactivateTemplateAction(
 
     if (error) return { ok: false, error: error.message }
 
-    revalidatePath('/settings/inspections/templates')
-    revalidatePath(`/settings/inspections/templates/${id}`)
+    revalidatePath('/inspections/templates')
+    revalidatePath(`/inspections/templates/${id}`)
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e as Error).message }
@@ -426,7 +426,7 @@ export async function deleteTemplateAction(
 
     if (error) return { ok: false, error: error.message }
 
-    revalidatePath('/settings/inspections/templates')
+    revalidatePath('/inspections/templates')
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e as Error).message }
@@ -531,6 +531,6 @@ export async function newTemplateVersionAction(
     throw error
   }
 
-  revalidatePath('/settings/inspections/templates')
+  revalidatePath('/inspections/templates')
   return (data as { id: string }).id
 }

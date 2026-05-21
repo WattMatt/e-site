@@ -13,7 +13,7 @@ interface Props {
   version: string
   /** Pre-fetched count of inspections referencing this (template_id, version). */
   inspectionCount: number
-  /** Where to redirect after successful deletion. Defaults to /settings/inspections/templates */
+  /** Where to redirect after successful deletion. Defaults to /inspections/templates */
   redirectTo?: string
 }
 
@@ -29,7 +29,7 @@ export default function DeleteTemplateButton({
   templateId,
   version,
   inspectionCount,
-  redirectTo = '/settings/inspections/templates',
+  redirectTo = '/inspections/templates',
 }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)

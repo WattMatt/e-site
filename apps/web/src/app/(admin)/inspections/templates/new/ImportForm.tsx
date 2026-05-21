@@ -16,7 +16,7 @@ export default function ImportForm({ organisationId }: { organisationId: string 
     setBusy(true)
     try {
       const id = await createTemplateAction(organisationId, json)
-      router.push(`/settings/inspections/templates/${id}`)
+      router.push(`/inspections/templates/${id}`)
     } catch (e) {
       setError((e as Error).message)
     } finally {

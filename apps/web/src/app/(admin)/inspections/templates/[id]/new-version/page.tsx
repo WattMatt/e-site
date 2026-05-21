@@ -43,7 +43,7 @@ export default async function NewVersionPage({ params }: Props) {
     <div className="animate-fadeup" style={{ maxWidth: 1200 }}>
       <div style={{ marginBottom: 16 }}>
         <Link
-          href={`/settings/inspections/templates/${source.id}`}
+          href={`/inspections/templates/${source.id}`}
           style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
         >
           ← {source.template_id} v{source.version}

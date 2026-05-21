@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { InspectionsTabs } from './InspectionsTabs'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Inspections' }
@@ -40,11 +41,12 @@ export default async function PortfolioRollupPage({ searchParams }: Props) {
 
   const { data: orgs } = await supabase
     .from('user_organisations')
-    .select('organisation_id')
+    .select('organisation_id, role')
     .eq('user_id', user.id)
     .eq('is_active', true)
   const orgIds = (orgs ?? []).map((o: any) => o.organisation_id)
   if (!orgIds.length) redirect('/onboarding')
+  const isAdmin = (orgs ?? []).some((o: any) => o.role === 'owner' || o.role === 'admin')
 
   const { status } = await searchParams
 
@@ -87,6 +89,7 @@ export default async function PortfolioRollupPage({ searchParams }: Props) {
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 1200 }}>
+      {isAdmin && <InspectionsTabs active="inspections" />}
       <div className="page-header">
         <div>
           <h1 className="page-title">Inspections</h1>

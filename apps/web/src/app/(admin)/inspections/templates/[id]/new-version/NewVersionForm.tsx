@@ -38,7 +38,7 @@ export default function NewVersionForm({
         parsed.version,
         json,
       )
-      router.push(`/settings/inspections/templates/${newId}`)
+      router.push(`/inspections/templates/${newId}`)
     } catch (e) {
       setError((e as Error).message)
     } finally {

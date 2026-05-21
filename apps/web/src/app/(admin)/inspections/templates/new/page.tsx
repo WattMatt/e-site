@@ -29,7 +29,7 @@ export default async function NewTemplatePage() {
     <div className="animate-fadeup" style={{ maxWidth: 1200 }}>
       <div style={{ marginBottom: 16 }}>
         <Link
-          href="/settings/inspections/templates"
+          href="/inspections/templates"
           style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
         >
           ← Templates

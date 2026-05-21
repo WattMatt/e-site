@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { InspectionsTabs } from '../InspectionsTabs'
 import DeprecateButton from './DeprecateButton'
 import ReactivateButton from './ReactivateButton'
 import DeleteTemplateButton from './DeleteTemplateButton'
@@ -63,21 +64,14 @@ export default async function TemplateLibraryPage() {
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 960 }}>
-      <div style={{ marginBottom: 16 }}>
-        <Link
-          href="/settings"
-          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
-        >
-          ← Settings
-        </Link>
-      </div>
+      <InspectionsTabs active="templates" />
 
       <div className="page-header">
         <div>
           <h1 className="page-title">Inspection Templates</h1>
           <p className="page-subtitle">Versioned schemas powering the inspector capture flow.</p>
         </div>
-        <Link href="/settings/inspections/templates/new" style={{ textDecoration: 'none' }}>
+        <Link href="/inspections/templates/new" style={{ textDecoration: 'none' }}>
           <Button>+ New template</Button>
         </Link>
       </div>
@@ -87,7 +81,7 @@ export default async function TemplateLibraryPage() {
           <CardBody>
             <div style={{ padding: '40px 12px', textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13 }}>
               No templates yet.{' '}
-              <Link href="/settings/inspections/templates/new" style={{ color: 'var(--c-amber)', textDecoration: 'underline' }}>
+              <Link href="/inspections/templates/new" style={{ color: 'var(--c-amber)', textDecoration: 'underline' }}>
                 → Use the builder to create your first template
               </Link>
             </div>
@@ -138,13 +132,13 @@ export default async function TemplateLibraryPage() {
                         </td>
                         <td style={{ padding: '8px 4px', textAlign: 'right' }}>
                           <Link
-                            href={`/settings/inspections/templates/${v.id}`}
+                            href={`/inspections/templates/${v.id}`}
                             style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline', marginRight: 12 }}
                           >
                             View
                           </Link>
                           <Link
-                            href={`/settings/inspections/templates/${v.id}/clone`}
+                            href={`/inspections/templates/${v.id}/clone`}
                             style={{ fontSize: 12, color: 'var(--c-amber)', textDecoration: 'underline', marginRight: 12 }}
                           >
                             Edit

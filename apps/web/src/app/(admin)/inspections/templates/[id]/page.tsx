@@ -57,7 +57,7 @@ export default async function ViewTemplatePage({ params }: Props) {
     <div className="animate-fadeup" style={{ maxWidth: 1200 }}>
       <div style={{ marginBottom: 16 }}>
         <Link
-          href="/settings/inspections/templates"
+          href="/inspections/templates"
           style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em' }}
         >
           ← Templates
@@ -80,7 +80,7 @@ export default async function ViewTemplatePage({ params }: Props) {
             {!t.is_active && <Badge variant="ghost">Deprecated</Badge>}
           </div>
         </div>
-        <Link href={`/settings/inspections/templates/${t.id}/new-version`} style={{ textDecoration: 'none' }}>
+        <Link href={`/inspections/templates/${t.id}/new-version`} style={{ textDecoration: 'none' }}>
           <Button>+ New Version</Button>
         </Link>
       </div>
@@ -131,7 +131,7 @@ export default async function ViewTemplatePage({ params }: Props) {
               templateId={t.template_id}
               version={t.version}
               inspectionCount={inspectionCount}
-              redirectTo="/settings/inspections/templates"
+              redirectTo="/inspections/templates"
             />
           </div>
         </div>
