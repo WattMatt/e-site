@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
 import { RevisionsList, type RevisionRow } from './RevisionsList'
 import { CreateRevisionButton } from './CreateRevisionButton'
+import { requireRole, ROLES_ENGINEER } from '@/lib/cable-schedule/require-role'
 
 export const metadata: Metadata = { title: 'Cable schedule' }
 
@@ -20,6 +21,18 @@ export default async function CablesPage({ params }: Props) {
     .getById(supabase as never, projectId)
     .catch(() => null)
   if (!project) notFound()
+
+  // The rate-library link is admin-gated (owner/admin/project_manager) to
+  // match the gate on the rate-library page itself.
+  const { data: orgRow } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('organisation_id')
+    .eq('id', projectId)
+    .maybeSingle()
+  const canManageRates = orgRow
+    ? (await requireRole(supabase, (orgRow as { organisation_id: string }).organisation_id, ROLES_ENGINEER)).ok
+    : false
 
   // Fetch revisions. If the cable_schedule schema isn't yet exposed via
   // PostgREST (manual dashboard step), this fails cleanly and the page
@@ -59,6 +72,20 @@ export default async function CablesPage({ params }: Props) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {canManageRates && (
+            <Link
+              href={`/projects/${projectId}/cables/rates`}
+              className="btn-primary-amber"
+              style={{
+                background: 'var(--c-panel)',
+                border: '1px solid var(--c-border)',
+                color: 'var(--c-text-mid)',
+                textDecoration: 'none',
+              }}
+            >
+              💰 Rate library
+            </Link>
+          )}
           <Link
             href={`/projects/${projectId}/cables/import`}
             className="btn-primary-amber"

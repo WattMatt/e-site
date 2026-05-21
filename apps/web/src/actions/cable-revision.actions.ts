@@ -108,7 +108,7 @@ export async function createRevisionAction(
 
   // ── Seed cost_lines rates (B5-T4 — 2026-05-18) ───────────────────────────
   // Priority order:
-  //   1. Firm-wide rate_library (authoritative source — wins when present)
+  //   1. Project rate_library (authoritative source — wins when present)
   //   2. Previous ISSUED revision on this project (legacy behavior from
   //      6715a58; may carry project-specific overrides we don't want to
   //      propagate by default — so only used when library is empty)
@@ -119,12 +119,12 @@ export async function createRevisionAction(
   try {
     const orgId = (project as { organisation_id: string }).organisation_id
 
-    // Priority 1: firm-wide rate library
+    // Priority 1: project rate library
     const { data: libraryRates } = await (supabase as any)
       .schema('cable_schedule')
       .from('rate_library')
       .select('size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
-      .eq('organisation_id', orgId)
+      .eq('project_id', parsed.data.projectId)
 
     const libraryEntries = (libraryRates ?? []) as Array<{
       size_mm2: number
@@ -344,7 +344,7 @@ export async function deleteDraftRevisionAction(
 }
 
 /**
- * Re-seed cost_lines for a DRAFT revision from the firm-wide rate_library.
+ * Re-seed cost_lines for a DRAFT revision from the project rate_library.
  *
  * Useful when:
  * - A new revision was created before the library was set up
@@ -389,12 +389,12 @@ export async function reseedCostLinesFromRateLibraryAction(
   if (!project) return { ok: false, error: 'Project not found' }
   const orgId = (project as { organisation_id: string }).organisation_id
 
-  // Fetch rate library
+  // Fetch the project's rate library
   const { data: libraryData } = await (supabase as any)
     .schema('cable_schedule')
     .from('rate_library')
     .select('size_mm2, conductor, supply_rate_per_m, install_rate_per_m, termination_rate_each')
-    .eq('organisation_id', orgId)
+    .eq('project_id', revRow.project_id)
 
   const libraryEntries = (libraryData ?? []) as Array<{
     size_mm2: number
@@ -407,7 +407,7 @@ export async function reseedCostLinesFromRateLibraryAction(
   if (libraryEntries.length === 0) {
     return {
       ok: false,
-      error: 'Rate library is empty for your organisation. Set rates first at /settings/cable-schedule/rates, then re-seed.',
+      error: 'Rate library is empty for this project. Set rates first on the project rate library page, then re-seed.',
     }
   }
 

@@ -58,7 +58,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
   const [reseedMessage, setReseedMessage] = useState<string | null>(null)
 
   function onReseed() {
-    if (!confirm('This will replace all current rates with the firm-wide library values. Continue?')) return
+    if (!confirm('This will replace all current rates with the project rate library values. Continue?')) return
     setReseedMessage(null)
     setReseeding(true)
     startTransition(async () => {
@@ -123,7 +123,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
             type="button"
             onClick={onReseed}
             disabled={reseeding}
-            title="Replace current rates with the firm-wide library values"
+            title="Replace current rates with the project rate library values"
             style={{
               background: 'var(--c-panel)',
               border: '1px solid var(--c-border)',

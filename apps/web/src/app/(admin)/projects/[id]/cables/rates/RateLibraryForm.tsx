@@ -18,7 +18,7 @@ interface Entry {
 }
 
 interface Props {
-  organisationId: string
+  projectId: string
   canEdit: boolean
   initialEntries: Array<{
     id: string
@@ -32,7 +32,7 @@ interface Props {
   }>
 }
 
-export function RateLibraryForm({ organisationId, canEdit, initialEntries }: Props) {
+export function RateLibraryForm({ projectId, canEdit, initialEntries }: Props) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -119,7 +119,7 @@ export function RateLibraryForm({ organisationId, canEdit, initialEntries }: Pro
         termination_rate_each: Number(r.termination_rate_each),
         notes: r.notes.trim() || null,
       }))
-      const result = await upsertRateLibraryEntriesAction(organisationId, entries)
+      const result = await upsertRateLibraryEntriesAction(projectId, entries)
       if (!result.ok) { setError(result.error); return }
       setSuccess(`Saved ${result.upserted} row${result.upserted !== 1 ? 's' : ''}.`)
       router.refresh()
