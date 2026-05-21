@@ -15,10 +15,10 @@ import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, listNodes } from '@esite/shared'
-import { Card, CardBody, CardHeader } from '@/components/ui/Card'
-import { Badge } from '@/components/ui/Badge'
-import { OrderRow, type OrderRowData } from './_components/OrderRow'
+import { Card, CardBody } from '@/components/ui/Card'
+import type { OrderRowData } from './_components/OrderRow'
 import type { OrderDoc } from './_components/OrderDocSlot'
+import { MaterialOrderGroup } from './_components/MaterialOrderGroup'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Material Orders' }
@@ -265,16 +265,6 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
   const totalFiltered = filteredOrders.length
   const base = `/projects/${projectId}/materials`
 
-  const th: React.CSSProperties = {
-    padding: '8px 12px',
-    textAlign: 'left',
-    fontSize: 11,
-    fontWeight: 600,
-    color: 'var(--c-text-dim)',
-    letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-  }
-
   return (
     <div className="animate-fadeup" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <div className="page-header">
@@ -329,39 +319,12 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
         const rows = grouped.get(groupKey) ?? []
         if (rows.length === 0) return null
         return (
-          <Card key={groupKey}>
-            <CardHeader>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-text)' }}>
-                  {label}
-                </span>
-                <Badge variant="ghost">{rows.length}</Badge>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <div style={{ overflowX: 'auto', margin: '-14px -18px' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--c-border)', background: 'var(--c-panel-alt, var(--c-panel))' }}>
-                      <th style={th}>Node</th>
-                      <th style={th}>Label</th>
-                      <th style={th}>Status</th>
-                      <th style={th}>Ordered</th>
-                      <th style={th}>Received</th>
-                      <th style={th}>Documents</th>
-                      <th style={th}>Notes</th>
-                      <th style={th}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((order) => (
-                      <OrderRow key={order.id} order={order} projectId={projectId} />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardBody>
-          </Card>
+          <MaterialOrderGroup
+            key={groupKey}
+            label={label}
+            rows={rows}
+            projectId={projectId}
+          />
         )
       })}
     </div>

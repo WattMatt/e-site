@@ -361,7 +361,7 @@ function KindGroup({
   onAddClick,
   ordersByNodeId,
 }: KindGroupProps) {
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true) // groups start collapsed
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   const [decommissioningNodeId, setDecommissioningNodeId] = useState<string | null>(null)
   const [, startReactivate] = useTransition()
