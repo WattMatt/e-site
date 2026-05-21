@@ -176,12 +176,15 @@ export async function createEquipmentNodeAction(
   if (nodeId) {
     const orderPayload = deriveEquipmentNodeOrder(nodeId, projectId, guard.orgId, code.trim())
 
-    // Upsert on partial unique index: (node_id) WHERE scope_item_type_id IS NULL.
-    // For a brand-new node this is always an INSERT; ignore-duplicates is used only
-    // as a race guard (e.g. retry after a network error). A retry must never overwrite
-    // an existing order, so ignore-duplicates is strictly safer than merge-duplicates.
+    // Plain INSERT — an equipment node_order is created exactly once, right
+    // after the node itself, so there is never a conflicting row. PostgREST
+    // `on_conflict` cannot be used here: the equipment uniqueness guarantee is
+    // a PARTIAL index (idx_node_orders_equipment_unique, WHERE scope_item_type_id
+    // IS NULL) and PostgREST cannot target a partial index (it errors 42P10).
+    // The partial index still enforces integrity — a genuine duplicate would
+    // surface as a clean unique-violation rather than being silently ignored.
     const orderRes = await fetch(
-      `${supabaseUrl}/rest/v1/node_orders?on_conflict=node_id`,
+      `${supabaseUrl}/rest/v1/node_orders`,
       {
         method: 'POST',
         headers: {
@@ -189,7 +192,7 @@ export async function createEquipmentNodeAction(
           Authorization: `Bearer ${serviceKey}`,
           'Content-Type': 'application/json',
           'Content-Profile': 'structure',
-          Prefer: 'resolution=ignore-duplicates,return=minimal',
+          Prefer: 'return=minimal',
         },
         body: JSON.stringify(orderPayload),
       },
