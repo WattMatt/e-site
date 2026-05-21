@@ -23,12 +23,28 @@ export interface OrderRowData {
   status: 'by_tenant' | 'required' | 'ordered' | 'received'
   ordered_at: string | null
   received_at: string | null
+  required_by: string | null
+  rag: 'red' | 'amber' | 'green' | 'neutral'
   notes: string
   documents: {
     quote: OrderDoc | null
     order_instruction: OrderDoc | null
     shop_drawing: OrderDoc | null
   }
+}
+
+const RAG_COLOR: Record<OrderRowData['rag'], string> = {
+  red: 'var(--c-red)',
+  amber: 'var(--c-amber)',
+  green: 'var(--c-green)',
+  neutral: 'var(--c-text-dim)',
+}
+
+const RAG_TITLE: Record<OrderRowData['rag'], string> = {
+  red: 'Overdue',
+  amber: 'Due soon',
+  green: 'On track',
+  neutral: 'No deadline',
 }
 
 function statusBadge(status: OrderRowData['status']) {
@@ -84,6 +100,22 @@ export function OrderRow({ order, projectId }: { order: OrderRowData; projectId:
         </td>
         {/* Status */}
         <td style={{ padding: '10px 12px', verticalAlign: 'top' }}>{statusBadge(order.status)}</td>
+        {/* Required by */}
+        <td style={{ padding: '10px 12px', fontSize: 12, fontFamily: 'var(--font-mono)', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+          {order.required_by ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span
+                title={RAG_TITLE[order.rag]}
+                style={{ width: 8, height: 8, borderRadius: '50%', background: RAG_COLOR[order.rag], flexShrink: 0 }}
+              />
+              <span style={{ color: order.rag === 'red' ? 'var(--c-red)' : 'var(--c-text-mid)' }}>
+                {order.required_by}
+              </span>
+            </span>
+          ) : (
+            <span style={{ color: 'var(--c-text-dim)' }}>—</span>
+          )}
+        </td>
         {/* Ordered at */}
         <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)', verticalAlign: 'top' }}>
           {order.ordered_at ?? '—'}
@@ -120,7 +152,7 @@ export function OrderRow({ order, projectId }: { order: OrderRowData; projectId:
       </tr>
       {error && (
         <tr>
-          <td colSpan={8} style={{ padding: '6px 12px', fontSize: 12, color: 'var(--c-red)', background: 'var(--c-red-dim)' }}>
+          <td colSpan={9} style={{ padding: '6px 12px', fontSize: 12, color: 'var(--c-red)', background: 'var(--c-red-dim)' }}>
             {error}
           </td>
         </tr>

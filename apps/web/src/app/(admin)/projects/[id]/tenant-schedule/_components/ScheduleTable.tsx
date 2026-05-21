@@ -11,6 +11,8 @@ import type { ScopeItemType, TenantScopeItem, TenantDetails } from './ScopeOfWor
 import type { LayoutDetails } from './LayoutIssuedPanel'
 import { NodeOrderCell } from '../../equipment-schedule/_components/NodeOrderCell'
 import type { NodeOrderData } from '../../equipment-schedule/_components/NodeOrderCell'
+import { BoPeriodSelect, BoDateCell } from './BoCells'
+import type { TenantBoInfo } from './BoCells'
 
 interface Props {
   nodes: Node[]
@@ -22,6 +24,8 @@ interface Props {
   layoutDetailsByNode: Record<string, LayoutDetails>    // node_id → layout details
   // `${node_id}:${scope_item_type_id}` → order — from node_orders for tenant scope items
   ordersByNodeAndScope: Record<string, NodeOrderData>
+  // node_id → beneficial-occupation info (period, override, effective date)
+  tenantBoByNode: Record<string, TenantBoInfo>
 }
 
 export function ScheduleTable({
@@ -33,6 +37,7 @@ export function ScheduleTable({
   tenantDetailsByNode,
   layoutDetailsByNode,
   ordersByNodeAndScope,
+  tenantBoByNode,
 }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   // node_id of the currently-expanded scope panel (one at a time)
@@ -148,6 +153,8 @@ export function ScheduleTable({
               <Th>GLA (m²)</Th>
               <Th>DB Code</Th>
               <Th>Scope Status</Th>
+              <Th>BO Period</Th>
+              <Th>BO Date</Th>
               {/* One party column + one order-status column per scope item type */}
               {scopeItemTypes.map((t) => (
                 <Th key={t.id}>{t.label}</Th>
@@ -196,6 +203,23 @@ export function ScheduleTable({
                       ) : (
                         <Badge variant="ghost">—</Badge>
                       )}
+                    </Td>
+
+                    {/* Beneficial occupation */}
+                    <Td>
+                      <BoPeriodSelect
+                        projectId={projectId}
+                        nodeId={node.id}
+                        value={tenantBoByNode[node.id]?.boPeriodDays ?? null}
+                      />
+                    </Td>
+                    <Td>
+                      <BoDateCell
+                        projectId={projectId}
+                        nodeId={node.id}
+                        effectiveDate={tenantBoByNode[node.id]?.effectiveDate ?? null}
+                        isOverride={tenantBoByNode[node.id]?.boDateOverride != null}
+                      />
                     </Td>
 
                     {/* Per-scope-item party cells */}
@@ -295,7 +319,7 @@ export function ScheduleTable({
                   {isExpanded && (
                     <tr>
                       <td
-                        colSpan={8 + scopeItemTypes.length * 2}
+                        colSpan={10 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <ScopeOfWorkPanel
@@ -315,7 +339,7 @@ export function ScheduleTable({
                   {isLayoutExpanded && (
                     <tr>
                       <td
-                        colSpan={8 + scopeItemTypes.length * 2}
+                        colSpan={10 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <LayoutIssuedPanel

@@ -79,6 +79,7 @@ export function MaterialOrderGroup({ label, rows, projectId }: Props) {
                   <th style={th}>Node</th>
                   <th style={th}>Label</th>
                   <th style={th}>Status</th>
+                  <th style={th}>Required by</th>
                   <th style={th}>Ordered</th>
                   <th style={th}>Received</th>
                   <th style={th}>Documents</th>

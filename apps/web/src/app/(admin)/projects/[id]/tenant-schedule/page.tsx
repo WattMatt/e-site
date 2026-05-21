@@ -2,12 +2,14 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, listNodes } from '@esite/shared'
+import { projectService, listNodes, computeBoDate } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { ScheduleTable } from './_components/ScheduleTable'
 import { ImportFlow } from './_components/ImportFlow'
+import { OpeningDateControl } from './_components/OpeningDateControl'
 import type { ScopeItemType, TenantScopeItem, TenantDetails } from './_components/ScopeOfWorkPanel'
 import type { LayoutDetails } from './_components/LayoutIssuedPanel'
+import type { TenantBoInfo } from './_components/BoCells'
 import type { NodeOrderData } from '../equipment-schedule/_components/NodeOrderCell'
 
 export const dynamic = 'force-dynamic'
@@ -27,6 +29,9 @@ export default async function TenantSchedulePage({ params }: Props) {
   if (!project) notFound()
 
   const orgId = project.organisation_id as string
+  // opening_date is added by migration 00091; pre-apply select('*') simply omits it.
+  const openingDate: string | null =
+    (project as { opening_date?: string | null }).opening_date ?? null
 
   // ── Load nodes ────────────────────────────────────────────────────────────
   // listNodes reads via .schema('structure') SELECT (read-only — no cross-schema
@@ -126,6 +131,41 @@ export default async function TenantSchedulePage({ params }: Props) {
     }
   }
 
+  // ── BO dates — separate query so it fails closed pre-migration-00091 ──────
+  // bo_period_days / bo_date_override are added by migration 00091. Querying
+  // them on their own means a pre-apply failure only blanks the BO cells —
+  // scope/layout (fetched above) are unaffected.
+  const tenantBoByNode: Record<string, TenantBoInfo> = {}
+  if (nodeIds.length > 0) {
+    let boRows: Array<{
+      node_id: string
+      bo_period_days: number | null
+      bo_date_override: string | null
+    }> = []
+    try {
+      const { data } = await supabase
+        .schema('structure')
+        .from('tenant_details')
+        .select('node_id, bo_period_days, bo_date_override')
+        .in('node_id', nodeIds)
+      // Generated DB types lag migration 00091 — cast at the query boundary.
+      if (data) boRows = data as unknown as typeof boRows
+    } catch {
+      // Non-fatal: pre-migration-00091 the columns don't exist — BO cells show "—".
+    }
+    const boByNode = new Map(boRows.map((r) => [r.node_id, r]))
+    for (const nodeId of nodeIds) {
+      const raw = boByNode.get(nodeId)
+      const boPeriodDays = raw?.bo_period_days ?? null
+      const boDateOverride = raw?.bo_date_override ?? null
+      tenantBoByNode[nodeId] = {
+        boPeriodDays,
+        boDateOverride,
+        effectiveDate: computeBoDate(openingDate, boPeriodDays, boDateOverride),
+      }
+    }
+  }
+
   // Build lookup maps for the client component
   const scopeItemsByNode: Record<string, TenantScopeItem[]> = {}
   for (const item of allScopeItems) {
@@ -177,6 +217,11 @@ export default async function TenantSchedulePage({ params }: Props) {
         <ImportFlow projectId={projectId} />
       </div>
 
+      {/* Opening date — anchors every tenant's beneficial-occupation date */}
+      <div style={{ marginBottom: 16 }}>
+        <OpeningDateControl projectId={projectId} openingDate={openingDate} />
+      </div>
+
       {/* Fetch error */}
       {loadError && (
         <div
@@ -207,6 +252,7 @@ export default async function TenantSchedulePage({ params }: Props) {
             tenantDetailsByNode={tenantDetailsByNode}
             layoutDetailsByNode={layoutDetailsByNode}
             ordersByNodeAndScope={ordersByNodeAndScope}
+            tenantBoByNode={tenantBoByNode}
           />
         </CardBody>
       </Card>

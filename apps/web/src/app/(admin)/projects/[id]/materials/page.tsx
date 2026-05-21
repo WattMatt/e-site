@@ -14,7 +14,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, listNodes } from '@esite/shared'
+import { projectService, listNodes, computeOrderRequiredBy, computeRagStatus } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import type { OrderRowData } from './_components/OrderRow'
 import type { OrderDoc } from './_components/OrderDocSlot'
@@ -121,6 +121,36 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
   }
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
 
+  // ── BO inputs for required-by dates ──────────────────────────────────────
+  // opening_date arrives via select('*'); pre-migration-00091 it is simply
+  // absent. Tenant BO columns are read in a separate query so a pre-apply
+  // 42703 fails closed — orders just get no required-by date.
+  const openingDate: string | null =
+    (project as { opening_date?: string | null }).opening_date ?? null
+
+  const boByNode = new Map<string, { boPeriodDays: number | null; boDateOverride: string | null }>()
+  const tenantNodeIds = nodes.filter((n) => n.kind === 'tenant_db').map((n) => n.id)
+  if (tenantNodeIds.length > 0) {
+    try {
+      const { data } = await supabase
+        .schema('structure')
+        .from('tenant_details')
+        .select('node_id, bo_period_days, bo_date_override')
+        .in('node_id', tenantNodeIds)
+      // Generated DB types lag migration 00091 — cast at the query boundary.
+      for (const r of (data ?? []) as unknown as Array<{
+        node_id: string
+        bo_period_days: number | null
+        bo_date_override: string | null
+      }>) {
+        boByNode.set(r.node_id, { boPeriodDays: r.bo_period_days, boDateOverride: r.bo_date_override })
+      }
+    } catch {
+      // Non-fatal: pre-migration-00091 the columns don't exist — orders get no required-by.
+    }
+  }
+  const today = new Date().toISOString().slice(0, 10)
+
   // ── Scope item types — classify tenant orders ────────────────────────────
   const orgId = project.organisation_id as string
   let scopeItemTypes: Array<{ id: string; key: string; label: string }> = []
@@ -208,6 +238,13 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
 
   for (const o of filteredOrders) {
     const node = nodeById.get(o.node_id)
+    // Required-by date: tenant orders (scope_item_type_id set) inherit their
+    // tenant's BO date; equipment orders fall back to the project opening date.
+    const bo =
+      o.scope_item_type_id !== null
+        ? boByNode.get(o.node_id) ?? { boPeriodDays: null, boDateOverride: null }
+        : null
+    const requiredBy = computeOrderRequiredBy({ openingDate, tenant: bo })
     const row: OrderRowData = {
       id: o.id,
       node_code: node?.code ?? o.node_id.slice(0, 8),
@@ -216,6 +253,8 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
       status: o.status,
       ordered_at: o.ordered_at,
       received_at: o.received_at,
+      required_by: requiredBy,
+      rag: computeRagStatus(requiredBy, o.status, today),
       notes: o.notes ?? '',
       documents: docsByOrder.get(o.id) ?? EMPTY_DOCS(),
     }
@@ -241,6 +280,17 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
         row,
       )
     }
+  }
+
+  // Within each group, surface the most urgent orders first: earliest
+  // required-by date at the top, undated orders last.
+  for (const bucket of grouped.values()) {
+    bucket.sort((a, b) => {
+      if (a.required_by === b.required_by) return 0
+      if (!a.required_by) return 1
+      if (!b.required_by) return -1
+      return a.required_by.localeCompare(b.required_by)
+    })
   }
 
   // Display order: built-in groups first, then custom-type groups sorted by name.
@@ -293,6 +343,22 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
           </Link>
         ))}
       </div>
+
+      {!openingDate && rawOrders.length > 0 && (
+        <div
+          style={{
+            padding: '10px 14px',
+            background: 'var(--c-amber-dim)',
+            border: '1px solid var(--c-amber)',
+            borderRadius: 6,
+            fontSize: 12,
+            color: 'var(--c-amber)',
+          }}
+        >
+          Set a project opening date in the Tenant Schedule to track these orders against
+          beneficial-occupation deadlines.
+        </div>
+      )}
 
       {loadError && (
         <div style={{ padding: '12px 16px', background: 'var(--c-red-dim)', border: '1px solid var(--c-red)', borderRadius: 6 }}>

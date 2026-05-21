@@ -32,3 +32,11 @@ export type {
   DerivedNodeOrder,
   TenantOrderReconcilePlan,
 } from './node-order.service';
+export {
+  computeBoDate,
+  computeOrderRequiredBy,
+  computeRagStatus,
+  BO_PERIOD_PRESETS,
+  AMBER_WINDOW_DAYS,
+} from './bo.service';
+export type { RagStatus, OrderRequiredByArgs } from './bo.service';
