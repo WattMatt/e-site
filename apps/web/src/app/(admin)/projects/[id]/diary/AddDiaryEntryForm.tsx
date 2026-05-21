@@ -244,7 +244,7 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
           {files.length > 0 && (
             <ul style={{ marginTop: 6, fontSize: 12, color: 'var(--c-text-dim)', listStyle: 'none', padding: 0 }}>
               {files.map((f, i) => (
-                <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                <li key={`${f.name}-${f.size}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
                   <span>{f.name} ({(f.size / 1024 / 1024).toFixed(1)} MB)</span>
                   <button
                     type="button"

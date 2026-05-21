@@ -41,6 +41,10 @@ export async function uploadDiaryAttachments(
         sort_order: i,
         uploaded_by: userId,
       })
-    if (rowErr) throw rowErr
+    if (rowErr) {
+      // The object uploaded but the row insert failed — remove the orphan.
+      await supabase.storage.from('diary-attachments').remove([path]).catch(() => {})
+      throw rowErr
+    }
   }
 }
