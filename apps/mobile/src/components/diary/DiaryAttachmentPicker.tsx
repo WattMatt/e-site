@@ -2,6 +2,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native'
 import * as ImagePicker from 'expo-image-picker'
 import * as DocumentPicker from 'expo-document-picker'
 import * as ImageManipulator from 'expo-image-manipulator'
+import * as FileSystem from 'expo-file-system'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../theme'
 import type { PendingAttachment } from '../../lib/diary-attachments'
 
@@ -10,13 +11,14 @@ interface Props {
   onChange: (items: PendingAttachment[]) => void
 }
 
-async function compressImage(uri: string): Promise<string> {
+async function compressImage(uri: string): Promise<{ uri: string; size: number }> {
   const result = await ImageManipulator.manipulateAsync(
     uri,
     [{ resize: { width: 2048 } }],
     { compress: 0.85, format: ImageManipulator.SaveFormat.JPEG },
   )
-  return result.uri
+  const info = await FileSystem.getInfoAsync(result.uri)
+  return { uri: result.uri, size: info.exists ? info.size : 0 }
 }
 
 export function DiaryAttachmentPicker({ items, onChange }: Props) {
@@ -32,6 +34,8 @@ export function DiaryAttachmentPicker({ items, onChange }: Props) {
   }
 
   async function addFromGallery() {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!perm.granted) { Alert.alert('Permission needed', 'Photo library access is required.'); return }
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images', 'videos'],
       allowsMultipleSelection: true,
@@ -46,12 +50,18 @@ export function DiaryAttachmentPicker({ items, onChange }: Props) {
     const next: PendingAttachment[] = []
     for (const asset of res.assets) {
       const isImage = (asset.type ?? '').startsWith('image')
-      const uri = isImage ? await compressImage(asset.uri) : asset.uri
+      let uri = asset.uri
+      let size = asset.fileSize ?? 0
+      if (isImage) {
+        const compressed = await compressImage(asset.uri)
+        uri = compressed.uri
+        size = compressed.size
+      }
       next.push({
         uri,
         name: asset.fileName ?? `${isImage ? 'photo' : 'video'}-${Date.now()}.${isImage ? 'jpg' : 'mp4'}`,
         mimeType: asset.mimeType ?? (isImage ? 'image/jpeg' : 'video/mp4'),
-        size: asset.fileSize ?? 0,
+        size,
       })
     }
     onChange([...items, ...next])

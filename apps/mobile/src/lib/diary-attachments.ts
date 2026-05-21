@@ -18,10 +18,10 @@ export async function uploadDiaryAttachments(
     const item = items[i]
     const ext = item.name.split('.').pop() ?? 'bin'
     const path = `${orgId}/${projectId}/${entryId}/${Date.now()}-${i}.${ext}`
-    const arraybuffer = await fetch(item.uri).then(r => r.arrayBuffer())
+    const blob = await fetch(item.uri).then(r => r.blob())
     const { error: upErr } = await client.storage
       .from('diary-attachments')
-      .upload(path, arraybuffer, { contentType: item.mimeType })
+      .upload(path, blob, { contentType: item.mimeType })
     if (upErr) throw upErr
     const { error: rowErr } = await client
       .schema('projects')
