@@ -53,8 +53,11 @@ DROP POLICY IF EXISTS "Org members can read requisition photo objects"   ON stor
 DROP POLICY IF EXISTS "Org members can update requisition photo objects" ON storage.objects;
 DROP POLICY IF EXISTS "Org members can delete requisition photo objects" ON storage.objects;
 
-DELETE FROM storage.objects WHERE bucket_id IN ('quotes', 'shop-drawings', 'grn-photos', 'requisition-photos');
-DELETE FROM storage.buckets WHERE id     IN ('quotes', 'shop-drawings', 'grn-photos', 'requisition-photos');
+-- The 4 procurement storage buckets (quotes, shop-drawings, grn-photos,
+-- requisition-photos) are NOT dropped here: Supabase blocks direct DELETE on
+-- storage.objects / storage.buckets (the storage.protect_delete() trigger).
+-- With their tables and RLS policies gone they are inert orphans — remove
+-- them via the Storage API or Supabase Studio if a clean storage list matters.
 
 -- PostgREST schema-cache refresh (procurement tables left the projects schema).
 NOTIFY pgrst, 'reload schema';
