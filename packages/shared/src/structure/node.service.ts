@@ -73,7 +73,9 @@ export async function getNode(
     .single();
 
   if (result.error) return null;
-  return result.data as Node | null;
+  // Generated DB types lag migration 00090 (custom_kind_label); cast at the
+  // app-type boundary.
+  return result.data as unknown as Node | null;
 }
 
 /**
@@ -87,8 +89,10 @@ export async function createNode(
   // Validate first — throws ZodError if invalid.
   const validated = nodeSchema.parse(input);
 
+  // validated carries custom_kind_label (00090); the generated Insert type
+  // lags it, so cast at this boundary.
   const result = await nodesTable(client)
-    .insert(validated)
+    .insert(validated as never)
     .select('*')
     .single();
 
@@ -103,8 +107,9 @@ export async function updateNode(
   nodeId: string,
   patch: Partial<NodeInput>,
 ): Promise<Node> {
+  // patch may carry custom_kind_label (00090); generated types lag it.
   const result = await nodesTable(client)
-    .update(patch)
+    .update(patch as never)
     .eq('id', nodeId)
     .select('*')
     .single();

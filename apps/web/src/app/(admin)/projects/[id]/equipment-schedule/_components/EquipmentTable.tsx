@@ -37,6 +37,7 @@ const KIND_LABEL: Record<EquipmentKind, string> = {
   main_board: 'Main Boards',
   common_area_board: 'Common Area Boards',
   common_area_lighting: 'Common Area Lighting',
+  custom: 'Custom',
 }
 
 // Display order for kind groups
@@ -55,6 +56,7 @@ interface EditFormProps {
 
 function EditForm({ node, existingCodes, projectId, onDone }: EditFormProps) {
   const [kind, setKind] = useState<EquipmentKind>(node.kind as EquipmentKind)
+  const [customKindLabel, setCustomKindLabel] = useState(node.custom_kind_label ?? '')
   const [code, setCode] = useState(node.code)
   const [name, setName] = useState(node.name ?? '')
   const [cocRequired, setCocRequired] = useState(node.coc_required)
@@ -64,10 +66,11 @@ function EditForm({ node, existingCodes, projectId, onDone }: EditFormProps) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    if (kind === 'custom' && !customKindLabel.trim()) { setError('Custom type is required.'); return }
     if (!code.trim()) { setError('Code is required.'); return }
 
     startTransition(async () => {
-      const result = await editEquipmentNodeAction(projectId, node.id, kind, code.trim(), name.trim(), cocRequired)
+      const result = await editEquipmentNodeAction(projectId, node.id, kind, code.trim(), name.trim(), cocRequired, customKindLabel.trim())
       if ('error' in result) { setError(result.error); return }
       onDone()
     })
@@ -90,6 +93,20 @@ function EditForm({ node, existingCodes, projectId, onDone }: EditFormProps) {
             </Select>
           </FormField>
         </div>
+        {kind === 'custom' && (
+          <div style={{ flex: '0 0 160px' }}>
+            <FormField label="Custom Type" htmlFor={`edit-custom-${node.id}`} required>
+              <TextInput
+                id={`edit-custom-${node.id}`}
+                value={customKindLabel}
+                onChange={(e) => { setCustomKindLabel(e.target.value); setError(null) }}
+                placeholder="e.g. UPS"
+                maxLength={60}
+                disabled={isPending}
+              />
+            </FormField>
+          </div>
+        )}
         <div style={{ flex: '0 0 140px' }}>
           <FormField label="Code" htmlFor={`edit-code-${node.id}`} required>
             <TextInput
@@ -236,11 +253,13 @@ function DecommissionModal({ node, projectId, onDone, onCancel }: DecommissionMo
 interface AddEquipmentModalProps {
   projectId: string
   existingCodes: string[]
+  existingCustomTypes: string[]
   defaultKind: EquipmentKind
+  defaultCustomLabel: string
   onClose: () => void
 }
 
-function AddEquipmentModal({ projectId, existingCodes, defaultKind, onClose }: AddEquipmentModalProps) {
+function AddEquipmentModal({ projectId, existingCodes, existingCustomTypes, defaultKind, defaultCustomLabel, onClose }: AddEquipmentModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -254,6 +273,7 @@ function AddEquipmentModal({ projectId, existingCodes, defaultKind, onClose }: A
           values.code,
           values.name,
           values.coc_required,
+          values.customKindLabel,
         )
         if ('error' in result) {
           reject(new Error(result.error))
@@ -296,7 +316,9 @@ function AddEquipmentModal({ projectId, existingCodes, defaultKind, onClose }: A
         </p>
         <EquipmentForm
           existingCodes={existingCodes}
+          existingCustomTypes={existingCustomTypes}
           defaultKind={defaultKind}
+          defaultCustomLabel={defaultCustomLabel}
           onSubmit={handleSubmit}
           onCancel={onClose}
           isLoading={isPending}
@@ -317,17 +339,21 @@ function AddEquipmentModal({ projectId, existingCodes, defaultKind, onClose }: A
 // ---------------------------------------------------------------------------
 
 interface KindGroupProps {
+  groupLabel: string
   kind: EquipmentKind
+  customLabel: string | null
   nodes: Node[]
   projectId: string
   existingCodes: string[]
   showDecommissioned: boolean
-  onAddClick: (kind: EquipmentKind) => void
+  onAddClick: (kind: EquipmentKind, customLabel: string | null) => void
   ordersByNodeId: Record<string, NodeOrderData>
 }
 
 function KindGroup({
+  groupLabel,
   kind,
+  customLabel,
   nodes,
   projectId,
   existingCodes,
@@ -383,7 +409,7 @@ function KindGroup({
               aria-expanded={!collapsed}
             >
               <span style={{ fontSize: 11, color: 'var(--c-text-dim)', transition: 'transform 0.15s', display: 'inline-block', transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}>▼</span>
-              {KIND_LABEL[kind]}
+              {groupLabel}
             </button>
             <span style={{ fontSize: 12, color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)' }}>
               {visible.filter((n) => n.status === 'active').length} active
@@ -395,7 +421,7 @@ function KindGroup({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => onAddClick(kind)}
+                onClick={() => onAddClick(kind, customLabel)}
               >
                 + Add
               </Button>
@@ -579,6 +605,7 @@ interface Props {
 export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   const [addingKind, setAddingKind] = useState<EquipmentKind | null>(null)
+  const [addingCustomLabel, setAddingCustomLabel] = useState('')
 
   const existingCodes = useMemo(() => nodes.map((n) => n.code), [nodes])
 
@@ -586,16 +613,42 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
   const equipmentNodes = nodes.filter((n) => n.kind !== 'tenant_db')
   const decommissionedCount = equipmentNodes.filter((n) => n.status === 'decommissioned').length
 
-  // Group by kind, respecting display order
-  const byKind = new Map<EquipmentKind, Node[]>()
-  for (const kind of KIND_ORDER) byKind.set(kind, [])
-  for (const node of equipmentNodes) {
-    const kind = node.kind as EquipmentKind
-    if (byKind.has(kind)) byKind.get(kind)!.push(node)
-  }
+  // Built-in kinds keep their fixed groups; custom nodes form one group per
+  // distinct custom_kind_label, appended after the built-ins (sorted by name).
+  const customLabels = Array.from(
+    new Set(
+      equipmentNodes
+        .filter((n) => n.kind === 'custom' && n.custom_kind_label)
+        .map((n) => n.custom_kind_label as string),
+    ),
+  ).sort((a, b) => a.localeCompare(b))
 
-  function handleAddClick(kind: EquipmentKind) {
+  const groups: Array<{
+    key: string
+    label: string
+    kind: EquipmentKind
+    customLabel: string | null
+    nodes: Node[]
+  }> = [
+    ...KIND_ORDER.map((k) => ({
+      key: k,
+      label: KIND_LABEL[k],
+      kind: k,
+      customLabel: null,
+      nodes: equipmentNodes.filter((n) => n.kind === k),
+    })),
+    ...customLabels.map((lbl) => ({
+      key: `custom:${lbl}`,
+      label: lbl,
+      kind: 'custom' as EquipmentKind,
+      customLabel: lbl,
+      nodes: equipmentNodes.filter((n) => n.kind === 'custom' && n.custom_kind_label === lbl),
+    })),
+  ]
+
+  function handleAddClick(kind: EquipmentKind, customLabel: string | null) {
     setAddingKind(kind)
+    setAddingCustomLabel(customLabel ?? '')
   }
 
   return (
@@ -606,7 +659,7 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
           type="button"
           variant="primary"
           size="sm"
-          onClick={() => setAddingKind(EQUIPMENT_KINDS[0])}
+          onClick={() => { setAddingKind(EQUIPMENT_KINDS[0]); setAddingCustomLabel('') }}
         >
           + Add equipment
         </Button>
@@ -624,22 +677,21 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
         )}
       </div>
 
-      {/* Kind groups */}
-      {KIND_ORDER.map((kind) => {
-        const kindNodes = byKind.get(kind) ?? []
-        return (
-          <KindGroup
-            key={kind}
-            kind={kind}
-            nodes={kindNodes}
-            projectId={projectId}
-            existingCodes={existingCodes}
-            showDecommissioned={showDecommissioned}
-            onAddClick={handleAddClick}
-            ordersByNodeId={ordersByNodeId}
-          />
-        )
-      })}
+      {/* Kind groups — built-in kinds, then one group per custom type */}
+      {groups.map((g) => (
+        <KindGroup
+          key={g.key}
+          groupLabel={g.label}
+          kind={g.kind}
+          customLabel={g.customLabel}
+          nodes={g.nodes}
+          projectId={projectId}
+          existingCodes={existingCodes}
+          showDecommissioned={showDecommissioned}
+          onAddClick={handleAddClick}
+          ordersByNodeId={ordersByNodeId}
+        />
+      ))}
 
       {/* Empty state — no equipment at all */}
       {equipmentNodes.length === 0 && (
@@ -660,7 +712,9 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
         <AddEquipmentModal
           projectId={projectId}
           existingCodes={existingCodes}
+          existingCustomTypes={customLabels}
           defaultKind={addingKind}
+          defaultCustomLabel={addingCustomLabel}
           onClose={() => setAddingKind(null)}
         />
       )}

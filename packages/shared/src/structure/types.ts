@@ -5,7 +5,8 @@ export type NodeKind =
   | 'common_area_lighting'
   | 'rmu'
   | 'mini_sub'
-  | 'generator';
+  | 'generator'
+  | 'custom';
 
 export type NodeStatus = 'active' | 'decommissioned';
 
@@ -18,6 +19,8 @@ export interface Node {
   project_id: string;
   organisation_id: string;
   kind: NodeKind;
+  /** Set only when kind === 'custom' — the user-defined equipment type name. */
+  custom_kind_label: string | null;
   code: string;
   name: string | null;
   coc_required: boolean;

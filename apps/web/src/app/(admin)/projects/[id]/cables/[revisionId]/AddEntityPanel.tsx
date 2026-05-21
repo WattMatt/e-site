@@ -74,6 +74,7 @@ export function AddEntityPanel({ projectId, revisionId, sources, boards, feedFro
       values.code,
       values.name,
       values.coc_required,
+      values.customKindLabel,
     )
     if ('error' in result) throw new Error(result.error)
     setFlash(`Equipment node "${values.code}" added.`)

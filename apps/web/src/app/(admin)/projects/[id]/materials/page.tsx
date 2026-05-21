@@ -195,8 +195,16 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
     : rawOrders
 
   // ── Group ────────────────────────────────────────────────────────────────
-  const grouped = new Map<GroupKey, OrderRowData[]>()
-  for (const key of GROUP_ORDER) grouped.set(key, [])
+  // Built-in kinds use a fixed GroupKey; custom equipment nodes group under a
+  // dynamic 'custom:<label>' key — one group per distinct custom type.
+  const grouped = new Map<string, OrderRowData[]>()
+  const customGroupLabel = new Map<string, string>()
+
+  function pushTo(groupKey: string, row: OrderRowData) {
+    let bucket = grouped.get(groupKey)
+    if (!bucket) { bucket = []; grouped.set(groupKey, bucket) }
+    bucket.push(row)
+  }
 
   for (const o of filteredOrders) {
     const node = nodeById.get(o.node_id)
@@ -214,22 +222,35 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
 
     if (o.scope_item_type_id !== null) {
       const key = scopeTypeById.get(o.scope_item_type_id)?.key ?? ''
-      const groupKey: GroupKey =
-        key === 'db' ? 'tenant_db' : key === 'lighting' ? 'tenant_lighting' : 'tenant_other'
-      grouped.get(groupKey)!.push(row)
+      pushTo(key === 'db' ? 'tenant_db' : key === 'lighting' ? 'tenant_lighting' : 'tenant_other', row)
+    } else if (node?.kind === 'custom') {
+      const lbl = node.custom_kind_label ?? 'Custom'
+      const groupKey = `custom:${lbl}`
+      customGroupLabel.set(groupKey, lbl)
+      pushTo(groupKey, row)
     } else {
       const kind = node?.kind
-      const groupKey: GroupKey =
+      pushTo(
         kind === 'rmu' ? 'rmu' :
         kind === 'mini_sub' ? 'mini_sub' :
         kind === 'generator' ? 'generator' :
         kind === 'main_board' ? 'main_board' :
         kind === 'common_area_board' ? 'common_area_board' :
         kind === 'common_area_lighting' ? 'common_area_lighting' :
-        'main_board'
-      grouped.get(groupKey)!.push(row)
+        'main_board',
+        row,
+      )
     }
   }
+
+  // Display order: built-in groups first, then custom-type groups sorted by name.
+  const customGroupKeys = [...grouped.keys()]
+    .filter((k) => k.startsWith('custom:'))
+    .sort((a, b) => a.localeCompare(b))
+  const displayGroups: Array<{ key: string; label: string }> = [
+    ...GROUP_ORDER.map((k) => ({ key: k as string, label: GROUP_LABEL[k] })),
+    ...customGroupKeys.map((k) => ({ key: k, label: customGroupLabel.get(k) ?? 'Custom' })),
+  ]
 
   const countByStatus: Record<NodeOrderStatus, number> = {
     by_tenant: 0,
@@ -304,7 +325,7 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
         </Card>
       )}
 
-      {GROUP_ORDER.map((groupKey) => {
+      {displayGroups.map(({ key: groupKey, label }) => {
         const rows = grouped.get(groupKey) ?? []
         if (rows.length === 0) return null
         return (
@@ -312,7 +333,7 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
             <CardHeader>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--c-text)' }}>
-                  {GROUP_LABEL[groupKey]}
+                  {label}
                 </span>
                 <Badge variant="ghost">{rows.length}</Badge>
               </div>

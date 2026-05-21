@@ -26,6 +26,7 @@ import {
   suggestEquipmentCode,
   EQUIPMENT_KINDS,
   COMMON_AREA_LIGHTING_ZONES,
+  COMMON_CUSTOM_EQUIPMENT_TYPES,
   type EquipmentKind,
 } from '@esite/shared'
 
@@ -35,6 +36,8 @@ import {
 
 export interface EquipmentFormValues {
   kind: EquipmentKind
+  /** The user-defined type name — only meaningful when kind === 'custom'. */
+  customKindLabel: string
   code: string
   name: string
   coc_required: boolean
@@ -43,8 +46,12 @@ export interface EquipmentFormValues {
 interface Props {
   /** All codes currently in use on the project (across all kinds). */
   existingCodes: string[]
+  /** Custom equipment-type labels already used on the project (datalist seed). */
+  existingCustomTypes?: string[]
   /** Pre-select a kind — e.g. when launching from the Cable Schedule. */
   defaultKind?: EquipmentKind
+  /** Pre-fill the custom-type label (used when adding into an existing custom group). */
+  defaultCustomLabel?: string
   /** Called with validated values when the user submits. Should throw on error. */
   onSubmit: (values: EquipmentFormValues) => Promise<void>
   /** If provided, a Cancel button is rendered that calls this. */
@@ -67,6 +74,7 @@ export const KIND_LABEL: Record<EquipmentKind, string> = {
   rmu: 'Ring Main Unit (RMU)',
   mini_sub: 'Mini-Substation',
   generator: 'Generator',
+  custom: 'Custom…',
 }
 
 const FIELD_GAP: React.CSSProperties = { marginBottom: 14 }
@@ -77,7 +85,9 @@ const FIELD_GAP: React.CSSProperties = { marginBottom: 14 }
 
 export function EquipmentForm({
   existingCodes,
+  existingCustomTypes,
   defaultKind,
+  defaultCustomLabel,
   onSubmit,
   onCancel,
   isLoading: externalLoading,
@@ -85,6 +95,7 @@ export function EquipmentForm({
   const firstKind: EquipmentKind = defaultKind ?? EQUIPMENT_KINDS[0]
 
   const [kind, setKind] = useState<EquipmentKind>(firstKind)
+  const [customKindLabel, setCustomKindLabel] = useState(defaultCustomLabel ?? '')
   const [code, setCode] = useState(() => suggestEquipmentCode(firstKind, existingCodes))
   const [name, setName] = useState('')
   const [cocRequired, setCocRequired] = useState(false)
@@ -123,7 +134,12 @@ export function EquipmentForm({
 
     const trimmedCode = code.trim()
     const trimmedName = name.trim()
+    const trimmedCustomLabel = customKindLabel.trim()
 
+    if (kind === 'custom' && !trimmedCustomLabel) {
+      setError('Custom type is required.')
+      return
+    }
     if (!trimmedCode) {
       setError('Code is required.')
       return
@@ -133,6 +149,7 @@ export function EquipmentForm({
       try {
         await onSubmit({
           kind,
+          customKindLabel: trimmedCustomLabel,
           code: trimmedCode,
           name: trimmedName,
           coc_required: cocRequired,
@@ -162,6 +179,35 @@ export function EquipmentForm({
           </Select>
         </FormField>
       </div>
+
+      {/* Custom type — only for the 'custom' kind */}
+      {kind === 'custom' && (
+        <div style={FIELD_GAP}>
+          <FormField
+            label="Custom Type"
+            htmlFor="eq-custom-type"
+            required
+            hint="Name the equipment type — e.g. UPS, Power Quality Meter"
+          >
+            <TextInput
+              id="eq-custom-type"
+              type="text"
+              value={customKindLabel}
+              onChange={(e) => { setCustomKindLabel(e.target.value); setError(null) }}
+              placeholder="e.g. UPS"
+              maxLength={60}
+              disabled={busy}
+              autoComplete="off"
+              list="eq-custom-types"
+            />
+          </FormField>
+          <datalist id="eq-custom-types">
+            {[...new Set([...COMMON_CUSTOM_EQUIPMENT_TYPES, ...(existingCustomTypes ?? [])])].map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+        </div>
+      )}
 
       {/* Code */}
       <div style={FIELD_GAP}>

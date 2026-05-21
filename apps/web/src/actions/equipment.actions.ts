@@ -127,10 +127,14 @@ async function guardNodeBelongsToProject(
 const createEquipmentSchema = z.object({
   projectId: uuidSchema,
   kind: equipmentKindEnum,
+  customKindLabel: z.string().max(60).optional(),
   code: z.string().min(1, 'Code is required').max(50),
   name: z.string().max(120).optional(),
   coc_required: z.boolean(),
-})
+}).refine(
+  (d) => d.kind !== 'custom' || (typeof d.customKindLabel === 'string' && d.customKindLabel.trim().length > 0),
+  { message: 'A custom type name is required', path: ['customKindLabel'] },
+)
 
 export type CreateEquipmentResult = { error: string } | { id: string }
 
@@ -140,8 +144,9 @@ export async function createEquipmentNodeAction(
   code: string,
   name: string,
   coc_required: boolean,
+  customKindLabel: string = '',
 ): Promise<CreateEquipmentResult> {
-  const parsed = createEquipmentSchema.safeParse({ projectId, kind, code, name, coc_required })
+  const parsed = createEquipmentSchema.safeParse({ projectId, kind, customKindLabel, code, name, coc_required })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
   const guard = await guardProjectAccess(projectId)
@@ -155,6 +160,7 @@ export async function createEquipmentNodeAction(
     project_id: projectId,
     organisation_id: guard.orgId,
     kind,
+    custom_kind_label: kind === 'custom' ? customKindLabel.trim() : null,
     code: code.trim(),
     name: name.trim() || null,
     coc_required,
@@ -220,10 +226,14 @@ const editEquipmentSchema = z.object({
   projectId: uuidSchema,
   nodeId: uuidSchema,
   kind: equipmentKindEnum,
+  customKindLabel: z.string().max(60).optional(),
   code: z.string().min(1, 'Code is required').max(50),
   name: z.string().max(120).optional(),
   coc_required: z.boolean(),
-})
+}).refine(
+  (d) => d.kind !== 'custom' || (typeof d.customKindLabel === 'string' && d.customKindLabel.trim().length > 0),
+  { message: 'A custom type name is required', path: ['customKindLabel'] },
+)
 
 export type EditEquipmentResult = { error: string } | { ok: true }
 
@@ -234,8 +244,9 @@ export async function editEquipmentNodeAction(
   code: string,
   name: string,
   coc_required: boolean,
+  customKindLabel: string = '',
 ): Promise<EditEquipmentResult> {
-  const parsed = editEquipmentSchema.safeParse({ projectId, nodeId, kind, code, name, coc_required })
+  const parsed = editEquipmentSchema.safeParse({ projectId, nodeId, kind, customKindLabel, code, name, coc_required })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
   const guard = await guardProjectAccess(projectId)
@@ -250,6 +261,7 @@ export async function editEquipmentNodeAction(
 
   const result = await structurePatch(supabaseUrl, serviceKey, 'nodes', `id=eq.${nodeId}`, {
     kind,
+    custom_kind_label: kind === 'custom' ? customKindLabel.trim() : null,
     code: code.trim(),
     name: name.trim() || null,
     coc_required,

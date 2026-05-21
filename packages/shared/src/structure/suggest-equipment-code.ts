@@ -13,6 +13,7 @@
  *   main_board           → MB-{n}
  *   common_area_board    → CB-{n}
  *   common_area_lighting → CAL-{n}
+ *   custom               → EQ-{n}
  *
  * Pure function — no I/O, deterministic.
  */
@@ -27,6 +28,7 @@ export const EQUIPMENT_KINDS = [
   'rmu',
   'mini_sub',
   'generator',
+  'custom',
 ] as const satisfies ReadonlyArray<Exclude<NodeKind, 'tenant_db'>>;
 
 export type EquipmentKind = (typeof EQUIPMENT_KINDS)[number];
@@ -38,6 +40,7 @@ const KIND_PREFIX: Record<EquipmentKind, string> = {
   main_board: 'MB',
   common_area_board: 'CB',
   common_area_lighting: 'CAL',
+  custom: 'EQ',
 };
 
 /**
