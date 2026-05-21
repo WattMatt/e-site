@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { diaryService } from '@esite/shared'
 import type { DiaryAttachment } from '@esite/shared'
-import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT } from '@/lib/diary-attachments'
+import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT_DOC } from '@/lib/diary-attachments'
 
 /** A diary attachment plus a signed URL generated server-side. */
 export interface DiaryAttachmentView extends DiaryAttachment {
@@ -128,23 +128,30 @@ export function DiaryAttachmentStrip({ entryId, orgId, projectId, userId, attach
             )}
           </div>
         ))}
-        {canEdit && (
-          <label style={{
-            width: 96, height: 96, borderRadius: 6, border: '1px dashed var(--c-border)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: busy ? 'wait' : 'pointer', color: 'var(--c-text-dim)', fontSize: 11, textAlign: 'center',
-          }}>
-            {busy ? '…' : '+ Add files'}
+        {canEdit && ([
+          { label: '📷 Photo', accept: 'image/*' },
+          { label: '🎥 Video', accept: 'video/*' },
+          { label: '📄 Doc', accept: DIARY_ATTACHMENT_ACCEPT_DOC },
+        ] as const).map(ctrl => (
+          <label
+            key={ctrl.label}
+            style={{
+              width: 96, height: 96, borderRadius: 6, border: '1px dashed var(--c-border)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: busy ? 'wait' : 'pointer', color: 'var(--c-text-dim)', fontSize: 11, textAlign: 'center',
+            }}
+          >
+            {busy ? '…' : ctrl.label}
             <input
               type="file"
               multiple
-              accept={DIARY_ATTACHMENT_ACCEPT}
+              accept={ctrl.accept}
               onChange={onAdd}
               disabled={busy}
               style={{ display: 'none' }}
             />
           </label>
-        )}
+        ))}
       </div>
       {error && <p style={{ color: 'var(--c-red)', fontSize: 11, marginTop: 4 }}>{error}</p>}
 

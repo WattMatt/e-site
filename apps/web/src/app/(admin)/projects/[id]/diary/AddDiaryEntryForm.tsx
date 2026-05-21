@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
-import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT } from '@/lib/diary-attachments'
+import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT_DOC } from '@/lib/diary-attachments'
 import type { DiaryEntryType } from '@esite/shared'
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Light rain', 'Heavy rain', 'Windy', 'Hot']
@@ -233,14 +233,34 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
         {/* Attachments */}
         <div>
           <label className="ob-label">Attachments</label>
-          <input
-            type="file"
-            multiple
-            accept={DIARY_ATTACHMENT_ACCEPT}
-            onChange={e => setFiles(Array.from(e.target.files ?? []))}
-            className="ob-input"
-            style={{ marginTop: 4 }}
-          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            {([
+              { label: '📷 Photo', accept: 'image/*' },
+              { label: '🎥 Video', accept: 'video/*' },
+              { label: '📄 Document', accept: DIARY_ATTACHMENT_ACCEPT_DOC },
+            ] as const).map(ctrl => (
+              <label
+                key={ctrl.label}
+                style={{
+                  flex: 1, textAlign: 'center', cursor: 'pointer', fontSize: 12,
+                  padding: '8px 10px', borderRadius: 6, border: '1px solid var(--c-border)',
+                  background: 'var(--c-panel)', color: 'var(--c-text-dim)',
+                }}
+              >
+                {ctrl.label}
+                <input
+                  type="file"
+                  multiple
+                  accept={ctrl.accept}
+                  onChange={e => {
+                    setFiles(prev => [...prev, ...Array.from(e.target.files ?? [])])
+                    e.target.value = ''
+                  }}
+                  style={{ display: 'none' }}
+                />
+              </label>
+            ))}
+          </div>
           {files.length > 0 && (
             <ul style={{ marginTop: 6, fontSize: 12, color: 'var(--c-text-dim)', listStyle: 'none', padding: 0 }}>
               {files.map((f, i) => (

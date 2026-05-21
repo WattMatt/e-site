@@ -1,13 +1,14 @@
 import { attachmentKindFromMime } from '@esite/shared'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-/** `accept` attribute for diary file inputs — matches the bucket's allowed MIME types. */
-export const DIARY_ATTACHMENT_ACCEPT =
-  'image/jpeg,image/png,image/webp,image/heic,application/pdf,application/msword,' +
+/** `accept` for the document file input. Photo/video inputs use `image/*` /
+ *  `video/*` so phone browsers surface the camera; the bucket enforces the
+ *  real allowed-MIME list on upload. */
+export const DIARY_ATTACHMENT_ACCEPT_DOC =
+  'application/pdf,application/msword,' +
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document,' +
   'application/vnd.ms-excel,' +
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,' +
-  'video/mp4,video/quicktime'
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 export const DIARY_ATTACHMENT_MAX_BYTES = 104857600 // 100 MiB
 
