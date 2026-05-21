@@ -49,6 +49,7 @@ type GroupKey =
   | 'generator'
   | 'main_board'
   | 'common_area_board'
+  | 'common_area_lighting'
 
 const GROUP_LABEL: Record<GroupKey, string> = {
   tenant_db: 'Tenant DB Orders',
@@ -59,6 +60,7 @@ const GROUP_LABEL: Record<GroupKey, string> = {
   generator: 'Generators',
   main_board: 'Main Boards',
   common_area_board: 'Common Area Boards',
+  common_area_lighting: 'Common Area Lighting',
 }
 
 const GROUP_ORDER: GroupKey[] = [
@@ -70,6 +72,7 @@ const GROUP_ORDER: GroupKey[] = [
   'generator',
   'main_board',
   'common_area_board',
+  'common_area_lighting',
 ]
 
 const STATUS_LABEL: Record<NodeOrderStatus, string> = {
@@ -222,6 +225,7 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
         kind === 'generator' ? 'generator' :
         kind === 'main_board' ? 'main_board' :
         kind === 'common_area_board' ? 'common_area_board' :
+        kind === 'common_area_lighting' ? 'common_area_lighting' :
         'main_board'
       grouped.get(groupKey)!.push(row)
     }

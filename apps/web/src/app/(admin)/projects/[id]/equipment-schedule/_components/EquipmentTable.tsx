@@ -9,11 +9,12 @@
 
 import { Fragment, useState, useMemo, useTransition } from 'react'
 import { Button } from '@/components/ui/Button'
-import { FormField, TextInput } from '@/components/ui/FormField'
+import { FormField, TextInput, Select } from '@/components/ui/FormField'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
-import { EquipmentForm } from './EquipmentForm'
+import { EquipmentForm, KIND_LABEL as EQUIPMENT_KIND_LABEL } from './EquipmentForm'
 import type { EquipmentFormValues } from './EquipmentForm'
 import type { Node } from '@esite/shared'
+import { EQUIPMENT_KINDS } from '@esite/shared'
 import type { EquipmentKind } from '@esite/shared'
 import {
   createEquipmentNodeAction,
@@ -34,10 +35,11 @@ const KIND_LABEL: Record<EquipmentKind, string> = {
   generator: 'Generators',
   main_board: 'Main Boards',
   common_area_board: 'Common Area Boards',
+  common_area_lighting: 'Common Area Lighting',
 }
 
 // Display order for kind groups
-const KIND_ORDER: EquipmentKind[] = ['rmu', 'mini_sub', 'generator', 'main_board', 'common_area_board']
+const KIND_ORDER: EquipmentKind[] = ['rmu', 'mini_sub', 'generator', 'main_board', 'common_area_board', 'common_area_lighting']
 
 // ---------------------------------------------------------------------------
 // Inline edit form
@@ -51,6 +53,7 @@ interface EditFormProps {
 }
 
 function EditForm({ node, existingCodes, projectId, onDone }: EditFormProps) {
+  const [kind, setKind] = useState<EquipmentKind>(node.kind as EquipmentKind)
   const [code, setCode] = useState(node.code)
   const [name, setName] = useState(node.name ?? '')
   const [cocRequired, setCocRequired] = useState(node.coc_required)
@@ -63,7 +66,7 @@ function EditForm({ node, existingCodes, projectId, onDone }: EditFormProps) {
     if (!code.trim()) { setError('Code is required.'); return }
 
     startTransition(async () => {
-      const result = await editEquipmentNodeAction(projectId, node.id, code.trim(), name.trim(), cocRequired)
+      const result = await editEquipmentNodeAction(projectId, node.id, kind, code.trim(), name.trim(), cocRequired)
       if ('error' in result) { setError(result.error); return }
       onDone()
     })
@@ -72,6 +75,20 @@ function EditForm({ node, existingCodes, projectId, onDone }: EditFormProps) {
   return (
     <form onSubmit={handleSubmit} style={{ padding: '12px 16px', background: 'var(--c-surface-raised)', borderTop: '1px solid var(--c-border)' }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ flex: '0 0 170px' }}>
+          <FormField label="Type" htmlFor={`edit-kind-${node.id}`}>
+            <Select
+              id={`edit-kind-${node.id}`}
+              value={kind}
+              onChange={(e) => { setKind(e.target.value as EquipmentKind); setError(null) }}
+              disabled={isPending}
+            >
+              {EQUIPMENT_KINDS.map((k) => (
+                <option key={k} value={k}>{EQUIPMENT_KIND_LABEL[k]}</option>
+              ))}
+            </Select>
+          </FormField>
+        </div>
         <div style={{ flex: '0 0 140px' }}>
           <FormField label="Code" htmlFor={`edit-code-${node.id}`} required>
             <TextInput
@@ -643,7 +660,7 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
             <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)' }}>
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6, color: 'var(--c-text-mid)' }}>No equipment registered yet</div>
               <div style={{ fontSize: 13 }}>
-                Add your first item — RMU, mini-sub, generator, or main board.
+                Add your first piece of equipment.
               </div>
             </div>
           </CardBody>

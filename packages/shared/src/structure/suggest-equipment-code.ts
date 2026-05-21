@@ -7,11 +7,12 @@
  *   matches exactly "{PREFIX}-{positive integer}".
  *
  * Per-kind prefixes:
- *   rmu                → RMU-{n}
- *   mini_sub           → MS-{n}
- *   generator          → GEN-{n}
- *   main_board         → MB-{n}
- *   common_area_board  → CB-{n}
+ *   rmu                  → RMU-{n}
+ *   mini_sub             → MS-{n}
+ *   generator            → GEN-{n}
+ *   main_board           → MB-{n}
+ *   common_area_board    → CB-{n}
+ *   common_area_lighting → CAL-{n}
  *
  * Pure function — no I/O, deterministic.
  */
@@ -22,6 +23,7 @@ import type { NodeKind } from './types';
 export const EQUIPMENT_KINDS = [
   'main_board',
   'common_area_board',
+  'common_area_lighting',
   'rmu',
   'mini_sub',
   'generator',
@@ -35,6 +37,7 @@ const KIND_PREFIX: Record<EquipmentKind, string> = {
   generator: 'GEN',
   main_board: 'MB',
   common_area_board: 'CB',
+  common_area_lighting: 'CAL',
 };
 
 /**

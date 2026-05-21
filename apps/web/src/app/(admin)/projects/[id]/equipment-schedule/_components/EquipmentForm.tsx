@@ -25,6 +25,7 @@ import { FormField, TextInput, Select } from '@/components/ui/FormField'
 import {
   suggestEquipmentCode,
   EQUIPMENT_KINDS,
+  COMMON_AREA_LIGHTING_ZONES,
   type EquipmentKind,
 } from '@esite/shared'
 
@@ -56,9 +57,13 @@ interface Props {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const KIND_LABEL: Record<EquipmentKind, string> = {
+/** Singular equipment-kind labels — shared by the add form and the edit form's
+ *  kind selector. (The Equipment table uses its own plural labels for group
+ *  headers.) */
+export const KIND_LABEL: Record<EquipmentKind, string> = {
   main_board: 'Main Board',
   common_area_board: 'Common Area Board',
+  common_area_lighting: 'Common Area Lighting',
   rmu: 'Ring Main Unit (RMU)',
   mini_sub: 'Mini-Substation',
   generator: 'Generator',
@@ -175,19 +180,33 @@ export function EquipmentForm({
         </FormField>
       </div>
 
-      {/* Name */}
+      {/* Name / Zone — common_area_lighting gets a quick-pick of standard
+          zones via a <datalist>, with free-text entry always allowed. */}
       <div style={FIELD_GAP}>
-        <FormField label="Name (optional)" htmlFor="eq-name">
+        <FormField
+          label={kind === 'common_area_lighting' ? 'Zone' : 'Name (optional)'}
+          htmlFor="eq-name"
+          hint={kind === 'common_area_lighting' ? 'Pick a standard zone or type your own' : undefined}
+        >
           <TextInput
             id="eq-name"
             type="text"
             value={name}
             onChange={(e) => { setName(e.target.value); setError(null) }}
-            placeholder="e.g. Main Substation"
+            placeholder={kind === 'common_area_lighting' ? 'e.g. Parking Lot Lighting' : 'e.g. Main Substation'}
             maxLength={120}
             disabled={busy}
+            autoComplete="off"
+            list={kind === 'common_area_lighting' ? 'eq-cal-zones' : undefined}
           />
         </FormField>
+        {kind === 'common_area_lighting' && (
+          <datalist id="eq-cal-zones">
+            {COMMON_AREA_LIGHTING_ZONES.map((zone) => (
+              <option key={zone} value={zone} />
+            ))}
+          </datalist>
+        )}
       </div>
 
       {/* COC Required */}

@@ -4,6 +4,7 @@ const nodeKindEnum = z.enum([
   'tenant_db',
   'main_board',
   'common_area_board',
+  'common_area_lighting',
   'rmu',
   'mini_sub',
   'generator',

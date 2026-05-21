@@ -19,7 +19,7 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, deriveEquipmentNodeOrder } from '@esite/shared'
+import { projectService, deriveEquipmentNodeOrder, EQUIPMENT_KINDS } from '@esite/shared'
 import type { EquipmentKind } from '@esite/shared'
 
 // ---------------------------------------------------------------------------
@@ -79,6 +79,9 @@ async function structurePatch(
 
 const uuidSchema = z.string().uuid()
 
+/** Equipment kinds accepted by create/edit — derived from the shared registry. */
+const equipmentKindEnum = z.enum(EQUIPMENT_KINDS)
+
 /** Returns { user, orgId, supabase } or { error: string } */
 async function guardProjectAccess(projectId: string): Promise<
   | { error: string; orgId?: undefined; supabase?: undefined }
@@ -123,7 +126,7 @@ async function guardNodeBelongsToProject(
 
 const createEquipmentSchema = z.object({
   projectId: uuidSchema,
-  kind: z.enum(['main_board', 'common_area_board', 'rmu', 'mini_sub', 'generator']),
+  kind: equipmentKindEnum,
   code: z.string().min(1, 'Code is required').max(50),
   name: z.string().max(120).optional(),
   coc_required: z.boolean(),
@@ -216,6 +219,7 @@ export async function createEquipmentNodeAction(
 const editEquipmentSchema = z.object({
   projectId: uuidSchema,
   nodeId: uuidSchema,
+  kind: equipmentKindEnum,
   code: z.string().min(1, 'Code is required').max(50),
   name: z.string().max(120).optional(),
   coc_required: z.boolean(),
@@ -226,11 +230,12 @@ export type EditEquipmentResult = { error: string } | { ok: true }
 export async function editEquipmentNodeAction(
   projectId: string,
   nodeId: string,
+  kind: EquipmentKind,
   code: string,
   name: string,
   coc_required: boolean,
 ): Promise<EditEquipmentResult> {
-  const parsed = editEquipmentSchema.safeParse({ projectId, nodeId, code, name, coc_required })
+  const parsed = editEquipmentSchema.safeParse({ projectId, nodeId, kind, code, name, coc_required })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
   const guard = await guardProjectAccess(projectId)
@@ -244,6 +249,7 @@ export async function editEquipmentNodeAction(
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
 
   const result = await structurePatch(supabaseUrl, serviceKey, 'nodes', `id=eq.${nodeId}`, {
+    kind,
     code: code.trim(),
     name: name.trim() || null,
     coc_required,

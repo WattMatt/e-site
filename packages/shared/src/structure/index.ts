@@ -16,6 +16,7 @@ export type {
 } from './import-preview';
 export { suggestEquipmentCode, EQUIPMENT_KINDS } from './suggest-equipment-code';
 export type { EquipmentKind } from './suggest-equipment-code';
+export { COMMON_AREA_LIGHTING_ZONES } from './common-area-lighting';
 export {
   deriveTenantOrderStatus,
   deriveTenantNodeOrder,
