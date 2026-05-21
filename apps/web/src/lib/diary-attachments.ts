@@ -1,0 +1,46 @@
+import { attachmentKindFromMime } from '@esite/shared'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+/** `accept` attribute for diary file inputs — matches the bucket's allowed MIME types. */
+export const DIARY_ATTACHMENT_ACCEPT =
+  'image/jpeg,image/png,image/webp,image/heic,application/pdf,application/msword,' +
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document,' +
+  'application/vnd.ms-excel,' +
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,' +
+  'video/mp4,video/quicktime'
+
+export const DIARY_ATTACHMENT_MAX_BYTES = 104857600 // 100 MiB
+
+/** Uploads files to the diary-attachments bucket and inserts attachment rows. */
+export async function uploadDiaryAttachments(
+  supabase: SupabaseClient,
+  opts: { orgId: string; projectId: string; entryId: string; userId: string; files: File[] },
+): Promise<void> {
+  const { orgId, projectId, entryId, userId, files } = opts
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+    if (file.size > DIARY_ATTACHMENT_MAX_BYTES) {
+      throw new Error(`"${file.name}" exceeds the 100 MB limit.`)
+    }
+    const ext = file.name.split('.').pop() ?? 'bin'
+    const path = `${orgId}/${projectId}/${entryId}/${Date.now()}-${i}.${ext}`
+    const { error: upErr } = await supabase.storage
+      .from('diary-attachments')
+      .upload(path, file, { contentType: file.type })
+    if (upErr) throw upErr
+    const { error: rowErr } = await supabase
+      .schema('projects')
+      .from('site_diary_attachments')
+      .insert({
+        diary_entry_id: entryId,
+        file_path: path,
+        file_name: file.name,
+        mime_type: file.type,
+        file_size_bytes: file.size,
+        kind: attachmentKindFromMime(file.type),
+        sort_order: i,
+        uploaded_by: userId,
+      })
+    if (rowErr) throw rowErr
+  }
+}

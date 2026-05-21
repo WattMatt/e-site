@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
+import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT } from '@/lib/diary-attachments'
 import type { DiaryEntryType } from '@esite/shared'
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Light rain', 'Heavy rain', 'Windy', 'Hot']
@@ -37,29 +38,41 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
   const [workers, setWorkers] = useState('')
   const [delays, setDelays] = useState('')
   const [error, setError] = useState('')
+  const [files, setFiles] = useState<File[]>([])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!progressNotes.trim()) { setError('Progress notes are required.'); return }
     setError('')
     const client = createClient()
-    await diaryService.create(client as any, orgId, userId, {
-      projectId,
-      entryDate,
-      entryType,
-      progressNotes: progressNotes.trim(),
-      safetyNotes: safetyNotes.trim() || undefined,
-      delayNotes: delayNotes.trim() || undefined,
-      weather: weather || undefined,
-      workersOnSite: workers ? parseInt(workers, 10) : undefined,
-      delays: delays.trim() || undefined,
-    })
+    try {
+      const entry = await diaryService.create(client as any, orgId, userId, {
+        projectId,
+        entryDate,
+        entryType,
+        progressNotes: progressNotes.trim(),
+        safetyNotes: safetyNotes.trim() || undefined,
+        delayNotes: delayNotes.trim() || undefined,
+        weather: weather || undefined,
+        workersOnSite: workers ? parseInt(workers, 10) : undefined,
+        delays: delays.trim() || undefined,
+      })
+      if (files.length > 0) {
+        await uploadDiaryAttachments(client as any, {
+          orgId, projectId, entryId: (entry as { id: string }).id, userId, files,
+        })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save entry.')
+      return
+    }
     setProgressNotes('')
     setSafetyNotes('')
     setDelayNotes('')
     setWeather('')
     setWorkers('')
     setDelays('')
+    setFiles([])
     setOpen(false)
     startTransition(() => router.refresh())
   }
@@ -216,6 +229,33 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
             />
           </div>
         )}
+
+        {/* Attachments */}
+        <div>
+          <label className="ob-label">Attachments</label>
+          <input
+            type="file"
+            multiple
+            accept={DIARY_ATTACHMENT_ACCEPT}
+            onChange={e => setFiles(Array.from(e.target.files ?? []))}
+            className="ob-input"
+            style={{ marginTop: 4 }}
+          />
+          {files.length > 0 && (
+            <ul style={{ marginTop: 6, fontSize: 12, color: 'var(--c-text-dim)', listStyle: 'none', padding: 0 }}>
+              {files.map((f, i) => (
+                <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                  <span>{f.name} ({(f.size / 1024 / 1024).toFixed(1)} MB)</span>
+                  <button
+                    type="button"
+                    onClick={() => setFiles(files.filter((_, j) => j !== i))}
+                    style={{ background: 'none', border: 'none', color: 'var(--c-red)', cursor: 'pointer' }}
+                  >✕</button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: 8 }}>
