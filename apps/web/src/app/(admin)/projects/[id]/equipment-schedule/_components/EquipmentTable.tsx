@@ -8,6 +8,7 @@
  */
 
 import { Fragment, useState, useMemo, useTransition } from 'react'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/Button'
 import { FormField, TextInput, Select } from '@/components/ui/FormField'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
@@ -170,7 +171,7 @@ function DecommissionModal({ node, projectId, onDone, onCancel }: DecommissionMo
     })
   }
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -223,7 +224,8 @@ function DecommissionModal({ node, projectId, onDone, onCancel }: DecommissionMo
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -263,7 +265,7 @@ function AddEquipmentModal({ projectId, existingCodes, defaultKind, onClose }: A
     })
   }
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -305,7 +307,8 @@ function AddEquipmentModal({ projectId, existingCodes, defaultKind, onClose }: A
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
