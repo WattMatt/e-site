@@ -5,7 +5,6 @@ export type AttachmentEntityType =
   | 'rfi_response'
   | 'snag'
   | 'site_diary_entry'
-  | 'procurement_item'
   | 'handover'
 
 export interface AnnotationData {

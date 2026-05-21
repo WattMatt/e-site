@@ -164,10 +164,10 @@ export type DeleteProjectResult = { ok: true } | { error: string }
 
 /**
  * Hard-delete a project. Owner-only. Cascade-deletes every child row
- * (snags, RFIs, diary entries, floor plans, schedule items, procurement,
- * shop drawings, GRN, supplier invoices, project_members) via the FK
- * `ON DELETE CASCADE` chain set in 00002_projects_schema.sql and the
- * procurement migrations (00046-00050).
+ * (snags, RFIs, diary entries, floor plans, the cable schedule, tenant
+ * and equipment schedules, material orders, inspections, project_members)
+ * via the FK `ON DELETE CASCADE` chain set in 00002_projects_schema.sql
+ * and the later schema migrations.
  *
  * Caller must pass `confirmationName` matching the project's name exactly
  * (case-sensitive, trim-tolerant). UI surfaces this as a type-to-confirm

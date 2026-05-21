@@ -97,14 +97,6 @@ export default function ProjectDetailScreen() {
           <Text style={styles.actionTextGhost}>📓 Site Diary</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          testID="project-procurement-link"
-          style={[styles.actionBtn, styles.actionBtnGhost, { marginTop: -4 }]}
-          onPress={() => router.push({ pathname: '/procurement/create', params: { projectId: id } } as any)}
-        >
-          <Text style={styles.actionTextGhost}>🛒 Raise procurement</Text>
-        </TouchableOpacity>
-
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Details</Text>
           <View style={styles.metaCard}>

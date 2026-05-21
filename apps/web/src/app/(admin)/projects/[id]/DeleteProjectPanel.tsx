@@ -60,8 +60,8 @@ export function DeleteProjectPanel({
           <>
             <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
               Permanently delete this project and everything linked to it: snags,
-              RFIs, diary entries, floor-plan markups, schedule items, procurement
-              records, shop drawings, goods-received notes and supplier invoices.
+              RFIs, diary entries, floor-plan markups, the cable schedule, tenant
+              and equipment schedules, material orders and inspections.
               This cannot be undone.
             </p>
             <Button
@@ -77,8 +77,8 @@ export function DeleteProjectPanel({
           <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <p style={{ fontSize: 13, color: 'var(--c-text)', marginBottom: 0 }}>
               Type <strong>{projectName}</strong> below to confirm. Every snag, RFI,
-              diary entry, markup, schedule, procurement row, GRN and supplier
-              invoice attached to this project will be deleted irreversibly.
+              diary entry, markup, schedule item, material order and inspection
+              attached to this project will be deleted irreversibly.
             </p>
             <div>
               <label className="ob-label" htmlFor="confirmProjectName">

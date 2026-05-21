@@ -159,7 +159,7 @@ export type SetScopeItemPartyResult = { ok: true } | { error: string }
  * Node-order reconciliation uses a read-then-decide pattern rather than an unconditional
  * merge-duplicates upsert. merge-duplicates overwrites EVERY payload column on conflict,
  * so including `status` in the payload would regress an order already at 'ordered' or
- * 'received' back to 'required'/'by_tenant', destroying procurement progress.
+ * 'received' back to 'required'/'by_tenant', destroying material-order progress.
  * Instead: read the existing order status → call planTenantOrderReconcile() → act on plan:
  *   insert        → POST a new node_order row (on_conflict do-nothing as a race guard)
  *   update_status → PATCH the existing row's status only

@@ -5,8 +5,8 @@
  * with a never-throw contract — notification failures are best-effort
  * and must not propagate to the user-visible action result.
  *
- * Used by rfi.actions, quote.actions, schedule.actions and anywhere else
- * the app fans out an in-app + push notification on an entity change.
+ * Used by rfi.actions and anywhere else the app fans out an in-app +
+ * push notification on an entity change.
  */
 
 export interface NotifyArgs {
@@ -17,7 +17,7 @@ export interface NotifyArgs {
   route: string
   /** Notification type (e.g. `rfi_assigned`, `quote_selected`). */
   type: string
-  /** Entity scope for in-app filtering (e.g. `rfi`, `procurement_item`). */
+  /** Entity scope for in-app filtering (e.g. `rfi`, `node_order`). */
   entityType?: string
   /** Entity uuid. */
   entityId?: string

@@ -47,9 +47,6 @@ export const ANALYTICS_EVENTS = {
   RFI_CLOSED:               'rfi_closed',
   DIARY_ENTRY_CREATED:      'diary_entry_created',
   FLOORPLAN_MARKUP_SAVED:   'floorplan_markup_saved',
-  SCHEDULE_ITEM_CREATED:    'schedule_item_created',
-  QUOTE_UPLOADED:           'procurement_quote_uploaded',
-  QUOTE_SELECTED:           'procurement_quote_selected',
 
   // Supplier funnel
   SUPPLIER_REGISTERED:      'supplier_registered',

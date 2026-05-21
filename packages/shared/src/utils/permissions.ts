@@ -30,10 +30,6 @@ export function canSignOffSnag(projectRole: ProjectRole): boolean {
   return projectRole === 'project_manager'
 }
 
-export function canManageProcurement(projectRole: ProjectRole): boolean {
-  return projectRole === 'project_manager'
-}
-
 export function canUploadCoc(projectRole: ProjectRole): boolean {
   return ['project_manager', 'contractor'].includes(projectRole)
 }

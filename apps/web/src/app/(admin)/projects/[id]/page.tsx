@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, snagService, rfiService, formatDate, formatZAR, getProjectCommittedSpend } from '@esite/shared'
+import { projectService, snagService, rfiService, formatDate, formatZAR } from '@esite/shared'
 import { ReportButton } from '@/components/ui/ReportButton'
 import { DeleteProjectPanel } from './DeleteProjectPanel'
 
@@ -43,12 +43,11 @@ export default async function ProjectDetailPage({ params }: Props) {
   const { id } = await params
   const supabase = await createClient()
 
-  const [project, snagStats, snags, rfis, spend] = await Promise.all([
+  const [project, snagStats, snags, rfis] = await Promise.all([
     projectService.getById(supabase as any, id).catch(() => null),
     snagService.getStats(supabase as any, id),
     snagService.list(supabase as any, id).catch(() => []),
     rfiService.list(supabase as any, id).catch(() => []),
-    getProjectCommittedSpend(supabase as any, id),
   ])
 
   if (!project) notFound()
@@ -87,20 +86,6 @@ export default async function ProjectDetailPage({ params }: Props) {
           <Link href={`/projects/${id}/snags/new`} className="btn-primary-amber">+ Snag</Link>
         </div>
       </div>
-
-      {/* Budget bar — visible whenever there's any scheduled or committed value
-          to show. Budget is set via the project edit form (project.budget_amount). */}
-      {((project as any).budget_amount || spend.scheduledValue > 0 || spend.committed > 0) && (
-        <div className="data-panel animate-fadeup animate-fadeup-1" style={{ padding: 16, marginBottom: 16 }}>
-          <BudgetBar
-            budget={Number((project as any).budget_amount ?? 0)}
-            scheduled={spend.scheduledValue}
-            committed={spend.committed}
-            ordered={spend.ordered}
-            delivered={spend.delivered}
-          />
-        </div>
-      )}
 
       {/* KPIs */}
       <div className="kpi-grid animate-fadeup animate-fadeup-1">
@@ -245,85 +230,6 @@ export default async function ProjectDetailPage({ params }: Props) {
       {isOwner && (
         <DeleteProjectPanel projectId={id} projectName={project.name} />
       )}
-    </div>
-  )
-}
-
-/**
- * BudgetBar — stacked progress bar showing scheduled (engineer's est) /
- * committed (selected quotes + approved + fulfilled) / ordered (approved +
- * fulfilled) / delivered (fulfilled) against the project's budget_amount.
- * When budget is 0, scales against MAX(scheduled, committed) so the bar
- * still tells a story.
- */
-function BudgetBar({
-  budget, scheduled, committed, ordered, delivered,
-}: {
-  budget: number
-  scheduled: number
-  committed: number
-  ordered: number
-  delivered: number
-}) {
-  const denominator = Math.max(budget, scheduled, committed, 1)
-  const pct = (n: number) => Math.min(100, Math.round((n / denominator) * 100))
-  const overBudget = budget > 0 && committed > budget
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div>
-          <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em',
-            textTransform: 'uppercase', color: 'var(--c-text-dim)',
-          }}>
-            Procurement budget
-          </div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--c-text)', marginTop: 2 }}>
-            {budget > 0 ? formatZAR(budget) : 'No budget set'}
-            {overBudget && (
-              <span style={{ marginLeft: 10, fontSize: 12, color: '#dc2626' }}>
-                · over by {formatZAR(committed - budget)}
-              </span>
-            )}
-          </div>
-        </div>
-        <div style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
-          {scheduled > 0 && <div>Scheduled: {formatZAR(scheduled)}</div>}
-          {committed > 0 && <div>Committed: {formatZAR(committed)}</div>}
-          {delivered > 0 && <div>Delivered: {formatZAR(delivered)}</div>}
-        </div>
-      </div>
-      <div style={{
-        position: 'relative', height: 12, background: 'var(--c-base)',
-        borderRadius: 6, overflow: 'hidden', border: '1px solid var(--c-border)',
-      }}>
-        <div style={{
-          position: 'absolute', top: 0, left: 0, height: '100%',
-          width: `${pct(committed)}%`, background: overBudget ? '#dc2626' : 'var(--c-amber-mid)',
-        }} />
-        <div style={{
-          position: 'absolute', top: 0, left: 0, height: '100%',
-          width: `${pct(ordered)}%`, background: 'var(--c-amber)',
-        }} />
-        <div style={{
-          position: 'absolute', top: 0, left: 0, height: '100%',
-          width: `${pct(delivered)}%`, background: '#16a34a',
-        }} />
-      </div>
-      <div style={{
-        display: 'flex', gap: 14, marginTop: 6, fontFamily: 'var(--font-mono)',
-        fontSize: 10, color: 'var(--c-text-dim)', flexWrap: 'wrap',
-      }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 10, height: 10, background: 'var(--c-amber-mid)', borderRadius: 2 }} /> Committed
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 10, height: 10, background: 'var(--c-amber)', borderRadius: 2 }} /> Ordered
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 10, height: 10, background: '#16a34a', borderRadius: 2 }} /> Delivered
-        </span>
-      </div>
     </div>
   )
 }
