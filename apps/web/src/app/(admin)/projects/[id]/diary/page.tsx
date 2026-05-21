@@ -32,6 +32,7 @@ export default async function DiaryPage({ params }: Props) {
     .single()
 
   const orgId = mem?.organisation_id ?? ''
+  const canEdit = mem?.role !== 'client_viewer'
 
   const [project, entries] = await Promise.all([
     projectService.getById(supabase as any, id).catch(() => null),
@@ -148,7 +149,7 @@ export default async function DiaryPage({ params }: Props) {
                     projectId={id}
                     userId={user!.id}
                     attachments={attachmentsByEntry.get(entry.id) ?? []}
-                    canEdit={true}
+                    canEdit={canEdit}
                   />
                 </div>
               </div>
