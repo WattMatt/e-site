@@ -11,6 +11,7 @@ export type {
   ImportNew,
   ImportUpdated,
   ImportDecommissioned,
+  ImportConflict,
   ImportDiffEntry,
 } from './import-preview';
 export { suggestEquipmentCode, EQUIPMENT_KINDS } from './suggest-equipment-code';

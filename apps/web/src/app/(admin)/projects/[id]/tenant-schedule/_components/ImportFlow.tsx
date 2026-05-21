@@ -10,6 +10,7 @@ import type {
   ImportNew,
   ImportUpdated,
   ImportDecommissioned,
+  ImportConflict,
 } from '@esite/shared'
 import type { CommitResult } from '@/app/api/tenant-schedule/commit/route'
 
@@ -141,7 +142,8 @@ export function ImportFlow({ projectId }: Props) {
   if (stage === 'done' && commitResult) {
     const hasWriteErrors = commitResult.write_errors.length > 0
     const hasSkipped = commitResult.skipped_parse_errors > 0
-    const hasWarnings = hasWriteErrors || hasSkipped
+    const hasConflicts = commitResult.skipped_conflicts > 0
+    const hasWarnings = hasWriteErrors || hasSkipped || hasConflicts
     return (
       <div style={{ border: hasWarnings ? '1px solid var(--c-amber-mid)' : '1px solid var(--c-green)', borderRadius: 8, background: 'var(--c-panel)', padding: '14px 18px' }}>
         <p style={{ fontWeight: 600, marginBottom: 8, color: hasWarnings ? 'var(--c-amber)' : 'var(--c-text)' }}>
@@ -168,6 +170,13 @@ export function ImportFlow({ projectId }: Props) {
           <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-amber-dim)', borderRadius: 4 }}>
             <p style={{ fontSize: 12, color: 'var(--c-amber)' }}>
               {commitResult.skipped_parse_errors} row{commitResult.skipped_parse_errors !== 1 ? 's' : ''} skipped — had parse errors, not committed.
+            </p>
+          </div>
+        )}
+        {hasConflicts && (
+          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-amber-dim)', borderRadius: 4 }}>
+            <p style={{ fontSize: 12, color: 'var(--c-amber)' }}>
+              {commitResult.skipped_conflicts} shop{commitResult.skipped_conflicts !== 1 ? 's' : ''} skipped — DB code already in use; needs reconciliation.
             </p>
           </div>
         )}
@@ -206,6 +215,7 @@ export function ImportFlow({ projectId }: Props) {
     const newCount = preview.new_entries.length
     const updatedCount = preview.updated_entries.length
     const decomCount = preview.decommissioned_entries.length
+    const conflictCount = preview.conflict_entries.length
     const errorCount = preview.parse_errors.length
 
     return (
@@ -231,6 +241,7 @@ export function ImportFlow({ projectId }: Props) {
             <Badge variant="success">{newCount} new</Badge>
             <Badge variant="info">{updatedCount} updated</Badge>
             <Badge variant={decomCount > 0 ? 'danger' : 'ghost'}>{decomCount} decommissioned</Badge>
+            {conflictCount > 0 && <Badge variant="warning">{conflictCount} conflict{conflictCount !== 1 ? 's' : ''}</Badge>}
             {errorCount > 0 && <Badge variant="warning">{errorCount} parse error{errorCount !== 1 ? 's' : ''}</Badge>}
           </div>
 
@@ -273,6 +284,51 @@ export function ImportFlow({ projectId }: Props) {
                         {e.existing.shop_area_m2} m²
                       </span>
                     )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── CONFLICTS — derived code already in use ───────────────────── */}
+          {conflictCount > 0 && (
+            <div style={{
+              padding: '12px 14px',
+              marginBottom: 16,
+              background: 'var(--c-amber-dim)',
+              border: '1.5px solid var(--c-amber-mid)',
+              borderRadius: 6,
+            }}>
+              <p style={{ fontWeight: 700, color: 'var(--c-amber)', marginBottom: 6, fontSize: 14 }}>
+                ⚠ {conflictCount} shop{conflictCount !== 1 ? 's' : ''} cannot be imported — DB code already in use
+              </p>
+              <p style={{ fontSize: 12, color: 'var(--c-text-mid)', marginBottom: 10 }}>
+                The distribution-board code for these shops already exists on this project — usually a
+                board entered via the Cable Schedule before the Tenant module. They will be{' '}
+                <strong>skipped</strong>. Reconcile each separately by converting the existing board
+                into the tenant DB, rather than creating a duplicate.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {(preview.conflict_entries as ImportConflict[]).map((e, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      gap: 12,
+                      padding: '5px 8px',
+                      background: 'var(--c-amber-dim)',
+                      borderRadius: 4,
+                      fontSize: 13,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-amber)', minWidth: 80 }}>
+                      {e.row.shop_number}
+                    </span>
+                    <span style={{ color: 'var(--c-text)' }}>{e.row.shop_name ?? '—'}</span>
+                    <span style={{ color: 'var(--c-text-dim)', marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                      {e.derived_code} — used by an existing {e.conflicting_node.kind} node
+                    </span>
                   </div>
                 ))}
               </div>

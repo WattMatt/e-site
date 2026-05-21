@@ -91,15 +91,17 @@ export async function POST(req: Request): Promise<NextResponse<ImportPreview | {
   }
 
   // ------------------------------------------------------------------
-  // 4. Load existing tenant_db nodes for this project
-  //    (read-only — RLS-gated via the server client; no service-role needed)
+  // 4. Load ALL project nodes (read-only — RLS-gated via the server client).
+  //    The tenant_db subset drives shop_number matching; the full set drives
+  //    code-collision detection (a new shop whose derived DB code is already
+  //    taken by, e.g., a cable-schedule board).
   // ------------------------------------------------------------------
-  let existingNodes: Awaited<ReturnType<typeof listNodes>>;
+  let allNodes: Awaited<ReturnType<typeof listNodes>>;
   try {
-    existingNodes = await listNodes(supabase, projectId, { kind: 'tenant_db' });
+    allNodes = await listNodes(supabase, projectId);
   } catch (e: any) {
     return NextResponse.json(
-      { error: `Could not load existing tenant nodes: ${e?.message ?? 'unknown'}` },
+      { error: `Could not load project nodes: ${e?.message ?? 'unknown'}` },
       { status: 500 },
     );
   }
@@ -107,7 +109,7 @@ export async function POST(req: Request): Promise<NextResponse<ImportPreview | {
   // ------------------------------------------------------------------
   // 5. Diff → ImportPreview (pure, no DB writes)
   // ------------------------------------------------------------------
-  const preview = diffTenantSchedule(parseResult.rows, parseResult.errors, existingNodes);
+  const preview = diffTenantSchedule(parseResult.rows, parseResult.errors, allNodes);
 
   return NextResponse.json(preview, { status: 200 });
 }

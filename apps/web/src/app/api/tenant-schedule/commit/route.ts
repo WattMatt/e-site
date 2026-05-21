@@ -160,6 +160,12 @@ export interface CommitResult {
   decommissioned: number;
   /** parse_error rows from the workbook that were skipped (not committed). */
   skipped_parse_errors: number;
+  /**
+   * New shops skipped because their derived DB code collides with an existing
+   * node (e.g. a cable-schedule board). Surfaced in the preview; these need
+   * manual reconciliation, not a blind insert.
+   */
+  skipped_conflicts: number;
   /** Per-write errors that occurred during the commit (partial failures). */
   write_errors: string[];
 }
@@ -237,20 +243,21 @@ export async function POST(
     );
   }
 
-  // 6. Load existing tenant_db nodes for this project
-  //    (read — RLS-gated via cookie client; no service-role needed for SELECT)
-  let existingNodes: Awaited<ReturnType<typeof listNodes>>;
+  // 6. Load ALL project nodes (read — RLS-gated via cookie client).
+  //    The tenant_db subset drives shop_number matching; the full set drives
+  //    code-collision detection (see diffTenantSchedule).
+  let allNodes: Awaited<ReturnType<typeof listNodes>>;
   try {
-    existingNodes = await listNodes(supabase, projectId, { kind: 'tenant_db' });
+    allNodes = await listNodes(supabase, projectId);
   } catch (e: any) {
     return NextResponse.json(
-      { error: `Could not load existing tenant nodes: ${e?.message ?? 'unknown'}` },
+      { error: `Could not load project nodes: ${e?.message ?? 'unknown'}` },
       { status: 500 },
     );
   }
 
   // 7. Compute diff (pure function — same as parse route, but we apply it here)
-  const preview = diffTenantSchedule(parseResult.rows, parseResult.errors, existingNodes);
+  const preview = diffTenantSchedule(parseResult.rows, parseResult.errors, allNodes);
 
   // 8. Apply the three write categories
   const writeErrors: string[] = [];
@@ -410,6 +417,7 @@ export async function POST(
       updated,
       decommissioned,
       skipped_parse_errors: preview.parse_errors.length,
+      skipped_conflicts: preview.conflict_entries.length,
       write_errors: writeErrors,
     },
     // 207 Multi-Status when at least one write failed (partial success);

@@ -169,3 +169,72 @@ describe('diffTenantSchedule', () => {
     expect(previewZero.updated_entries[0].changes.shop_area_m2).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Code-collision detection (new shop vs an existing cable-schedule board)
+// ---------------------------------------------------------------------------
+
+describe('diffTenantSchedule — code conflicts', () => {
+  it('flags a new shop whose derived code is taken by another node as a conflict', () => {
+    // A cable-schedule board already occupies code DB-18.
+    const existing: Node[] = [
+      makeNode({ shop_number: null as any, kind: 'main_board', code: 'DB-18', id: 'board-18' }),
+    ];
+    const rows: TenantImportRow[] = [makeRow('18', 'SHOPRITE', 2720.3)];
+    const preview = diffTenantSchedule(rows, [], existing);
+
+    expect(preview.new_entries).toHaveLength(0);
+    expect(preview.conflict_entries).toHaveLength(1);
+    const c = preview.conflict_entries[0];
+    expect(c.kind).toBe('conflict');
+    expect(c.row.shop_number).toBe('18');
+    expect(c.derived_code).toBe('DB-18');
+    expect(c.conflicting_node.id).toBe('board-18');
+    expect(c.conflicting_node.kind).toBe('main_board');
+    expect(c.conflicting_node.code).toBe('DB-18');
+  });
+
+  it('keeps a new shop with a free derived code as new', () => {
+    const existing: Node[] = [
+      makeNode({ shop_number: null as any, kind: 'main_board', code: 'DB-18' }),
+    ];
+    const rows: TenantImportRow[] = [makeRow('19', 'TRUWORTHS', 920)];
+    const preview = diffTenantSchedule(rows, [], existing);
+
+    expect(preview.conflict_entries).toHaveLength(0);
+    expect(preview.new_entries).toHaveLength(1);
+    expect(preview.new_entries[0].derived_code).toBe('DB-19');
+  });
+
+  it('a shop matched by shop_number is updated, never a conflict (re-import safe)', () => {
+    // shop 18 is already a tenant_db node (post-reconciliation); re-import updates it.
+    const existing: Node[] = [
+      makeNode({ shop_number: '18', kind: 'tenant_db', code: 'DB-18', shop_name: 'SHOPRITE', shop_area_m2: 2720.3 }),
+    ];
+    const rows: TenantImportRow[] = [makeRow('18', 'SHOPRITE', 2720.3)];
+    const preview = diffTenantSchedule(rows, [], existing);
+
+    expect(preview.conflict_entries).toHaveLength(0);
+    expect(preview.updated_entries).toHaveLength(1);
+  });
+
+  it('mixes new / conflict / updated correctly in one call', () => {
+    const existing: Node[] = [
+      makeNode({ shop_number: null as any, kind: 'main_board', code: 'DB-18' }), // board → conflicts with shop 18
+      makeNode({ shop_number: '5', kind: 'tenant_db', code: 'DB-5', shop_name: 'BOXER', shop_area_m2: 1800 }),
+    ];
+    const rows: TenantImportRow[] = [
+      makeRow('18', 'SHOPRITE', 2720), // conflict
+      makeRow('5', 'BOXER', 1809),     // updated (area changed)
+      makeRow('99', 'NEW SHOP', 100),  // new
+    ];
+    const preview = diffTenantSchedule(rows, [], existing);
+
+    expect(preview.conflict_entries).toHaveLength(1);
+    expect(preview.conflict_entries[0].row.shop_number).toBe('18');
+    expect(preview.updated_entries).toHaveLength(1);
+    expect(preview.updated_entries[0].row.shop_number).toBe('5');
+    expect(preview.new_entries).toHaveLength(1);
+    expect(preview.new_entries[0].row.shop_number).toBe('99');
+  });
+});
