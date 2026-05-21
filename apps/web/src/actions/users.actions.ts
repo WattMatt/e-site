@@ -1,13 +1,14 @@
 'use server'
 
 /**
- * Admin user management — create / update / remove organisation members.
+ * Admin user management — invite / update / remove organisation members.
  * Replaces the deleted team-invite subsystem (spec sections 5.3, 11 steps 2-3).
  *
  * All actions are gated to owner/admin of the caller's organisation.
- * createUserAction provisions an auth.users row with NO password, then sends a
- * "set your password" email through the standard recovery flow — admin-created
- * and existing users share one password flow (spec section 5.4).
+ * inviteUserAction detects whether the email belongs to an existing E-Site
+ * account (Path B — pending membership + notification email) or is brand-new
+ * (Path A — Supabase inviteUserByEmail, which sends the onboarding email
+ * automatically).
  */
 
 import { headers } from 'next/headers'
@@ -17,12 +18,13 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { getOrgContext, isOrgAdmin } from '@/lib/auth-org'
 import { logAuthEvent, orgRoleSchema } from '@esite/shared'
+import { sendOrgInviteEmail } from '@/lib/emails/org-invite-email'
 
 type ActionResult = { ok: true; warning?: string } | { ok: false; error: string }
 
 const createUserSchema = z.object({
   email:    z.string().email('Enter a valid email address.'),
-  fullName: z.string().trim().min(2, 'Enter the person’s full name.').max(120),
+  fullName: z.string().trim().min(2, "Enter the person's full name.").max(120),
   role:     orgRoleSchema,
 })
 
@@ -34,8 +36,9 @@ const updateUserSchema = z.object({
 
 const removeUserSchema = z.object({ userId: z.string().uuid() })
 
-/** Create an organisation member directly and email them a set-password link. */
-export async function createUserAction(input: {
+/** Invite a user to the organisation — new accounts receive a Supabase invite
+ *  email (Path A); existing E-Site accounts receive an org-invite nudge (Path B). */
+export async function inviteUserAction(input: {
   email: string
   fullName: string
   role: string
@@ -65,56 +68,156 @@ export async function createUserAction(input: {
 
   const service = createServiceClient()
 
-  // 1. Create the auth user with no password. email_confirm:true marks the
-  //    address admin-verified so they skip the verify-email gate.
-  const { data: created, error: createErr } = await service.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    user_metadata: { full_name: fullName },
-  })
-  if (createErr || !created?.user) {
-    const msg = createErr?.message ?? 'Could not create the user.'
-    return {
-      ok: false,
-      error: /already|exist|registered/i.test(msg)
-        ? 'A user with that email already exists.'
-        : msg,
+  // Step 1 — detect an existing account.
+  const { data: existingProfile } = await service
+    .from('profiles')
+    .select('id')
+    .eq('email', email)
+    .maybeSingle()
+
+  let invitedUserId: string
+
+  if (!existingProfile) {
+    // -- Path A: brand-new email --------------------------------------------------
+    const { data: invited, error: inviteErr } = await service.auth.admin.inviteUserByEmail(email, {
+      data: {
+        full_name:      fullName,
+        invited_to_org: ctx.organisationId,
+        invited_role:   role,
+      },
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback?next=/invite`,
+    })
+
+    // If Supabase reports the email is already registered, fall through to Path B.
+    if (inviteErr) {
+      if (/already|registered|exists/i.test(inviteErr.message)) {
+        // Re-query profiles — race condition: profile row may now exist.
+        const { data: raceProfile } = await service
+          .from('profiles')
+          .select('id')
+          .eq('email', email)
+          .maybeSingle()
+        if (!raceProfile) {
+          // Still cannot find the profile — surface the original error.
+          return { ok: false, error: inviteErr.message }
+        }
+        return handlePathB({ service, userId: raceProfile.id, email, role, ctx, ip, ua })
+      }
+      return { ok: false, error: inviteErr.message }
     }
-  }
-  const newUserId = created.user.id
 
-  // The handle_new_user trigger has created public.profiles. Add the membership.
-  const { error: memberErr } = await service.from('user_organisations').insert({
-    user_id:         newUserId,
-    organisation_id: ctx.organisationId,
-    role,
-    is_active:       true,
-    invited_by:      ctx.userId,
-    accepted_at:     new Date().toISOString(),
-  })
-  if (memberErr) {
-    // Roll back the orphaned auth user so a retry starts clean.
-    await service.auth.admin.deleteUser(newUserId).catch(() => {})
-    return { ok: false, error: `Could not add the user to your organisation: ${memberErr.message}` }
-  }
+    if (!invited?.user) {
+      return { ok: false, error: 'Could not send the invitation.' }
+    }
 
-  // 2. Send the "set your password" email via the standard recovery flow.
-  let warning: string | undefined
-  const { error: mailErr } = await service.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-  })
-  if (mailErr) {
-    console.error('createUserAction: set-password email failed', { newUserId, error: mailErr })
-    warning = 'User created, but the set-password email could not be sent. They can use “Forgot password” on the login page.'
+    invitedUserId = invited.user.id
+
+    // Insert the membership row (accepted_at=null — pending until they accept in-app).
+    const { error: memberErr } = await service.from('user_organisations').insert({
+      user_id:         invitedUserId,
+      organisation_id: ctx.organisationId,
+      role,
+      is_active:       true,
+      accepted_at:     null,
+      invited_by:      ctx.userId,
+    })
+    if (memberErr) {
+      // Roll back the orphaned auth user so a retry starts clean.
+      await service.auth.admin.deleteUser(invitedUserId).catch(() => {})
+      return { ok: false, error: `Could not add the user to your organisation: ${memberErr.message}` }
+    }
+  } else {
+    // -- Path B: existing E-Site account -----------------------------------------
+    return handlePathB({ service, userId: existingProfile.id, email, role, ctx, ip, ua })
   }
 
-  // 3. Audit.
+  // Audit (Path A only — Path B audits inside handlePathB).
   await logAuthEvent(service, {
-    userId:    newUserId,
+    userId:    invitedUserId,
     eventType: 'user_created',
     ipAddress: ip === 'unknown' ? null : ip,
     userAgent: ua,
     metadata:  { created_by: ctx.userId, organisation_id: ctx.organisationId, role },
+  })
+
+  revalidatePath('/settings/users')
+  return { ok: true }
+}
+
+// -- Path B helper ---------------------------------------------------------------
+
+type PathBParams = {
+  service:   ReturnType<typeof createServiceClient>
+  userId:    string
+  email:     string
+  role:      string
+  ctx:       NonNullable<Awaited<ReturnType<typeof getOrgContext>>>
+  ip:        string
+  ua:        string | null
+}
+
+async function handlePathB({
+  service,
+  userId,
+  email,
+  role,
+  ctx,
+  ip,
+  ua,
+}: PathBParams): Promise<ActionResult> {
+  // Check for any existing membership row.
+  const { data: existing } = await service
+    .from('user_organisations')
+    .select('id, accepted_at, is_active')
+    .eq('user_id', userId)
+    .eq('organisation_id', ctx.organisationId)
+    .maybeSingle()
+
+  if (existing) {
+    if (existing.accepted_at !== null && existing.is_active) {
+      return { ok: false, error: 'That person is already a member of your organisation.' }
+    }
+    if (existing.accepted_at === null) {
+      return { ok: false, error: 'That person already has a pending invitation — use Resend.' }
+    }
+    if (existing.accepted_at !== null && !existing.is_active) {
+      return { ok: false, error: 'That person was deactivated — reactivate them from the members list instead.' }
+    }
+  }
+
+  // Insert a pending membership row.
+  const { error: memberErr } = await service.from('user_organisations').insert({
+    user_id:         userId,
+    organisation_id: ctx.organisationId,
+    role,
+    is_active:       false,
+    accepted_at:     null,
+    invited_by:      ctx.userId,
+  })
+  if (memberErr) {
+    return { ok: false, error: `Could not add the user to your organisation: ${memberErr.message}` }
+  }
+
+  // Look up org name and inviter name for the email.
+  const [{ data: orgRow }, { data: inviterRow }] = await Promise.all([
+    service.from('organisations').select('name').eq('id', ctx.organisationId).maybeSingle(),
+    service.from('profiles').select('full_name').eq('id', ctx.userId).maybeSingle(),
+  ])
+  const orgName     = orgRow?.name         ?? 'your organisation'
+  const inviterName = inviterRow?.full_name ?? 'A team member'
+
+  let warning: string | undefined
+  const mailResult = await sendOrgInviteEmail({ to: email, orgName, inviterName })
+  if (!mailResult.ok) {
+    warning = 'Invited, but the notification email could not be sent.'
+  }
+
+  await logAuthEvent(service, {
+    userId,
+    eventType: 'user_created',
+    ipAddress: ip === 'unknown' ? null : ip,
+    userAgent: ua,
+    metadata:  { created_by: ctx.userId, organisation_id: ctx.organisationId, role, path: 'B' },
   })
 
   revalidatePath('/settings/users')

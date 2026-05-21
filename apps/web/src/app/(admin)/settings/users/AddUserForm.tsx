@@ -14,7 +14,7 @@ import { z } from 'zod'
 import { Button } from '@/components/ui/Button'
 import { FormField, TextInput, Select } from '@/components/ui/FormField'
 import { ORG_ROLES, ORG_ROLE_LABELS } from '@esite/shared'
-import { createUserAction } from '@/actions/users.actions'
+import { inviteUserAction } from '@/actions/users.actions'
 
 // The owner role is never assigned at creation — it is transferred separately.
 const ASSIGNABLE_ROLES = ORG_ROLES.filter((r) => r !== 'owner')
@@ -43,7 +43,7 @@ export function AddUserForm() {
     setSuccess(null)
     setWarning(null)
     startTransition(async () => {
-      const result = await createUserAction({
+      const result = await inviteUserAction({
         email: values.email,
         fullName: values.fullName,
         role: values.role,
