@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { projectService, diaryService, formatDate, ENTRY_TYPE_LABELS } from '@esite/shared'
 import type { DiaryEntryType } from '@esite/shared'
 import { AddDiaryEntryForm } from './AddDiaryEntryForm'
+import { DiaryAttachmentStrip, type DiaryAttachmentView } from '@/components/diary/DiaryAttachmentStrip'
 
 interface Props { params: Promise<{ id: string }> }
 
@@ -38,6 +39,22 @@ export default async function DiaryPage({ params }: Props) {
   ])
 
   if (!project) notFound()
+
+  const attachmentRows = await diaryService.listAttachments(
+    supabase as never,
+    entries.map((e: { id: string }) => e.id),
+  )
+  const attachmentPaths = attachmentRows.map(a => a.file_path)
+  const signedUrls = attachmentPaths.length
+    ? (await supabase.storage.from('diary-attachments').createSignedUrls(attachmentPaths, 3600)).data ?? []
+    : []
+  const urlByPath = new Map(signedUrls.map(s => [s.path, s.signedUrl]))
+  const attachmentsByEntry = new Map<string, DiaryAttachmentView[]>()
+  for (const a of attachmentRows) {
+    const list = attachmentsByEntry.get(a.diary_entry_id) ?? []
+    list.push({ ...a, url: urlByPath.get(a.file_path) ?? '' })
+    attachmentsByEntry.set(a.diary_entry_id, list)
+  }
 
   return (
     <div className="animate-fadeup">
@@ -125,6 +142,14 @@ export default async function DiaryPage({ params }: Props) {
                       </div>
                     )}
                   </div>
+                  <DiaryAttachmentStrip
+                    entryId={entry.id}
+                    orgId={orgId}
+                    projectId={id}
+                    userId={user!.id}
+                    attachments={attachmentsByEntry.get(entry.id) ?? []}
+                    canEdit={true}
+                  />
                 </div>
               </div>
             )

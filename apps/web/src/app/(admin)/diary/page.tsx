@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 export const metadata: Metadata = { title: 'Site Diary' }
 import { diaryService, ENTRY_TYPE_LABELS, formatDate } from '@esite/shared'
 import type { DiaryEntryType } from '@esite/shared'
+import { DiaryAttachmentStrip, type DiaryAttachmentView } from '@/components/diary/DiaryAttachmentStrip'
 
 interface Props {
   searchParams: Promise<{
@@ -40,12 +41,30 @@ export default async function DiaryListPage({ searchParams }: Props) {
 
   const orgId = mem?.organisation_id ?? ''
 
+  const userId = user!.id
+
   const entries = await diaryService.listByOrg(supabase as any, orgId, {
     dateFrom: params.dateFrom || undefined,
     dateTo: params.dateTo || undefined,
     entryType: params.type as DiaryEntryType | undefined,
     projectId: params.project || undefined,
   }).catch(() => [])
+
+  const attachmentRows = await diaryService.listAttachments(
+    supabase as never,
+    entries.map((e: { id: string }) => e.id),
+  )
+  const attachmentPaths = attachmentRows.map(a => a.file_path)
+  const signedUrls = attachmentPaths.length
+    ? (await supabase.storage.from('diary-attachments').createSignedUrls(attachmentPaths, 3600)).data ?? []
+    : []
+  const urlByPath = new Map(signedUrls.map(s => [s.path, s.signedUrl]))
+  const attachmentsByEntry = new Map<string, DiaryAttachmentView[]>()
+  for (const a of attachmentRows) {
+    const list = attachmentsByEntry.get(a.diary_entry_id) ?? []
+    list.push({ ...a, url: urlByPath.get(a.file_path) ?? '' })
+    attachmentsByEntry.set(a.diary_entry_id, list)
+  }
 
   // Build project list for filter dropdown (from entries)
   const projectMap = new Map<string, string>()
@@ -182,6 +201,14 @@ export default async function DiaryListPage({ searchParams }: Props) {
                       </div>
                     )}
                   </div>
+                  <DiaryAttachmentStrip
+                    entryId={entry.id}
+                    orgId={orgId}
+                    projectId={(entry as any).project?.id ?? ''}
+                    userId={userId}
+                    attachments={attachmentsByEntry.get(entry.id) ?? []}
+                    canEdit={false}
+                  />
                 </div>
               </div>
             )
