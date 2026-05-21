@@ -122,7 +122,7 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
 
   // ── BO inputs for required-by dates ──────────────────────────────────────
-  // opening_date arrives via select('*'); pre-migration-00091 it is simply
+  // opening_date arrives via select('*'); pre-migration-00093 it is simply
   // absent. Tenant BO columns are read in a separate query so a pre-apply
   // 42703 fails closed — orders just get no required-by date.
   const openingDate: string | null =
@@ -137,7 +137,7 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
         .from('tenant_details')
         .select('node_id, bo_period_days, bo_date_override')
         .in('node_id', tenantNodeIds)
-      // Generated DB types lag migration 00091 — cast at the query boundary.
+      // Generated DB types lag migration 00093 — cast at the query boundary.
       for (const r of (data ?? []) as unknown as Array<{
         node_id: string
         bo_period_days: number | null
@@ -146,7 +146,7 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
         boByNode.set(r.node_id, { boPeriodDays: r.bo_period_days, boDateOverride: r.bo_date_override })
       }
     } catch {
-      // Non-fatal: pre-migration-00091 the columns don't exist — orders get no required-by.
+      // Non-fatal: pre-migration-00093 the columns don't exist — orders get no required-by.
     }
   }
   const today = new Date().toISOString().slice(0, 10)

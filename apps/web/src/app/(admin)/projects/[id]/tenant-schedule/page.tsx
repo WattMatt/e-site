@@ -29,7 +29,7 @@ export default async function TenantSchedulePage({ params }: Props) {
   if (!project) notFound()
 
   const orgId = project.organisation_id as string
-  // opening_date is added by migration 00091; pre-apply select('*') simply omits it.
+  // opening_date is added by migration 00093; pre-apply select('*') simply omits it.
   const openingDate: string | null =
     (project as { opening_date?: string | null }).opening_date ?? null
 
@@ -131,8 +131,8 @@ export default async function TenantSchedulePage({ params }: Props) {
     }
   }
 
-  // ── BO dates — separate query so it fails closed pre-migration-00091 ──────
-  // bo_period_days / bo_date_override are added by migration 00091. Querying
+  // ── BO dates — separate query so it fails closed pre-migration-00093 ──────
+  // bo_period_days / bo_date_override are added by migration 00093. Querying
   // them on their own means a pre-apply failure only blanks the BO cells —
   // scope/layout (fetched above) are unaffected.
   const tenantBoByNode: Record<string, TenantBoInfo> = {}
@@ -148,10 +148,10 @@ export default async function TenantSchedulePage({ params }: Props) {
         .from('tenant_details')
         .select('node_id, bo_period_days, bo_date_override')
         .in('node_id', nodeIds)
-      // Generated DB types lag migration 00091 — cast at the query boundary.
+      // Generated DB types lag migration 00093 — cast at the query boundary.
       if (data) boRows = data as unknown as typeof boRows
     } catch {
-      // Non-fatal: pre-migration-00091 the columns don't exist — BO cells show "—".
+      // Non-fatal: pre-migration-00093 the columns don't exist — BO cells show "—".
     }
     const boByNode = new Map(boRows.map((r) => [r.node_id, r]))
     for (const nodeId of nodeIds) {
