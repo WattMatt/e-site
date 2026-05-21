@@ -11,6 +11,9 @@ import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
 import { track, ANALYTICS_EVENTS } from '../../src/lib/analytics'
+import { DiaryAttachmentPicker } from '../../src/components/diary/DiaryAttachmentPicker'
+import { DiaryAttachmentStrip } from '../../src/components/diary/DiaryAttachmentStrip'
+import { uploadDiaryAttachments, type PendingAttachment } from '../../src/lib/diary-attachments'
 
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Rain', 'Windy', 'Hot']
 
@@ -30,6 +33,7 @@ export default function SiteDiaryScreen() {
   const [weather, setWeather] = useState('')
   const [workers, setWorkers] = useState('')
   const [delays, setDelays] = useState('')
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
 
   const { data: entries, isLoading } = useQuery({
     queryKey: ['diary', projectId],
@@ -38,8 +42,8 @@ export default function SiteDiaryScreen() {
   })
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      diaryService.create(client, orgId, profile!.id, {
+    mutationFn: async () => {
+      const entry = await diaryService.create(client, orgId, profile!.id, {
         projectId,
         entryDate,
         entryType,
@@ -48,7 +52,18 @@ export default function SiteDiaryScreen() {
         weather: weather || undefined,
         workersOnSite: workers ? parseInt(workers, 10) : undefined,
         delays: delays.trim() || undefined,
-      }),
+      })
+      if (attachments.length > 0) {
+        await uploadDiaryAttachments(client, {
+          orgId,
+          projectId,
+          entryId: (entry as { id: string }).id,
+          userId: profile!.id,
+          items: attachments,
+        })
+      }
+      return entry
+    },
     onSuccess: () => {
       void track(ANALYTICS_EVENTS.DIARY_ENTRY_CREATED, {
         project_id: projectId,
@@ -67,6 +82,7 @@ export default function SiteDiaryScreen() {
       setWeather('')
       setWorkers('')
       setDelays('')
+      setAttachments([])
     },
     onError: (e: any) => Alert.alert('Error', e.message ?? 'Failed to save entry'),
   })
@@ -217,6 +233,8 @@ export default function SiteDiaryScreen() {
               />
             </View>
 
+            <DiaryAttachmentPicker items={attachments} onChange={setAttachments} />
+
             <TouchableOpacity
               testID="diary-save-button"
               style={[styles.submitBtn, createMutation.isPending && styles.btnDisabled]}
@@ -265,6 +283,7 @@ export default function SiteDiaryScreen() {
                   <Text style={styles.delayText}>{(item as any).delays}</Text>
                 </View>
               ) : null}
+              <DiaryAttachmentStrip entryId={(item as any).id} />
               <Text style={styles.authorText}>
                 {(item as any).author?.full_name ?? 'Unknown'} · {new Date((item as any).created_at).toLocaleDateString('en-ZA')}
               </Text>
