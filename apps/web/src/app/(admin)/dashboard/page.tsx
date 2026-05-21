@@ -11,6 +11,8 @@ import {
 } from '@esite/shared'
 import { isMarketplaceEnabled } from '@/components/marketplace/InDevelopmentNotice'
 import Link from 'next/link'
+import { PendingInvitations } from '@/components/PendingInvitations'
+import { listPendingInvitationsForCurrentUser } from '@/actions/invitations.actions'
 
 export const metadata: Metadata = { title: 'Dashboard' }
 import { FolderPlus, AlertTriangle, BookOpen, ShoppingBag, Clock, ClipboardCheck, MessageSquareWarning, RotateCcw, FileEdit } from 'lucide-react'
@@ -30,7 +32,7 @@ export default async function DashboardPage() {
   const orgId = membership?.organisation_id
   const orgIds = orgId ? [orgId] : []
 
-  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, sla, awaiting, reinspect, staleDrafts] = await Promise.all([
+  const [stats, projects, recentSnags, ordersResult, ordersCountResult, deadlinesResult, sla, awaiting, reinspect, staleDrafts, pendingInvitations] = await Promise.all([
     orgId
       ? projectService.getStats(supabase as any, orgId)
       : Promise.resolve({ activeProjects: 0, openSnags: 0 }),
@@ -105,6 +107,7 @@ export default async function DashboardPage() {
     getAwaitingVerification(supabase as any, orgIds),
     getReInspectRequired(supabase as any, orgIds),
     getStaleDraftInspections(supabase as any, orgIds),
+    listPendingInvitationsForCurrentUser(),
   ])
 
   const activeOrders = ordersCountResult.count ?? 0
@@ -158,6 +161,8 @@ export default async function DashboardPage() {
           + New Project
         </Link>
       </div>
+
+      <PendingInvitations invitations={pendingInvitations} />
 
       {/* KPI row */}
       <div className="kpi-grid animate-fadeup animate-fadeup-1">
