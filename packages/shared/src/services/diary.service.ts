@@ -20,6 +20,29 @@ export const ENTRY_TYPE_LABELS: Record<DiaryEntryType, string> = {
   general: 'General',
 }
 
+export type DiaryAttachmentKind = 'image' | 'video' | 'document'
+
+export interface DiaryAttachment {
+  id: string
+  diary_entry_id: string
+  file_path: string
+  file_name: string
+  mime_type: string
+  file_size_bytes: number
+  kind: DiaryAttachmentKind
+  caption: string | null
+  sort_order: number
+  uploaded_by: string | null
+  created_at: string
+}
+
+/** Classifies a MIME type into the attachment `kind` used for UI rendering. */
+export function attachmentKindFromMime(mime: string): DiaryAttachmentKind {
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  return 'document'
+}
+
 export const diaryService = {
   async list(client: TypedSupabaseClient, projectId: string) {
     const { data, error } = await client
@@ -166,5 +189,32 @@ export const diaryService = {
       .single()
     if (error) throw error
     return data
+  },
+
+  /** All attachments for the given entry ids, ordered by sort_order. */
+  async listAttachments(client: TypedSupabaseClient, entryIds: string[]): Promise<DiaryAttachment[]> {
+    if (entryIds.length === 0) return []
+    const { data, error } = await client
+      .schema('projects')
+      .from('site_diary_attachments')
+      .select('*')
+      .in('diary_entry_id', entryIds)
+      .order('sort_order', { ascending: true })
+    if (error) throw error
+    return (data ?? []) as unknown as DiaryAttachment[]
+  },
+
+  /** Deletes an attachment row, then best-effort deletes its storage object. */
+  async deleteAttachment(
+    client: TypedSupabaseClient,
+    attachment: Pick<DiaryAttachment, 'id' | 'file_path'>,
+  ): Promise<void> {
+    const { error } = await client
+      .schema('projects')
+      .from('site_diary_attachments')
+      .delete()
+      .eq('id', attachment.id)
+    if (error) throw error
+    await client.storage.from('diary-attachments').remove([attachment.file_path])
   },
 }

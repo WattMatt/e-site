@@ -2937,6 +2937,56 @@ export type Database = {
           },
         ]
       }
+      site_diary_attachments: {
+        Row: {
+          caption: string | null
+          created_at: string
+          diary_entry_id: string
+          file_name: string
+          file_path: string
+          file_size_bytes: number
+          id: string
+          kind: string
+          mime_type: string
+          sort_order: number
+          uploaded_by: string | null
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          diary_entry_id: string
+          file_name: string
+          file_path: string
+          file_size_bytes: number
+          id?: string
+          kind: string
+          mime_type: string
+          sort_order?: number
+          uploaded_by?: string | null
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          diary_entry_id?: string
+          file_name?: string
+          file_path?: string
+          file_size_bytes?: number
+          id?: string
+          kind?: string
+          mime_type?: string
+          sort_order?: number
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_diary_attachments_diary_entry_id_fkey"
+            columns: ["diary_entry_id"]
+            isOneToOne: false
+            referencedRelation: "site_diary_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       site_diary_entries: {
         Row: {
           created_at: string
