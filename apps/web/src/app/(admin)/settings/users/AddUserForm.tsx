@@ -94,7 +94,7 @@ export function AddUserForm() {
             </Select>
           </FormField>
         </div>
-        <Button type="submit" isLoading={isPending} size="sm">Add user</Button>
+        <Button type="submit" isLoading={isPending} size="sm">Send invite</Button>
       </form>
 
       {error && (
@@ -119,9 +119,9 @@ export function AddUserForm() {
             padding: '14px 16px',
           }}
         >
-          <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>User created — {success}</p>
+          <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Invitation sent to {success}</p>
           <p style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 4, marginBottom: 0 }}>
-            {warning ?? 'They’ve been emailed a link to set their password and sign in.'}
+            {warning ?? "They've been emailed an invitation to join your organisation."}
           </p>
         </div>
       )}

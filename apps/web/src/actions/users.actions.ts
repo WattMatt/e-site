@@ -18,7 +18,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { getOrgContext, isOrgAdmin } from '@/lib/auth-org'
 import { logAuthEvent, orgRoleSchema } from '@esite/shared'
-import { sendOrgInviteEmail } from '@/lib/emails/org-invite-email'
+import { sendOrgInviteEmail, sendInviteLinkEmail } from '@/lib/emails/org-invite-email'
 
 type ActionResult = { ok: true; warning?: string } | { ok: false; error: string }
 
@@ -295,6 +295,98 @@ export async function updateUserAction(input: {
     ipAddress: ip === 'unknown' ? null : ip,
     userAgent: ua,
     metadata:  { updated_by: ctx.userId, organisation_id: ctx.organisationId, ...patch },
+  })
+
+  revalidatePath('/settings/users')
+  return { ok: true }
+}
+
+/** Resend an invitation to a pending member.
+ *  - Existing-user invite (is_active=false): resend the in-app nudge email.
+ *  - New-user invite (is_active=true): regenerate the Supabase invite link and email it. */
+export async function resendInviteAction(input: { userId: string }): Promise<ActionResult> {
+  const h = await headers()
+  const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ua = h.get('user-agent') ?? null
+
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+  if (!isOrgAdmin(ctx.role)) return { ok: false, error: 'Only an admin or owner can resend invitations.' }
+
+  if (!rateLimit(`resend-invite:${ctx.userId}`, 20, 60 * 60_000)) {
+    return { ok: false, error: 'Too many invitations resent recently. Please wait before trying again.' }
+  }
+
+  const parsed = removeUserSchema.safeParse(input)
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { userId } = parsed.data
+
+  const service = createServiceClient()
+
+  // Look up the membership row.
+  const { data: member, error: memberErr } = await service
+    .from('user_organisations')
+    .select('id, is_active, accepted_at')
+    .eq('user_id', userId)
+    .eq('organisation_id', ctx.organisationId)
+    .maybeSingle()
+  if (memberErr) return { ok: false, error: memberErr.message }
+  if (!member) return { ok: false, error: 'That user is not a member of your organisation.' }
+
+  if (member.accepted_at !== null) {
+    return { ok: false, error: 'That member has already accepted their invitation.' }
+  }
+
+  // Look up org name and inviter name (needed by both email paths).
+  const [{ data: orgRow }, { data: inviterRow }] = await Promise.all([
+    service.from('organisations').select('name').eq('id', ctx.organisationId).maybeSingle(),
+    service.from('profiles').select('full_name').eq('id', ctx.userId).maybeSingle(),
+  ])
+  const orgName     = orgRow?.name         ?? 'your organisation'
+  const inviterName = inviterRow?.full_name ?? 'A team member'
+
+  if (!member.is_active) {
+    // Existing-user invite — resend the in-app nudge email.
+    const { data: profileRow } = await service
+      .from('profiles')
+      .select('email')
+      .eq('id', userId)
+      .maybeSingle()
+    const email = profileRow?.email
+    if (!email) return { ok: false, error: 'Could not find the email address for this user.' }
+
+    const mailResult = await sendOrgInviteEmail({ to: email, orgName, inviterName })
+    if (!mailResult.ok) return { ok: false, error: mailResult.error ?? 'Failed to send invitation email.' }
+  } else {
+    // New-user invite — regenerate the Supabase invite link.
+    const { data: authUser } = await service.auth.admin.getUserById(userId)
+    const email = authUser?.user?.email
+    if (!email) return { ok: false, error: 'Could not find the email address for this user.' }
+
+    const { data: linkData, error: linkErr } = await service.auth.admin.generateLink({
+      type: 'invite',
+      email,
+      options: {
+        redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback?next=/invite`,
+      },
+    })
+    if (linkErr) return { ok: false, error: linkErr.message }
+
+    const actionLink = linkData?.properties?.action_link
+    if (!actionLink) return { ok: false, error: 'Could not generate the invitation link.' }
+
+    const mailResult = await sendInviteLinkEmail({ to: email, orgName, inviterName, actionLink })
+    if (!mailResult.ok) return { ok: false, error: mailResult.error ?? 'Failed to send invitation email.' }
+  }
+
+  await logAuthEvent(service, {
+    userId,
+    eventType: 'user_created',
+    ipAddress: ip === 'unknown' ? null : ip,
+    userAgent: ua,
+    metadata:  { resent_by: ctx.userId, organisation_id: ctx.organisationId },
   })
 
   revalidatePath('/settings/users')

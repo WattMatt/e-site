@@ -11,7 +11,7 @@ import { useRouter } from 'next/navigation'
 import { Select } from '@/components/ui/FormField'
 import { Button } from '@/components/ui/Button'
 import { ORG_ROLES, ORG_ROLE_LABELS, type OrgRole } from '@esite/shared'
-import { updateUserAction, removeUserAction } from '@/actions/users.actions'
+import { updateUserAction, removeUserAction, resendInviteAction } from '@/actions/users.actions'
 
 interface Props {
   userId:     string
@@ -19,13 +19,15 @@ interface Props {
   isActive:   boolean
   isSelf:     boolean
   callerRole: OrgRole
+  pending:    boolean
 }
 
-export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: Props) {
+export function UserRowActions({ userId, role, isActive, isSelf, callerRole, pending }: Props) {
   const router = useRouter()
   const [roleVal, setRoleVal] = useState(role)
   const [error, setError] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [resendSuccess, setResendSuccess] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   // Cannot edit your own row (self-lockout guard); a non-owner cannot touch an
@@ -65,6 +67,19 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
     })
   }
 
+  function resend() {
+    setError(null)
+    setResendSuccess(false)
+    startTransition(async () => {
+      const result = await resendInviteAction({ userId })
+      if (!result.ok) {
+        setError(result.error ?? 'Something went wrong.')
+        return
+      }
+      setResendSuccess(true)
+    })
+  }
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
@@ -81,6 +96,21 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
           <option key={r} value={r}>{ORG_ROLE_LABELS[r]}</option>
         ))}
       </Select>
+
+      {pending && (
+        resendSuccess ? (
+          <span style={{ fontSize: 11, color: 'var(--c-green)' }}>Invite sent.</span>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={isPending}
+            onClick={resend}
+          >
+            Resend invite
+          </Button>
+        )
+      )}
 
       <Button
         variant="secondary"

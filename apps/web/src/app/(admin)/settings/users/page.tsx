@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { createServiceClient } from '@/lib/supabase/server'
 import { getOrgContext, isOrgAdmin } from '@/lib/auth-org'
 import { formatDate } from '@esite/shared'
+import { membershipState } from '@/lib/membership'
 import { AddUserForm } from './AddUserForm'
 import { UserRowActions } from './UserRowActions'
 
@@ -18,12 +19,13 @@ const ROLE_BADGE: Record<string, string> = {
 }
 
 interface MemberRow {
-  id:         string
-  user_id:    string
-  role:       string
-  is_active:  boolean
-  created_at: string
-  profile:    { full_name: string | null; email: string | null } | null
+  id:          string
+  user_id:     string
+  role:        string
+  is_active:   boolean
+  accepted_at: string | null
+  created_at:  string
+  profile:     { full_name: string | null; email: string | null } | null
 }
 
 const monoDim: React.CSSProperties = {
@@ -70,7 +72,7 @@ export default async function UsersPage() {
   const [{ data: membersRaw }, { data: org }, usersList] = await Promise.all([
     service
       .from('user_organisations')
-      .select('id, user_id, role, is_active, created_at, profile:profiles!user_organisations_user_id_fkey(full_name, email)')
+      .select('id, user_id, role, is_active, accepted_at, created_at, profile:profiles!user_organisations_user_id_fkey(full_name, email)')
       .eq('organisation_id', ctx.organisationId)
       .order('created_at'),
     service
@@ -108,7 +110,7 @@ export default async function UsersPage() {
         {/* Add user */}
         <div className="data-panel">
           <div className="data-panel-header">
-            <span className="data-panel-title">Add user</span>
+            <span className="data-panel-title">Invite user</span>
           </div>
           <div style={{ padding: '16px 18px' }}>
             <AddUserForm />
@@ -125,56 +127,62 @@ export default async function UsersPage() {
           {members.length === 0 ? (
             <div className="data-panel-empty" style={{ padding: '24px 18px' }}>No users yet.</div>
           ) : (
-            members.map((m) => (
-              <div
-                key={m.id}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '14px 18px', borderTop: '1px solid var(--c-border)',
-                  flexWrap: 'wrap', opacity: m.is_active ? 1 : 0.55,
-                }}
-              >
-                <div style={{
-                  width: 36, height: 36, borderRadius: '50%',
-                  background: 'var(--c-amber-dim)', border: '1px solid var(--c-amber-mid)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-amber)',
-                  flexShrink: 0,
-                }}>
-                  {m.profile?.full_name?.[0]?.toUpperCase() ?? '?'}
+            members.map((m) => {
+              const state = membershipState({ is_active: m.is_active, accepted_at: m.accepted_at })
+              const isPending = state === 'pending'
+              return (
+                <div
+                  key={m.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '14px 18px', borderTop: '1px solid var(--c-border)',
+                    flexWrap: 'wrap', opacity: m.is_active ? 1 : 0.55,
+                  }}
+                >
+                  <div style={{
+                    width: 36, height: 36, borderRadius: '50%',
+                    background: 'var(--c-amber-dim)', border: '1px solid var(--c-amber-mid)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-amber)',
+                    flexShrink: 0,
+                  }}>
+                    {m.profile?.full_name?.[0]?.toUpperCase() ?? '?'}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 160 }}>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
+                      {m.profile?.full_name ?? '—'}
+                      {m.user_id === ctx.userId && (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginLeft: 8 }}>you</span>
+                      )}
+                    </p>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                      {m.profile?.email ?? '—'}
+                    </p>
+                  </div>
+                  <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
+                  {isPending && <span className="badge badge-amber">pending</span>}
+                  {!m.is_active && !isPending && <span className="badge badge-muted">inactive</span>}
+                  <div style={{ textAlign: 'right', minWidth: 96 }}>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                      {lastSeen.has(m.user_id)
+                        ? `seen ${formatDate(lastSeen.get(m.user_id)!)}`
+                        : 'never signed in'}
+                    </p>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--c-text-dim)', opacity: 0.6 }}>
+                      joined {formatDate(m.created_at)}
+                    </p>
+                  </div>
+                  <UserRowActions
+                    userId={m.user_id}
+                    role={m.role}
+                    isActive={m.is_active}
+                    isSelf={m.user_id === ctx.userId}
+                    callerRole={ctx.role}
+                    pending={isPending}
+                  />
                 </div>
-                <div style={{ flex: 1, minWidth: 160 }}>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
-                    {m.profile?.full_name ?? '—'}
-                    {m.user_id === ctx.userId && (
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginLeft: 8 }}>you</span>
-                    )}
-                  </p>
-                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
-                    {m.profile?.email ?? '—'}
-                  </p>
-                </div>
-                <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
-                {!m.is_active && <span className="badge badge-muted">inactive</span>}
-                <div style={{ textAlign: 'right', minWidth: 96 }}>
-                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
-                    {lastSeen.has(m.user_id)
-                      ? `seen ${formatDate(lastSeen.get(m.user_id)!)}`
-                      : 'never signed in'}
-                  </p>
-                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--c-text-dim)', opacity: 0.6 }}>
-                    joined {formatDate(m.created_at)}
-                  </p>
-                </div>
-                <UserRowActions
-                  userId={m.user_id}
-                  role={m.role}
-                  isActive={m.is_active}
-                  isSelf={m.user_id === ctx.userId}
-                  callerRole={ctx.role}
-                />
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       </div>
