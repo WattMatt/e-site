@@ -175,3 +175,60 @@ Invite / accept / decline reuse existing `auth_events` types (`user_created`, `u
 
 No integration harness exists for server actions in this codebase, so the flows are verified
 by the smoke walkthrough + typecheck rather than automated e2e.
+
+## Appendix A — Supabase "Invite user" email template
+
+The branded template below replaces Supabase's default invite template so new-user (Path A)
+invite emails are E-Site-branded. It is applied to the Supabase project's auth config via the
+Management API — **a production-config change, applied manually with sign-off** (it is not
+committed code).
+
+**Subject** (`mailer_subjects_invite`): `You've been invited to E-Site`
+
+**HTML body** (`mailer_templates_invite_content`) — uses Supabase template variables
+`{{ .ConfirmationURL }}` (the accept link → `/auth/callback?next=/invite`) and `{{ .Token }}`
+(the 6-digit code for the `/invite` page's code fallback):
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;">
+    <tr><td>
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:8px;padding:40px 36px;">
+        <tr><td style="padding-bottom:24px;">
+          <span style="font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:-0.5px;">E-Site</span>
+        </td></tr>
+        <tr><td style="font-size:16px;color:#1a1a1a;line-height:1.6;padding-bottom:16px;">
+          You've been invited to join <strong>E-Site</strong>.
+        </td></tr>
+        <tr><td style="font-size:15px;color:#444444;line-height:1.6;padding-bottom:32px;">
+          Click below to accept your invitation and create your password:
+        </td></tr>
+        <tr><td style="padding-bottom:28px;">
+          <a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#d97706;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;padding:12px 28px;border-radius:6px;">Accept invitation</a>
+        </td></tr>
+        <tr><td style="font-size:13px;color:#666666;line-height:1.6;padding-bottom:8px;">
+          Or enter this 6-digit code on the invite page:
+        </td></tr>
+        <tr><td style="padding-bottom:32px;">
+          <span style="font-family:monospace;font-size:24px;font-weight:700;letter-spacing:6px;color:#1a1a1a;">{{ .Token }}</span>
+        </td></tr>
+        <tr><td style="font-size:13px;color:#888888;line-height:1.5;border-top:1px solid #eeeeee;padding-top:24px;">
+          If you weren't expecting this invitation, you can safely ignore this email.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+```
+
+**How to apply:** `PATCH https://api.supabase.com/v1/projects/cbskbnvvgcybmfikxgky/config/auth`
+with body `{ "mailer_subjects_invite": "...", "mailer_templates_invite_content": "..." }`,
+authenticated with the Supabase Management API PAT (macOS keychain, service `Supabase CLI`).
+Capture the current values first so the change is reversible.
+
+**Note:** the feature works without this step — Supabase's default invite template is already a
+genuine "you've been invited" email (not a password reset). This appendix is branding polish.
