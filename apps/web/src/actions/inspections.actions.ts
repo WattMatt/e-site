@@ -210,6 +210,84 @@ export interface CreateInspectionInput {
   scheduledAt: string | null
 }
 
+/** Template_ids whose schema carries the `sub_feeds` repeating_group. */
+const SUB_FEED_TEMPLATE_IDS = ['fat-inspection-report', 'electrical-main-board-inspection']
+
+/**
+ * Pre-create one `sub_feeds` repeating_group entry per outgoing sub-feed of a
+ * board, read from the current cable-schedule revision. Seeding one
+ * `feed_label` response row per index materialises that entry in the capture
+ * UI (synthetic field_id `<group>[<index>].<sub_field>`); the inspector then
+ * fills the breaker / meter / CT fields. Best-effort — the caller wraps this
+ * in try/catch so a failure never blocks inspection creation.
+ */
+async function prePopulateSubFeeds(
+  supabase: AnyClient,
+  args: {
+    inspectionId: string
+    projectId: string
+    templateRowId: string
+    boardNodeId: string
+    userId: string
+  },
+): Promise<void> {
+  // Only FAT / EMB templates define the sub_feeds repeating_group.
+  const { data: tpl } = await supabase
+    .schema('inspections')
+    .from('templates')
+    .select('template_id')
+    .eq('id', args.templateRowId)
+    .single()
+  const templateKey = (tpl as { template_id: string } | null)?.template_id
+  if (!templateKey || !SUB_FEED_TEMPLATE_IDS.includes(templateKey)) return
+
+  const revisionId = await getCurrentRevisionId(supabase, args.projectId)
+  if (!revisionId) return
+
+  // Outgoing sub-feeds: supplies leaving this board node.
+  const { data: supplies } = await supabase
+    .schema('cable_schedule')
+    .from('supplies')
+    .select('to_node_id')
+    .eq('revision_id', revisionId)
+    .eq('from_node_id', args.boardNodeId)
+
+  const destIds = [
+    ...new Set(
+      ((supplies as Array<{ to_node_id: string | null }> | null) ?? [])
+        .map((s) => s.to_node_id)
+        .filter((v): v is string => Boolean(v)),
+    ),
+  ]
+  if (destIds.length === 0) return
+
+  // Resolve each destination's label from structure.nodes.
+  const { data: nodes } = await supabase
+    .schema('structure')
+    .from('nodes')
+    .select('id, code, name')
+    .in('id', destIds)
+  const labelOf = new Map(
+    ((nodes as Array<{ id: string; code: string; name: string | null }> | null) ?? []).map(
+      (n) => [n.id, n.name || n.code],
+    ),
+  )
+  const labels = destIds.map((id) => labelOf.get(id) ?? id).sort((a, b) => a.localeCompare(b))
+
+  // One feed_label response row per index materialises that repeating_group entry.
+  const now = new Date().toISOString()
+  const rows = labels.map((label, i) => ({
+    inspection_id: args.inspectionId,
+    section_id: 'sub_feed_capture',
+    field_id: `sub_feeds[${i}].feed_label`,
+    value_text: label,
+    latest_responded_by: args.userId,
+    latest_responded_at: now,
+  }))
+  const { error } = await supabase.schema('inspections').from('responses').insert(rows)
+  if (error) throw error
+}
+
 export async function createInspectionAction(input: CreateInspectionInput): Promise<string> {
   const supabase = (await createClient()) as AnyClient
   const user = await requirePmOrAbove(supabase, input.organisationId)
@@ -235,6 +313,22 @@ export async function createInspectionAction(input: CreateInspectionInput): Prom
 
   if (error) throw error
   const inspectionId = (data as { id: string }).id
+
+  // Pre-populate per-sub-feed capture groups for FAT/EMB inspections on a
+  // board. Best-effort — a failure here must never block inspection creation.
+  if (input.targetNodeType === 'board' && input.targetNodeId) {
+    try {
+      await prePopulateSubFeeds(supabase, {
+        inspectionId,
+        projectId: input.projectId,
+        templateRowId: input.templateId,
+        boardNodeId: input.targetNodeId,
+        userId: user.id,
+      })
+    } catch (e) {
+      console.error('[createInspectionAction] sub-feed pre-population failed:', e)
+    }
+  }
 
   // Best-effort notification to the assignee (skip if they assigned themselves).
   if (input.assignedToId && input.assignedToId !== user.id) {
