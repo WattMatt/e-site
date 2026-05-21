@@ -19,6 +19,22 @@ async function buildFixtureWorkbook(rows: FixtureRow[]): Promise<Buffer> {
   return Buffer.from(buf);
 }
 
+/**
+ * Flexible builder — caller supplies the exact header row and data rows.
+ * Used to exercise tolerant header matching and footer-row handling.
+ */
+async function buildWorkbook(
+  header: (string | null)[],
+  dataRows: (string | number | null)[][],
+): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  ws.addRow(header);
+  for (const r of dataRows) ws.addRow(r);
+  const buf = await wb.xlsx.writeBuffer();
+  return Buffer.from(buf);
+}
+
 // ---------------------------------------------------------------------------
 // Baseline fixture — mirrors key rows from the real TENANT SCHEDULE.xlsx
 // ---------------------------------------------------------------------------
@@ -309,5 +325,133 @@ describe('TenantImportRow shape', () => {
     expect(typeof row.shop_area_m2).toBe('number');
     // shop_name may be string or null
     expect(row.shop_name === null || typeof row.shop_name === 'string').toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tolerant header matching — real-file header wording
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — tolerant header matching', () => {
+  it('parses the real KINGSWALK headers ("SHOP NO." / "Shop name" / "Area (m²)")', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'Area (m²)'],
+      [
+        ['01', 'VACANT', 131.66],
+        ['01A', 'WATLOO BUTCHERY', 802.34],
+        ['K01', 'KIOSK', 15.9],
+      ],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows[0]).toMatchObject({ shop_number: '01', shop_name: 'VACANT', shop_area_m2: 131.66 });
+    expect(result.rows[1]).toMatchObject({
+      shop_number: '01A',
+      shop_name: 'WATLOO BUTCHERY',
+      shop_area_m2: 802.34,
+    });
+  });
+
+  it('matches headers case-insensitively', async () => {
+    const buf = await buildWorkbook(['shop no.', 'tenant', 'gla'], [['1', 'BOXER', 1809.27]]);
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(1);
+  });
+
+  it('matches an ASCII "Area (m2)" header (no superscript)', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'Area (m2)'],
+      [['1', 'PEP', 501.52]],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows[0].shop_area_m2).toBe(501.52);
+  });
+
+  it('resolves columns by header, not by position (reordered columns)', async () => {
+    const buf = await buildWorkbook(
+      ['Area (m²)', 'SHOP NO.', 'Shop name'],
+      [[250, '03', 'MAX BOX']],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows[0]).toMatchObject({
+      shop_number: '03',
+      shop_name: 'MAX BOX',
+      shop_area_m2: 250,
+    });
+  });
+
+  it('still accepts the legacy "TENANT" / "TOTAL GLA" wording', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'TENANT', 'TOTAL GLA'],
+      [['1', 'WOOLWORTHS', 577.4]],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(1);
+  });
+
+  it('errors with a clear message when the area column is absent', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'NOTES'],
+      [['1', 'CLICKS', 'anchor']],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.rows).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].source_row).toBe(1);
+    expect(result.errors[0].message).toMatch(/area|gla/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Trailing total / separator rows
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — trailing total / separator rows', () => {
+  it('skips a "TOTAL GLA" footer row (blank shop no. + blank area) silently', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'Area (m²)'],
+      [
+        ['01', 'VACANT', 131.66],
+        ['02', 'SLEEPMASTERS', 150.49],
+        [null, 'TOTAL GLA', null], // footer row — must be skipped, not an error
+      ],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(2);
+  });
+
+  it('skips a footer row whose area is a SUM formula (real KINGSWALK shape)', async () => {
+    // Mirrors the real file's row 109: [blank, "TOTAL GLA", =SUM(C2:C3)].
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.addRow(['SHOP NO.', 'Shop name', 'Area (m²)']);
+    ws.addRow(['01', 'VACANT', 131.66]);
+    ws.addRow(['02', 'SLEEPMASTERS', 150.49]);
+    ws.addRow([null, 'TOTAL GLA', { formula: 'SUM(C2:C3)', result: 282.15 }]);
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(2);
+  });
+
+  it('still errors on a row with a blank SHOP NO. but a present (literal) area', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'Area (m²)'],
+      [
+        ['01', 'VACANT', 131.66],
+        [null, 'MYSTERY TENANT', 200], // real mistake — literal area present, shop no. missing
+      ],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.rows).toHaveLength(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].source_row).toBe(3);
+    expect(result.errors[0].message).toMatch(/shop no/i);
   });
 });
