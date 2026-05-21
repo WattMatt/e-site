@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 00091 — beneficial occupation (BO) date tracking
+-- Migration 00093 — beneficial occupation (BO) date tracking
 -- =============================================================================
 -- Background:
 --   The Tenant Schedule hands shops over to tenants on "beneficial occupation"
