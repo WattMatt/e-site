@@ -67,7 +67,7 @@ export default async function UsersPage() {
 
   const service = createServiceClient()
 
-  const [{ data: membersRaw }, { data: org }] = await Promise.all([
+  const [{ data: membersRaw }, { data: org }, usersList] = await Promise.all([
     service
       .from('user_organisations')
       .select('id, user_id, role, is_active, created_at, profile:profiles!user_organisations_user_id_fkey(full_name, email)')
@@ -78,10 +78,18 @@ export default async function UsersPage() {
       .select('name')
       .eq('id', ctx.organisationId)
       .maybeSingle(),
+    // last_sign_in_at lives on auth.users — fetch it via the admin API.
+    // One page of 1000 covers any realistic single project.
+    service.auth.admin.listUsers({ page: 1, perPage: 1000 }),
   ])
 
   const members = (membersRaw ?? []) as unknown as MemberRow[]
   const activeCount = members.filter((m) => m.is_active).length
+
+  const lastSeen = new Map<string, string>()
+  for (const u of usersList.data?.users ?? []) {
+    if (u.last_sign_in_at) lastSeen.set(u.id, u.last_sign_in_at)
+  }
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 820 }}>
@@ -148,9 +156,16 @@ export default async function UsersPage() {
                 </div>
                 <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
                 {!m.is_active && <span className="badge badge-muted">inactive</span>}
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
-                  {formatDate(m.created_at)}
-                </span>
+                <div style={{ textAlign: 'right', minWidth: 96 }}>
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                    {lastSeen.has(m.user_id)
+                      ? `seen ${formatDate(lastSeen.get(m.user_id)!)}`
+                      : 'never signed in'}
+                  </p>
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--c-text-dim)', opacity: 0.6 }}>
+                    joined {formatDate(m.created_at)}
+                  </p>
+                </div>
                 <UserRowActions
                   userId={m.user_id}
                   role={m.role}

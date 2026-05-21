@@ -127,6 +127,10 @@ export async function updateUserAction(input: {
   role?: string
   isActive?: boolean
 }): Promise<ActionResult> {
+  const h = await headers()
+  const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ua = h.get('user-agent') ?? null
+
   const ctx = await getOrgContext()
   if (!ctx) return { ok: false, error: 'Not authenticated.' }
   if (!isOrgAdmin(ctx.role)) return { ok: false, error: 'Only an admin or owner can edit users.' }
@@ -182,12 +186,24 @@ export async function updateUserAction(input: {
     .eq('id', target.id)
   if (updErr) return { ok: false, error: updErr.message }
 
+  await logAuthEvent(service, {
+    userId,
+    eventType: 'user_updated',
+    ipAddress: ip === 'unknown' ? null : ip,
+    userAgent: ua,
+    metadata:  { updated_by: ctx.userId, organisation_id: ctx.organisationId, ...patch },
+  })
+
   revalidatePath('/settings/users')
   return { ok: true }
 }
 
 /** Remove a member; delete their auth account if they belong to no other org. */
 export async function removeUserAction(input: { userId: string }): Promise<ActionResult> {
+  const h = await headers()
+  const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ua = h.get('user-agent') ?? null
+
   const ctx = await getOrgContext()
   if (!ctx) return { ok: false, error: 'Not authenticated.' }
   if (!isOrgAdmin(ctx.role)) return { ok: false, error: 'Only an admin or owner can remove users.' }
@@ -232,6 +248,14 @@ export async function removeUserAction(input: { userId: string }): Promise<Actio
     .delete()
     .eq('id', target.id)
   if (delErr) return { ok: false, error: delErr.message }
+
+  await logAuthEvent(service, {
+    userId,
+    eventType: 'user_removed',
+    ipAddress: ip === 'unknown' ? null : ip,
+    userAgent: ua,
+    metadata:  { removed_by: ctx.userId, organisation_id: ctx.organisationId, removed_role: target.role },
+  })
 
   // If the user now belongs to no organisation, delete the auth account too.
   const { count: remaining } = await service
