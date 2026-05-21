@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { updateSession } from './lib/supabase/middleware'
 
-const PUBLIC_PATHS = ['/login', '/signup', '/reset-password', '/auth/callback', '/share', '/account-deleted', '/inspection']
+const PUBLIC_PATHS = ['/login', '/signup', '/reset-password', '/auth/callback', '/share', '/account-deleted', '/inspection', '/invite']
 const ONBOARDING_PATH = '/onboarding'
 const VERIFY_EMAIL_PATH = '/verify-email'
 const VERIFY_MFA_PATH = '/verify-mfa'
@@ -82,12 +82,15 @@ export async function middleware(request: NextRequest) {
   //    code exchange), /reset-password* (the OTP flow establishes a
   //    recovery session via verifyOtp, then the user sets a new password
   //    while still on /reset-password/confirm — must NOT bounce them away),
-  //    and /inspection/* (public share links — signed-in users viewing a
+  //    /inspection/* (public share links — signed-in users viewing a
   //    shared cert should see the same public view as anonymous visitors,
-  //    not get redirected to their dashboard).
+  //    not get redirected to their dashboard), and /invite (a brand-new
+  //    invitee lands here with an invite session and needs to set their
+  //    password before the session is useful for anything else).
   const isResetFlow = pathname.startsWith('/reset-password')
   const isPublicShare = pathname.startsWith('/inspection')
-  if (user && isPublicPath && !isAuthCallback && !isResetFlow && !isPublicShare) {
+  const isInviteFlow = pathname.startsWith('/invite')
+  if (user && isPublicPath && !isAuthCallback && !isResetFlow && !isPublicShare && !isInviteFlow) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     url.searchParams.delete('next')
