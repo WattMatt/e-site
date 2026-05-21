@@ -12,6 +12,7 @@ import FileField from './fields/FileField'
 import HeaderField from './fields/HeaderField'
 import ComputedField from './fields/ComputedField'
 import RepeatingGroupField from './fields/RepeatingGroupField'
+import InlinePhotoCapture from './fields/InlinePhotoCapture'
 
 export interface RendererProps {
   field: Field
@@ -30,7 +31,23 @@ export interface RendererProps {
   onUpsert?: (fieldId: string, patch: Partial<InspectionResponse>) => void
 }
 
-export default function FieldRenderer(p: RendererProps) {
+// Answerable entry types that get an inline photo-capture strip, so a field
+// worker can attach photo evidence directly to the specific check, measurement
+// or field it documents. Excluded: `photo` (already a photo field),
+// `signature`/`file` (their own attachment), `header`/`computed` (not
+// answerable), and `repeating_group` (its sub-fields get their own strip via
+// the nested FieldRenderer below).
+const PHOTO_CAPTURE_TYPES: ReadonlySet<string> = new Set([
+  'pass_fail',
+  'number',
+  'text',
+  'textarea',
+  'dropdown',
+  'multi_select',
+  'date',
+])
+
+function renderFieldBody(p: RendererProps) {
   switch (p.field.type) {
     case 'pass_fail':
       return <PassFailField {...p} />
@@ -59,4 +76,23 @@ export default function FieldRenderer(p: RendererProps) {
     default:
       return null
   }
+}
+
+export default function FieldRenderer(p: RendererProps) {
+  const body = renderFieldBody(p)
+  if (!PHOTO_CAPTURE_TYPES.has(p.field.type)) return body
+
+  return (
+    <>
+      {body}
+      <InlinePhotoCapture
+        inspectionId={p.inspectionId}
+        sectionId={p.sectionId}
+        fieldId={p.field.field_id}
+        // A verifier reviewing the inspection can flip pass/fail but should not
+        // be capturing fresh photo evidence — treat verifier mode as read-only.
+        readOnly={p.readOnly || p.verifierFlipMode}
+      />
+    </>
+  )
 }

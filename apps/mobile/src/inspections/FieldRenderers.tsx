@@ -72,7 +72,35 @@ export interface RendererProps {
   onDeleteEntry?: (groupFieldId: string, index: number) => Promise<void>
 }
 
+// Answerable entry types that get an inline photo-capture strip, so a field
+// worker can attach photo evidence directly to the specific check or
+// measurement it documents. Mirrors PHOTO_CAPTURE_TYPES in the web FieldRenderer.
+const INLINE_PHOTO_TYPES = new Set<string>([
+  'pass_fail',
+  'number',
+  'text',
+  'textarea',
+  'dropdown',
+  'multi_select',
+  'date',
+])
+
 export function Renderer(props: RendererProps): JSX.Element | null {
+  const body = renderFieldBody(props)
+  if (!INLINE_PHOTO_TYPES.has(props.field.type)) return body
+  return (
+    <>
+      {body}
+      <InlineFieldPhotos
+        inspectionId={props.inspectionId}
+        sectionId={props.sectionId}
+        fieldId={props.field.field_id}
+      />
+    </>
+  )
+}
+
+function renderFieldBody(props: RendererProps): JSX.Element | null {
   const { field } = props
   switch (field.type) {
     case 'pass_fail':
@@ -316,23 +344,15 @@ function ChoiceField({ field, response, onChange }: RendererProps) {
 
 // ─── Photo ──────────────────────────────────────────────────────────
 
-function PhotoField({
-  field,
-  inspectionId,
-  sectionId,
-}: {
-  field: Field
-  inspectionId: string
-  sectionId: string
-}) {
+// Shared camera-capture + enqueue logic. Photos are keyed by
+// (inspection_id, section_id, field_id), so each one ties to its exact entry.
+function usePhotoCapture(inspectionId: string, sectionId: string, fieldId: string) {
   const [enqueueing, setEnqueueing] = useState(false)
-  // localPhotos holds the file:// URI + a stable id for each captured photo.
-  // We use local URIs for thumbnails so they display immediately, even offline,
-  // without needing a signed storage URL.
+  // localPhotos holds the file:// URI + a stable id for each captured photo —
+  // local URIs render thumbnails immediately, even offline.
   const [localPhotos, setLocalPhotos] = useState<LightboxPhoto[]>([])
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
 
-  const onPick = async () => {
+  const capture = async () => {
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync()
       if (!perm.granted) {
@@ -362,7 +382,7 @@ function PhotoField({
       // remote_path uses __placeholder__/<inspection_id>/... — the upload
       // worker resolves this to <project_id>/<inspection_id>/... at upload
       // time via lookupProjectId().
-      const remotePath = `__placeholder__/${inspectionId}/${sectionId}/${field.field_id}/${Date.now()}.jpg`
+      const remotePath = `__placeholder__/${inspectionId}/${sectionId}/${fieldId}/${Date.now()}.jpg`
       await enqueueAttachment({
         id,
         inspection_id: inspectionId,
@@ -370,7 +390,7 @@ function PhotoField({
         local_path: localCopy,
         remote_path: remotePath,
         section_id: sectionId,
-        field_id: field.field_id,
+        field_id: fieldId,
         signature_role: null,
         signatory_name: null,
         signatory_title: null,
@@ -389,6 +409,25 @@ function PhotoField({
       setEnqueueing(false)
     }
   }
+
+  return { enqueueing, localPhotos, capture }
+}
+
+function PhotoField({
+  field,
+  inspectionId,
+  sectionId,
+}: {
+  field: Field
+  inspectionId: string
+  sectionId: string
+}) {
+  const { enqueueing, localPhotos, capture: onPick } = usePhotoCapture(
+    inspectionId,
+    sectionId,
+    field.field_id,
+  )
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
 
   return (
     <View>
@@ -420,6 +459,52 @@ function PhotoField({
       ) : null}
 
       {/* Full-screen lightbox */}
+      <PhotoLightbox
+        photos={localPhotos}
+        activeIndex={lightboxIndex ?? 0}
+        visible={lightboxIndex !== null}
+        onClose={() => setLightboxIndex(null)}
+      />
+    </View>
+  )
+}
+
+// Compact photo strip rendered beneath every answerable entry — the mobile
+// mirror of the web InlinePhotoCapture. Photos attach to the entry's own
+// field_id so each one is tied to the exact check it documents.
+function InlineFieldPhotos({
+  inspectionId,
+  sectionId,
+  fieldId,
+}: {
+  inspectionId: string
+  sectionId: string
+  fieldId: string
+}) {
+  const { enqueueing, localPhotos, capture } = usePhotoCapture(inspectionId, sectionId, fieldId)
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+
+  return (
+    <View style={styles.inlinePhotoRow}>
+      {localPhotos.map((photo, idx) => (
+        <TouchableOpacity
+          key={photo.id}
+          style={styles.inlinePhotoThumb}
+          onPress={() => setLightboxIndex(idx)}
+          activeOpacity={0.8}
+        >
+          <Image source={{ uri: photo.uri }} style={styles.photoThumbImg} resizeMode="cover" />
+        </TouchableOpacity>
+      ))}
+      <Pressable
+        onPress={capture}
+        disabled={enqueueing}
+        style={[styles.inlinePhotoBtn, enqueueing && { opacity: 0.5 }]}
+      >
+        <Text style={styles.inlinePhotoBtnText}>
+          {enqueueing ? 'Saving…' : localPhotos.length > 0 ? '+ Photo' : '+ Add photo'}
+        </Text>
+      </Pressable>
       <PhotoLightbox
         photos={localPhotos}
         activeIndex={lightboxIndex ?? 0}
@@ -796,6 +881,33 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   photoThumbImg: { width: '100%', height: '100%' },
+  inlinePhotoRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  inlinePhotoThumb: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+    backgroundColor: colors.surface,
+  },
+  inlinePhotoBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.borderMid,
+  },
+  inlinePhotoBtnText: {
+    color: colors.amber,
+    fontSize: fontSize.small,
+    fontWeight: fontWeight.semibold,
+  },
   sectionHeader: {
     fontSize: fontSize.lg,
     fontWeight: fontWeight.semibold,
