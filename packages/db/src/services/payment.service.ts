@@ -376,6 +376,33 @@ export class PaystackService {
   }
 
   /**
+   * Fetch a subscription by code. Paystack returns the email_token that is
+   * required (alongside the code) to enable or disable the subscription.
+   */
+  async fetchSubscription(
+    code: string,
+  ): Promise<{ subscription_code: string; email_token: string; status: string }> {
+    return this.request<{ subscription_code: string; email_token: string; status: string }>(
+      'GET',
+      `/subscription/${encodeURIComponent(code)}`,
+    )
+  }
+
+  /**
+   * Disable (cancel) a recurring subscription so Paystack stops charging the
+   * customer. Paystack requires the subscription's email_token, so we fetch it
+   * first. Paystack then emits a subscription.disable event, which the billing
+   * webhook reflects into billing.subscriptions.
+   */
+  async disableSubscription(code: string): Promise<void> {
+    const sub = await this.fetchSubscription(code)
+    await this.request<unknown>('POST', '/subscription/disable', {
+      code,
+      token: sub.email_token,
+    })
+  }
+
+  /**
    * List SA banks (for supplier subaccount onboarding form).
    */
   async listSABanks(): Promise<Array<{ id: number; name: string; code: string }>> {

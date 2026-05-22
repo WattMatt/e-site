@@ -141,19 +141,21 @@ export const billingService = {
     description?: string
     paidAt?: string
   }) {
+    // Idempotent on paystack_reference: a duplicate webhook delivery, or the
+    // callback and webhook both recording the same charge, is a clean no-op.
     const { data, error } = await client
       .schema('billing')
       .from('invoices')
-      .insert({
+      .upsert({
         organisation_id: orgId,
         paystack_reference: params.paystackReference,
         amount_kobo: params.amountKobo,
         status: params.status,
         description: params.description,
         paid_at: params.paidAt,
-      })
+      }, { onConflict: 'paystack_reference', ignoreDuplicates: true })
       .select()
-      .single()
+      .maybeSingle()
     if (error) throw error
     return data
   },

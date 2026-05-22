@@ -134,8 +134,9 @@ async function resolveOrgAdmin(
     .from('user_organisations')
     .select('user_id, profile:profiles!user_id(id, full_name, email)')
     .eq('organisation_id', orgId)
-    .eq('role', 'org_admin')
+    .in('role', ['owner', 'admin'])
     .eq('is_active', true)
+    .order('role', { ascending: false })
     .limit(1)
     .maybeSingle()
   const p = data?.profile as { id: string; full_name: string | null; email: string | null } | undefined
