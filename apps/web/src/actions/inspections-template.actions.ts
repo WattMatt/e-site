@@ -92,7 +92,6 @@ export async function getTemplateAction(id: string) {
 export async function createTemplateAction(
   organisationId: string,
   jsonText: string,
-  description?: string | null,
 ) {
   const supabase = await createClient()
   const user = await requireOwnerOrAdmin(supabase, organisationId)
@@ -125,7 +124,6 @@ export async function createTemplateAction(
       node_subtypes: t.node_subtypes ?? null,
       sans_reference: t.sans_reference ?? null,
       deliverable_type: t.deliverable_type,
-      description: description?.trim() || null,
       schema_json: t,
       is_active: true,
       created_by: user.id,
@@ -495,7 +493,7 @@ export async function newTemplateVersionAction(
   const { data: source } = await (supabase as AnyClient)
     .schema('inspections')
     .from('templates')
-    .select('template_id, description')
+    .select('template_id, name, description')
     .eq('id', sourceId)
     .single()
 
@@ -513,7 +511,7 @@ export async function newTemplateVersionAction(
       organisation_id: organisationId,
       template_id: t.template_id,
       version: t.version,
-      name: t.name,
+      name: (source as { name?: string }).name ?? t.name,
       applies_to_node_types: t.applies_to_node_types,
       node_subtypes: t.node_subtypes ?? null,
       sans_reference: t.sans_reference ?? null,
