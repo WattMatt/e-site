@@ -64,6 +64,54 @@ export default async function SettingsPage() {
           </div>
         )}
 
+        {/* Users */}
+        {isAdmin && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Users</span>
+            </div>
+            <div style={{ padding: '16px 18px' }}>
+              <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+                Invite teammates, assign roles, and manage who has access to your organisation.
+              </p>
+              <Link
+                href="/settings/users"
+                style={{
+                  display: 'inline-block',
+                  fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                  border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                  textDecoration: 'none',
+                }}
+              >
+                Manage users →
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Billing */}
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">Billing &amp; plans</span>
+          </div>
+          <div style={{ padding: '16px 18px' }}>
+            <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+              View your subscription, change plan, and access invoices.
+            </p>
+            <Link
+              href="/settings/billing"
+              style={{
+                display: 'inline-block',
+                fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                textDecoration: 'none',
+              }}
+            >
+              Manage billing →
+            </Link>
+          </div>
+        </div>
+
         {/* Security */}
         <div className="data-panel">
           <div className="data-panel-header">
@@ -109,6 +157,31 @@ export default async function SettingsPage() {
                 }}
               >
                 Manage integrations →
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Health */}
+        {isAdmin && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Organisation health</span>
+            </div>
+            <div style={{ padding: '16px 18px' }}>
+              <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+                Track login recency and compliance activity across the organisations you administer.
+              </p>
+              <Link
+                href="/settings/health"
+                style={{
+                  display: 'inline-block',
+                  fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                  border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                  textDecoration: 'none',
+                }}
+              >
+                View health →
               </Link>
             </div>
           </div>

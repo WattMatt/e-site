@@ -112,11 +112,11 @@ export default async function HealthDashboardPage(props: {
 
       {/* Tier filter pills */}
       <div className="animate-fadeup animate-fadeup-1" style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-        <TierPill href="/admin/health"             active={tierFilter === 'all'}    label="All"    count={rows.length} />
-        <TierPill href="/admin/health?tier=red"    active={tierFilter === 'red'}    label="Red"    count={counts.red}    tier="red" />
-        <TierPill href="/admin/health?tier=orange" active={tierFilter === 'orange'} label="Orange" count={counts.orange} tier="orange" />
-        <TierPill href="/admin/health?tier=yellow" active={tierFilter === 'yellow'} label="Yellow" count={counts.yellow} tier="yellow" />
-        <TierPill href="/admin/health?tier=green"  active={tierFilter === 'green'}  label="Green"  count={counts.green}  tier="green" />
+        <TierPill href="/settings/health"             active={tierFilter === 'all'}    label="All"    count={rows.length} />
+        <TierPill href="/settings/health?tier=red"    active={tierFilter === 'red'}    label="Red"    count={counts.red}    tier="red" />
+        <TierPill href="/settings/health?tier=orange" active={tierFilter === 'orange'} label="Orange" count={counts.orange} tier="orange" />
+        <TierPill href="/settings/health?tier=yellow" active={tierFilter === 'yellow'} label="Yellow" count={counts.yellow} tier="yellow" />
+        <TierPill href="/settings/health?tier=green"  active={tierFilter === 'green'}  label="Green"  count={counts.green}  tier="green" />
       </div>
 
       <div className="data-panel animate-fadeup animate-fadeup-2">

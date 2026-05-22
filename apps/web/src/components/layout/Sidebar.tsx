@@ -5,8 +5,8 @@ import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
-  MessageSquare, ShoppingBag, Users, CreditCard,
-  Settings, LogOut, Activity, Map, ClipboardCheck, ArrowLeft, Cloud,
+  MessageSquare, ShoppingBag,
+  Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
   Cable, BookMarked, HardHat, Package, Store, Zap,
 } from 'lucide-react'
 
@@ -75,10 +75,6 @@ function projectNav(id: string) {
 const FOOTER_ITEMS = [
   { href: '/site',                   label: 'Site capture', Icon: HardHat },
   { href: '/cable-schedule/sans',    label: 'SANS ref',     Icon: BookMarked },
-  { href: '/admin/health',           label: 'Health',       Icon: Activity },
-  { href: '/settings/users',         label: 'Users',        Icon: Users },
-  { href: '/settings/billing',       label: 'Billing',      Icon: CreditCard },
-  { href: '/settings/integrations',  label: 'Integrations', Icon: Cloud },
   { href: '/settings',               label: 'Settings',     Icon: Settings },
 ] as const
 
