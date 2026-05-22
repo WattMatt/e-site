@@ -13,6 +13,53 @@ export interface FieldPhoto {
 }
 
 /**
+ * Downscale + re-encode a captured photo before upload.
+ *
+ * The upload route runs as a Vercel serverless function whose request body
+ * is capped at ~4.5 MB — a raw tablet/phone camera photo (2-6 MB) can exceed
+ * that and fail. This mirrors the mobile app's pre-upload step: resize to
+ * 2048 px wide and re-encode as JPEG q0.85. `imageOrientation: 'from-image'`
+ * bakes EXIF rotation into the pixels, so the result needs no orientation tag.
+ *
+ * Any failure (undecodable format, no canvas) falls back to the original file
+ * so a capture is never silently dropped.
+ */
+async function compressImage(file: File): Promise<File> {
+  const MAX_WIDTH = 2048
+  const QUALITY = 0.85
+
+  if (!file.type.startsWith('image/')) return file
+  if (typeof createImageBitmap !== 'function') return file
+
+  let bitmap: ImageBitmap | null = null
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+
+    const scale = Math.min(1, MAX_WIDTH / bitmap.width)
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return file
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', QUALITY),
+    )
+    // Keep the original if encoding failed or didn't actually shrink it.
+    if (!blob || blob.size >= file.size) return file
+
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', {
+      type: 'image/jpeg',
+    })
+  } catch {
+    return file
+  } finally {
+    bitmap?.close()
+  }
+}
+
+/**
  * Loads and uploads the photos attached to one inspection field.
  *
  * Photos are keyed by (inspection_id, section_id, field_id) — the same tuple
@@ -59,8 +106,9 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
       setUploading(true)
       setError(null)
       try {
+        const prepared = await compressImage(file)
         const fd = new FormData()
-        fd.append('file', file)
+        fd.append('file', prepared)
         fd.append('inspectionId', inspectionId)
         fd.append('sectionId', sectionId)
         fd.append('fieldId', fieldId)
