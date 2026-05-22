@@ -96,6 +96,11 @@ export default async function TemplateLibraryPage() {
                   <div style={{ minWidth: 0 }}>
                     <h2 style={{ fontSize: 15, fontWeight: 700, color: 'var(--c-text)', margin: 0 }}>{latest.name}</h2>
                     <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>{templateId}</p>
+                    {latest.description && (
+                      <p style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 6, maxWidth: 620 }}>
+                        {latest.description}
+                      </p>
+                    )}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <Badge variant={latest.deliverable_type === 'coc' ? 'warning' : 'info'}>

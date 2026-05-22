@@ -50,7 +50,7 @@ export async function listTemplatesAction(organisationId: string) {
     .schema('inspections')
     .from('templates')
     .select(
-      'id, template_id, version, name, applies_to_node_types, node_subtypes, deliverable_type, is_active, created_at, updated_at',
+      'id, template_id, version, name, description, applies_to_node_types, node_subtypes, deliverable_type, is_active, created_at, updated_at',
     )
     .eq('organisation_id', organisationId)
     .order('template_id', { ascending: true })
@@ -62,6 +62,7 @@ export async function listTemplatesAction(organisationId: string) {
     template_id: string
     version: string
     name: string
+    description: string | null
     applies_to_node_types: string[]
     node_subtypes: string[] | null
     deliverable_type: 'coc' | 'inspection_only' | 'factory_test'
@@ -91,6 +92,7 @@ export async function getTemplateAction(id: string) {
 export async function createTemplateAction(
   organisationId: string,
   jsonText: string,
+  description?: string | null,
 ) {
   const supabase = await createClient()
   const user = await requireOwnerOrAdmin(supabase, organisationId)
@@ -123,6 +125,7 @@ export async function createTemplateAction(
       node_subtypes: t.node_subtypes ?? null,
       sans_reference: t.sans_reference ?? null,
       deliverable_type: t.deliverable_type,
+      description: description?.trim() || null,
       schema_json: t,
       is_active: true,
       created_by: user.id,
@@ -492,7 +495,7 @@ export async function newTemplateVersionAction(
   const { data: source } = await (supabase as AnyClient)
     .schema('inspections')
     .from('templates')
-    .select('template_id')
+    .select('template_id, description')
     .eq('id', sourceId)
     .single()
 
@@ -515,6 +518,7 @@ export async function newTemplateVersionAction(
       node_subtypes: t.node_subtypes ?? null,
       sans_reference: t.sans_reference ?? null,
       deliverable_type: t.deliverable_type,
+      description: (source as { description?: string | null }).description ?? null,
       schema_json: t,
       is_active: true,
       created_by: user.id,
@@ -533,4 +537,43 @@ export async function newTemplateVersionAction(
 
   revalidatePath('/inspections/templates')
   return (data as { id: string }).id
+}
+
+// ─── updateTemplateDetailsAction ────────────────────────────────────────
+
+/**
+ * Edit a template's display name and description.
+ *
+ * Both are family-level metadata — the update is applied to EVERY version row
+ * of the template_id so the library stays consistent. schema_json is never
+ * touched, so this does not trip the immutability trigger and needs no version
+ * bump. Owner or admin only.
+ */
+export async function updateTemplateDetailsAction(
+  organisationId: string,
+  templateId: string,
+  details: { name: string; description: string | null },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const supabase = await createClient()
+    await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+
+    const name = details.name.trim()
+    if (!name) return { ok: false, error: 'Template name cannot be empty' }
+    const description = details.description?.trim() || null
+
+    const { error } = await (supabase as AnyClient)
+      .schema('inspections')
+      .from('templates')
+      .update({ name, description })
+      .eq('organisation_id', organisationId)
+      .eq('template_id', templateId)
+
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/inspections/templates')
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
 }

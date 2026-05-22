@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import TemplatePreviewPane from './TemplatePreviewPane'
 import DeleteTemplateButton from '../DeleteTemplateButton'
+import TemplateDetailsEditor from './TemplateDetailsEditor'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,13 +36,16 @@ export default async function ViewTemplatePage({ params }: Props) {
   if (!orgData) redirect('/onboarding')
 
   const orgId = orgData.organisation_id as string
-  const isOwner = (orgData.role as string) === 'owner'
+  const role = orgData.role as string
+  const isOwner = role === 'owner'
+  const canEditDetails = role === 'owner' || role === 'admin'
 
   const t = await getTemplateAction(id) as {
     id: string
     template_id: string
     version: string
     name: string
+    description: string | null
     applies_to_node_types: string[]
     deliverable_type: 'coc' | 'inspection_only' | 'factory_test'
     is_active: boolean
@@ -82,6 +86,16 @@ export default async function ViewTemplatePage({ params }: Props) {
         <Link href={`/inspections/templates/${t.id}/new-version`} style={{ textDecoration: 'none' }}>
           <Button>+ New Version</Button>
         </Link>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <TemplateDetailsEditor
+          organisationId={orgId}
+          templateId={t.template_id}
+          initialName={t.name}
+          initialDescription={t.description}
+          canEdit={canEditDetails}
+        />
       </div>
 
       <Card>
