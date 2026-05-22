@@ -38,7 +38,7 @@ export default async function SupplierProfilePage({ searchParams }: Props) {
     ? await supabase
         .schema('marketplace')
         .from('paystack_subaccounts')
-        .select('subaccount_code, is_active, bank_name, account_name')
+        .select('subaccount_code, is_verified, settlement_bank, business_name')
         .eq('supplier_id', supplier.id)
         .maybeSingle()
     : { data: null }
@@ -48,7 +48,7 @@ export default async function SupplierProfilePage({ searchParams }: Props) {
     supplier?.province &&
     (supplier as any)?.categories?.length > 0
   )
-  const isPaystackLinked = !!paystackSub?.is_active
+  const isPaystackLinked = !!paystackSub?.is_verified
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 20 }}>

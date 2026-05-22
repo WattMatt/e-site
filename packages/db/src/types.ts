@@ -2684,7 +2684,9 @@ export type Database = {
           cloud_storage_folder_id?: string | null
           cloud_storage_folder_path?: string | null
           cloud_storage_last_sync_at?: string | null
-          code: string
+          // Auto-filled by the projects_ensure_code BEFORE INSERT trigger
+          // (migration 00095); supabase gen types cannot see triggers.
+          code?: string
           contract_value?: number | null
           created_at?: string
           created_by: string
@@ -3538,7 +3540,9 @@ export type Database = {
           registration_no?: string | null
           registration_number?: string | null
           settings?: Json
-          slug: string
+          // Auto-filled by the organisations_ensure_slug BEFORE INSERT trigger
+          // (migration 00022); supabase gen types cannot see triggers.
+          slug?: string
           storage_used_bytes?: number
           subscription_tier?: string
           type?: string

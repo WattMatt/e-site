@@ -4,9 +4,9 @@ import { useState, useTransition } from 'react'
 
 interface Subaccount {
   subaccount_code: string
-  bank_name: string
-  account_name: string
-  is_active: boolean
+  settlement_bank: string
+  business_name: string
+  is_verified: boolean
 }
 
 interface Props {
@@ -57,7 +57,7 @@ export function PaystackOnboardingCard({ supplierId, subaccount }: Props) {
     })
   }
 
-  if (subaccount?.is_active) {
+  if (subaccount?.is_verified) {
     return (
       <div
         className="animate-fadeup animate-fadeup-2"
@@ -71,9 +71,9 @@ export function PaystackOnboardingCard({ supplierId, subaccount }: Props) {
         <h3 style={{ fontSize: 13, fontWeight: 700, color: '#4ade80', marginBottom: 8, letterSpacing: '0.02em' }}>
           ✓ Paystack Bank Account Linked
         </h3>
-        <p style={{ fontSize: 13, color: 'var(--c-text)' }}>{subaccount.account_name}</p>
+        <p style={{ fontSize: 13, color: 'var(--c-text)' }}>{subaccount.business_name}</p>
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>
-          {subaccount.bank_name} · Subaccount: {subaccount.subaccount_code}
+          {SA_BANKS.find(b => b.code === subaccount.settlement_bank)?.name ?? subaccount.settlement_bank} · Subaccount: {subaccount.subaccount_code}
         </p>
         <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 10 }}>
           Payments will be split automatically. Settlement typically 24–48 hours after payment.
