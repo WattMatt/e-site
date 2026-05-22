@@ -82,7 +82,11 @@ export default async function BillingPage() {
               <span style={{ color: subscription.status === 'active' ? '#4ade80' : 'var(--c-amber)' }}>
                 {subscription.status}
               </span>
-              {subscription.next_billing_date && ` · Renews ${subscription.next_billing_date}`}
+              {subscription.next_billing_date && (
+                subscription.status === 'cancelled'
+                  ? ` · Active until ${subscription.next_billing_date}`
+                  : ` · Renews ${subscription.next_billing_date}`
+              )}
             </p>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
