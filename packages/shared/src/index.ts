@@ -15,3 +15,7 @@ export * from './inspections'
 
 // Structure (Phase 2 — nodes, tenant schedule import)
 export * from './structure'
+
+// JBCC — Phase 5 pure modules
+export * from './lib/jbcc/sa-public-holidays'
+export * from './lib/jbcc/working-days'
