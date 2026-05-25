@@ -1,62 +1,28 @@
 /**
- * Shared role-gate helper for cable-schedule write actions (C12).
+ * Cable-schedule role-gate helpers.
  *
- * Reads the user's role from user_organisations directly (bypassing
- * lookupCableRole which silently coerces unknowns to 'Viewer' — a
- * false-positive risk per the same pattern in export-role.ts).
- *
- * Returns:
- * - { ok: true, role } when the user is an active member with one of the
- *   allowed roles for this organisation
- * - { ok: false, error } when not authenticated, not a member, or role
- *   not in the allowed list
- *
- * Caller is responsible for resolving the organisation_id from the
- * revision / project / entity being modified. Most cable-schedule write
- * actions take a revisionId; use requireRoleForRevision(supabase, revisionId)
- * below as a one-liner.
+ * The generic primitive `requireRole` now lives in `@/lib/auth/require-role`
+ * (the canonical RBAC module). This file keeps the cable-schedule-specific
+ * convenience wrapper `requireRoleForRevision` (which resolves the org id
+ * from a revision id via the revisions → projects join) and re-exports the
+ * primitive + role-group constants so existing import paths keep working.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { OrgRole } from '@esite/shared'
+import { ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
 
-// OrgRole — canonical shared vocabulary (packages/shared/src/types). Re-exported
-// so existing cable-schedule importers keep their import path.
-export type { OrgRole }
+import {
+  requireRole,
+  type RequireRoleResult,
+} from '@/lib/auth/require-role'
 
-export type RequireRoleResult =
-  | { ok: true; role: OrgRole }
-  | { ok: false; error: string }
-
-export async function requireRole(
-  supabase: SupabaseClient,
-  organisationId: string,
-  allowedRoles: readonly OrgRole[],
-): Promise<RequireRoleResult> {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { ok: false, error: 'Not authenticated' }
-
-  const { data: row } = await (supabase as any)
-    .from('user_organisations')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('organisation_id', organisationId)
-    .eq('is_active', true)
-    .maybeSingle()
-
-  const role = (row as { role?: OrgRole } | null)?.role
-  if (!role) return { ok: false, error: 'Not a member of this organisation' }
-  if (!allowedRoles.includes(role)) {
-    return { ok: false, error: `Your role (${role}) is not allowed to perform this action` }
-  }
-
-  return { ok: true, role }
-}
+export { requireRole }
+export type { OrgRole, RequireRoleResult }
 
 /**
  * Convenience wrapper — resolves the revision's organisation_id via the
- * revisions → projects.projects.organisation_id chain, then enforces
- * the role check.
+ * revisions → projects.projects.organisation_id chain, then enforces the
+ * role check.
  */
 export async function requireRoleForRevision(
   supabase: SupabaseClient,
@@ -86,8 +52,12 @@ export async function requireRoleForRevision(
   )
 }
 
-/** Common role groups for write actions */
-export const ROLES_ENGINEER = ['owner', 'admin', 'project_manager'] as const satisfies readonly OrgRole[]
-// 'field_worker' removed — it was never a DB-legal user_organisations.role and
+/**
+ * Common role groups for cable-schedule write actions.
+ * Aliased to the canonical @esite/shared constants so there's a single
+ * source of truth; names retained for call-site stability.
+ */
+export const ROLES_ENGINEER = ORG_WRITE_ROLES
+// 'field_worker' removed — was never a DB-legal user_organisations.role and
 // so was unreachable. Constant name retained for call-site stability.
-export const ROLES_ENGINEER_AND_FIELD = ['owner', 'admin', 'project_manager'] as const satisfies readonly OrgRole[]
+export const ROLES_ENGINEER_AND_FIELD = ORG_WRITE_ROLES
