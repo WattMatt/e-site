@@ -25,6 +25,14 @@ export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
   supplier:        'Supplier',
   client_viewer:   'Client (read-only)',
 }
+
+/**
+ * Role groups — canonical sets used by RBAC gates.
+ * Always import these instead of hardcoding role-string arrays at call sites;
+ * adding/renaming a role then flows through a single source.
+ */
+export const OWNER_ADMIN = ['owner', 'admin'] as const satisfies readonly OrgRole[]
+export const ORG_WRITE_ROLES = ['owner', 'admin', 'project_manager'] as const satisfies readonly OrgRole[]
 export type ProjectRole = 'project_manager' | 'contractor' | 'client_viewer'
 export type SubscriptionTier = 'free' | 'starter' | 'professional' | 'enterprise'
 export type SnagStatus = 'open' | 'in_progress' | 'resolved' | 'pending_sign_off' | 'signed_off' | 'closed'
