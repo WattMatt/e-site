@@ -83,6 +83,15 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       testMatch: /09-rbac-admin-routes\.spec\.ts/,
     },
+
+    // JBCC paywall tests — self-contained (each test logs in inline).
+    // Tests auto-skip when E2E_CONTRACTOR_EMAIL / E2E_JBCC_LOCKED_PROJECT_ID
+    // are unset, so the project is safe to run without seeded JBCC test data.
+    {
+      name: 'chromium-jbcc-paywall',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /10-jbcc-paywall\.spec\.ts/,
+    },
   ],
   webServer: process.env.CI ? undefined : {
     command: 'pnpm dev',

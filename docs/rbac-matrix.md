@@ -58,10 +58,19 @@ membership.
 | `/settings/users` | W | W | — | — | — | — | — |
 | `/settings/organisation` | W | W | ? | — | — | — | — |
 | `/settings/integrations` | W | W | ? | — | — | — | — |
+| `/projects/[id]/jbcc/unlock` | R⁴ | R⁴ | R⁴ | R⁴ | R⁴ | — | — |
+| `/projects/[id]/jbcc` (library landing) | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | R⁵ |
+| `/projects/[id]/jbcc/notice/[code]` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | R⁵ |
+| `/projects/[id]/jbcc/notice/[code]/new` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
+| `/projects/[id]/jbcc/tracking` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | R⁵ |
+| `/projects/[id]/jbcc/tracking/[letterId]` | W⁵ | W⁵ | W⁵ | W⁵ | R⁵ | — | R⁵ |
+| `/projects/[id]/jbcc/parties` | W⁵ | W⁵ | W⁵ | W⁵ | R⁵ | — | R⁵ |
 
 ¹ `client_viewer` exports redact cost columns ([`export-role.ts:104`](../apps/web/src/lib/cable-schedule/export-role.ts:104)).
 ² All inspections access requires `public.has_feature(org_id, 'inspections') = true` — the paywall layer comes before the role check. WM-Consulting bypasses.
 ³ Marketplace is Phase 2-gated by `NEXT_PUBLIC_PHASE_2_MARKETPLACE=true`.
+⁴ `/jbcc/unlock` is visible to all authenticated org members (read-only paywall page). The `<UnlockJbccButton />` inside only renders for owner/admin; all other roles see "ask your owner/admin" text. No redirect for locked org — this IS the locked-state destination.
+⁵ All JBCC routes under `/(gated)/` require `public.has_feature(org_id, 'jbcc') = true` — the `jbcc/layout.tsx` gate redirects locked orgs to `/jbcc/unlock` before any role check. WM-Consulting bypasses. For write-gated routes: `inspector`, `supplier`, and `client_viewer` cannot reach `/notice/[code]/new`; status/attachment mutations on tracking and CRUD on parties require `ORG_WRITE_ROLES` (owner/admin/project_manager/contractor) enforced server-side.
 
 ## API routes (`apps/web/src/app/api/*`)
 
@@ -72,6 +81,8 @@ membership.
 | `POST /api/paystack/callback` | n/a — public webhook, signature-validated |
 | `POST /api/inspections/delete-photo` | W | W | W | W² | W² | — | — |
 | `POST /api/notifications/dispatch` | bearer-token; not session-gated — **not yet audited** |
+| `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |
+| `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | — |
 
 ## Public / unauthenticated
 

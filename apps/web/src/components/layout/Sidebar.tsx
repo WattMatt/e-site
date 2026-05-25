@@ -8,7 +8,7 @@ import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
-  Cable, BookMarked, HardHat, Package, Store, Zap, Lock,
+  Cable, BookMarked, HardHat, Package, Store, Zap, Lock, ScrollText,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -80,6 +80,7 @@ function projectNav(id: string) {
     { href: `/projects/${id}/inspections`,     label: 'Inspections',     Icon: ClipboardCheck, exact: false },
     { href: `/projects/${id}/floor-plans`,  label: 'Floor Plans', Icon: Map,           exact: false },
     { href: `/projects/${id}/handover`,     label: 'Handover',    Icon: ClipboardCheck, exact: false },
+    { href: `/projects/${id}/jbcc`,         label: 'JBCC',        Icon: ScrollText,    exact: false },
   ]
 }
 
@@ -96,10 +97,11 @@ function extractProjectId(pathname: string): string | null {
 
 interface SidebarContentProps {
   inspectionsUnlocked: boolean
+  jbccUnlocked: boolean
   role: OrgRole | null
 }
 
-function SidebarContent({ inspectionsUnlocked, role }: SidebarContentProps) {
+function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarContentProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
@@ -148,6 +150,7 @@ function SidebarContent({ inspectionsUnlocked, role }: SidebarContentProps) {
               const active = exact
                 ? pathname === basePath
                 : pathname === basePath || pathname.startsWith(basePath + '/')
+              const isJbcc = basePath === `/projects/${projectId}/jbcc`
               return (
                 <Link
                   key={href}
@@ -157,6 +160,7 @@ function SidebarContent({ inspectionsUnlocked, role }: SidebarContentProps) {
                 >
                   <Icon {...IC} />
                   {label}
+                  {isJbcc && !jbccUnlocked && <LockedBadge />}
                 </Link>
               )
             })}
@@ -221,10 +225,11 @@ function SidebarContent({ inspectionsUnlocked, role }: SidebarContentProps) {
 
 interface SidebarProps {
   inspectionsUnlocked?: boolean
+  jbccUnlocked?: boolean
   role?: OrgRole | null
 }
 
-export function Sidebar({ inspectionsUnlocked = false, role = null }: SidebarProps = {}) {
+export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, role = null }: SidebarProps = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -234,7 +239,7 @@ export function Sidebar({ inspectionsUnlocked = false, role = null }: SidebarPro
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} role={role} />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} role={role} />
       </Suspense>
     </aside>
   )
