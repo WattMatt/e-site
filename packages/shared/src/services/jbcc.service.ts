@@ -304,3 +304,71 @@ export async function deleteLetter(client: Client, id: string): Promise<void> {
     .eq('id', id)
   if (error) throw error
 }
+
+// --- letter attachments ---------------------------------------------------
+
+export interface JbccLetterAttachment {
+  id: string
+  letter_id: string
+  organisation_id: string
+  file_path: string
+  file_name: string
+  mime_type: string | null
+  size_bytes: number | null
+  created_by: string
+  created_at: string
+}
+
+export async function listLetterAttachments(
+  client: Client,
+  letterId: string,
+): Promise<JbccLetterAttachment[]> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letter_attachments')
+    .select('*')
+    .eq('letter_id', letterId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as JbccLetterAttachment[]
+}
+
+export async function createLetterAttachment(client: Client, input: {
+  letter_id: string
+  organisation_id: string
+  file_path: string
+  file_name: string
+  mime_type: string | null
+  size_bytes: number | null
+  created_by: string
+}): Promise<JbccLetterAttachment> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letter_attachments')
+    .insert(input)
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as JbccLetterAttachment
+}
+
+export async function deleteLetterAttachment(client: Client, id: string): Promise<void> {
+  const { error } = await client
+    .schema('projects')
+    .from('jbcc_letter_attachments')
+    .delete()
+    .eq('id', id)
+  if (error) throw error
+}
+
+/** Letter detail needs the notice by id (not by code) since the letter stores notice_id. */
+export async function getNoticeById(client: Client, id: string): Promise<JbccNotice | null> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_notices')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  return (data ?? null) as JbccNotice | null
+}

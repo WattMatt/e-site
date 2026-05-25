@@ -13,6 +13,9 @@ import {
   getNotice,
   createLetter, computeDeadline, fillTemplate,
   generateLetterSchema,
+  getLetter, updateLetterStatus,
+  createLetterAttachment, deleteLetterAttachment, listLetterAttachments,
+  letterStatusSchema,
 } from '@esite/shared'
 
 export type ActionResult<T = void> =
@@ -283,5 +286,139 @@ export async function generateLetterAction(
       ok: false,
       error: e instanceof Error ? e.message : 'Letter insert failed',
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// updateLetterStatusAction
+// ---------------------------------------------------------------------------
+
+export async function updateLetterStatusAction(
+  projectId: string,
+  letterId: string,
+  raw: unknown,
+): Promise<ActionResult> {
+  const orgId = await getOrgIdForProject(projectId)
+  if (!orgId) return { ok: false, error: 'Project not found' }
+
+  const role = await requireRoleAPI(ORG_WRITE_ROLES, orgId)
+  if (!role.ok) return { ok: false, error: 'forbidden' }
+  await requireFeature(role.ctx.organisationId, 'jbcc', undefined, `/projects/${projectId}/jbcc/unlock`)
+
+  const parsed = letterStatusSchema.safeParse(raw)
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  }
+
+  const supabase = await createClient()
+  try {
+    await updateLetterStatus(supabase as any, letterId, parsed.data)
+    revalidatePath(`/projects/${projectId}/jbcc/tracking`)
+    revalidatePath(`/projects/${projectId}/jbcc/tracking/${letterId}`)
+    return { ok: true, data: undefined }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Update failed' }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// addAttachmentAction
+// ---------------------------------------------------------------------------
+
+export async function addAttachmentAction(
+  projectId: string,
+  letterId: string,
+  formData: FormData,
+): Promise<ActionResult<{ id: string }>> {
+  const orgId = await getOrgIdForProject(projectId)
+  if (!orgId) return { ok: false, error: 'Project not found' }
+
+  const role = await requireRoleAPI(ORG_WRITE_ROLES, orgId)
+  if (!role.ok) return { ok: false, error: 'forbidden' }
+  await requireFeature(role.ctx.organisationId, 'jbcc', undefined, `/projects/${projectId}/jbcc/unlock`)
+
+  const file = formData.get('file')
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: 'No file provided' }
+  }
+  if (file.size > 25 * 1024 * 1024) {
+    return { ok: false, error: 'File exceeds 25 MB limit' }
+  }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated' }
+
+  // Verify the letter belongs to this project.
+  const letter = await getLetter(supabase as any, letterId)
+  if (!letter || letter.project_id !== projectId) {
+    return { ok: false, error: 'Letter not found' }
+  }
+
+  const ext      = file.name.includes('.') ? file.name.slice(file.name.lastIndexOf('.')) : ''
+  const safeName = `${randomUUID()}${ext}`
+  // Storage path must start with orgId so the RLS foldername(name)[1] check passes.
+  const filePath = `${orgId}/projects/${projectId}/letters/${letterId}/attachments/${safeName}`
+  const bytes    = Buffer.from(await file.arrayBuffer())
+
+  const { error: uploadErr } = await supabase.storage
+    .from('jbcc-letters')
+    .upload(filePath, bytes, {
+      contentType: file.type || 'application/octet-stream',
+      upsert:      false,
+    })
+  if (uploadErr) {
+    return { ok: false, error: `Upload failed: ${uploadErr.message}` }
+  }
+
+  // Insert the attachment row. On failure, remove the uploaded file (atomic).
+  try {
+    const att = await createLetterAttachment(supabase as any, {
+      letter_id:       letterId,
+      organisation_id: orgId,
+      file_path:       filePath,
+      file_name:       file.name,
+      mime_type:       file.type || null,
+      size_bytes:      file.size,
+      created_by:      user.id,
+    })
+    revalidatePath(`/projects/${projectId}/jbcc/tracking/${letterId}`)
+    return { ok: true, data: { id: att.id } }
+  } catch (e) {
+    await supabase.storage.from('jbcc-letters').remove([filePath])
+    return { ok: false, error: e instanceof Error ? e.message : 'Insert failed' }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// deleteAttachmentAction
+// ---------------------------------------------------------------------------
+
+export async function deleteAttachmentAction(
+  projectId: string,
+  letterId: string,
+  attachmentId: string,
+): Promise<ActionResult> {
+  const orgId = await getOrgIdForProject(projectId)
+  if (!orgId) return { ok: false, error: 'Project not found' }
+
+  const role = await requireRoleAPI(ORG_WRITE_ROLES, orgId)
+  if (!role.ok) return { ok: false, error: 'forbidden' }
+  await requireFeature(role.ctx.organisationId, 'jbcc', undefined, `/projects/${projectId}/jbcc/unlock`)
+
+  const supabase = await createClient()
+
+  // Look up the storage path before deleting the row.
+  const attachments = await listLetterAttachments(supabase as any, letterId)
+  const target = attachments.find(a => a.id === attachmentId)
+  if (!target) return { ok: false, error: 'Attachment not found' }
+
+  try {
+    await deleteLetterAttachment(supabase as any, attachmentId)
+    await supabase.storage.from('jbcc-letters').remove([target.file_path])
+    revalidatePath(`/projects/${projectId}/jbcc/tracking/${letterId}`)
+    return { ok: true, data: undefined }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Delete failed' }
   }
 }
