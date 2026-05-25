@@ -1,24 +1,11 @@
 import Link from 'next/link'
+import { LEGAL_ENTITY, formatAddressOneLine } from '@/lib/legal/entity'
 
-// ECTA (Electronic Communications and Transactions Act) §43 business
-// disclosure + POPIA Information Officer contact. Shown on every legal page
-// and linked into the admin footer.
+// Legacy admin-shell legal footer. ECTA (Electronic Communications and
+// Transactions Act) §43 business disclosure + POPIA Information Officer
+// contact. Shown on legacy /(legal) pages and linked into the admin footer.
 //
-// Placeholder values marked TODO — replace once CIPC registration and
-// physical address are finalised. All legal copy is currently placeholder
-// content and must be replaced before launch (see spec-v2.md §19 and the
-// lawyer-deliverable line items in build-action-plan Session 7.2).
-
-const BUSINESS = {
-  tradingName:       'E-Site',
-  registeredName:    'Watson Mattheus (Pty) Ltd',          // TODO confirm at CIPC
-  registrationNo:    '2026/XXXXXX/07',                      // TODO pull from CIPC certificate
-  vatNo:             'Not yet VAT-registered',              // TODO update when VAT-registered
-  physicalAddress:   'Somerset West, Western Cape, South Africa',  // TODO full street address
-  contactEmail:      'hello@e-site.live',
-  infoOfficer:       'Arno Mattheus',
-  infoOfficerEmail:  'arno@watsonmattheus.com',
-}
+// Entity strings sourced from @/lib/legal/entity — single source of truth.
 
 export function LegalFooter() {
   return (
@@ -33,22 +20,28 @@ export function LegalFooter() {
     >
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
         <div style={{ marginBottom: 16 }}>
-          <strong style={{ color: 'var(--c-text-mid)' }}>{BUSINESS.tradingName}</strong> is operated by
-          {' '}{BUSINESS.registeredName}, registration no. {BUSINESS.registrationNo}.
-          {' '}{BUSINESS.vatNo}.
-          {' '}Registered address: {BUSINESS.physicalAddress}.
-          {' '}General enquiries: <a href={`mailto:${BUSINESS.contactEmail}`} style={{ color: 'var(--c-text-mid)' }}>{BUSINESS.contactEmail}</a>.
+          <strong style={{ color: 'var(--c-text-mid)' }}>{LEGAL_ENTITY.tradingName}</strong> is operated by
+          {' '}{LEGAL_ENTITY.registeredName}, registration no. {LEGAL_ENTITY.registrationNo}.
+          {' '}VAT {LEGAL_ENTITY.vatNo}.
+          {' '}Registered address: {formatAddressOneLine()}.
+          {' '}General enquiries:{' '}
+          <a href={`mailto:${LEGAL_ENTITY.contactEmail}`} style={{ color: 'var(--c-text-mid)' }}>
+            {LEGAL_ENTITY.contactEmail}
+          </a>.
         </div>
         <div style={{ marginBottom: 16 }}>
           <strong style={{ color: 'var(--c-text-mid)' }}>POPIA Information Officer:</strong>
-          {' '}{BUSINESS.infoOfficer} · <a href={`mailto:${BUSINESS.infoOfficerEmail}`} style={{ color: 'var(--c-text-mid)' }}>{BUSINESS.infoOfficerEmail}</a>
+          {' '}{LEGAL_ENTITY.infoOfficer} ·{' '}
+          <a href={`mailto:${LEGAL_ENTITY.infoOfficerEmail}`} style={{ color: 'var(--c-text-mid)' }}>
+            {LEGAL_ENTITY.infoOfficerEmail}
+          </a>
         </div>
         <nav style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <Link href="/privacy"         style={{ color: 'var(--c-text-mid)' }}>Privacy</Link>
-          <Link href="/terms"           style={{ color: 'var(--c-text-mid)' }}>Terms</Link>
-          <Link href="/acceptable-use"  style={{ color: 'var(--c-text-mid)' }}>Acceptable use</Link>
-          <Link href="/cookies"         style={{ color: 'var(--c-text-mid)' }}>Cookies</Link>
-          <Link href="/privacy/request" style={{ color: 'var(--c-text-mid)' }}>Data request</Link>
+          <Link href="/legal/privacy"                style={{ color: 'var(--c-text-mid)' }}>Privacy</Link>
+          <Link href="/legal/terms"                  style={{ color: 'var(--c-text-mid)' }}>Terms</Link>
+          <Link href="/legal/acceptable-use-policy"  style={{ color: 'var(--c-text-mid)' }}>Acceptable use</Link>
+          <Link href="/cookies"                      style={{ color: 'var(--c-text-mid)' }}>Cookies</Link>
+          <Link href="/privacy/request"              style={{ color: 'var(--c-text-mid)' }}>Data request</Link>
         </nav>
       </div>
     </footer>
