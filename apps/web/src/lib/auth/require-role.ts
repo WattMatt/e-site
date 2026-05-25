@@ -8,9 +8,10 @@
  *   Use from server actions that already hold a supabase client and an org id
  *   resolved from a domain entity (revision, project, etc.).
  *
- * - requireRoleAPI(orgId, allowedRoles) — for route handlers. Returns either
- *   { ok: true, ctx } or { ok: false, response } where response is a ready-to-
- *   return NextResponse (401 unauthenticated, 403 wrong-role).
+ * - requireRoleAPI(allowedRoles, orgId?) — for route handlers. Returns either
+ *   { ok: true, ctx, user } or { ok: false, response } where response is a
+ *   ready-to-return NextResponse (401/400/403). If orgId is omitted, falls
+ *   back to the caller's primary org.
  *
  * - requireRolePage(allowedRoles, opts?) — for server-rendered pages. Returns
  *   OrgContext on success, or calls Next's redirect() (which throws) on
@@ -28,7 +29,7 @@
 
 import { NextResponse } from 'next/server'
 import { redirect } from 'next/navigation'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient, User } from '@supabase/supabase-js'
 import type { OrgRole } from '@esite/shared'
 
 import { createClient } from '@/lib/supabase/server'
@@ -70,43 +71,56 @@ export async function requireRole(
 }
 
 export type RequireRoleAPIResult =
-  | { ok: true;  ctx: { userId: string; organisationId: string; role: OrgRole } }
+  | { ok: true;  ctx: OrgContext; user: User }
   | { ok: false; response: NextResponse }
 
 /**
- * For API route handlers. Resolves the user's primary org, confirms membership
- * in the supplied `organisationId` with an allowed role.
+ * For API route handlers. Confirms the caller is authenticated and holds one
+ * of `allowedRoles` on the relevant organisation.
+ *
+ * If `organisationId` is omitted, the caller's *primary* org (oldest active
+ * membership) is used — the common case for endpoints that operate on a user's
+ * own org context (e.g. checkout, settings mutations). Pass an explicit id
+ * for endpoints that act on a specific entity whose org id has been resolved
+ * from a path param or domain join.
+ *
+ * Returns:
+ * - 401 when no session
+ * - 400 when no organisation can be resolved (primary-org case only)
+ * - 403 when membership exists but the role is not in `allowedRoles`
  *
  * Usage:
- *   const guard = await requireRoleAPI(orgId, OWNER_ADMIN)
+ *   const guard = await requireRoleAPI(OWNER_ADMIN)
  *   if (!guard.ok) return guard.response
- *   // … use guard.ctx
+ *   const { organisationId, role } = guard.ctx
  */
 export async function requireRoleAPI(
-  organisationId: string,
   allowedRoles: readonly OrgRole[],
+  organisationId?: string,
 ): Promise<RequireRoleAPIResult> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return {
-      ok: false,
-      response: NextResponse.json({ error: 'Not authenticated' }, { status: 401 }),
+  if (!user) return jsonErr(401, 'Not authenticated')
+
+  if (organisationId) {
+    const result = await requireRole(supabase, organisationId, allowedRoles)
+    if (!result.ok) {
+      const status = result.error === 'Not authenticated' ? 401 : 403
+      return jsonErr(status, result.error)
     }
+    return { ok: true, ctx: { userId: user.id, organisationId, role: result.role }, user }
   }
 
-  const result = await requireRole(supabase, organisationId, allowedRoles)
-  if (!result.ok) {
-    return {
-      ok: false,
-      response: NextResponse.json({ error: result.error }, { status: 403 }),
-    }
+  const ctx = await getOrgContext()
+  if (!ctx) return jsonErr(400, 'No organisation found')
+  if (!allowedRoles.includes(ctx.role)) {
+    return jsonErr(403, `Your role (${ctx.role}) is not allowed to perform this action`)
   }
+  return { ok: true, ctx, user }
+}
 
-  return {
-    ok: true,
-    ctx: { userId: user.id, organisationId, role: result.role },
-  }
+function jsonErr(status: number, error: string): RequireRoleAPIResult {
+  return { ok: false, response: NextResponse.json({ error }, { status }) }
 }
 
 export interface RequireRolePageOptions {

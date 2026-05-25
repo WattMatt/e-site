@@ -1,7 +1,8 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { createServiceClient } from '@/lib/supabase/server'
-import { getOrgContext, isOrgAdmin } from '@/lib/auth-org'
-import { formatDate } from '@esite/shared'
+import { getOrgContext } from '@/lib/auth-org'
+import { OWNER_ADMIN, formatDate } from '@esite/shared'
 import { AddUserForm } from './AddUserForm'
 import { UserRowActions } from './UserRowActions'
 
@@ -49,20 +50,10 @@ export default async function UsersPage() {
     )
   }
 
-  if (!isOrgAdmin(ctx.role)) {
-    return (
-      <div className="animate-fadeup" style={{ maxWidth: 820 }}>
-        <div style={{ marginBottom: 16 }}>
-          <Link href="/settings" style={{ ...monoDim, textDecoration: 'none' }}>← Settings</Link>
-        </div>
-        <div className="page-header"><h1 className="page-title">Users</h1></div>
-        <div className="data-panel">
-          <div className="data-panel-empty" style={{ padding: '40px 24px' }}>
-            You need admin or owner access to manage users.
-          </div>
-        </div>
-      </div>
-    )
+  // Non-admins (contractor, supplier, inspector, project_manager, client_viewer)
+  // get redirected — the page must be unreachable, not show an in-page denial.
+  if (!OWNER_ADMIN.includes(ctx.role)) {
+    redirect('/dashboard')
   }
 
   const service = createServiceClient()

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { PLANS, resolvePaystackPlanCode } from '@esite/shared'
+import { OWNER_ADMIN, PLANS, resolvePaystackPlanCode } from '@esite/shared'
+import { requireRoleAPI } from '@/lib/auth/require-role'
 import { rateLimit } from '@/lib/rate-limit'
 
 const bodySchema = z.object({
@@ -16,11 +16,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Paystack not configured' }, { status: 503 })
   }
 
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Only owners and admins may initiate a subscription checkout — Paystack
+  // billing is an org-level commitment, not something contractors/suppliers/
+  // inspectors should be able to trigger on the org's behalf.
+  const guard = await requireRoleAPI(OWNER_ADMIN)
+  if (!guard.ok) return guard.response
+  const { userId, organisationId } = guard.ctx
+  const userEmail = guard.user.email
 
-  if (!rateLimit(`checkout:${user.id}`, 5, 60_000)) {
+  if (!rateLimit(`checkout:${userId}`, 5, 60_000)) {
     return NextResponse.json({ error: 'Too many requests. Please try again shortly.' }, { status: 429 })
   }
 
@@ -41,18 +45,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ contactSales: true })
   }
 
-  // Get user's org
-  const { data: memRaw } = await supabase
-    .from('user_organisations')
-    .select('organisation_id')
-    .eq('user_id', user.id)
-    .eq('is_active', true)
-    .limit(1)
-    .single()
-  const mem = memRaw as { organisation_id: string } | null
-
-  if (!mem) return NextResponse.json({ error: 'No organisation found' }, { status: 400 })
-
   const callbackUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/api/paystack/callback`
 
   // Path B: when PAYSTACK_PLAN_<TIER>_<PERIOD> env is set, send `plan` field.
@@ -63,11 +55,11 @@ export async function POST(req: NextRequest) {
   const isRecurring = !!planCode
 
   const initBody: Record<string, unknown> = {
-    email: user.email,
+    email: userEmail,
     currency: 'ZAR',
     callback_url: callbackUrl,
     metadata: {
-      org_id: mem.organisation_id,
+      org_id: organisationId,
       tier,
       period,
       amount_kobo: amountKobo,
