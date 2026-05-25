@@ -69,6 +69,12 @@ export const FEATURE_PRICES = {
     amountKobo: 25000, // R250 lifetime
     description: 'All current and future inspection templates, lifetime access.',
   },
+  jbcc: {
+    key: 'jbcc',
+    label: 'JBCC Procedural Toolkit',
+    amountKobo: 199900, // R1,999 lifetime
+    description: 'JBCC Procedural Toolkit — clause reference, notice-letter generation, time-bar tracking',
+  },
 } as const
 
 export type FeatureKey = keyof typeof FEATURE_PRICES
