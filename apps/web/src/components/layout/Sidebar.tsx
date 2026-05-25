@@ -3,6 +3,7 @@
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
+import { OWNER_ADMIN, type OrgRole } from '@esite/shared'
 import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
@@ -93,13 +94,30 @@ function extractProjectId(pathname: string): string | null {
   return m ? m[1] : null
 }
 
-function SidebarContent({ inspectionsUnlocked }: { inspectionsUnlocked: boolean }) {
+interface SidebarContentProps {
+  inspectionsUnlocked: boolean
+  role: OrgRole | null
+}
+
+function SidebarContent({ inspectionsUnlocked, role }: SidebarContentProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
   const projectIdFromPath = extractProjectId(pathname)
   const projectIdFromQuery = searchParams.get('projectId')
   const projectId = projectIdFromPath ?? projectIdFromQuery
+
+  // Hide owner/admin-only entries from non-admin roles. The pages themselves
+  // enforce the gate server-side (requireRolePage / layout-level redirects)
+  // — this is the discovery-surface fix so contractors/suppliers/inspectors
+  // don't see links that just bounce them back to /dashboard.
+  const isAdmin = role !== null && OWNER_ADMIN.includes(role)
+  const globalNav = isAdmin
+    ? GLOBAL_NAV
+    : GLOBAL_NAV.filter(item => item.href !== '/inspections/templates')
+  const footerItems = isAdmin
+    ? FOOTER_ITEMS
+    : FOOTER_ITEMS.filter(item => item.href !== '/settings')
 
   return (
     <>
@@ -156,7 +174,7 @@ function SidebarContent({ inspectionsUnlocked }: { inspectionsUnlocked: boolean 
         ) : (
           <>
             <span className="sidebar-section-label">Workspace</span>
-            {GLOBAL_NAV.map(({ href, label, Icon }) => {
+            {globalNav.map(({ href, label, Icon }) => {
               const active = pathname === href || pathname.startsWith(href + '/')
               const isMarketplace = href === '/marketplace'
               const isInspections = href === '/inspections/templates'
@@ -180,7 +198,7 @@ function SidebarContent({ inspectionsUnlocked }: { inspectionsUnlocked: boolean 
 
       {/* Footer */}
       <div className="sidebar-footer">
-        {FOOTER_ITEMS.map(({ href, label, Icon }) => (
+        {footerItems.map(({ href, label, Icon }) => (
           <Link
             key={href}
             href={href}
@@ -201,7 +219,12 @@ function SidebarContent({ inspectionsUnlocked }: { inspectionsUnlocked: boolean 
   )
 }
 
-export function Sidebar({ inspectionsUnlocked = false }: { inspectionsUnlocked?: boolean } = {}) {
+interface SidebarProps {
+  inspectionsUnlocked?: boolean
+  role?: OrgRole | null
+}
+
+export function Sidebar({ inspectionsUnlocked = false, role = null }: SidebarProps = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -211,7 +234,7 @@ export function Sidebar({ inspectionsUnlocked = false }: { inspectionsUnlocked?:
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} role={role} />
       </Suspense>
     </aside>
   )
