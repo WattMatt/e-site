@@ -131,5 +131,29 @@ export function useFieldPhotos(inspectionId: string, sectionId: string, fieldId:
     [supabase, inspectionId, sectionId, fieldId],
   )
 
-  return { photos, uploading, error, upload }
+  const remove = useCallback(
+    async (id: string) => {
+      setError(null)
+      const prev = photos
+      // Optimistic: drop from local state immediately; roll back on API failure.
+      setPhotos((p) => p.filter((x) => x.id !== id))
+      try {
+        const res = await fetch('/api/inspections/delete-photo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ photoId: id }),
+        })
+        if (!res.ok) {
+          const t = await res.text()
+          throw new Error(`Delete failed (HTTP ${res.status}): ${t}`)
+        }
+      } catch (e) {
+        setPhotos(prev)
+        setError((e as Error).message)
+      }
+    },
+    [photos],
+  )
+
+  return { photos, uploading, error, upload, remove }
 }

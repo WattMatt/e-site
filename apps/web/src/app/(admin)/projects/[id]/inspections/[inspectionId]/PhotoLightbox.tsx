@@ -15,9 +15,11 @@ interface Props {
   activeIndex: number
   onClose: () => void
   onChange: (i: number) => void
+  /** When provided, renders a Delete button next to Close. Omitting it hides delete entirely. */
+  onDelete?: (id: string) => void
 }
 
-export function PhotoLightbox({ photos, activeIndex, onClose, onChange }: Props) {
+export function PhotoLightbox({ photos, activeIndex, onClose, onChange, onDelete }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -84,6 +86,36 @@ export function PhotoLightbox({ photos, activeIndex, onClose, onChange }: Props)
       >
         ›
       </button>
+
+      {/* Delete — only rendered when the parent passes an onDelete handler */}
+      {onDelete && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            if (confirm('Delete this photo?')) {
+              onDelete(photo.id)
+              onClose()
+            }
+          }}
+          aria-label="Delete photo"
+          style={{
+            position: 'absolute',
+            top: 16,
+            right: 64,
+            color: '#ff6b6b',
+            fontSize: 13,
+            fontWeight: 600,
+            lineHeight: 1,
+            padding: '8px 14px',
+            background: 'rgba(0,0,0,0.45)',
+            border: '1px solid rgba(255,107,107,0.5)',
+            borderRadius: 6,
+            cursor: 'pointer',
+          }}
+        >
+          Delete
+        </button>
+      )}
 
       {/* Close */}
       <button

@@ -19,7 +19,7 @@ interface Props {
  * shared per-section bucket to guess against.
  */
 export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, readOnly }: Props) {
-  const { photos, uploading, error, upload } = useFieldPhotos(inspectionId, sectionId, fieldId)
+  const { photos, uploading, error, upload, remove } = useFieldPhotos(inspectionId, sectionId, fieldId)
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
 
   const viewable = photos.filter(
@@ -40,34 +40,66 @@ export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, r
       }}
     >
       {viewable.map((p, i) => (
-        <button
-          key={p.id}
-          type="button"
-          onClick={() => setLightboxIndex(i)}
-          aria-label="View photo full size"
-          style={{
-            padding: 0,
-            border: 'none',
-            background: 'none',
-            cursor: 'zoom-in',
-            borderRadius: 4,
-            lineHeight: 0,
-          }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={p.signed_url}
-            alt=""
+        <div key={p.id} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setLightboxIndex(i)}
+            aria-label="View photo full size"
             style={{
-              width: 56,
-              height: 56,
-              objectFit: 'cover',
+              padding: 0,
+              border: 'none',
+              background: 'none',
+              cursor: 'zoom-in',
               borderRadius: 4,
-              border: '1px solid var(--c-border)',
-              display: 'block',
+              lineHeight: 0,
             }}
-          />
-        </button>
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={p.signed_url}
+              alt=""
+              style={{
+                width: 56,
+                height: 56,
+                objectFit: 'cover',
+                borderRadius: 4,
+                border: '1px solid var(--c-border)',
+                display: 'block',
+              }}
+            />
+          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (confirm('Delete this photo?')) remove(p.id)
+              }}
+              aria-label="Delete photo"
+              title="Delete photo"
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                background: 'var(--c-red, #dc2626)',
+                color: '#fff',
+                border: '1px solid var(--c-bg, #000)',
+                fontSize: 12,
+                lineHeight: 1,
+                padding: 0,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
       ))}
 
       {!readOnly && (
@@ -118,6 +150,7 @@ export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, r
           activeIndex={Math.min(lightboxIndex, viewable.length - 1)}
           onChange={(i) => setLightboxIndex(i)}
           onClose={() => setLightboxIndex(null)}
+          onDelete={!readOnly ? remove : undefined}
         />
       )}
     </div>

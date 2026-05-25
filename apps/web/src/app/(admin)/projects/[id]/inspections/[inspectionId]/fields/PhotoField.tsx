@@ -6,7 +6,7 @@ import { useFieldPhotos } from './useFieldPhotos'
 import { PhotoLightbox, type LightboxPhoto } from '../PhotoLightbox'
 
 export default function PhotoField({ field, inspectionId, sectionId, readOnly }: RendererProps) {
-  const { photos, uploading, error, upload } = useFieldPhotos(
+  const { photos, uploading, error, upload, remove } = useFieldPhotos(
     inspectionId,
     sectionId,
     field.field_id,
@@ -26,34 +26,68 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
         {photos.map(
           (p, i) =>
             p.signed_url && (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => setLightbox({ index: i })}
-                style={{
-                  padding: 0,
-                  border: 'none',
-                  background: 'none',
-                  cursor: 'zoom-in',
-                  borderRadius: 6,
-                  overflow: 'hidden',
-                }}
-                aria-label="View photo full size"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={p.signed_url}
-                  alt=""
+              <div key={p.id} style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => setLightbox({ index: i })}
                   style={{
-                    width: '100%',
-                    height: 96,
-                    objectFit: 'cover',
+                    padding: 0,
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'zoom-in',
                     borderRadius: 6,
-                    border: '1px solid var(--c-border)',
+                    overflow: 'hidden',
+                    width: '100%',
                     display: 'block',
                   }}
-                />
-              </button>
+                  aria-label="View photo full size"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.signed_url}
+                    alt=""
+                    style={{
+                      width: '100%',
+                      height: 96,
+                      objectFit: 'cover',
+                      borderRadius: 6,
+                      border: '1px solid var(--c-border)',
+                      display: 'block',
+                    }}
+                  />
+                </button>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (confirm('Delete this photo?')) remove(p.id)
+                    }}
+                    aria-label="Delete photo"
+                    title="Delete photo"
+                    style={{
+                      position: 'absolute',
+                      top: 4,
+                      right: 4,
+                      width: 22,
+                      height: 22,
+                      borderRadius: '50%',
+                      background: 'rgba(220, 38, 38, 0.92)',
+                      color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.9)',
+                      fontSize: 14,
+                      lineHeight: 1,
+                      padding: 0,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             ),
         )}
         {!readOnly && (
@@ -110,6 +144,7 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
                 setLightbox({ index: originalIndex >= 0 ? originalIndex : i })
               }}
               onClose={() => setLightbox(null)}
+              onDelete={!readOnly ? remove : undefined}
             />
           )
         })()}
