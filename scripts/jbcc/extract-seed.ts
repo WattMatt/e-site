@@ -180,7 +180,11 @@ function classify(p: string): 'recipient' | 'sender' | 'manual' {
   return 'manual'
 }
 
-function fieldType(p: string): 'text' | 'textarea' | 'date' | 'number' {
+// Field types this script can produce. The DB CHECK allows 'number' too, but
+// the heuristics here never classify a placeholder as numeric, so it's left
+// out of the union — keeps the return type honest. Future contributors can
+// widen this if a numeric placeholder pattern is added.
+function fieldType(p: string): 'text' | 'textarea' | 'date' {
   if (/^date$|Insert Date/i.test(p)) return 'date'
   if (/^(describe|specifics|narrative|cause|effect|details?)/i.test(p)) return 'textarea'
   return 'text'
@@ -205,7 +209,7 @@ function extractPlaceholders(docxPath: string): string[] {
 
 interface Field {
   code: string; placeholder: string; label: string
-  field_type: 'text' | 'textarea' | 'date' | 'number'
+  field_type: 'text' | 'textarea' | 'date'
   source: 'recipient' | 'sender' | 'manual'
   required: boolean; sort_order: number
 }
@@ -282,6 +286,17 @@ function emitFieldsSeed(fields: Field[]): string {
 async function main() {
   const { notices, clauses, timebars } = await readXlsx()
   const fields = buildFieldRows()
+
+  // Guard against double-append: abort if the seed sentinel is already in
+  // MIGRATION. The inner SQL is idempotent (ON CONFLICT DO NOTHING) but the
+  // file itself shouldn't grow on every re-run.
+  const SENTINEL = '-- Reference seed (extracted from SPEC DOCS/JBCC'
+  const existingMigration = readFileSync(MIGRATION, 'utf-8')
+  if (existingMigration.includes(SENTINEL)) {
+    console.error(`Error: ${MIGRATION} already contains the reference seed block.`)
+    console.error('To re-run: git checkout HEAD -- apps/edge-functions/supabase/migrations/00099_jbcc_module.sql && pnpm tsx scripts/jbcc/extract-seed.ts')
+    process.exit(1)
+  }
 
   appendFileSync(MIGRATION, emitReferenceSeed(notices, clauses, timebars))
   writeFileSync(FIELDS_SEED, emitFieldsSeed(fields))
