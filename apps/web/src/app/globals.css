@@ -1243,3 +1243,9 @@ body {
 .jbcc-status-draft  { color: var(--c-text-muted); background: var(--c-elevated); }
 .jbcc-status-issued { color: var(--c-amber);       background: var(--c-amber-dim-rgb, rgba(232,146,58,.12)); }
 .jbcc-status-served { color: var(--c-green);       background: rgba(61,184,130,.10); }
+
+/* Tracking table open link hover */
+.jbcc-tracking-open:hover { opacity: 1 !important; }
+
+/* Back link hover */
+.jbcc-back-link:hover { color: var(--c-text) !important; }
