@@ -245,6 +245,10 @@ CREATE POLICY "jbcc_letters_storage_read_member"
     AND (storage.foldername(name))[1] = ANY(public.get_user_org_ids()::TEXT[])
   );
 
+-- NOTE: this policy is FOR INSERT only — there is intentionally no FOR UPDATE
+-- policy because no current code path overwrites letters or attachments in
+-- place (all uploads use upsert: false). If a future re-generate flow is
+-- added, add a FOR UPDATE policy here with the same WITH CHECK condition.
 CREATE POLICY "jbcc_letters_storage_write_editor"
   ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (

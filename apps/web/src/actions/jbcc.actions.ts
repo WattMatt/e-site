@@ -413,12 +413,27 @@ export async function deleteAttachmentAction(
   const target = attachments.find(a => a.id === attachmentId)
   if (!target) return { ok: false, error: 'Attachment not found' }
 
+  // Delete the row first. If THIS fails, neither the row nor the file have
+  // changed — return the error and let the caller retry.
   try {
     await deleteLetterAttachment(supabase as any, attachmentId)
-    await supabase.storage.from('jbcc-letters').remove([target.file_path])
-    revalidatePath(`/projects/${projectId}/jbcc/tracking/${letterId}`)
-    return { ok: true, data: undefined }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Delete failed' }
   }
+
+  // Then remove the storage object. If THIS fails, the row is already gone —
+  // returning an error would be misleading (a retry would say "Attachment not
+  // found"). Log it instead and treat the action as successful; any leaked
+  // object is cleaned by the periodic storage-purge job (or manually).
+  try {
+    await supabase.storage.from('jbcc-letters').remove([target.file_path])
+  } catch (e) {
+    console.error(
+      `[jbcc] orphaned storage object after row delete: ${target.file_path}`,
+      e instanceof Error ? e.message : e,
+    )
+  }
+
+  revalidatePath(`/projects/${projectId}/jbcc/tracking/${letterId}`)
+  return { ok: true, data: undefined }
 }
