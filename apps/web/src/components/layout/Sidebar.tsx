@@ -107,10 +107,14 @@ function SidebarContent({ inspectionsUnlocked, role }: SidebarContentProps) {
   const projectIdFromQuery = searchParams.get('projectId')
   const projectId = projectIdFromPath ?? projectIdFromQuery
 
-  // Hide /settings from non-admin roles. The pages themselves enforce the
-  // gate server-side (requireRolePage) — this is the discovery-surface fix
-  // so contractors/suppliers/inspectors don't see a link they can't use.
+  // Hide owner/admin-only entries from non-admin roles. The pages themselves
+  // enforce the gate server-side (requireRolePage / layout-level redirects)
+  // — this is the discovery-surface fix so contractors/suppliers/inspectors
+  // don't see links that just bounce them back to /dashboard.
   const isAdmin = role !== null && OWNER_ADMIN.includes(role)
+  const globalNav = isAdmin
+    ? GLOBAL_NAV
+    : GLOBAL_NAV.filter(item => item.href !== '/inspections/templates')
   const footerItems = isAdmin
     ? FOOTER_ITEMS
     : FOOTER_ITEMS.filter(item => item.href !== '/settings')
@@ -170,7 +174,7 @@ function SidebarContent({ inspectionsUnlocked, role }: SidebarContentProps) {
         ) : (
           <>
             <span className="sidebar-section-label">Workspace</span>
-            {GLOBAL_NAV.map(({ href, label, Icon }) => {
+            {globalNav.map(({ href, label, Icon }) => {
               const active = pathname === href || pathname.startsWith(href + '/')
               const isMarketplace = href === '/marketplace'
               const isInspections = href === '/inspections/templates'

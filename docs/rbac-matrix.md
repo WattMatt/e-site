@@ -47,7 +47,7 @@ membership.
 | `/projects/[id]/handover` | W | W | W | R | R | — | R |
 | `/projects/[id]/inspections` | W² | W² | W² | R² | W² | — | R² |
 | `/rfis?projectId=…` | W | W | W | W | R | — | R |
-| `/inspections/templates` | W² | W² | R² | — | — | — | — |
+| `/inspections/templates` | W² | W² | — | — | — | — | — |
 | `/inspections/unlock` | W | R | R | — | — | — | — |
 | `/marketplace` | W³ | W³ | W³ | W³ | — | — | — |
 | `/marketplace/supplier/*` | — | — | — | — | — | W | — |
