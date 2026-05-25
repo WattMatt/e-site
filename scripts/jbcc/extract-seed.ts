@@ -95,9 +95,11 @@ async function readXlsx(): Promise<{ notices: Notice[]; clauses: Clause[]; timeb
   const s1 = wb.worksheets[0]
   s1.eachRow((row, n) => {
     if (n < 4) return
-    if (!row.getCell(1).value) return
+    const clauseRef = cellText(row.getCell(1))
+    if (!clauseRef) return
+    if (clauseRef === 'Clause Ref.') return  // header row
     clauses.push({
-      clause_ref:             cellText(row.getCell(1)),
+      clause_ref:             clauseRef,
       contract:               cellText(row.getCell(2)),
       edition:                cellText(row.getCell(3)),
       topic:                  cellText(row.getCell(4)),
@@ -154,6 +156,7 @@ async function readXlsx(): Promise<{ notices: Notice[]; clauses: Clause[]; timeb
     if (n < 4) return
     const clause = cellText(row.getCell(1))
     if (!clause) return
+    if (clause === 'Clause') return  // header row
     timebars.push({
       clause,
       time_period: cellText(row.getCell(2)),
