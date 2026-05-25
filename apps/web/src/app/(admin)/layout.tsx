@@ -15,9 +15,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   if (!user) redirect('/login')
 
-  // Resolve the user's primary org to drive the sidebar's lock indicator on
-  // gated nav items (currently just Inspection Templates), plus role-gating
-  // of admin-only footer items like /settings.
+  // Resolve the user's primary org to drive the sidebar's lock indicators on
+  // gated nav items (Inspection Templates, JBCC), plus role-gating of
+  // admin-only footer items like /settings.
   const { data: primaryMembership } = await supabase
     .from('user_organisations')
     .select('organisation_id, role')
@@ -29,16 +29,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const membership = primaryMembership as { organisation_id: string; role: OrgRole } | null
   const primaryOrgId = membership?.organisation_id
   const primaryRole = membership?.role ?? null
-  const inspectionsUnlocked = primaryOrgId
-    ? await hasFeature(primaryOrgId, 'inspections', supabase)
-    : false
+  const [inspectionsUnlocked, jbccUnlocked] = primaryOrgId
+    ? await Promise.all([
+        hasFeature(primaryOrgId, 'inspections', supabase),
+        hasFeature(primaryOrgId, 'jbcc', supabase),
+      ])
+    : [false, false]
 
   return (
     <div className="portal-shell">
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      <Sidebar inspectionsUnlocked={inspectionsUnlocked} role={primaryRole} />
+      <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} role={primaryRole} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <header className="portal-header">
           <NotificationCentre />
