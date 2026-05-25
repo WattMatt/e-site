@@ -115,3 +115,87 @@ export async function listTimeBars(client: Client): Promise<JbccTimeBar[]> {
   if (error) throw error
   return (data ?? []) as JbccTimeBar[]
 }
+
+// --- parties --------------------------------------------------------------
+
+export type PartyRole =
+  | 'principal_agent' | 'employer' | 'guarantor' | 'subcontractor' | 'other'
+
+export interface JbccParty {
+  id: string
+  project_id: string
+  organisation_id: string
+  party_role: PartyRole
+  name: string
+  company: string | null
+  address: string | null
+  email: string | null
+  phone: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatePartyInput {
+  project_id: string
+  organisation_id: string
+  party_role: PartyRole
+  name: string
+  company?: string | null
+  address?: string | null
+  email?: string | null
+  phone?: string | null
+  created_by: string
+}
+
+export type UpdatePartyPatch = Partial<
+  Omit<CreatePartyInput, 'project_id' | 'organisation_id' | 'created_by'>
+>
+
+export async function listParties(client: Client, projectId: string): Promise<JbccParty[]> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_parties')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('party_role', { ascending: true })
+    .order('name', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as JbccParty[]
+}
+
+export async function createParty(client: Client, input: CreatePartyInput): Promise<JbccParty> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_parties')
+    .insert(input)
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as JbccParty
+}
+
+export async function updateParty(
+  client: Client,
+  id: string,
+  patch: UpdatePartyPatch,
+): Promise<JbccParty> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_parties')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as JbccParty
+}
+
+export async function deleteParty(client: Client, id: string): Promise<void> {
+  const { error } = await client
+    .schema('projects')
+    .from('jbcc_parties')
+    .delete()
+    .eq('id', id)
+  if (error) throw error
+}
