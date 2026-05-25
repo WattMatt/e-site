@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
-import { billingService, PLANS, formatZARFromKobo } from '@esite/shared'
+import { OWNER_ADMIN, billingService, PLANS, formatZARFromKobo } from '@esite/shared'
+import { requireRolePage } from '@/lib/auth/require-role'
 import Link from 'next/link'
 import { BillingCheckoutButton } from './BillingCheckoutButton'
 import { CancelSubscriptionButton } from './CancelSubscriptionButton'
@@ -16,22 +17,14 @@ function PlanFeature({ text }: { text: string }) {
 }
 
 export default async function BillingPage() {
+  // Page-level role gate: non-admins get redirected to /dashboard.
+  // The page now renders only for owner/admin — no conditional UI by role.
+  const ctx = await requireRolePage(OWNER_ADMIN)
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: mem } = await supabase
-    .from('user_organisations')
-    .select('organisation_id, role')
-    .eq('user_id', user!.id)
-    .eq('is_active', true)
-    .limit(1)
-    .single()
-
-  const orgId = mem?.organisation_id ?? ''
-  const isAdmin = ['owner', 'admin'].includes(mem?.role ?? '')
   const [subscription, invoices] = await Promise.all([
-    billingService.getSubscription(supabase as any, orgId).catch(() => null),
-    billingService.getInvoices(supabase as any, orgId).catch(() => []),
+    billingService.getSubscription(supabase as any, ctx.organisationId).catch(() => null),
+    billingService.getInvoices(supabase as any, ctx.organisationId).catch(() => []),
   ])
 
   const currentTier = subscription?.tier ?? 'free'
@@ -96,7 +89,7 @@ export default async function BillingPage() {
                 /{subscription.billing_period === 'annual' ? 'yr' : 'mo'}
               </span>
             </p>
-            {isAdmin && subscription.status !== 'cancelled' && <CancelSubscriptionButton />}
+            {subscription.status !== 'cancelled' && <CancelSubscriptionButton />}
           </div>
         </div>
       )}
