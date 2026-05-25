@@ -8,7 +8,7 @@ import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
-  Cable, BookMarked, HardHat, Package, Store, Zap, Lock,
+  Cable, BookMarked, HardHat, Package, Store, Zap, Lock, ScrollText,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -80,6 +80,7 @@ function projectNav(id: string) {
     { href: `/projects/${id}/inspections`,     label: 'Inspections',     Icon: ClipboardCheck, exact: false },
     { href: `/projects/${id}/floor-plans`,  label: 'Floor Plans', Icon: Map,           exact: false },
     { href: `/projects/${id}/handover`,     label: 'Handover',    Icon: ClipboardCheck, exact: false },
+    { href: `/projects/${id}/jbcc`,         label: 'JBCC',        Icon: ScrollText,    exact: false },
   ]
 }
 
