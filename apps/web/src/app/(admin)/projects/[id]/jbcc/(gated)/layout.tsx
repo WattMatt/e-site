@@ -38,5 +38,21 @@ export default async function JbccGatedLayout({
 
   await requireFeature(orgId, 'jbcc', supabase, `/projects/${projectId}/jbcc/unlock`)
 
-  return <>{children}</>
+  return (
+    // Construction-drafting grid applied to the outer container of all JBCC pages.
+    // Uses --c-border-soft (rgba 4% white) so it stays subtle and doesn't compete
+    // with content. The grid is 32px — matching the mockup exactly.
+    <div
+      style={{
+        backgroundImage:
+          'linear-gradient(var(--c-border-soft) 1px, transparent 1px), ' +
+          'linear-gradient(90deg, var(--c-border-soft) 1px, transparent 1px)',
+        backgroundSize: '32px 32px',
+        backgroundPosition: '-1px -1px',
+        minHeight: '100%',
+      }}
+    >
+      {children}
+    </div>
+  )
 }

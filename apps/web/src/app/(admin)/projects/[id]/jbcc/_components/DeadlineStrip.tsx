@@ -1,56 +1,61 @@
-import Link from 'next/link'
-import { deadlineStatus, type JbccLetter } from '@esite/shared'
+import { deadlineStatus, type JbccLetter, type JbccNotice } from '@esite/shared'
+import { UrgencyStrip } from './procedural/UrgencyStrip'
 
 interface Props {
   projectId: string
   letters:   JbccLetter[]
+  notices?:  JbccNotice[]
 }
 
-export function DeadlineStrip({ projectId, letters }: Props) {
+/**
+ * Computes overdue/due-soon counts from the open letters and renders
+ * the urgency hero strip from the Procedural mockup.
+ * Returns null when all deadlines are clear.
+ */
+export function DeadlineStrip({ projectId, letters, notices = [] }: Props) {
   const today = new Date()
   const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()))
 
+  const noticeMap = new Map(notices.map(n => [n.id, n]))
+
   const openLetters = letters.filter(l => l.status !== 'served')
 
-  let overdue  = 0
-  let dueSoon  = 0
+  const urgentItems: Array<{ letter: JbccLetter; ds: 'overdue' | 'due_soon'; daysLabel: string }> = []
+
   for (const l of openLetters) {
     const deadline = l.deadline_date ? new Date(`${l.deadline_date}T00:00:00.000Z`) : null
     const ds = deadlineStatus(deadline, todayUtc)
-    if (ds === 'overdue')  overdue++
-    if (ds === 'due_soon') dueSoon++
+    if (ds === 'overdue' || ds === 'due_soon') {
+      const msPerDay = 86400000
+      const diffMs = deadline ? deadline.getTime() - todayUtc.getTime() : 0
+      const diffDays = Math.round(Math.abs(diffMs) / msPerDay)
+      const daysLabel = ds === 'overdue'
+        ? `${diffDays} WD overdue`
+        : `${diffDays} WD remaining`
+      urgentItems.push({ letter: l, ds, daysLabel })
+    }
   }
+
+  const overdue = urgentItems.filter(i => i.ds === 'overdue').length
+  const dueSoon = urgentItems.filter(i => i.ds === 'due_soon').length
 
   if (overdue === 0 && dueSoon === 0) return null
 
+  const items = urgentItems.map(({ letter, daysLabel }) => {
+    const notice = noticeMap.get(letter.notice_id)
+    return {
+      code:     notice?.code  ?? '—',
+      title:    notice?.title ?? 'Unknown notice',
+      dueLabel: daysLabel,
+    }
+  })
+
   return (
-    <div
-      style={{
-        borderBottom: '2px solid var(--c-danger, #ef4444)',
-        background: 'var(--c-danger-dim, #fef2f2)',
-        padding: '8px 16px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 16,
-        fontSize: 13,
-        color: 'var(--c-text)',
-      }}
-    >
-      <span>
-        <strong>{overdue}</strong> overdue · <strong>{dueSoon}</strong> due soon
-      </span>
-      <Link
-        href={`/projects/${projectId}/jbcc/tracking`}
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          color: 'var(--c-danger, #ef4444)',
-          textDecoration: 'none',
-          letterSpacing: '0.06em',
-        }}
-      >
-        View tracking →
-      </Link>
-    </div>
+    <UrgencyStrip
+      overdue={overdue}
+      dueSoon={dueSoon}
+      items={items}
+      trackingHref={`/projects/${projectId}/jbcc/tracking`}
+    />
   )
 }
