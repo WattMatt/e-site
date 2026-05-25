@@ -12,6 +12,14 @@ import { createClient } from '@/lib/supabase/server'
  *   2. Validates that the leading org-id segment belongs to one of the
  *      user's organisations via `public.get_user_org_ids()` — same function
  *      the storage RLS policy uses, so the check is consistent.
+ *
+ * Scope (intentional): authorisation is **org-level**, not project-level. A
+ * member of org A can request a signed URL for any letter file in org A's
+ * folder regardless of which project inside the org the file belongs to.
+ * This matches the broader esite convention (org membership is the
+ * authorisation boundary) and the inspections module's equivalent endpoint.
+ * If a future feature needs project-level isolation, add a project-membership
+ * lookup here before generating the signed URL.
  */
 export async function GET(req: NextRequest) {
   const path = req.nextUrl.searchParams.get('path')
