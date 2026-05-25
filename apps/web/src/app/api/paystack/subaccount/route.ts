@@ -62,11 +62,10 @@ export async function POST(req: NextRequest) {
         supplier_id: supplierId,
         supplier_org_id: mem.organisation_id,
         subaccount_code: subaccount.subaccount_code,
-        bank_name: subaccount.settlement_bank,
-        bank_code: bankCode,
+        settlement_bank: bankCode,
         account_number: accountNumber,
-        account_name: businessName,
-        is_active: true,
+        business_name: businessName,
+        is_verified: true,
       }, { onConflict: 'supplier_id' })
 
     if (dbErr) {

@@ -134,8 +134,9 @@ async function resolveOrgAdmin(
     .from('user_organisations')
     .select('user_id, profile:profiles!user_id(id, full_name, email)')
     .eq('organisation_id', orgId)
-    .eq('role', 'org_admin')
+    .in('role', ['owner', 'admin'])
     .eq('is_active', true)
+    .order('role', { ascending: false })
     .limit(1)
     .maybeSingle()
   const p = data?.profile as { id: string; full_name: string | null; email: string | null } | undefined
@@ -171,6 +172,20 @@ async function pauseOrgProjects(supabase: SupabaseClient, orgId: string): Promis
     .eq('status', 'active')
     .select('id')
   if (error) throw new Error(`pauseOrgProjects: ${error.message}`)
+  return (data ?? []).length
+}
+
+async function downgradeExpiredCancellations(supabase: SupabaseClient): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10)
+  const { data, error } = await (supabase as any)
+    .schema('billing')
+    .from('subscriptions')
+    .update({ tier: 'free', status: 'active', amount_kobo: 0 })
+    .eq('status', 'cancelled')
+    .neq('tier', 'free')
+    .lt('next_billing_date', today)
+    .select('id')
+  if (error) throw new Error(`downgradeExpiredCancellations: ${error.message}`)
   return (data ?? []).length
 }
 
@@ -221,6 +236,7 @@ Deno.serve(async (req) => {
     subscriptions_inspected: 0,
     actions: { day3_retry_failed: 0, day7_final_warning: 0, day14_paused: 0, day30_cancelled: 0 },
     projects_paused: 0,
+    cancellations_downgraded: 0,
     errors: [] as Array<{ subscriptionId: string; message: string }>,
   }
 
@@ -260,6 +276,17 @@ Deno.serve(async (req) => {
           message: err instanceof Error ? err.message : String(err),
         })
       }
+    }
+
+    // Daily billing housekeeping: revert subscriptions whose cancellation has
+    // reached its paid-period end (next_billing_date) back to the free tier.
+    try {
+      report.cancellations_downgraded = await downgradeExpiredCancellations(supabase)
+    } catch (err) {
+      report.errors.push({
+        subscriptionId: 'downgrade-expired',
+        message: err instanceof Error ? err.message : String(err),
+      })
     }
 
     return jsonResponse({ ok: true, ran_at: now.toISOString(), ...report })

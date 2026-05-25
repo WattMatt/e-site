@@ -56,6 +56,23 @@ export const PLANS = {
 
 export type PlanTier = keyof typeof PLANS
 
+// FEATURE_PRICES — single source of truth for paid add-on unlocks. Lives
+// alongside PLANS but operates orthogonally: an unlock is a one-time charge
+// that grants the organisation lifetime access to a discrete module,
+// independent of their subscription tier. Backed by billing.org_feature_unlocks
+// (migration 00097); webhook flow lives in /api/paystack/webhook under
+// metadata.type === 'feature_unlock'.
+export const FEATURE_PRICES = {
+  inspections: {
+    key: 'inspections',
+    label: 'Inspections module',
+    amountKobo: 25000, // R250 lifetime
+    description: 'All current and future inspection templates, lifetime access.',
+  },
+} as const
+
+export type FeatureKey = keyof typeof FEATURE_PRICES
+
 /**
  * Resolve the Paystack plan code for a (tier, period) pair from env vars at
  * runtime. Returns undefined when unset — callers should fall back to one-off
@@ -141,19 +158,21 @@ export const billingService = {
     description?: string
     paidAt?: string
   }) {
+    // Idempotent on paystack_reference: a duplicate webhook delivery, or the
+    // callback and webhook both recording the same charge, is a clean no-op.
     const { data, error } = await client
       .schema('billing')
       .from('invoices')
-      .insert({
+      .upsert({
         organisation_id: orgId,
         paystack_reference: params.paystackReference,
         amount_kobo: params.amountKobo,
         status: params.status,
         description: params.description,
         paid_at: params.paidAt,
-      })
+      }, { onConflict: 'paystack_reference', ignoreDuplicates: true })
       .select()
-      .single()
+      .maybeSingle()
     if (error) throw error
     return data
   },

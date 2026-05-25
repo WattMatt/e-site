@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { billingService, PLANS, formatZARFromKobo } from '@esite/shared'
 import Link from 'next/link'
 import { BillingCheckoutButton } from './BillingCheckoutButton'
+import { CancelSubscriptionButton } from './CancelSubscriptionButton'
 
 const TIER_ORDER = ['free', 'starter', 'professional', 'enterprise'] as const
 
@@ -20,13 +21,14 @@ export default async function BillingPage() {
 
   const { data: mem } = await supabase
     .from('user_organisations')
-    .select('organisation_id')
+    .select('organisation_id, role')
     .eq('user_id', user!.id)
     .eq('is_active', true)
     .limit(1)
     .single()
 
   const orgId = mem?.organisation_id ?? ''
+  const isAdmin = ['owner', 'admin'].includes(mem?.role ?? '')
   const [subscription, invoices] = await Promise.all([
     billingService.getSubscription(supabase as any, orgId).catch(() => null),
     billingService.getInvoices(supabase as any, orgId).catch(() => []),
@@ -80,15 +82,22 @@ export default async function BillingPage() {
               <span style={{ color: subscription.status === 'active' ? '#4ade80' : 'var(--c-amber)' }}>
                 {subscription.status}
               </span>
-              {subscription.next_billing_date && ` · Renews ${subscription.next_billing_date}`}
+              {subscription.next_billing_date && (
+                subscription.status === 'cancelled'
+                  ? ` · Active until ${subscription.next_billing_date}`
+                  : ` · Renews ${subscription.next_billing_date}`
+              )}
             </p>
           </div>
-          <p style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-text)' }}>
-            {formatZARFromKobo(subscription.amount_kobo)}
-            <span style={{ fontSize: 12, color: 'var(--c-text-dim)', fontWeight: 400 }}>
-              /{subscription.billing_period === 'annual' ? 'yr' : 'mo'}
-            </span>
-          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+            <p style={{ fontSize: 22, fontWeight: 700, color: 'var(--c-text)' }}>
+              {formatZARFromKobo(subscription.amount_kobo)}
+              <span style={{ fontSize: 12, color: 'var(--c-text-dim)', fontWeight: 400 }}>
+                /{subscription.billing_period === 'annual' ? 'yr' : 'mo'}
+              </span>
+            </p>
+            {isAdmin && subscription.status !== 'cancelled' && <CancelSubscriptionButton />}
+          </div>
         </div>
       )}
 

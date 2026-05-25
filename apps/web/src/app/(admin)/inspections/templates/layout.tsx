@@ -1,11 +1,14 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { hasFeature } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Owner/admin gate for the whole `/inspections/templates` subtree.
- * Non-admins (PM, field worker) are bounced to the dashboard.
+ * Owner/admin + inspections-feature gate for the whole `/inspections/templates`
+ * subtree. Non-admins (PM, field worker) are bounced to the dashboard;
+ * admins of an org that has not unlocked the inspections module are sent to
+ * the paywall.
  */
 export default async function InspectionTemplatesLayout({
   children,
@@ -18,14 +21,17 @@ export default async function InspectionTemplatesLayout({
 
   const { data: memberships } = await supabase
     .from('user_organisations')
-    .select('role')
+    .select('organisation_id, role')
     .eq('user_id', user.id)
     .eq('is_active', true)
 
-  const isAdmin = (memberships ?? []).some(
+  const adminMembership = (memberships ?? []).find(
     (m: { role: string }) => m.role === 'owner' || m.role === 'admin',
-  )
-  if (!isAdmin) redirect('/dashboard')
+  ) as { organisation_id: string } | undefined
+  if (!adminMembership) redirect('/dashboard')
+
+  const unlocked = await hasFeature(adminMembership.organisation_id, 'inspections', supabase)
+  if (!unlocked) redirect('/inspections/unlock')
 
   return <>{children}</>
 }

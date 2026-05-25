@@ -18,6 +18,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { templateSchema } from '@esite/shared'
 import { bumpSemver } from '@/lib/inspections/bump-semver'
+import { requireFeature } from '@/lib/features'
 
 type AnyClient = SupabaseClient<any, any, any>
 
@@ -46,6 +47,7 @@ async function requireOwnerOrAdmin(
 
 export async function listTemplatesAction(organisationId: string) {
   const supabase = await createClient()
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
   const { data, error } = await (supabase as AnyClient)
     .schema('inspections')
     .from('templates')
@@ -92,10 +94,10 @@ export async function getTemplateAction(id: string) {
 export async function createTemplateAction(
   organisationId: string,
   jsonText: string,
-  description?: string | null,
 ) {
   const supabase = await createClient()
   const user = await requireOwnerOrAdmin(supabase, organisationId)
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
   let parsed: unknown
   try {
@@ -125,7 +127,6 @@ export async function createTemplateAction(
       node_subtypes: t.node_subtypes ?? null,
       sans_reference: t.sans_reference ?? null,
       deliverable_type: t.deliverable_type,
-      description: description?.trim() || null,
       schema_json: t,
       is_active: true,
       created_by: user.id,
@@ -161,6 +162,7 @@ export async function updateTemplateMetadataAction(
 ) {
   const supabase = await createClient()
   await requireOwnerOrAdmin(supabase, organisationId)
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
   const { error } = await (supabase as AnyClient)
     .schema('inspections')
@@ -220,6 +222,7 @@ export async function cloneTemplateToNewVersionAction(
       .limit(1)
     const orgId = memberships?.[0]?.organisation_id as string | undefined
     if (!orgId) return { ok: false, error: 'No active organisation' }
+    await requireFeature(orgId, 'inspections', supabase as AnyClient)
 
     // Fetch source row.
     const { data: source, error: fetchErr } = await (supabase as AnyClient)
@@ -301,6 +304,7 @@ export async function deactivateTemplateAction(
   try {
     const supabase = await createClient()
     await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+    await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
     const { error } = await (supabase as AnyClient)
       .schema('inspections')
@@ -332,6 +336,7 @@ export async function reactivateTemplateAction(
   try {
     const supabase = await createClient()
     await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+    await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
     const { error } = await (supabase as AnyClient)
       .schema('inspections')
@@ -384,6 +389,8 @@ export async function deleteTemplateAction(
     if (!membership || membership.role !== 'owner') {
       return { ok: false, error: 'Only the organisation owner can delete templates' }
     }
+
+    await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
     // Fetch the template row to validate existence + build confirm string.
     const { data: template } = await (supabase as AnyClient)
@@ -449,6 +456,7 @@ export async function getTemplateInspectionCountAction(
   organisationId: string,
 ): Promise<number> {
   const supabase = await createClient()
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
   const { count } = await (supabase as AnyClient)
     .schema('inspections')
     .from('inspections')
@@ -469,6 +477,7 @@ export async function newTemplateVersionAction(
 ) {
   const supabase = await createClient()
   const user = await requireOwnerOrAdmin(supabase, organisationId)
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
   let parsed: unknown
   try {
@@ -495,7 +504,7 @@ export async function newTemplateVersionAction(
   const { data: source } = await (supabase as AnyClient)
     .schema('inspections')
     .from('templates')
-    .select('template_id, description')
+    .select('template_id, name, description')
     .eq('id', sourceId)
     .single()
 
@@ -513,7 +522,7 @@ export async function newTemplateVersionAction(
       organisation_id: organisationId,
       template_id: t.template_id,
       version: t.version,
-      name: t.name,
+      name: (source as { name?: string }).name ?? t.name,
       applies_to_node_types: t.applies_to_node_types,
       node_subtypes: t.node_subtypes ?? null,
       sans_reference: t.sans_reference ?? null,
@@ -557,6 +566,7 @@ export async function updateTemplateDetailsAction(
   try {
     const supabase = await createClient()
     await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+    await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
     const name = details.name.trim()
     if (!name) return { ok: false, error: 'Template name cannot be empty' }
