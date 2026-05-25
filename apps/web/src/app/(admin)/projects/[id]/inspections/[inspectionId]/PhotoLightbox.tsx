@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 export interface LightboxPhoto {
   id: string
@@ -20,6 +20,15 @@ interface Props {
 }
 
 export function PhotoLightbox({ photos, activeIndex, onClose, onChange, onDelete }: Props) {
+  // Two-step inline confirmation for delete — avoids window.confirm()
+  // (Safari can silently suppress it after a prior suppression).
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
+  // Reset delete-confirmation when the user navigates to a different photo.
+  useEffect(() => {
+    setConfirmingDelete(false)
+  }, [activeIndex])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -87,33 +96,43 @@ export function PhotoLightbox({ photos, activeIndex, onClose, onChange, onDelete
         ›
       </button>
 
-      {/* Delete — only rendered when the parent passes an onDelete handler */}
+      {/* Delete — only rendered when the parent passes an onDelete handler.
+          Two-step inline confirm (no window.confirm() — that can be silently suppressed). */}
       {onDelete && (
         <button
           onClick={(e) => {
             e.stopPropagation()
-            if (confirm('Delete this photo?')) {
+            // eslint-disable-next-line no-console
+            console.log('[delete-photo] lightbox Delete clicked', {
+              photoId: photo.id,
+              confirming: confirmingDelete,
+            })
+            if (confirmingDelete) {
               onDelete(photo.id)
+              setConfirmingDelete(false)
               onClose()
+            } else {
+              setConfirmingDelete(true)
+              setTimeout(() => setConfirmingDelete(false), 3000)
             }
           }}
-          aria-label="Delete photo"
+          aria-label={confirmingDelete ? 'Tap again to confirm delete' : 'Delete photo'}
           style={{
             position: 'absolute',
             top: 16,
             right: 64,
-            color: '#ff6b6b',
+            color: '#fff',
             fontSize: 13,
-            fontWeight: 600,
+            fontWeight: 700,
             lineHeight: 1,
             padding: '8px 14px',
-            background: 'rgba(0,0,0,0.45)',
-            border: '1px solid rgba(255,107,107,0.5)',
+            background: confirmingDelete ? '#7f1d1d' : 'rgba(220, 38, 38, 0.95)',
+            border: '1px solid rgba(255,255,255,0.9)',
             borderRadius: 6,
             cursor: 'pointer',
           }}
         >
-          Delete
+          {confirmingDelete ? 'Tap to confirm' : 'Delete'}
         </button>
       )}
 

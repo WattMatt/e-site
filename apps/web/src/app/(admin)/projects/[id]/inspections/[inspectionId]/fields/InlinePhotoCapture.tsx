@@ -21,6 +21,9 @@ interface Props {
 export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, readOnly }: Props) {
   const { photos, uploading, error, upload, remove } = useFieldPhotos(inspectionId, sectionId, fieldId)
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  // Two-step inline confirmation — first × tap arms it; second tap deletes.
+  // Avoids window.confirm() entirely (it can be silently suppressed by Safari).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const viewable = photos.filter(
     (p): p is FieldPhoto & { signed_url: string } => !!p.signed_url,
@@ -73,30 +76,46 @@ export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, r
               type="button"
               onClick={(e) => {
                 e.stopPropagation()
-                if (confirm('Delete this photo?')) remove(p.id)
+                // eslint-disable-next-line no-console
+                console.log('[delete-photo] inline × clicked', {
+                  photoId: p.id,
+                  confirming: confirmDeleteId === p.id,
+                })
+                if (confirmDeleteId === p.id) {
+                  remove(p.id)
+                  setConfirmDeleteId(null)
+                } else {
+                  setConfirmDeleteId(p.id)
+                  setTimeout(() => {
+                    setConfirmDeleteId((curr) => (curr === p.id ? null : curr))
+                  }, 3000)
+                }
               }}
-              aria-label="Delete photo"
-              title="Delete photo"
+              aria-label={confirmDeleteId === p.id ? 'Tap again to confirm delete' : 'Delete photo'}
+              title={confirmDeleteId === p.id ? 'Tap again to confirm' : 'Delete photo'}
               style={{
                 position: 'absolute',
-                top: -4,
-                right: -4,
-                width: 18,
-                height: 18,
-                borderRadius: '50%',
-                background: 'var(--c-red, #dc2626)',
+                top: 2,
+                right: 2,
+                height: 22,
+                minWidth: 22,
+                padding: confirmDeleteId === p.id ? '0 8px' : 0,
+                borderRadius: 11,
+                background: confirmDeleteId === p.id ? '#7f1d1d' : 'rgba(220, 38, 38, 0.95)',
                 color: '#fff',
-                border: '1px solid var(--c-bg, #000)',
-                fontSize: 12,
+                border: '1px solid rgba(255,255,255,0.9)',
+                fontSize: confirmDeleteId === p.id ? 10 : 14,
+                fontWeight: 700,
                 lineHeight: 1,
-                padding: 0,
                 cursor: 'pointer',
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                whiteSpace: 'nowrap',
+                zIndex: 10,
               }}
             >
-              ×
+              {confirmDeleteId === p.id ? 'Tap to delete' : '×'}
             </button>
           )}
         </div>
