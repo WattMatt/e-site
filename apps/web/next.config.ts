@@ -100,6 +100,13 @@ const config: NextConfig = {
     return webpackConfig
   },
 
+  // ─── Vercel file tracing — binary assets read at runtime ─────────────────
+  // The generateLetterAction reads .docx templates via readFileSync. Without
+  // this, Vercel's file-tracing step omits them from the server bundle.
+  outputFileTracingIncludes: {
+    '/projects/[id]/jbcc/notice/[code]/new': ['./src/lib/jbcc/templates/**'],
+  },
+
   // ─── Security headers ─────────────────────────────────────────────────────
   async headers() {
     return [
