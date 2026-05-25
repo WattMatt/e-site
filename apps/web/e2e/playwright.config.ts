@@ -74,6 +74,15 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       testMatch: /00-auth-guard\.spec\.ts/,
     },
+
+    // Contractor-role RBAC tests — self-contained (each test logs in inline).
+    // Tests inside this spec auto-skip when E2E_CONTRACTOR_EMAIL is unset,
+    // so the project is safe to run even without a seeded contractor user.
+    {
+      name: 'chromium-rbac-contractor',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: /09-rbac-admin-routes\.spec\.ts/,
+    },
   ],
   webServer: process.env.CI ? undefined : {
     command: 'pnpm dev',

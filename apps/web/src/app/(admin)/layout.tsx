@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import type { OrgRole } from '@esite/shared'
 import { createClient } from '@/lib/supabase/server'
 import { hasFeature } from '@/lib/features'
 import { Sidebar } from '@/components/layout/Sidebar'
@@ -15,16 +16,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!user) redirect('/login')
 
   // Resolve the user's primary org to drive the sidebar's lock indicator on
-  // gated nav items (currently just Inspection Templates).
+  // gated nav items (currently just Inspection Templates), plus role-gating
+  // of admin-only footer items like /settings.
   const { data: primaryMembership } = await supabase
     .from('user_organisations')
-    .select('organisation_id')
+    .select('organisation_id, role')
     .eq('user_id', user.id)
     .eq('is_active', true)
     .order('created_at')
     .limit(1)
     .maybeSingle()
-  const primaryOrgId = (primaryMembership as { organisation_id: string } | null)?.organisation_id
+  const membership = primaryMembership as { organisation_id: string; role: OrgRole } | null
+  const primaryOrgId = membership?.organisation_id
+  const primaryRole = membership?.role ?? null
   const inspectionsUnlocked = primaryOrgId
     ? await hasFeature(primaryOrgId, 'inspections', supabase)
     : false
@@ -34,7 +38,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      <Sidebar inspectionsUnlocked={inspectionsUnlocked} />
+      <Sidebar inspectionsUnlocked={inspectionsUnlocked} role={primaryRole} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <header className="portal-header">
           <NotificationCentre />

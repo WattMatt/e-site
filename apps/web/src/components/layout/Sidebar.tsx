@@ -3,6 +3,7 @@
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
+import { OWNER_ADMIN, type OrgRole } from '@esite/shared'
 import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
@@ -93,13 +94,26 @@ function extractProjectId(pathname: string): string | null {
   return m ? m[1] : null
 }
 
-function SidebarContent({ inspectionsUnlocked }: { inspectionsUnlocked: boolean }) {
+interface SidebarContentProps {
+  inspectionsUnlocked: boolean
+  role: OrgRole | null
+}
+
+function SidebarContent({ inspectionsUnlocked, role }: SidebarContentProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
   const projectIdFromPath = extractProjectId(pathname)
   const projectIdFromQuery = searchParams.get('projectId')
   const projectId = projectIdFromPath ?? projectIdFromQuery
+
+  // Hide /settings from non-admin roles. The pages themselves enforce the
+  // gate server-side (requireRolePage) — this is the discovery-surface fix
+  // so contractors/suppliers/inspectors don't see a link they can't use.
+  const isAdmin = role !== null && OWNER_ADMIN.includes(role)
+  const footerItems = isAdmin
+    ? FOOTER_ITEMS
+    : FOOTER_ITEMS.filter(item => item.href !== '/settings')
 
   return (
     <>
@@ -180,7 +194,7 @@ function SidebarContent({ inspectionsUnlocked }: { inspectionsUnlocked: boolean 
 
       {/* Footer */}
       <div className="sidebar-footer">
-        {FOOTER_ITEMS.map(({ href, label, Icon }) => (
+        {footerItems.map(({ href, label, Icon }) => (
           <Link
             key={href}
             href={href}
@@ -201,7 +215,12 @@ function SidebarContent({ inspectionsUnlocked }: { inspectionsUnlocked: boolean 
   )
 }
 
-export function Sidebar({ inspectionsUnlocked = false }: { inspectionsUnlocked?: boolean } = {}) {
+interface SidebarProps {
+  inspectionsUnlocked?: boolean
+  role?: OrgRole | null
+}
+
+export function Sidebar({ inspectionsUnlocked = false, role = null }: SidebarProps = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -211,7 +230,7 @@ export function Sidebar({ inspectionsUnlocked = false }: { inspectionsUnlocked?:
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} role={role} />
       </Suspense>
     </aside>
   )
