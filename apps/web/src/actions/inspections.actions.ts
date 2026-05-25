@@ -28,6 +28,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { dispatchNotification } from '@/lib/notifications'
+import { requireFeature } from '@/lib/features'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 type AnyClient = SupabaseClient<any, any, any>
@@ -213,6 +214,7 @@ export interface CreateInspectionInput {
 export async function createInspectionAction(input: CreateInspectionInput): Promise<string> {
   const supabase = (await createClient()) as AnyClient
   const user = await requirePmOrAbove(supabase, input.organisationId)
+  await requireFeature(input.organisationId, 'inspections', supabase)
 
   const { data, error } = await supabase
     .schema('inspections')
@@ -474,6 +476,7 @@ export async function abandonInspectionAction(
     const supabase = (await createClient()) as AnyClient
     const orgId = await getOrgIdForProject(supabase, projectId)
     const user = await requirePmOrAbove(supabase, orgId)
+    await requireFeature(orgId, 'inspections', supabase)
 
     // Fetch inspection to validate status and collect notification recipients.
     const { data: insp } = await supabase
@@ -569,6 +572,7 @@ export async function deleteInspectionAction(
   try {
     const supabase = (await createClient()) as AnyClient
     const orgId = await getOrgIdForProject(supabase, projectId)
+    await requireFeature(orgId, 'inspections', supabase)
 
     // Owner only.
     const { data: { user } } = await supabase.auth.getUser()

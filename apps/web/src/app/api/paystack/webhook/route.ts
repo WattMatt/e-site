@@ -74,7 +74,47 @@ export async function POST(req: NextRequest) {
 
   if (event.event === 'charge.success') {
     const data = event.data
-    const { org_id, tier, period, amount_kobo, plan_code, mode } = data.metadata ?? {}
+    const metadata = data.metadata ?? {}
+
+    // Branch A: paid add-on feature unlock — one-time charge that grants the
+    // org lifetime access to a discrete module (inspections, JBCC, …).
+    // Discriminated by metadata.type set in /api/paystack/feature-unlock.
+    // Skips the subscription/invoice path entirely; subscriptions are
+    // orthogonal to feature unlocks.
+    if (metadata.type === 'feature_unlock' && metadata.org_id && metadata.feature_key) {
+      const orgId      = metadata.org_id as string
+      const featureKey = metadata.feature_key as string
+      const amountKobo = (metadata.amount_kobo as number | undefined) ?? data.amount
+
+      // Idempotent on paystack_reference — duplicate webhook deliveries no-op.
+      const { error: unlockErr } = await (supabase as any)
+        .schema('billing')
+        .from('org_feature_unlocks')
+        .upsert(
+          {
+            organisation_id:    orgId,
+            feature_key:        featureKey,
+            paystack_reference: data.reference,
+            amount_paid_kobo:   amountKobo,
+          },
+          { onConflict: 'paystack_reference', ignoreDuplicates: true },
+        )
+      if (unlockErr) console.error('Webhook feature_unlock insert error:', unlockErr)
+
+      // Audit trail in billing.invoices (also idempotent on paystack_reference).
+      await billingService.recordInvoice(supabase as any, orgId, {
+        paystackReference: data.reference,
+        amountKobo,
+        status:            'paid',
+        description:       `Feature unlock: ${featureKey}`,
+        paidAt:            new Date().toISOString(),
+      }).catch(console.error)
+
+      return NextResponse.json({ received: true })
+    }
+
+    // Branch B: subscription charge (recurring or one-off fallback).
+    const { org_id, tier, period, amount_kobo, plan_code, mode } = metadata
     if (org_id && tier) {
       await billingService.upsertSubscription(supabase as any, org_id, {
         tier,

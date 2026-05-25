@@ -7,7 +7,7 @@ import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
-  Cable, BookMarked, HardHat, Package, Store, Zap,
+  Cable, BookMarked, HardHat, Package, Store, Zap, Lock,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -36,6 +36,16 @@ function InDevBadge() {
     >
       In Dev
     </span>
+  )
+}
+
+function LockedBadge() {
+  return (
+    <Lock
+      size={12}
+      aria-label="Locked — unlock for R250"
+      style={{ marginLeft: 'auto', opacity: 0.7 }}
+    />
   )
 }
 
@@ -83,7 +93,7 @@ function extractProjectId(pathname: string): string | null {
   return m ? m[1] : null
 }
 
-function SidebarContent() {
+function SidebarContent({ inspectionsUnlocked }: { inspectionsUnlocked: boolean }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
@@ -149,6 +159,7 @@ function SidebarContent() {
             {GLOBAL_NAV.map(({ href, label, Icon }) => {
               const active = pathname === href || pathname.startsWith(href + '/')
               const isMarketplace = href === '/marketplace'
+              const isInspections = href === '/inspections/templates'
               return (
                 <Link
                   key={href}
@@ -159,6 +170,7 @@ function SidebarContent() {
                   <Icon {...IC} />
                   {label}
                   {isMarketplace && !MARKETPLACE_ENABLED && <InDevBadge />}
+                  {isInspections && !inspectionsUnlocked && <LockedBadge />}
                 </Link>
               )
             })}
@@ -189,7 +201,7 @@ function SidebarContent() {
   )
 }
 
-export function Sidebar() {
+export function Sidebar({ inspectionsUnlocked = false }: { inspectionsUnlocked?: boolean } = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -199,7 +211,7 @@ export function Sidebar() {
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} />
       </Suspense>
     </aside>
   )

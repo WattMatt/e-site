@@ -18,6 +18,7 @@ import { createClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { templateSchema } from '@esite/shared'
 import { bumpSemver } from '@/lib/inspections/bump-semver'
+import { requireFeature } from '@/lib/features'
 
 type AnyClient = SupabaseClient<any, any, any>
 
@@ -46,6 +47,7 @@ async function requireOwnerOrAdmin(
 
 export async function listTemplatesAction(organisationId: string) {
   const supabase = await createClient()
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
   const { data, error } = await (supabase as AnyClient)
     .schema('inspections')
     .from('templates')
@@ -95,6 +97,7 @@ export async function createTemplateAction(
 ) {
   const supabase = await createClient()
   const user = await requireOwnerOrAdmin(supabase, organisationId)
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
   let parsed: unknown
   try {
@@ -159,6 +162,7 @@ export async function updateTemplateMetadataAction(
 ) {
   const supabase = await createClient()
   await requireOwnerOrAdmin(supabase, organisationId)
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
   const { error } = await (supabase as AnyClient)
     .schema('inspections')
@@ -218,6 +222,7 @@ export async function cloneTemplateToNewVersionAction(
       .limit(1)
     const orgId = memberships?.[0]?.organisation_id as string | undefined
     if (!orgId) return { ok: false, error: 'No active organisation' }
+    await requireFeature(orgId, 'inspections', supabase as AnyClient)
 
     // Fetch source row.
     const { data: source, error: fetchErr } = await (supabase as AnyClient)
@@ -299,6 +304,7 @@ export async function deactivateTemplateAction(
   try {
     const supabase = await createClient()
     await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+    await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
     const { error } = await (supabase as AnyClient)
       .schema('inspections')
@@ -330,6 +336,7 @@ export async function reactivateTemplateAction(
   try {
     const supabase = await createClient()
     await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+    await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
     const { error } = await (supabase as AnyClient)
       .schema('inspections')
@@ -382,6 +389,8 @@ export async function deleteTemplateAction(
     if (!membership || membership.role !== 'owner') {
       return { ok: false, error: 'Only the organisation owner can delete templates' }
     }
+
+    await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
     // Fetch the template row to validate existence + build confirm string.
     const { data: template } = await (supabase as AnyClient)
@@ -447,6 +456,7 @@ export async function getTemplateInspectionCountAction(
   organisationId: string,
 ): Promise<number> {
   const supabase = await createClient()
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
   const { count } = await (supabase as AnyClient)
     .schema('inspections')
     .from('inspections')
@@ -467,6 +477,7 @@ export async function newTemplateVersionAction(
 ) {
   const supabase = await createClient()
   const user = await requireOwnerOrAdmin(supabase, organisationId)
+  await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
   let parsed: unknown
   try {
@@ -555,6 +566,7 @@ export async function updateTemplateDetailsAction(
   try {
     const supabase = await createClient()
     await requireOwnerOrAdmin(supabase as AnyClient, organisationId)
+    await requireFeature(organisationId, 'inspections', supabase as AnyClient)
 
     const name = details.name.trim()
     if (!name) return { ok: false, error: 'Template name cannot be empty' }

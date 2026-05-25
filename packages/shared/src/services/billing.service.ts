@@ -56,6 +56,23 @@ export const PLANS = {
 
 export type PlanTier = keyof typeof PLANS
 
+// FEATURE_PRICES — single source of truth for paid add-on unlocks. Lives
+// alongside PLANS but operates orthogonally: an unlock is a one-time charge
+// that grants the organisation lifetime access to a discrete module,
+// independent of their subscription tier. Backed by billing.org_feature_unlocks
+// (migration 00097); webhook flow lives in /api/paystack/webhook under
+// metadata.type === 'feature_unlock'.
+export const FEATURE_PRICES = {
+  inspections: {
+    key: 'inspections',
+    label: 'Inspections module',
+    amountKobo: 25000, // R250 lifetime
+    description: 'All current and future inspection templates, lifetime access.',
+  },
+} as const
+
+export type FeatureKey = keyof typeof FEATURE_PRICES
+
 /**
  * Resolve the Paystack plan code for a (tier, period) pair from env vars at
  * runtime. Returns undefined when unset — callers should fall back to one-off

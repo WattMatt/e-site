@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { hasFeature } from '@/lib/features'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { NotificationCentre } from '@/components/ui/NotificationCentre'
 import { PaymentStatusBanner } from '@/components/layout/PaymentStatusBanner'
@@ -13,12 +14,27 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   if (!user) redirect('/login')
 
+  // Resolve the user's primary org to drive the sidebar's lock indicator on
+  // gated nav items (currently just Inspection Templates).
+  const { data: primaryMembership } = await supabase
+    .from('user_organisations')
+    .select('organisation_id')
+    .eq('user_id', user.id)
+    .eq('is_active', true)
+    .order('created_at')
+    .limit(1)
+    .maybeSingle()
+  const primaryOrgId = (primaryMembership as { organisation_id: string } | null)?.organisation_id
+  const inspectionsUnlocked = primaryOrgId
+    ? await hasFeature(primaryOrgId, 'inspections', supabase)
+    : false
+
   return (
     <div className="portal-shell">
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      <Sidebar />
+      <Sidebar inspectionsUnlocked={inspectionsUnlocked} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <header className="portal-header">
           <NotificationCentre />

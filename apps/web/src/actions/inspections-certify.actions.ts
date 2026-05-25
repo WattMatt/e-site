@@ -16,6 +16,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { dispatchNotification } from '@/lib/notifications'
+import { requireFeature } from '@/lib/features'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -101,6 +102,7 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
   if (insp.verifier_id !== user.id) {
     throw new Error('Only the assigned verifier can certify this inspection')
   }
+  await requireFeature(insp.organisation_id, 'inspections', supabase)
 
   const { data: template } = await supabase
     .schema('inspections')
@@ -310,12 +312,13 @@ export async function sendBackForReinspectionAction(input: {
   const { data: insp } = await supabase
     .schema('inspections')
     .from('inspections')
-    .select('verifier_id')
+    .select('verifier_id, organisation_id')
     .eq('id', input.inspectionId)
     .single()
   if (!insp || insp.verifier_id !== user.id) {
     throw new Error('Only the assigned verifier can send back')
   }
+  await requireFeature(insp.organisation_id, 'inspections', supabase)
 
   const { error } = await supabase
     .schema('inspections')
@@ -363,6 +366,15 @@ export async function revokeCertificateAction(input: {
   } = await supabase.auth.getUser()
   if (!user) throw new Error('Unauthenticated')
   if (!input.reason.trim()) throw new Error('Revocation reason required')
+
+  const { data: inspOrg } = await supabase
+    .schema('inspections')
+    .from('inspections')
+    .select('organisation_id')
+    .eq('id', input.inspectionId)
+    .single()
+  if (!inspOrg) throw new Error('Inspection not found')
+  await requireFeature(inspOrg.organisation_id, 'inspections', supabase)
 
   const { error } = await supabase
     .schema('inspections')
