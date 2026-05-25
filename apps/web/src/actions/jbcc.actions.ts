@@ -11,12 +11,16 @@ import { requireFeature } from '@/lib/features'
 import {
   createParty, updateParty, deleteParty, partyInputSchema,
   getNotice,
-  createLetter, computeDeadline, fillTemplate,
+  createLetter, computeDeadline,
   generateLetterSchema,
   getLetter, updateLetterStatus,
   createLetterAttachment, deleteLetterAttachment, listLetterAttachments,
   letterStatusSchema,
 } from '@esite/shared'
+// fillTemplate imports docxtemplater + pizzip — kept out of the @esite/shared
+// barrel and behind a sub-path entry so the admin layout's barrel load chain
+// doesn't pull those modules in. See packages/shared/src/index.ts NOTE.
+import { fillTemplate } from '@esite/shared/placeholder-fill'
 
 export type ActionResult<T = void> =
   | { ok: true;  data: T }
@@ -185,11 +189,17 @@ export async function generateLetterAction(
     .eq('id', project.organisation_id)
     .maybeSingle()
 
-  const { data: profile } = await (supabase as any)
+  const { data: profile, error: profileError } = await supabase
     .from('profiles')
-    .select('full_name, title')
+    .select('full_name')
     .eq('id', user.id)
-    .maybeSingle() as { data: { full_name?: string; title?: string } | null }
+    .maybeSingle()
+  if (profileError) {
+    console.error(
+      `[jbcc] profile lookup failed for user ${user.id}:`,
+      profileError.message,
+    )
+  }
 
   // Build the full placeholder values map.
   // Both generic and role-suffixed keys are populated so templates work before
@@ -214,7 +224,7 @@ export async function generateLetterAction(
     // sender — generic + role-suffixed
     'Name of Signatory':         profile?.full_name ?? '',
     'Sender Name':               profile?.full_name ?? '',
-    'Project Manager':           profile?.title ?? 'Project Manager',
+    'Project Manager':           'Project Manager',
     'Sender Company Name':       org?.name ?? '',
     'Sender Address':            '',
 

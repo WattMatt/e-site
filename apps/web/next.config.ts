@@ -7,6 +7,13 @@ const config: NextConfig = {
   // Point Next.js at the monorepo root so file tracing works correctly
   outputFileTracingRoot: path.join(__dirname, '../../'),
 
+  // docxtemplater + pizzip are CJS libraries with binary-handling internals
+  // that Next.js's server bundler mishandles. Mark them external so Node
+  // resolves them from node_modules at runtime. They're only loaded when the
+  // generateLetterAction server action runs (sub-path imported, not in any
+  // shared barrel) — see packages/shared/src/index.ts.
+  serverExternalPackages: ['docxtemplater', 'pizzip'],
+
   // TODO: Remove after running `supabase gen types typescript` against the deployed DB.
   // The types.ts in @esite/db was generated against an older postgrest-js version.
   // supabase-js 2.103 has stricter schema inference that causes the entire public schema
