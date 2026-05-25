@@ -199,3 +199,108 @@ export async function deleteParty(client: Client, id: string): Promise<void> {
     .eq('id', id)
   if (error) throw error
 }
+
+// --- letters --------------------------------------------------------------
+
+export type LetterStatus = 'draft' | 'issued' | 'served'
+export type ServiceMethod = 'hand' | 'email' | 'registered_post'
+
+export interface JbccLetter {
+  id: string
+  project_id: string
+  organisation_id: string
+  notice_id: string
+  recipient_party_id: string | null
+  status: LetterStatus
+  field_values: Record<string, string>
+  trigger_date: string | null
+  deadline_date: string | null
+  issued_date: string | null
+  service_method: ServiceMethod | null
+  served_date: string | null
+  document_path: string
+  notes: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateLetterInput {
+  id?: string
+  project_id: string
+  organisation_id: string
+  notice_id: string
+  recipient_party_id: string
+  field_values: Record<string, string>
+  trigger_date: string | null
+  deadline_date: string | null
+  document_path: string
+  created_by: string
+}
+
+export async function createLetter(client: Client, input: CreateLetterInput): Promise<JbccLetter> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letters')
+    .insert({ ...input, status: 'draft' })
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as JbccLetter
+}
+
+export async function listLetters(
+  client: Client,
+  projectId: string,
+): Promise<JbccLetter[]> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letters')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as JbccLetter[]
+}
+
+export async function getLetter(client: Client, id: string): Promise<JbccLetter | null> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letters')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  return (data ?? null) as JbccLetter | null
+}
+
+export async function updateLetterStatus(
+  client: Client,
+  id: string,
+  patch: {
+    status?: LetterStatus
+    issued_date?: string | null
+    service_method?: ServiceMethod | null
+    served_date?: string | null
+    notes?: string | null
+  },
+): Promise<JbccLetter> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letters')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as JbccLetter
+}
+
+export async function deleteLetter(client: Client, id: string): Promise<void> {
+  const { error } = await client
+    .schema('projects')
+    .from('jbcc_letters')
+    .delete()
+    .eq('id', id)
+  if (error) throw error
+}

@@ -20,3 +20,11 @@ export const partyInputSchema = z.object({
   phone:      optionalString(40),
 })
 export type PartyInput = z.infer<typeof partyInputSchema>
+
+export const generateLetterSchema = z.object({
+  notice_code:        z.string().regex(/^N-\d{2}$/),
+  recipient_party_id: z.string().uuid(),
+  trigger_date:       z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  manual_values:      z.record(z.string(), z.string()),
+})
+export type GenerateLetterInput = z.infer<typeof generateLetterSchema>
