@@ -59,7 +59,8 @@ CREATE TABLE projects.jbcc_clauses (
   triggering_event       text,
   linked_notice          text,
   consequence_of_failure text,
-  sort_order             integer NOT NULL
+  sort_order             integer NOT NULL,
+  UNIQUE (clause_ref, contract, edition)
 );
 
 CREATE TABLE projects.jbcc_time_bar_schedule (
@@ -68,7 +69,8 @@ CREATE TABLE projects.jbcc_time_bar_schedule (
   time_period text NOT NULL,
   parties     text NOT NULL,
   action      text NOT NULL,
-  sort_order  integer NOT NULL
+  sort_order  integer NOT NULL,
+  UNIQUE (clause, sort_order)
 );
 
 -- ============================================================================
@@ -112,7 +114,7 @@ CREATE TABLE projects.jbcc_letters (
   issued_date        date,
   service_method     text CHECK (service_method IN ('hand', 'email', 'registered_post')),
   served_date        date,
-  document_path      text NOT NULL,
+  document_path      text NOT NULL,  -- atomic with the .docx upload in generateLetterAction
   notes              text,
   created_by         uuid NOT NULL,
   created_at         timestamptz NOT NULL DEFAULT now(),
@@ -179,6 +181,11 @@ CREATE POLICY jbcc_parties_write_editor
     SELECT organisation_id FROM public.user_organisations
      WHERE user_id = auth.uid() AND is_active = true
        AND role IN ('owner', 'admin', 'project_manager', 'contractor')
+  ))
+  WITH CHECK (organisation_id IN (
+    SELECT organisation_id FROM public.user_organisations
+     WHERE user_id = auth.uid() AND is_active = true
+       AND role IN ('owner', 'admin', 'project_manager', 'contractor')
   ));
 
 CREATE POLICY jbcc_letters_select_member
@@ -190,6 +197,11 @@ CREATE POLICY jbcc_letters_select_member
 CREATE POLICY jbcc_letters_write_editor
   ON projects.jbcc_letters FOR ALL TO authenticated
   USING (organisation_id IN (
+    SELECT organisation_id FROM public.user_organisations
+     WHERE user_id = auth.uid() AND is_active = true
+       AND role IN ('owner', 'admin', 'project_manager', 'contractor')
+  ))
+  WITH CHECK (organisation_id IN (
     SELECT organisation_id FROM public.user_organisations
      WHERE user_id = auth.uid() AND is_active = true
        AND role IN ('owner', 'admin', 'project_manager', 'contractor')
@@ -207,12 +219,21 @@ CREATE POLICY jbcc_letter_attachments_write_editor
     SELECT organisation_id FROM public.user_organisations
      WHERE user_id = auth.uid() AND is_active = true
        AND role IN ('owner', 'admin', 'project_manager', 'contractor')
+  ))
+  WITH CHECK (organisation_id IN (
+    SELECT organisation_id FROM public.user_organisations
+     WHERE user_id = auth.uid() AND is_active = true
+       AND role IN ('owner', 'admin', 'project_manager', 'contractor')
   ));
 
 -- ============================================================================
 -- Storage bucket — generated letters + attachments live here.
 -- ============================================================================
 
+-- NOTE: Storage path convention is {orgId}/projects/{projectId}/letters/{letterId}.docx
+-- (orgId is the first path segment so foldername(name)[1] can be matched against
+-- the caller's org membership).  generateLetterAction (Phase 6) and the attachment
+-- upload action (Phase 7) must construct paths accordingly.
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('jbcc-letters', 'jbcc-letters', false)
 ON CONFLICT (id) DO NOTHING;
@@ -221,21 +242,21 @@ CREATE POLICY "jbcc_letters_storage_read_member"
   ON storage.objects FOR SELECT TO authenticated
   USING (
     bucket_id = 'jbcc-letters'
-    AND (storage.foldername(name))[1] = 'projects'
+    AND (storage.foldername(name))[1] = ANY(public.get_user_org_ids()::TEXT[])
   );
 
 CREATE POLICY "jbcc_letters_storage_write_editor"
   ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'jbcc-letters'
-    AND (storage.foldername(name))[1] = 'projects'
+    AND (storage.foldername(name))[1] = ANY(public.get_user_org_ids()::TEXT[])
   );
 
 CREATE POLICY "jbcc_letters_storage_delete_editor"
   ON storage.objects FOR DELETE TO authenticated
   USING (
     bucket_id = 'jbcc-letters'
-    AND (storage.foldername(name))[1] = 'projects'
+    AND (storage.foldername(name))[1] = ANY(public.get_user_org_ids()::TEXT[])
   );
 
 COMMIT;
