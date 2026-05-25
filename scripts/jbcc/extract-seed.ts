@@ -7,11 +7,13 @@
 
 import { appendFileSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { join, resolve, dirname } from 'node:path'
 import ExcelJS from 'exceljs'
 
 // --- paths -----------------------------------------------------------------
 
+const __dirname  = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT   = resolve(__dirname, '..', '..')
 const JBCC_DIR    = process.env.JBCC_SOURCE_DIR
   ?? '/Users/spud/Documents/DEVELOPER/ESITE.V1/SPEC DOCS/JBCC'
