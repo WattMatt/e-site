@@ -76,11 +76,6 @@ export default function InlinePhotoCapture({ inspectionId, sectionId, fieldId, r
               type="button"
               onClick={(e) => {
                 e.stopPropagation()
-                // eslint-disable-next-line no-console
-                console.log('[delete-photo] inline × clicked', {
-                  photoId: p.id,
-                  confirming: confirmDeleteId === p.id,
-                })
                 if (confirmDeleteId === p.id) {
                   remove(p.id)
                   setConfirmDeleteId(null)

@@ -102,11 +102,6 @@ export function PhotoLightbox({ photos, activeIndex, onClose, onChange, onDelete
         <button
           onClick={(e) => {
             e.stopPropagation()
-            // eslint-disable-next-line no-console
-            console.log('[delete-photo] lightbox Delete clicked', {
-              photoId: photo.id,
-              confirming: confirmingDelete,
-            })
             if (confirmingDelete) {
               onDelete(photo.id)
               setConfirmingDelete(false)

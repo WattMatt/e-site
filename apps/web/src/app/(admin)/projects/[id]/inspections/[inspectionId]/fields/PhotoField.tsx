@@ -64,11 +64,6 @@ export default function PhotoField({ field, inspectionId, sectionId, readOnly }:
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation()
-                      // eslint-disable-next-line no-console
-                      console.log('[delete-photo] grid × clicked', {
-                        photoId: p.id,
-                        confirming: confirmDeleteId === p.id,
-                      })
                       if (confirmDeleteId === p.id) {
                         remove(p.id)
                         setConfirmDeleteId(null)
