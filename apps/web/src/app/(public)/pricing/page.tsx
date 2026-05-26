@@ -4,7 +4,7 @@ import Link from 'next/link'
 export const metadata: Metadata = {
   title: 'Pricing — E-Site',
   description:
-    'E-Site subscription tiers (Free, Starter R499, Pro R999, Enterprise) plus one-time paid module unlocks for Inspections and JBCC, and the 5% marketplace commission.',
+    'E-Site subscription tiers (Free, Starter R499, Pro R1499, Enterprise) plus one-time paid module unlocks for Inspections and JBCC, and the 5% marketplace commission.',
 }
 
 interface Tier {
@@ -55,7 +55,7 @@ const TIERS: Tier[] = [
   {
     key: 'pro',
     name: 'Pro',
-    priceLine: 'R 999',
+    priceLine: 'R 1 499',
     cadence: 'per organisation, per month',
     blurb: 'For multi-project teams and businesses that need the marketplace, RFI module, cable schedule, and the full reporting surface.',
     features: [
