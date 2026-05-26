@@ -1249,3 +1249,18 @@ body {
 
 /* Back link hover */
 .jbcc-back-link:hover { color: var(--c-text) !important; }
+
+/* ─── Public-shell Procedural display headings ───────────────────────────
+   The (public) layout sets `data-procedural-public` on its root <div> and
+   re-maps `--font-sans` / `--font-mono` to Mona Sans / IBM Plex Mono so
+   the public surface inherits the JBCC tab's body identity. CSS-in-JS
+   can't target descendants, so H1 / H2 elements get Fraunces italic via
+   this rule. Mirrors the inline style on `_components/procedural/PageHero.tsx`. */
+[data-procedural-public] h1,
+[data-procedural-public] h2 {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-weight: 350;
+  letter-spacing: -0.025em;
+  font-variation-settings: 'opsz' 144, 'SOFT' 30;
+}

@@ -19,11 +19,11 @@ export function MinimalLegalNav() {
         marginTop: 32,
       }}
     >
-      <Link href="/privacy"         style={{ color: 'var(--c-text-dim)' }}>Privacy</Link>
-      <Link href="/terms"           style={{ color: 'var(--c-text-dim)' }}>Terms</Link>
-      <Link href="/acceptable-use"  style={{ color: 'var(--c-text-dim)' }}>Acceptable use</Link>
-      <Link href="/cookies"         style={{ color: 'var(--c-text-dim)' }}>Cookies</Link>
-      <Link href="/privacy/request" style={{ color: 'var(--c-text-dim)' }}>Data request</Link>
+      <Link href="/legal/privacy"                style={{ color: 'var(--c-text-dim)' }}>Privacy</Link>
+      <Link href="/legal/terms"                  style={{ color: 'var(--c-text-dim)' }}>Terms</Link>
+      <Link href="/legal/acceptable-use-policy"  style={{ color: 'var(--c-text-dim)' }}>Acceptable use</Link>
+      <Link href="/cookies"                      style={{ color: 'var(--c-text-dim)' }}>Cookies</Link>
+      <Link href="/privacy/request"              style={{ color: 'var(--c-text-dim)' }}>Data request</Link>
     </div>
   )
 }

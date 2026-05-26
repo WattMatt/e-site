@@ -26,9 +26,20 @@ const config: NextConfig = {
   eslint: { ignoreDuringBuilds: true },
 
   // ─── Redirects ───────────────────────────────────────────────────────────
+  //
+  // `/` no longer redirects — it now renders the public landing page (see
+  // apps/web/src/app/(public)/page.tsx). Authed-user redirect to /dashboard
+  // happens inside that page so the other public routes don't run auth.
+  //
+  // The /acceptable-use, /privacy, and /terms legacy paths are aliased to
+  // the canonical /legal/* URLs that ship in the Paystack KYC response
+  // email. /cookies and /privacy/request remain at their original paths
+  // since they live under a different content surface.
   async redirects() {
     return [
-      { source: '/', destination: '/dashboard', permanent: false },
+      { source: '/acceptable-use', destination: '/legal/acceptable-use-policy', permanent: true },
+      { source: '/privacy',        destination: '/legal/privacy',               permanent: true },
+      { source: '/terms',          destination: '/legal/terms',                 permanent: true },
     ]
   },
 

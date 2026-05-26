@@ -138,9 +138,9 @@ export default function SignupPage() {
           <input {...register('popiaConsent')} type="checkbox" id="popiaConsent" className="auth-checkbox" />
           <label htmlFor="popiaConsent" className="auth-checkbox-label">
             I agree to E-Site&apos;s{' '}
-            <Link href="/terms" className="auth-link-accent" target="_blank" rel="noopener">Terms of Service</Link>,{' '}
-            <Link href="/privacy" className="auth-link-accent" target="_blank" rel="noopener">Privacy Policy</Link>, and{' '}
-            <Link href="/acceptable-use" className="auth-link-accent" target="_blank" rel="noopener">Acceptable Use Policy</Link>,
+            <Link href="/legal/terms" className="auth-link-accent" target="_blank" rel="noopener">Terms of Service</Link>,{' '}
+            <Link href="/legal/privacy" className="auth-link-accent" target="_blank" rel="noopener">Privacy Policy</Link>, and{' '}
+            <Link href="/legal/acceptable-use-policy" className="auth-link-accent" target="_blank" rel="noopener">Acceptable Use Policy</Link>,
             and consent to processing of my personal information under POPIA. Data may be processed outside
             South Africa subject to adequate safeguards.
           </label>
