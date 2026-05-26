@@ -15,6 +15,7 @@ import { LEGAL_ENTITY, formatAddressOneLine } from '@/lib/legal/entity'
 export default function PublicLayout({ children }: { children: ReactNode }) {
   return (
     <div
+      data-procedural-public
       style={{
         minHeight: '100vh',
         background: 'var(--c-base)',
@@ -22,6 +23,18 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
+        // Procedural identity: override the inherited font variables so every
+        // descendant that references `var(--font-sans)` / `var(--font-mono)`
+        // picks up the JBCC-tab fonts instead of the global Syne / JetBrains
+        // Mono defaults. Keeps the public surface and authenticated JBCC tab
+        // visually identical without per-element font-family declarations.
+        //
+        // H1 / H2 headings use Fraunces italic — applied via the
+        // [data-procedural-public] CSS rule in globals.css since CSS-in-JS
+        // can't target descendants.
+        ['--font-sans' as string]: 'var(--f-body-jbcc)',
+        ['--font-mono' as string]: 'var(--f-mono-display)',
+        fontFamily: 'var(--font-sans)',
       }}
     >
       {/* 32 px drafting-grid backdrop — same .blueprint-grid-subtle the
