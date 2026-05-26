@@ -67,6 +67,17 @@
   /* Typography */
   --font-sans: var(--font-syne), 'Syne', system-ui, sans-serif;
   --font-mono: var(--font-mono), 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* JBCC "Procedural" design-system extensions — additions, not replacements */
+  --c-border-soft:   rgba(255,255,255,.04);
+  --c-amber-dim-rgb: rgba(232,146,58,.12);
+  --c-amber-mid-rgb: rgba(232,146,58,.32);
+  --c-red-dim-rgb:   rgba(255,107,107,.10);
+  --c-red-bright:    #FF6B6B;
+  --c-text-muted:    #5C5C70;
+  --f-display:       var(--font-display, 'Fraunces'), 'EB Garamond', Georgia, serif;
+  --f-body-jbcc:     'Mona Sans Variable', 'Mona Sans', system-ui, sans-serif;
+  --f-mono-display:  var(--font-mono-display, 'IBM Plex Mono'), ui-monospace, SFMono-Regular, monospace;
 }
 
 /* ─── Base ───────────────────────────────────────────────────── */
@@ -1053,3 +1064,188 @@ body {
   thead { display: table-header-group; }
   tfoot { display: table-footer-group; }
 }
+
+/* ─── JBCC "Procedural" — interactive states ────────────────── */
+
+/* Notice card hover — background lift + arrow shift */
+.jbcc-notice-card:hover {
+  background: var(--c-panel) !important;
+}
+.jbcc-notice-card:hover .jbcc-card-arrow {
+  opacity: 1 !important;
+  transform: translateX(3px);
+}
+
+/* Urgency CTA hover — amber fill */
+.jbcc-urgency-cta:hover {
+  background: var(--c-amber) !important;
+  color: var(--c-base) !important;
+  border-color: var(--c-amber) !important;
+}
+
+/* Procedural tab — amber top-border active indicator */
+.jbcc-tab-btn {
+  font-family: var(--f-mono-display);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+  padding: 14px 20px 12px;
+  background: none;
+  border: none;
+  border-top: 3px solid transparent;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.jbcc-tab-btn:hover {
+  color: var(--c-text);
+}
+.jbcc-tab-btn[data-active='true'] {
+  color: var(--c-amber);
+  border-top-color: var(--c-amber);
+}
+
+/* Procedural CTA button (status-flow actions, generate letter) */
+.jbcc-btn-cta {
+  font-family: var(--f-mono-display);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--c-text);
+  padding: 10px 20px;
+  border: 1px solid var(--c-border);
+  border-radius: 1px;
+  background: transparent;
+  cursor: pointer;
+  transition: background .2s, color .2s, border-color .2s;
+}
+.jbcc-btn-cta:hover:not(:disabled) {
+  background: var(--c-amber);
+  color: var(--c-base);
+  border-color: var(--c-amber);
+}
+.jbcc-btn-cta:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.jbcc-btn-cta--danger {
+  color: var(--c-red-bright);
+  border-color: rgba(255,107,107,.30);
+}
+.jbcc-btn-cta--danger:hover:not(:disabled) {
+  background: var(--c-red-bright);
+  color: var(--c-base);
+  border-color: var(--c-red-bright);
+}
+
+/* Procedural stagger on-load animation (Notice Library only) */
+@keyframes jbcc-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.jbcc-shell > * {
+  animation: jbcc-rise .55s cubic-bezier(.2,.7,.2,1) backwards;
+}
+.jbcc-shell > *:nth-child(1) { animation-delay: 0ms; }
+.jbcc-shell > *:nth-child(2) { animation-delay: 80ms; }
+.jbcc-shell > *:nth-child(3) { animation-delay: 160ms; }
+.jbcc-shell > *:nth-child(4) { animation-delay: 240ms; }
+.jbcc-shell > *:nth-child(5) { animation-delay: 320ms; }
+.jbcc-shell > *:nth-child(6) { animation-delay: 400ms; }
+.jbcc-shell > *:nth-child(7) { animation-delay: 480ms; }
+
+/* Simple single fade-in for non-library JBCC pages */
+@keyframes jbcc-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.jbcc-page-fade {
+  animation: jbcc-fade .4s cubic-bezier(.2,.7,.2,1) both;
+}
+
+/* Procedural notice grid — 1px gap, no radius */
+.jbcc-notice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--c-border);
+  border: 1px solid var(--c-border);
+  margin-bottom: 64px;
+}
+@media (max-width: 900px) {
+  .jbcc-notice-grid { grid-template-columns: 1fr; }
+}
+
+/* Procedural input / select — dark surface, amber focus */
+.jbcc-input {
+  width: 100%;
+  background: var(--c-panel);
+  border: 1px solid var(--c-border);
+  border-radius: 2px;
+  padding: 10px 14px;
+  font-family: var(--f-body-jbcc);
+  font-size: 13px;
+  color: var(--c-text);
+  outline: none;
+  transition: border-color .15s;
+}
+.jbcc-input::placeholder { color: var(--c-text-muted); }
+.jbcc-input:focus { border-color: var(--c-amber); }
+
+/* Procedural label */
+.jbcc-label {
+  display: block;
+  font-family: var(--f-mono-display);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--c-text-muted);
+  margin-bottom: 8px;
+}
+
+/* Procedural panel section (letter detail panels, consequence panel) */
+.jbcc-panel {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  padding: 24px;
+  margin-bottom: 24px;
+}
+.jbcc-panel-title {
+  font-family: var(--f-mono-display);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--c-amber);
+  margin-bottom: 16px;
+}
+
+/* Deadline chips for tracking list */
+.jbcc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--f-mono-display);
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 1px;
+}
+.jbcc-chip--overdue  { color: var(--c-red-bright);  background: var(--c-red-dim-rgb, rgba(255,107,107,.10)); }
+.jbcc-chip--due-soon { color: var(--c-amber);        background: var(--c-amber-dim-rgb, rgba(232,146,58,.12)); }
+.jbcc-chip--clear    { color: var(--c-green);        background: rgba(61,184,130,.10); }
+.jbcc-chip--none     { color: var(--c-text-muted);   background: var(--c-elevated); }
+
+/* Status chips for letter status */
+.jbcc-status-draft  { color: var(--c-text-muted); background: var(--c-elevated); }
+.jbcc-status-issued { color: var(--c-amber);       background: var(--c-amber-dim-rgb, rgba(232,146,58,.12)); }
+.jbcc-status-served { color: var(--c-green);       background: rgba(61,184,130,.10); }
+
+/* Tracking table open link hover */
+.jbcc-tracking-open:hover { opacity: 1 !important; }
+
+/* Back link hover */
+.jbcc-back-link:hover { color: var(--c-text) !important; }

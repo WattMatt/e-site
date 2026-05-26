@@ -1,7 +1,10 @@
 'use client'
 
-import Link from 'next/link'
-import type { JbccNotice } from '@esite/shared'
+import type { JbccNotice, JbccLetter } from '@esite/shared'
+import { deadlineStatus } from '@esite/shared'
+import { useMemo } from 'react'
+import { SectionHeader } from './procedural/SectionHeader'
+import { NoticeCard } from './procedural/NoticeCard'
 
 const CATEGORY_ORDER = [
   'Changes, Delays & Site Conditions',
@@ -12,49 +15,101 @@ const CATEGORY_ORDER = [
   'Dispute Resolution',
 ] as const
 
+// Section numbers matching the JBCC contract part numbering aesthetic
+const CATEGORY_SECTION: Record<string, string> = {
+  'Changes, Delays & Site Conditions': '§ 01',
+  'Financial & Security':              '§ 02',
+  'Performance & Administrative':      '§ 03',
+  'Subcontract':                       '§ 04',
+  'Suspension & Termination':          '§ 05',
+  'Dispute Resolution':                '§ 06',
+}
+
 interface Props {
   projectId: string
   notices: JbccNotice[]
+  letters?: JbccLetter[]
 }
 
-export function NoticeLibrary({ projectId, notices }: Props) {
-  const byCategory = new Map<string, JbccNotice[]>()
-  for (const n of notices) {
-    const bucket = byCategory.get(n.category) ?? []
-    bucket.push(n)
-    byCategory.set(n.category, bucket)
-  }
+export function NoticeLibrary({ projectId, notices, letters = [] }: Props) {
+  const today = useMemo(() => {
+    const d = new Date()
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+  }, [])
+
+  // Build per-notice letter state maps
+  const activeByNotice = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const l of letters) {
+      if (l.status !== 'served') {
+        map.set(l.notice_id, (map.get(l.notice_id) ?? 0) + 1)
+      }
+    }
+    return map
+  }, [letters])
+
+  const overdueByNotice = useMemo(() => {
+    const set = new Set<string>()
+    for (const l of letters) {
+      if (l.status === 'served') continue
+      const deadline = l.deadline_date ? new Date(`${l.deadline_date}T00:00:00.000Z`) : null
+      if (deadlineStatus(deadline, today) === 'overdue') {
+        set.add(l.notice_id)
+      }
+    }
+    return set
+  }, [letters, today])
+
+  const byCategory = useMemo(() => {
+    const map = new Map<string, JbccNotice[]>()
+    for (const n of notices) {
+      const bucket = map.get(n.category) ?? []
+      bucket.push(n)
+      map.set(n.category, bucket)
+    }
+    return map
+  }, [notices])
 
   return (
-    <div className="px-6 py-8 space-y-10">
-      {CATEGORY_ORDER.filter(c => byCategory.has(c)).map(category => (
-        <section key={category}>
-          <h3 className="text-xs uppercase tracking-wider opacity-60 mb-3">
-            {category}
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {byCategory.get(category)!.map(n => (
-              <Link
-                key={n.code}
-                href={`/projects/${projectId}/jbcc/notice/${n.code}`}
-                className="border rounded-lg p-4 hover:bg-zinc-50 dark:hover:bg-zinc-900/40 transition block"
-              >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-xs font-mono opacity-60">{n.code}</span>
-                  <span className="text-xs opacity-40">·</span>
-                  <span className="text-xs opacity-60">
-                    {n.time_bar_days !== null
-                      ? `${n.time_bar_days} ${n.time_bar_unit}`
-                      : 'see rule'}
-                  </span>
-                </div>
-                <div className="text-sm font-medium leading-snug">{n.title}</div>
-                <div className="text-xs opacity-60 mt-1.5">cl. {n.triggering_clause}</div>
-              </Link>
-            ))}
-          </div>
-        </section>
-      ))}
+    <div style={{ padding: '48px 0 0' }}>
+      {CATEGORY_ORDER.filter(c => byCategory.has(c)).map(category => {
+        const categoryNotices = byCategory.get(category)!
+        return (
+          <section key={category} style={{ marginBottom: 48 }}>
+            <SectionHeader
+              num={CATEGORY_SECTION[category] ?? '§'}
+              title={category}
+              count={`${String(categoryNotices.length).padStart(2, '0')} notices`}
+            />
+            <div className="jbcc-notice-grid">
+              {categoryNotices.map(n => {
+                const timeBarLabel = n.time_bar_days !== null
+                  ? `${n.time_bar_days} ${n.time_bar_unit ?? ''}`
+                  : 'Promptly'
+                const clauseRef = `cl. ${n.triggering_clause}`
+                const direction = `${n.from_party} → ${n.to_party}`
+                const activeCount = activeByNotice.get(n.id) ?? 0
+                const isOverdue = overdueByNotice.has(n.id)
+
+                return (
+                  <NoticeCard
+                    key={n.code}
+                    code={n.code}
+                    title={n.title}
+                    summary={n.purpose ?? null}
+                    timeBarLabel={timeBarLabel}
+                    clauseRef={clauseRef}
+                    direction={direction}
+                    href={`/projects/${projectId}/jbcc/notice/${n.code}`}
+                    activeLetterCount={activeCount}
+                    isOverdue={isOverdue}
+                  />
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
     </div>
   )
 }

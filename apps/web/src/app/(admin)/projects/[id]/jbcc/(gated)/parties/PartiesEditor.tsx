@@ -79,50 +79,160 @@ export function PartiesEditor({ projectId, initialParties }: Props) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8">
-      <header className="flex items-center justify-between mb-6">
-        <h1 className="text-lg font-semibold">Parties</h1>
+    <div
+      className="jbcc-page-fade"
+      style={{ maxWidth: 860, margin: '0 auto', padding: '48px 40px 96px' }}
+    >
+      {/* Page header */}
+      <header
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          marginBottom: 40,
+          paddingBottom: 20,
+          borderBottom: '1px solid var(--c-border)',
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontFamily: 'var(--f-mono-display)',
+              fontSize: 10,
+              letterSpacing: '0.22em',
+              color: 'var(--c-amber)',
+              textTransform: 'uppercase',
+              marginBottom: 8,
+            }}
+          >
+            Project Parties
+          </div>
+          <h1
+            style={{
+              fontFamily: 'var(--f-display)',
+              fontStyle: 'italic',
+              fontWeight: 350,
+              fontSize: 36,
+              lineHeight: 1.05,
+              letterSpacing: '-0.02em',
+              color: 'var(--c-text)',
+              margin: 0,
+            }}
+          >
+            Parties
+          </h1>
+        </div>
         <button
           type="button"
           onClick={openAdd}
           disabled={editingId === 'new' || busy}
-          className="px-3 py-1.5 text-sm rounded-md bg-amber-600 text-white font-medium hover:bg-amber-700 disabled:opacity-50"
+          className="jbcc-btn-cta"
         >
-          + Add party
+          + Add Party
         </button>
       </header>
 
       {error && (
-        <p className="mb-4 px-3 py-2 text-sm rounded-md bg-red-50 text-red-700 border border-red-200">
+        <div
+          style={{
+            marginBottom: 24,
+            padding: '12px 16px',
+            background: 'var(--c-red-dim-rgb, rgba(255,107,107,.10))',
+            border: '1px solid rgba(255,107,107,.25)',
+            fontFamily: 'var(--f-mono-display)',
+            fontSize: 12,
+            color: 'var(--c-red-bright)',
+          }}
+        >
           {error}
-        </p>
+        </div>
       )}
 
-      <ul className="space-y-2">
+      {/* Party card list — 1px gaps, no radius */}
+      <ul
+        style={{
+          listStyle: 'none',
+          padding: 0,
+          margin: 0,
+          display: 'grid',
+          gap: 1,
+          background: 'var(--c-border)',
+        }}
+      >
         {initialParties.map(p => (
-          <li key={p.id} className="border rounded-lg">
+          <li key={p.id} style={{ background: 'var(--c-surface)' }}>
             {editingId === p.id ? (
               <PartyForm form={form} setForm={setForm} onSubmit={submit} onCancel={cancel} busy={busy} />
             ) : (
-              <div className="px-4 py-3 flex items-start justify-between gap-3">
+              <div
+                style={{
+                  padding: '20px 24px',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                }}
+              >
                 <div>
-                  <div className="text-xs opacity-60">{ROLE_LABELS[p.party_role]}</div>
-                  <div className="text-sm font-medium">{p.name}</div>
-                  {p.company && <div className="text-sm opacity-70">{p.company}</div>}
-                  {p.email   && <div className="text-xs opacity-60">{p.email}</div>}
+                  {/* Role — amber mono uppercase eyebrow */}
+                  <div
+                    style={{
+                      fontFamily: 'var(--f-mono-display)',
+                      fontSize: 10,
+                      letterSpacing: '0.18em',
+                      textTransform: 'uppercase',
+                      color: 'var(--c-amber)',
+                      marginBottom: 6,
+                    }}
+                  >
+                    {ROLE_LABELS[p.party_role]}
+                  </div>
+                  {/* Name — Fraunces italic */}
+                  <div
+                    style={{
+                      fontFamily: 'var(--f-display)',
+                      fontStyle: 'italic',
+                      fontWeight: 350,
+                      fontSize: 20,
+                      letterSpacing: '-0.01em',
+                      color: 'var(--c-text)',
+                      marginBottom: 4,
+                    }}
+                  >
+                    {p.name}
+                  </div>
+                  {p.company && (
+                    <div style={{ fontSize: 13, color: 'var(--c-text-muted)' }}>{p.company}</div>
+                  )}
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 16,
+                      marginTop: 8,
+                      fontFamily: 'var(--f-mono-display)',
+                      fontSize: 11,
+                      color: 'var(--c-text-muted)',
+                      letterSpacing: '0.02em',
+                    }}
+                  >
+                    {p.email && <span>{p.email}</span>}
+                    {p.phone && <span>{p.phone}</span>}
+                  </div>
                 </div>
-                <div className="flex gap-2 shrink-0">
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                   <button
                     onClick={() => openEdit(p)}
                     disabled={busy}
-                    className="opacity-60 hover:opacity-100 text-sm"
+                    className="jbcc-btn-cta"
+                    style={{ fontSize: 10, padding: '6px 12px' }}
                   >
                     Edit
                   </button>
                   <button
                     onClick={() => remove(p.id)}
                     disabled={busy}
-                    className="opacity-60 hover:opacity-100 text-sm text-red-600"
+                    className="jbcc-btn-cta jbcc-btn-cta--danger"
+                    style={{ fontSize: 10, padding: '6px 12px' }}
                   >
                     Delete
                   </button>
@@ -133,16 +243,26 @@ export function PartiesEditor({ projectId, initialParties }: Props) {
         ))}
 
         {editingId === 'new' && (
-          <li className="border rounded-lg">
+          <li style={{ background: 'var(--c-panel)' }}>
             <PartyForm form={form} setForm={setForm} onSubmit={submit} onCancel={cancel} busy={busy} />
           </li>
         )}
       </ul>
 
       {initialParties.length === 0 && editingId !== 'new' && (
-        <p className="text-sm opacity-60 text-center py-12">
-          No parties yet. Add the Principal Agent and Employer to start generating letters.
-        </p>
+        <div
+          style={{
+            padding: '64px 24px',
+            textAlign: 'center',
+            fontFamily: 'var(--f-mono-display)',
+            fontSize: 12,
+            color: 'var(--c-text-muted)',
+            letterSpacing: '0.06em',
+            border: '1px dashed var(--c-border)',
+          }}
+        >
+          No parties yet — add the Principal Agent and Employer to start generating letters
+        </div>
       )}
     </div>
   )
@@ -160,20 +280,28 @@ function PartyForm({ form, setForm, onSubmit, onCancel, busy }: PartyFormProps) 
   return (
     <form
       onSubmit={e => { e.preventDefault(); onSubmit() }}
-      className="px-4 py-4 grid grid-cols-1 md:grid-cols-2 gap-3"
+      style={{
+        padding: '24px',
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: 16,
+      }}
     >
-      <label className="text-sm md:col-span-2">
-        <span className="block text-xs opacity-60 mb-1">Role</span>
+      {/* Role selector — full width */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <label className="jbcc-label" htmlFor="party-role">Role</label>
         <select
+          id="party-role"
           value={form.party_role}
           onChange={e => setForm({ ...form, party_role: e.target.value as PartyRole })}
-          className="w-full border rounded-md px-2 py-1.5 bg-transparent"
+          className="jbcc-input"
+          style={{ appearance: 'none' }}
         >
           {Object.entries(ROLE_LABELS).map(([v, l]) => (
             <option key={v} value={v}>{l}</option>
           ))}
         </select>
-      </label>
+      </div>
 
       <Field label="Name *"  value={form.name}    onChange={v => setForm({ ...form, name: v })} />
       <Field label="Company" value={form.company} onChange={v => setForm({ ...form, company: v })} />
@@ -181,21 +309,29 @@ function PartyForm({ form, setForm, onSubmit, onCancel, busy }: PartyFormProps) 
       <Field label="Email"   value={form.email}   onChange={v => setForm({ ...form, email: v })} type="email" />
       <Field label="Phone"   value={form.phone}   onChange={v => setForm({ ...form, phone: v })} />
 
-      <div className="md:col-span-2 flex gap-2 justify-end pt-2">
+      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 8 }}>
         <button
           type="button"
           onClick={onCancel}
           disabled={busy}
-          className="px-3 py-1.5 text-sm rounded-md opacity-70 hover:opacity-100"
+          className="jbcc-btn-cta"
+          style={{ fontSize: 10, padding: '8px 14px' }}
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={busy}
-          className="px-3 py-1.5 text-sm rounded-md bg-amber-600 text-white font-medium hover:bg-amber-700 disabled:opacity-50"
+          className="jbcc-btn-cta"
+          style={{
+            fontSize: 10,
+            padding: '8px 14px',
+            background: busy ? 'transparent' : 'var(--c-amber)',
+            color: busy ? 'var(--c-text-muted)' : 'var(--c-base)',
+            borderColor: busy ? 'var(--c-border)' : 'var(--c-amber)',
+          }}
         >
-          {busy ? 'Saving…' : 'Save'}
+          {busy ? 'Saving…' : 'Save Party'}
         </button>
       </div>
     </form>
@@ -212,14 +348,14 @@ interface FieldProps {
 
 function Field({ label, value, onChange, type = 'text', colSpan = false }: FieldProps) {
   return (
-    <label className={`text-sm${colSpan ? ' md:col-span-2' : ''}`}>
-      <span className="block text-xs opacity-60 mb-1">{label}</span>
+    <div style={colSpan ? { gridColumn: '1 / -1' } : {}}>
+      <label className="jbcc-label">{label}</label>
       <input
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="w-full border rounded-md px-2 py-1.5 bg-transparent"
+        className="jbcc-input"
       />
-    </label>
+    </div>
   )
 }
