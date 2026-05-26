@@ -29,26 +29,58 @@ export function GenerateLetterForm({ projectId, notice, fields, parties }: Props
   // No parties — can't generate a letter without a recipient.
   if (parties.length === 0) {
     return (
-      <div style={{ padding: '2rem', maxWidth: 600 }}>
-        <h2 style={{ marginBottom: '0.75rem', fontSize: '1.25rem', fontWeight: 600 }}>
-          {notice.code} — {notice.title}
+      <div
+        className="jbcc-page-fade"
+        style={{ padding: '48px 40px', maxWidth: 640, margin: '0 auto' }}
+      >
+        <div
+          style={{
+            fontFamily: 'var(--f-mono-display)',
+            fontSize: 11,
+            letterSpacing: '0.24em',
+            color: 'var(--c-amber)',
+            textTransform: 'uppercase',
+            marginBottom: 16,
+          }}
+        >
+          {notice.code}
+        </div>
+        <h2
+          style={{
+            fontFamily: 'var(--f-display)',
+            fontStyle: 'italic',
+            fontWeight: 350,
+            fontSize: 32,
+            lineHeight: 1.1,
+            color: 'var(--c-text)',
+            marginBottom: 16,
+            margin: '0 0 16px',
+          }}
+        >
+          No parties registered
         </h2>
-        <p style={{ opacity: 0.7, marginBottom: '1.5rem' }}>
+        <p style={{ fontSize: 14, color: 'var(--c-text-muted)', marginBottom: 32, lineHeight: 1.6 }}>
           You need to add at least one party before you can generate this notice.
         </p>
         <a
           href={`/projects/${projectId}/jbcc/parties`}
+          className="jbcc-btn-cta"
           style={{
             display: 'inline-block',
-            padding: '0.5rem 1rem',
-            background: 'var(--c-primary, #2563eb)',
-            color: '#fff',
-            borderRadius: '0.375rem',
             textDecoration: 'none',
-            fontWeight: 500,
+            background: 'var(--c-amber)',
+            color: 'var(--c-base)',
+            borderColor: 'var(--c-amber)',
+            fontFamily: 'var(--f-mono-display)',
+            fontSize: 11,
+            letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            padding: '10px 20px',
+            border: '1px solid',
+            borderRadius: 1,
           }}
         >
-          Add a party
+          Add a Party →
         </a>
       </div>
     )
@@ -123,26 +155,67 @@ export function GenerateLetterForm({ projectId, notice, fields, parties }: Props
   }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: 640 }}>
-      <h2 style={{ marginBottom: '0.25rem', fontSize: '1.25rem', fontWeight: 600 }}>
-        {notice.code} — {notice.title}
-      </h2>
-      <p style={{ opacity: 0.6, marginBottom: '1.5rem', fontSize: '0.875rem' }}>
-        {notice.purpose}
-      </p>
+    <div
+      className="jbcc-page-fade"
+      style={{ padding: '48px 40px 96px', maxWidth: 720, margin: '0 auto' }}
+    >
+      {/* Eyebrow — notice code */}
+      <div
+        style={{
+          fontFamily: 'var(--f-mono-display)',
+          fontSize: 11,
+          fontWeight: 500,
+          letterSpacing: '0.24em',
+          color: 'var(--c-amber)',
+          textTransform: 'uppercase',
+          marginBottom: 10,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+        }}
+      >
+        {notice.code}
+        <span
+          style={{
+            height: 1,
+            flex: 1,
+            background: 'linear-gradient(90deg, var(--c-amber-mid-rgb, rgba(232,146,58,.32)), transparent)',
+            maxWidth: 80,
+          }}
+        />
+      </div>
 
-      <form onSubmit={handleSubmit}>
+      {/* Fraunces italic heading */}
+      <h1
+        style={{
+          fontFamily: 'var(--f-display)',
+          fontStyle: 'italic',
+          fontWeight: 350,
+          fontSize: 'clamp(24px, 3.5vw, 44px)',
+          lineHeight: 1.05,
+          letterSpacing: '-0.02em',
+          color: 'var(--c-text)',
+          fontVariationSettings: "'opsz' 72, 'SOFT' 30",
+          marginBottom: 32,
+          margin: '0 0 32px',
+        }}
+      >
+        Generate Letter
+      </h1>
+
+      <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 24 }}>
         {/* Recipient picker */}
-        <div style={fieldGroupStyle}>
-          <label htmlFor="recipient" style={labelStyle}>
-            Recipient party <span style={{ color: 'var(--c-danger, #dc2626)' }}>*</span>
+        <div>
+          <label htmlFor="recipient" className="jbcc-label">
+            Recipient party <span style={{ color: 'var(--c-red-bright)' }}>*</span>
           </label>
           <select
             id="recipient"
             value={recipientId}
             onChange={e => setRecipientId(e.target.value)}
             required
-            style={inputStyle}
+            className="jbcc-input"
+            style={{ appearance: 'none' }}
           >
             {parties.map(p => (
               <option key={p.id} value={p.id}>
@@ -152,16 +225,13 @@ export function GenerateLetterForm({ projectId, notice, fields, parties }: Props
           </select>
         </div>
 
-        {/* Trigger date — only shown when the notice has a numeric time-bar */}
+        {/* Trigger date */}
         {needsTrigger && (
-          <div style={fieldGroupStyle}>
-            <label htmlFor="trigger_date" style={labelStyle}>
-              Trigger date{' '}
-              <span style={{ fontWeight: 400, opacity: 0.6 }}>
-                ({notice.time_bar_days} {notice.time_bar_unit === 'WD' ? 'working' : 'calendar'} days
-                from this date)
-              </span>{' '}
-              <span style={{ color: 'var(--c-danger, #dc2626)' }}>*</span>
+          <div>
+            <label htmlFor="trigger_date" className="jbcc-label">
+              Trigger date · {notice.time_bar_days}{' '}
+              {notice.time_bar_unit === 'WD' ? 'working' : 'calendar'} days from this date{' '}
+              <span style={{ color: 'var(--c-red-bright)' }}>*</span>
             </label>
             <input
               id="trigger_date"
@@ -169,7 +239,7 @@ export function GenerateLetterForm({ projectId, notice, fields, parties }: Props
               value={triggerDate}
               onChange={e => setTriggerDate(e.target.value)}
               required={needsTrigger}
-              style={inputStyle}
+              className="jbcc-input"
             />
           </div>
         )}
@@ -178,11 +248,11 @@ export function GenerateLetterForm({ projectId, notice, fields, parties }: Props
         {manualFields.map(field => {
           const value = manualValues[field.placeholder] ?? ''
           return (
-            <div key={field.id} style={fieldGroupStyle}>
-              <label htmlFor={`field-${field.id}`} style={labelStyle}>
+            <div key={field.id}>
+              <label htmlFor={`field-${field.id}`} className="jbcc-label">
                 {field.label}
                 {field.required && (
-                  <span style={{ color: 'var(--c-danger, #dc2626)' }}> *</span>
+                  <span style={{ color: 'var(--c-red-bright)' }}> *</span>
                 )}
               </label>
               {field.field_type === 'textarea' ? (
@@ -192,7 +262,8 @@ export function GenerateLetterForm({ projectId, notice, fields, parties }: Props
                   onChange={e => handleManualChange(field.placeholder, e.target.value)}
                   required={field.required}
                   rows={3}
-                  style={{ ...inputStyle, resize: 'vertical' }}
+                  className="jbcc-input"
+                  style={{ resize: 'vertical' }}
                 />
               ) : (
                 <input
@@ -201,7 +272,7 @@ export function GenerateLetterForm({ projectId, notice, fields, parties }: Props
                   value={value}
                   onChange={e => handleManualChange(field.placeholder, e.target.value)}
                   required={field.required}
-                  style={inputStyle}
+                  className="jbcc-input"
                 />
               )}
             </div>
@@ -209,37 +280,36 @@ export function GenerateLetterForm({ projectId, notice, fields, parties }: Props
         })}
 
         {error && (
-          <p
+          <div
             role="alert"
             style={{
-              marginBottom: '1rem',
-              padding: '0.5rem 0.75rem',
-              background: 'var(--c-danger-subtle, #fef2f2)',
-              color: 'var(--c-danger, #dc2626)',
-              borderRadius: '0.375rem',
-              fontSize: '0.875rem',
+              padding: '12px 16px',
+              background: 'var(--c-red-dim-rgb, rgba(255,107,107,.10))',
+              border: '1px solid rgba(255,107,107,.25)',
+              fontFamily: 'var(--f-mono-display)',
+              fontSize: 12,
+              color: 'var(--c-red-bright)',
+              letterSpacing: '0.02em',
             }}
           >
             {error}
-          </p>
+          </div>
         )}
 
-        <button
-          type="submit"
-          disabled={busy}
-          style={{
-            padding: '0.625rem 1.25rem',
-            background: busy ? 'var(--c-muted, #9ca3af)' : 'var(--c-primary, #2563eb)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '0.375rem',
-            fontSize: '0.875rem',
-            fontWeight: 600,
-            cursor: busy ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {busy ? 'Generating…' : 'Generate letter'}
-        </button>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button
+            type="submit"
+            disabled={busy}
+            className="jbcc-btn-cta"
+            style={{
+              background: busy ? 'transparent' : 'var(--c-amber)',
+              color: busy ? 'var(--c-text-muted)' : 'var(--c-base)',
+              borderColor: busy ? 'var(--c-border)' : 'var(--c-amber)',
+            }}
+          >
+            {busy ? 'Generating…' : 'Generate Letter →'}
+          </button>
+        </div>
       </form>
     </div>
   )

@@ -15,6 +15,7 @@
   "dependencies": {
     "@esite/db": "workspace:*",
     "@esite/shared": "workspace:*",
+    "@fontsource-variable/mona-sans": "^5.2.8",
     "@hookform/resolvers": "^3.9.0",
     "@marsidev/react-turnstile": "^1.5.1",
     "@monaco-editor/react": "^4.7.0",
