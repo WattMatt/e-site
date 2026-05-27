@@ -16,7 +16,8 @@ export function MinimalLegalNav() {
         display: 'flex',
         gap: 16,
         flexWrap: 'wrap',
-        marginTop: 32,
+        marginTop: 'auto',
+        paddingTop: 32,
       }}
     >
       <Link href="/legal/privacy"                style={{ color: 'var(--c-text-dim)' }}>Privacy</Link>
