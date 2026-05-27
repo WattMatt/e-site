@@ -343,6 +343,8 @@ body {
   flex: 1;
   overflow: auto;
   padding: 32px;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ─── Page Header ───────────────────────────────────────────── */
