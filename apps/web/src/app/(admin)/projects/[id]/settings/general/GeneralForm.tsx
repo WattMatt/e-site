@@ -13,10 +13,23 @@ import { FormField, TextInput, Select, Textarea } from '@/components/ui/FormFiel
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
+// Mirrors the DB CHECK constraint `projects_code_format`:
+//   CHECK (code ~ '^[A-Z][A-Z0-9]{1,11}$')
+// Total length 2–12 chars; must start with an uppercase letter; only
+// uppercase letters and digits after that. NOT NULL in DB, so required here.
+const PROJECT_CODE_REGEX = /^[A-Z][A-Z0-9]{1,11}$/
+
 const generalFormSchema = z.object({
   name: z.string().min(1, 'Project name is required').max(120),
   description: z.string().max(2000).optional(),
-  code: z.string().max(64).optional(),
+  code: z
+    .string()
+    .min(2, 'Code must be at least 2 characters')
+    .max(12, 'Code must be at most 12 characters')
+    .regex(
+      PROJECT_CODE_REGEX,
+      'Must start with an uppercase letter, then uppercase letters or digits only (e.g. STP24, KNG, P001)',
+    ),
   status: z.enum(['planning', 'active', 'on_hold', 'completed', 'cancelled']),
 })
 
@@ -84,7 +97,8 @@ export function GeneralForm({ projectId, initial }: GeneralFormProps) {
     const result = await updateProjectAction(projectId, {
       name: values.name,
       description: values.description || null,
-      code: values.code || null,
+      // Code is required by the DB CHECK + NOT NULL — pass it verbatim.
+      code: values.code,
       status: values.status,
     })
     if ('error' in result) {
@@ -155,13 +169,20 @@ export function GeneralForm({ projectId, initial }: GeneralFormProps) {
 
             <FormField
               label="Project Code"
+              required
               error={errors.code?.message}
-              hint="Optional short identifier used in reports (e.g. STP-2024)"
+              hint="2–12 chars, uppercase letters + digits, must start with a letter (e.g. STP24, KNG, P001)"
             >
               <TextInput
-                {...register('code')}
+                {...register('code', {
+                  // Auto-uppercase as the user types so 'stp24' becomes 'STP24'.
+                  onChange: e => {
+                    e.target.value = e.target.value.toUpperCase()
+                  },
+                })}
                 invalid={!!errors.code}
-                placeholder="e.g. STP-2024"
+                placeholder="STP24"
+                maxLength={12}
               />
             </FormField>
 

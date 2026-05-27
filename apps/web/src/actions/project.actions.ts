@@ -249,7 +249,11 @@ export async function deleteProjectAction(
 const updateProjectSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   description: z.string().max(2000).nullable().optional(),
-  code: z.string().max(64).nullable().optional(),
+  // Mirrors DB CHECK projects_code_format: ^[A-Z][A-Z0-9]{1,11}$ — i.e.
+  // 2–12 chars, must start with an uppercase letter, then uppercase letters
+  // or digits only. NOT NULL in DB; we accept .optional() in the patch
+  // (omitting = no change) but reject blank/null at the type boundary.
+  code: z.string().regex(/^[A-Z][A-Z0-9]{1,11}$/, 'Project code must start with an uppercase letter, then uppercase letters or digits only (2–12 chars)').optional(),
   address: z.string().max(500).nullable().optional(),
   city: z.string().max(120).nullable().optional(),
   province: z.string().max(120).nullable().optional(),

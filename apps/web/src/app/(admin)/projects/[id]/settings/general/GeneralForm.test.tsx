@@ -77,7 +77,9 @@ describe('GeneralForm', () => {
     render(
       <GeneralForm
         projectId="proj-uuid"
-        initial={{ name: 'Test Project', description: 'Desc', code: 'TP-01', status: 'active' }}
+        // 'TP01' matches the DB CHECK projects_code_format
+        // (^[A-Z][A-Z0-9]{1,11}$ — letters + digits, no hyphens).
+        initial={{ name: 'Test Project', description: 'Desc', code: 'TP01', status: 'active' }}
       />,
     )
 
@@ -98,7 +100,7 @@ describe('GeneralForm', () => {
     mockUpdateProjectAction.mockResolvedValueOnce({ error: 'Permission denied' })
 
     const { GeneralForm } = await import('./GeneralForm')
-    render(<GeneralForm projectId="proj-uuid" initial={{ name: 'X', status: 'active' }} />)
+    render(<GeneralForm projectId="proj-uuid" initial={{ name: 'X', code: 'TP01', status: 'active' }} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -106,5 +108,26 @@ describe('GeneralForm', () => {
       const alert = screen.getByRole('alert')
       expect(alert.textContent).toContain('Permission denied')
     })
+  })
+
+  // Regression: DB CHECK rejects codes that don't match ^[A-Z][A-Z0-9]{1,11}$.
+  // Form must reject the same input client-side with a useful error before
+  // hitting the action.
+  it('blocks submit when code is invalid (e.g. starts with a digit)', async () => {
+    const { GeneralForm } = await import('./GeneralForm')
+    render(
+      <GeneralForm
+        projectId="proj-uuid"
+        initial={{ name: 'Test', code: '643', status: 'active' }}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    // Action should never be called — Zod blocks submission.
+    await waitFor(() => {
+      expect(screen.getByText(/must start with an uppercase letter/i)).toBeDefined()
+    })
+    expect(mockUpdateProjectAction).not.toHaveBeenCalled()
   })
 })
