@@ -81,6 +81,7 @@ function projectNav(id: string) {
     { href: `/projects/${id}/floor-plans`,  label: 'Floor Plans', Icon: Map,           exact: false },
     { href: `/projects/${id}/handover`,     label: 'Handover',    Icon: ClipboardCheck, exact: false },
     { href: `/projects/${id}/jbcc`,         label: 'JBCC',        Icon: ScrollText,    exact: false },
+    { href: `/projects/${id}/settings`,     label: 'Settings',    Icon: Settings,      exact: false },
   ]
 }
 
