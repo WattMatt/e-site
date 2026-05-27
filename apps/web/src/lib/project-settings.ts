@@ -1,14 +1,21 @@
 /**
- * Web-side cache wrappers around @esite/shared's projectSettingsService.
+ * Web-side helpers around @esite/shared's projectSettingsService.
  *
- * Server components call get*Cached() to read; server actions call
- * invalidateProjectSettings() after a write so the next render fetches fresh.
+ * NOTE: these used to be wrapped in `unstable_cache`, but Next.js forbids
+ * accessing `cookies()` / `headers()` inside `unstable_cache`, and
+ * `createClient()` from `@/lib/supabase/server` reads cookies for the user's
+ * session. Calling the wrapped function threw a runtime error on every
+ * settings sub-page that fetched data (operational / contract / integrations
+ * / history). Per-request React `cache()` still dedupes calls within a single
+ * render; cross-request caching of authenticated data is dangerous anyway
+ * (different users → different RLS scopes → different rows).
  *
- * Cache key strategy: per-project tags so writes on project A don't bust
- * project B's cache. Tag format: `project-settings:<projectId>`.
+ * `invalidateProjectSettings` is retained as a tag-revalidator so server
+ * actions can still bust any downstream tag-keyed fetch cache. No-op for
+ * the get* functions above (they no longer cache).
  */
 
-import { unstable_cache, revalidateTag } from 'next/cache'
+import { revalidateTag } from 'next/cache'
 
 import { createClient } from '@/lib/supabase/server'
 import { projectSettingsService } from '@esite/shared'
@@ -17,45 +24,31 @@ import type { ProjectSettings, ProjectSettingsHistoryRow } from '@esite/shared'
 const TAG = (projectId: string) => `project-settings:${projectId}`
 
 /**
- * Returns the project_settings row for `projectId`, or null. Cached per
- * project with a 60s revalidate window; busted explicitly on write via
- * invalidateProjectSettings.
+ * Returns the project_settings row for `projectId`, or null. Each call reads
+ * cookies → user session → RLS-scoped Supabase client.
+ *
+ * Function name keeps the `Cached` suffix so existing imports don't need
+ * updating in this fix. Cross-request caching has been removed (see header).
  */
 export async function getProjectSettingsCached(projectId: string): Promise<ProjectSettings | null> {
-  const cached = unstable_cache(
-    async () => {
-      const supabase = await createClient()
-      return projectSettingsService.get(supabase as any, projectId)
-    },
-    ['project-settings', projectId],
-    { tags: [TAG(projectId)], revalidate: 60 },
-  )
-  return cached()
+  const supabase = await createClient()
+  return projectSettingsService.get(supabase as any, projectId)
 }
 
 /**
- * Returns the most recent history rows for `projectId`. Same cache pattern.
- * Limit caps at 50 by default — the audit viewer (Phase 2) can override.
+ * Returns the most recent history rows for `projectId`. Same shape as above.
  */
 export async function getProjectHistoryCached(
   projectId: string,
   limit = 50,
 ): Promise<ProjectSettingsHistoryRow[]> {
-  const cached = unstable_cache(
-    async () => {
-      const supabase = await createClient()
-      return projectSettingsService.getHistory(supabase as any, projectId, { limit })
-    },
-    ['project-settings-history', projectId, String(limit)],
-    { tags: [TAG(projectId)], revalidate: 60 },
-  )
-  return cached()
+  const supabase = await createClient()
+  return projectSettingsService.getHistory(supabase as any, projectId, { limit })
 }
 
 /**
- * Bust the cache for this project. Call after any write (update / reset /
- * restore). Cheap — Next dedupes within a request and tag invalidation is
- * O(1) on the tag index.
+ * Bust any downstream tag-keyed cache for this project. Safe to call from
+ * server actions after a write.
  */
 export function invalidateProjectSettings(projectId: string): void {
   revalidateTag(TAG(projectId))
