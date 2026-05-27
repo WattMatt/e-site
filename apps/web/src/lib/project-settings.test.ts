@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Hoisted mocks — must declare before importing the module under test.
 const revalidateTagMock = vi.fn()
-const unstableCacheMock = vi.fn((fn: any) => fn)
+const unstableCacheMock = vi.fn((fn: any, _keys?: unknown, _opts?: unknown) => fn)
 
 vi.mock('next/cache', () => ({
   revalidateTag: revalidateTagMock,

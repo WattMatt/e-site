@@ -84,7 +84,7 @@ export async function resetProjectSettingsAction(
   if (!guard.ok) return { error: guard.error }
 
   try {
-    const settings = await projectSettingsService.reset(supabase as any, projectId, fields)
+    const settings = await projectSettingsService.reset(supabase as any, projectId, [...fields])
     bust(projectId)
     return { settings }
   } catch (err) {
