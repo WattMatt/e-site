@@ -1,10 +1,11 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
-import { projectService } from '@esite/shared'
+import { projectService, ORG_WRITE_ROLES } from '@esite/shared'
 import type { OrgRole } from '@esite/shared'
 
-import { Placeholder } from '../_components/Placeholder'
+import { listJbccParties } from '@/actions/jbcc-parties.actions'
+import { JbccPartiesList } from './JbccPartiesList'
 
 const VIEW_ROLES: ReadonlyArray<OrgRole> = ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer']
 
@@ -22,5 +23,16 @@ export default async function Page({ params }: Props) {
   const guard = await requireRole(supabase, orgId, VIEW_ROLES)
   if (!guard.ok) redirect(`/projects/${id}/settings/general`)
 
-  return <Placeholder title="JBCC Parties" description="Employer, contractor, principal agent, etc." />
+  const canEdit = (ORG_WRITE_ROLES as readonly string[]).includes(guard.role ?? '')
+
+  const result = await listJbccParties(id)
+  const parties = 'parties' in result ? result.parties : []
+
+  return (
+    <JbccPartiesList
+      projectId={id}
+      initialParties={parties}
+      canEdit={canEdit}
+    />
+  )
 }
