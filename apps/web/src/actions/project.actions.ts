@@ -18,9 +18,11 @@
  */
 
 import { revalidatePath } from 'next/cache'
+import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
+import { requireRole } from '@/lib/auth/require-role'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
-import { createProjectSchema, type CreateProjectInput, PLANS, type PlanTier } from '@esite/shared'
+import { createProjectSchema, type CreateProjectInput, PLANS, type PlanTier, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
 
 export interface ProjectGateInfo {
   tier: PlanTier
@@ -237,5 +239,83 @@ export async function deleteProjectAction(
 
   revalidatePath('/projects')
   revalidatePath('/dashboard')
+  return { ok: true }
+}
+
+// ─── updateProjectAction ────────────────────────────────────────────────────
+
+export const updateProjectSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(2000).nullable().optional(),
+  code: z.string().max(64).nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
+  city: z.string().max(120).nullable().optional(),
+  province: z.string().max(120).nullable().optional(),
+  status: z.enum(['planning', 'active', 'on_hold', 'completed', 'cancelled']).optional(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  clientName: z.string().max(200).nullable().optional(),
+  clientContact: z.string().max(500).nullable().optional(),
+  contractValue: z.number().nonnegative().nullable().optional(),
+  currency: z.string().max(8).nullable().optional(),
+})
+
+export type UpdateProjectInput = z.infer<typeof updateProjectSchema>
+
+export type UpdateProjectResult = { ok: true } | { error: string }
+
+/**
+ * Patch a subset of projects.projects columns.
+ *
+ * Role gate: resolves the project's org, then requires one of
+ * allowedRoles (default = ORG_WRITE_ROLES). All passed fields are
+ * camelCase→snake_case mapped; undefined fields are not included in
+ * the UPDATE so they are never zeroed out.
+ */
+export async function updateProjectAction(
+  projectId: string,
+  input: UpdateProjectInput,
+  allowedRoles: readonly OrgRole[] = ORG_WRITE_ROLES,
+): Promise<UpdateProjectResult> {
+  const supabase = await createClient()
+
+  const { data: proj } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('organisation_id')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (!proj) return { error: 'Project not found' }
+
+  const guard = await requireRole(supabase, proj.organisation_id, allowedRoles)
+  if (!guard.ok) return { error: guard.error }
+
+  const parsed = updateProjectSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  // camelCase → snake_case row patch — only include keys that were passed.
+  const row: Record<string, unknown> = {}
+  if (parsed.data.name !== undefined)          row.name = parsed.data.name
+  if (parsed.data.description !== undefined)   row.description = parsed.data.description
+  if (parsed.data.code !== undefined)          row.code = parsed.data.code
+  if (parsed.data.address !== undefined)       row.address = parsed.data.address
+  if (parsed.data.city !== undefined)          row.city = parsed.data.city
+  if (parsed.data.province !== undefined)      row.province = parsed.data.province
+  if (parsed.data.status !== undefined)        row.status = parsed.data.status
+  if (parsed.data.startDate !== undefined)     row.start_date = parsed.data.startDate
+  if (parsed.data.endDate !== undefined)       row.end_date = parsed.data.endDate
+  if (parsed.data.clientName !== undefined)    row.client_name = parsed.data.clientName
+  if (parsed.data.clientContact !== undefined) row.client_contact = parsed.data.clientContact
+  if (parsed.data.contractValue !== undefined) row.contract_value = parsed.data.contractValue
+  if (parsed.data.currency !== undefined)      row.currency = parsed.data.currency
+
+  const { error } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .update(row)
+    .eq('id', projectId)
+  if (error) return { error: error.message }
+
+  revalidatePath(`/projects/${projectId}`, 'layout')
   return { ok: true }
 }
