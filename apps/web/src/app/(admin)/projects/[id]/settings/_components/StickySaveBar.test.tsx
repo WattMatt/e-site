@@ -55,4 +55,22 @@ describe('StickySaveBar', () => {
       expect(screen.getByRole('button', { name: /Retry/i })).toBeDefined()
     })
   })
+
+  // Regression: previously the component returned null BEFORE a useEffect was
+  // declared, so flipping isDirty false→true changed the hook count and
+  // React threw #310 ("Rendered fewer hooks than expected"). All hooks must
+  // sit above any conditional return.
+  it('does not throw when isDirty toggles false → true → false', async () => {
+    const { StickySaveBar } = await import('./StickySaveBar')
+
+    const { rerender } = render(
+      <StickySaveBar isDirty={false} onSave={vi.fn()} onDiscard={vi.fn()} />,
+    )
+    rerender(<StickySaveBar isDirty={true} onSave={vi.fn()} onDiscard={vi.fn()} />)
+    rerender(<StickySaveBar isDirty={false} onSave={vi.fn()} onDiscard={vi.fn()} />)
+
+    // If hook order had changed across renders, React would have thrown
+    // before reaching this assertion. Reaching here = no #310.
+    expect(true).toBe(true)
+  })
 })

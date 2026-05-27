@@ -26,13 +26,16 @@ export function StickySaveBar({ isDirty, onSave, onDiscard }: StickySaveBarProps
   const [state, setState] = useState<BarState>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  if (!isDirty && state !== 'success') return null
-
+  // Hook MUST stay above the early return below — otherwise the bar
+  // renders different hook counts on dirty-vs-clean renders and React
+  // throws #310 ("Rendered fewer hooks than expected").
   useEffect(() => {
     if (state !== 'success') return
     const t = setTimeout(() => setState('idle'), 1500)
     return () => clearTimeout(t)
   }, [state])
+
+  if (!isDirty && state !== 'success') return null
 
   const handleSave = async () => {
     setState('submitting')
