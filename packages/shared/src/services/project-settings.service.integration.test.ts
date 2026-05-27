@@ -57,7 +57,12 @@ describe.skipIf(!runIntegration)('projectSettingsService — INTEGRATION (live D
 
   afterAll(async () => {
     if (projectId) {
-      // Cascade removes project_settings + history via FK ON DELETE CASCADE.
+      // 3-step delete: the audit trigger fires on project_settings DELETE and
+      // inserts a history row, which fails FK if the parent project row is
+      // being removed in the same transaction. So drop settings + history
+      // explicitly first, then the project.
+      await (admin as any).schema('projects').from('project_settings').delete().eq('project_id', projectId)
+      await (admin as any).schema('projects').from('project_settings_history').delete().eq('project_id', projectId)
       await (admin as any).schema('projects').from('projects').delete().eq('id', projectId)
     }
   }, 30_000)
@@ -105,12 +110,14 @@ describe.skipIf(!runIntegration)('projectSettingsService — INTEGRATION (live D
   it('restore re-applies a past snapshot and writes a new history row', async () => {
     // Find the history row from the first UPDATE (retentionPct: 5 → 7.5).
     const history = await projectSettingsService.getHistory(admin, projectId, { limit: 10 })
+    // The audit trigger stores diff values as JSON numbers (5, 7.5),
+    // not stringified PG numerics. Match against the number.
     const targetRow = history.find(h =>
       h.operation === 'UPDATE'
         && h.diff?.retention_pct
-        && h.diff.retention_pct[1] === '7.50',
+        && h.diff.retention_pct[1] === 7.5,
     )
-    if (!targetRow) throw new Error('expected to find the 5.00→7.50 history row')
+    if (!targetRow) throw new Error('expected to find the 5→7.5 history row')
 
     const restored = await projectSettingsService.restore(admin, projectId, targetRow.id)
     expect(restored.retentionPct).toBe(7.5)
