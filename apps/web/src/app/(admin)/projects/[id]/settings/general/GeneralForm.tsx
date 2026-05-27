@@ -13,11 +13,11 @@ import { FormField, TextInput, Select, Textarea } from '@/components/ui/FormFiel
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
-// Mirrors the DB CHECK constraint `projects_code_format`:
-//   CHECK (code ~ '^[A-Z][A-Z0-9]{1,11}$')
-// Total length 2–12 chars; must start with an uppercase letter; only
-// uppercase letters and digits after that. NOT NULL in DB, so required here.
-const PROJECT_CODE_REGEX = /^[A-Z][A-Z0-9]{1,11}$/
+// Mirrors the DB CHECK constraint `projects_code_format` (after migration
+// 00105): CHECK (code ~ '^[A-Z0-9][A-Z0-9-]{1,11}$')
+// Total length 2–12 chars; starts with uppercase letter OR digit; allows
+// uppercase letters, digits, and hyphens. NOT NULL in DB.
+const PROJECT_CODE_REGEX = /^[A-Z0-9][A-Z0-9-]{1,11}$/
 
 const generalFormSchema = z.object({
   name: z.string().min(1, 'Project name is required').max(120),
@@ -28,7 +28,7 @@ const generalFormSchema = z.object({
     .max(12, 'Code must be at most 12 characters')
     .regex(
       PROJECT_CODE_REGEX,
-      'Must start with an uppercase letter, then uppercase letters or digits only (e.g. STP24, KNG, P001)',
+      'Uppercase letters, digits, and hyphens only — must start with a letter or digit (e.g. 643, STP24, 2024-A)',
     ),
   status: z.enum(['planning', 'active', 'on_hold', 'completed', 'cancelled']),
 })
@@ -171,17 +171,18 @@ export function GeneralForm({ projectId, initial }: GeneralFormProps) {
               label="Project Code"
               required
               error={errors.code?.message}
-              hint="2–12 chars, uppercase letters + digits, must start with a letter (e.g. STP24, KNG, P001)"
+              hint="2–12 chars. Uppercase letters, digits, and hyphens (e.g. 643, STP24, 2024-A)"
             >
               <TextInput
                 {...register('code', {
                   // Auto-uppercase as the user types so 'stp24' becomes 'STP24'.
+                  // Digits and hyphens pass through unchanged.
                   onChange: e => {
                     e.target.value = e.target.value.toUpperCase()
                   },
                 })}
                 invalid={!!errors.code}
-                placeholder="STP24"
+                placeholder="643"
                 maxLength={12}
               />
             </FormField>

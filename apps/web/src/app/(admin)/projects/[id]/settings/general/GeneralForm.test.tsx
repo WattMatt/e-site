@@ -77,8 +77,8 @@ describe('GeneralForm', () => {
     render(
       <GeneralForm
         projectId="proj-uuid"
-        // 'TP01' matches the DB CHECK projects_code_format
-        // (^[A-Z][A-Z0-9]{1,11}$ — letters + digits, no hyphens).
+        // 'TP01' matches DB CHECK projects_code_format
+        // (^[A-Z0-9][A-Z0-9-]{1,11}$ — uppercase letters, digits, hyphens).
         initial={{ name: 'Test Project', description: 'Desc', code: 'TP01', status: 'active' }}
       />,
     )
@@ -110,15 +110,16 @@ describe('GeneralForm', () => {
     })
   })
 
-  // Regression: DB CHECK rejects codes that don't match ^[A-Z][A-Z0-9]{1,11}$.
+  // Regression: DB CHECK rejects codes that don't match ^[A-Z0-9][A-Z0-9-]{1,11}$.
   // Form must reject the same input client-side with a useful error before
-  // hitting the action.
-  it('blocks submit when code is invalid (e.g. starts with a digit)', async () => {
+  // hitting the action. (Digit-only codes like '643' are now valid since
+  // migration 00105 — we test a still-invalid case: leading hyphen.)
+  it('blocks submit when code violates the regex (leading hyphen)', async () => {
     const { GeneralForm } = await import('./GeneralForm')
     render(
       <GeneralForm
         projectId="proj-uuid"
-        initial={{ name: 'Test', code: '643', status: 'active' }}
+        initial={{ name: 'Test', code: '-ABC', status: 'active' }}
       />,
     )
 
@@ -126,7 +127,7 @@ describe('GeneralForm', () => {
 
     // Action should never be called — Zod blocks submission.
     await waitFor(() => {
-      expect(screen.getByText(/must start with an uppercase letter/i)).toBeDefined()
+      expect(screen.getByText(/uppercase letters, digits, and hyphens/i)).toBeDefined()
     })
     expect(mockUpdateProjectAction).not.toHaveBeenCalled()
   })
