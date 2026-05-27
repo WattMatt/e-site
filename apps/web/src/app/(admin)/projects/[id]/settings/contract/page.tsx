@@ -4,7 +4,8 @@ import { requireRole } from '@/lib/auth/require-role'
 import { projectService } from '@esite/shared'
 import type { OrgRole } from '@esite/shared'
 
-import { Placeholder } from '../_components/Placeholder'
+import { getProjectSettingsCached } from '@/lib/project-settings'
+import { ContractForm } from './ContractForm'
 
 const VIEW_ROLES: ReadonlyArray<OrgRole> = ['owner', 'admin']
 
@@ -22,5 +23,19 @@ export default async function Page({ params }: Props) {
   const guard = await requireRole(supabase, orgId, VIEW_ROLES)
   if (!guard.ok) redirect(`/projects/${id}/settings/general`)
 
-  return <Placeholder title="Contract" description="Contract type, value, retention, and signed/PC dates" />
+  const settings = await getProjectSettingsCached(id)
+
+  // projectService.getById returns snake_case rows — extract to camelCase explicitly.
+  const projectClientProps = {
+    contractValue: (project as any).contract_value ?? null,
+    currency: (project as any).currency ?? null,
+  }
+
+  return (
+    <ContractForm
+      projectId={id}
+      project={projectClientProps}
+      settings={settings}
+    />
+  )
 }
