@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, snagService, rfiService, formatDate, formatZAR } from '@esite/shared'
+import { projectService, snagService, rfiService, formatDate, formatZAR, OWNER_ADMIN } from '@esite/shared'
+import { requireRole } from '@/lib/auth/require-role'
 import { ReportButton } from '@/components/ui/ReportButton'
 
 interface Props {
@@ -50,6 +51,10 @@ export default async function ProjectDetailPage({ params }: Props) {
   ])
 
   if (!project) notFound()
+
+  const orgId = (project as any).organisation_id ?? (project as any).organisationId
+  const guard = await requireRole(supabase, orgId, ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer'])
+  const canSeeCost = guard.ok && (OWNER_ADMIN as readonly string[]).includes(guard.role ?? '')
 
   const openRfis = rfis.filter((r) => r.status === 'open').length
 
@@ -105,7 +110,7 @@ export default async function ProjectDetailPage({ params }: Props) {
             {[
               ['Client', project.client_name],
               ['Contact', project.client_contact],
-              ['Contract Value', project.contract_value ? formatZAR(project.contract_value) : null],
+              ['Contract Value', canSeeCost && project.contract_value ? formatZAR(project.contract_value) : null],
               ['Start Date', project.start_date ? formatDate(project.start_date) : null],
               ['End Date', project.end_date ? formatDate(project.end_date) : null],
             ].filter(([, v]) => v).map(([label, value]) => (

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, formatDate, formatZAR } from '@esite/shared'
+import { projectService, formatDate, formatZAR, OWNER_ADMIN } from '@esite/shared'
+import { requireRole } from '@/lib/auth/require-role'
 import { FolderOpen } from 'lucide-react'
 import Link from 'next/link'
 
@@ -28,6 +29,12 @@ export default async function ProjectsPage() {
   const projects = membership
     ? await projectService.list(supabase as any, membership.organisation_id)
     : []
+
+  const canSeeCost = membership
+    ? await requireRole(supabase, membership.organisation_id, OWNER_ADMIN).then(
+        (g) => g.ok,
+      )
+    : false
 
   // Per-project inspections certified count (replaces compliance-health %)
   const projectIds = projects.map((p: any) => p.id)
@@ -94,7 +101,7 @@ export default async function ProjectsPage() {
                       {counts.certified} of {counts.total} certified
                     </span>
                   )}
-                  {project.contract_value != null && (
+                  {canSeeCost && project.contract_value != null && (
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--c-text-mid)' }}>
                       {formatZAR(project.contract_value)}
                     </span>
