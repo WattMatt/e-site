@@ -2,11 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Hoisted mocks — must declare before importing the module under test.
 const revalidateTagMock = vi.fn()
-const unstableCacheMock = vi.fn((fn: any, _keys?: unknown, _opts?: unknown) => fn)
 
 vi.mock('next/cache', () => ({
   revalidateTag: revalidateTagMock,
-  unstable_cache: unstableCacheMock,
 }))
 
 const createClientMock = vi.fn()
@@ -26,13 +24,12 @@ vi.mock('@esite/shared', () => ({
 describe('project-settings web lib', () => {
   beforeEach(() => {
     revalidateTagMock.mockReset()
-    unstableCacheMock.mockClear()
     createClientMock.mockReset()
     serviceGetMock.mockReset()
     serviceGetHistoryMock.mockReset()
   })
 
-  it('getProjectSettingsCached registers an unstable_cache wrapper keyed by projectId', async () => {
+  it('getProjectSettingsCached fetches via the live client (not via unstable_cache)', async () => {
     const { getProjectSettingsCached } = await import('./project-settings')
 
     const fakeClient = { fakeClient: true }
@@ -41,15 +38,12 @@ describe('project-settings web lib', () => {
 
     const result = await getProjectSettingsCached('p1')
 
+    // Regression: this function used to wrap the body in `unstable_cache`,
+    // but Next.js forbids reading cookies inside that scope and createClient()
+    // does so. The function now calls the service directly each time.
+    expect(createClientMock).toHaveBeenCalledTimes(1)
     expect(serviceGetMock).toHaveBeenCalledWith(fakeClient, 'p1')
     expect(result).toEqual({ id: 's1', projectId: 'p1' })
-
-    // unstable_cache called with (fn, keyParts, opts) — verify keyParts + tag include projectId.
-    const callArgs = unstableCacheMock.mock.calls[0]
-    expect(callArgs[1]).toEqual(['project-settings', 'p1'])
-    expect(callArgs[2]).toMatchObject({
-      tags: ['project-settings:p1'],
-    })
   })
 
   it('getProjectHistoryCached calls the history service with default limit', async () => {
