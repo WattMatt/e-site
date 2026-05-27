@@ -57,12 +57,9 @@ describe.skipIf(!runIntegration)('projectSettingsService — INTEGRATION (live D
 
   afterAll(async () => {
     if (projectId) {
-      // 3-step delete: the audit trigger fires on project_settings DELETE and
-      // inserts a history row, which fails FK if the parent project row is
-      // being removed in the same transaction. So drop settings + history
-      // explicitly first, then the project.
-      await (admin as any).schema('projects').from('project_settings').delete().eq('project_id', projectId)
-      await (admin as any).schema('projects').from('project_settings_history').delete().eq('project_id', projectId)
+      // Migration 00104 made the audit trigger skip the history INSERT on
+      // DELETE, so cascade from projects.projects cleanly purges settings +
+      // history in a single statement.
       await (admin as any).schema('projects').from('projects').delete().eq('id', projectId)
     }
   }, 30_000)
