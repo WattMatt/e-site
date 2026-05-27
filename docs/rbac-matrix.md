@@ -72,6 +72,27 @@ membership.
 ⁴ `/jbcc/unlock` is visible to all authenticated org members (read-only paywall page). The `<UnlockJbccButton />` inside only renders for owner/admin; all other roles see "ask your owner/admin" text. No redirect for locked org — this IS the locked-state destination.
 ⁵ All JBCC routes under `/(gated)/` require `public.has_feature(org_id, 'jbcc') = true` — the `jbcc/layout.tsx` gate redirects locked orgs to `/jbcc/unlock` before any role check. WM-Consulting bypasses. For write-gated routes: `inspector`, `supplier`, and `client_viewer` cannot reach `/notice/[code]/new`; status/attachment mutations on tracking and CRUD on parties require `ORG_WRITE_ROLES` (owner/admin/project_manager/contractor) enforced server-side.
 
+## Project settings (`apps/web/src/app/(admin)/projects/[id]/settings/*`)
+
+All 12 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narrow further per sub-page. The DB RLS gate underneath (PR-1a) is `ORG_WRITE_ROLES`; app-layer rows below narrow further. PR-1c ships these routes as placeholders ("Coming soon"); real forms land per Phase-2 PR.
+
+| Sub-page | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `/projects/[id]/settings/general`       | W | W | W | R | R | R | R |
+| `/projects/[id]/settings/site`          | W | W | W | R | R | R | R |
+| `/projects/[id]/settings/dates`         | W | W | W | R | R | R | R |
+| `/projects/[id]/settings/client`        | W | W | W | R | R | R | R |
+| `/projects/[id]/settings/contract`      | W | W | — | — | — | — | — |
+| `/projects/[id]/settings/members`       | W | W | — | — | — | — | — |
+| `/projects/[id]/settings/contacts`      | W | W | W | R | R | R | R |
+| `/projects/[id]/settings/jbcc-parties`  | W | W | W | R | R | R | R |
+| `/projects/[id]/settings/operational`   | W | W | W | R | R | R | R |
+| `/projects/[id]/settings/integrations`  | W | W | — | — | — | — | — |
+| `/projects/[id]/settings/danger-zone`   | W | — | — | — | — | — | — |
+| `/projects/[id]/settings/history`       | R | R | R | R | R | R | R |
+
+W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
+
 ## API routes (`apps/web/src/app/api/*`)
 
 | Endpoint | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
