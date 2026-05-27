@@ -14,12 +14,10 @@ export default function AdminError({
     console.error('[AdminError]', error)
   }, [error])
 
-  // Surface the actual error on non-production deploys (preview/dev) so we
-  // don't have to dig through Vercel function logs by digest. Production
-  // still shows just the friendly UI + digest.
-  const showDebug =
-    process.env.NEXT_PUBLIC_VERCEL_ENV !== 'production' ||
-    process.env.NODE_ENV !== 'production'
+  // TEMPORARY: surface the actual error in production so we can diagnose
+  // the settings sub-page failure (PR-1c/Phase-2). Revert to the env-gated
+  // version (only preview/dev show debug) once root cause is identified.
+  const showDebug = true
 
   return (
     <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
