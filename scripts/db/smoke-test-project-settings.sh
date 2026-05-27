@@ -41,30 +41,20 @@ SET=$(echo $COUNTS | awk '{print $2}')
 
 section "6. UPDATE round-trip writes a history row with snapshot + diff"
 # Pick the first project; UPDATE one field; check history; ROLLBACK to leave no trace.
+# NOTE: must use multi-statement (not data-modifying CTE) because the CTE's
+# trigger writes are NOT visible to a sibling SELECT in the same snapshot.
 RESULT=$(mgmt_query "
 BEGIN;
-WITH target AS (SELECT project_id FROM projects.project_settings LIMIT 1),
-upd AS (
-  UPDATE projects.project_settings ps
-     SET retention_pct = 7.5,
-         updated_by    = NULL
-   FROM target
-   WHERE ps.project_id = target.project_id
-   RETURNING ps.project_id, ps.retention_pct
-),
-hist AS (
-  SELECT h.operation,
-         (h.diff->'retention_pct'->>0)::numeric AS old_val,
-         (h.diff->'retention_pct'->>1)::numeric AS new_val,
-         (h.snapshot->>'project_id')::uuid       AS snap_project_id
-    FROM projects.project_settings_history h
-    JOIN target USING (project_id)
-   ORDER BY h.changed_at DESC LIMIT 1
-)
-SELECT (SELECT operation FROM hist) AS op,
-       (SELECT old_val   FROM hist) AS old_pct,
-       (SELECT new_val   FROM hist) AS new_pct,
-       (SELECT snap_project_id FROM hist) = (SELECT project_id FROM target) AS snap_matches;
+CREATE TEMP TABLE _smoke_t AS SELECT project_id FROM projects.project_settings LIMIT 1;
+UPDATE projects.project_settings SET retention_pct = 7.5 WHERE project_id IN (SELECT project_id FROM _smoke_t);
+SELECT h.operation AS op,
+       (h.diff->'retention_pct'->>0)::numeric AS old_pct,
+       (h.diff->'retention_pct'->>1)::numeric AS new_pct,
+       (h.snapshot->>'project_id')::uuid = (SELECT project_id FROM _smoke_t) AS snap_matches
+  FROM projects.project_settings_history h
+  WHERE h.project_id IN (SELECT project_id FROM _smoke_t)
+    AND h.operation = 'UPDATE'
+  ORDER BY h.changed_at DESC LIMIT 1;
 ROLLBACK;
 ")
 OP=$(echo "$RESULT" | jq -r '.[0].op')
@@ -78,19 +68,17 @@ SNAP=$(echo "$RESULT" | jq -r '.[0].snap_matches')
 [[ "$SNAP" == "true" ]] && pass "snapshot.project_id matches the target row" || fail "snapshot project_id mismatch"
 
 section "7. Auto-create trigger fires on new project insertion"
+# Multi-statement: INSERT first (trigger fires); then SELECT sees the trigger's write.
 RESULT=$(mgmt_query "
 BEGIN;
-WITH any_org AS (SELECT id AS org_id FROM public.organisations LIMIT 1),
-     any_user AS (SELECT id AS u_id FROM public.profiles LIMIT 1),
-     ins AS (
-       INSERT INTO projects.projects (name, organisation_id, created_by)
-       SELECT 'SMOKE-TEST-DO-NOT-COMMIT', any_org.org_id, any_user.u_id
-         FROM any_org, any_user
-       RETURNING id
-     )
+INSERT INTO projects.projects (name, organisation_id, created_by)
+SELECT 'SMOKE-TEST-DO-NOT-COMMIT',
+       (SELECT id FROM public.organisations LIMIT 1),
+       (SELECT id FROM public.profiles LIMIT 1);
 SELECT EXISTS(
   SELECT 1 FROM projects.project_settings ps
-   WHERE ps.project_id = (SELECT id FROM ins)
+   JOIN projects.projects p ON p.id = ps.project_id
+   WHERE p.name = 'SMOKE-TEST-DO-NOT-COMMIT'
 ) AS settings_created;
 ROLLBACK;
 ")
