@@ -2,7 +2,32 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { updateSession } from './lib/supabase/middleware'
 
-const PUBLIC_PATHS = ['/login', '/signup', '/reset-password', '/auth/callback', '/share', '/account-deleted', '/inspection']
+const PUBLIC_PATHS = [
+  '/login',
+  '/signup',
+  '/reset-password',
+  '/auth/callback',
+  '/share',
+  '/account-deleted',
+  '/inspection',
+  // Public marketing + legal pages (PR #10, built for the Paystack KYC
+  // review). Must be reachable without a session — Paystack reviewers and
+  // anonymous visitors hit these without logging in.
+  '/pricing',
+  '/legal',         // covers /legal/acceptable-use-policy, /legal/privacy, /legal/terms
+  '/sitemap.xml',
+  '/robots.txt',
+]
+
+// Exact-match public paths. `'/'.startsWith('/')` matches every URL, so the
+// root landing page can't go in PUBLIC_PATHS — it needs an exact match.
+const PUBLIC_EXACT_PATHS = new Set(['/'])
+
+// Marketing pages — accessible to anonymous AND authenticated visitors. Unlike
+// /login or /signup we do NOT bounce logged-in users away from these, since a
+// logged-in user reading /pricing or /legal/* is legitimate. The (public)/
+// page.tsx for `/` handles its own logged-in redirect at the page level.
+const MARKETING_PREFIXES = ['/pricing', '/legal', '/sitemap.xml', '/robots.txt']
 const ONBOARDING_PATH = '/onboarding'
 const VERIFY_EMAIL_PATH = '/verify-email'
 const VERIFY_MFA_PATH = '/verify-mfa'
@@ -63,7 +88,8 @@ export async function middleware(request: NextRequest) {
 
   const { supabaseResponse, user, aal } = await updateSession(request)
 
-  const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
+  const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p)) || PUBLIC_EXACT_PATHS.has(pathname)
+  const isMarketing = pathname === '/' || MARKETING_PREFIXES.some((p) => pathname.startsWith(p))
   const isOnboarding = pathname.startsWith(ONBOARDING_PATH)
   const isVerifyEmail = pathname.startsWith(VERIFY_EMAIL_PATH)
   const isVerifyMfa = pathname.startsWith(VERIFY_MFA_PATH)
@@ -87,7 +113,7 @@ export async function middleware(request: NextRequest) {
   //    not get redirected to their dashboard).
   const isResetFlow = pathname.startsWith('/reset-password')
   const isPublicShare = pathname.startsWith('/inspection')
-  if (user && isPublicPath && !isAuthCallback && !isResetFlow && !isPublicShare) {
+  if (user && isPublicPath && !isAuthCallback && !isResetFlow && !isPublicShare && !isMarketing) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     url.searchParams.delete('next')
