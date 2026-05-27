@@ -244,7 +244,9 @@ export async function deleteProjectAction(
 
 // ─── updateProjectAction ────────────────────────────────────────────────────
 
-export const updateProjectSchema = z.object({
+// Schema is internal — Next.js 'use server' files can only export async fns.
+// Type aliases below are erased at compile time so they're fine to export.
+const updateProjectSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   description: z.string().max(2000).nullable().optional(),
   code: z.string().max(64).nullable().optional(),
