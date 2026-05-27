@@ -4,7 +4,7 @@ import { requireRole } from '@/lib/auth/require-role'
 import { projectService } from '@esite/shared'
 import type { OrgRole } from '@esite/shared'
 
-import { Placeholder } from '../_components/Placeholder'
+import { DatesForm } from './DatesForm'
 
 const VIEW_ROLES: ReadonlyArray<OrgRole> = ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer']
 
@@ -22,5 +22,5 @@ export default async function Page({ params }: Props) {
   const guard = await requireRole(supabase, orgId, VIEW_ROLES)
   if (!guard.ok) redirect(`/projects/${id}/settings/general`)
 
-  return <Placeholder title="Dates" description="Start, end, and practical-completion dates" />
+  return <DatesForm projectId={id} initial={project as any} />
 }

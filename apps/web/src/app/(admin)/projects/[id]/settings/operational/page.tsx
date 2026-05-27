@@ -4,7 +4,8 @@ import { requireRole } from '@/lib/auth/require-role'
 import { projectService } from '@esite/shared'
 import type { OrgRole } from '@esite/shared'
 
-import { Placeholder } from '../_components/Placeholder'
+import { getProjectSettingsCached } from '@/lib/project-settings'
+import { OperationalForm } from './OperationalForm'
 
 const VIEW_ROLES: ReadonlyArray<OrgRole> = ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer']
 
@@ -22,5 +23,7 @@ export default async function Page({ params }: Props) {
   const guard = await requireRole(supabase, orgId, VIEW_ROLES)
   if (!guard.ok) redirect(`/projects/${id}/settings/general`)
 
-  return <Placeholder title="Operational" description="Calendar, RFI defaults, units, date format" />
+  const settings = await getProjectSettingsCached(id)
+
+  return <OperationalForm projectId={id} initial={settings} />
 }
