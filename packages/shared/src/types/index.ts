@@ -35,6 +35,13 @@ export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
  */
 export const OWNER_ADMIN: readonly OrgRole[] = ['owner', 'admin']
 export const ORG_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager']
+/**
+ * Roles permitted to view cost/money fields (contract_value, currency,
+ * retention_pct, cable cost summaries, rate libraries). Owner + admin + PM.
+ * Distinct from ORG_WRITE_ROLES even though the sets coincide today — keep
+ * the concerns separate so changes to one don't silently reshape the other.
+ */
+export const COST_VIEW_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager']
 export type ProjectRole = 'project_manager' | 'contractor' | 'client_viewer'
 export type SubscriptionTier = 'free' | 'starter' | 'professional' | 'enterprise'
 export type SnagStatus = 'open' | 'in_progress' | 'resolved' | 'pending_sign_off' | 'signed_off' | 'closed'

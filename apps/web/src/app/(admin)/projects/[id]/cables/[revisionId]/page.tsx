@@ -3,7 +3,7 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import type { CSSProperties } from 'react'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
+import { projectService, COST_VIEW_ROLES } from '@esite/shared'
 import {
   computeCumulativeVdMap,
   voltDropPctForSupply,
@@ -15,6 +15,7 @@ import {
   changedCableIds,
   type DiffableCable,
 } from '@esite/shared'
+import { requireRole } from '@/lib/auth/require-role'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
 import { type NodeOption } from './CableScheduleGrid'
 import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-payload'
@@ -98,6 +99,13 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     .getById(supabase as never, projectId)
     .catch(() => null)
   if (!project) notFound()
+
+  // Role check — only owner/admin/PM see the Cost summary link in the header.
+  // Non-cost-viewers still see the schedule, structure, diff and tags.
+  const orgId = (project as any).organisation_id ?? (project as any).organisationId
+  const canSeeCost = orgId
+    ? (await requireRole(supabase, orgId, COST_VIEW_ROLES)).ok
+    : false
 
   const [{ data: revisionRow }, { data: priorList }] = await Promise.all([
     (supabase as any)
@@ -604,7 +612,9 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
             <Link href={`/projects/${projectId}/cables/${revisionId}/tags`} style={headerNavLinkStyle}>🏷 Tag schedule</Link>
-            <Link href={`/projects/${projectId}/cables/${revisionId}/cost`} style={headerNavLinkStyle}>💰 Cost summary</Link>
+            {canSeeCost && (
+              <Link href={`/projects/${projectId}/cables/${revisionId}/cost`} style={headerNavLinkStyle}>💰 Cost summary</Link>
+            )}
             <Link href={`/projects/${projectId}/cables/${revisionId}/diff`} style={headerNavLinkStyle}
               title={priorIssued ? `Diff against ${priorIssued.code}` : 'No prior issued revision to diff against'}>🔀 Diff</Link>
             <Link href={`/projects/${projectId}/cables/${revisionId}/discrepancies`} style={headerNavLinkStyle}>📐 Discrepancies</Link>

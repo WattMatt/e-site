@@ -37,12 +37,13 @@ describe('SettingsTabs', () => {
 
     render(<SettingsTabs projectId="p1" role="project_manager" dirtyTab={null} />)
 
-    // Contract, Members, Integrations should have the lock marker for PMs.
-    expect(screen.getByText(/Contract/).textContent).toContain('🔒')
+    // Members + Integrations are owner/admin-only — PMs see the lock.
     expect(screen.getByText(/Members/).textContent).toContain('🔒')
     expect(screen.getByText(/Integrations/).textContent).toContain('🔒')
     // Danger is owner-only — for PMs, even more locked.
     expect(screen.getByText(/Danger/).textContent).toContain('🔒')
+    // Contract is now PM-permitted (cost-viewer role group) — no lock.
+    expect(screen.getByText(/Contract/).textContent).not.toContain('🔒')
   })
 
   it('shows unsaved-dot ● on the dirty tab', async () => {

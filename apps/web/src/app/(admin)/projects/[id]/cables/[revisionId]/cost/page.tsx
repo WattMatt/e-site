@@ -1,13 +1,14 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
+import { projectService, COST_VIEW_ROLES } from '@esite/shared'
 import {
   activeLengthM,
   type CableForCalc,
   type LengthMode,
 } from '@esite/shared'
+import { requireRole } from '@/lib/auth/require-role'
 import { CostSummaryTable, type CostRow, type CostHeader } from './CostSummaryTable'
 import { LengthModeToggle } from '../LengthModeToggle'
 import { RevisionStatusBadge } from '../RevisionStatusBadge'
@@ -67,6 +68,13 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
     .getById(supabase as never, projectId)
     .catch(() => null)
   if (!project) notFound()
+
+  // Cost surface — owner / admin / project_manager only. Contractors,
+  // inspectors, suppliers and client viewers bounce back to the revision
+  // detail page (they can see the schedule, not the rates).
+  const orgId = (project as any).organisation_id ?? (project as any).organisationId
+  const guard = await requireRole(supabase, orgId, COST_VIEW_ROLES)
+  if (!guard.ok) redirect(`/projects/${projectId}/cables/${revisionId}`)
 
   // vat_pct landed on revisions in migration 00060. SELECT is tolerant —
   // if the column isn't applied yet, PostgREST 400s and we fall back to

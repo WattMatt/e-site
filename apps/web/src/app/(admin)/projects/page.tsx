@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, formatDate, formatZAR, OWNER_ADMIN } from '@esite/shared'
+import { projectService, formatDate, formatZAR, COST_VIEW_ROLES } from '@esite/shared'
 import { requireRole } from '@/lib/auth/require-role'
 import { FolderOpen } from 'lucide-react'
 import Link from 'next/link'
@@ -31,7 +31,7 @@ export default async function ProjectsPage() {
     : []
 
   const canSeeCost = membership
-    ? await requireRole(supabase, membership.organisation_id, OWNER_ADMIN).then(
+    ? await requireRole(supabase, membership.organisation_id, COST_VIEW_ROLES).then(
         (g) => g.ok,
       )
     : false

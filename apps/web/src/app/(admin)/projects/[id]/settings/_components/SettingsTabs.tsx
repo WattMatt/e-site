@@ -15,7 +15,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import type { OrgRole } from '@esite/shared'
+import { COST_VIEW_ROLES, type OrgRole } from '@esite/shared'
 
 type Slug =
   | 'general' | 'site' | 'dates' | 'client' | 'contract' | 'members'
@@ -44,7 +44,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { slug: 'site',          label: 'Site',          viewRoles: ALL,         editRoles: ORG_WRITE },
   { slug: 'dates',         label: 'Dates',         viewRoles: ALL,         editRoles: ORG_WRITE },
   { slug: 'client',        label: 'Client',        viewRoles: ALL,         editRoles: ORG_WRITE },
-  { slug: 'contract',      label: 'Contract',      viewRoles: OWNER_ADMIN, editRoles: OWNER_ADMIN },
+  { slug: 'contract',      label: 'Contract',      viewRoles: COST_VIEW_ROLES, editRoles: COST_VIEW_ROLES },
   { slug: 'members',       label: 'Members',       viewRoles: OWNER_ADMIN, editRoles: OWNER_ADMIN },
   { slug: 'jbcc-parties',  label: 'JBCC Parties',  viewRoles: ALL,         editRoles: ORG_WRITE },
   { slug: 'operational',   label: 'Operational',   viewRoles: ALL,         editRoles: ORG_WRITE },

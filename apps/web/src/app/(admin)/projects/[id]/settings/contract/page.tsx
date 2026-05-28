@@ -1,13 +1,10 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
-import { projectService } from '@esite/shared'
-import type { OrgRole } from '@esite/shared'
+import { projectService, COST_VIEW_ROLES } from '@esite/shared'
 
 import { getProjectSettingsCached } from '@/lib/project-settings'
 import { ContractForm } from './ContractForm'
-
-const VIEW_ROLES: ReadonlyArray<OrgRole> = ['owner', 'admin']
 
 interface Props {
   params: Promise<{ id: string }>
@@ -20,7 +17,7 @@ export default async function Page({ params }: Props) {
   if (!project) redirect(`/projects/${id}`)
 
   const orgId = (project as any).organisation_id ?? (project as any).organisationId
-  const guard = await requireRole(supabase, orgId, VIEW_ROLES)
+  const guard = await requireRole(supabase, orgId, COST_VIEW_ROLES)
   if (!guard.ok) redirect(`/projects/${id}/settings/general`)
 
   const settings = await getProjectSettingsCached(id)

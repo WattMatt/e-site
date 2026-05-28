@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, snagService, rfiService, formatDate, formatZAR, OWNER_ADMIN } from '@esite/shared'
+import { projectService, snagService, rfiService, formatDate, formatZAR, COST_VIEW_ROLES } from '@esite/shared'
 import { requireRole } from '@/lib/auth/require-role'
 import { ReportButton } from '@/components/ui/ReportButton'
 
@@ -54,7 +54,7 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   const orgId = (project as any).organisation_id ?? (project as any).organisationId
   const guard = await requireRole(supabase, orgId, ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer'])
-  const canSeeCost = guard.ok && (OWNER_ADMIN as readonly string[]).includes(guard.role ?? '')
+  const canSeeCost = guard.ok && (COST_VIEW_ROLES as readonly string[]).includes(guard.role ?? '')
 
   const openRfis = rfis.filter((r) => r.status === 'open').length
 
