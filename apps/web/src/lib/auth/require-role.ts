@@ -70,6 +70,39 @@ export async function requireRole(
   return { ok: true, role }
 }
 
+/**
+ * Project-scoped variant of requireRole. Resolves the caller's *effective*
+ * role on a specific project — see public.user_effective_project_role
+ * (migration 00107) for the resolution rules:
+ *   - org owner/admin/PM win regardless of project_members
+ *   - else projects.project_members.role applies (per-project promotion)
+ *   - else null (no access)
+ *
+ * Use this from project-scoped pages/actions when the decision should
+ * honour per-project role overrides. Keep using requireRole for org-wide
+ * surfaces (billing, org settings, user invite, marketplace ordering).
+ */
+export async function requireEffectiveRole(
+  supabase: SupabaseClient,
+  projectId: string,
+  allowedRoles: readonly OrgRole[],
+): Promise<RequireRoleResult> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not authenticated' }
+
+  const { data, error } = await (supabase as any).rpc(
+    'user_effective_project_role',
+    { p_project_id: projectId, p_user_id: user.id },
+  )
+  if (error) return { ok: false, error: error.message }
+  const role = data as OrgRole | null
+  if (!role) return { ok: false, error: 'No access to this project' }
+  if (!allowedRoles.includes(role)) {
+    return { ok: false, error: `Your role (${role}) is not allowed to perform this action` }
+  }
+  return { ok: true, role }
+}
+
 export type RequireRoleAPIResult =
   | { ok: true;  ctx: OrgContext; user: User }
   | { ok: false; response: NextResponse }

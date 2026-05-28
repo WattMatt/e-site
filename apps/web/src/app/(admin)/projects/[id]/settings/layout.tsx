@@ -14,7 +14,7 @@
 import { notFound, redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { getOrgContext } from '@/lib/auth-org'
-import { requireRole } from '@/lib/auth/require-role'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { projectService } from '@esite/shared'
 
 import { SettingsTabs } from './_components/SettingsTabs'
@@ -32,12 +32,13 @@ export default async function SettingsLayout({ params, children }: Props) {
   const project = await projectService.getById(supabase as any, id).catch(() => null)
   if (!project) notFound()
 
-  // Resolve the caller's role on the project's organisation.
-  // requireRole returns { ok: false, error } for non-members and
-  // unauth'd users; we redirect those to /login or /dashboard.
-  const guard = await requireRole(
+  // Resolve the caller's *effective* role on this project. The SettingsTabs
+  // component dims tabs the user can't view; using effective role means a
+  // project_members.role='project_manager' promotion un-dims Contract for
+  // a narrower org-level role.
+  const guard = await requireEffectiveRole(
     supabase,
-    (project as any).organisation_id ?? (project as any).organisationId,
+    id,
     ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer'],
   )
   if (!guard.ok) {

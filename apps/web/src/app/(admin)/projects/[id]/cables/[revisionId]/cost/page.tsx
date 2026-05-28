@@ -8,7 +8,7 @@ import {
   type CableForCalc,
   type LengthMode,
 } from '@esite/shared'
-import { requireRole } from '@/lib/auth/require-role'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { CostSummaryTable, type CostRow, type CostHeader } from './CostSummaryTable'
 import { LengthModeToggle } from '../LengthModeToggle'
 import { RevisionStatusBadge } from '../RevisionStatusBadge'
@@ -69,11 +69,10 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
     .catch(() => null)
   if (!project) notFound()
 
-  // Cost surface — owner / admin / project_manager only. Contractors,
-  // inspectors, suppliers and client viewers bounce back to the revision
-  // detail page (they can see the schedule, not the rates).
-  const orgId = (project as any).organisation_id ?? (project as any).organisationId
-  const guard = await requireRole(supabase, orgId, COST_VIEW_ROLES)
+  // Cost surface — owner / admin / project_manager only. Effective role on
+  // this project, so a project_members.role = 'project_manager' promotion
+  // grants access here even if the user's org role is narrower.
+  const guard = await requireEffectiveRole(supabase, projectId, COST_VIEW_ROLES)
   if (!guard.ok) redirect(`/projects/${projectId}/cables/${revisionId}`)
 
   // vat_pct landed on revisions in migration 00060. SELECT is tolerant —

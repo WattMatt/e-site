@@ -15,7 +15,7 @@ import {
   changedCableIds,
   type DiffableCable,
 } from '@esite/shared'
-import { requireRole } from '@/lib/auth/require-role'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { CableScheduleGrid, type ScheduleRow } from './CableScheduleGrid'
 import { type NodeOption } from './CableScheduleGrid'
 import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-payload'
@@ -101,11 +101,9 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   if (!project) notFound()
 
   // Role check — only owner/admin/PM see the Cost summary link in the header.
-  // Non-cost-viewers still see the schedule, structure, diff and tags.
-  const orgId = (project as any).organisation_id ?? (project as any).organisationId
-  const canSeeCost = orgId
-    ? (await requireRole(supabase, orgId, COST_VIEW_ROLES)).ok
-    : false
+  // Uses effective role so a project_members.role='project_manager' promotion
+  // surfaces the link on this project for a narrower org-level role.
+  const canSeeCost = (await requireEffectiveRole(supabase, projectId, COST_VIEW_ROLES)).ok
 
   const [{ data: revisionRow }, { data: priorList }] = await Promise.all([
     (supabase as any)

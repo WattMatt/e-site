@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { requireRole } from '@/lib/auth/require-role'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { projectService, COST_VIEW_ROLES } from '@esite/shared'
 
 import { getProjectSettingsCached } from '@/lib/project-settings'
@@ -16,8 +16,8 @@ export default async function Page({ params }: Props) {
   const project = await projectService.getById(supabase as any, id).catch(() => null)
   if (!project) redirect(`/projects/${id}`)
 
-  const orgId = (project as any).organisation_id ?? (project as any).organisationId
-  const guard = await requireRole(supabase, orgId, COST_VIEW_ROLES)
+  // Effective-role gate — honours per-project promotion via project_members.
+  const guard = await requireEffectiveRole(supabase, id, COST_VIEW_ROLES)
   if (!guard.ok) redirect(`/projects/${id}/settings/general`)
 
   const settings = await getProjectSettingsCached(id)

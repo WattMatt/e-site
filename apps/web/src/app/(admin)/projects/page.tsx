@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, formatDate, formatZAR, COST_VIEW_ROLES } from '@esite/shared'
-import { requireRole } from '@/lib/auth/require-role'
 import { FolderOpen } from 'lucide-react'
 import Link from 'next/link'
 
@@ -30,11 +29,40 @@ export default async function ProjectsPage() {
     ? await projectService.list(supabase as any, membership.organisation_id)
     : []
 
-  const canSeeCost = membership
-    ? await requireRole(supabase, membership.organisation_id, COST_VIEW_ROLES).then(
-        (g) => g.ok,
-      )
-    : false
+  // Per-row cost visibility uses the user's *effective* role on each
+  // project. Owner/admin/PM at org level auto-pass (cost-view everywhere);
+  // narrower org roles consult projects.project_members.role for promotion.
+  // See migration 00107.
+  let isOrgCostViewer = false
+  const projectRoleByProject = new Map<string, string>()
+  if (membership && user) {
+    const { data: orgRow } = await supabase
+      .from('user_organisations')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('organisation_id', membership.organisation_id)
+      .eq('is_active', true)
+      .maybeSingle()
+    const orgRole = (orgRow as { role?: string } | null)?.role ?? null
+    isOrgCostViewer = orgRole != null
+      && (COST_VIEW_ROLES as readonly string[]).includes(orgRole)
+    if (!isOrgCostViewer) {
+      const { data: pmRows } = await (supabase as any)
+        .schema('projects')
+        .from('project_members')
+        .select('project_id, role')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+      for (const r of (pmRows ?? []) as Array<{ project_id: string; role: string }>) {
+        projectRoleByProject.set(r.project_id, r.role)
+      }
+    }
+  }
+  const canSeeCostFor = (projectId: string): boolean => {
+    if (isOrgCostViewer) return true
+    const role = projectRoleByProject.get(projectId)
+    return role != null && (COST_VIEW_ROLES as readonly string[]).includes(role)
+  }
 
   // Per-project inspections certified count (replaces compliance-health %)
   const projectIds = projects.map((p: any) => p.id)
@@ -101,7 +129,7 @@ export default async function ProjectsPage() {
                       {counts.certified} of {counts.total} certified
                     </span>
                   )}
-                  {canSeeCost && project.contract_value != null && (
+                  {canSeeCostFor(project.id) && project.contract_value != null && (
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--c-text-mid)' }}>
                       {formatZAR(project.contract_value)}
                     </span>

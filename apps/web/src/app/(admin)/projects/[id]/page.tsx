@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, snagService, rfiService, formatDate, formatZAR, COST_VIEW_ROLES } from '@esite/shared'
-import { requireRole } from '@/lib/auth/require-role'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { ReportButton } from '@/components/ui/ReportButton'
 
 interface Props {
@@ -52,9 +52,10 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   if (!project) notFound()
 
-  const orgId = (project as any).organisation_id ?? (project as any).organisationId
-  const guard = await requireRole(supabase, orgId, ['owner', 'admin', 'project_manager', 'contractor', 'inspector', 'supplier', 'client_viewer'])
-  const canSeeCost = guard.ok && (COST_VIEW_ROLES as readonly string[]).includes(guard.role ?? '')
+  // Cost visibility uses the user's *effective* role on this project — org
+  // role for owner/admin/PM (auto-pass), project_members.role for narrower
+  // roles. See migration 00107.
+  const canSeeCost = (await requireEffectiveRole(supabase, id, COST_VIEW_ROLES)).ok
 
   const openRfis = rfis.filter((r) => r.status === 'open').length
 
