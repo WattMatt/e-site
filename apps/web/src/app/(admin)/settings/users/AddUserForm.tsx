@@ -13,7 +13,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Button } from '@/components/ui/Button'
 import { FormField, TextInput, Select } from '@/components/ui/FormField'
-import { ORG_ROLES, ORG_ROLE_LABELS } from '@esite/shared'
+import { ORG_ROLES, ORG_ROLE_LABELS, type ContractorCompany } from '@esite/shared'
 import { createUserAction } from '@/actions/users.actions'
 
 // The owner role is never assigned at creation — it is transferred separately.
@@ -23,10 +23,15 @@ const schema = z.object({
   email:    z.string().email('Valid email required'),
   fullName: z.string().min(2, 'Full name required'),
   role:     z.string().min(1, 'Role required'),
+  contractorCompanyId: z.string().optional(),
 })
 type FormValues = z.infer<typeof schema>
 
-export function AddUserForm() {
+interface AddUserFormProps {
+  companies?: ContractorCompany[]
+}
+
+export function AddUserForm({ companies = [] }: AddUserFormProps = {}) {
   const router = useRouter()
   const [success, setSuccess] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
@@ -47,6 +52,9 @@ export function AddUserForm() {
         email: values.email,
         fullName: values.fullName,
         role: values.role,
+        contractorCompanyId: values.contractorCompanyId
+          ? values.contractorCompanyId
+          : null,
       })
       if (!result.ok) {
         setError(result.error)
@@ -54,10 +62,12 @@ export function AddUserForm() {
       }
       setSuccess(values.email)
       if (result.warning) setWarning(result.warning)
-      reset({ email: '', fullName: '', role: 'contractor' })
+      reset({ email: '', fullName: '', role: 'contractor', contractorCompanyId: '' })
       router.refresh()
     })
   }
+
+  const activeCompanies = companies.filter((c) => c.active)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -94,6 +104,18 @@ export function AddUserForm() {
             </Select>
           </FormField>
         </div>
+        {activeCompanies.length > 0 && (
+          <div style={{ width: 200 }}>
+            <FormField label="Contractor company" htmlFor="user-company">
+              <Select id="user-company" {...register('contractorCompanyId')} style={{ width: '100%' }}>
+                <option value="">— Internal / none —</option>
+                {activeCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+            </FormField>
+          </div>
+        )}
         <Button type="submit" isLoading={isPending} size="sm">Add user</Button>
       </form>
 

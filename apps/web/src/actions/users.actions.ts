@@ -24,6 +24,7 @@ const createUserSchema = z.object({
   email:    z.string().email('Enter a valid email address.'),
   fullName: z.string().trim().min(2, 'Enter the person’s full name.').max(120),
   role:     orgRoleSchema,
+  contractorCompanyId: z.string().uuid().nullable().optional(),
 })
 
 const updateUserSchema = z.object({
@@ -39,6 +40,7 @@ export async function createUserAction(input: {
   email: string
   fullName: string
   role: string
+  contractorCompanyId?: string | null
 }): Promise<ActionResult> {
   const h = await headers()
   const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
@@ -56,7 +58,7 @@ export async function createUserAction(input: {
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
   }
-  const { fullName, role } = parsed.data
+  const { fullName, role, contractorCompanyId } = parsed.data
   const email = parsed.data.email.trim().toLowerCase()
 
   if (role === 'owner') {
@@ -84,13 +86,17 @@ export async function createUserAction(input: {
   const newUserId = created.user.id
 
   // The handle_new_user trigger has created public.profiles. Add the membership.
-  const { error: memberErr } = await service.from('user_organisations').insert({
-    user_id:         newUserId,
-    organisation_id: ctx.organisationId,
+  // Cast to any because the generated DB types don't yet reflect the
+  // contractor_company_id column (added 00108); regenerate via
+  // `pnpm db:gen-types` after this PR lands and the cast can come off.
+  const { error: memberErr } = await (service as any).from('user_organisations').insert({
+    user_id:               newUserId,
+    organisation_id:       ctx.organisationId,
     role,
-    is_active:       true,
-    invited_by:      ctx.userId,
-    accepted_at:     new Date().toISOString(),
+    is_active:             true,
+    invited_by:            ctx.userId,
+    accepted_at:           new Date().toISOString(),
+    contractor_company_id: contractorCompanyId ?? null,
   })
   if (memberErr) {
     // Roll back the orphaned auth user so a retry starts clean.

@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
+import type { ContractorCompany } from '@esite/shared'
 import {
   addProjectMember,
   updateProjectMemberRole,
@@ -15,6 +16,7 @@ import {
   type ProjectMember,
   type OrgMemberOption,
 } from '@/actions/project-members.actions'
+import { BulkAddMembersModal } from './BulkAddMembersModal'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -54,6 +56,8 @@ interface Props {
   initialMembers: ProjectMember[]
   availableOrgMembers: OrgMemberOption[]
   canEdit: boolean
+  /** Active + inactive contractor companies for the bulk-add modal. Defaults to [] for tests. */
+  companies?: ContractorCompany[]
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -64,6 +68,7 @@ export function ProjectMembersList({
   initialMembers,
   availableOrgMembers,
   canEdit,
+  companies = [],
 }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -72,6 +77,7 @@ export function ProjectMembersList({
   const [showAddForm, setShowAddForm] = useState(false)
   const [addUserId, setAddUserId] = useState('')
   const [addRole, setAddRole] = useState<string>('contractor')
+  const [showBulkModal, setShowBulkModal] = useState(false)
 
   // Edit state: memberId being edited
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -175,10 +181,17 @@ export function ProjectMembersList({
                 {' '}Org owners, admins and project managers have implicit access.
               </div>
             </div>
-            {canEdit && !showAddForm && availableOrgMembers.length > 0 && (
-              <Button size="sm" variant="secondary" onClick={() => setShowAddForm(true)}>
-                + Add member
-              </Button>
+            {canEdit && !showAddForm && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                {availableOrgMembers.length > 0 && (
+                  <Button size="sm" variant="secondary" onClick={() => setShowAddForm(true)}>
+                    + Add member
+                  </Button>
+                )}
+                <Button size="sm" variant="secondary" onClick={() => setShowBulkModal(true)}>
+                  + Add many
+                </Button>
+              </div>
             )}
           </div>
         </CardHeader>
@@ -373,6 +386,13 @@ export function ProjectMembersList({
           )}
         </CardBody>
       </Card>
+
+      <BulkAddMembersModal
+        projectId={projectId}
+        companies={companies}
+        open={showBulkModal}
+        onClose={() => setShowBulkModal(false)}
+      />
     </div>
   )
 }

@@ -43,6 +43,21 @@ export const ORG_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_m
  */
 export const COST_VIEW_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager']
 export type ProjectRole = 'project_manager' | 'contractor' | 'client_viewer'
+
+/**
+ * Lightweight contractor-company entity (migration 00108). Groups external
+ * site agents within an org so they can be filtered, bulk-managed, and
+ * displayed together in admin UIs. NOT a separate auth tenant — companies
+ * are scoped to a single organisation_id.
+ */
+export interface ContractorCompany {
+  id: string
+  organisation_id: string
+  name: string
+  active: boolean
+  created_at: string
+  created_by: string | null
+}
 export type SubscriptionTier = 'free' | 'starter' | 'professional' | 'enterprise'
 export type SnagStatus = 'open' | 'in_progress' | 'resolved' | 'pending_sign_off' | 'signed_off' | 'closed'
 export type RfiStatus = 'draft' | 'open' | 'responded' | 'closed'
