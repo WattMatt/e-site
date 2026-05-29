@@ -1,23 +1,25 @@
 -- 00109_sub_organisations.sql
 --
--- Promote sub-organisations from the flat `contractor_companies` label model
--- (introduced 00108, shipped in 343505b) to first-class rows in
--- public.organisations. A "sub-org" is just a `public.organisations` row
--- marked as a shadow whose contact details and people roster are managed by
--- a parent org (e.g., WM Consulting). When/if the sub-org's owner signs up,
--- the shadow flag clears and they take over.
+-- Promote sub-organisations to first-class rows in public.organisations.
+-- A "sub-org" is just a `public.organisations` row marked as a shadow whose
+-- contact details and people roster are managed by a parent org (e.g., WM
+-- Consulting). When/if the sub-org's owner signs up, the shadow flag clears
+-- and they take over.
 --
 -- This migration:
 --   1. Adds is_shadow + parent_organisation_id + contact-detail columns to
---      public.organisations.
---   2. Grants owner/admin/PM of parent_organisation_id SELECT + UPDATE on
---      their shadow children via a new RLS policy.
---   3. Drops projects.contractor_companies (empty on prod) and
---      user_organisations.contractor_company_id (all NULLs on prod).
+--      public.organisations (idempotent ADD COLUMN IF NOT EXISTS).
+--   2. Grants owner/admin/PM of parent_organisation_id SELECT + UPDATE + INSERT
+--      on their shadow children via 3 new RLS policies.
 --
--- Reversible:
---   - To recreate contractor_companies: re-apply 00108.
---   - To remove sub-org columns: ALTER TABLE public.organisations DROP COLUMN <each>.
+-- The deprecation of `projects.contractor_companies` + the
+-- `user_organisations.contractor_company_id` column is split into a SEPARATE
+-- migration (00110_drop_contractor_companies.sql), applied only after the web
+-- code stops referencing them. This keeps prod in a working state during the
+-- PR-A rollout.
+--
+-- Reversible: ALTER TABLE public.organisations DROP COLUMN <each>; DROP POLICY
+-- ... ; DROP INDEX idx_organisations_parent_shadow.
 
 -- 1. New columns on public.organisations
 ALTER TABLE public.organisations
@@ -37,7 +39,7 @@ COMMENT ON COLUMN public.organisations.is_shadow IS
 COMMENT ON COLUMN public.organisations.parent_organisation_id IS
   'For shadow orgs, the creating org. NULL once claimed (or for non-shadow orgs).';
 
-CREATE INDEX idx_organisations_parent_shadow
+CREATE INDEX IF NOT EXISTS idx_organisations_parent_shadow
   ON public.organisations (parent_organisation_id, is_shadow)
   WHERE is_shadow = TRUE;
 
@@ -85,12 +87,11 @@ CREATE POLICY "Parent admins can insert shadow children"
     AND EXISTS (
       SELECT 1 FROM public.user_organisations uo
       WHERE uo.user_id = auth.uid()
+        -- Unqualified `parent_organisation_id` here resolves to the NEW row's
+        -- value (correct for INSERT WITH CHECK). SELECT/UPDATE policies use
+        -- the table-qualified form because they operate on existing rows.
         AND uo.organisation_id = parent_organisation_id
         AND uo.is_active = TRUE
         AND uo.role IN ('owner', 'admin', 'project_manager')
     )
   );
-
--- 3. Deprecate contractor_companies (empty on prod)
-ALTER TABLE public.user_organisations DROP COLUMN IF EXISTS contractor_company_id;
-DROP TABLE IF EXISTS projects.contractor_companies CASCADE;

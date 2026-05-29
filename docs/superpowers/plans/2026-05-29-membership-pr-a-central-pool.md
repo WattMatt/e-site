@@ -46,27 +46,33 @@
 
 - [ ] **Step 1: Write the migration SQL**
 
+PR-A uses two migrations: `00109_sub_organisations.sql` (applied now, ADD COLUMN + RLS only) and `00110_drop_contractor_companies.sql` (applied at Task 14, immediately before pushing the code that no longer references the dropped objects). Splitting the deprecation keeps prod in a working state for the duration of PR-A.
+
+For `apps/edge-functions/supabase/migrations/00109_sub_organisations.sql`:
+
 ```sql
 -- 00109_sub_organisations.sql
 --
--- Promote sub-organisations from the flat `contractor_companies` label model
--- (introduced 00108, shipped in 343505b) to first-class rows in
--- public.organisations. A "sub-org" is just a `public.organisations` row
--- marked as a shadow whose contact details and people roster are managed by
--- a parent org (e.g., WM Consulting). When/if the sub-org's owner signs up,
--- the shadow flag clears and they take over.
+-- Promote sub-organisations to first-class rows in public.organisations.
+-- A "sub-org" is just a `public.organisations` row marked as a shadow whose
+-- contact details and people roster are managed by a parent org (e.g., WM
+-- Consulting). When/if the sub-org's owner signs up, the shadow flag clears
+-- and they take over.
 --
 -- This migration:
 --   1. Adds is_shadow + parent_organisation_id + contact-detail columns to
---      public.organisations.
---   2. Grants owner/admin/PM of parent_organisation_id SELECT + UPDATE on
---      their shadow children via a new RLS policy.
---   3. Drops projects.contractor_companies (empty on prod) and
---      user_organisations.contractor_company_id (all NULLs on prod).
+--      public.organisations (idempotent ADD COLUMN IF NOT EXISTS).
+--   2. Grants owner/admin/PM of parent_organisation_id SELECT + UPDATE + INSERT
+--      on their shadow children via 3 new RLS policies.
 --
--- Reversible:
---   - To recreate contractor_companies: re-apply 00108.
---   - To remove sub-org columns: ALTER TABLE public.organisations DROP COLUMN <each>.
+-- The deprecation of `projects.contractor_companies` + the
+-- `user_organisations.contractor_company_id` column is split into a SEPARATE
+-- migration (00110_drop_contractor_companies.sql), applied only after the web
+-- code stops referencing them. This keeps prod in a working state during the
+-- PR-A rollout.
+--
+-- Reversible: ALTER TABLE public.organisations DROP COLUMN <each>; DROP POLICY
+-- ... ; DROP INDEX idx_organisations_parent_shadow.
 
 -- 1. New columns on public.organisations
 ALTER TABLE public.organisations
@@ -86,7 +92,7 @@ COMMENT ON COLUMN public.organisations.is_shadow IS
 COMMENT ON COLUMN public.organisations.parent_organisation_id IS
   'For shadow orgs, the creating org. NULL once claimed (or for non-shadow orgs).';
 
-CREATE INDEX idx_organisations_parent_shadow
+CREATE INDEX IF NOT EXISTS idx_organisations_parent_shadow
   ON public.organisations (parent_organisation_id, is_shadow)
   WHERE is_shadow = TRUE;
 
@@ -134,18 +140,40 @@ CREATE POLICY "Parent admins can insert shadow children"
     AND EXISTS (
       SELECT 1 FROM public.user_organisations uo
       WHERE uo.user_id = auth.uid()
+        -- Unqualified `parent_organisation_id` here resolves to the NEW row's
+        -- value (correct for INSERT WITH CHECK). SELECT/UPDATE policies use
+        -- the table-qualified form because they operate on existing rows.
         AND uo.organisation_id = parent_organisation_id
         AND uo.is_active = TRUE
         AND uo.role IN ('owner', 'admin', 'project_manager')
     )
   );
+```
 
--- 3. Deprecate contractor_companies (empty on prod)
+For `apps/edge-functions/supabase/migrations/00110_drop_contractor_companies.sql` (NOT applied in Task 1 — applied as the first step of Task 14):
+
+```sql
+-- 00110_drop_contractor_companies.sql
+--
+-- Final deprecation step: drop the `projects.contractor_companies` table and
+-- the `public.user_organisations.contractor_company_id` column. Both were
+-- introduced by 00108 and superseded by the sub-org model in 00109.
+--
+-- IMPORTANT: this migration must be applied ONLY after the web code stops
+-- referencing the table / column. In the PR-A rollout this happens in Task 14
+-- right before pushing the new code — the deploy window is then constrained
+-- to Vercel build time (~3 min) rather than the duration of the entire PR.
+--
+-- On prod (cbskbnvvgcybmfikxgky) the table was empty at migration time and
+-- the column was all NULLs — no data loss either way.
+--
+-- Reversible: re-apply 00108_contractor_companies.sql.
+
 ALTER TABLE public.user_organisations DROP COLUMN IF EXISTS contractor_company_id;
 DROP TABLE IF EXISTS projects.contractor_companies CASCADE;
 ```
 
-- [ ] **Step 2: Apply to prod Supabase**
+- [ ] **Step 2: Apply 00109 to prod Supabase (NOT 00110)**
 
 ```bash
 cd /Users/spud/Developer/ESITE.V1/esite && . scripts/db/mgmt-api.sh && mgmt_apply_sql_file apps/edge-functions/supabase/migrations/00109_sub_organisations.sql
@@ -153,7 +181,7 @@ cd /Users/spud/Developer/ESITE.V1/esite && . scripts/db/mgmt-api.sh && mgmt_appl
 
 Expected output: `[]` (empty array — DDL statements return no rows).
 
-- [ ] **Step 3: Verify columns + dropped table**
+- [ ] **Step 3: Verify columns added**
 
 ```bash
 cd /Users/spud/Developer/ESITE.V1/esite && . scripts/db/mgmt-api.sh && mgmt_query "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='organisations' AND column_name IN ('is_shadow','parent_organisation_id','address','phone','registration_number','vat_number','signatory_name','signatory_title') ORDER BY column_name;"
@@ -161,17 +189,15 @@ cd /Users/spud/Developer/ESITE.V1/esite && . scripts/db/mgmt-api.sh && mgmt_quer
 
 Expected: 8 rows, all 8 column names present.
 
-```bash
-cd /Users/spud/Developer/ESITE.V1/esite && . scripts/db/mgmt-api.sh && mgmt_query "SELECT to_regclass('projects.contractor_companies') AS still_exists, EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_organisations' AND column_name='contractor_company_id') AS column_still_exists;"
-```
+`projects.contractor_companies` and `user_organisations.contractor_company_id` are intentionally still present at this stage — they get dropped by 00110 at Task 14.
 
-Expected: `still_exists: null`, `column_still_exists: false`.
-
-- [ ] **Step 4: Stage + commit**
+- [ ] **Step 4: Stage + commit both migration files**
 
 ```bash
-cd /Users/spud/Developer/ESITE.V1/esite && git add apps/edge-functions/supabase/migrations/00109_sub_organisations.sql && git commit -m "feat(db): migration 00109 — sub-org schema on public.organisations + drop contractor_companies"
+cd /Users/spud/Developer/ESITE.V1/esite && git add apps/edge-functions/supabase/migrations/00109_sub_organisations.sql apps/edge-functions/supabase/migrations/00110_drop_contractor_companies.sql && git commit -m "feat(db): migrations 00109 (sub-org schema) + 00110 (deferred drop of contractor_companies)"
 ```
+
+Both files are committed together; only 00109 is applied now, 00110 stays unapplied until Task 14.
 
 ---
 
@@ -1778,15 +1804,33 @@ cd /Users/spud/Developer/ESITE.V1/esite && git add packages/shared/src/types/ind
 
 ---
 
-## Task 14: Push + verify on prod
+## Task 14: Apply 00110, push, verify on prod
 
-- [ ] **Step 1: Push to main**
+- [ ] **Step 1: Apply migration 00110 (drop contractor_companies)**
+
+The web code in this PR no longer references `projects.contractor_companies` or `user_organisations.contractor_company_id` (Task 12 removed all references). Apply 00110 NOW, immediately before pushing — this minimises the broken window to just the Vercel build time.
+
+```bash
+cd /Users/spud/Developer/ESITE.V1/esite && . scripts/db/mgmt-api.sh && mgmt_apply_sql_file apps/edge-functions/supabase/migrations/00110_drop_contractor_companies.sql
+```
+
+Expected output: `[]`.
+
+Verify:
+
+```bash
+cd /Users/spud/Developer/ESITE.V1/esite && . scripts/db/mgmt-api.sh && mgmt_query "SELECT to_regclass('projects.contractor_companies') AS still_exists, EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='user_organisations' AND column_name='contractor_company_id') AS column_still_exists;"
+```
+
+Expected: `still_exists: null`, `column_still_exists: false`.
+
+- [ ] **Step 2: Push to main**
 
 ```bash
 cd /Users/spud/Developer/ESITE.V1/esite && git push origin main
 ```
 
-- [ ] **Step 2: Wait for Vercel deploy + verify alias**
+- [ ] **Step 3: Wait for Vercel deploy + verify alias**
 
 Wait ~3 minutes. Then check the prod alias still points to the latest commit (per the gotcha discovered in this session — see [esite-project-context](../../.claude/projects/-Users-spud-Documents-DEVELOPER/memory/esite-project-context.md)):
 
@@ -1806,7 +1850,7 @@ The returned SHA must match `git rev-parse HEAD`. If not, promote the right depl
 vercel promote https://esite-<correct-slug>-arno-mattheus-projects.vercel.app
 ```
 
-- [ ] **Step 3: Manual smoke test on prod**
+- [ ] **Step 4: Manual smoke test on prod**
 
 In a browser, signed in as Arno (or any owner/admin):
 
@@ -1816,7 +1860,7 @@ In a browser, signed in as Arno (or any owner/admin):
 4. Change the address, click Save. Refresh — value persists.
 5. Navigate to `/settings/users`. Verify the "Contractor companies" panel is GONE. Verify no per-user "Internal" dropdown next to contractor users. Verify the Add user form has no "Belongs to contractor company" dropdown.
 
-- [ ] **Step 4: PR-A verification complete**
+- [ ] **Step 5: PR-A verification complete**
 
 If all 5 smoke tests pass, PR-A is complete. Mark this in the session memory, then write the plan for PR-B.
 
