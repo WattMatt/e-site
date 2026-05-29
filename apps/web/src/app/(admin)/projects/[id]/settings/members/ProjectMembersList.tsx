@@ -16,6 +16,7 @@ import {
   type OrgMemberOption,
 } from '@/actions/project-members.actions'
 import { BulkAddMembersModal } from './BulkAddMembersModal'
+import { AddFromSubOrgModal } from './AddFromSubOrgModal'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ export function ProjectMembersList({
   const [addUserId, setAddUserId] = useState('')
   const [addRole, setAddRole] = useState<string>('contractor')
   const [showBulkModal, setShowBulkModal] = useState(false)
+  const [showFromSubOrgModal, setShowFromSubOrgModal] = useState(false)
 
   // Edit state: memberId being edited
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -186,6 +188,9 @@ export function ProjectMembersList({
                 )}
                 <Button size="sm" variant="secondary" onClick={() => setShowBulkModal(true)}>
                   + Add many
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => setShowFromSubOrgModal(true)}>
+                  + Add from sub-org
                 </Button>
               </div>
             )}
@@ -387,6 +392,11 @@ export function ProjectMembersList({
         projectId={projectId}
         open={showBulkModal}
         onClose={() => setShowBulkModal(false)}
+      />
+      <AddFromSubOrgModal
+        projectId={projectId}
+        open={showFromSubOrgModal}
+        onClose={() => setShowFromSubOrgModal(false)}
       />
     </div>
   )
