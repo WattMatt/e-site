@@ -530,3 +530,39 @@ export async function bulkInviteSubOrgMembers(
   revalidatePath(`/settings/sub-organizations/${parsed.data.subOrgId}`)
   return { ok: true, summary: { invited, added, skipped, failed }, details }
 }
+
+// ─── PR-D Task 2: getProjectMembershipsForUser ────────────────────────────────
+
+/**
+ * Return the count and names of projects (within the caller's org) that the
+ * given user is actively on via project_members. Used to populate the cascade
+ * warning before removing a sub-org roster member (spec §6.3).
+ *
+ * Gate: caller must be ORG_WRITE_ROLES on their primary org.
+ */
+export async function getProjectMembershipsForUser(
+  userId: string,
+  parentOrgId: string,
+): Promise<ActionOk<{ count: number; projectNames: string[] }> | ActionErr> {
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+
+  const supabase = await createClient()
+
+  const guard = await requireRole(supabase, parentOrgId, ORG_WRITE_ROLES)
+  if (!guard.ok) return { ok: false, error: guard.error }
+
+  // project_members joined with projects (scoped to caller's org).
+  const { data, error } = await (supabase as any)
+    .from('project_members')
+    .select('projects!inner(id, name, organisation_id)')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .eq('projects.organisation_id', parentOrgId)
+
+  if (error) return { ok: false, error: error.message }
+
+  const rows = (data ?? []) as Array<{ projects: { name: string } }>
+  const projectNames = rows.map((r) => r.projects.name).filter(Boolean)
+  return { ok: true, count: projectNames.length, projectNames }
+}

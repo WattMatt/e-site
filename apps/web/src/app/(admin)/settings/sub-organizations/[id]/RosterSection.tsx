@@ -7,16 +7,18 @@ import { SubOrgBulkInviteModal } from './SubOrgBulkInviteModal'
 
 interface Props {
   subOrgId:       string
+  parentOrgId:    string
   initialMembers: SubOrgMember[]
 }
 
-export function RosterSection({ subOrgId, initialMembers }: Props) {
+export function RosterSection({ subOrgId, parentOrgId, initialMembers }: Props) {
   const [bulkOpen, setBulkOpen] = useState(false)
 
   return (
     <>
       <SubOrgRosterPanel
         subOrgId={subOrgId}
+        parentOrgId={parentOrgId}
         initialMembers={initialMembers}
         onOpenBulkInvite={() => setBulkOpen(true)}
       />

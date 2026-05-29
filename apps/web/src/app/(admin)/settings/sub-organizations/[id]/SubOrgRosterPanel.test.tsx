@@ -9,8 +9,9 @@ vi.mock('next/navigation', () => ({
 }))
 
 vi.mock('@/actions/sub-org-members.actions', () => ({
-  addSubOrgMember:        vi.fn(),
-  removeSubOrgMember:     vi.fn(),
+  addSubOrgMember:                  vi.fn(),
+  removeSubOrgMember:               vi.fn(),
+  getProjectMembershipsForUser:     vi.fn().mockResolvedValue({ ok: true, count: 0, projectNames: [] }),
 }))
 
 const makeMembers = (n: number): SubOrgMember[] =>
@@ -30,6 +31,7 @@ describe('SubOrgRosterPanel', () => {
     render(
       <SubOrgRosterPanel
         subOrgId="suborg-1"
+        parentOrgId="org-wm"
         initialMembers={[]}
         onOpenBulkInvite={vi.fn()}
       />,
@@ -44,6 +46,7 @@ describe('SubOrgRosterPanel', () => {
     render(
       <SubOrgRosterPanel
         subOrgId="suborg-1"
+        parentOrgId="org-wm"
         initialMembers={members}
         onOpenBulkInvite={vi.fn()}
       />,

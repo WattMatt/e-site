@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button'
 import {
   addSubOrgMember,
   removeSubOrgMember,
+  getProjectMembershipsForUser,
   type SubOrgMember,
 } from '@/actions/sub-org-members.actions'
 
@@ -50,11 +51,12 @@ const inputStyle: React.CSSProperties = {
 
 interface Props {
   subOrgId: string
+  parentOrgId: string
   initialMembers: SubOrgMember[]
   onOpenBulkInvite: () => void
 }
 
-export function SubOrgRosterPanel({ subOrgId, initialMembers, onOpenBulkInvite }: Props) {
+export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpenBulkInvite }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
@@ -108,8 +110,20 @@ export function SubOrgRosterPanel({ subOrgId, initialMembers, onOpenBulkInvite }
 
   function handleRemove(member: SubOrgMember) {
     const displayName = member.full_name ?? member.email ?? 'this person'
-    if (!confirm(`Remove ${displayName} from the roster?`)) return
     startTransition(async () => {
+      // Fetch cascade count before confirming (spec §6.3).
+      const memberships = await getProjectMembershipsForUser(member.user_id, parentOrgId)
+      const count = memberships.ok ? memberships.count : 0
+
+      let message: string
+      if (count > 0) {
+        message = `${displayName} is on ${count} project${count === 1 ? '' : 's'}. Removing them will revoke their access to all of them. Continue?`
+      } else {
+        message = `Remove ${displayName} from the roster?`
+      }
+
+      if (!confirm(message)) return
+
       const result = await removeSubOrgMember(member.id)
       if (!result.ok) {
         alert(result.error)
