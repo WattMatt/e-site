@@ -88,3 +88,37 @@ describe('createSubOrganisation', () => {
     if (result.ok) expect(result.subOrganisation.id).toBe('sub-1')
   })
 })
+
+describe('updateSubOrganisation', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('updates only the provided fields and skips the rest', async () => {
+    const orgId = 'org-wm'
+    getOrgContextMock.mockResolvedValueOnce({ userId: 'u', organisationId: orgId, role: 'admin' })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+    const subId = '00000000-0000-0000-0000-000000000001'
+    const updated = {
+      id: subId, name: "Bob's Building", is_shadow: true, parent_organisation_id: orgId,
+      address: 'New Address', phone: '+27 21 555 0100',
+      registration_number: null, vat_number: null,
+      signatory_name: null, signatory_title: null, created_at: '2026-05-29T00:00:00Z',
+    }
+    const single = vi.fn().mockResolvedValueOnce({ data: updated, error: null })
+    const select = vi.fn().mockReturnValueOnce({ single })
+    const eqParent = vi.fn().mockReturnValueOnce({ select })
+    const eqId = vi.fn().mockReturnValueOnce({ eq: eqParent })
+    const update = vi.fn().mockReturnValueOnce({ eq: eqId })
+    const from = vi.fn().mockReturnValueOnce({ update })
+    createClientMock.mockResolvedValueOnce({ from })
+    const { updateSubOrganisation } = await import('./sub-organisations.actions')
+    const result = await updateSubOrganisation(subId, { address: 'New Address', phone: '+27 21 555 0100' })
+    expect(result.ok).toBe(true)
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      address: 'New Address',
+      phone: '+27 21 555 0100',
+    }))
+    // name and other fields should NOT be in the update payload
+    const patch = update.mock.calls[0][0] as Record<string, unknown>
+    expect(patch).not.toHaveProperty('name')
+  })
+})

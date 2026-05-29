@@ -99,3 +99,54 @@ export async function createSubOrganisation(
   bust()
   return { ok: true, subOrganisation: data as SubOrganisation }
 }
+
+const updateSchema = z.object({
+  name:                nameSchema.optional(),
+  address:             optionalText,
+  phone:               optionalText,
+  registration_number: optionalText,
+  vat_number:          optionalText,
+  signatory_name:      optionalText,
+  signatory_title:     optionalText,
+})
+
+/** Update contact / name fields on a sub-org. Owner of the parent org only. */
+export async function updateSubOrganisation(
+  id: string,
+  input: z.input<typeof updateSchema>,
+): Promise<ActionResult<{ subOrganisation: SubOrganisation }>> {
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+
+  const supabase = await createClient()
+  const guard = await requireRole(supabase, ctx.organisationId, ORG_WRITE_ROLES)
+  if (!guard.ok) return { ok: false, error: guard.error }
+
+  if (!uuidSchema.safeParse(id).success) return { ok: false, error: 'Invalid id.' }
+  const parsed = updateSchema.safeParse(input)
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+
+  const patch: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(parsed.data)) {
+    if (value !== undefined) patch[key] = value
+  }
+  if (Object.keys(patch).length === 0) {
+    return { ok: false, error: 'Nothing to update.' }
+  }
+
+  const { data, error } = await (supabase as any)
+    .from('organisations')
+    .update(patch)
+    .eq('id', id)
+    .eq('parent_organisation_id', ctx.organisationId)
+    .select(
+      'id, name, parent_organisation_id, is_shadow, address, phone, registration_number, vat_number, signatory_name, signatory_title, created_at',
+    )
+    .single()
+  if (error) return { ok: false, error: error.message }
+
+  bust()
+  return { ok: true, subOrganisation: data as SubOrganisation }
+}
