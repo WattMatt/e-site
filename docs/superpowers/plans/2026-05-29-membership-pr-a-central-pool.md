@@ -70,14 +70,14 @@
 
 -- 1. New columns on public.organisations
 ALTER TABLE public.organisations
-  ADD COLUMN is_shadow              BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN parent_organisation_id UUID NULL REFERENCES public.organisations(id) ON DELETE SET NULL,
-  ADD COLUMN address                TEXT NULL,
-  ADD COLUMN phone                  TEXT NULL,
-  ADD COLUMN registration_number    TEXT NULL,
-  ADD COLUMN vat_number             TEXT NULL,
-  ADD COLUMN signatory_name         TEXT NULL,
-  ADD COLUMN signatory_title        TEXT NULL;
+  ADD COLUMN IF NOT EXISTS is_shadow              BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS parent_organisation_id UUID NULL REFERENCES public.organisations(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS address                TEXT NULL,
+  ADD COLUMN IF NOT EXISTS phone                  TEXT NULL,
+  ADD COLUMN IF NOT EXISTS registration_number    TEXT NULL,
+  ADD COLUMN IF NOT EXISTS vat_number             TEXT NULL,
+  ADD COLUMN IF NOT EXISTS signatory_name         TEXT NULL,
+  ADD COLUMN IF NOT EXISTS signatory_title        TEXT NULL;
 
 COMMENT ON COLUMN public.organisations.is_shadow IS
   'TRUE while this org was created by another org as a contracting party and '
