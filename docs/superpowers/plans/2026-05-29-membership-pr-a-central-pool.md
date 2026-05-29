@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status (2026-05-29):** SHIPPED on main. PR-B (roster), PR-C (cross-org membership + switcher), and PR-D (polish + edge cases) followed in the same session without their own dedicated plan docs — the spec carried the design.
+
 **Goal:** Replace the `projects.contractor_companies` table (shipped in 343505b) with a proper sub-organisation entity model. Ship a working central pool UI where WM admins can create and manage external contracting parties (sub-orgs) with contact details. Roster + project attachment surfaces ship empty placeholders (filled in PR-B and PR-C).
 
 **Architecture:** Extend `public.organisations` with `is_shadow` + `parent_organisation_id` flags and contact-detail columns. Sub-orgs are full Postgres organisations marked as shadows, owned-by-parent until claimed. Web layer adds `sub-organisations.actions.ts` and two pages under `/settings/sub-organizations`. Existing `projects.contractor_companies` table and `user_organisations.contractor_company_id` column are dropped entirely (both are empty on prod — zero data loss).
@@ -206,9 +208,11 @@ Both files are committed together; only 00109 is applied now, 00110 stays unappl
 **Files:**
 - Modify: `packages/shared/src/types/index.ts`
 
-- [ ] **Step 1: Add the interface**
+- [ ] **Step 1: Add the interface alongside the existing ContractorCompany**
 
-Open `packages/shared/src/types/index.ts`. After the existing `ContractorCompany` interface (lines around 38–52), REPLACE the `ContractorCompany` interface with:
+Open `packages/shared/src/types/index.ts`. The existing `ContractorCompany` interface (lines around 38–52) STAYS for now — it's still imported by Task-12-deletion-targets in `/settings/users` and `/projects/[id]/settings/members`. Removing it now would break typecheck across many files. Task 13 removes it after Task 12 deletes the consumers.
+
+Add the new `SubOrganisation` interface IMMEDIATELY AFTER the existing `ContractorCompany` interface:
 
 ```typescript
 /**

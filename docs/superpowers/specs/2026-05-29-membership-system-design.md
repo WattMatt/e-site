@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-29
 **Author:** Arno (WM Consulting) + Claude (brainstorming session)
-**Status:** Pending user approval before implementation planning
+**Status:** Shipped in 4 PRs (PR-A through PR-D) on 2026-05-29. See git log for commits.
 
 ## 1. Purpose & Goals
 
