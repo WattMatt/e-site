@@ -8,7 +8,6 @@ import Link from 'next/link'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
-import type { ContractorCompany } from '@esite/shared'
 import {
   addProjectMember,
   updateProjectMemberRole,
@@ -56,8 +55,6 @@ interface Props {
   initialMembers: ProjectMember[]
   availableOrgMembers: OrgMemberOption[]
   canEdit: boolean
-  /** Active + inactive contractor companies for the bulk-add modal. Defaults to [] for tests. */
-  companies?: ContractorCompany[]
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -68,7 +65,6 @@ export function ProjectMembersList({
   initialMembers,
   availableOrgMembers,
   canEdit,
-  companies = [],
 }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -389,7 +385,6 @@ export function ProjectMembersList({
 
       <BulkAddMembersModal
         projectId={projectId}
-        companies={companies}
         open={showBulkModal}
         onClose={() => setShowBulkModal(false)}
       />

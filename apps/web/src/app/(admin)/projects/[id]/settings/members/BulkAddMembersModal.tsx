@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import type { ContractorCompany } from '@esite/shared'
 
 import { Button } from '@/components/ui/Button'
 import {
@@ -13,7 +12,6 @@ import {
 
 interface Props {
   projectId: string
-  companies: ContractorCompany[]
   open: boolean
   onClose: () => void
 }
@@ -48,12 +46,11 @@ const STATUS_COLOR: Record<BulkAddStatus, string> = {
   'failed':                     'var(--c-danger)',
 }
 
-export function BulkAddMembersModal({ projectId, companies, open, onClose }: Props) {
+export function BulkAddMembersModal({ projectId, open, onClose }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [emailsText, setEmailsText] = useState('')
   const [role, setRole] = useState<string>('contractor')
-  const [contractorCompanyId, setContractorCompanyId] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<BulkAddResult | null>(null)
 
@@ -62,7 +59,6 @@ export function BulkAddMembersModal({ projectId, companies, open, onClose }: Pro
   function reset() {
     setEmailsText('')
     setRole('contractor')
-    setContractorCompanyId('')
     setError(null)
     setResult(null)
   }
@@ -87,7 +83,6 @@ export function BulkAddMembersModal({ projectId, companies, open, onClose }: Pro
         projectId,
         emails,
         projectRole: role,
-        contractorCompanyId: contractorCompanyId === '' ? null : contractorCompanyId,
       })
       if (!r.ok) {
         setError(r.error)
@@ -97,8 +92,6 @@ export function BulkAddMembersModal({ projectId, companies, open, onClose }: Pro
       router.refresh()
     })
   }
-
-  const activeCompanies = companies.filter((c) => c.active)
 
   return (
     <div
@@ -204,37 +197,6 @@ export function BulkAddMembersModal({ projectId, companies, open, onClose }: Pro
                     ))}
                   </select>
                 </div>
-
-                {activeCompanies.length > 0 && (
-                  <div style={{ flex: '1 1 220px' }}>
-                    <label
-                      htmlFor="bulk-company"
-                      style={{
-                        display: 'block', fontFamily: 'var(--font-mono)', fontSize: 10,
-                        color: 'var(--c-text-dim)', letterSpacing: '0.08em',
-                        textTransform: 'uppercase', marginBottom: 4,
-                      }}
-                    >
-                      Contractor company (new users only)
-                    </label>
-                    <select
-                      id="bulk-company"
-                      value={contractorCompanyId}
-                      onChange={(e) => setContractorCompanyId(e.target.value)}
-                      disabled={isPending}
-                      style={{
-                        width: '100%', padding: '8px 10px', fontSize: 13,
-                        border: '1px solid var(--c-border)', borderRadius: 4,
-                        background: 'var(--c-input-bg)', color: 'var(--c-text)',
-                      }}
-                    >
-                      <option value="">— Internal / none —</option>
-                      {activeCompanies.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
               </div>
 
               {role === 'project_manager' && (
@@ -244,7 +206,7 @@ export function BulkAddMembersModal({ projectId, companies, open, onClose }: Pro
                   borderRadius: 4, marginBottom: 14,
                 }}>
                   Project-manager role on this project only. New users get org role
-                  ‘contractor’ so the PM promotion stays scoped — they won’t see other projects.
+                  'contractor' so the PM promotion stays scoped — they won't see other projects.
                 </div>
               )}
 

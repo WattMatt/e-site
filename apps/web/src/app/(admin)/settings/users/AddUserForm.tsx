@@ -1,11 +1,5 @@
 'use client'
 
-/**
- * AddUserForm — creates an organisation member directly (no invite).
- * Calls createUserAction, which provisions the auth user and emails them a
- * set-password link. The role dropdown reads the canonical ORG_ROLES enum.
- */
-
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
@@ -13,25 +7,19 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Button } from '@/components/ui/Button'
 import { FormField, TextInput, Select } from '@/components/ui/FormField'
-import { ORG_ROLES, ORG_ROLE_LABELS, type ContractorCompany } from '@esite/shared'
+import { ORG_ROLES, ORG_ROLE_LABELS } from '@esite/shared'
 import { createUserAction } from '@/actions/users.actions'
 
-// The owner role is never assigned at creation — it is transferred separately.
 const ASSIGNABLE_ROLES = ORG_ROLES.filter((r) => r !== 'owner')
 
 const schema = z.object({
   email:    z.string().email('Valid email required'),
   fullName: z.string().min(2, 'Full name required'),
   role:     z.string().min(1, 'Role required'),
-  contractorCompanyId: z.string().optional(),
 })
 type FormValues = z.infer<typeof schema>
 
-interface AddUserFormProps {
-  companies?: ContractorCompany[]
-}
-
-export function AddUserForm({ companies = [] }: AddUserFormProps = {}) {
+export function AddUserForm() {
   const router = useRouter()
   const [success, setSuccess] = useState<string | null>(null)
   const [warning, setWarning] = useState<string | null>(null)
@@ -52,9 +40,6 @@ export function AddUserForm({ companies = [] }: AddUserFormProps = {}) {
         email: values.email,
         fullName: values.fullName,
         role: values.role,
-        contractorCompanyId: values.contractorCompanyId
-          ? values.contractorCompanyId
-          : null,
       })
       if (!result.ok) {
         setError(result.error)
@@ -62,37 +47,22 @@ export function AddUserForm({ companies = [] }: AddUserFormProps = {}) {
       }
       setSuccess(values.email)
       if (result.warning) setWarning(result.warning)
-      reset({ email: '', fullName: '', role: 'contractor', contractorCompanyId: '' })
+      reset({ email: '', fullName: '', role: 'contractor' })
       router.refresh()
     })
   }
-
-  const activeCompanies = companies.filter((c) => c.active)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 200px' }}>
           <FormField label="Full name" error={errors.fullName?.message} htmlFor="user-name">
-            <TextInput
-              id="user-name"
-              {...register('fullName')}
-              placeholder="Thandi Mokoena"
-              invalid={Boolean(errors.fullName)}
-              style={{ width: '100%' }}
-            />
+            <TextInput id="user-name" {...register('fullName')} placeholder="Thandi Mokoena" invalid={Boolean(errors.fullName)} style={{ width: '100%' }} />
           </FormField>
         </div>
         <div style={{ flex: '1 1 200px' }}>
           <FormField label="Email" error={errors.email?.message} htmlFor="user-email">
-            <TextInput
-              id="user-email"
-              {...register('email')}
-              type="email"
-              placeholder="colleague@company.co.za"
-              invalid={Boolean(errors.email)}
-              style={{ width: '100%' }}
-            />
+            <TextInput id="user-email" {...register('email')} type="email" placeholder="colleague@company.co.za" invalid={Boolean(errors.email)} style={{ width: '100%' }} />
           </FormField>
         </div>
         <div style={{ width: 180 }}>
@@ -104,46 +74,20 @@ export function AddUserForm({ companies = [] }: AddUserFormProps = {}) {
             </Select>
           </FormField>
         </div>
-        {activeCompanies.length > 0 && (
-          <div style={{ width: 200 }}>
-            <FormField label="Contractor company" htmlFor="user-company">
-              <Select id="user-company" {...register('contractorCompanyId')} style={{ width: '100%' }}>
-                <option value="">— Internal / none —</option>
-                {activeCompanies.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </Select>
-            </FormField>
-          </div>
-        )}
         <Button type="submit" isLoading={isPending} size="sm">Add user</Button>
       </form>
 
       {error && (
-        <div
-          role="alert"
-          style={{
-            background: 'var(--c-red-dim)', color: 'var(--c-red)',
-            border: '1px solid rgba(232,85,85,0.3)', borderRadius: 6,
-            padding: '10px 14px', fontSize: 13,
-          }}
-        >
+        <div role="alert" style={{ background: 'var(--c-red-dim)', color: 'var(--c-red)', border: '1px solid rgba(232,85,85,0.3)', borderRadius: 6, padding: '10px 14px', fontSize: 13 }}>
           {error}
         </div>
       )}
 
       {success && (
-        <div
-          role="status"
-          style={{
-            background: 'var(--c-green-dim)', color: 'var(--c-green)',
-            border: '1px solid rgba(61,184,130,0.3)', borderRadius: 6,
-            padding: '14px 16px',
-          }}
-        >
+        <div role="status" style={{ background: 'var(--c-green-dim)', color: 'var(--c-green)', border: '1px solid rgba(61,184,130,0.3)', borderRadius: 6, padding: '14px 16px' }}>
           <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>User created — {success}</p>
           <p style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 4, marginBottom: 0 }}>
-            {warning ?? 'They’ve been emailed a link to set their password and sign in.'}
+            {warning ?? "They've been emailed a link to set their password and sign in."}
           </p>
         </div>
       )}

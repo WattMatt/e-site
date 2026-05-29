@@ -2,11 +2,9 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createServiceClient } from '@/lib/supabase/server'
 import { getOrgContext } from '@/lib/auth-org'
-import { OWNER_ADMIN, formatDate, type ContractorCompany } from '@esite/shared'
+import { OWNER_ADMIN, formatDate } from '@esite/shared'
 import { AddUserForm } from './AddUserForm'
 import { UserRowActions } from './UserRowActions'
-import { ContractorCompaniesPanel } from './ContractorCompaniesPanel'
-import { UserCompanyDropdown } from './UserCompanyDropdown'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,13 +19,12 @@ const ROLE_BADGE: Record<string, string> = {
 }
 
 interface MemberRow {
-  id:                    string
-  user_id:               string
-  role:                  string
-  is_active:             boolean
-  created_at:            string
-  contractor_company_id: string | null
-  profile:               { full_name: string | null; email: string | null } | null
+  id:         string
+  user_id:    string
+  role:       string
+  is_active:  boolean
+  created_at: string
+  profile:    { full_name: string | null; email: string | null } | null
 }
 
 const monoDim: React.CSSProperties = {
@@ -36,7 +33,6 @@ const monoDim: React.CSSProperties = {
 
 export default async function UsersPage() {
   const ctx = await getOrgContext()
-
   if (!ctx) {
     return (
       <div className="animate-fadeup">
@@ -53,18 +49,14 @@ export default async function UsersPage() {
     )
   }
 
-  // Non-admins (contractor, supplier, inspector, project_manager, client_viewer)
-  // get redirected — the page must be unreachable, not show an in-page denial.
-  if (!OWNER_ADMIN.includes(ctx.role)) {
-    redirect('/dashboard')
-  }
+  if (!OWNER_ADMIN.includes(ctx.role)) redirect('/dashboard')
 
   const service = createServiceClient()
 
-  const [{ data: membersRaw }, { data: org }, usersList, { data: companiesRaw }] = await Promise.all([
-    (service as any)
+  const [{ data: membersRaw }, { data: org }, usersList] = await Promise.all([
+    service
       .from('user_organisations')
-      .select('id, user_id, role, is_active, created_at, contractor_company_id, profile:profiles!user_organisations_user_id_fkey(full_name, email)')
+      .select('id, user_id, role, is_active, created_at, profile:profiles!user_organisations_user_id_fkey(full_name, email)')
       .eq('organisation_id', ctx.organisationId)
       .order('created_at'),
     service
@@ -72,20 +64,10 @@ export default async function UsersPage() {
       .select('name')
       .eq('id', ctx.organisationId)
       .maybeSingle(),
-    // last_sign_in_at lives on auth.users — fetch it via the admin API.
-    // One page of 1000 covers any realistic single project.
     service.auth.admin.listUsers({ page: 1, perPage: 1000 }),
-    (service as any)
-      .schema('projects')
-      .from('contractor_companies')
-      .select('id, organisation_id, name, active, created_at, created_by')
-      .eq('organisation_id', ctx.organisationId)
-      .order('active', { ascending: false })
-      .order('name'),
   ])
 
   const members = (membersRaw ?? []) as unknown as MemberRow[]
-  const companies = (companiesRaw ?? []) as ContractorCompany[]
   const activeCount = members.filter((m) => m.is_active).length
 
   const lastSeen = new Map<string, string>()
@@ -107,30 +89,15 @@ export default async function UsersPage() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Add user */}
         <div className="data-panel">
           <div className="data-panel-header">
             <span className="data-panel-title">Add user</span>
           </div>
           <div style={{ padding: '16px 18px' }}>
-            <AddUserForm companies={companies} />
+            <AddUserForm />
           </div>
         </div>
 
-        {/* Contractor companies */}
-        <div className="data-panel">
-          <div className="data-panel-header">
-            <span className="data-panel-title">Contractor companies</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
-              {companies.filter((c) => c.active).length} active · {companies.length} total
-            </span>
-          </div>
-          <div style={{ padding: '16px 18px' }}>
-            <ContractorCompaniesPanel initialCompanies={companies} />
-          </div>
-        </div>
-
-        {/* Members */}
         <div className="data-panel">
           <div className="data-panel-header">
             <span className="data-panel-title">
@@ -171,14 +138,6 @@ export default async function UsersPage() {
                 </div>
                 <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
                 {!m.is_active && <span className="badge badge-muted">inactive</span>}
-                {(m.role === 'contractor' || m.role === 'inspector' || m.role === 'supplier' || m.role === 'client_viewer') && (
-                  <UserCompanyDropdown
-                    userId={m.user_id}
-                    currentCompanyId={m.contractor_company_id}
-                    companies={companies}
-                    disabled={!m.is_active}
-                  />
-                )}
                 <div style={{ textAlign: 'right', minWidth: 96 }}>
                   <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                     {lastSeen.has(m.user_id)

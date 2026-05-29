@@ -3,12 +3,11 @@
 /**
  * Bulk add-or-invite project members.
  *
- * Takes a list of emails, a project role, and an optional contractor-company
- * id. For each email:
+ * Takes a list of emails and a project role. For each email:
  *   - If a user with that email already exists in this org → add them to
  *     project_members with the chosen role.
  *   - Else → provision an org user (auth.users + user_organisations +
- *     contractor_company_id + set-password email), then add to project_members.
+ *     set-password email), then add to project_members.
  *
  * The bulk role determines BOTH the project_members.role AND the new user's
  * org role — EXCEPT when the bulk role is 'project_manager'. In that case
@@ -46,7 +45,6 @@ const inputSchema = z.object({
     .min(1, 'Enter at least one email address.')
     .max(50, 'Up to 50 emails per bulk operation.'),
   projectRole: z.enum(PROJECT_MEMBER_ROLES),
-  contractorCompanyId: z.string().uuid().nullable().optional(),
 })
 
 export type BulkAddStatus =
@@ -65,7 +63,6 @@ export interface BulkAddInput {
   projectId: string
   emails: string[]
   projectRole: string
-  contractorCompanyId?: string | null
 }
 
 export async function bulkAddOrInviteProjectMembers(
@@ -97,18 +94,6 @@ export async function bulkAddOrInviteProjectMembers(
   // One bulk call per 12-min window per user — prevents accidental floods.
   if (!rateLimit(`bulk-invite:${ctx.userId}`, 5, 60 * 60_000)) {
     return { ok: false, error: 'Too many bulk operations recently. Please wait.' }
-  }
-
-  // Validate contractor_company_id (if provided) belongs to this org.
-  if (parsed.data.contractorCompanyId) {
-    const { data: company } = await (supabase as any)
-      .schema('projects')
-      .from('contractor_companies')
-      .select('id')
-      .eq('id', parsed.data.contractorCompanyId)
-      .eq('organisation_id', orgId)
-      .maybeSingle()
-    if (!company) return { ok: false, error: 'Contractor company not found in your organisation.' }
   }
 
   // Dedupe & lowercase emails (zod already lowercased; defensive de-dupe).
@@ -205,15 +190,13 @@ export async function bulkAddOrInviteProjectMembers(
       }
       const newUserId = created.user.id
 
-      // Cast — generated DB types don't yet reflect contractor_company_id (00108).
-      const { error: memErr } = await (service as any).from('user_organisations').insert({
+      const { error: memErr } = await service.from('user_organisations').insert({
         user_id: newUserId,
         organisation_id: orgId,
         role: orgRoleForNewUsers,
         is_active: true,
         invited_by: ctx.userId,
         accepted_at: new Date().toISOString(),
-        contractor_company_id: parsed.data.contractorCompanyId ?? null,
       })
       if (memErr) {
         await service.auth.admin.deleteUser(newUserId).catch(() => {})
