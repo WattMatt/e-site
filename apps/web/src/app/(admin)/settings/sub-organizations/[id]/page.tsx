@@ -5,8 +5,10 @@ import type { Metadata } from 'next'
 import { getOrgContext } from '@/lib/auth-org'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 import { getSubOrganisation } from '@/actions/sub-organisations.actions'
+import { listSubOrgMembers } from '@/actions/sub-org-members.actions'
 
 import { ContactDetailsPanel } from './ContactDetailsPanel'
+import { RosterSection } from './RosterSection'
 
 export const metadata: Metadata = { title: 'Sub-organisation' }
 export const dynamic = 'force-dynamic'
@@ -27,6 +29,9 @@ export default async function SubOrgDetailPage({ params }: Props) {
   const result = await getSubOrganisation(id)
   if (!result.ok) notFound()
   const subOrg = result.subOrganisation
+
+  const membersResult = await listSubOrgMembers(id)
+  const initialMembers = membersResult.ok ? membersResult.members : []
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 920 }}>
@@ -63,9 +68,7 @@ export default async function SubOrgDetailPage({ params }: Props) {
           <div className="data-panel-header">
             <span className="data-panel-title">Roster</span>
           </div>
-          <div className="data-panel-empty" style={{ padding: '24px 18px' }}>
-            Roster management ships in PR-B.
-          </div>
+          <RosterSection subOrgId={id} initialMembers={initialMembers} />
         </div>
 
         <div className="data-panel">
@@ -73,7 +76,7 @@ export default async function SubOrgDetailPage({ params }: Props) {
             <span className="data-panel-title">Attached projects</span>
           </div>
           <div className="data-panel-empty" style={{ padding: '24px 18px' }}>
-            Project attachment ships in PR-B.
+            Project attachment ships in PR-C.
           </div>
         </div>
       </div>
