@@ -2,7 +2,9 @@ import { redirect } from 'next/navigation'
 import type { OrgRole } from '@esite/shared'
 import { createClient } from '@/lib/supabase/server'
 import { hasFeature } from '@/lib/features'
+import { listMyOrganisations } from '@/actions/active-organisation.actions'
 import { Sidebar } from '@/components/layout/Sidebar'
+import { OrgSwitcher } from '@/components/layout/OrgSwitcher'
 import { NotificationCentre } from '@/components/ui/NotificationCentre'
 import { PaymentStatusBanner } from '@/components/layout/PaymentStatusBanner'
 import { MinimalLegalNav } from '@/components/layout/MinimalLegalNav'
@@ -29,12 +31,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const membership = primaryMembership as { organisation_id: string; role: OrgRole } | null
   const primaryOrgId = membership?.organisation_id
   const primaryRole = membership?.role ?? null
-  const [inspectionsUnlocked, jbccUnlocked] = primaryOrgId
-    ? await Promise.all([
-        hasFeature(primaryOrgId, 'inspections', supabase),
-        hasFeature(primaryOrgId, 'jbcc', supabase),
-      ])
-    : [false, false]
+  const [inspectionsUnlocked, jbccUnlocked, orgsResult] = await Promise.all([
+    primaryOrgId ? hasFeature(primaryOrgId, 'inspections', supabase) : Promise.resolve(false),
+    primaryOrgId ? hasFeature(primaryOrgId, 'jbcc', supabase) : Promise.resolve(false),
+    listMyOrganisations(),
+  ])
+  const orgMemberships = orgsResult.ok ? orgsResult.memberships : []
 
   return (
     <div className="portal-shell">
@@ -44,6 +46,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} role={primaryRole} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <header className="portal-header">
+          <OrgSwitcher memberships={orgMemberships} />
           <NotificationCentre />
         </header>
         <main id="main-content" className="portal-main">
