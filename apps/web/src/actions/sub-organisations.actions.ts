@@ -150,3 +150,26 @@ export async function updateSubOrganisation(
   bust()
   return { ok: true, subOrganisation: data as SubOrganisation }
 }
+
+/** Fetch a single sub-org by id, scoped to caller's primary org. */
+export async function getSubOrganisation(
+  id: string,
+): Promise<ActionResult<{ subOrganisation: SubOrganisation }>> {
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+
+  if (!uuidSchema.safeParse(id).success) return { ok: false, error: 'Invalid id.' }
+
+  const supabase = await createClient()
+  const { data, error } = await (supabase as any)
+    .from('organisations')
+    .select(
+      'id, name, parent_organisation_id, is_shadow, address, phone, registration_number, vat_number, signatory_name, signatory_title, created_at',
+    )
+    .eq('id', id)
+    .eq('parent_organisation_id', ctx.organisationId)
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: 'Sub-organisation not found.' }
+  return { ok: true, subOrganisation: data as SubOrganisation }
+}

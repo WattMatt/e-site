@@ -122,3 +122,43 @@ describe('updateSubOrganisation', () => {
     expect(patch).not.toHaveProperty('name')
   })
 })
+
+describe('getSubOrganisation', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns the sub-org by id when it belongs to the caller\'s org', async () => {
+    const orgId = 'org-wm'
+    getOrgContextMock.mockResolvedValueOnce({ userId: 'u', organisationId: orgId, role: 'admin' })
+    const subId = '00000000-0000-0000-0000-000000000001'
+    const found = {
+      id: subId, name: "Bob's Building", is_shadow: true, parent_organisation_id: orgId,
+      address: null, phone: null, registration_number: null, vat_number: null,
+      signatory_name: null, signatory_title: null, created_at: '2026-05-29T00:00:00Z',
+    }
+    const maybeSingle = vi.fn().mockResolvedValueOnce({ data: found, error: null })
+    const eqParent = vi.fn().mockReturnValueOnce({ maybeSingle })
+    const eqId = vi.fn().mockReturnValueOnce({ eq: eqParent })
+    const select = vi.fn().mockReturnValueOnce({ eq: eqId })
+    const from = vi.fn().mockReturnValueOnce({ select })
+    createClientMock.mockResolvedValueOnce({ from })
+    const { getSubOrganisation } = await import('./sub-organisations.actions')
+    const result = await getSubOrganisation(subId)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.subOrganisation.id).toBe(subId)
+  })
+
+  it('returns ok:false when sub-org not found', async () => {
+    getOrgContextMock.mockResolvedValueOnce({ userId: 'u', organisationId: 'org-wm', role: 'owner' })
+    const subId = '00000000-0000-0000-0000-000000000099'
+    const maybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null })
+    const eqParent = vi.fn().mockReturnValueOnce({ maybeSingle })
+    const eqId = vi.fn().mockReturnValueOnce({ eq: eqParent })
+    const select = vi.fn().mockReturnValueOnce({ eq: eqId })
+    const from = vi.fn().mockReturnValueOnce({ select })
+    createClientMock.mockResolvedValueOnce({ from })
+    const { getSubOrganisation } = await import('./sub-organisations.actions')
+    const result = await getSubOrganisation(subId)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/not found/i)
+  })
+})
