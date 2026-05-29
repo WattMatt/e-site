@@ -17,51 +17,50 @@ export default async function ProjectsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: membership } = await supabase
-    .from('user_organisations')
-    .select('organisation_id')
-    .eq('user_id', user!.id)
-    .eq('is_active', true)
-    .limit(1)
-    .single()
-
-  const projects = membership
-    ? await projectService.list(supabase as any, membership.organisation_id)
+  // Cross-org list: RLS gates access, no org_id filter needed.
+  // Sub-org users (e.g. Mike from Bob's Building) see projects they've been
+  // added to via project_members even though they have no row in the project's org.
+  const projects = user
+    ? await projectService.listAccessible(supabase as any)
     : []
 
-  // Per-row cost visibility uses the user's *effective* role on each
-  // project. Owner/admin/PM at org level auto-pass (cost-view everywhere);
-  // narrower org roles consult projects.project_members.role for promotion.
-  // See migration 00107.
-  let isOrgCostViewer = false
+  // Per-row cost visibility: a user can see cost if they are owner/admin/PM in
+  // THAT project's org, OR if they hold a COST_VIEW_ROLES project-member role.
+  // For cross-org sub-org users, only the project_members path will fire.
   const projectRoleByProject = new Map<string, string>()
-  if (membership && user) {
-    const { data: orgRow } = await supabase
+  const orgRoleByOrgId       = new Map<string, string>()
+  if (user) {
+    // All active org memberships for this user (one row for single-org users,
+    // multiple for cross-org). Builds orgRoleByOrgId used in per-row check.
+    const { data: orgRows } = await supabase
       .from('user_organisations')
-      .select('role')
+      .select('organisation_id, role')
       .eq('user_id', user.id)
-      .eq('organisation_id', membership.organisation_id)
       .eq('is_active', true)
-      .maybeSingle()
-    const orgRole = (orgRow as { role?: string } | null)?.role ?? null
-    isOrgCostViewer = orgRole != null
-      && (COST_VIEW_ROLES as readonly string[]).includes(orgRole)
-    if (!isOrgCostViewer) {
-      const { data: pmRows } = await (supabase as any)
-        .schema('projects')
-        .from('project_members')
-        .select('project_id, role')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-      for (const r of (pmRows ?? []) as Array<{ project_id: string; role: string }>) {
-        projectRoleByProject.set(r.project_id, r.role)
-      }
+    for (const r of (orgRows ?? []) as Array<{ organisation_id: string; role: string }>) {
+      orgRoleByOrgId.set(r.organisation_id, r.role)
+    }
+
+    // Project-member roles for this user across all projects.
+    // Used for sub-org users who may be promoted to a cost-view role on a specific project.
+    const { data: pmRows } = await (supabase as any)
+      .schema('projects')
+      .from('project_members')
+      .select('project_id, role')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+    for (const r of (pmRows ?? []) as Array<{ project_id: string; role: string }>) {
+      projectRoleByProject.set(r.project_id, r.role)
     }
   }
-  const canSeeCostFor = (projectId: string): boolean => {
-    if (isOrgCostViewer) return true
-    const role = projectRoleByProject.get(projectId)
-    return role != null && (COST_VIEW_ROLES as readonly string[]).includes(role)
+
+  const canSeeCostFor = (p: { id: string; organisation_id: string }): boolean => {
+    // Check project's own org first (WM users with owner/admin/PM role).
+    const orgRole = orgRoleByOrgId.get(p.organisation_id)
+    if (orgRole != null && (COST_VIEW_ROLES as readonly string[]).includes(orgRole)) return true
+    // Fall through to per-project role (sub-org users promoted to PM on the project).
+    const pmRole = projectRoleByProject.get(p.id)
+    return pmRole != null && (COST_VIEW_ROLES as readonly string[]).includes(pmRole)
   }
 
   // Per-project inspections certified count (replaces compliance-health %)
@@ -129,7 +128,7 @@ export default async function ProjectsPage() {
                       {counts.certified} of {counts.total} certified
                     </span>
                   )}
-                  {canSeeCostFor(project.id) && project.contract_value != null && (
+                  {canSeeCostFor(project) && project.contract_value != null && (
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--c-text-mid)' }}>
                       {formatZAR(project.contract_value)}
                     </span>

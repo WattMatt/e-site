@@ -19,6 +19,27 @@ export const projectService = {
     }))
   },
 
+  /**
+   * Returns every project the caller can see, regardless of which org owns it.
+   * RLS on projects.projects handles access — cross-org members (granted via
+   * project_members) will see the right rows without an org_id filter.
+   * Used by /projects page so sub-org users see projects they've been added to.
+   */
+  async listAccessible(client: TypedSupabaseClient) {
+    const { data, error } = await client
+      .schema('projects')
+      .from('projects')
+      .select('*, _count:project_members(count)')
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    const projects = data ?? []
+    const profiles = await fetchProfileMap(client, projects.map(p => (p as any).site_manager_id))
+    return projects.map(p => ({
+      ...p,
+      site_manager: (p as any).site_manager_id ? (profiles[(p as any).site_manager_id] ?? null) : null,
+    }))
+  },
+
   async getById(client: TypedSupabaseClient, id: string) {
     const { data, error } = await client
       .schema('projects')
