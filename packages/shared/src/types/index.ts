@@ -58,6 +58,32 @@ export interface ContractorCompany {
   created_at: string
   created_by: string | null
 }
+
+/**
+ * Sub-organisation entity. A `public.organisations` row marked as a shadow
+ * (is_shadow=TRUE, parent_organisation_id=parent). Holds contact details
+ * and acts as the identity boundary for external site agents (Bob's
+ * Building's people log in as Bob's Building users, granted access to
+ * specific projects via project_members).
+ *
+ * The old ContractorCompany interface (still above) is retained until Task 13
+ * removes its consumers in Task 12. New code uses SubOrganisation.
+ *
+ * See migration 00109_sub_organisations.sql for full semantics.
+ */
+export interface SubOrganisation {
+  id: string
+  name: string
+  parent_organisation_id: string | null
+  is_shadow: boolean
+  address: string | null
+  phone: string | null
+  registration_number: string | null
+  vat_number: string | null
+  signatory_name: string | null
+  signatory_title: string | null
+  created_at: string
+}
 export type SubscriptionTier = 'free' | 'starter' | 'professional' | 'enterprise'
 export type SnagStatus = 'open' | 'in_progress' | 'resolved' | 'pending_sign_off' | 'signed_off' | 'closed'
 export type RfiStatus = 'draft' | 'open' | 'responded' | 'closed'
