@@ -25,6 +25,10 @@ const nameSchema = z.string().trim().min(1, 'Name required.').max(200)
 const optionalText = z.string().trim().max(500).nullable().optional()
 const uuidSchema = z.string().uuid()
 
+// Select string including is_active (migration 00112).
+const SELECT_FIELDS =
+  'id, name, parent_organisation_id, is_shadow, is_active, address, phone, registration_number, vat_number, signatory_name, signatory_title, created_at'
+
 function bust(): void {
   revalidatePath('/settings/sub-organizations')
 }
@@ -39,9 +43,7 @@ export async function listSubOrganisations(): Promise<
   const supabase = await createClient()
   const { data, error } = await (supabase as any)
     .from('organisations')
-    .select(
-      'id, name, parent_organisation_id, is_shadow, address, phone, registration_number, vat_number, signatory_name, signatory_title, created_at',
-    )
+    .select(SELECT_FIELDS)
     .eq('parent_organisation_id', ctx.organisationId)
     .order('is_shadow', { ascending: false })
     .order('name')
@@ -90,9 +92,7 @@ export async function createSubOrganisation(
   const { data, error } = await (supabase as any)
     .from('organisations')
     .insert(row)
-    .select(
-      'id, name, parent_organisation_id, is_shadow, address, phone, registration_number, vat_number, signatory_name, signatory_title, created_at',
-    )
+    .select(SELECT_FIELDS)
     .single()
   if (error) return { ok: false, error: error.message }
 
@@ -141,9 +141,7 @@ export async function updateSubOrganisation(
     .update(patch)
     .eq('id', id)
     .eq('parent_organisation_id', ctx.organisationId)
-    .select(
-      'id, name, parent_organisation_id, is_shadow, address, phone, registration_number, vat_number, signatory_name, signatory_title, created_at',
-    )
+    .select(SELECT_FIELDS)
     .single()
   if (error) return { ok: false, error: error.message }
 
@@ -163,13 +161,41 @@ export async function getSubOrganisation(
   const supabase = await createClient()
   const { data, error } = await (supabase as any)
     .from('organisations')
-    .select(
-      'id, name, parent_organisation_id, is_shadow, address, phone, registration_number, vat_number, signatory_name, signatory_title, created_at',
-    )
+    .select(SELECT_FIELDS)
     .eq('id', id)
     .eq('parent_organisation_id', ctx.organisationId)
     .maybeSingle()
   if (error) return { ok: false, error: error.message }
   if (!data) return { ok: false, error: 'Sub-organisation not found.' }
   return { ok: true, subOrganisation: data as SubOrganisation }
+}
+
+/**
+ * Activate or deactivate a sub-org (spec §6.2).
+ * Members and project memberships are intentionally NOT cascaded.
+ * Gate: caller must be ORG_WRITE_ROLES on the parent org.
+ */
+export async function setSubOrgActive(
+  subOrgId: string,
+  active: boolean,
+): Promise<ActionResult> {
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+
+  if (!uuidSchema.safeParse(subOrgId).success) return { ok: false, error: 'Invalid id.' }
+
+  const supabase = await createClient()
+  const guard = await requireRole(supabase, ctx.organisationId, ORG_WRITE_ROLES)
+  if (!guard.ok) return { ok: false, error: guard.error }
+
+  const { error } = await (supabase as any)
+    .from('organisations')
+    .update({ is_active: active })
+    .eq('id', subOrgId)
+    .eq('parent_organisation_id', ctx.organisationId)
+  if (error) return { ok: false, error: error.message }
+
+  bust()
+  revalidatePath(`/settings/sub-organizations/${subOrgId}`)
+  return { ok: true }
 }

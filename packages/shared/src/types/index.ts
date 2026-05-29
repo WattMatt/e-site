@@ -58,6 +58,8 @@ export interface SubOrganisation {
   name: string
   parent_organisation_id: string | null
   is_shadow: boolean
+  /** Added in migration 00112. FALSE = deactivated (see spec §6.2). */
+  is_active: boolean
   address: string | null
   phone: string | null
   registration_number: string | null

@@ -31,7 +31,7 @@ export function SubOrgsList({ initialSubOrgs }: Props) {
           key={s.id}
           href={`/settings/sub-organizations/${s.id}`}
           className="data-panel-row"
-          style={{ display: 'flex', alignItems: 'center', gap: 12 }}
+          style={{ display: 'flex', alignItems: 'center', gap: 12, opacity: s.is_active ? 1 : 0.5 }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>
@@ -41,6 +41,9 @@ export function SubOrgsList({ initialSubOrgs }: Props) {
               {s.signatory_name ?? '—'}{s.phone ? ` · ${s.phone}` : ''}
             </div>
           </div>
+          {!s.is_active && (
+            <span className="badge badge-muted">inactive</span>
+          )}
           {s.is_shadow ? (
             <span className="badge badge-amber">shadow</span>
           ) : (

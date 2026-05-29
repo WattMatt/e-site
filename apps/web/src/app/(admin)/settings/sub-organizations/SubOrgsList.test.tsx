@@ -15,7 +15,7 @@ describe('SubOrgsList', () => {
         initialSubOrgs={[
           {
             id: 's1', name: "Bob's Building", parent_organisation_id: 'p',
-            is_shadow: true, address: null, phone: '+27 21 555 0100',
+            is_shadow: true, is_active: true, address: null, phone: '+27 21 555 0100',
             registration_number: null, vat_number: null,
             signatory_name: 'Bob', signatory_title: 'Owner',
             created_at: '2026-05-29',

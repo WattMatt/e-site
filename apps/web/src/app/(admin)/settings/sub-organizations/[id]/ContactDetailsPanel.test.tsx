@@ -8,7 +8,7 @@ vi.mock('@/actions/sub-organisations.actions', () => ({
 
 const fixture = {
   id: 's1', name: "Bob's Building", parent_organisation_id: 'p',
-  is_shadow: true, address: 'Cape Town', phone: '+27 21 555 0100',
+  is_shadow: true, is_active: true, address: 'Cape Town', phone: '+27 21 555 0100',
   registration_number: '2024/123456/07', vat_number: '4123456789',
   signatory_name: 'Bob Smith', signatory_title: 'Owner',
   created_at: '2026-05-29',
