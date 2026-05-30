@@ -228,6 +228,159 @@ describe('addSubOrgMember', () => {
     }
     expect(revalidatePathMock).toHaveBeenCalledWith(`/settings/sub-organizations/${SUB_ORG_ID}`)
   })
+
+  // ─── Email collision tests ────────────────────────────────────────────────
+
+  it('email collision: looks up existing user and inserts membership with their user_id', async () => {
+    vi.resetModules()
+    vi.clearAllMocks()
+
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+    rateLimitMock.mockReturnValueOnce(true)
+
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+    const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const subOrgEqId        = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
+    const subOrgSelect      = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
+    createClientMock.mockResolvedValueOnce({ from: vi.fn().mockReturnValueOnce({ select: subOrgSelect }) })
+
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    const existingUserId = '00000000-0000-0000-0000-000000000088'
+    const insertedMember = {
+      id:              MEMBER_ROW_ID,
+      user_id:         existingUserId,
+      organisation_id: SUB_ORG_ID,
+      role:            'contractor',
+      is_active:       true,
+      created_at:      '2026-05-29T00:00:00Z',
+      profiles:        { full_name: 'Existing User', email: 'existing@example.com' },
+    }
+
+    // Service client mock:
+    //   createUser → collision error
+    //   service.from('profiles').select('id').eq('email', email).maybeSingle() → existing id
+    //   service.from('user_organisations').insert(...).select(...).single()     → member row
+    const profilesMaybeSingle = vi.fn().mockResolvedValueOnce({ data: { id: existingUserId }, error: null })
+    const profilesEqEmail     = vi.fn().mockReturnValueOnce({ maybeSingle: profilesMaybeSingle })
+    const profilesSelect      = vi.fn().mockReturnValueOnce({ eq: profilesEqEmail })
+
+    const insertSingle = vi.fn().mockResolvedValueOnce({ data: insertedMember, error: null })
+    const insertSelect = vi.fn().mockReturnValueOnce({ single: insertSingle })
+    const insertFn     = vi.fn().mockReturnValueOnce({ select: insertSelect })
+
+    const resetPasswordForEmail = vi.fn().mockResolvedValue({ error: null })
+
+    createServiceClientMock.mockReturnValueOnce({
+      auth: {
+        admin: {
+          createUser: vi.fn().mockResolvedValueOnce({
+            data: null,
+            error: { message: 'User already registered' },
+          }),
+          deleteUser: vi.fn().mockResolvedValue({}),
+        },
+        resetPasswordForEmail,
+      },
+      from: vi.fn()
+        .mockReturnValueOnce({ select: profilesSelect })   // profiles look-up
+        .mockReturnValueOnce({ insert: insertFn }),         // user_organisations insert
+    })
+
+    vi.doMock('@esite/shared', async () => {
+      const actual = await vi.importActual<any>('@esite/shared')
+      return { ...actual, logAuthEvent: vi.fn().mockResolvedValue(undefined) }
+    })
+
+    const { addSubOrgMember } = await import('./sub-org-members.actions')
+    const result = await addSubOrgMember(SUB_ORG_ID, {
+      email: 'existing@example.com',
+      fullName: 'Existing User',
+      role: 'contractor',
+    })
+
+    expect(result.ok).toBe(true)
+    // The insert must use the EXISTING user's id (not a newly created one)
+    expect(insertFn).toHaveBeenCalledWith(expect.objectContaining({
+      user_id:         existingUserId,
+      organisation_id: SUB_ORG_ID,
+    }))
+    // Profiles look-up was called to resolve the existing user
+    expect(profilesMaybeSingle).toHaveBeenCalled()
+    if (result.ok) {
+      expect(result.member.user_id).toBe(existingUserId)
+    }
+  })
+
+  it('no-collision: standard happy path still works (no regression)', async () => {
+    vi.resetModules()
+    vi.clearAllMocks()
+
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+    rateLimitMock.mockReturnValueOnce(true)
+
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+    const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const subOrgEqId        = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
+    const subOrgSelect      = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
+    createClientMock.mockResolvedValueOnce({ from: vi.fn().mockReturnValueOnce({ select: subOrgSelect }) })
+
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    const newUserId  = '00000000-0000-0000-0000-000000000099'
+    const insertedMember = {
+      id:              MEMBER_ROW_ID,
+      user_id:         newUserId,
+      organisation_id: SUB_ORG_ID,
+      role:            'contractor',
+      is_active:       true,
+      created_at:      '2026-05-29T00:00:00Z',
+      profiles:        { full_name: 'New User', email: 'new@example.com' },
+    }
+
+    const insertSingle = vi.fn().mockResolvedValueOnce({ data: insertedMember, error: null })
+    const insertSelect = vi.fn().mockReturnValueOnce({ single: insertSingle })
+    const insertFn     = vi.fn().mockReturnValueOnce({ select: insertSelect })
+
+    createServiceClientMock.mockReturnValueOnce({
+      auth: {
+        admin: {
+          createUser: vi.fn().mockResolvedValueOnce({
+            data: { user: { id: newUserId } },
+            error: null,
+          }),
+        },
+        resetPasswordForEmail: vi.fn().mockResolvedValue({ error: null }),
+      },
+      from: vi.fn().mockReturnValueOnce({ insert: insertFn }),
+    })
+
+    vi.doMock('@esite/shared', async () => {
+      const actual = await vi.importActual<any>('@esite/shared')
+      return { ...actual, logAuthEvent: vi.fn().mockResolvedValue(undefined) }
+    })
+
+    const { addSubOrgMember } = await import('./sub-org-members.actions')
+    const result = await addSubOrgMember(SUB_ORG_ID, {
+      email: 'new@example.com',
+      fullName: 'New User',
+      role: 'contractor',
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.member.user_id).toBe(newUserId)
+      expect(result.member.organisation_id).toBe(SUB_ORG_ID)
+    }
+  })
 })
 
 // ─── Task 3: removeSubOrgMember ───────────────────────────────────────────────
