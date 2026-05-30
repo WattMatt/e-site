@@ -59,12 +59,11 @@ const bulkInviteSchema = z.object({
 async function resolveSubOrg(
   supabase: Awaited<ReturnType<typeof createClient>>,
   subOrgId: string,
-): Promise<{ id: string; parent_organisation_id: string; is_shadow: boolean } | null> {
+): Promise<{ id: string; parent_organisation_id: string | null; is_shadow: boolean } | null> {
   const { data } = await (supabase as any)
     .from('organisations')
     .select('id, parent_organisation_id, is_shadow')
     .eq('id', subOrgId)
-    .eq('is_shadow', true)
     .maybeSingle()
   return data ?? null
 }
@@ -94,6 +93,9 @@ export async function listSubOrgMembers(
   // Resolve sub-org to get parent org id for the role gate.
   const subOrg = await resolveSubOrg(supabase, subOrgId)
   if (!subOrg) return { ok: false, error: 'Sub-organisation not found.' }
+  if (!subOrg.parent_organisation_id) {
+    return { ok: false, error: 'Sub-organisation has been claimed and is no longer managed by you.' }
+  }
 
   // Gate: caller must be ORG_WRITE_ROLES on the PARENT org.
   const guard = await requireRole(supabase, subOrg.parent_organisation_id, ORG_WRITE_ROLES)
@@ -163,6 +165,9 @@ export async function addSubOrgMember(
   // 1. Resolve sub-org.
   const subOrg = await resolveSubOrg(supabase, subOrgId)
   if (!subOrg) return { ok: false, error: 'Sub-organisation not found.' }
+  if (!subOrg.parent_organisation_id) {
+    return { ok: false, error: 'Sub-organisation has been claimed and is no longer managed by you.' }
+  }
 
   // Gate: caller must be ORG_WRITE_ROLES on the PARENT org.
   const guard = await requireRole(supabase, subOrg.parent_organisation_id, ORG_WRITE_ROLES)
@@ -313,9 +318,12 @@ export async function removeSubOrgMember(
 
   const subOrgId = (memberRow as { organisation_id: string }).organisation_id
 
-  // Confirm the org is a sub-org (shadow) of the caller's org.
+  // Confirm the org is a sub-org of the caller's org.
   const subOrg = await resolveSubOrg(supabase, subOrgId)
   if (!subOrg) return { ok: false, error: 'This membership does not belong to a sub-organisation.' }
+  if (!subOrg.parent_organisation_id) {
+    return { ok: false, error: 'Sub-organisation has been claimed and is no longer managed by you.' }
+  }
 
   // Gate: caller must be ORG_WRITE_ROLES on the parent org.
   const guard = await requireRole(supabase, subOrg.parent_organisation_id, ORG_WRITE_ROLES)
@@ -384,9 +392,12 @@ export async function bulkInviteSubOrgMembers(
 
   const supabase = await createClient()
 
-  // Resolve sub-org → confirm shadow + parent.
+  // Resolve sub-org → confirm parent.
   const subOrg = await resolveSubOrg(supabase, parsed.data.subOrgId)
   if (!subOrg) return { ok: false, error: 'Sub-organisation not found.' }
+  if (!subOrg.parent_organisation_id) {
+    return { ok: false, error: 'Sub-organisation has been claimed and is no longer managed by you.' }
+  }
 
   // Gate: caller must be ORG_WRITE_ROLES on the parent org.
   const guard = await requireRole(supabase, subOrg.parent_organisation_id, ORG_WRITE_ROLES)
