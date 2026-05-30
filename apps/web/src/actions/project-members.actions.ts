@@ -112,17 +112,24 @@ export async function listProjectMembers(
 
   if (error) return { error: error.message }
 
-  // Fetch org roles for these users so we can show override markers in the UI
-  const userIds = ((data ?? []) as any[]).map((r: any) => r.user_id)
-  const orgRoleMap: Record<string, string> = {}
-  if (userIds.length > 0) {
+  // Fetch org roles keyed by (user_id, organisation_id) — cross-org safe.
+  // Each project_members row carries the user's identity org, which may differ
+  // from the project's org for cross-org (sub-org) members.
+  const idPairs = ((data ?? []) as any[]).map((r: any) => ({
+    user_id: r.user_id, organisation_id: r.organisation_id,
+  }))
+  const userIds = idPairs.map((p: { user_id: string }) => p.user_id)
+  const orgIds = Array.from(new Set(idPairs.map((p: { organisation_id: string }) => p.organisation_id)))
+
+  const orgRoleMap = new Map<string, string>() // key: `${user_id}|${organisation_id}`
+  if (idPairs.length > 0) {
     const { data: orgRows } = await (supabase as any)
       .from('user_organisations')
-      .select('user_id, role')
-      .eq('organisation_id', project.organisation_id)
+      .select('user_id, organisation_id, role')
       .in('user_id', userIds)
-    for (const row of (orgRows ?? []) as Array<{ user_id: string; role: string }>) {
-      orgRoleMap[row.user_id] = row.role
+      .in('organisation_id', orgIds)
+    for (const row of (orgRows ?? []) as Array<{ user_id: string; organisation_id: string; role: string }>) {
+      orgRoleMap.set(`${row.user_id}|${row.organisation_id}`, row.role)
     }
   }
 
@@ -136,7 +143,7 @@ export async function listProjectMembers(
     created_at: r.created_at,
     full_name: r.profiles?.full_name ?? null,
     email: r.profiles?.email ?? null,
-    org_role: orgRoleMap[r.user_id] ?? null,
+    org_role: orgRoleMap.get(`${r.user_id}|${r.organisation_id}`) ?? null,
   }))
 
   return { members }
