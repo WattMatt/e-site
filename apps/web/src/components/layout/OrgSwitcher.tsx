@@ -35,6 +35,15 @@ export function OrgSwitcher({ memberships }: Props) {
 
   const current = memberships.find((m) => m.is_active_context) ?? memberships[0] ?? null
 
+  // Close on outside click — declared unconditionally (rules-of-hooks).
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    if (open) document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
   // Single-org users: render static label, no dropdown.
   if (memberships.length <= 1) {
     return current ? (
@@ -43,16 +52,6 @@ export function OrgSwitcher({ memberships }: Props) {
       </div>
     ) : null
   }
-
-  // Close on outside click.
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    if (open) document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
 
   function pick(orgId: string) {
     if (orgId === current?.organisation_id) {
