@@ -282,3 +282,20 @@ The existing cost-view, effective-role, JBCC parties, and contacts behavior must
 - Prior PRs setting context: `4de5562` (cost-view fix), `30c1896` (effective-role mechanic), `343505b` (contractor companies + bulk-add — partially superseded by this spec).
 - Migrations: `00106_relax_user_has_project_access.sql`, `00107_user_effective_project_role.sql`, `00108_contractor_companies.sql` (the table 00108 created is **dropped** by PR-A of this spec).
 - Memory: [esite-rbac-model](../../.claude/projects/-Users-spud-Documents-DEVELOPER/memory/esite-rbac-model.md), [esite-project-context](../../.claude/projects/-Users-spud-Documents-DEVELOPER/memory/esite-project-context.md).
+
+## 10. Post-ship follow-ups (PR-E + PR-F, 2026-05-29 → 05-30)
+
+After the 4 design PRs shipped, a senior-engineer audit of the live code surfaced 6 issues, fixed in **PR-E** (`b28586a`…`946cc03`):
+
+1. **Security — RBAC helper grants.** `user_effective_project_role`, `user_has_project_access`, `user_is_client_viewer`, `get_user_org_ids` were `EXECUTE`-able by `PUBLIC` + `anon` (Postgres default). `user_effective_project_role(project, user)` let unauthenticated callers enumerate roles. **Migration 00113** REVOKEs `PUBLIC` + `anon`; `authenticated` + `service_role` retained.
+2. **React hooks-rule violation in `OrgSwitcher`** — `useEffect` after an early return (the eslint-disable masked it). Refactored so all hooks run unconditionally.
+3. **`listProjectMembers` cross-org `org_role`** — looked up by the project's org, returning `null` for sub-org members. Now keyed per-row by each member's `organisation_id`.
+4. **`resolveSubOrg` filtered `is_shadow=true`** — would silently break the roster UI once a sub-org is claimed. Filter dropped; the `requireRole(parent_organisation_id, …)` gate is the access boundary.
+5. **`addProjectMembersFromSubOrg`** now rejects deactivated (`is_active=false`) and claimed (`is_shadow=false`) sub-orgs.
+6. **`AddFromSubOrgModal`** picker filters out deactivated / claimed sub-orgs.
+
+**PR-F** (`b1bfb1c`…`b99f96f`) added 24 tests (152 web tests total) covering the previously-untested surfaces: `active-organisation.actions`, `OrgSwitcher` render branches + interactions, `addProjectMembersFromSubOrg` gates, `setSubOrgActive`, and the `addSubOrgMember` email-collision path.
+
+Migrations after this spec's original 00109–00112: **00113** (grant lockdown). Latest prod commit: `b99f96f`.
+
+**Still genuinely deferred** (unchanged from §8): the full transfer-ownership claim flow when a shadow-org owner signs up. Placeholder UI is live; the claim mechanics need their own spec.
