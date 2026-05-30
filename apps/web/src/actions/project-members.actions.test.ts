@@ -92,7 +92,11 @@ function makeClient({
           ...Promise.resolve({ data: [], error: null }),
         }),
       }),
-      in: () => Promise.resolve({ data: [], error: null }),
+      // double-in chain: .in('user_id', ...).in('organisation_id', ...) used by org-role lookup
+      in: (col: string, vals: unknown[]) => ({
+        in: () => Promise.resolve({ data: orgMembersData ?? [], error: null }),
+        order: () => Promise.resolve({ data: orgMembersData ?? [], error: null }),
+      }),
       order: () => ({
         in: () => Promise.resolve({ data: orgMembersData ?? [], error: null }),
       }),

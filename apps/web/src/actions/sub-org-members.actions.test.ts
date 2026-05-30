@@ -65,7 +65,7 @@ describe('listSubOrgMembers', () => {
       profiles: { full_name: 'Mike Smith', email: 'mike@example.com' },
     }
 
-    // Chain: supabase.from('organisations').select(...).eq('id', subOrgId).eq('is_shadow', true).maybeSingle()
+    // Chain: supabase.from('organisations').select(...).eq('id', subOrgId).maybeSingle()
     //        → resolves sub-org row with parent_organisation_id
     // Then requireRole is called with parent org id.
     // Then: supabase.from('user_organisations').select(...).eq('organisation_id', subOrgId).eq('is_active', true)
@@ -73,10 +73,9 @@ describe('listSubOrgMembers', () => {
 
     const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
 
-    // First from() call: resolve sub-org
+    // First from() call: resolve sub-org (single .eq() now — is_shadow filter removed)
     const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
-    const subOrgEqShadow = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
-    const subOrgEqId = vi.fn().mockReturnValueOnce({ eq: subOrgEqShadow })
+    const subOrgEqId = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
     const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
     const fromOrgs = vi.fn().mockReturnValueOnce({ select: subOrgSelect })
 
@@ -138,8 +137,7 @@ describe('addSubOrgMember', () => {
 
     const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
     const maybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
-    const eqShadow = vi.fn().mockReturnValueOnce({ maybeSingle })
-    const eqId = vi.fn().mockReturnValueOnce({ eq: eqShadow })
+    const eqId = vi.fn().mockReturnValueOnce({ maybeSingle })
     const select = vi.fn().mockReturnValueOnce({ eq: eqId })
     const from = vi.fn().mockReturnValueOnce({ select })
     createClientMock.mockResolvedValueOnce({ from })
@@ -164,8 +162,7 @@ describe('addSubOrgMember', () => {
 
     const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
     const maybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
-    const eqShadow = vi.fn().mockReturnValueOnce({ maybeSingle })
-    const eqId = vi.fn().mockReturnValueOnce({ eq: eqShadow })
+    const eqId = vi.fn().mockReturnValueOnce({ maybeSingle })
     const select = vi.fn().mockReturnValueOnce({ eq: eqId })
     const fromOrgs = vi.fn().mockReturnValueOnce({ select })
     createClientMock.mockResolvedValueOnce({ from: fromOrgs })
@@ -271,8 +268,7 @@ describe('removeSubOrgMember', () => {
     const memberSelect = vi.fn().mockReturnValueOnce({ eq: memberEqId })
 
     const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
-    const subOrgEqShadow = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
-    const subOrgEqId = vi.fn().mockReturnValueOnce({ eq: subOrgEqShadow })
+    const subOrgEqId = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
     const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
 
     const updateEqId = vi.fn().mockResolvedValueOnce({ error: null })
@@ -328,8 +324,7 @@ describe('bulkInviteSubOrgMembers', () => {
 
     // supabase client: resolve sub-org then fetch existing members
     const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
-    const subOrgEqShadow = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
-    const subOrgEqId = vi.fn().mockReturnValueOnce({ eq: subOrgEqShadow })
+    const subOrgEqId = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
     const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
 
     // existing members query (empty — no one in sub-org yet)
