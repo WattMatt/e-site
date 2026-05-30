@@ -68,12 +68,18 @@ export async function addProjectMembersFromSubOrg(
   // Confirm subOrg belongs to projectOrg (WM admin owns Bob's Building).
   const { data: subOrg } = await (supabase as any)
     .from('organisations')
-    .select('id, parent_organisation_id')
+    .select('id, parent_organisation_id, is_shadow, is_active')
     .eq('id', subOrgId)
     .maybeSingle()
   if (!subOrg) return { ok: false, error: 'Sub-organisation not found.' }
   if ((subOrg as { parent_organisation_id: string | null }).parent_organisation_id !== projectOrgId) {
     return { ok: false, error: "Sub-organisation does not belong to this project's org." }
+  }
+  if (!(subOrg as { is_active: boolean }).is_active) {
+    return { ok: false, error: 'Sub-organisation is deactivated.' }
+  }
+  if (!(subOrg as { is_shadow: boolean }).is_shadow) {
+    return { ok: false, error: 'This organisation has been claimed by its owner; use its own admin to grant access.' }
   }
 
   // Filter userIds to those actually in the sub-org's active roster (defence in depth).
