@@ -162,3 +162,51 @@ describe('getSubOrganisation', () => {
     if (!result.ok) expect(result.error).toMatch(/not found/i)
   })
 })
+
+// ─── setSubOrgActive ──────────────────────────────────────────────────────────
+//
+// Source chain:
+//   getOrgContext() → uuid-check → createClient() → requireRole() →
+//   supabase.from('organisations').update({ is_active }).eq('id', subOrgId)
+//                                .eq('parent_organisation_id', ctx.organisationId)
+//   → bust() + revalidatePath(...)
+
+const PARENT_ORG_ID = 'org-wm'
+const SUB_ORG_ID    = '00000000-0000-0000-0000-000000000001'
+
+describe('setSubOrgActive', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('sends is_active=false and scopes update to caller\'s org', async () => {
+    getOrgContextMock.mockResolvedValueOnce({ userId: 'u', organisationId: PARENT_ORG_ID, role: 'owner' })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'owner' })
+
+    // Chain: .from('organisations').update({ is_active: false }).eq('id', subOrgId).eq('parent_organisation_id', orgId)
+    const eqParent = vi.fn().mockResolvedValueOnce({ error: null })
+    const eqId     = vi.fn().mockReturnValueOnce({ eq: eqParent })
+    const update   = vi.fn().mockReturnValueOnce({ eq: eqId })
+    const from     = vi.fn().mockReturnValueOnce({ update })
+    createClientMock.mockResolvedValueOnce({ from })
+
+    const { setSubOrgActive } = await import('./sub-organisations.actions')
+    const result = await setSubOrgActive(SUB_ORG_ID, false)
+
+    expect(result.ok).toBe(true)
+    expect(update).toHaveBeenCalledWith({ is_active: false })
+    expect(eqId).toHaveBeenCalledWith('id', SUB_ORG_ID)
+    expect(eqParent).toHaveBeenCalledWith('parent_organisation_id', PARENT_ORG_ID)
+    expect(revalidatePathMock).toHaveBeenCalledWith('/settings/sub-organizations')
+  })
+
+  it('returns ok:false with guard error when caller lacks ORG_WRITE_ROLES', async () => {
+    getOrgContextMock.mockResolvedValueOnce({ userId: 'u', organisationId: PARENT_ORG_ID, role: 'contractor' })
+    requireRoleMock.mockResolvedValueOnce({ ok: false, error: 'Insufficient role.' })
+    createClientMock.mockResolvedValueOnce({})
+
+    const { setSubOrgActive } = await import('./sub-organisations.actions')
+    const result = await setSubOrgActive(SUB_ORG_ID, true)
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/Insufficient role/i)
+  })
+})
