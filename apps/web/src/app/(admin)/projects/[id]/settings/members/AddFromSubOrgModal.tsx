@@ -264,7 +264,12 @@ function Step1({
     )
   }
 
-  if (subOrgs.length === 0) {
+  // Only show active, unclaimed (shadow) sub-orgs. Deactivated or claimed orgs
+  // are blocked server-side by addProjectMembersFromSubOrg; hiding them here
+  // avoids the user picking an option that will immediately fail.
+  const pickable = subOrgs.filter((s) => s.is_active && s.is_shadow)
+
+  if (pickable.length === 0) {
     return (
       <div>
         <p style={{ fontSize: 13, color: 'var(--c-text-mid)', marginBottom: 16 }}>
@@ -285,12 +290,13 @@ function Step1({
     <div>
       <p style={{ fontSize: 12, color: 'var(--c-text-dim)', marginBottom: 12 }}>
         Select a sub-organisation to add members from its roster to this project.
+        {pickable.length} sub-organisation{pickable.length !== 1 ? 's' : ''} available.
       </p>
       <div style={{
         border: '1px solid var(--c-border)', borderRadius: 4,
         overflow: 'hidden', marginBottom: 16,
       }}>
-        {subOrgs.map((s, i) => (
+        {pickable.map((s, i) => (
           <button
             key={s.id}
             type="button"
