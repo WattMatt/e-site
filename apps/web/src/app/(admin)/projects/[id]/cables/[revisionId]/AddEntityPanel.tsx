@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useEffect, useRef } from 'react'
+import { useState, useTransition, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   findOrCreateSupplyAction,
@@ -20,6 +20,8 @@ interface Props {
   revisionId: string
   sources: NodeOption[]
   boards: NodeOption[]
+  /** Already-fed "fromKey|toBoardId" pairs — a destination leaves the "To" list once the selected From already feeds it. */
+  fedPairs: string[]
   /** When set (e.g. `source:<id>` / `board:<id>`), the form opens pre-seeded with this "From". */
   feedFromKey?: string | null
   /** Called once the pre-seeded feed has been used (submitted) so the caller can clear it. */
@@ -37,7 +39,7 @@ const BOARD_KIND_OPTIONS = [
   { value: 'CONSUMER_RMU', label: 'Consumer RMU' },
 ]
 
-export function AddEntityPanel({ projectId, revisionId, sources, boards, feedFromKey, onFeedConsumed, defaultOpen = false }: Props) {
+export function AddEntityPanel({ projectId, revisionId, sources, boards, fedPairs, feedFromKey, onFeedConsumed, defaultOpen = false }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(defaultOpen)
   const [mode, setMode] = useState<PanelMode>('cable')
@@ -137,7 +139,7 @@ export function AddEntityPanel({ projectId, revisionId, sources, boards, feedFro
       )}
 
       {mode === 'cable' ? (
-        <CableForm revisionId={revisionId} sources={sources} boards={boards} pending={pending} onSubmit={submit} feedFromKey={feedFromKey} />
+        <CableForm revisionId={revisionId} sources={sources} boards={boards} fedPairs={fedPairs} pending={pending} onSubmit={submit} feedFromKey={feedFromKey} />
       ) : (
         <EquipmentForm
           existingCodes={boards.map((b) => b.code)}
@@ -153,11 +155,12 @@ export function AddEntityPanel({ projectId, revisionId, sources, boards, feedFro
 // ─── cable form ─────────────────────────────────────────────────────
 
 function CableForm({
-  revisionId, sources, boards, pending, onSubmit, feedFromKey,
+  revisionId, sources, boards, fedPairs, pending, onSubmit, feedFromKey,
 }: {
   revisionId: string
   sources: NodeOption[]
   boards: NodeOption[]
+  fedPairs: string[]
   pending: boolean
   onSubmit: (fn: () => Promise<{ error?: string }>, label: string) => void
   feedFromKey?: string | null
@@ -171,7 +174,17 @@ function CableForm({
   const [showMore, setShowMore] = useState(false)
 
   const [fromKey, setFromKey] = useState(allFrom[0]?.key ?? '')
-  const [toBoardId, setToBoardId] = useState(boards[0]?.id ?? '')
+
+  // To list excludes boards the SELECTED From already feeds (a `fromKey|toId`
+  // pair in fedPairs). A board fed by a different From stays available, so a
+  // second feed from another source (e.g. emergency) is still possible.
+  const fedSet = useMemo(() => new Set(fedPairs), [fedPairs])
+  const availableBoards = useMemo(
+    () => boards.filter((b) => !fedSet.has(`${fromKey}|${b.id}`)),
+    [boards, fedSet, fromKey],
+  )
+
+  const [toBoardId, setToBoardId] = useState(availableBoards[0]?.id ?? '')
   const [voltage, setVoltage] = useState('400')
   const [load, setLoad] = useState('')
   const [section, setSection] = useState<'NORMAL'|'EMERGENCY'|''>('NORMAL')
@@ -202,6 +215,15 @@ function CableForm({
       setFromKey(feedFromKey)
     }
   }, [feedFromKey])
+
+  // When the selected From changes, or a board drops out after being fed
+  // (router.refresh re-derives fedPairs), advance the To selection to the next
+  // available board so the engineer can work straight down the list. "+ new
+  // board…" is always valid, so leave that selection alone.
+  useEffect(() => {
+    const stillValid = toBoardId === '__new__' || availableBoards.some((b) => b.id === toBoardId)
+    if (!stillValid) setToBoardId(availableBoards[0]?.id ?? '__new__')
+  }, [availableBoards, toBoardId])
 
   useEffect(() => {
     const [kind, id] = fromKey.split(':')
@@ -374,7 +396,7 @@ function CableForm({
       </Field>
       <Field label="To (board) *">
         <select className="ob-input" value={toBoardId} onChange={(e) => setToBoardId(e.target.value)}>
-          {boards.map((b) => <option key={b.id} value={b.id}>{b.code}</option>)}
+          {availableBoards.map((b) => <option key={b.id} value={b.id}>{b.code}</option>)}
           <option value="__new__">+ new board…</option>
         </select>
         {toBoardId === '__new__' && (

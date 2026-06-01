@@ -14,6 +14,8 @@ interface Props {
   canEdit: boolean
   sources: NodeOption[]
   boards: NodeOption[]
+  /** Already-fed "fromKey|toBoardId" pairs — hides a destination from the Add-cable "To" list once that specific From feeds it. */
+  fedPairs: string[]
   /** Schedule grid (or empty-state) rendered between the structure tree and the Add-cable panel. */
   children?: ReactNode
   /** Auto-open the Add-cable panel on first render (e.g. when the revision has zero cables). */
@@ -37,6 +39,7 @@ export function StructureSection({
   canEdit,
   sources,
   boards,
+  fedPairs,
   children,
   addPanelDefaultOpen = false,
 }: Props) {
@@ -58,6 +61,7 @@ export function StructureSection({
           revisionId={revisionId}
           sources={sources}
           boards={boards}
+          fedPairs={fedPairs}
           feedFromKey={feedFrom}
           onFeedConsumed={() => setFeedFrom(null)}
           defaultOpen={addPanelDefaultOpen}

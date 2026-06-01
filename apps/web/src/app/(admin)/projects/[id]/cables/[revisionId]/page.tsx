@@ -291,6 +291,23 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     cableCountBySupply.set(sup.id, cables.filter((c) => c.supply_id === sup.id).length)
   }
 
+  // Already-fed (from → to) pairs for the Add-cable "To board" filter: a
+  // destination drops off the list only for the specific From that already
+  // feeds it (mirrors the per-(from,to) supply uniqueness), so a second feed
+  // from a different source — e.g. an emergency/standby supply — stays
+  // possible. Key format matches CableForm's `fromKey` ("source:<id>" /
+  // "board:<id>"). Only supplies that actually carry a cable count.
+  const fedPairs: string[] = []
+  for (const s of supplies) {
+    if ((cableCountBySupply.get(s.id) ?? 0) === 0) continue
+    const fromKey = s.from_source_id
+      ? `source:${s.from_source_id}`
+      : s.from_node_id
+        ? `board:${s.from_node_id}`
+        : null
+    if (fromKey) fedPairs.push(`${fromKey}|${s.to_node_id}`)
+  }
+
   // Build grid rows: one row per cable, with FROM / TO / VD / cumulative VD
   // resolved up-front.
   const supplyById = new Map(supplies.map((s) => [s.id, s] as const))
@@ -636,6 +653,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         canEdit={revision.status === 'DRAFT'}
         sources={sources.map<NodeOption>((s) => ({ id: s.id, code: s.code, kind: 'source' }))}
         boards={boards.map<NodeOption>((b) => ({ id: b.id, code: b.code, kind: 'board' }))}
+        fedPairs={fedPairs}
         addPanelDefaultOpen={cables.length === 0}
       >
         {cables.length === 0 ? (
