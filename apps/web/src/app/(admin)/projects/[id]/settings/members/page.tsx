@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
 import { projectService, OWNER_ADMIN, ORG_WRITE_ROLES } from '@esite/shared'
 import type { OrgRole } from '@esite/shared'
@@ -35,8 +35,10 @@ export default async function Page({ params }: Props) {
   const members = 'members' in membersResult ? membersResult.members : []
   const availableOrgMembers = 'members' in availableResult ? availableResult.members : []
 
-  // Find the org owner's user_id — used in the UI to prevent accidental self-lockout removal
-  const { data: ownerRow } = await (supabase as any)
+  // Find the org owner's user_id — used in the UI to prevent accidental self-lockout removal.
+  // user_organisations RLS is own-row-only, so an admin viewer couldn't resolve the owner's
+  // row via the cookie client — use the service client (after the VIEW_ROLES gate above).
+  const { data: ownerRow } = await (createServiceClient() as any)
     .from('user_organisations')
     .select('user_id')
     .eq('organisation_id', orgId)
