@@ -33,7 +33,7 @@ const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
  * error banner, "+ Add strand" tail row, inline edit-strand / edit-run /
  * add-strand form rows). Update in lock-step with the <thead> column list.
  */
-const TOTAL_COLS = 25
+const TOTAL_COLS = 24
 
 const SIZE_OPTIONS = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400]
   .map((s) => ({ value: String(s), label: String(s) }))
@@ -155,13 +155,13 @@ function utilisationPctForRun(run: EnrichedRun): number | null {
   return (run.load_a / run.combined_capacity_a) * 100
 }
 
-/** Canonical run identifier shown in the "Cable tag" column. */
+/** Canonical run identifier (FROM–TO). Used for search matching + action aria-labels. */
 function runLabel(run: EnrichedRun): string {
   const suffix = run.parallel_count > 1 ? ` ×${run.parallel_count}` : ''
   return `${run.from_label}–${run.to_label}${suffix}`
 }
 
-/** Per-strand tag for the drill-down. Honours the cable's tag_override. */
+/** Per-strand tag (honours the cable's tag_override). Used for search matching. */
 function strandTag(c: EnrichedCable): string {
   if (c.tag_override) return c.tag_override
   return `${c.from_label}-${c.to_label}-${c.size_mm2}-${c.cable_no}`
@@ -387,7 +387,7 @@ export function CableScheduleGrid({
 
   // ── Per-strand field (measured length, ohm override, tag, notes) ────
   type StrandField =
-    | 'measured_length_m' | 'ohm_per_km_override' | 'tag_override' | 'notes' | 'ambient_temp_c'
+    | 'measured_length_m' | 'ohm_per_km_override' | 'notes' | 'ambient_temp_c'
 
   async function saveStrandField(
     cableId: string, supplyId: string, field: StrandField, next: string | number | null,
@@ -402,9 +402,6 @@ export function CableScheduleGrid({
         break
       case 'ohm_per_km_override':
         cableKey.ohm_per_km = next == null ? null : Number(next)
-        break
-      case 'tag_override':
-        // no calc effect, no liveCables patch needed
         break
       case 'notes':
         break
@@ -426,7 +423,6 @@ export function CableScheduleGrid({
           patch.ohm_per_km = next == null ? null : Number(next)
           patch.manual_override = next != null
         }
-        else if (field === 'tag_override') patch.tag_override = next as string | null
         else if (field === 'notes') patch.notes = next as string | null
         else if (field === 'ambient_temp_c') patch.ambient_temp_c = Number(next)
         return { ...c, ...patch }
@@ -438,7 +434,6 @@ export function CableScheduleGrid({
       cableId,
       measuredLengthM: field === 'measured_length_m' ? (next == null ? null : Number(next)) : undefined,
       ohmPerKmOverride: field === 'ohm_per_km_override' ? (next == null ? null : Number(next)) : undefined,
-      tagOverride: field === 'tag_override' ? (next as string | null) : undefined,
       notes: field === 'notes' ? (next as string | null) : undefined,
       ambientTempC: field === 'ambient_temp_c' ? Number(next) : undefined,
     })
@@ -619,9 +614,8 @@ export function CableScheduleGrid({
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
               <Th w={24} align="center" />{/* expand chevron */}
-              <Th w={28} align="center">Run</Th>
+              <Th w={88} align="center">Run</Th>
               <Th w={32} align="center">Δ</Th>
-              <Th w={220}>Cable tag</Th>
               <Th w={120}>From</Th>
               <Th w={120}>To</Th>
               <Th w={70} align="right">V</Th>
@@ -739,8 +733,50 @@ export function CableScheduleGrid({
                       />
                     )}
                   </Td>
-                  <Td align="center" style={{ color: 'var(--c-text-dim)', fontSize: 10 }}>
-                    {runIdx + 1}
+                  <Td align="center" style={{ padding: '4px 6px', whiteSpace: 'nowrap' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ color: 'var(--c-text-dim)', fontSize: 10 }}>{runIdx + 1}</span>
+                      {run.cables.some((c) => c.manual_override) && (
+                        <span title="At least one strand has a manual Ω/km override" style={{ color: 'var(--c-amber)', fontSize: 10 }}>⚑</span>
+                      )}
+                      {canEdit && !locked && (
+                        <button
+                          type="button"
+                          onClick={() => setDrawer({ mode: 'edit-run', supplyId: run.supply_id, run })}
+                          aria-label={`Edit run ${run.from_label} to ${run.to_label}`}
+                          title="Edit run (shared cable properties + supply fields)"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12, padding: '0 2px' }}
+                        >
+                          ✏
+                        </button>
+                      )}
+                      {canEdit && !locked && (
+                        <button
+                          type="button"
+                          onClick={() => setDrawer({
+                            mode: 'add-run',
+                            revisionId,
+                            nodeOptions,
+                            defaults: {
+                              size_mm2: run.size_mm2,
+                              cores: run.cores,
+                              conductor: run.conductor,
+                              insulation: run.insulation,
+                              installation_method: run.installation_method ?? undefined,
+                              depth_mm: run.depth_mm ?? undefined,
+                              voltage_v: run.voltage_v,
+                              design_load_a: run.load_a,
+                              section: run.section ?? null,
+                            },
+                          })}
+                          aria-label={`Duplicate run ${run.from_label} to ${run.to_label}`}
+                          title="Create a new run with these cable properties (you'll set the new FROM/TO)"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12, padding: '0 2px' }}
+                        >
+                          📋
+                        </button>
+                      )}
+                    </span>
                   </Td>
                   <Td align="center" style={{ padding: '4px 6px' }}>
                     {cloud.kind && (
@@ -756,55 +792,6 @@ export function CableScheduleGrid({
                       >
                         ☁{cloud.letter}
                       </span>
-                    )}
-                  </Td>
-                  <Td>
-                    <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>{runLabel(run)}</span>
-                    {run.parallel_count > 1 && (
-                      <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--c-text-dim)' }}>
-                        {run.cables.some((c) => c.manual_override) && <span title="At least one strand has manual Ω/km override" style={{ color: 'var(--c-amber)' }}>⚑ </span>}
-                        Strand 1: <span style={{ color: 'var(--c-text-mid)' }}>{strandTag(head)}</span>
-                      </span>
-                    )}
-                    {head.manual_override && run.parallel_count === 1 && (
-                      <span style={{ marginLeft: 4, fontSize: 9, color: 'var(--c-amber)' }} title="Manual override">⚑</span>
-                    )}
-                    {canEdit && !locked && (
-                      <button
-                        type="button"
-                        onClick={() => setDrawer({ mode: 'edit-run', supplyId: run.supply_id, run })}
-                        aria-label={`Edit run ${run.from_label} to ${run.to_label}`}
-                        title="Edit run (shared cable properties + supply fields)"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12, marginLeft: 6, padding: '0 4px' }}
-                      >
-                        ✏
-                      </button>
-                    )}
-                    {canEdit && !locked && (
-                      <button
-                        type="button"
-                        onClick={() => setDrawer({
-                          mode: 'add-run',
-                          revisionId,
-                          nodeOptions,
-                          defaults: {
-                            size_mm2: run.size_mm2,
-                            cores: run.cores,
-                            conductor: run.conductor,
-                            insulation: run.insulation,
-                            installation_method: run.installation_method ?? undefined,
-                            depth_mm: run.depth_mm ?? undefined,
-                            voltage_v: run.voltage_v,
-                            design_load_a: run.load_a,
-                            section: run.section ?? null,
-                          },
-                        })}
-                        aria-label={`Duplicate run ${run.from_label} to ${run.to_label}`}
-                        title="Create a new run with these cable properties (you'll set the new FROM/TO)"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12, marginLeft: 2, padding: '0 4px' }}
-                      >
-                        📋
-                      </button>
                     )}
                   </Td>
                   <Td>
@@ -974,7 +961,7 @@ export function CableScheduleGrid({
                 // ── Mixed-properties banner row (only when divergent) ─────
                 ...(run.mixed_properties.fields.length > 0 && canEdit && !locked ? [(
                   <tr key={`mixed-${run.supply_id}`}>
-                    <td colSpan={25} style={{ background: 'var(--c-amber-dim)', padding: '6px 14px', borderTop: '1px solid var(--c-border)' }}>
+                    <td colSpan={TOTAL_COLS} style={{ background: 'var(--c-amber-dim)', padding: '6px 14px', borderTop: '1px solid var(--c-border)' }}>
                       <span style={{ fontSize: 11, color: 'var(--c-text)' }}>
                         ⚠ Parallel strands disagree on: <strong>{run.mixed_properties.fields.join(', ')}</strong>.
                       </span>
@@ -993,7 +980,7 @@ export function CableScheduleGrid({
                 // ── Shared-edit error banner (only on partial failure) ────
                 ...(sharedError?.supplyId === run.supply_id ? [(
                   <tr key={`error-${run.supply_id}`}>
-                    <td colSpan={25} role="alert" style={{ background: 'rgba(220,38,38,0.08)', padding: '6px 14px', borderTop: '1px solid #dc2626', color: '#dc2626', fontSize: 11 }}>
+                    <td colSpan={TOTAL_COLS} role="alert" style={{ background: 'rgba(220,38,38,0.08)', padding: '6px 14px', borderTop: '1px solid #dc2626', color: '#dc2626', fontSize: 11 }}>
                       {sharedError.message}
                     </td>
                   </tr>
@@ -1020,11 +1007,6 @@ export function CableScheduleGrid({
                       </Td>
                       <Td align="center" style={{ color: 'var(--c-text-dim)' }}>#{c.cable_no}</Td>
                       <Td />
-                      <Td>
-                        <EditableCell type="text" align="left" disabled={locked || !canEdit}
-                          value={c.tag_override} placeholder={strandTag(c)}
-                          onSave={(n) => saveStrandField(c.id, run.supply_id, 'tag_override', n)} />
-                      </Td>
                       <Td colSpan={2} style={{ color: 'var(--c-text-dim)', fontStyle: 'italic', fontSize: 10 }}>
                         (strand of run above)
                       </Td>
