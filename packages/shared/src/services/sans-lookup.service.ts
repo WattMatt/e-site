@@ -174,10 +174,41 @@ export async function loadCableTable(
 }
 
 /**
- * Apply derating factors. Pulls factors from the SANS 1507 LV derating
- * tables — 6.3.1 (depth), 6.3.2 (soil thermal resistivity), 6.3.6
- * (grouping) and 6.3.4 (ground temperature) — based on the installation
- * parameters.
+ * Resolve which SANS 1507 derating tables apply for a given installation
+ * method. Burial depth (6.3.1) and soil-thermal resistivity (6.3.2) only
+ * derate a cable that is actually in the ground or a buried duct — a cable
+ * in air (on a ladder, tray or cleats) has no burial depth and no soil
+ * around it, so both factors are 1.0 and the ambient correction reads the
+ * air table (6.3.5) instead of the ground table (6.3.4). DUCT additionally
+ * selects the single-way-duct soil columns rather than the direct-in-ground
+ * columns.
+ *
+ * Recognised methods: DIRECT_IN_GROUND, DUCT, LADDER, TRAY, CLIPPED.
+ * Anything else (including null) is treated as in-air — consistent with the
+ * base-rating selection, which also falls through to the in-air rating for
+ * non-ground/non-duct methods.
+ */
+export function deratingBasis(method: string | null): {
+  inAir: boolean
+  soilFactorKey: 'factor_direct_in_ground' | 'factor_single_way_duct'
+  temperatureTable: 'TABLE_6_3_4' | 'TABLE_6_3_5'
+} {
+  const inDuct = method === 'DUCT'
+  const inGround = method === 'DIRECT_IN_GROUND'
+  const inAir = !inDuct && !inGround
+  return {
+    inAir,
+    soilFactorKey: inDuct ? 'factor_single_way_duct' : 'factor_direct_in_ground',
+    temperatureTable: inAir ? 'TABLE_6_3_5' : 'TABLE_6_3_4',
+  }
+}
+
+/**
+ * Apply derating factors from the SANS 1507 LV tables, branching on the
+ * installation method (see deratingBasis): 6.3.1 (depth) and 6.3.2 (soil
+ * thermal) for in-ground / duct cables, 6.3.6 (grouping) always, and the
+ * ground (6.3.4) or air (6.3.5) ambient table. In-air cables skip depth and
+ * soil — both are returned as 1.0.
  *
  * If a factor table lookup misses a value, the nearest-conservative
  * (lower) factor is used so the calculation errs on the safe side.
@@ -190,6 +221,12 @@ export async function lookupDeratingFactors(
     grouped_with: number
     ambient_c: number
     insulation: 'PVC' | 'XLPE' | 'PILC'
+    /**
+     * Installation method — selects whether the burial-depth / soil-thermal
+     * chain applies (in-ground / duct) or is bypassed (in air), and which
+     * ambient table is read. See deratingBasis. Null → in-air.
+     */
+    installation_method: string | null
     /**
      * Cable layout in the trench / duct group.
      *   TOUCHING  → T6.3.6 `factor_touching` (conservative, hardest derate)
@@ -206,21 +243,27 @@ export async function lookupDeratingFactors(
   temperature: number | null
 }> {
   // SANS 1507 LV derating tables 6.3.1–6.3.6 (migration 00057, source-workbook
-  // shape). Each tabulates a direct-in-ground and an in-duct factor; the
-  // auto-calc takes the direct-in-ground / touching / ground-temperature
-  // values as the conservative default. Temperature (6.3.4) carries separate
-  // columns for PVC 70 °C and XLPE 90 °C conductors. Grouping reads 6.3.6
-  // (per-count, includes n = 1) rather than the 6.3.3 axial-spacing matrix,
-  // since the caller supplies only a cable count, not a spacing.
+  // shape). The depth (6.3.1) and soil-thermal (6.3.2) tables each tabulate a
+  // direct-in-ground and a single-way-duct factor; deratingBasis picks the
+  // column for the installation method and, for in-air cables, bypasses both
+  // (factor 1.0 — no burial depth, no soil). Temperature reads the ground
+  // (6.3.4) or air (6.3.5) table — both carry separate PVC 70 °C / XLPE 90 °C
+  // columns. Grouping reads 6.3.6 (per-count, includes n = 1) rather than the
+  // 6.3.3 axial-spacing matrix, since the caller supplies only a cable count.
   const tempFactorKey = args.insulation === 'XLPE' ? 'factor_xlpe_90c' : 'factor_pvc_70c'
   const groupingFactorKey =
     args.grouping_arrangement === 'SPACING_D' ? 'factor_clearance_d' : 'factor_touching'
+  const basis = deratingBasis(args.installation_method)
 
   const [d, th, gr, te] = await Promise.all([
-    lookupFactor(supabase, 'TABLE_6_3_1', 'depth_mm',        args.depth_mm,                'factor_direct_in_ground'),
-    lookupFactor(supabase, 'TABLE_6_3_2', 'resistivity_kmw', args.thermal_resistivity_kmw, 'factor_direct_in_ground'),
-    lookupFactor(supabase, 'TABLE_6_3_6', 'n_cables',        args.grouped_with,            groupingFactorKey),
-    lookupFactor(supabase, 'TABLE_6_3_4', 'ambient_c',       args.ambient_c,               tempFactorKey),
+    basis.inAir
+      ? Promise.resolve(1)
+      : lookupFactor(supabase, 'TABLE_6_3_1', 'depth_mm',        args.depth_mm,                basis.soilFactorKey),
+    basis.inAir
+      ? Promise.resolve(1)
+      : lookupFactor(supabase, 'TABLE_6_3_2', 'resistivity_kmw', args.thermal_resistivity_kmw, basis.soilFactorKey),
+    lookupFactor(supabase, 'TABLE_6_3_6', 'n_cables',        args.grouped_with, groupingFactorKey),
+    lookupFactor(supabase, basis.temperatureTable, 'ambient_c', args.ambient_c, tempFactorKey),
   ])
   return { depth: d, thermal: th, grouping: gr, temperature: te }
 }

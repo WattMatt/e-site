@@ -782,6 +782,7 @@ async function resolveCableElectricals(
     grouped_with: args.groupedWith,
     ambient_c: args.ambientTempC,
     insulation: args.insulation,
+    installation_method: args.installationMethod,
     grouping_arrangement: args.groupingArrangement,
   })
 
@@ -1142,6 +1143,7 @@ export async function updateCableAction(
       grouped_with: next.groupedWith,
       ambient_c: next.ambientTempC,
       insulation: next.insulation,
+      installation_method: next.installationMethod,
       grouping_arrangement: next.groupingArrangement,
     })
     const deratedA = deratedRating(baseRating ?? null, {
@@ -1418,6 +1420,7 @@ export async function previewParallelCableSet(
         grouped_with: i + 1,
         ambient_c: parsed.data.ambientTempC,
         insulation: parsed.data.insulation,
+        installation_method: parsed.data.installationMethod,
         grouping_arrangement: parsed.data.groupingArrangement,
       }),
     ),
