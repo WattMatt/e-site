@@ -664,7 +664,49 @@ export function CableScheduleGrid({
                 ? <span className="badge badge-warning" title={`Parallel cables disagree on ${field} — Expand to view; Normalise to fix.`}>⚠ Mixed</span>
                 : current
 
+              // Group headers. page.tsx orders runs FROM-board → section →
+              // conductor → to, so same-board runs are contiguous here: emit a
+              // board header on each from-board change, and a section·conductor
+              // sub-header on each change within a board. Co-locates everything
+              // a board feeds. Display-only — exports keep their own order.
+              const prevRun = runIdx > 0 ? filtered[runIdx - 1] : null
+              const newBoard = !prevRun || prevRun.from_label !== run.from_label
+              const newSubgroup = !prevRun
+                || prevRun.from_label !== run.from_label
+                || prevRun.section !== run.section
+                || prevRun.conductor !== run.conductor
+              const groupHeaderRows: React.ReactNode[] = []
+              if (newBoard) {
+                groupHeaderRows.push(
+                  <tr key={`board-${run.from_label}`}>
+                    <td colSpan={TOTAL_COLS} style={{
+                      background: 'var(--c-base)',
+                      borderTop: '2px solid var(--c-amber-mid)',
+                      padding: '8px 14px', fontWeight: 700, fontSize: 12,
+                      letterSpacing: '0.04em', color: 'var(--c-text)',
+                    }}>
+                      {run.from_label}
+                    </td>
+                  </tr>,
+                )
+              }
+              if (newSubgroup) {
+                groupHeaderRows.push(
+                  <tr key={`sub-${run.from_label}-${run.section ?? 'none'}-${run.conductor}`}>
+                    <td colSpan={TOTAL_COLS} style={{
+                      background: 'var(--c-panel)',
+                      borderTop: '1px solid var(--c-border)',
+                      padding: '3px 14px 3px 28px', fontSize: 10,
+                      letterSpacing: '0.06em', color: 'var(--c-text-dim)',
+                    }}>
+                      {run.section ?? '—'} · {run.conductor}
+                    </td>
+                  </tr>,
+                )
+              }
+
               return [
+                ...groupHeaderRows,
                 <tr key={`run-${run.supply_id}`} style={{
                   borderTop: '1px solid var(--c-border)',
                   background: run.parallel_count > 1 ? 'rgba(243, 178, 88, 0.04)' : undefined,

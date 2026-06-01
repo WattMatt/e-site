@@ -574,14 +574,18 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       cables: strands.map(toEnrichedCable),
     })
   }
-  // Sort canonically — section → conductor → from → to. Matches what
-  // export-payload.ts uses so the on-screen grid and Excel/PDF agree.
+  // Grid display order: group by FROM-board (primary) → section → conductor
+  // → to, so each board's outgoing cables read as one contiguous block on
+  // screen (CableScheduleGrid draws the board + section·conductor headers off
+  // this order). This is the ON-SCREEN order only — exports (export-payload.ts)
+  // keep the canonical section→conductor→from→to order, so Excel/PDF section
+  // grouping is unaffected and the two intentionally diverge.
   runs.sort((a, b) => {
+    if (a.from_label !== b.from_label) return a.from_label.localeCompare(b.from_label, undefined, { numeric: true })
     const sa = a.section ?? ''
     const sb = b.section ?? ''
     if (sa !== sb) return sa.localeCompare(sb)
     if (a.conductor !== b.conductor) return a.conductor.localeCompare(b.conductor)
-    if (a.from_label !== b.from_label) return a.from_label.localeCompare(b.from_label, undefined, { numeric: true })
     return a.to_label.localeCompare(b.to_label, undefined, { numeric: true })
   })
 
