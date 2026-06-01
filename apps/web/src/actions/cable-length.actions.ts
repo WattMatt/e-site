@@ -116,7 +116,7 @@ export async function updateMeasuredLengthAction(
   //   measured set, confirmed set    → recompute discrepancy
   //   measured cleared               → UNMEASURED (no confirmed) or MEASURED (with confirmed pending)
   const newMeasured = parsed.data.measuredLengthM
-  let newStatus: 'UNMEASURED' | 'MEASURED' | 'CONFIRMED' | 'DISCREPANCY' = 'UNMEASURED'
+  let newStatus: 'UNMEASURED' | 'MEASURED' | 'CONFIRMED' | 'DISCREPANCY'
   if (newMeasured != null) {
     if (ctx.confirmed == null) newStatus = 'MEASURED'
     else newStatus = discrepancyExceeded(newMeasured, ctx.confirmed) ? 'DISCREPANCY' : 'CONFIRMED'
@@ -282,7 +282,7 @@ export async function updateConfirmedLengthAction(
   //   confirmed set, not signed off  → MEASURED (still pending sign-off)
   //   confirmed set + signOff + ≤ threshold  → CONFIRMED
   //   confirmed set + signOff + > threshold  → DISCREPANCY
-  let newStatus: 'UNMEASURED' | 'MEASURED' | 'CONFIRMED' | 'DISCREPANCY' = ctx.status
+  let newStatus: 'UNMEASURED' | 'MEASURED' | 'CONFIRMED' | 'DISCREPANCY'
   if (newConfirmed == null) {
     newStatus = ctx.measured == null ? 'UNMEASURED' : 'MEASURED'
   } else if (!parsed.data.signOff) {

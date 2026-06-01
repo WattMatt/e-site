@@ -47,7 +47,7 @@ export function suggestShortCode(boardCode: string): string {
   // Collapse whitespace, normalise separators
   result = result
     .replace(/\s+/g, '-')           // spaces → hyphens
-    .replace(/[^A-Z0-9.\-]/gi, '')  // strip anything not alphanumeric/dot/hyphen
+    .replace(/[^A-Z0-9.-]/gi, '')  // strip anything not alphanumeric/dot/hyphen
     .replace(/-+/g, '-')            // collapse multiple hyphens
     .replace(/^-+|-+$/g, '')        // trim leading/trailing hyphens
     .toUpperCase()

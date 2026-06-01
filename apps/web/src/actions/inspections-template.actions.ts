@@ -103,7 +103,7 @@ export async function createTemplateAction(
   try {
     parsed = JSON.parse(jsonText)
   } catch (e) {
-    throw new Error(`Invalid JSON: ${(e as Error).message}`)
+    throw new Error(`Invalid JSON: ${(e as Error).message}`, { cause: e })
   }
 
   const result = templateSchema.safeParse(parsed)
@@ -483,7 +483,7 @@ export async function newTemplateVersionAction(
   try {
     parsed = JSON.parse(newSchemaJsonText)
   } catch (e) {
-    throw new Error(`Invalid JSON: ${(e as Error).message}`)
+    throw new Error(`Invalid JSON: ${(e as Error).message}`, { cause: e })
   }
 
   const result = templateSchema.safeParse(parsed)

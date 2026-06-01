@@ -81,7 +81,7 @@ export async function initializeHandoverCategoryAction(
     .maybeSingle()
 
   let categoryRootId: string
-  let categoryRootCloudId: string | null = null
+  let categoryRootCloudId: string | null
   let cloudMirrored = 0
 
   if (existingRoot) {

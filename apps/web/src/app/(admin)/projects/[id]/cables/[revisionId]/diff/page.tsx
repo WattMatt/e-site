@@ -97,7 +97,7 @@ export default async function RevisionDiffPage({ params, searchParams }: Props) 
 
   // Pick the comparison revision: explicit `vs` param > previous (most
   // recently created before this one) > most recent ISSUED.
-  let compareRev: RevisionStub | null = null
+  let compareRev: RevisionStub | null
   if (vs) {
     compareRev = allRevs.find((r) => r.id === vs) ?? null
   } else {

@@ -129,7 +129,7 @@ export type MirrorResult =
  */
 function sanitiseForCloud(name: string): string {
   return name
-    .replace(/[\/\\:*?"<>|]/g, ' - ')
+    .replace(/[/\\:*?"<>|]/g, ' - ')
     .replace(/\s+/g, ' ')
     .replace(/[.\s]+$/, '')
     .trim()

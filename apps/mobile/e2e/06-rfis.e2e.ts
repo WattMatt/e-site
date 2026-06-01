@@ -28,7 +28,7 @@ describe('RFIs', () => {
     // Assumes we are already on the create screen from the previous test.
     // If not, navigate there again.
     let onCreateScreen = false
-    try { await waitFor(element(by.id('rfi-create-screen'))).toBeVisible().withTimeout(1000); onCreateScreen = true } catch {}
+    try { await waitFor(element(by.id('rfi-create-screen'))).toBeVisible().withTimeout(1000); onCreateScreen = true } catch { /* ignore */ }
     if (!onCreateScreen) {
       await element(by.id('tab-projects')).tap()
       await waitFor(element(by.id('project-card'))).toBeVisible().withTimeout(10_000)

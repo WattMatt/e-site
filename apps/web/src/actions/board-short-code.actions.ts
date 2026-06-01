@@ -58,7 +58,7 @@ export async function updateBoardShortCodesAction(
     if (trimmed.length > 12) {
       return { ok: false, error: `Short code "${trimmed}" exceeds 12 characters` }
     }
-    if (!/^[A-Z0-9.\-]+$/i.test(trimmed)) {
+    if (!/^[A-Z0-9.-]+$/i.test(trimmed)) {
       return { ok: false, error: `Short code "${trimmed}" contains invalid characters (only A-Z, 0-9, ., - allowed)` }
     }
     normalised.push({ boardId: u.boardId, shortCode: trimmed.toUpperCase() })

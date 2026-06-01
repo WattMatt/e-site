@@ -90,7 +90,7 @@ async function guardWriter(projectId: string): Promise<GuardResult> {
   } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
-  let project: { organisation_id: string } | null = null
+  let project: { organisation_id: string } | null
   try {
     project = (await projectService.getById(supabase as never, projectId)) as { organisation_id: string }
   } catch {
