@@ -82,7 +82,9 @@ const STATUS_LABEL: Record<NodeOrderStatus, string> = {
   received: 'Received',
 }
 
-const STATUS_ORDER: NodeOrderStatus[] = ['by_tenant', 'required', 'ordered', 'received']
+// 'by_tenant' is intentionally omitted — tenant-supplied orders are excluded
+// from the buy-list query, so there is no pill or status filter for them here.
+const STATUS_ORDER: NodeOrderStatus[] = ['required', 'ordered', 'received']
 
 const EMPTY_DOCS = (): OrderRowData['documents'] => ({
   quote: null,
@@ -175,6 +177,9 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
       .from('node_orders')
       .select('id, node_id, label, scope_item_type_id, status, ordered_at, received_at, notes')
       .eq('project_id', projectId)
+      // Materials is a procurement buy-list: tenant-supplied items (status
+      // 'by_tenant') are excluded — they live in the Tenant Schedule only.
+      .neq('status', 'by_tenant')
       .order('label', { ascending: true })
     if (error) throw error
     if (data) rawOrders = data as RawNodeOrder[]
