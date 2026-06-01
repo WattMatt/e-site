@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 
@@ -93,47 +93,51 @@ export async function listProjectMembers(
   )
   if (!guard.ok) return { error: guard.error }
 
-  // Fetch project members, joining user_organisations for the org role, and profiles for name/email.
+  // Fetch project_members rows. The RLS SELECT policy lets any org member read all
+  // rows for a project they belong to, so this returns every member. We do NOT join
+  // profiles / org-role here: public.user_organisations RLS is own-row-only
+  // (user_id = auth.uid()) and the profiles policy resolves through it, so the cookie
+  // client can only ever see the *viewer's* identity. Every member's identity is
+  // resolved below with the service client — safe because requireRole above already
+  // authorised the caller (same pattern as the bulk-add / sub-org actions).
   const { data, error } = await (supabase as any)
     .schema('projects')
     .from('project_members')
-    .select(`
-      id,
-      project_id,
-      organisation_id,
-      user_id,
-      role,
-      is_active,
-      created_at,
-      profiles!project_members_user_id_fkey(full_name, email)
-    `)
+    .select('id, project_id, organisation_id, user_id, role, is_active, created_at')
     .eq('project_id', projectId)
     .order('created_at', { ascending: true })
 
   if (error) return { error: error.message }
 
-  // Fetch org roles keyed by (user_id, organisation_id) — cross-org safe.
-  // Each project_members row carries the user's identity org, which may differ
-  // from the project's org for cross-org (sub-org) members.
-  const idPairs = ((data ?? []) as any[]).map((r: any) => ({
-    user_id: r.user_id, organisation_id: r.organisation_id,
-  }))
-  const userIds = idPairs.map((p: { user_id: string }) => p.user_id)
-  const orgIds = Array.from(new Set(idPairs.map((p: { organisation_id: string }) => p.organisation_id)))
+  const rows = (data ?? []) as any[]
+  const userIds = Array.from(new Set(rows.map((r: any) => r.user_id)))
+  const orgIds = Array.from(new Set(rows.map((r: any) => r.organisation_id)))
 
+  // Resolve identity (profiles) + org-role for EVERY member via the service client —
+  // an elevated read, after the role gate. org_role is keyed by (user_id,
+  // organisation_id) — cross-org safe, since a member's row carries their identity org,
+  // which may differ from the project's org for sub-org members.
+  const profileMap = new Map<string, { full_name: string | null; email: string | null }>()
   const orgRoleMap = new Map<string, string>() // key: `${user_id}|${organisation_id}`
-  if (idPairs.length > 0) {
-    const { data: orgRows } = await (supabase as any)
-      .from('user_organisations')
-      .select('user_id, organisation_id, role')
-      .in('user_id', userIds)
-      .in('organisation_id', orgIds)
+  if (userIds.length > 0) {
+    const service = createServiceClient() as any
+    const [{ data: profs }, { data: orgRows }] = await Promise.all([
+      service.from('profiles').select('id, full_name, email').in('id', userIds),
+      service
+        .from('user_organisations')
+        .select('user_id, organisation_id, role')
+        .in('user_id', userIds)
+        .in('organisation_id', orgIds),
+    ])
+    for (const p of (profs ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>) {
+      profileMap.set(p.id, { full_name: p.full_name ?? null, email: p.email ?? null })
+    }
     for (const row of (orgRows ?? []) as Array<{ user_id: string; organisation_id: string; role: string }>) {
       orgRoleMap.set(`${row.user_id}|${row.organisation_id}`, row.role)
     }
   }
 
-  const members: ProjectMember[] = ((data ?? []) as any[]).map((r: any) => ({
+  const members: ProjectMember[] = rows.map((r: any) => ({
     id: r.id,
     project_id: r.project_id,
     organisation_id: r.organisation_id,
@@ -141,8 +145,8 @@ export async function listProjectMembers(
     role: r.role,
     is_active: r.is_active,
     created_at: r.created_at,
-    full_name: r.profiles?.full_name ?? null,
-    email: r.profiles?.email ?? null,
+    full_name: profileMap.get(r.user_id)?.full_name ?? null,
+    email: profileMap.get(r.user_id)?.email ?? null,
     org_role: orgRoleMap.get(`${r.user_id}|${r.organisation_id}`) ?? null,
   }))
 
@@ -185,16 +189,7 @@ export async function addProjectMember(
       organisation_id: project.organisation_id,
       role: parsed.data,
     })
-    .select(`
-      id,
-      project_id,
-      organisation_id,
-      user_id,
-      role,
-      is_active,
-      created_at,
-      profiles!project_members_user_id_fkey(full_name, email)
-    `)
+    .select('id, project_id, organisation_id, user_id, role, is_active, created_at')
     .single()
 
   if (error) {
@@ -202,12 +197,18 @@ export async function addProjectMember(
     return { error: error.message }
   }
 
-  const { data: orgRow } = await (supabase as any)
-    .from('user_organisations')
-    .select('role')
-    .eq('organisation_id', project.organisation_id)
-    .eq('user_id', userId)
-    .maybeSingle()
+  // Resolve display identity + org-role via the service client — profiles and
+  // user_organisations are RLS-hidden for other users on the cookie client.
+  const service = createServiceClient() as any
+  const [{ data: profRow }, { data: orgRow }] = await Promise.all([
+    service.from('profiles').select('full_name, email').eq('id', userId).maybeSingle(),
+    service
+      .from('user_organisations')
+      .select('role')
+      .eq('organisation_id', project.organisation_id)
+      .eq('user_id', userId)
+      .maybeSingle(),
+  ])
 
   bust(projectId)
   return {
@@ -219,8 +220,8 @@ export async function addProjectMember(
       role: (data as any).role,
       is_active: (data as any).is_active,
       created_at: (data as any).created_at,
-      full_name: (data as any).profiles?.full_name ?? null,
-      email: (data as any).profiles?.email ?? null,
+      full_name: (profRow as any)?.full_name ?? null,
+      email: (profRow as any)?.email ?? null,
       org_role: (orgRow as any)?.role ?? null,
     },
   }
@@ -251,26 +252,24 @@ export async function updateProjectMemberRole(
     .from('project_members')
     .update({ role: parsed.data })
     .eq('id', memberId)
-    .select(`
-      id,
-      project_id,
-      organisation_id,
-      user_id,
-      role,
-      is_active,
-      created_at,
-      profiles!project_members_user_id_fkey(full_name, email)
-    `)
+    .select('id, project_id, organisation_id, user_id, role, is_active, created_at')
     .single()
 
   if (error) return { error: error.message }
 
-  const { data: orgRow } = await (supabase as any)
-    .from('user_organisations')
-    .select('role')
-    .eq('organisation_id', resolved.organisationId)
-    .eq('user_id', (data as any).user_id)
-    .maybeSingle()
+  // Resolve display identity + org-role via the service client — profiles and
+  // user_organisations are RLS-hidden for other users on the cookie client.
+  const service = createServiceClient() as any
+  const userId = (data as any).user_id
+  const [{ data: profRow }, { data: orgRow }] = await Promise.all([
+    service.from('profiles').select('full_name, email').eq('id', userId).maybeSingle(),
+    service
+      .from('user_organisations')
+      .select('role')
+      .eq('organisation_id', resolved.organisationId)
+      .eq('user_id', userId)
+      .maybeSingle(),
+  ])
 
   bust(resolved.projectId)
   return {
@@ -282,8 +281,8 @@ export async function updateProjectMemberRole(
       role: (data as any).role,
       is_active: (data as any).is_active,
       created_at: (data as any).created_at,
-      full_name: (data as any).profiles?.full_name ?? null,
-      email: (data as any).profiles?.email ?? null,
+      full_name: (profRow as any)?.full_name ?? null,
+      email: (profRow as any)?.email ?? null,
       org_role: (orgRow as any)?.role ?? null,
     },
   }
@@ -346,8 +345,11 @@ export async function listAvailableOrgMembers(
     ((existingRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id),
   )
 
-  // Fetch all active org members with profiles
-  const { data: orgMembers, error } = await (supabase as any)
+  // Fetch all active org members with profiles. user_organisations RLS is own-row-only,
+  // so this uses the service client (after the ORG_WRITE_ROLES gate above) — otherwise
+  // the picker would only ever list the viewer themselves.
+  const service = createServiceClient() as any
+  const { data: orgMembers, error } = await service
     .from('user_organisations')
     .select('user_id, role, profiles!user_organisations_user_id_fkey(full_name, email)')
     .eq('organisation_id', project.organisation_id)

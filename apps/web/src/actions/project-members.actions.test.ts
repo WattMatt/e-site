@@ -6,7 +6,11 @@ const requireRoleMock = vi.fn()
 vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
 
 const createClientMock = vi.fn()
-vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock }))
+const createServiceClientMock = vi.fn()
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: createClientMock,
+  createServiceClient: createServiceClientMock,
+}))
 
 const revalidatePathMock = vi.fn()
 vi.mock('next/cache', () => ({
@@ -143,12 +147,56 @@ function makeClient({
   }
 }
 
+/** Service-client mock — bypasses RLS. Serves the profile / org-role reads added by the
+ *  identity-resolution fix (createServiceClient), which the RLS-gated cookie client cannot. */
+function makeServiceClient({
+  profilesList,
+  orgRolesList,
+  profileSingle,
+  orgRoleSingle,
+  orgMembersData,
+}: {
+  profilesList?: Record<string, unknown>[]
+  orgRolesList?: Record<string, unknown>[]
+  profileSingle?: Record<string, unknown> | null
+  orgRoleSingle?: Record<string, unknown> | null
+  orgMembersData?: Record<string, unknown>[]
+} = {}) {
+  const profilesFrom = {
+    select: () => ({
+      // .in('id', ids) — batch read in listProjectMembers
+      in: () => Promise.resolve({ data: profilesList ?? [], error: null }),
+      // .eq('id', id).maybeSingle() — single read in add/update
+      eq: () => ({
+        maybeSingle: () => Promise.resolve({ data: profileSingle ?? null, error: null }),
+      }),
+    }),
+  }
+  const userOrgsFrom = {
+    select: () => ({
+      // .in('user_id', ids).in('organisation_id', ids) — listProjectMembers org-role map
+      in: () => ({ in: () => Promise.resolve({ data: orgRolesList ?? [], error: null }) }),
+      // .eq().eq().maybeSingle() — add/update;  .eq().eq().order() — listAvailableOrgMembers
+      eq: () => ({
+        eq: () => ({
+          maybeSingle: () => Promise.resolve({ data: orgRoleSingle ?? null, error: null }),
+          order: () => Promise.resolve({ data: orgMembersData ?? [], error: null }),
+        }),
+      }),
+    }),
+  }
+  return {
+    from: (table: string) => (table === 'profiles' ? profilesFrom : userOrgsFrom),
+  }
+}
+
 // ─── listProjectMembers ───────────────────────────────────────────────────────
 
 describe('listProjectMembers', () => {
   beforeEach(() => {
     vi.resetModules()
     createClientMock.mockReset()
+    createServiceClientMock.mockReset()
     requireRoleMock.mockReset()
     revalidatePathMock.mockReset()
   })
@@ -183,10 +231,17 @@ describe('listProjectMembers', () => {
         role: 'contractor',
         is_active: true,
         created_at: '2024-01-01T00:00:00Z',
-        profiles: { full_name: 'Alice Smith', email: 'alice@example.com' },
+        // No profiles embed — the fix resolves identity via the service client, not the
+        // RLS-blocked join; full_name/email come from makeServiceClient below.
       },
     ]
     createClientMock.mockResolvedValue(makeClient({ projectOrgId: 'org-1', listData }))
+    createServiceClientMock.mockReturnValue(
+      makeServiceClient({
+        profilesList: [{ id: 'u-1', full_name: 'Alice Smith', email: 'alice@example.com' }],
+        orgRolesList: [{ user_id: 'u-1', organisation_id: 'org-1', role: 'contractor' }],
+      }),
+    )
     requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
     const { listProjectMembers } = await import('./project-members.actions')
 
@@ -212,6 +267,7 @@ describe('addProjectMember', () => {
   beforeEach(() => {
     vi.resetModules()
     createClientMock.mockReset()
+    createServiceClientMock.mockReset()
     requireRoleMock.mockReset()
     revalidatePathMock.mockReset()
   })
@@ -247,9 +303,15 @@ describe('addProjectMember', () => {
       role: 'contractor',
       is_active: true,
       created_at: '2024-01-01T00:00:00Z',
-      profiles: { full_name: 'Bob', email: 'bob@example.com' },
+      // No profiles embed — identity comes from the service client (mock below).
     }
     createClientMock.mockResolvedValue(makeClient({ projectOrgId: 'org-1', insertData: inserted }))
+    createServiceClientMock.mockReturnValue(
+      makeServiceClient({
+        profileSingle: { full_name: 'Bob', email: 'bob@example.com' },
+        orgRoleSingle: { role: 'contractor' },
+      }),
+    )
     requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
     const { addProjectMember } = await import('./project-members.actions')
 
@@ -284,6 +346,7 @@ describe('removeProjectMember', () => {
   beforeEach(() => {
     vi.resetModules()
     createClientMock.mockReset()
+    createServiceClientMock.mockReset()
     requireRoleMock.mockReset()
     revalidatePathMock.mockReset()
   })
