@@ -21,6 +21,7 @@ import {
   updateRunCableFieldsAction,
   normaliseRunPropertiesAction,
   deleteCableAction,
+  deleteSupplyAction,
   repointSupplyAction,
 } from '@/actions/cable-entities.actions'
 import { bulkUpdateCableLengthStatusAction } from '@/actions/cable-length.actions'
@@ -203,6 +204,7 @@ export function CableScheduleGrid({
   const [query, setQuery] = useState('')
   const [editConfirmed, setEditConfirmed] = useState<EnrichedCable | null>(null)
   const [pendingDelete, setPendingDelete] = useState<EnrichedCable | null>(null)
+  const [pendingDeleteRun, setPendingDeleteRun] = useState<EnrichedRun | null>(null)
   const [repointing, setRepointing] = useState<{ supplyId: string; from: string; to: string; end: 'from' | 'to'; current: string } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
@@ -492,6 +494,23 @@ export function CableScheduleGrid({
     }
   }
 
+  async function confirmDeleteRun(): Promise<void> {
+    if (!pendingDeleteRun) return
+    const target = pendingDeleteRun
+    setPendingDeleteRun(null)
+    const prevRuns = liveRuns
+    const prevCables = liveCables
+    const cableIds = new Set(target.cables.map((c) => c.id))
+    setLiveCables(liveCables.filter((c) => !cableIds.has(c.id)))
+    setLiveRuns(liveRuns.filter((r) => r.supply_id !== target.supply_id))
+    const res = await deleteSupplyAction(target.supply_id)
+    if (res.error) {
+      setLiveRuns(prevRuns)
+      setLiveCables(prevCables)
+      alert(`Could not delete: ${res.error}`)
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return liveRuns
@@ -614,7 +633,7 @@ export function CableScheduleGrid({
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
               <Th w={24} align="center" />{/* expand chevron */}
-              <Th w={88} align="center">Run</Th>
+              <Th w={110} align="center">Run</Th>
               <Th w={32} align="center">Δ</Th>
               <Th w={120}>From</Th>
               <Th w={120}>To</Th>
@@ -774,6 +793,17 @@ export function CableScheduleGrid({
                           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12, padding: '0 2px' }}
                         >
                           📋
+                        </button>
+                      )}
+                      {canEdit && !locked && (
+                        <button
+                          type="button"
+                          onClick={() => setPendingDeleteRun(run)}
+                          aria-label={`Delete run ${run.from_label} to ${run.to_label}`}
+                          title="Delete this run and all its strands"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 12, padding: '0 2px' }}
+                        >
+                          ✕
                         </button>
                       )}
                     </span>
@@ -1137,6 +1167,15 @@ export function CableScheduleGrid({
           confirmLabel="Delete"
           onConfirm={confirmDeleteCable}
           onCancel={() => setPendingDelete(null)}
+        />
+      )}
+      {pendingDeleteRun && (
+        <ConfirmDialog
+          title="Delete run"
+          body={`Delete run ${pendingDeleteRun.from_label} → ${pendingDeleteRun.to_label}${pendingDeleteRun.parallel_count > 1 ? ` and all ${pendingDeleteRun.parallel_count} parallel strands` : ''}? This removes the supply and its cables, terminations and tags. This cannot be undone.`}
+          confirmLabel="Delete run"
+          onConfirm={confirmDeleteRun}
+          onCancel={() => setPendingDeleteRun(null)}
         />
       )}
       {repointing && (
