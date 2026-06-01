@@ -90,7 +90,7 @@ export default function InviteJoinScreen() {
                 role: inviteData.role,
                 is_active: true,
               }, { onConflict: 'user_id,organisation_id' } as any)
-          } catch {}
+          } catch { /* ignore */ }
         }
       }
 

@@ -28,7 +28,7 @@ export default function NewVersionForm({
       try {
         parsed = JSON.parse(json)
       } catch (e) {
-        throw new Error(`Invalid JSON: ${(e as Error).message}`)
+        throw new Error(`Invalid JSON: ${(e as Error).message}`, { cause: e })
       }
       if (!parsed.version) throw new Error('JSON must include a "version" field')
 

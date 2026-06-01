@@ -28,9 +28,9 @@ describe('Site Diary', () => {
     await waitFor(element(by.id('diary-screen'))).toBeVisible().withTimeout(8_000)
     // Either diary-entry-card or empty-state should be visible
     let hasEntries = false
-    try { await waitFor(element(by.id('diary-entry-card'))).toBeVisible().withTimeout(1000); hasEntries = true } catch {}
+    try { await waitFor(element(by.id('diary-entry-card'))).toBeVisible().withTimeout(1000); hasEntries = true } catch { /* ignore */ }
     let isEmpty = false
-    try { await waitFor(element(by.id('diary-empty-state'))).toBeVisible().withTimeout(1000); isEmpty = true } catch {}
+    try { await waitFor(element(by.id('diary-empty-state'))).toBeVisible().withTimeout(1000); isEmpty = true } catch { /* ignore */ }
     expect(hasEntries || isEmpty).toBe(true)
   })
 

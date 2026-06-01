@@ -56,6 +56,7 @@ export async function connectCloudProvider(
       // into an error redirect query param.
       throw new Error(
         `Failed to connect ${args.provider}: ${e.providerErrorCode ?? e.message}`,
+        { cause: e },
       )
     }
     throw e

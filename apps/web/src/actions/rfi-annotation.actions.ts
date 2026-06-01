@@ -77,7 +77,7 @@ export async function createRfiAnnotationAction(
     .select('id')
     .single()
   if (attErr || !att) {
-    try { await supabase.storage.from('rfi-attachments').remove([filePath]) } catch {}
+    try { await supabase.storage.from('rfi-attachments').remove([filePath]) } catch { /* ignore */ }
     return { error: `Attachment insert failed: ${attErr?.message ?? '?'}` }
   }
 
@@ -94,8 +94,8 @@ export async function createRfiAnnotationAction(
     .select('id')
     .single()
   if (annErr || !ann) {
-    try { await supabase.from('attachments').delete().eq('id', att.id) } catch {}
-    try { await supabase.storage.from('rfi-attachments').remove([filePath]) } catch {}
+    try { await supabase.from('attachments').delete().eq('id', att.id) } catch { /* ignore */ }
+    try { await supabase.storage.from('rfi-attachments').remove([filePath]) } catch { /* ignore */ }
     return { error: `Annotation insert failed: ${annErr?.message ?? '?'}` }
   }
 

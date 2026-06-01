@@ -18,7 +18,7 @@ describe('SettingsTabs', () => {
       'Danger', 'History',
     ]
     const links = screen.getAllByRole('link')
-    expect(links.map(a => a.textContent?.replace(/[●🔒⚠]/g, '').trim())).toEqual(expected)
+    expect(links.map(a => a.textContent?.replace(/[●🔒⚠]/gu, '').trim())).toEqual(expected)
   })
 
   it('marks the active tab from pathname', async () => {

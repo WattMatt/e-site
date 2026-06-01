@@ -54,6 +54,7 @@ export async function commitStagedAttachments({
         .from('rfi_annotations')
         .insert({
           organisation_id: orgId,
+          rfi_id: rfiId,
           attachment_id: attachment.id,
           source_floor_plan_id: item.sourceFloorPlanId,
           annotation_data: item.annotationData as unknown as import('@esite/db').Json,

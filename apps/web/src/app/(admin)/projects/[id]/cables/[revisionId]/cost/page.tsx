@@ -79,7 +79,7 @@ export default async function CostSummaryPage({ params, searchParams }: Props) {
   // if the column isn't applied yet, PostgREST 400s and we fall back to
   // the legacy cost_lines sentinel read (which currently null-defaults
   // to 15 in the calc below).
-  let revisionRow: { id: string; code: string; status: string; project_id: string; vat_pct: number | null } | null = null
+  let revisionRow: { id: string; code: string; status: string; project_id: string; vat_pct: number | null } | null
   const revQuery = await (supabase as any)
     .schema('cable_schedule')
     .from('revisions')

@@ -225,7 +225,6 @@ function drawCoverPage(
       })
       lineY -= 14
     }
-    y -= panelH + 20
   }
 
   // Footer
