@@ -42,6 +42,7 @@ export function StructurePanel({ projectId, revisionId, roots, unfed, canEdit, o
   const [confirmDelete, setConfirmDelete] = useState<StructureTreeNode | null>(null)
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [collapsed, setCollapsed] = useState(true)
 
   function run(fn: () => Promise<{ error?: string }>) {
     setError(null)
@@ -63,12 +64,27 @@ export function StructurePanel({ projectId, revisionId, roots, unfed, canEdit, o
 
   return (
     <div className="data-panel" style={{ padding: 16, marginBottom: 14 }}>
-      <div style={{ marginBottom: 12 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Structure</h3>
-        <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: '2px 0 0' }}>
-          Where power comes from, and the boards it feeds. Each branch is a cable — use "+ feed a board" to extend it.
-        </p>
-      </div>
+      <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
+        <button
+          type="button"
+          onClick={() => setCollapsed((c) => !c)}
+          aria-expanded={!collapsed}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            font: 'inherit', color: 'inherit', textAlign: 'left' }}
+        >
+          <span aria-hidden="true" style={{ fontFamily: 'var(--font-mono)', fontSize: 12,
+            color: 'var(--c-text-mid)', width: 14, display: 'inline-block', textAlign: 'center' }}>
+            {collapsed ? '▸' : '▾'}
+          </span>
+          Structure
+        </button>
+      </h3>
+
+      {!collapsed && (<>
+      <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: '12px 0' }}>
+        Where power comes from, and the boards it feeds. Each branch is a cable — use "+ feed a board" to extend it.
+      </p>
 
       {error && (
         <div role="alert" style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6,
@@ -117,6 +133,7 @@ export function StructurePanel({ projectId, revisionId, roots, unfed, canEdit, o
           onSubmit={(payload) => run(() => adding === 'source'
             ? addSourceAction(payload as never) : addBoardAction(payload as never))} />
       )}
+      </>)}
 
       {confirmDelete && (
         <div role="dialog" aria-modal="true" aria-labelledby="structure-del-title"
