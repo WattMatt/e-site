@@ -25,6 +25,7 @@ import {
   resolveHandoverCategory,
   buildHandoverDrawingName,
   ALL_CATEGORIES,
+  CATEGORY_LABELS,
   type HandoverCategory,
 } from '@esite/shared'
 
@@ -83,6 +84,25 @@ async function structurePatch(
     return { ok: false, error: `PATCH structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 300)}` }
   }
   return { ok: true }
+}
+
+async function structurePatchReturning(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  filterQuery: string,
+  patch: Record<string, unknown>,
+): Promise<{ ok: boolean; rows?: unknown[]; error?: string }> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterQuery}`, {
+    method: 'PATCH',
+    headers: structureHeaders(serviceKey, 'return=representation'),
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `PATCH structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 300)}` }
+  }
+  return { ok: true, rows: (await res.json()) as unknown[] }
 }
 
 async function structureDelete(
@@ -216,7 +236,7 @@ async function ensureHandoverCategoryRoot(
       organisation_id: orgId,
       project_id: projectId,
       parent_folder_id: null,
-      name: category,
+      name: CATEGORY_LABELS[category],
       category,
       cloud_provider: null,
       cloud_folder_id: null,
@@ -362,11 +382,11 @@ export async function approveShopDrawingAction(
   if ('error' in env) return env
 
   if (parsed.data.categoryOverride) {
-    if (ctx.scopeKey && ctx.order.scope_item_type_id) {
-      await structurePatch(env.url, env.key, 'scope_item_types', `id=eq.${ctx.order.scope_item_type_id}`, { handover_category: category })
-    } else {
-      await structurePatch(env.url, env.key, 'nodes', `id=eq.${ctx.order.node_id}`, { handover_category: category })
-    }
+    const ov =
+      ctx.scopeKey && ctx.order.scope_item_type_id
+        ? await structurePatch(env.url, env.key, 'scope_item_types', `id=eq.${ctx.order.scope_item_type_id}`, { handover_category: category })
+        : await structurePatch(env.url, env.key, 'nodes', `id=eq.${ctx.order.node_id}`, { handover_category: category })
+    if (!ov.ok) return { error: ov.error ?? 'Failed to save the category choice' }
   }
 
   const folder = await ensureHandoverCategoryRoot(guard.supabase, guard.orgId, projectId, category, guard.user.id)
@@ -407,17 +427,28 @@ export async function approveShopDrawingAction(
     return { error: `Handover document insert failed: ${(insErr as { message?: string } | null)?.message ?? 'unknown'}` }
   }
 
-  const patch = await structurePatch(env.url, env.key, 'node_order_shop_drawings', `id=eq.${drawingId}`, {
-    status: 'approved',
-    approved_at: new Date().toISOString(),
-    approved_by: guard.user.id,
-    handover_document_id: (docRow as { id: string }).id,
-    handover_category: category,
-  })
-  if (!patch.ok) {
+  // Conditional on status='received' so a concurrent approve can't double-file.
+  const patch = await structurePatchReturning(
+    env.url,
+    env.key,
+    'node_order_shop_drawings',
+    `id=eq.${drawingId}&status=eq.received`,
+    {
+      status: 'approved',
+      approved_at: new Date().toISOString(),
+      approved_by: guard.user.id,
+      handover_document_id: (docRow as { id: string }).id,
+      handover_category: category,
+    },
+  )
+  if (!patch.ok || !patch.rows || patch.rows.length === 0) {
+    // Hard failure OR we lost an approve race (another request already moved
+    // this drawing past 'received'). Either way, undo the duplicate handover
+    // artefacts this attempt created.
     await (guard.supabase as any).schema('tenants').from('documents').delete().eq('id', (docRow as { id: string }).id)
     await guard.supabase.storage.from(HANDOVER_BUCKET).remove([handoverPath]).catch(() => undefined)
-    return { error: patch.error ?? 'Failed to commit approval' }
+    // A lost race is not an error — the drawing is approved and filed already.
+    return patch.ok ? { ok: true } : { error: patch.error ?? 'Failed to commit approval' }
   }
 
   revalidate(projectId)
