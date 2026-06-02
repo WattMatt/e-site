@@ -101,6 +101,7 @@ describe('resolveOwningLease', () => {
     const b = mkNode('b', 'sub_board', { parent_node_id: 'a' });
     const byId = new Map([[a.id, a], [b.id, b]] as const);
     expect(resolveOwningLease(a, byId)).toBeNull();
+    expect(resolveOwningLease(b, byId)).toBeNull();
   });
 });
 
@@ -176,5 +177,15 @@ describe('computeNodeOrderRequiredBy', () => {
     // node is the anchor itself; its lease is itself, but no BO inputs are known.
     const got = computeNodeOrderRequiredBy(s.anchor, s.byId, '2026-12-01', lookup({}));
     expect(got).toBe('2026-12-01');
+  });
+
+  it('returns null when a no-lease node has no opening date', () => {
+    const s = scenario();
+    expect(computeNodeOrderRequiredBy(s.gen, s.byId, null, lookup({}))).toBeNull();
+  });
+
+  it('returns null when a lease node has neither BO inputs nor an opening date', () => {
+    const s = scenario();
+    expect(computeNodeOrderRequiredBy(s.anchor, s.byId, null, lookup({}))).toBeNull();
   });
 });
