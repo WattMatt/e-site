@@ -89,7 +89,6 @@ const STATUS_ORDER: NodeOrderStatus[] = ['required', 'ordered', 'received']
 const EMPTY_DOCS = (): OrderRowData['documents'] => ({
   quote: null,
   order_instruction: null,
-  shop_drawing: null,
 })
 
 // ---------------------------------------------------------------------------
@@ -213,10 +212,44 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
         const ref: OrderDoc = { storage_path: d.storage_path, file_name: d.file_name }
         if (d.doc_type === 'quote') entry.quote = ref
         else if (d.doc_type === 'order_instruction') entry.order_instruction = ref
-        else if (d.doc_type === 'shop_drawing') entry.shop_drawing = ref
       }
     } catch {
       // Non-fatal — orders still render, with empty doc slots.
+    }
+  }
+
+  // ── node_order_shop_drawings — the multi-drawing list per order ──────────
+  const drawingsByOrder = new Map<string, OrderRowData['shopDrawings']>()
+  if (orderIds.length > 0) {
+    try {
+      const { data: rows } = await (supabase as never as {
+        schema: (s: string) => { from: (t: string) => any }
+      })
+        .schema('structure')
+        .from('node_order_shop_drawings')
+        .select('id, node_order_id, file_name, storage_path, status, handover_category')
+        .in('node_order_id', orderIds)
+        .order('created_at', { ascending: true })
+      for (const r of (rows ?? []) as Array<{
+        id: string
+        node_order_id: string
+        file_name: string
+        storage_path: string
+        status: 'awaiting' | 'received' | 'approved'
+        handover_category: string | null
+      }>) {
+        const list = drawingsByOrder.get(r.node_order_id) ?? []
+        list.push({
+          id: r.id,
+          file_name: r.file_name,
+          storage_path: r.storage_path,
+          status: r.status,
+          handover_category: (r.handover_category ?? null) as OrderRowData['shopDrawings'][number]['handover_category'],
+        })
+        drawingsByOrder.set(r.node_order_id, list)
+      }
+    } catch {
+      // Non-fatal — orders still render with no drawings.
     }
   }
 
@@ -262,6 +295,7 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
       rag: computeRagStatus(requiredBy, o.status, today),
       notes: o.notes ?? '',
       documents: docsByOrder.get(o.id) ?? EMPTY_DOCS(),
+      shopDrawings: drawingsByOrder.get(o.id) ?? [],
     }
 
     if (o.scope_item_type_id !== null) {
