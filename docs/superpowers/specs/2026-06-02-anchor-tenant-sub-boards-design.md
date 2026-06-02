@@ -68,7 +68,7 @@ ALTER TABLE structure.nodes ADD CONSTRAINT nodes_project_id_key UNIQUE (project_
 ALTER TABLE structure.nodes ADD CONSTRAINT nodes_parent_fk
   FOREIGN KEY (project_id, parent_node_id)
   REFERENCES structure.nodes (project_id, id)
-  ON DELETE RESTRICT;
+  ON DELETE NO ACTION;
 
 CREATE INDEX idx_nodes_parent ON structure.nodes (parent_node_id)
   WHERE parent_node_id IS NOT NULL;
@@ -124,7 +124,7 @@ CREATE INDEX idx_tenant_units_node ON structure.tenant_units (node_id);
 
 ### 4.6 Edge cases / non-functional
 
-- **Integrity:** self-parent CHECK + ancestor-walk cycle trigger; same-project parent via the composite FK; `ON DELETE RESTRICT` (can't delete a board with children — re-parent/delete first); leaf deletion cascades its order (existing equipment behaviour).
+- **Integrity:** self-parent CHECK + ancestor-walk cycle trigger; same-project parent via the composite FK; `ON DELETE NO ACTION` (end-of-statement check — blocks deleting a lone board that still has children, yet still lets a project-delete cascade the whole tree) — re-parent/delete children first when removing a single board; leaf deletion cascades its order (existing equipment behaviour).
 - **RLS:** row-level on `structure.nodes` already applies; the new column inherits. `tenant_units` gets RLS mirroring nodes. Cross-org/sub-org governed by existing RBAC (`requireRolePage` / `requireEffectiveRole`).
 - **Decommission** (`status='decommissioned'`) leaves children intact; rollup may show/hide decommissioned.
 
@@ -139,7 +139,7 @@ CREATE INDEX idx_tenant_units_node ON structure.tenant_units (node_id);
 
 ## 6. Testing
 
-- **Schema smoke** (transactional, rollback): cross-project parent rejected · self-parent rejected · deep cycle rejected · `ON DELETE RESTRICT` blocks parent-with-children · `tenant_units` RLS.
+- **Schema smoke** (transactional, rollback): cross-project parent rejected · self-parent rejected · deep cycle rejected · `ON DELETE NO ACTION` blocks parent-with-children · `tenant_units` RLS.
 - **Unit (shared):** `sub_board` derivation creates an order · `resolveOwningLease` (dept→anchor; concession board→concession *not* anchor; common-area→null) · required-by inheritance (sub-board inherits anchor BO; concession uses own BO).
 - **Component (web):** Materials nested rollup + lease-boundary divider · tenant-schedule add-sub-board / add-concession / units affordances.
 - **Cable:** supply anchor DB → sub_board cables; tree nests; ring/multi-fed detection intact.
