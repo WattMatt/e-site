@@ -2,7 +2,7 @@
 
 /**
  * node-order-document.actions.ts — server actions for node-order documents
- * (quote / order instruction / shop drawing) in the Material Order Tracker.
+ * (quote / order instruction) in the Material Order Tracker.
  *
  *   - attachNodeOrderDocumentAction       — record an uploaded doc in a slot
  *   - clearNodeOrderDocumentAction        — remove a doc from a slot
@@ -20,7 +20,7 @@ import { projectService } from '@esite/shared'
 
 const BUCKET = 'node-order-documents'
 const uuidSchema = z.string().uuid()
-const docTypeSchema = z.enum(['quote', 'order_instruction', 'shop_drawing'])
+const docTypeSchema = z.enum(['quote', 'order_instruction'])
 
 // ---------------------------------------------------------------------------
 // structure.* raw-fetch helpers

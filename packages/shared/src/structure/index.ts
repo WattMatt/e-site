@@ -40,3 +40,5 @@ export {
   AMBER_WINDOW_DAYS,
 } from './bo.service';
 export type { RagStatus, OrderRequiredByArgs } from './bo.service';
+export { nextStatus, prevStatus, canAdvanceTo } from './shop-drawing-status';
+export type { ShopDrawingStatus } from './shop-drawing-status';

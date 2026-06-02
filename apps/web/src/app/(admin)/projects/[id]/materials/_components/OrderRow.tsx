@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { markOrderedAction, markReceivedAction } from '@/actions/node-order.actions'
 import { OrderDocSlot, type OrderDoc } from './OrderDocSlot'
+import { ShopDrawingList, type ShopDrawing } from './ShopDrawingList'
 
 export interface OrderRowData {
   id: string
@@ -29,8 +30,8 @@ export interface OrderRowData {
   documents: {
     quote: OrderDoc | null
     order_instruction: OrderDoc | null
-    shop_drawing: OrderDoc | null
   }
+  shopDrawings: ShopDrawing[]
 }
 
 const RAG_COLOR: Record<OrderRowData['rag'], string> = {
@@ -129,7 +130,7 @@ export function OrderRow({ order, projectId }: { order: OrderRowData; projectId:
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             <OrderDocSlot projectId={projectId} nodeOrderId={order.id} docType="quote" label="Quote" doc={order.documents.quote} />
             <OrderDocSlot projectId={projectId} nodeOrderId={order.id} docType="order_instruction" label="Order instr." doc={order.documents.order_instruction} />
-            <OrderDocSlot projectId={projectId} nodeOrderId={order.id} docType="shop_drawing" label="Shop drawing" doc={order.documents.shop_drawing} />
+            <ShopDrawingList projectId={projectId} nodeOrderId={order.id} drawings={order.shopDrawings} />
           </div>
         </td>
         {/* Notes */}

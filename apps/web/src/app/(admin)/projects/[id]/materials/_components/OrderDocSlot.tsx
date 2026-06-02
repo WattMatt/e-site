@@ -3,7 +3,7 @@
 /**
  * OrderDocSlot — a single document slot on a material-order row.
  *
- * One of three slots per order: Quote, Order Instruction, Shop Drawing.
+ * One of two slots per order: Quote, Order Instruction.
  * Empty → an upload button. Filled → the file name + view + remove.
  * Upload goes through /api/node-order-documents then attachNodeOrderDocumentAction.
  */
@@ -16,7 +16,7 @@ import {
   getNodeOrderDocumentSignedUrlAction,
 } from '@/actions/node-order-document.actions'
 
-export type OrderDocType = 'quote' | 'order_instruction' | 'shop_drawing'
+export type OrderDocType = 'quote' | 'order_instruction'
 
 export interface OrderDoc {
   storage_path: string
