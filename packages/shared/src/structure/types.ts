@@ -6,7 +6,8 @@ export type NodeKind =
   | 'rmu'
   | 'mini_sub'
   | 'generator'
-  | 'custom';
+  | 'custom'
+  | 'sub_board';
 
 export type NodeStatus = 'active' | 'decommissioned';
 
@@ -25,6 +26,8 @@ export interface Node {
   name: string | null;
   coc_required: boolean;
   status: NodeStatus;
+  /** Containment parent — the board this node sits under; null for a root/lease (migration 00116). */
+  parent_node_id: string | null;
   // Tenant facet
   shop_number: string | null;
   shop_name: string | null;
