@@ -128,7 +128,10 @@ async function structureDelete(
 
 type StructureSchemaClient = { schema: (s: string) => { from: (t: string) => any } }
 
-async function guardProjectAccess(projectId: string): Promise<
+async function guardProjectAccess(
+  projectId: string,
+  opts: { requireManage?: boolean } = {},
+): Promise<
   | { error: string; user?: undefined; orgId?: undefined; supabase?: undefined }
   | { error?: undefined; user: { id: string }; orgId: string; supabase: Awaited<ReturnType<typeof createClient>> }
 > {
@@ -139,6 +142,11 @@ async function guardProjectAccess(projectId: string): Promise<
   if (!user) return { error: 'Not authenticated' }
   const project = await projectService.getById(supabase as never, projectId)
   if (!project) return { error: 'Project not found' }
+  if (opts.requireManage) {
+    const { data: canManage, error } = await (supabase as any).rpc('user_can_manage_project', { p_project_id: projectId })
+    if (error) return { error: `Authorization check failed: ${error.message}` }
+    if (!canManage) return { error: 'You do not have permission to manage this project' }
+  }
   return { user: { id: user.id }, orgId: (project as { organisation_id: string }).organisation_id, supabase }
 }
 
@@ -273,7 +281,7 @@ export async function addShopDrawingAction(
     .safeParse({ projectId, nodeOrderId, storagePath, fileName })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
-  const guard = await guardProjectAccess(projectId)
+  const guard = await guardProjectAccess(projectId, { requireManage: true })
   if (guard.error !== undefined) return { error: guard.error }
 
   const { data: order } = await (guard.supabase as never as StructureSchemaClient)
@@ -314,7 +322,7 @@ export async function markShopDrawingReceivedAction(
   const parsed = z.object({ projectId: uuidSchema, drawingId: uuidSchema }).safeParse({ projectId, drawingId })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
-  const guard = await guardProjectAccess(projectId)
+  const guard = await guardProjectAccess(projectId, { requireManage: true })
   if (guard.error !== undefined) return { error: guard.error }
 
   const loaded = await loadDrawingContext(guard.supabase, drawingId, projectId)
@@ -356,7 +364,7 @@ export async function approveShopDrawingAction(
     .safeParse({ projectId, drawingId, categoryOverride })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
-  const guard = await guardProjectAccess(projectId)
+  const guard = await guardProjectAccess(projectId, { requireManage: true })
   if (guard.error !== undefined) return { error: guard.error }
 
   const loaded = await loadDrawingContext(guard.supabase, drawingId, projectId)
@@ -466,7 +474,7 @@ export async function revertShopDrawingAction(
   const parsed = z.object({ projectId: uuidSchema, drawingId: uuidSchema }).safeParse({ projectId, drawingId })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
-  const guard = await guardProjectAccess(projectId)
+  const guard = await guardProjectAccess(projectId, { requireManage: true })
   if (guard.error !== undefined) return { error: guard.error }
 
   const loaded = await loadDrawingContext(guard.supabase, drawingId, projectId)
@@ -513,7 +521,7 @@ export async function removeShopDrawingAction(
   const parsed = z.object({ projectId: uuidSchema, drawingId: uuidSchema }).safeParse({ projectId, drawingId })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
-  const guard = await guardProjectAccess(projectId)
+  const guard = await guardProjectAccess(projectId, { requireManage: true })
   if (guard.error !== undefined) return { error: guard.error }
 
   const loaded = await loadDrawingContext(guard.supabase, drawingId, projectId)

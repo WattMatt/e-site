@@ -91,9 +91,21 @@ WHERE d.doc_type = 'shop_drawing';
 DELETE FROM structure.node_order_documents WHERE doc_type = 'shop_drawing';
 
 -- ── 5. Tighten node_order_documents to the two remaining single slots ─────────
--- Inline CHECK constraints are auto-named <table>_<col>_check. Drop + re-add.
-ALTER TABLE structure.node_order_documents
-    DROP CONSTRAINT IF EXISTS node_order_documents_doc_type_check;
+-- Drop whatever the doc_type CHECK is currently named (robust to the auto-
+-- generated constraint name), then re-add it without 'shop_drawing'.
+DO $$
+DECLARE c_name text;
+BEGIN
+    SELECT conname INTO c_name
+    FROM pg_constraint
+    WHERE conrelid = 'structure.node_order_documents'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%doc_type%';
+    IF c_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE structure.node_order_documents DROP CONSTRAINT %I', c_name);
+    END IF;
+END $$;
+
 ALTER TABLE structure.node_order_documents
     ADD CONSTRAINT node_order_documents_doc_type_check
     CHECK (doc_type IN ('quote', 'order_instruction'));
