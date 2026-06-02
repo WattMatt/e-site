@@ -1,0 +1,531 @@
+'use server'
+
+/**
+ * node-order-shop-drawing.actions.ts — server actions for the multi shop-drawing
+ * workflow on a material order.
+ *
+ *   - addShopDrawingAction          — record an uploaded drawing (status 'awaiting')
+ *   - markShopDrawingReceivedAction — awaiting → received
+ *   - approveShopDrawingAction      — received → approved + auto-file into handover
+ *   - revertShopDrawingAction       — step status back one stage (un-files if leaving 'approved')
+ *   - removeShopDrawingAction       — delete drawing (+ linked handover doc if approved)
+ *   - getShopDrawingSignedUrlAction — short-lived signed URL for view/download
+ *
+ * structure.* writes use raw PostgREST + service-role (schema not PostgREST-
+ * exposed). The handover document (tenants.documents) is written with the
+ * cookie client. Approval copies the file from the node-order-documents bucket
+ * to the project-documents bucket at the handover path.
+ */
+
+import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
+import { createClient } from '@/lib/supabase/server'
+import {
+  projectService,
+  resolveHandoverCategory,
+  buildHandoverDrawingName,
+  ALL_CATEGORIES,
+  type HandoverCategory,
+} from '@esite/shared'
+
+const DRAWINGS_BUCKET = 'node-order-documents'
+const HANDOVER_BUCKET = 'project-documents'
+const uuidSchema = z.string().uuid()
+const categorySchema = z.enum(ALL_CATEGORIES as [HandoverCategory, ...HandoverCategory[]])
+
+// ---------------------------------------------------------------------------
+// structure.* raw-fetch helpers (local copy — no shared module exists)
+// ---------------------------------------------------------------------------
+
+function structureHeaders(serviceKey: string, prefer = 'return=minimal'): HeadersInit {
+  return {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+    'Content-Profile': 'structure',
+    Prefer: prefer,
+  }
+}
+
+async function structureInsertReturningId(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: structureHeaders(serviceKey, 'return=representation'),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `INSERT structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 300)}` }
+  }
+  const rows = (await res.json()) as Array<{ id: string }>
+  return { ok: true, id: rows[0]?.id }
+}
+
+async function structurePatch(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  filterQuery: string,
+  patch: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterQuery}`, {
+    method: 'PATCH',
+    headers: structureHeaders(serviceKey),
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `PATCH structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 300)}` }
+  }
+  return { ok: true }
+}
+
+async function structureDelete(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  filterQuery: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterQuery}`, {
+    method: 'DELETE',
+    headers: structureHeaders(serviceKey),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `DELETE structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 300)}` }
+  }
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// Guards + env
+// ---------------------------------------------------------------------------
+
+type StructureSchemaClient = { schema: (s: string) => { from: (t: string) => any } }
+
+async function guardProjectAccess(projectId: string): Promise<
+  | { error: string; user?: undefined; orgId?: undefined; supabase?: undefined }
+  | { error?: undefined; user: { id: string }; orgId: string; supabase: Awaited<ReturnType<typeof createClient>> }
+> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+  const project = await projectService.getById(supabase as never, projectId)
+  if (!project) return { error: 'Project not found' }
+  return { user: { id: user.id }, orgId: (project as { organisation_id: string }).organisation_id, supabase }
+}
+
+function serviceEnv(): { url: string; key: string } | { error: string } {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!key || !url) return { error: 'Server misconfigured' }
+  return { url, key }
+}
+
+interface DrawingContext {
+  drawing: { id: string; node_order_id: string; status: string; storage_path: string; file_name: string; handover_document_id: string | null }
+  order: { id: string; node_id: string; scope_item_type_id: string | null; label: string }
+  node: { kind: string | null; handover_category: string | null } | null
+  scopeKey: string | null
+  scopeTypeOverride: string | null
+}
+
+/** Load a drawing + its order/node/scope context, asserting project ownership. */
+async function loadDrawingContext(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  drawingId: string,
+  projectId: string,
+): Promise<{ ctx: DrawingContext } | { error: string }> {
+  const sc = supabase as never as StructureSchemaClient
+  const { data: drawing } = await sc
+    .schema('structure')
+    .from('node_order_shop_drawings')
+    .select('id, node_order_id, status, storage_path, file_name, handover_document_id')
+    .eq('id', drawingId)
+    .maybeSingle()
+  if (!drawing) return { error: 'Drawing not found' }
+
+  const { data: order } = await sc
+    .schema('structure')
+    .from('node_orders')
+    .select('id, node_id, scope_item_type_id, label, project_id')
+    .eq('id', drawing.node_order_id)
+    .maybeSingle()
+  if (!order || order.project_id !== projectId) return { error: 'Drawing does not belong to this project' }
+
+  const { data: node } = await sc
+    .schema('structure')
+    .from('nodes')
+    .select('kind, handover_category')
+    .eq('id', order.node_id)
+    .maybeSingle()
+
+  let scopeKey: string | null = null
+  let scopeTypeOverride: string | null = null
+  if (order.scope_item_type_id) {
+    const { data: st } = await sc
+      .schema('structure')
+      .from('scope_item_types')
+      .select('key, handover_category')
+      .eq('id', order.scope_item_type_id)
+      .maybeSingle()
+    scopeKey = (st as { key: string | null } | null)?.key ?? null
+    scopeTypeOverride = (st as { handover_category: string | null } | null)?.handover_category ?? null
+  }
+
+  return {
+    ctx: {
+      drawing: drawing as DrawingContext['drawing'],
+      order: order as DrawingContext['order'],
+      node: (node as DrawingContext['node']) ?? null,
+      scopeKey,
+      scopeTypeOverride,
+    },
+  }
+}
+
+/** Find or create the category root handover folder; returns its id + path + org. */
+async function ensureHandoverCategoryRoot(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  projectId: string,
+  category: HandoverCategory,
+  userId: string,
+): Promise<{ id: string; folder_path: string; organisation_id: string } | { error: string }> {
+  const { data: existing } = await (supabase as any)
+    .schema('tenants')
+    .from('handover_folders')
+    .select('id, folder_path, organisation_id')
+    .eq('project_id', projectId)
+    .eq('category', category)
+    .is('parent_folder_id', null)
+    .maybeSingle()
+  if (existing) return existing as { id: string; folder_path: string; organisation_id: string }
+
+  const { data: inserted, error } = await (supabase as any)
+    .schema('tenants')
+    .from('handover_folders')
+    .insert({
+      organisation_id: orgId,
+      project_id: projectId,
+      parent_folder_id: null,
+      name: category,
+      category,
+      cloud_provider: null,
+      cloud_folder_id: null,
+      cloud_folder_path: null,
+      cloud_synced_at: null,
+      created_by: userId,
+    })
+    .select('id, folder_path, organisation_id')
+    .single()
+  if (error || !inserted) return { error: `Failed to create handover folder: ${(error as { message?: string } | null)?.message ?? 'unknown'}` }
+  return inserted as { id: string; folder_path: string; organisation_id: string }
+}
+
+function revalidate(projectId: string): void {
+  revalidatePath(`/projects/${projectId}/materials`)
+  revalidatePath(`/projects/${projectId}/handover`)
+  revalidatePath(`/projects/${projectId}/handover/documents`)
+}
+
+// ---------------------------------------------------------------------------
+// addShopDrawingAction
+// ---------------------------------------------------------------------------
+
+export type AddShopDrawingResult = { ok: true } | { error: string }
+
+export async function addShopDrawingAction(
+  projectId: string,
+  nodeOrderId: string,
+  storagePath: string,
+  fileName: string,
+): Promise<AddShopDrawingResult> {
+  const parsed = z
+    .object({ projectId: uuidSchema, nodeOrderId: uuidSchema, storagePath: z.string().min(1), fileName: z.string().min(1).max(255) })
+    .safeParse({ projectId, nodeOrderId, storagePath, fileName })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const { data: order } = await (guard.supabase as never as StructureSchemaClient)
+    .schema('structure')
+    .from('node_orders')
+    .select('id')
+    .eq('id', nodeOrderId)
+    .eq('project_id', projectId)
+    .maybeSingle()
+  if (!order) return { error: 'Node order not found' }
+
+  const env = serviceEnv()
+  if ('error' in env) return env
+
+  const ins = await structureInsertReturningId(env.url, env.key, 'node_order_shop_drawings', {
+    node_order_id: nodeOrderId,
+    storage_path: parsed.data.storagePath,
+    file_name: parsed.data.fileName,
+    status: 'awaiting',
+    uploaded_by: guard.user.id,
+  })
+  if (!ins.ok) return { error: ins.error ?? 'Failed to record drawing' }
+
+  revalidate(projectId)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// markShopDrawingReceivedAction
+// ---------------------------------------------------------------------------
+
+export type ShopDrawingStatusResult = { ok: true } | { error: string }
+
+export async function markShopDrawingReceivedAction(
+  projectId: string,
+  drawingId: string,
+): Promise<ShopDrawingStatusResult> {
+  const parsed = z.object({ projectId: uuidSchema, drawingId: uuidSchema }).safeParse({ projectId, drawingId })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const loaded = await loadDrawingContext(guard.supabase, drawingId, projectId)
+  if ('error' in loaded) return loaded
+  if (loaded.ctx.drawing.status !== 'awaiting') {
+    return { error: `Can only mark received from 'awaiting' (currently '${loaded.ctx.drawing.status}')` }
+  }
+
+  const env = serviceEnv()
+  if ('error' in env) return env
+
+  const patch = await structurePatch(env.url, env.key, 'node_order_shop_drawings', `id=eq.${drawingId}`, {
+    status: 'received',
+    received_at: new Date().toISOString(),
+  })
+  if (!patch.ok) return { error: patch.error ?? 'Failed to mark received' }
+
+  revalidate(projectId)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// approveShopDrawingAction (+ auto-file into handover)
+// ---------------------------------------------------------------------------
+
+export type ApproveShopDrawingResult = { ok: true } | { needsCategory: true } | { error: string }
+
+export async function approveShopDrawingAction(
+  projectId: string,
+  drawingId: string,
+  categoryOverride?: string,
+): Promise<ApproveShopDrawingResult> {
+  const parsed = z
+    .object({
+      projectId: uuidSchema,
+      drawingId: uuidSchema,
+      categoryOverride: categorySchema.optional(),
+    })
+    .safeParse({ projectId, drawingId, categoryOverride })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const loaded = await loadDrawingContext(guard.supabase, drawingId, projectId)
+  if ('error' in loaded) return loaded
+  const { ctx } = loaded
+
+  if (ctx.drawing.status === 'approved' && ctx.drawing.handover_document_id) return { ok: true }
+  if (ctx.drawing.status !== 'received') {
+    return { error: `Can only approve from 'received' (currently '${ctx.drawing.status}')` }
+  }
+
+  const category =
+    parsed.data.categoryOverride ??
+    resolveHandoverCategory({
+      scopeKey: ctx.scopeKey,
+      scopeTypeOverride: ctx.scopeTypeOverride,
+      kind: ctx.node?.kind,
+      nodeOverride: ctx.node?.handover_category,
+    })
+  if (!category) return { needsCategory: true }
+
+  const env = serviceEnv()
+  if ('error' in env) return env
+
+  if (parsed.data.categoryOverride) {
+    if (ctx.scopeKey && ctx.order.scope_item_type_id) {
+      await structurePatch(env.url, env.key, 'scope_item_types', `id=eq.${ctx.order.scope_item_type_id}`, { handover_category: category })
+    } else {
+      await structurePatch(env.url, env.key, 'nodes', `id=eq.${ctx.order.node_id}`, { handover_category: category })
+    }
+  }
+
+  const folder = await ensureHandoverCategoryRoot(guard.supabase, guard.orgId, projectId, category, guard.user.id)
+  if ('error' in folder) return folder
+
+  const cleanFolderPath = (folder.folder_path || '').replace(/^\/+/, '').replace(/\/+/g, '/')
+  const displayName = buildHandoverDrawingName(ctx.order.label, ctx.drawing.file_name)
+  const safeName = displayName.replace(/[^a-zA-Z0-9._ -]/g, '_')
+  const handoverPath = `${folder.organisation_id}/${projectId}/handover/${cleanFolderPath}/${Date.now()}-${safeName}`
+
+  const { data: blob, error: dlErr } = await guard.supabase.storage.from(DRAWINGS_BUCKET).download(ctx.drawing.storage_path)
+  if (dlErr || !blob) return { error: `Could not read the drawing file: ${dlErr?.message ?? 'missing'}` }
+
+  const { error: upErr } = await guard.supabase.storage
+    .from(HANDOVER_BUCKET)
+    .upload(handoverPath, blob, { contentType: (blob as Blob).type || 'application/octet-stream', upsert: false })
+  if (upErr) return { error: `Could not copy the drawing into handover: ${upErr.message}` }
+
+  const { data: docRow, error: insErr } = await (guard.supabase as any)
+    .schema('tenants')
+    .from('documents')
+    .insert({
+      organisation_id: folder.organisation_id,
+      project_id: projectId,
+      name: safeName,
+      category: 'handover',
+      storage_path: handoverPath,
+      mime_type: (blob as Blob).type || null,
+      size_bytes: (blob as Blob).size,
+      handover_folder_id: folder.id,
+      handover_category: category,
+      uploaded_by: guard.user.id,
+    })
+    .select('id')
+    .single()
+  if (insErr || !docRow) {
+    await guard.supabase.storage.from(HANDOVER_BUCKET).remove([handoverPath]).catch(() => undefined)
+    return { error: `Handover document insert failed: ${(insErr as { message?: string } | null)?.message ?? 'unknown'}` }
+  }
+
+  const patch = await structurePatch(env.url, env.key, 'node_order_shop_drawings', `id=eq.${drawingId}`, {
+    status: 'approved',
+    approved_at: new Date().toISOString(),
+    approved_by: guard.user.id,
+    handover_document_id: (docRow as { id: string }).id,
+    handover_category: category,
+  })
+  if (!patch.ok) {
+    await (guard.supabase as any).schema('tenants').from('documents').delete().eq('id', (docRow as { id: string }).id)
+    await guard.supabase.storage.from(HANDOVER_BUCKET).remove([handoverPath]).catch(() => undefined)
+    return { error: patch.error ?? 'Failed to commit approval' }
+  }
+
+  revalidate(projectId)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// revertShopDrawingAction — step status back one stage
+// ---------------------------------------------------------------------------
+
+export async function revertShopDrawingAction(
+  projectId: string,
+  drawingId: string,
+): Promise<ShopDrawingStatusResult> {
+  const parsed = z.object({ projectId: uuidSchema, drawingId: uuidSchema }).safeParse({ projectId, drawingId })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const loaded = await loadDrawingContext(guard.supabase, drawingId, projectId)
+  if ('error' in loaded) return loaded
+  const { ctx } = loaded
+
+  const env = serviceEnv()
+  if ('error' in env) return env
+
+  if (ctx.drawing.status === 'approved') {
+    if (ctx.drawing.handover_document_id) {
+      const { data: doc } = await (guard.supabase as any)
+        .schema('tenants').from('documents').select('storage_path').eq('id', ctx.drawing.handover_document_id).maybeSingle()
+      await (guard.supabase as any)
+        .schema('tenants').from('documents').delete().eq('id', ctx.drawing.handover_document_id)
+      const path = (doc as { storage_path: string } | null)?.storage_path
+      if (path) await guard.supabase.storage.from(HANDOVER_BUCKET).remove([path]).catch(() => undefined)
+    }
+    const patch = await structurePatch(env.url, env.key, 'node_order_shop_drawings', `id=eq.${drawingId}`, {
+      status: 'received', approved_at: null, approved_by: null, handover_document_id: null, handover_category: null,
+    })
+    if (!patch.ok) return { error: patch.error ?? 'Failed to revert approval' }
+  } else if (ctx.drawing.status === 'received') {
+    const patch = await structurePatch(env.url, env.key, 'node_order_shop_drawings', `id=eq.${drawingId}`, {
+      status: 'awaiting', received_at: null,
+    })
+    if (!patch.ok) return { error: patch.error ?? 'Failed to revert' }
+  } else {
+    return { error: "Drawing is already 'awaiting'" }
+  }
+
+  revalidate(projectId)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// removeShopDrawingAction
+// ---------------------------------------------------------------------------
+
+export async function removeShopDrawingAction(
+  projectId: string,
+  drawingId: string,
+): Promise<ShopDrawingStatusResult> {
+  const parsed = z.object({ projectId: uuidSchema, drawingId: uuidSchema }).safeParse({ projectId, drawingId })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const loaded = await loadDrawingContext(guard.supabase, drawingId, projectId)
+  if ('error' in loaded) return loaded
+  const { ctx } = loaded
+
+  const env = serviceEnv()
+  if ('error' in env) return env
+
+  if (ctx.drawing.handover_document_id) {
+    const { data: doc } = await (guard.supabase as any)
+      .schema('tenants').from('documents').select('storage_path').eq('id', ctx.drawing.handover_document_id).maybeSingle()
+    await (guard.supabase as any)
+      .schema('tenants').from('documents').delete().eq('id', ctx.drawing.handover_document_id)
+    const hPath = (doc as { storage_path: string } | null)?.storage_path
+    if (hPath) await guard.supabase.storage.from(HANDOVER_BUCKET).remove([hPath]).catch(() => undefined)
+  }
+
+  const del = await structureDelete(env.url, env.key, 'node_order_shop_drawings', `id=eq.${drawingId}`)
+  if (!del.ok) return { error: del.error ?? 'Failed to remove drawing' }
+  await guard.supabase.storage.from(DRAWINGS_BUCKET).remove([ctx.drawing.storage_path]).catch(() => undefined)
+
+  revalidate(projectId)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// getShopDrawingSignedUrlAction
+// ---------------------------------------------------------------------------
+
+export type SignedUrlResult = { url: string } | { error: string }
+
+export async function getShopDrawingSignedUrlAction(
+  projectId: string,
+  storagePath: string,
+): Promise<SignedUrlResult> {
+  const parsed = z.object({ projectId: uuidSchema, storagePath: z.string().min(1) }).safeParse({ projectId, storagePath })
+  if (!parsed.success) return { error: 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const { data, error } = await guard.supabase.storage.from(DRAWINGS_BUCKET).createSignedUrl(storagePath, 300)
+  if (error || !data?.signedUrl) return { error: error?.message ?? 'Could not generate signed URL' }
+  return { url: data.signedUrl }
+}
