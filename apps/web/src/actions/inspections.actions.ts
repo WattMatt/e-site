@@ -294,6 +294,64 @@ export async function createInspectionAction(input: CreateInspectionInput): Prom
   return inspectionId
 }
 
+// ─── updateInspectionAssignmentAction ───────────────────────────────────────
+
+export interface UpdateInspectionAssignmentInput {
+  inspectionId: string
+  projectId: string
+  organisationId: string
+  assignedToId: string | null // Inspector — optional (may be unassigned)
+  verifierId: string // Verifier — required (mirrors create)
+}
+
+/**
+ * Reassign an existing inspection's Inspector + Verifier. Allowed at ANY status
+ * (per design 2026-06-02). PM+ only — identical gate to createInspectionAction.
+ * Notifies the new Inspector only when they actually changed and aren't the actor.
+ */
+export async function updateInspectionAssignmentAction(
+  input: UpdateInspectionAssignmentInput,
+): Promise<void> {
+  const supabase = (await createClient()) as AnyClient
+  const user = await requirePmOrAbove(supabase, input.organisationId)
+  await requireFeature(input.organisationId, 'inspections', supabase)
+
+  // Read the current assignee to decide whether a notification is warranted.
+  const { data: current } = await supabase
+    .schema('inspections')
+    .from('inspections')
+    .select('assigned_to_id')
+    .eq('id', input.inspectionId)
+    .single()
+  const previousAssignee = (current as { assigned_to_id: string | null } | null)?.assigned_to_id ?? null
+
+  const { error } = await supabase
+    .schema('inspections')
+    .from('inspections')
+    .update({ assigned_to_id: input.assignedToId, verifier_id: input.verifierId })
+    .eq('id', input.inspectionId)
+  if (error) throw error
+
+  if (
+    input.assignedToId &&
+    input.assignedToId !== previousAssignee &&
+    input.assignedToId !== user.id
+  ) {
+    await dispatchNotification({
+      userIds: [input.assignedToId],
+      title: 'Inspection assigned to you',
+      body: 'You are now the inspector on this inspection.',
+      route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
+      type: 'inspection_assigned',
+      entityType: 'inspection',
+      entityId: input.inspectionId,
+    })
+  }
+
+  revalidatePath(`/projects/${input.projectId}/inspections/${input.inspectionId}`)
+  revalidatePath(`/projects/${input.projectId}/inspections`)
+}
+
 // ─── listInspectionsAction ──────────────────────────────────────────────
 
 export async function listInspectionsAction(

@@ -33,7 +33,7 @@ vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificati
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
 vi.mock('next/navigation', () => ({ redirect: redirectMock }))
 
-import { listProjectMembersAction } from './inspections.actions'
+import { listProjectMembersAction, updateInspectionAssignmentAction } from './inspections.actions'
 
 // ─── Chainable + awaitable query-builder stub ───────────────────────────────
 // Returns a Promise (so `await qb(r)` === r) that also exposes the supabase
@@ -127,5 +127,89 @@ describe('listProjectMembersAction — name resolution', () => {
     const result = await listProjectMembersAction('p-unknown')
     expect(result).toEqual([])
     expect(requireRoleMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─── update-action client stub ──────────────────────────────────────────────
+function makeUpdateClient({
+  role,
+  previousAssignee,
+  updateError = null,
+}: {
+  role: string
+  previousAssignee: string | null
+  updateError?: { message: string } | null
+}) {
+  return {
+    auth: { getUser: () => Promise.resolve({ data: { user: { id: 'caller-id' } } }) },
+    // requirePmOrAbove → from('user_organisations').select('role')...single()
+    from: () => ({ select: () => qb({ data: { role }, error: null }) }),
+    // schema('inspections').from('inspections') → select (current) + update
+    schema: () => ({
+      from: () => ({
+        select: () => qb({ data: { assigned_to_id: previousAssignee }, error: null }),
+        update: () => qb({ error: updateError }),
+      }),
+    }),
+  }
+}
+
+describe('updateInspectionAssignmentAction', () => {
+  const base = {
+    inspectionId: 'insp-1',
+    projectId: 'p-1',
+    organisationId: 'org-1',
+    verifierId: 'u-verifier',
+  }
+
+  it('throws for a non-PM caller', async () => {
+    createClientMock.mockResolvedValue(makeUpdateClient({ role: 'contractor', previousAssignee: null }))
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    await expect(
+      updateInspectionAssignmentAction({ ...base, assignedToId: 'u-alice' }),
+    ).rejects.toThrow(/Forbidden/)
+  })
+
+  it('updates and notifies the new inspector when the assignee changes', async () => {
+    createClientMock.mockResolvedValue(makeUpdateClient({ role: 'admin', previousAssignee: 'u-old' }))
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' })
+
+    expect(dispatchNotificationMock).toHaveBeenCalledTimes(1)
+    expect(dispatchNotificationMock.mock.calls[0][0]).toMatchObject({
+      userIds: ['u-new'],
+      type: 'inspection_assigned',
+      entityId: 'insp-1',
+    })
+    expect(revalidatePathMock).toHaveBeenCalledWith('/projects/p-1/inspections/insp-1')
+  })
+
+  it('does NOT notify when the assignee is unchanged', async () => {
+    createClientMock.mockResolvedValue(makeUpdateClient({ role: 'admin', previousAssignee: 'u-same' }))
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    await updateInspectionAssignmentAction({ ...base, assignedToId: 'u-same' })
+    expect(dispatchNotificationMock).not.toHaveBeenCalled()
+  })
+
+  it('does NOT notify when the caller assigns themselves', async () => {
+    createClientMock.mockResolvedValue(makeUpdateClient({ role: 'admin', previousAssignee: null }))
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    await updateInspectionAssignmentAction({ ...base, assignedToId: 'caller-id' })
+    expect(dispatchNotificationMock).not.toHaveBeenCalled()
+  })
+
+  it('throws when the DB update errors', async () => {
+    createClientMock.mockResolvedValue(
+      makeUpdateClient({ role: 'admin', previousAssignee: null, updateError: { message: 'boom' } }),
+    )
+    requireFeatureMock.mockResolvedValue(undefined)
+
+    await expect(
+      updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' }),
+    ).rejects.toThrow('boom')
   })
 })
