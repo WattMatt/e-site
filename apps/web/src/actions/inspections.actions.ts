@@ -26,7 +26,8 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { requireRole } from '@/lib/auth/require-role'
 import { dispatchNotification } from '@/lib/notifications'
 import { requireFeature } from '@/lib/features'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -160,30 +161,68 @@ export async function listProjectNodesAction(projectId: string) {
  * batch-hydrate from public.profiles + public.user_organisations.
  */
 export async function listProjectMembersAction(projectId: string) {
+  type Member = { user_id: string; full_name: string | null; email: string | null; role: string | null }
   const supabase = (await createClient()) as AnyClient
+
+  // Resolve org for the access gate.
+  const { data: project } = await supabase
+    .schema('projects')
+    .from('projects')
+    .select('organisation_id')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (!project) return [] as Member[]
+
+  // Gate: any active org member may see the member list (matches the settings
+  // members page). Return [] rather than throw, so the un-PM-gated /new page
+  // still renders for non-PM members.
+  const guard = await requireRole(supabase, project.organisation_id, [
+    'owner',
+    'admin',
+    'project_manager',
+    'contractor',
+    'inspector',
+    'supplier',
+    'client_viewer',
+  ])
+  if (!guard.ok) return [] as Member[]
 
   const { data: rows } = await supabase
     .schema('projects')
     .from('project_members')
-    .select('user_id')
+    .select('user_id, organisation_id')
     .eq('project_id', projectId)
     .eq('is_active', true)
 
-  const members = (rows as Array<{ user_id: string }> | null) ?? []
-  if (members.length === 0) {
-    return [] as Array<{ user_id: string; full_name: string | null; email: string | null; role: string | null }>
-  }
+  const members = (rows as Array<{ user_id: string; organisation_id: string }> | null) ?? []
+  if (members.length === 0) return [] as Member[]
 
-  const userIds = members.map((m) => m.user_id)
+  const userIds = [...new Set(members.map((m) => m.user_id))]
+  const orgIds = [...new Set(members.map((m) => m.organisation_id))]
+
+  // Resolve identity (profiles) + org-role via the SERVICE client — the cookie
+  // client only ever sees the viewer's own profile under RLS (00009). Safe: the
+  // requireRole gate above already authorised the caller. org_role is keyed by
+  // (user_id, organisation_id) so cross-org / sub-org members resolve correctly.
+  const service = createServiceClient() as AnyClient
   const [{ data: profiles }, { data: roles }] = await Promise.all([
-    supabase.from('profiles').select('id, full_name, email').in('id', userIds),
-    supabase.from('user_organisations').select('user_id, role').in('user_id', userIds).eq('is_active', true),
+    service.from('profiles').select('id, full_name, email').in('id', userIds),
+    service
+      .from('user_organisations')
+      .select('user_id, organisation_id, role')
+      .in('user_id', userIds)
+      .in('organisation_id', orgIds),
   ])
 
   const profileMap = new Map(
-    (profiles ?? []).map((p) => [p.id, p as { id: string; full_name: string | null; email: string | null }]),
+    ((profiles ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>).map((p) => [p.id, p]),
   )
-  const roleMap = new Map((roles ?? []).map((r) => [r.user_id, r.role as string]))
+  const roleMap = new Map(
+    ((roles ?? []) as Array<{ user_id: string; organisation_id: string; role: string }>).map((r) => [
+      `${r.user_id}|${r.organisation_id}`,
+      r.role,
+    ]),
+  )
 
   return members.map((m) => {
     const p = profileMap.get(m.user_id)
@@ -191,8 +230,8 @@ export async function listProjectMembersAction(projectId: string) {
       user_id: m.user_id,
       full_name: p?.full_name ?? null,
       email: p?.email ?? null,
-      role: roleMap.get(m.user_id) ?? null,
-    }
+      role: roleMap.get(`${m.user_id}|${m.organisation_id}`) ?? null,
+    } as Member
   })
 }
 
@@ -303,6 +342,10 @@ export async function listInspectionsAction(
     ),
   ]
 
+  // The inspections SELECT above is RLS-gated — returned rows prove project
+  // access, so resolving assignee/verifier names via the service client here is
+  // safe (cookie client can't read other users' profiles; see 00009).
+  const service = createServiceClient() as AnyClient
   const [{ data: templates }, { data: profiles }] = await Promise.all([
     templateIds.length
       ? supabase
@@ -312,7 +355,7 @@ export async function listInspectionsAction(
           .in('id', templateIds)
       : Promise.resolve({ data: [] as Array<{ id: string; name: string; deliverable_type: string }> }),
     userIds.length
-      ? supabase.from('profiles').select('id, full_name, email').in('id', userIds)
+      ? service.from('profiles').select('id, full_name, email').in('id', userIds)
       : Promise.resolve({ data: [] as Array<{ id: string; full_name: string | null; email: string | null }> }),
   ])
 
