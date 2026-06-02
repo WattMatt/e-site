@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { Node, NodeKind } from './types';
-import { resolveOwningLease, buildAnchorGroups } from './owning-lease';
+import {
+  resolveOwningLease,
+  buildAnchorGroups,
+  computeNodeOrderRequiredBy,
+  type LeaseBoInputs,
+} from './owning-lease';
 
 /** Build a full Node from id + kind, overriding only what a test cares about. */
 function mkNode(id: string, kind: NodeKind, over: Partial<Node> = {}): Node {
@@ -131,5 +136,45 @@ describe('buildAnchorGroups', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].members.map((n) => n.id)).toEqual(['lone']);
     expect(ungrouped).toEqual([]);
+  });
+});
+
+describe('computeNodeOrderRequiredBy', () => {
+  /** Build a boInputsFor lookup from a plain id → inputs map. */
+  const lookup = (m: Record<string, LeaseBoInputs>) => (id: string) => m[id] ?? null;
+
+  it("a sub_board inherits its owning lease's BO override", () => {
+    const s = scenario();
+    const got = computeNodeOrderRequiredBy(
+      s.butchery,
+      s.byId,
+      '2026-12-01',
+      lookup({ anchor: { boPeriodDays: null, boDateOverride: '2026-05-15' } }),
+    );
+    expect(got).toBe('2026-05-15');
+  });
+
+  it("a nested sub_board inherits the anchor's BO period (opening - periodDays)", () => {
+    const s = scenario();
+    const got = computeNodeOrderRequiredBy(
+      s.coldroom,
+      s.byId,
+      '2026-03-01',
+      lookup({ anchor: { boPeriodDays: 30, boDateOverride: null } }),
+    );
+    expect(got).toBe('2026-01-30');
+  });
+
+  it('a node with no owning lease falls back to the project opening date', () => {
+    const s = scenario();
+    const got = computeNodeOrderRequiredBy(s.gen, s.byId, '2026-12-01', lookup({}));
+    expect(got).toBe('2026-12-01');
+  });
+
+  it('a lease with no BO inputs falls back to the project opening date', () => {
+    const s = scenario();
+    // node is the anchor itself; its lease is itself, but no BO inputs are known.
+    const got = computeNodeOrderRequiredBy(s.anchor, s.byId, '2026-12-01', lookup({}));
+    expect(got).toBe('2026-12-01');
   });
 });
