@@ -1,10 +1,12 @@
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { listProjectMembersAction } from '@/actions/inspections.actions'
 import { Badge } from '@/components/ui/Badge'
 import CaptureForm from './CaptureForm'
 import InspectionActions from './InspectionActions'
+import AssignmentEditor from './AssignmentEditor'
 import type { Template, Response as InspectionResponse } from '@esite/shared'
 
 export const dynamic = 'force-dynamic'
@@ -74,15 +76,29 @@ export default async function CapturePage({ params }: Props) {
     supabase.auth.getUser(),
   ])
 
-  const verifierProfile = inspection.verifier_id
-    ? (
-        await supabase
-          .from('profiles')
-          .select('id, full_name, email')
-          .eq('id', inspection.verifier_id)
-          .single()
-      ).data
-    : null
+  // Resolve assignee + verifier display names via the service client — the
+  // RLS cookie client can't read other users' profiles (00009). The inspection
+  // read above is RLS-gated, so a returned row already proves project access.
+  const service = createServiceClient() as AnyClient
+  const assigneeIds = [inspection.assigned_to_id, inspection.verifier_id].filter(
+    (v): v is string => Boolean(v),
+  )
+  const { data: people } = assigneeIds.length
+    ? await service.from('profiles').select('id, full_name, email').in('id', assigneeIds)
+    : { data: [] as Array<{ id: string; full_name: string | null; email: string | null }> }
+  const peopleMap = new Map(
+    ((people ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>).map((p) => [
+      p.id,
+      p,
+    ]),
+  )
+  const nameFrom = (uid: string | null) => {
+    if (!uid) return null
+    const p = peopleMap.get(uid)
+    return p ? p.full_name ?? p.email ?? uid.slice(0, 8) : uid.slice(0, 8)
+  }
+  const assigneeName = nameFrom(inspection.assigned_to_id)
+  const verifierName = nameFrom(inspection.verifier_id)
 
   // Resolve the user's org-level role for showing danger-zone controls.
   const { data: orgRole } = await supabase
@@ -93,6 +109,8 @@ export default async function CapturePage({ params }: Props) {
     .eq('is_active', true)
     .single()
   const userOrgRole = (orgRole as { role: string } | null)?.role ?? null
+  const canEdit = ['owner', 'admin', 'project_manager'].includes(userOrgRole ?? '')
+  const members = canEdit ? await listProjectMembersAction(projectId) : []
 
   const responses = (responsesRaw ?? []) as InspectionResponse[]
   const photos = (photosRaw ?? []) as { section_id: string; field_id: string }[]
@@ -138,13 +156,22 @@ export default async function CapturePage({ params }: Props) {
                 {inspection.coc_number}
               </span>
             )}
-            {verifierProfile && (
-              <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>
-                verifier: {verifierProfile.full_name ?? verifierProfile.email}
-              </span>
-            )}
           </div>
         </div>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <AssignmentEditor
+          inspectionId={inspectionId}
+          projectId={projectId}
+          organisationId={inspection.organisation_id}
+          assignedToId={inspection.assigned_to_id}
+          verifierId={inspection.verifier_id}
+          assigneeName={assigneeName}
+          verifierName={verifierName}
+          members={members}
+          canEdit={canEdit}
+        />
       </div>
 
       {!templateJson ? (
