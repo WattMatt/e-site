@@ -275,7 +275,7 @@ N=$(mgmt_query "SELECT count(*)::int AS n FROM pg_policies WHERE schemaname='pro
 section "4. storage buckets"
 N=$(mgmt_query "SELECT count(*)::int AS n FROM storage.buckets WHERE id IN ('report-logos','reports');" | jq -r '.[0].n')
 [[ "$N" == "2" ]] && pass "both buckets present" || fail "expected 2 buckets, got $N"
-N=$(mgmt_query "SELECT count(*)::int AS n FROM pg_policies WHERE schemaname='storage' AND tablename='objects' AND (policyname ILIKE '%report logos%' OR policyname ILIKE '%reports%');" | jq -r '.[0].n')
+N=$(mgmt_query "SELECT count(*)::int AS n FROM pg_policies WHERE schemaname='storage' AND tablename='objects' AND policyname IN ('Org members read report logos','Org members upload report logos','Org members update report logos','Org members delete report logos','Org members read reports','Org members upload reports','Org members update reports','Org members delete reports');" | jq -r '.[0].n')
 [[ "$N" == "8" ]] && pass "8 storage policies present" || fail "expected 8 storage policies, got $N"
 
 # ── 5. POSITIVE: reports insert round-trip ──
