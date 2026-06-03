@@ -7,12 +7,18 @@ const config: NextConfig = {
   // Point Next.js at the monorepo root so file tracing works correctly
   outputFileTracingRoot: path.join(__dirname, '../../'),
 
-  // docxtemplater + pizzip are CJS libraries with binary-handling internals
-  // that Next.js's server bundler mishandles. Mark them external so Node
-  // resolves them from node_modules at runtime. They're only loaded when the
-  // generateLetterAction server action runs (sub-path imported, not in any
-  // shared barrel) — see packages/shared/src/index.ts.
-  serverExternalPackages: ['docxtemplater', 'pizzip'],
+  // These libraries have binary-handling internals that Next.js's server
+  // bundler mishandles — webpack-bundling corrupts them so they throw at
+  // runtime even though the build succeeds. Mark them external so Node
+  // resolves them (and their assets) from node_modules at runtime.
+  //   • docxtemplater + pizzip — zip-stream internals; loaded by
+  //     generateLetterAction (sub-path imported, not in any shared barrel).
+  //   • @react-pdf/renderer — yoga-layout (WASM) + fontkit AFM font data;
+  //     loaded by the branding-preview route + reports engine
+  //     (apps/web/src/lib/reports). Without this, renderToBuffer() fails on
+  //     Vercel with "PDF render failed" while unit tests (real node_modules)
+  //     pass.
+  serverExternalPackages: ['docxtemplater', 'pizzip', '@react-pdf/renderer'],
 
   // TODO: Remove after running `supabase gen types typescript` against the deployed DB.
   // The types.ts in @esite/db was generated against an older postgrest-js version.
