@@ -4,19 +4,20 @@
  * ScopeOfWorkPanel — per-tenant scope-of-work editor.
  *
  * Renders:
- *   1. Scope status toggle (awaited / received)
+ *   1. READ-ONLY scope status display (auto-derived by the 00118 DB trigger)
  *   2. Scope documents (managed set via TenantDocumentList)
  *   3. Per-scope-item Landlord / Tenant radio grid
+ *
+ * Status is auto-derived from document/revision presence by the DB trigger.
+ * The manual scope-status toggle was removed — it conflicted with the trigger
+ * (spec §3.3).
  *
  * This is an "inline expand" panel — ScheduleTable renders it in a full-width
  * row below the tenant row when the user clicks the scope edit button.
  */
 
 import { useState, useTransition } from 'react'
-import {
-  setScopeItemPartyAction,
-  setScopeStatusAction,
-} from '@/actions/tenant-scope.actions'
+import { setScopeItemPartyAction } from '@/actions/tenant-scope.actions'
 import { TenantDocumentList } from './TenantDocumentList'
 
 // ---------------------------------------------------------------------------
@@ -62,15 +63,14 @@ export function ScopeOfWorkPanel({
   shopName,
   scopeItemTypes,
   scopeItems: initialScopeItems,
-  tenantDetails: initialDetails,
+  tenantDetails,
   onClose,
 }: Props) {
   const [scopeItems, setScopeItems] = useState<TenantScopeItem[]>(initialScopeItems)
-  const [details, setDetails] = useState<TenantDetails>(
-    initialDetails ?? { node_id: nodeId, scope_status: 'awaited' },
-  )
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+
+  const scopeStatus = tenantDetails?.scope_status ?? 'awaited'
 
   // ── Scope item party toggle ───────────────────────────────────────────────
 
@@ -100,23 +100,6 @@ export function ScopeOfWorkPanel({
         setError(res.error)
         // Revert to the pre-mutation state, not the stale initial prop
         setScopeItems(snapshot)
-      }
-    })
-  }
-
-  // ── Scope status toggle ───────────────────────────────────────────────────
-
-  function handleStatusChange(status: 'awaited' | 'received') {
-    setError(null)
-    setDetails((d) => ({ ...d, scope_status: status }))
-    startTransition(async () => {
-      const res = await setScopeStatusAction(projectId, nodeId, status)
-      if ('error' in res) {
-        setError(res.error)
-        setDetails((d) => ({
-          ...d,
-          scope_status: status === 'awaited' ? 'received' : 'awaited',
-        }))
       }
     })
   }
@@ -192,7 +175,7 @@ export function ScopeOfWorkPanel({
         </div>
       )}
 
-      {/* ── Section 1: Scope status + document ── */}
+      {/* ── Section 1: Scope status display + document ── */}
       <div
         style={{
           display: 'flex',
@@ -202,7 +185,7 @@ export function ScopeOfWorkPanel({
           flexWrap: 'wrap',
         }}
       >
-        {/* Status toggle */}
+        {/* Status display (read-only — auto-derived by DB trigger) */}
         <div>
           <div
             style={{
@@ -216,43 +199,23 @@ export function ScopeOfWorkPanel({
           >
             Scope Status
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {(['awaited', 'received'] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => handleStatusChange(s)}
-                disabled={isPending}
-                style={{
-                  padding: '5px 12px',
-                  borderRadius: 5,
-                  border: '1px solid',
-                  cursor: isPending ? 'default' : 'pointer',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  transition: 'all 0.15s',
-                  background:
-                    details.scope_status === s
-                      ? s === 'received'
-                        ? 'var(--c-green-dim)'
-                        : 'var(--c-amber-dim)'
-                      : 'var(--c-panel)',
-                  borderColor:
-                    details.scope_status === s
-                      ? s === 'received'
-                        ? 'var(--c-green)'
-                        : 'var(--c-amber)'
-                      : 'var(--c-border)',
-                  color:
-                    details.scope_status === s
-                      ? s === 'received'
-                        ? 'var(--c-green)'
-                        : 'var(--c-amber)'
-                      : 'var(--c-text-dim)',
-                }}
-              >
-                {s === 'awaited' ? 'Awaited' : 'Received'}
-              </button>
-            ))}
+          <div
+            style={{
+              display: 'inline-block',
+              padding: '5px 12px',
+              borderRadius: 5,
+              border: '1px solid',
+              fontSize: 12,
+              fontWeight: 600,
+              background:
+                scopeStatus === 'received' ? 'var(--c-green-dim)' : 'var(--c-amber-dim)',
+              borderColor:
+                scopeStatus === 'received' ? 'var(--c-green)' : 'var(--c-amber)',
+              color:
+                scopeStatus === 'received' ? 'var(--c-green)' : 'var(--c-amber)',
+            }}
+          >
+            {scopeStatus === 'received' ? 'Received' : 'Awaited'}
           </div>
         </div>
 

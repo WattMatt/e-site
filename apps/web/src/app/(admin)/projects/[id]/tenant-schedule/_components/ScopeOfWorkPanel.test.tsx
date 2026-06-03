@@ -4,14 +4,12 @@ import { render, screen } from '@testing-library/react'
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-const { mockSetScopeItemParty, mockSetScopeStatus } = vi.hoisted(() => ({
+const { mockSetScopeItemParty } = vi.hoisted(() => ({
   mockSetScopeItemParty: vi.fn(),
-  mockSetScopeStatus: vi.fn(),
 }))
 
 vi.mock('@/actions/tenant-scope.actions', () => ({
   setScopeItemPartyAction: (...args: unknown[]) => mockSetScopeItemParty(...args),
-  setScopeStatusAction: (...args: unknown[]) => mockSetScopeStatus(...args),
 }))
 
 vi.mock('./TenantDocumentList', () => ({
@@ -52,10 +50,23 @@ describe('ScopeOfWorkPanel', () => {
     vi.clearAllMocks()
   })
 
-  it('renders scope status display', () => {
+  it('renders read-only "Awaited" status when awaited', () => {
     render(<ScopeOfWorkPanel {...baseProps} />)
     expect(screen.getByText('Awaited')).toBeDefined()
+    // No toggle buttons for status — status is read-only
+    expect(screen.queryByRole('button', { name: /^awaited$/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^received$/i })).toBeNull()
+  })
+
+  it('renders read-only "Received" status when received', () => {
+    render(
+      <ScopeOfWorkPanel
+        {...baseProps}
+        tenantDetails={{ node_id: 'node-1', scope_status: 'received' }}
+      />,
+    )
     expect(screen.getByText('Received')).toBeDefined()
+    expect(screen.queryByRole('button', { name: /^received$/i })).toBeNull()
   })
 
   it('renders TenantDocumentList with kind="scope"', () => {
@@ -72,8 +83,9 @@ describe('ScopeOfWorkPanel', () => {
     expect(screen.getByText('HVAC')).toBeDefined()
   })
 
-  it('renders with null tenantDetails (defaults applied)', () => {
+  it('renders with null tenantDetails (defaults to awaited)', () => {
     render(<ScopeOfWorkPanel {...baseProps} tenantDetails={null} />)
+    expect(screen.getByText('Awaited')).toBeDefined()
     expect(screen.getByTestId('TenantDocumentList')).toBeDefined()
   })
 

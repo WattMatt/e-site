@@ -6,8 +6,9 @@
  * Covers:
  *   - setScopeItemPartyAction   — set Landlord/Tenant for a (node, scope_item_type) pair
  *   - addScopeItemTypeAction    — add a new org-level scope item type to the registry
- *   - setScopeStatusAction      — set scope_status (awaited | received) on tenant_details
- *   - setLayoutStatusAction     — set layout_status + layout_issued_at on tenant_details
+ *
+ * Note: setScopeStatusAction and setLayoutStatusAction were removed — status is
+ * auto-derived by the 00118 DB trigger from document/revision presence (spec §3.3).
  *
  * Cross-schema write pattern (CLAUDE.md 2026-05-18 gotcha):
  *   supabase-js `.schema('structure').from(...).insert()` silently strips the
@@ -372,136 +373,4 @@ export async function addScopeItemTypeAction(
   return { ok: true, id }
 }
 
-// ---------------------------------------------------------------------------
-// setScopeStatusAction
-// ---------------------------------------------------------------------------
-
-const setScopeStatusSchema = z.object({
-  projectId: uuidSchema,
-  nodeId: uuidSchema,
-  status: z.enum(['awaited', 'received']),
-})
-
-export type SetScopeStatusResult = { ok: true } | { error: string }
-
-/**
- * Update tenant_details.scope_status for a tenant node.
- * Also ensures the tenant_details row exists (upsert-ignore if missing).
- */
-export async function setScopeStatusAction(
-  projectId: string,
-  nodeId: string,
-  status: 'awaited' | 'received',
-): Promise<SetScopeStatusResult> {
-  const parsed = setScopeStatusSchema.safeParse({ projectId, nodeId, status })
-  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
-
-  const guard = await guardProjectAccess(projectId)
-  if (guard.error !== undefined) return { error: guard.error }
-
-  const nodeErr = await guardNodeBelongsToProject(guard.supabase, nodeId, projectId)
-  if (nodeErr) return nodeErr
-
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
-
-  // Ensure the row exists first (upsert-ignore)
-  const ensureRes = await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
-    method: 'POST',
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      'Content-Type': 'application/json',
-      'Content-Profile': 'structure',
-      Prefer: 'resolution=ignore-duplicates',
-    },
-    body: JSON.stringify({ node_id: nodeId }),
-  })
-  if (!ensureRes.ok) {
-    const text = await ensureRes.text()
-    return { error: `Failed to ensure tenant_details row (HTTP ${ensureRes.status}): ${text.slice(0, 200)}` }
-  }
-
-  const result = await structurePatch(
-    supabaseUrl,
-    serviceKey,
-    'tenant_details',
-    `node_id=eq.${nodeId}`,
-    { scope_status: status },
-  )
-
-  if (!result.ok) return { error: result.error ?? 'Failed to update scope status' }
-
-  revalidatePath(`/projects/${projectId}/tenant-schedule`)
-  return { ok: true }
-}
-
-// ---------------------------------------------------------------------------
-// setLayoutStatusAction
-// ---------------------------------------------------------------------------
-
-const setLayoutStatusSchema = z.object({
-  projectId: uuidSchema,
-  nodeId: uuidSchema,
-  status: z.enum(['not_issued', 'issued']),
-  issuedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-})
-
-export type SetLayoutStatusResult = { ok: true } | { error: string }
-
-/**
- * Update tenant_details.layout_status + layout_issued_at for a tenant node.
- * Also ensures the tenant_details row exists (upsert-ignore if missing).
- * issuedAt is a YYYY-MM-DD string; pass null to clear it.
- */
-export async function setLayoutStatusAction(
-  projectId: string,
-  nodeId: string,
-  status: 'not_issued' | 'issued',
-  issuedAt: string | null,
-): Promise<SetLayoutStatusResult> {
-  const parsed = setLayoutStatusSchema.safeParse({ projectId, nodeId, status, issuedAt })
-  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
-
-  const guard = await guardProjectAccess(projectId)
-  if (guard.error !== undefined) return { error: guard.error }
-
-  const nodeErr = await guardNodeBelongsToProject(guard.supabase, nodeId, projectId)
-  if (nodeErr) return nodeErr
-
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
-
-  // Ensure the row exists first (upsert-ignore)
-  const ensureRes = await fetch(`${supabaseUrl}/rest/v1/tenant_details?on_conflict=node_id`, {
-    method: 'POST',
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      'Content-Type': 'application/json',
-      'Content-Profile': 'structure',
-      Prefer: 'resolution=ignore-duplicates',
-    },
-    body: JSON.stringify({ node_id: nodeId }),
-  })
-  if (!ensureRes.ok) {
-    const text = await ensureRes.text()
-    return { error: `Failed to ensure tenant_details row (HTTP ${ensureRes.status}): ${text.slice(0, 200)}` }
-  }
-
-  const result = await structurePatch(
-    supabaseUrl,
-    serviceKey,
-    'tenant_details',
-    `node_id=eq.${nodeId}`,
-    { layout_status: status, layout_issued_at: issuedAt },
-  )
-
-  if (!result.ok) return { error: result.error ?? 'Failed to update layout status' }
-
-  revalidatePath(`/projects/${projectId}/tenant-schedule`)
-  return { ok: true }
-}
 

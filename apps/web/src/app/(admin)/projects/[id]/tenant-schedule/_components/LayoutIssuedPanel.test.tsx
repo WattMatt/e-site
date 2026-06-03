@@ -4,14 +4,6 @@ import { render, screen } from '@testing-library/react'
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-const { mockSetLayoutStatus } = vi.hoisted(() => ({
-  mockSetLayoutStatus: vi.fn(),
-}))
-
-vi.mock('@/actions/tenant-scope.actions', () => ({
-  setLayoutStatusAction: (...args: unknown[]) => mockSetLayoutStatus(...args),
-}))
-
 vi.mock('./TenantDocumentList', () => ({
   TenantDocumentList: (props: { kind: string; projectId: string; nodeId: string; readOnly: boolean }) => (
     <div
@@ -45,10 +37,35 @@ describe('LayoutIssuedPanel', () => {
     vi.clearAllMocks()
   })
 
-  it('renders layout status display', () => {
+  it('renders read-only "Not Issued" status when not issued', () => {
     render(<LayoutIssuedPanel {...baseProps} />)
     expect(screen.getByText('Not Issued')).toBeDefined()
+    // No toggle buttons — status is read-only
+    expect(screen.queryByRole('button', { name: /not issued/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^issued$/i })).toBeNull()
+  })
+
+  it('renders read-only "Issued" status with date when issued', () => {
+    render(
+      <LayoutIssuedPanel
+        {...baseProps}
+        layoutDetails={{
+          node_id: 'node-1',
+          layout_status: 'issued',
+          layout_issued_at: '2026-06-01',
+        }}
+      />,
+    )
     expect(screen.getByText('Issued')).toBeDefined()
+    expect(screen.getByText('2026-06-01')).toBeDefined()
+    // No date input
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it('renders no date when layout_issued_at is null', () => {
+    render(<LayoutIssuedPanel {...baseProps} />)
+    // Only the status badge, no date text
+    expect(screen.queryByRole('textbox')).toBeNull()
   })
 
   it('renders TenantDocumentList with kind="layout"', () => {
@@ -60,8 +77,9 @@ describe('LayoutIssuedPanel', () => {
     expect(list.getAttribute('data-read-only')).toBe('false')
   })
 
-  it('renders with null layoutDetails (defaults applied)', () => {
+  it('renders with null layoutDetails (defaults to not_issued)', () => {
     render(<LayoutIssuedPanel {...baseProps} layoutDetails={null} />)
+    expect(screen.getByText('Not Issued')).toBeDefined()
     expect(screen.getByTestId('TenantDocumentList')).toBeDefined()
   })
 
