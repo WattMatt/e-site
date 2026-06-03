@@ -10,8 +10,9 @@ export function resolveAccent(
   return projectAccent ?? orgAccent ?? DEFAULT_ACCENT
 }
 
-/** Spacing and size tokens for the report cover layout. */
+/** Spacing and size tokens for the report layout. */
 export const spacing = {
+  // Cover layout tokens
   pagePaddingH: 40,
   pagePaddingV: 48,
   accentRuleHeight: 3,
@@ -29,4 +30,43 @@ export const spacing = {
   sectionGap: 20,
   smallGap: 8,
   tinyGap: 4,
+  // Interior layout tokens
+  runningHeaderHeight: 28,
+  runningFooterHeight: 24,
+  headerLogoMaxHeight: 14,
+  headerFontSize: 8,
+  sectionHeadingFontSize: 13,
+  sectionRuleHeight: 2,
+  rowLabelFontSize: 9,
+  rowValueFontSize: 10,
+  rowGap: 6,
+  pillFontSize: 8,
+  pillPaddingH: 6,
+  pillPaddingV: 2,
+  failReasonFontSize: 8,
+  photoGridCols: 3, // column count, not pt
+  photoCellGap: 6,
+  photoCaptionFontSize: 6,
+  tableHeaderFontSize: 8,
+  tableCellFontSize: 9,
+  annexureRowFontSize: 9,
+  signatureImageMaxHeight: 60,
+  auditRowFontSize: 7,
 } as const
+
+/** Colour scheme for pass/fail/na/null pill states. Pure function; no side effects. */
+export function passPillColors(
+  pass: 'pass' | 'fail' | 'na' | null,
+): { bg: string; fg: string } {
+  switch (pass) {
+    case 'pass':
+      return { bg: '#D1FAE5', fg: '#065F46' } // light green / dark green
+    case 'fail':
+      return { bg: '#FEE2E2', fg: '#991B1B' } // light red / dark red
+    case 'na':
+      return { bg: '#F3F4F6', fg: '#374151' } // light grey / dark grey
+    case null:
+    default:
+      return { bg: '#F9FAFB', fg: '#6B7280' } // very light grey / medium grey
+  }
+}
