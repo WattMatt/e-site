@@ -4,22 +4,20 @@
  * ScopeOfWorkPanel — per-tenant scope-of-work editor.
  *
  * Renders:
- *   1. Scope status toggle (awaited / received) with document upload on "received"
- *   2. Per-scope-item Landlord / Tenant radio grid
+ *   1. Scope status toggle (awaited / received)
+ *   2. Scope documents (managed set via TenantDocumentList)
+ *   3. Per-scope-item Landlord / Tenant radio grid
  *
  * This is an "inline expand" panel — ScheduleTable renders it in a full-width
  * row below the tenant row when the user clicks the scope edit button.
  */
 
-import { useState, useTransition, useRef } from 'react'
-import { Button } from '@/components/ui/Button'
+import { useState, useTransition } from 'react'
 import {
   setScopeItemPartyAction,
   setScopeStatusAction,
-  attachScopeDocumentAction,
-  clearScopeDocumentAction,
-  getScopeSignedUrlAction,
 } from '@/actions/tenant-scope.actions'
+import { TenantDocumentList } from './TenantDocumentList'
 
 // ---------------------------------------------------------------------------
 // Types (local — structure schema isn't in generated DB types yet)
@@ -42,7 +40,6 @@ export interface TenantScopeItem {
 export interface TenantDetails {
   node_id: string
   scope_status: 'awaited' | 'received'
-  scope_document_path: string | null
 }
 
 interface Props {
@@ -70,15 +67,10 @@ export function ScopeOfWorkPanel({
 }: Props) {
   const [scopeItems, setScopeItems] = useState<TenantScopeItem[]>(initialScopeItems)
   const [details, setDetails] = useState<TenantDetails>(
-    initialDetails ?? { node_id: nodeId, scope_status: 'awaited', scope_document_path: null },
+    initialDetails ?? { node_id: nodeId, scope_status: 'awaited' },
   )
   const [error, setError] = useState<string | null>(null)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [isUploading, setIsUploading] = useState(false)
-  const [signedUrl, setSignedUrl] = useState<string | null>(null)
-  const [isLoadingUrl, setIsLoadingUrl] = useState(false)
   const [isPending, startTransition] = useTransition()
-  const fileRef = useRef<HTMLInputElement>(null)
 
   // ── Scope item party toggle ───────────────────────────────────────────────
 
@@ -128,86 +120,6 @@ export function ScopeOfWorkPanel({
       }
     })
   }
-
-  // ── Document upload ───────────────────────────────────────────────────────
-
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploadError(null)
-    setSignedUrl(null)
-    setIsUploading(true)
-
-    try {
-      const fd = new FormData()
-      fd.append('projectId', projectId)
-      fd.append('nodeId', nodeId)
-      fd.append('file', file)
-
-      const res = await fetch('/api/tenant-schedule/upload-scope-document', {
-        method: 'POST',
-        body: fd,
-      })
-
-      if (!res.ok) {
-        const body = (await res.json()) as { error?: string }
-        throw new Error(body.error ?? `Upload failed (HTTP ${res.status})`)
-      }
-
-      const { storagePath } = (await res.json()) as { storagePath: string }
-
-      // Persist path to DB and flip status to received
-      const attach = await attachScopeDocumentAction(projectId, nodeId, storagePath)
-      if ('error' in attach) {
-        // Upload succeeded but DB attach failed — delete the orphaned storage
-        // object best-effort so the bucket doesn't accumulate dangling files.
-        await fetch('/api/tenant-schedule/upload-scope-document', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storagePath }),
-        }).catch(() => {/* best-effort */})
-        throw new Error(attach.error)
-      }
-
-      setDetails((d) => ({ ...d, scope_document_path: storagePath, scope_status: 'received' }))
-    } catch (err: unknown) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed')
-    } finally {
-      setIsUploading(false)
-      if (fileRef.current) fileRef.current.value = ''
-    }
-  }
-
-  async function handleRemoveDocument() {
-    if (!details.scope_document_path) return
-    setSignedUrl(null)
-    const path = details.scope_document_path
-    setDetails((d) => ({ ...d, scope_document_path: null }))
-    const res = await clearScopeDocumentAction(projectId, nodeId, path)
-    if ('error' in res) {
-      setError(res.error)
-      setDetails((d) => ({ ...d, scope_document_path: path }))
-    }
-  }
-
-  async function handlePreview() {
-    if (!details.scope_document_path) return
-    setIsLoadingUrl(true)
-    const res = await getScopeSignedUrlAction(projectId, details.scope_document_path)
-    setIsLoadingUrl(false)
-    if ('error' in res) {
-      setUploadError(res.error)
-    } else {
-      setSignedUrl(res.url)
-      window.open(res.url, '_blank', 'noopener,noreferrer')
-    }
-  }
-
-  // ── Filename display ──────────────────────────────────────────────────────
-
-  const documentFilename = details.scope_document_path
-    ? details.scope_document_path.split('/').pop()?.replace(/^\d+-/, '') ?? 'document'
-    : null
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -344,7 +256,7 @@ export function ScopeOfWorkPanel({
           </div>
         </div>
 
-        {/* Document upload */}
+        {/* Scope documents (managed set) */}
         <div style={{ flex: 1, minWidth: 200 }}>
           <div
             style={{
@@ -356,120 +268,14 @@ export function ScopeOfWorkPanel({
               marginBottom: 8,
             }}
           >
-            Scope Document
+            Scope Documents
           </div>
-
-          {details.scope_document_path ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span
-                style={{
-                  fontSize: 12,
-                  color: 'var(--c-text)',
-                  fontFamily: 'var(--font-mono)',
-                  background: 'var(--c-panel)',
-                  border: '1px solid var(--c-border)',
-                  borderRadius: 4,
-                  padding: '3px 8px',
-                  maxWidth: 260,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-                title={documentFilename ?? undefined}
-              >
-                {documentFilename}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handlePreview}
-                isLoading={isLoadingUrl}
-                style={{ fontSize: 11 }}
-              >
-                Preview / Download
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleRemoveDocument}
-                style={{ fontSize: 11, color: 'var(--c-red)' }}
-              >
-                Remove
-              </Button>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <label
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 12px',
-                  borderRadius: 6,
-                  border: '1px solid var(--c-border)',
-                  background: 'var(--c-panel)',
-                  cursor: isUploading ? 'default' : 'pointer',
-                  fontSize: 12,
-                  color: 'var(--c-text-mid)',
-                  transition: 'border-color 0.15s',
-                }}
-              >
-                {isUploading ? (
-                  <>
-                    <svg
-                      className="animate-spin"
-                      width="13"
-                      height="13"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                      />
-                    </svg>
-                    Uploading…
-                  </>
-                ) : (
-                  <>↑ Upload scope doc (.xlsx / .pdf)</>
-                )}
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".pdf,.xlsx,.xls,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                  style={{ display: 'none' }}
-                  onChange={handleFileChange}
-                  disabled={isUploading}
-                />
-              </label>
-            </div>
-          )}
-
-          {uploadError && (
-            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--c-red)' }}>{uploadError}</div>
-          )}
-          {signedUrl && (
-            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--c-text-dim)' }}>
-              URL expires in 5 minutes.{' '}
-              <a
-                href={signedUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: 'var(--c-amber)' }}
-              >
-                Open again
-              </a>
-            </div>
-          )}
+          <TenantDocumentList
+            kind="scope"
+            projectId={projectId}
+            nodeId={nodeId}
+            readOnly={false}
+          />
         </div>
       </div>
 

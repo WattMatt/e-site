@@ -9,7 +9,7 @@
  * Path convention: {projectId}/{nodeId}/{timestamp}-{sanitisedFilename}
  *
  * Returns { storagePath, filename } on success.
- * Callers should then invoke attachScopeDocumentAction or attachLayoutDrawingAction.
+ * Callers should then invoke the appropriate tenant-documents action to persist the DB record.
  *
  * Auth: cookie session — verified before any storage write.
  * Storage write uses the authenticated user client (bucket RLS allows
