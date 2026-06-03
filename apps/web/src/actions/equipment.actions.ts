@@ -19,7 +19,8 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, deriveEquipmentNodeOrder, EQUIPMENT_KINDS } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { projectService, deriveEquipmentNodeOrder, EQUIPMENT_KINDS, ORG_WRITE_ROLES } from '@esite/shared'
 import type { EquipmentKind } from '@esite/shared'
 
 // ---------------------------------------------------------------------------
@@ -95,6 +96,12 @@ async function guardProjectAccess(projectId: string): Promise<
 
   const project = await projectService.getById(supabase as never, projectId)
   if (!project) return { error: 'Project not found' }
+
+  // Writes here use the service-role key (bypasses RLS), so enforce the
+  // owner/admin/project_manager write-role gate in app code. requireEffectiveRole
+  // honours per-project promotion (user_effective_project_role / migration 00107).
+  const roleGate = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!roleGate.ok) return { error: roleGate.error }
 
   return { user, orgId: project.organisation_id as string, supabase }
 }
