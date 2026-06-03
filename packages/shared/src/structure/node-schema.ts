@@ -9,6 +9,7 @@ const nodeKindEnum = z.enum([
   'mini_sub',
   'generator',
   'custom',
+  'sub_board',
 ]);
 
 const nodeStatusEnum = z.enum(['active', 'decommissioned']);
@@ -19,6 +20,7 @@ const nodeBaseSchema = z.object({
   project_id: z.string().uuid(),
   organisation_id: z.string().uuid(),
   kind: nodeKindEnum,
+  parent_node_id: z.string().uuid().nullable().optional(),
   custom_kind_label: z.string().nullable().optional(),
   code: z.string().min(1),
   name: z.string().nullable().optional(),
