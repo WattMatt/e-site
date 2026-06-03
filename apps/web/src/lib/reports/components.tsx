@@ -189,7 +189,7 @@ export function Cover({ resolved }: CoverProps) {
       {/* Footer stamp */}
       <View style={s.footer} fixed>
         <Text style={s.footerText}>{footerStamp}</Text>
-        <Text style={s.footerText}>e-site.live</Text>
+        <Text style={s.footerText} render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
       </View>
     </>
   )
