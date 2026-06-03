@@ -17,22 +17,26 @@ import {
   createSubBoardAction,
   createConcessionAction,
   addTenantUnitAction,
+  updateTenantUnitAction,
+  deleteTenantUnitAction,
 } from './tenant-board.actions'
 
 const UUID = '11111111-1111-1111-1111-111111111111'
 const PARENT = '22222222-2222-2222-2222-222222222222'
 
-/** Minimal supabase mock: auth.getUser + the structure existence checks
- *  (two .eq() for nodes; one .eq() for tenant_units). */
-function mockClient() {
+/** Minimal supabase mock: auth.getUser + the effective-role RPC + the structure
+ *  existence checks (two .eq() for nodes; one .eq() for tenant_units). */
+function mockClient(opts: { role?: string | null; unitNodeId?: string | null } = {}) {
+  const { role = 'owner', unitNodeId = PARENT } = opts
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: { id: 'u-1' } } }) },
+    rpc: () => Promise.resolve({ data: role, error: null }),
     schema: () => ({
       from: () => ({
         select: () => ({
           eq: () => ({
             eq: () => ({ maybeSingle: () => Promise.resolve({ data: { id: PARENT } }) }),
-            maybeSingle: () => Promise.resolve({ data: { node_id: PARENT } }),
+            maybeSingle: () => Promise.resolve({ data: unitNodeId ? { node_id: unitNodeId } : null }),
           }),
         }),
       }),
@@ -135,5 +139,45 @@ describe('addTenantUnitAction', () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
     expect(body.node_id).toBe(PARENT)
     expect(body.area_m2).toBe(250)
+  })
+})
+
+describe('role gate (C1)', () => {
+  it('denies a caller whose effective role is not owner/admin/PM, before any write', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await createSubBoardAction(UUID, PARENT, 'SB-1')
+    expect('error' in res).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('denies when the RPC returns no project access (null role)', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: null }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await createConcessionAction(UUID, PARENT, 'SHOP-1', 'x', 'CON-1')
+    expect('error' in res).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('tenant_units update / delete guards (M1)', () => {
+  it('update patches the unit after the ownership guard passes', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('') })
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await updateTenantUnitAction(UUID, PARENT, 'Bay 2', 300)
+    expect(res).toEqual({ ok: true })
+    expect(fetchMock.mock.calls[0][0]).toContain('/rest/v1/tenant_units')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('PATCH')
+  })
+
+  it('delete fails closed when the unit does not belong to the project', async () => {
+    createClientMock.mockResolvedValue(mockClient({ unitNodeId: null }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await deleteTenantUnitAction(UUID, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+    expect('error' in res).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
