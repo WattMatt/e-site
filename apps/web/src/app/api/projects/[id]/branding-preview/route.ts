@@ -127,13 +127,7 @@ export async function GET(
     pdfBuffer = await renderBrandingPreview(resolved)
   } catch (err) {
     console.error('[branding-preview] render error', err)
-    // TEMP DIAGNOSTIC (revert before merge): surface the real error so the
-    // deployed failure can be diagnosed via the response (Vercel `logs` does
-    // not stream function console output).
-    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-    const stack =
-      err instanceof Error ? (err.stack ?? '').split('\n').slice(0, 10).join('\n') : ''
-    return NextResponse.json({ error: 'PDF render failed', detail, stack }, { status: 500 })
+    return NextResponse.json({ error: 'PDF render failed' }, { status: 500 })
   }
 
   return new Response(new Uint8Array(pdfBuffer), {
