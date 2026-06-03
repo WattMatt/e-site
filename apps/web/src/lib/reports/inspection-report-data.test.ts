@@ -571,6 +571,144 @@ describe('gatherInspectionReportData — graceful degradation', () => {
   })
 })
 
+// ─── Repeating-group photo sub-fields ─────────────────────────────────────
+// Photos on a repeating_group photo sub-field were silently dropped because
+// the photo-emit pass iterates flattenSectionFields (which intentionally does
+// NOT recurse into group sub-fields), so photo buckets keyed by synthetic ids
+// like "sub_feeds[0].breaker_photo" were never drained → photos vanished.
+
+describe('gatherInspectionReportData — repeating_group photo sub-fields', () => {
+  // Template: one section with a repeating_group that has a photo sub-field.
+  const GROUP_PHOTO_TEMPLATE = {
+    data: {
+      name: 'Distribution Board Inspection',
+      version: '1.0',
+      deliverable_type: 'inspection_only',
+      sans_reference: 'SANS 10142-1',
+      schema_json: {
+        sections: [
+          {
+            section_id: 'sec-feeds',
+            title: 'Sub-feeds',
+            fields: [
+              {
+                field_id: 'sub_feeds',
+                label: 'Sub-feed Circuits',
+                type: 'repeating_group',
+                fields: [
+                  { field_id: 'circuit_label', label: 'Circuit label', type: 'text' },
+                  { field_id: 'breaker_photo', label: 'Breaker photo', type: 'photo' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+    error: null,
+  }
+
+  // Responses: two entries in sub_feeds, each with a text and a photo response.
+  const GROUP_PHOTO_RESPONSES = {
+    data: [
+      { section_id: 'sec-feeds', field_id: 'sub_feeds[0].circuit_label', value_text: 'Circuit A' },
+      { section_id: 'sec-feeds', field_id: 'sub_feeds[1].circuit_label', value_text: 'Circuit B' },
+    ],
+    error: null,
+  }
+
+  // Photo rows using the synthetic field ids for group sub-fields.
+  const GROUP_PHOTO_ROWS = {
+    data: [
+      {
+        id: 'grp-photo-0',
+        section_id: 'sec-feeds',
+        field_id: 'sub_feeds[0].breaker_photo',
+        storage_path: 'p/entry0-breaker.jpg',
+        original_path: 'p/entry0-breaker-full.jpg',
+        caption: 'Entry 0 breaker',
+        gps_lat: null,
+        gps_lng: null,
+        taken_at: '2026-01-01T09:00:00Z',
+        uploaded_by: 'user-insp',
+      },
+      {
+        id: 'grp-photo-1',
+        section_id: 'sec-feeds',
+        field_id: 'sub_feeds[1].breaker_photo',
+        storage_path: 'p/entry1-breaker.jpg',
+        original_path: null,
+        caption: 'Entry 1 breaker',
+        gps_lat: null,
+        gps_lng: null,
+        taken_at: '2026-01-01T09:01:00Z',
+        uploaded_by: 'user-insp',
+      },
+    ],
+    error: null,
+  }
+
+  function setupGroupPhoto() {
+    const buckets: string[] = []
+    setup({
+      storageCapture: buckets,
+      serviceOver: {
+        'inspections.templates': GROUP_PHOTO_TEMPLATE,
+        'inspections.responses': GROUP_PHOTO_RESPONSES,
+        'inspections.photos': GROUP_PHOTO_ROWS,
+      },
+    })
+    return buckets
+  }
+
+  it('emits group photo sub-field photos into the section photoFields (not annexures)', async () => {
+    setupGroupPhoto()
+    const data = await gatherInspectionReportData(INSPECTION_ID)
+    const section = data.sections.find((s) => s.sectionId === 'sec-feeds')!
+
+    // Must have photo fields for the two entries.
+    expect(section.photoFields.length).toBeGreaterThanOrEqual(1)
+
+    // All group photo rows must be accounted for in photoFields (not lost).
+    const totalPhotosInSection = section.photoFields.reduce(
+      (sum, pf) => sum + pf.photos.length + pf.omittedCount,
+      0,
+    )
+    expect(totalPhotosInSection).toBe(2)
+
+    // None of the group photos may appear in annexures.
+    const annexureNames = data.annexures.map((a) => a.name)
+    expect(annexureNames).not.toContain('Entry 0 breaker')
+    expect(annexureNames).not.toContain('Entry 1 breaker')
+  })
+
+  it('gives group photo ReportPhotoFields entry-aware labels (group + entry number + sub-field)', async () => {
+    setupGroupPhoto()
+    const data = await gatherInspectionReportData(INSPECTION_ID)
+    const section = data.sections.find((s) => s.sectionId === 'sec-feeds')!
+
+    const labels = section.photoFields.map((pf) => pf.label)
+    // Each label should convey group + entry number + sub-field name.
+    expect(labels.some((l) => l.includes('Sub-feed Circuits') && l.includes('Entry 1') && l.includes('Breaker photo'))).toBe(true)
+    expect(labels.some((l) => l.includes('Sub-feed Circuits') && l.includes('Entry 2') && l.includes('Breaker photo'))).toBe(true)
+  })
+
+  it('downloads group photo data URIs against the inspection-photos bucket', async () => {
+    const buckets = setupGroupPhoto()
+    const data = await gatherInspectionReportData(INSPECTION_ID)
+    const section = data.sections.find((s) => s.sectionId === 'sec-feeds')!
+
+    // Each photoField should have a data URI resolved.
+    for (const pf of section.photoFields) {
+      for (const ph of pf.photos) {
+        expect(ph.dataUri).toMatch(/^data:image\//)
+      }
+    }
+    // inspection-photos bucket was used for the downloads.
+    expect(buckets).toContain('inspection-photos')
+  })
+})
+
 // ─── Summary tally + failed list ───────────────────────────────────────────
 
 describe('gatherInspectionReportData — summary tally + failed list', () => {

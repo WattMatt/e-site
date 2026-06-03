@@ -507,6 +507,8 @@ export async function gatherInspectionReportData(
     }
 
     // Photo fields for this section — download + caption each photo.
+    // Pass A: top-level photo fields (flattenSectionFields intentionally does NOT
+    // recurse into repeating_group sub-fields, so those are handled in Pass B).
     for (const field of flattenSectionFields(section)) {
       if (field.type !== 'photo') continue
       const k = key(section.section_id, field.field_id)
@@ -526,6 +528,43 @@ export async function gatherInspectionReportData(
         photos,
         omittedCount: Math.max(0, rowsForField.length - MAX_PHOTOS_PER_FIELD),
       })
+    }
+
+    // Pass B: repeating_group photo sub-fields.
+    // The photo-routing step (step 6) correctly placed these rows into
+    // photoFieldBuckets under their synthetic keys (e.g. "sec-1|grp[0].ph").
+    // But Pass A never visits those keys because flattenSectionFields skips
+    // group sub-fields. Drain them here, one ReportPhotoField per (group, entry,
+    // photo-sub-field) triple, with an entry-aware label.
+    for (const field of flattenSectionFields(section)) {
+      if (field.type !== 'repeating_group') continue
+      const groupLabel = String(field.label ?? field.field_id)
+      const indices = collectGroupEntryIndices(field.field_id, responseList, section.section_id)
+      for (const sub of (field.fields ?? []) as FlatField[]) {
+        if (sub.type !== 'photo') continue
+        const subLabel = String(sub.label ?? sub.field_id)
+        for (const i of indices) {
+          const synthetic = `${field.field_id}[${i}].${sub.field_id}`
+          const k = key(section.section_id, synthetic)
+          const rowsForField = photoFieldBuckets.get(k) ?? []
+          if (rowsForField.length === 0) continue
+          const rendered = rowsForField.slice(0, MAX_PHOTOS_PER_FIELD)
+          const photos: ReportPhoto[] = await Promise.all(
+            rendered.map(async (ph) => {
+              const pathForSigning = ph.original_path ?? ph.storage_path
+              const dataUri = await downloadToDataUri(service, PHOTO_BUCKET, pathForSigning)
+              return { dataUri, caption: buildCaption(ph, nameLookup) }
+            }),
+          )
+          photoFields.push({
+            sectionId: section.section_id,
+            fieldId: synthetic,
+            label: `${groupLabel} — Entry ${i + 1}: ${subLabel}`,
+            photos,
+            omittedCount: Math.max(0, rowsForField.length - MAX_PHOTOS_PER_FIELD),
+          })
+        }
+      }
     }
 
     reportSections.push({
