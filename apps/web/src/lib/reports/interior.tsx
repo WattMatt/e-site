@@ -4,50 +4,32 @@ import { View, Text, Image, Link, StyleSheet } from '@react-pdf/renderer'
 import { spacing, passPillColors } from './theme'
 
 // ---------------------------------------------------------------------------
-// Local prop interfaces — matched exactly to the Task-3 shapes so Task 4
-// can swap to type-only imports from inspection-report-data.ts with zero reshape.
+// Shared types from inspection-report-data.ts (Task 4 type-switch).
+// PassState is kept as a local export because interior.test.tsx imports it
+// from './interior' and the type is not exported from inspection-report-data.
+// Table's generic { columns, rows } interface is kept local (it is not a
+// Report* type).
 // ---------------------------------------------------------------------------
 
 export type PassState = 'pass' | 'fail' | 'na' | null
 
-export interface ReportFieldRow {
-  fieldId: string
-  label: string
-  kind: 'result' | 'value' | 'paragraph' | 'list' | 'subheading'
-  pass?: PassState
-  failReason?: string | null
-  sansRef?: string | null
-  value?: string
-}
+// Import types for use within this file, then re-export for consumers.
+// (A bare `export type { ... } from '...'` does not make the names available
+// as local identifiers within the same file.)
+import type {
+  ReportFieldRow,
+  ReportPhoto,
+  ReportPhotoField,
+  ReportSignature,
+  ReportAnnexure,
+} from './inspection-report-data'
 
-export interface ReportPhoto {
-  dataUri: string | null
-  caption: string
-}
-
-export interface ReportPhotoField {
-  sectionId: string
-  fieldId: string
-  label: string
-  photos: ReportPhoto[]
-  omittedCount: number
-}
-
-export interface ReportSignature {
-  role: string
-  name: string
-  title: string | null
-  registrationNumber: string | null
-  signedAt: string | null
-  imageDataUri: string | null
-}
-
-export interface ReportAnnexure {
-  name: string
-  source: 'attachment' | 'handover'
-  href: string | null
-  thumbnailDataUri?: string | null
-  meta?: string | null
+export type {
+  ReportFieldRow,
+  ReportPhoto,
+  ReportPhotoField,
+  ReportSignature,
+  ReportAnnexure,
 }
 
 // ---------------------------------------------------------------------------
