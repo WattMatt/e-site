@@ -286,21 +286,37 @@ export async function gatherSnagVisitReportData(
     }
   }
 
-  // Build a snag number: "{visit_no}.{sequence_within_bucket}"
-  function makeNumber(s: any, idx: number): string {
-    const vno = s.raised_on_visit_id ? (visitNoById.get(s.raised_on_visit_id) ?? 0) : 0
-    return `${vno}.${idx + 1}`
+  // Compute stable, collision-free snag numbers across the full project snag set.
+  // Group all snags by raised_on_visit_id, sort each group by created_at ascending,
+  // then assign "{visit_no}.{n}" (1-based) within each group.
+  // A snag carries the same number regardless of which bucket it lands in.
+  const snagNumberMap = new Map<string, string>()
+  const byVisit = new Map<string | null, any[]>()
+  for (const s of snags) {
+    const vid = s.raised_on_visit_id ?? null
+    if (!byVisit.has(vid)) byVisit.set(vid, [])
+    byVisit.get(vid)!.push(s)
+  }
+  for (const [vid, group] of byVisit) {
+    group.sort((a: any, b: any) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0
+      return ta - tb
+    })
+    const vno = vid ? (visitNoById.get(vid) ?? 0) : 0
+    group.forEach((s: any, i: number) => {
+      snagNumberMap.set(s.id, `${vno}.${i + 1}`)
+    })
   }
 
   async function toReportSnag(
     s: any,
-    idx: number,
     isClosed: boolean,
   ): Promise<ReportSnag> {
     const photoData = await resolveSnagPhotos(s, isClosed)
     return {
       id: s.id,
-      number: makeNumber(s, idx),
+      number: snagNumberMap.get(s.id) ?? '0.0',
       title: s.title ?? 'Untitled',
       priority: s.priority ?? null,
       status: s.status,
@@ -315,9 +331,9 @@ export async function gatherSnagVisitReportData(
   }
 
   const [newSnags, stillOpen, closedThisVisit] = await Promise.all([
-    Promise.all(buckets.newSnags.map((s, i) => toReportSnag(s, i, false))),
-    Promise.all(buckets.stillOpen.map((s, i) => toReportSnag(s, i, false))),
-    Promise.all(buckets.closedThisVisit.map((s, i) => toReportSnag(s, i, true))),
+    Promise.all(buckets.newSnags.map(s => toReportSnag(s, false))),
+    Promise.all(buckets.stillOpen.map(s => toReportSnag(s, false))),
+    Promise.all(buckets.closedThisVisit.map(s => toReportSnag(s, true))),
   ])
 
   // 5 (cont). Branding — resolve logos to data: URIs.

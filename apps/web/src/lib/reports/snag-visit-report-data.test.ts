@@ -315,4 +315,81 @@ describe('gatherSnagVisitReportData', () => {
     expect(data.visit.openCount).toBe(1)
     expect(data.visit.closedCount).toBe(1)
   })
+
+  it('assigns distinct stable numbers to two snags raised on the same visit even when they land in different buckets', async () => {
+    // snag-open-v1a: raised v1, closed on future v3 → stillOpen on v2 report
+    // snag-closed-v1b: raised v1, closed v2 → closedThisVisit on v2 report
+    // Both raised on visit-v1 → numbers must be "1.1" and "1.2" (by created_at order)
+    // and must be DISTINCT even though each is idx=0 in its own bucket.
+    const snagOpenV1a = {
+      id: 'snag-open-v1a',
+      title: 'First v1 snag (still open)',
+      priority: 'high',
+      status: 'in_progress',
+      location: null,
+      category: null,
+      description: null,
+      raised_by: null,
+      assigned_to: null,
+      raised_on_visit_id: 'visit-v1',
+      closed_on_visit_id: 'visit-v3',
+      created_at: '2026-05-28T08:00:00Z',  // earlier → "1.1"
+      snag_photos: [],
+    }
+    const snagClosedV1b = {
+      id: 'snag-closed-v1b',
+      title: 'Second v1 snag (closed this visit)',
+      priority: 'low',
+      status: 'signed_off',
+      location: null,
+      category: null,
+      description: null,
+      raised_by: null,
+      assigned_to: null,
+      raised_on_visit_id: 'visit-v1',
+      closed_on_visit_id: 'visit-v2',
+      created_at: '2026-05-28T09:00:00Z',  // later → "1.2"
+      snag_photos: [],
+    }
+
+    // Override the service mock to use the collision fixture snags
+    mockCreateServiceClient.mockReturnValue({
+      ...buildServiceMock(),
+      schema: (name: string) => {
+        const base = buildServiceMock().schema(name)
+        const baseFrom = base.from.bind(base)
+        return {
+          from: (table: string) => {
+            if (name === 'field' && table === 'snags') {
+              const q: any = {
+                select: () => q,
+                eq: () => q,
+                order: () => q,
+                then: (resolve: any) =>
+                  Promise.resolve({ data: [snagOpenV1a, snagClosedV1b], error: null }).then(resolve),
+              }
+              return q
+            }
+            return baseFrom(table)
+          },
+        }
+      },
+    })
+
+    const { gatherSnagVisitReportData } = await import('./snag-visit-report-data')
+    const data = await gatherSnagVisitReportData(buildCookieMock() as any, PROJECT_ID, VISIT_ID)
+
+    const openSnag = data.stillOpen.find(s => s.id === 'snag-open-v1a')!
+    const closedSnag = data.closedThisVisit.find(s => s.id === 'snag-closed-v1b')!
+
+    expect(openSnag).toBeDefined()
+    expect(closedSnag).toBeDefined()
+
+    // Numbers must be distinct — no collision
+    expect(openSnag.number).not.toBe(closedSnag.number)
+
+    // Stable ordering by created_at: earlier → 1.1, later → 1.2
+    expect(openSnag.number).toBe('1.1')
+    expect(closedSnag.number).toBe('1.2')
+  })
 })
