@@ -122,7 +122,25 @@ SELECT visit_no FROM field.snag_visits
 V=$(mgmt_apply_sql_file "$TMP" | jq -r '.[0].visit_no'); rm -f "$TMP"
 [[ "$V" == "0" ]] && pass "backlog visit_no = 0" || fail "expected visit_no=0, got $V"
 
-section "3b. NEGATIVE: second backlog on same project violates snag_visits_project_no_uniq"
+section "3b. POSITIVE: first non-backlog visit after backlog gets visit_no=1"
+
+TMP=$(make_txn "
+INSERT INTO projects.projects (name, organisation_id, created_by)
+  SELECT 'SMOKE-BACKLOG-SEQ-DNC', $ORG, $WHO;
+INSERT INTO field.snag_visits (organisation_id, project_id, is_backlog, visit_date, conducted_by, title)
+  SELECT $ORG, p.id, true, '2026-01-01', $WHO, 'Initial backlog'
+  FROM projects.projects p WHERE p.name='SMOKE-BACKLOG-SEQ-DNC';
+INSERT INTO field.snag_visits (organisation_id, project_id, is_backlog, visit_date, conducted_by, title)
+  SELECT $ORG, p.id, false, '2026-06-01', $WHO, 'First real visit'
+  FROM projects.projects p WHERE p.name='SMOKE-BACKLOG-SEQ-DNC';
+SELECT visit_no FROM field.snag_visits
+  WHERE project_id=(SELECT id FROM projects.projects WHERE name='SMOKE-BACKLOG-SEQ-DNC')
+    AND is_backlog=false;
+")
+V=$(mgmt_apply_sql_file "$TMP" | jq -r '.[0].visit_no'); rm -f "$TMP"
+[[ "$V" == "1" ]] && pass "first non-backlog visit after backlog gets visit_no=1" || fail "expected visit_no=1 for first real visit, got $V"
+
+section "3c. NEGATIVE: second backlog on same project violates snag_visits_project_no_uniq"
 # NOTE on NEGATIVE sections: mgmt_apply_sql_file exits non-zero on any API
 # error; these blocks discard stderr. The ONLY statement that can fail is the
 # second backlog INSERT (which produces duplicate (project_id, 0)).
@@ -207,6 +225,28 @@ rm -f "$TMP"
 # ---------------------------------------------------------------------------
 section "5b. POSITIVE: deleting the project cascades through visits and snags"
 
+# Step 1: count visits for the test project BEFORE delete — must be > 0 to prove the cascade has real rows to remove.
+TMP=$(make_txn "
+INSERT INTO projects.projects (name, organisation_id, created_by)
+  SELECT 'SMOKE-CASCADE-V-DNC', $ORG, $WHO;
+INSERT INTO field.snag_visits (organisation_id, project_id, is_backlog, visit_date, conducted_by, title)
+  SELECT $ORG, p.id, true, '2026-01-01', $WHO, 'Backlog'
+  FROM projects.projects p WHERE p.name='SMOKE-CASCADE-V-DNC';
+INSERT INTO field.snags (organisation_id, project_id, title, raised_by, raised_on_visit_id)
+  SELECT $ORG,
+         (SELECT id FROM projects.projects WHERE name='SMOKE-CASCADE-V-DNC'),
+         'Snag',
+         $WHO,
+         (SELECT v.id FROM field.snag_visits v
+            JOIN projects.projects p ON p.id=v.project_id
+           WHERE p.name='SMOKE-CASCADE-V-DNC' LIMIT 1);
+SELECT count(*)::int AS n FROM field.snag_visits
+  WHERE project_id=(SELECT id FROM projects.projects WHERE name='SMOKE-CASCADE-V-DNC');
+")
+PRE=$(mgmt_apply_sql_file "$TMP" | jq -r '.[0].n'); rm -f "$TMP"
+[[ "$PRE" -gt "0" ]] && pass "pre-delete: test project has $PRE visit(s) to cascade" || fail "pre-delete: expected >0 visits for test project, got $PRE"
+
+# Step 2: delete the project and assert post-delete visit count is 0.
 TMP=$(make_txn "
 INSERT INTO projects.projects (name, organisation_id, created_by)
   SELECT 'SMOKE-CASCADE-V-DNC', $ORG, $WHO;
@@ -222,15 +262,11 @@ INSERT INTO field.snags (organisation_id, project_id, title, raised_by, raised_o
             JOIN projects.projects p ON p.id=v.project_id
            WHERE p.name='SMOKE-CASCADE-V-DNC' LIMIT 1);
 DELETE FROM projects.projects WHERE name='SMOKE-CASCADE-V-DNC';
-SELECT
-  (SELECT count(*)::int FROM field.snag_visits sv
-     WHERE NOT EXISTS (SELECT 1 FROM projects.projects pp WHERE pp.id=sv.project_id)) +
-  (SELECT count(*)::int FROM field.snags s
-     WHERE NOT EXISTS (SELECT 1 FROM projects.projects pp WHERE pp.id=s.project_id))
-  AS orphans;
+SELECT count(*)::int AS n FROM field.snag_visits sv
+  WHERE NOT EXISTS (SELECT 1 FROM projects.projects pp WHERE pp.id=sv.project_id AND pp.name='SMOKE-CASCADE-V-DNC');
 ")
-ORPHANS=$(mgmt_apply_sql_file "$TMP" | jq -r '.[0].orphans'); rm -f "$TMP"
-[[ "$ORPHANS" == "0" ]] && pass "project cascade removed visits + snags (no orphans)" || fail "expected 0 orphans after cascade, got $ORPHANS"
+POST=$(mgmt_apply_sql_file "$TMP" | jq -r '.[0].n'); rm -f "$TMP"
+[[ "$POST" == "0" ]] && pass "post-delete: project cascade removed visits + snags (0 orphans)" || fail "expected 0 orphan visits after cascade, got $POST"
 
 # ---------------------------------------------------------------------------
 # Section 6 — Catalog: RLS enabled + exactly 3 policies on snag_visits

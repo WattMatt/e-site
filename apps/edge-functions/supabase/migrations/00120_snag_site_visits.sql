@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS field.snag_visits (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     organisation_id UUID        NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
     project_id      UUID        NOT NULL REFERENCES projects.projects(id)    ON DELETE CASCADE,
-    visit_no        INT         NOT NULL DEFAULT 0,
+    visit_no        INT         NOT NULL DEFAULT 0, -- overridden by snag_visits_ensure_no() trigger for non-backlog rows; 0 only stands for backlog rows
     is_backlog      BOOLEAN     NOT NULL DEFAULT false,
     visit_date      DATE        NOT NULL,
     conducted_by    UUID        NOT NULL REFERENCES public.profiles(id),
@@ -39,7 +39,9 @@ DROP TRIGGER IF EXISTS snag_visits_updated_at ON field.snag_visits;
 CREATE TRIGGER snag_visits_updated_at BEFORE UPDATE ON field.snag_visits
     FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
-CREATE OR REPLACE FUNCTION field.snag_visits_ensure_no() RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION field.snag_visits_ensure_no() RETURNS TRIGGER
+    SECURITY DEFINER SET search_path = ''
+AS $$
 BEGIN
   IF NEW.is_backlog THEN
     NEW.visit_no := 0;
@@ -82,9 +84,11 @@ DO $$
 DECLARE r RECORD; v_id UUID; v_raiser UUID;
 BEGIN
   FOR r IN
-    SELECT project_id, organisation_id, MIN(created_at)::date AS first_date
-      FROM field.snags WHERE raised_on_visit_id IS NULL
-      GROUP BY project_id, organisation_id
+    SELECT s.project_id, p.organisation_id, MIN(s.created_at)::date AS first_date
+      FROM field.snags s
+      JOIN projects.projects p ON p.id = s.project_id
+      WHERE s.raised_on_visit_id IS NULL
+      GROUP BY s.project_id, p.organisation_id
   LOOP
     SELECT raised_by INTO v_raiser FROM field.snags
       WHERE project_id = r.project_id AND raised_on_visit_id IS NULL
@@ -98,8 +102,11 @@ BEGIN
 END $$;
 
 -- 5. RLS — mirror field.snags write policies (from 00009 + 00032) --------------
---    SELECT: org membership (mirroring "Org members can view snags" from 00009/00034)
---            Uses user_has_project_access because snag_visits has a project_id.
+--    SELECT: project-scoped access via user_has_project_access(project_id) — consistent
+--            with all other project-scoped tables (structure.*, inspections.*, etc.).
+--            Intentionally broader/cleaner than the legacy field.snags SELECT which
+--            gates on org membership via get_user_org_ids(); snag_visits is a
+--            project-level resource, so the project-scoped helper is the right gate.
 --    INSERT: org membership + payment_paused block (mirroring 00032 "Contractors and above can create snags")
 --    UPDATE: org membership + payment_paused block (mirroring 00032 "Org members can update snags")
 --    DELETE: none — field.snags has no DELETE policy; snag_visits mirrors that.
@@ -126,6 +133,14 @@ DROP POLICY IF EXISTS snag_visits_update ON field.snag_visits;
 CREATE POLICY snag_visits_update ON field.snag_visits
     FOR UPDATE TO authenticated
     USING (
+        organisation_id = ANY(public.get_user_org_ids())
+        AND NOT EXISTS (
+            SELECT 1 FROM projects.projects p
+            WHERE p.id = project_id
+              AND p.status = 'payment_paused'
+        )
+    )
+    WITH CHECK (
         organisation_id = ANY(public.get_user_org_ids())
         AND NOT EXISTS (
             SELECT 1 FROM projects.projects p
