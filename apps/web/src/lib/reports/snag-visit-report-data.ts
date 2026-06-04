@@ -215,9 +215,8 @@ export async function gatherSnagVisitReportData(
   //    Collect all unique user IDs referenced across visit + snags.
   const userIds = new Set<string>()
   if (visitRow.conducted_by) userIds.add(visitRow.conducted_by)
-  if (Array.isArray(visitRow.attendees)) {
-    for (const a of visitRow.attendees) if (a) userIds.add(a)
-  }
+  // NOTE: attendees are { name, company? } objects — NOT profile IDs.
+  // They are not added to the profile-id lookup set.
   for (const s of snags) {
     if (s.raised_by) userIds.add(s.raised_by)
     if (s.assigned_to) userIds.add(s.assigned_to)
@@ -351,8 +350,10 @@ export async function gatherSnagVisitReportData(
   })
 
   // 6. Assemble the serialisable result.
+  // attendees are { name: string; company?: string } objects — build display strings directly.
   const attendeeNames = (Array.isArray(visitRow.attendees) ? visitRow.attendees : [])
-    .map((id: string) => nameOf(id) ?? id)
+    .filter((a: unknown) => a && typeof (a as any).name === 'string')
+    .map((a: any) => a.company ? `${a.name} (${a.company})` : a.name as string)
 
   return {
     branding,

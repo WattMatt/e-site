@@ -186,6 +186,34 @@ const s = StyleSheet.create({
     textAlign: 'center',
   },
 
+  // ── Visit-info header block (top of first body page) ─────────────────────
+  visitInfo: {
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  visitInfoLine: {
+    fontSize: 8,
+    color: '#555555',
+    lineHeight: 1.5,
+  },
+  visitInfoLabel: {
+    fontSize: 7,
+    fontFamily: 'Helvetica-Bold',
+    color: '#888888',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  visitInfoNotes: {
+    fontSize: 8,
+    color: '#777777',
+    fontStyle: 'italic',
+    lineHeight: 1.4,
+    marginTop: 3,
+  },
+
   // ── Running footer (fixed — repeats on every body page) ──────────────────
   footer: {
     position: 'absolute',
@@ -254,6 +282,40 @@ const PRIORITY_LABELS: Record<string, string> = {
 // Sub-components
 // ---------------------------------------------------------------------------
 
+function VisitInfoBlock({
+  conductedByName,
+  visitDate,
+  attendeeNames,
+  notes,
+}: {
+  conductedByName: string | null
+  visitDate: string | null
+  attendeeNames: string[]
+  notes: string | null
+}) {
+  // Nothing to show if all fields are empty
+  if (!conductedByName && !visitDate && attendeeNames.length === 0 && !notes) return null
+  return (
+    <View style={s.visitInfo}>
+      {(conductedByName || visitDate) && (
+        <Text style={s.visitInfoLine}>
+          {conductedByName ? `Conducted by ${conductedByName}` : ''}
+          {conductedByName && visitDate ? ' · ' : ''}
+          {visitDate ?? ''}
+        </Text>
+      )}
+      {attendeeNames.length > 0 && (
+        <Text style={s.visitInfoLine}>
+          Attendees: {attendeeNames.join(', ')}
+        </Text>
+      )}
+      {notes && (
+        <Text style={s.visitInfoNotes}>{notes}</Text>
+      )}
+    </View>
+  )
+}
+
 function PhotoGrid({ photos, label }: { photos: SnagPhotoData[]; label?: string }) {
   if (photos.length === 0) return null
   return (
@@ -278,7 +340,7 @@ function SnagCard({ snag, isClosed }: { snag: ReportSnag; isClosed: boolean }) {
   if (snag.raisedOnVisitLabel) metaParts.push(`raised ${snag.raisedOnVisitLabel}`)
 
   return (
-    <View style={s.card}>
+    <View style={s.card} wrap={false}>
       {/* Header: number + title + badges */}
       <View style={s.cardHeader}>
         <View style={s.cardTitleBlock}>
@@ -377,6 +439,12 @@ export function SnagVisitReportDocument({ data }: { data: SnagVisitReportData })
       {/* ── Body pages ── */}
       <Page size="A4" style={pageStyles.page}>
         <View style={s.body}>
+          <VisitInfoBlock
+            conductedByName={visit.conductedByName}
+            visitDate={visit.visitDate}
+            attendeeNames={visit.attendeeNames}
+            notes={visit.notes}
+          />
           <SectionGroup
             label="NEW THIS VISIT"
             snags={data.newSnags}

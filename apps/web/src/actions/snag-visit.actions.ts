@@ -470,15 +470,22 @@ export async function exportSnagVisitReportAction(
 
   const reportId = (newReport as { id: string }).id
 
-  // ── Supersede the prior issued row ────────────────────────────────────────
-  if (priorRow) {
-    await (serviceClient as any)
-      .schema('projects')
-      .from('reports')
-      .update({ status: 'superseded', superseded_by: reportId })
-      .eq('id', (priorRow as { id: string }).id)
-    // Non-blocking: failure to supersede leaves two 'issued' rows momentarily,
-    // which the UI handles by reading the latest version.
+  // ── Supersede ALL prior issued rows for this visit (self-healing) ─────────
+  // One statement supersedes every issued row, including any duplicates that
+  // might have been created by a previous interrupted export.
+  // Best-effort: a partial unique index (source_table, source_id) WHERE status='issued'
+  // is the durable fix; that would require supersede-before-insert reordering — deferred.
+  const { error: supersededError } = await (serviceClient as any)
+    .schema('projects')
+    .from('reports')
+    .update({ status: 'superseded', superseded_by: reportId })
+    .eq('source_table', 'snag_visits')
+    .eq('source_id', visitId)
+    .eq('status', 'issued')
+    .neq('id', reportId)
+  if (supersededError) {
+    console.error('[exportSnagVisitReportAction] supersede error', supersededError)
+    // Non-blocking: the new row is valid; the UI reads the latest version by version number.
   }
 
   revalidatePath(`/projects/${projectId}/snags/visits/${visitId}`)

@@ -51,7 +51,7 @@ const THIS_VISIT = {
   title: 'Site Visit 2',
   notes: 'Inspection complete.',
   conducted_by: 'user-conductor',
-  attendees: ['user-attendee'],
+  attendees: [{ name: 'J. Smit', company: "Bob's Building" }],
 }
 
 // Three snags covering all three buckets
@@ -130,7 +130,6 @@ const ORG_ROW = {
 
 const PROFILES = [
   { id: 'user-conductor', full_name: 'Jane Conductor', email: 'jane@example.com' },
-  { id: 'user-attendee', full_name: 'Bob Attendee', email: 'bob@example.com' },
   { id: 'user-001', full_name: 'Alice Raiser', email: 'alice@example.com' },
 ]
 
@@ -303,10 +302,10 @@ describe('gatherSnagVisitReportData', () => {
     expect(data.visit.conductedByName).toBe('Jane Conductor')
   })
 
-  it('resolves attendee names from profiles', async () => {
+  it('builds attendeeNames from the { name, company } objects (not profile IDs)', async () => {
     const { gatherSnagVisitReportData } = await import('./snag-visit-report-data')
     const data = await gatherSnagVisitReportData(buildCookieMock() as any, PROJECT_ID, VISIT_ID)
-    expect(data.visit.attendeeNames).toContain('Bob Attendee')
+    expect(data.visit.attendeeNames).toContain("J. Smit (Bob's Building)")
   })
 
   it('populates visit counts correctly', async () => {

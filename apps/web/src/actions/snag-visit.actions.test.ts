@@ -528,9 +528,13 @@ function mockExportServiceClient(opts: {
               : Promise.resolve({ data: { id: REPORT_ID }, error: null }),
           }),
         }),
-        update: () => ({
-          eq: () => Promise.resolve({ data: null, error: null }),
-        }),
+        update: () => {
+          const chain: any = {
+            eq: () => chain,
+            neq: () => Promise.resolve({ data: null, error: null }),
+          }
+          return chain
+        },
       }),
     }),
     storage: {

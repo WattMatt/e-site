@@ -680,8 +680,9 @@ export function VisitDetail({
                 setExportError(result.error)
                 return
               }
-              // Build a signed download URL via the inline preview route
-              // (no separate signed-URL action needed — the GET route streams the PDF).
+              // Build download URL via the inline preview route, which re-renders the
+              // current visit live (equivalent for the latest report). The server-load
+              // path serves the frozen storage_path artifact via a signed URL instead.
               const previewUrl = `/api/projects/${projectId}/snags/visits/${visit.id}/report`
               setLastExported({
                 date: new Date().toISOString(),
