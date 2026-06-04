@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { snagService, formatDate, formatRelative } from '@esite/shared'
 import { SnagStatusForm } from './SnagStatusForm'
 import { SnagPhotoGrid } from './SnagPhotoGrid'
@@ -42,6 +42,54 @@ export default async function SnagDetailPage({ params }: Props) {
       return { ...p, url: data?.signedUrl }
     })
   )
+
+  // ── Resolve visit linkage (additive — Task 4.4) ──
+  // Raised-on and closed-on visit IDs reference field.snag_visits.
+  // Use service client — RLS on snag_visits requires org membership check.
+  // Gracefully handle the case where 00120 is not yet applied (no snag_visits table).
+  const raisedOnVisitId: string | null = (snag as any).raised_on_visit_id ?? null
+  const closedOnVisitId: string | null = (snag as any).closed_on_visit_id ?? null
+
+  let raisedOnVisitNo: number | null = null
+  let closedOnVisitNo: number | null = null
+
+  if (raisedOnVisitId || closedOnVisitId) {
+    try {
+      const serviceClient = createServiceClient() as any
+      const idsToFetch = [...new Set([raisedOnVisitId, closedOnVisitId].filter(Boolean) as string[])]
+      const { data: visitRows } = await serviceClient
+        .schema('field')
+        .from('snag_visits')
+        .select('id, visit_no, is_backlog')
+        .in('id', idsToFetch)
+      if (visitRows) {
+        const visitMap = new Map((visitRows as any[]).map((v: any) => [v.id, v]))
+        if (raisedOnVisitId) {
+          const v = visitMap.get(raisedOnVisitId)
+          raisedOnVisitNo = v?.is_backlog ? null : (v?.visit_no ?? null)
+        }
+        if (closedOnVisitId && closedOnVisitId !== raisedOnVisitId) {
+          const v = visitMap.get(closedOnVisitId)
+          closedOnVisitNo = v?.is_backlog ? null : (v?.visit_no ?? null)
+        } else if (closedOnVisitId === raisedOnVisitId && raisedOnVisitNo !== null) {
+          closedOnVisitNo = raisedOnVisitNo
+        }
+      }
+    } catch {
+      // Graceful fallback: snag_visits table may not exist pre-migration 00120.
+    }
+  }
+
+  // Group photos by visit_id for the Evidence Photos panel.
+  // visit_id column added by 00120; null visit_id photos appear in "General" group.
+  const photosByVisit = new Map<string | null, typeof photoUrls>()
+  for (const p of photoUrls) {
+    const key: string | null = p.visit_id ?? null
+    if (!photosByVisit.has(key)) photosByVisit.set(key, [])
+    photosByVisit.get(key)!.push(p)
+  }
+  // Determine if photos need grouping (>1 distinct visit_id, or any non-null visit_id)
+  const hasVisitGroups = photosByVisit.size > 1 || (photosByVisit.size === 1 && !photosByVisit.has(null))
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 860 }}>
@@ -87,7 +135,7 @@ export default async function SnagDetailPage({ params }: Props) {
             </div>
           )}
 
-          {/* Photos */}
+          {/* Photos — grouped by visit if visit_id column is populated (00120+) */}
           {photoUrls.length > 0 && (
             <div className="data-panel">
               <div className="data-panel-header">
@@ -95,7 +143,32 @@ export default async function SnagDetailPage({ params }: Props) {
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>{photoUrls.length} photo{photoUrls.length !== 1 ? 's' : ''}</span>
               </div>
               <div style={{ padding: '14px 18px' }}>
-                <SnagPhotoGrid photos={photoUrls} />
+                {hasVisitGroups ? (
+                  // Grouped by visit — each group gets a small caption label.
+                  Array.from(photosByVisit.entries()).map(([visitId, groupPhotos]) => {
+                    const groupLabel = visitId
+                      ? `Site Visit ${(groupPhotos[0] as any)._visitNo ?? visitId.slice(0, 8)}`
+                      : 'General'
+                    return (
+                      <div key={visitId ?? '__general'} style={{ marginBottom: 16 }}>
+                        <div style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 9,
+                          fontWeight: 600,
+                          letterSpacing: '0.1em',
+                          textTransform: 'uppercase',
+                          color: 'var(--c-text-dim)',
+                          marginBottom: 8,
+                        }}>
+                          {groupLabel}
+                        </div>
+                        <SnagPhotoGrid photos={groupPhotos} />
+                      </div>
+                    )
+                  })
+                ) : (
+                  <SnagPhotoGrid photos={photoUrls} />
+                )}
               </div>
             </div>
           )}
@@ -141,6 +214,47 @@ export default async function SnagDetailPage({ params }: Props) {
                   </div>
                   <div style={{ fontSize: 13, color: '#34d399' }}>{signedOffBy?.full_name}</div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>{formatDate(snag.signed_off_at)}</div>
+                </div>
+              )}
+
+              {/* Visit linkage — additive, rendered when 00120 is applied */}
+              {raisedOnVisitId && (
+                <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 2 }}>
+                    Raised on
+                  </div>
+                  {project?.id && raisedOnVisitId ? (
+                    <Link
+                      href={`/projects/${project.id}/snags/visits/${raisedOnVisitId}`}
+                      style={{ fontSize: 13, color: '#60a5fa', textDecoration: 'none' }}
+                    >
+                      {raisedOnVisitNo != null ? `Site Visit ${raisedOnVisitNo}` : 'Initial backlog'}
+                    </Link>
+                  ) : (
+                    <div style={{ fontSize: 13, color: 'var(--c-text)' }}>
+                      {raisedOnVisitNo != null ? `Site Visit ${raisedOnVisitNo}` : 'Initial backlog'}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {closedOnVisitId && closedOnVisitId !== raisedOnVisitId && (
+                <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 2 }}>
+                    Closed on
+                  </div>
+                  {project?.id && closedOnVisitId ? (
+                    <Link
+                      href={`/projects/${project.id}/snags/visits/${closedOnVisitId}`}
+                      style={{ fontSize: 13, color: '#34d399', textDecoration: 'none' }}
+                    >
+                      {closedOnVisitNo != null ? `Site Visit ${closedOnVisitNo}` : 'Initial backlog'}
+                    </Link>
+                  ) : (
+                    <div style={{ fontSize: 13, color: 'var(--c-text)' }}>
+                      {closedOnVisitNo != null ? `Site Visit ${closedOnVisitNo}` : 'Initial backlog'}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
