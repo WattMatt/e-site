@@ -9,6 +9,7 @@ import { VisitForm } from '../../_components/VisitForm'
 import {
   closeSnagOnVisitAction,
   addSnagToVisitAction,
+  exportSnagVisitReportAction,
 } from '@/actions/snag-visit.actions'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -58,6 +59,8 @@ interface Props {
   visitNoById: Record<string, number>
   members: Member[]
   currentUserId: string
+  /** Last exported report, if any. Populated by the server page on load. */
+  lastExported?: { date: string; downloadUrl: string } | null
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -560,10 +563,16 @@ export function VisitDetail({
   visitNoById,
   members,
   currentUserId,
+  lastExported: initialLastExported,
 }: Props) {
   const [showEditForm, setShowEditForm] = useState(false)
   const [showAddSnag, setShowAddSnag] = useState(false)
   const [openCollapsed, setOpenCollapsed] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [lastExported, setLastExported] = useState<{ date: string; downloadUrl: string } | null>(
+    initialLastExported ?? null,
+  )
 
   // All hooks unconditionally above any conditional render — React #310 rule.
 
@@ -659,14 +668,28 @@ export function VisitDetail({
           >
             Edit visit
           </Button>
-          {/* TODO(Phase 5): wire to exportSnagVisitReportAction once the report
-              render route is available. The button is disabled here to avoid a
-              broken interaction; Phase 5 (Task 5.4) removes the disabled state
-              and hooks up the download. */}
           <button
             type="button"
-            disabled
-            title="PDF export — available after report wiring (Phase 5)"
+            disabled={isExporting}
+            onClick={async () => {
+              setIsExporting(true)
+              setExportError(null)
+              const result = await exportSnagVisitReportAction(visit.id, projectId)
+              setIsExporting(false)
+              if ('error' in result) {
+                setExportError(result.error)
+                return
+              }
+              // Build a signed download URL via the inline preview route
+              // (no separate signed-URL action needed — the GET route streams the PDF).
+              const previewUrl = `/api/projects/${projectId}/snags/visits/${visit.id}/report`
+              setLastExported({
+                date: new Date().toISOString(),
+                downloadUrl: previewUrl,
+              })
+              // Open inline in a new tab so the browser's native PDF viewer handles it.
+              window.open(previewUrl, '_blank', 'noopener')
+            }}
             style={{
               fontSize: 12,
               fontWeight: 600,
@@ -675,15 +698,62 @@ export function VisitDetail({
               border: 'none',
               background: 'var(--c-amber)',
               color: '#0D0B09',
-              cursor: 'not-allowed',
-              opacity: 0.55,
+              cursor: isExporting ? 'not-allowed' : 'pointer',
+              opacity: isExporting ? 0.6 : 1,
               transition: 'all 0.12s',
+              whiteSpace: 'nowrap',
             }}
           >
-            ⬇ Export PDF
+            {isExporting ? 'Exporting…' : '⬇ Export PDF'}
           </button>
         </div>
       </div>
+
+      {/* ── Export error ──────────────────────────────────────────────── */}
+      {exportError && (
+        <p
+          style={{
+            color: 'var(--c-red)',
+            fontSize: 12,
+            margin: '4px 0 0',
+          }}
+        >
+          Export failed: {exportError}
+        </p>
+      )}
+
+      {/* ── Last exported banner ──────────────────────────────────────── */}
+      {lastExported && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 11,
+            color: 'var(--c-text-dim)',
+            fontFamily: 'var(--font-mono)',
+            margin: '6px 0 0',
+          }}
+        >
+          <span>
+            Last exported{' '}
+            {new Date(lastExported.date).toLocaleDateString('en-ZA', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })}
+          </span>
+          <span style={{ color: 'var(--c-border)' }}>·</span>
+          <a
+            href={lastExported.downloadUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--c-amber)', textDecoration: 'none' }}
+          >
+            re-download
+          </a>
+        </div>
+      )}
 
       {/* ── Inline forms ──────────────────────────────────────────────── */}
       {showEditForm && (
