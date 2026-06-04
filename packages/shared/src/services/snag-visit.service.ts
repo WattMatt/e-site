@@ -16,7 +16,7 @@ export const snagVisitService = {
       .from('snag_visits')
       .select('*')
       .eq('project_id', projectId)
-      .order('visit_no', { ascending: true })
+      .order('visit_no', { ascending: false })
     if (visitErr) throw visitErr
     const visits = (visitRows ?? []) as Array<{ id: string; visit_no: number; [k: string]: unknown }>
 
@@ -88,6 +88,10 @@ export const snagVisitService = {
     if (patch.attendees !== undefined) update.attendees = patch.attendees
     if (patch.title !== undefined) update.title = patch.title
     if (patch.notes !== undefined) update.notes = patch.notes
+
+    if (Object.keys(update).length === 0) {
+      throw new Error('updateVisit: no editable fields provided')
+    }
 
     const { data, error } = await (client as any)
       .schema('field')

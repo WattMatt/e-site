@@ -14,9 +14,10 @@ export const createSnagVisitSchema = z.object({
   notes: z.string().max(5000).optional(),
 })
 
-export const updateSnagVisitSchema = createSnagVisitSchema.partial().extend({
-  visitId: z.string().uuid(),
-})
+export const updateSnagVisitSchema = createSnagVisitSchema
+  .omit({ projectId: true })
+  .partial()
+  .extend({ visitId: z.string().uuid() })
 
 export type VisitAttendee = z.infer<typeof visitAttendeeSchema>
 export type CreateSnagVisitInput = z.infer<typeof createSnagVisitSchema>
