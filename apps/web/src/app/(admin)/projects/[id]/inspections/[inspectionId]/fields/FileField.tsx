@@ -21,21 +21,30 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
     let cancelled = false
     ;(async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // File attachments re-use inspections.photos (see the upload-file route +
+      // spec §4.4): the blob lives in the inspection-attachments bucket and the
+      // original filename is stored in the `caption` column. Mirrors how photo
+      // fields read inspections.photos via useFieldPhotos.
       const { data } = await (supabase as any)
         .schema('inspections')
-        .from('attachments')
-        .select('id, storage_path, filename')
+        .from('photos')
+        .select('id, storage_path, caption')
         .eq('inspection_id', inspectionId)
         .eq('section_id', sectionId)
         .eq('field_id', field.field_id)
       if (cancelled) return
-      const rows = (data ?? []) as FileItem[]
+      const rows = (data ?? []) as Array<{ id: string; storage_path: string; caption: string | null }>
       const withUrls = await Promise.all(
-        rows.map(async (f) => {
+        rows.map(async (r) => {
           const { data: sig } = await supabase.storage
             .from('inspection-attachments')
-            .createSignedUrl(f.storage_path, 3600)
-          return { ...f, signed_url: sig?.signedUrl }
+            .createSignedUrl(r.storage_path, 3600)
+          return {
+            id: r.id,
+            storage_path: r.storage_path,
+            filename: r.caption ?? 'file',
+            signed_url: sig?.signedUrl,
+          }
         }),
       )
       if (!cancelled) setFiles(withUrls)

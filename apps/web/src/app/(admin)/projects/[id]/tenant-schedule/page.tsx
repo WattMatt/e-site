@@ -85,20 +85,18 @@ export default async function TenantSchedulePage({ params }: Props) {
       const { data: details } = await supabase
         .schema('structure')
         .from('tenant_details')
-        .select('node_id, scope_status, scope_document_path, layout_status, layout_issued_at, layout_drawing_path')
+        .select('node_id, scope_status, layout_status, layout_issued_at')
         .in('node_id', nodeIds)
 
       if (details) {
         allTenantDetails = (details as Array<TenantDetails & LayoutDetails>).map((d) => ({
           node_id: d.node_id,
           scope_status: d.scope_status,
-          scope_document_path: d.scope_document_path,
         }))
         allLayoutDetails = (details as Array<TenantDetails & LayoutDetails>).map((d) => ({
           node_id: d.node_id,
           layout_status: d.layout_status ?? 'not_issued',
           layout_issued_at: d.layout_issued_at ?? null,
-          layout_drawing_path: d.layout_drawing_path ?? null,
         }))
       }
     } catch {
