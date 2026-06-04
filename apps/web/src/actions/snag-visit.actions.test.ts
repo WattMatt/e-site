@@ -2,11 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // vi.hoisted ensures mocks are initialised before hoisted vi.mock() factories
 // — avoids the vitest TDZ crash that hit inspections.actions.test.ts.
-const { getByIdMock, createClientMock, createServiceClientMock, revalidatePathMock } = vi.hoisted(() => ({
+const {
+  getByIdMock,
+  createClientMock,
+  createServiceClientMock,
+  revalidatePathMock,
+  gatherMock,
+  renderMock,
+} = vi.hoisted(() => ({
   getByIdMock: vi.fn(),
   createClientMock: vi.fn(),
   createServiceClientMock: vi.fn(),
   revalidatePathMock: vi.fn(),
+  gatherMock: vi.fn(),
+  renderMock: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -14,6 +23,8 @@ vi.mock('@/lib/supabase/server', () => ({
   createServiceClient: createServiceClientMock,
 }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock, revalidateTag: vi.fn() }))
+vi.mock('@/lib/reports/snag-visit-report-data', () => ({ gatherSnagVisitReportData: gatherMock }))
+vi.mock('@/lib/reports/snag-visit-report', () => ({ renderSnagVisitReport: renderMock }))
 vi.mock('@esite/shared', async () => {
   const actual = await vi.importActual<any>('@esite/shared')
   return {
@@ -33,6 +44,7 @@ import {
   deleteSnagVisitAction,
   addSnagToVisitAction,
   closeSnagOnVisitAction,
+  exportSnagVisitReportAction,
 } from './snag-visit.actions'
 
 const PROJECT_ID = '11111111-1111-1111-1111-111111111111'
@@ -189,6 +201,18 @@ beforeEach(async () => {
   getByIdMock.mockResolvedValue({ organisation_id: 'org-1' })
   createClientMock.mockResolvedValue(mockClient())
   createServiceClientMock.mockReturnValue(mockServiceClient())
+
+  gatherMock.mockReset()
+  renderMock.mockReset()
+  gatherMock.mockResolvedValue({
+    branding: { accent: '#F59E0B', issuer: { wordmark: 'WM Consulting' }, kicker: 'SNAG & DEFECT REPORT', projectLine: 'Test Project' },
+    visit: { id: VISIT_ID, visitNo: 1, isBacklog: false, visitDate: '2026-06-04', title: null, notes: null, conductedByName: null, attendeeNames: [], newCount: 0, openCount: 0, closedCount: 0 },
+    projectName: 'Test Project',
+    newSnags: [],
+    stillOpen: [],
+    closedThisVisit: [],
+  })
+  renderMock.mockResolvedValue(Buffer.from('%PDF-1.4 mock'))
 
   vi.unstubAllGlobals()
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'svc'
@@ -447,5 +471,165 @@ describe('closeSnagOnVisitAction — closeout photo guard', () => {
     const res = await closeSnagOnVisitAction('bad', VISIT_ID, PROJECT_ID)
     expect(res).toEqual({ error: expect.any(String) })
     expect(createClientMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// exportSnagVisitReportAction
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REPORT_ID = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
+
+/**
+ * Service-role client mock for the export action.
+ *
+ * Handles four distinct DB/storage calls in order:
+ *  1. schema('projects').from('reports')…maybeSingle() — prior-report lookup
+ *  2. storage.from('reports').upload()
+ *  3. schema('projects').from('reports').insert()…single() — new row
+ *  4. schema('projects').from('reports').update()…eq() — supersede (optional)
+ *
+ * Also handles schema('field').from('snag_visits') for guardVisitBelongsToProject
+ * (which uses the cookie client, not the service client, so it doesn't land here).
+ */
+function mockExportServiceClient(opts: {
+  priorReport?: { id: string; version: number } | null
+  uploadError?: string | null
+  insertError?: string | null
+} = {}) {
+  const {
+    priorReport = null,
+    uploadError = null,
+    insertError = null,
+  } = opts
+
+  return {
+    schema: () => ({
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: () => ({
+                    maybeSingle: () => Promise.resolve({ data: priorReport, error: null }),
+                  }),
+                }),
+              }),
+              maybeSingle: () => Promise.resolve({ data: { id: VISIT_ID }, error: null }),
+            }),
+            maybeSingle: () => Promise.resolve({ data: { id: VISIT_ID }, error: null }),
+          }),
+        }),
+        insert: () => ({
+          select: () => ({
+            single: () => insertError
+              ? Promise.resolve({ data: null, error: { message: insertError } })
+              : Promise.resolve({ data: { id: REPORT_ID }, error: null }),
+          }),
+        }),
+        update: () => ({
+          eq: () => Promise.resolve({ data: null, error: null }),
+        }),
+      }),
+    }),
+    storage: {
+      from: () => ({
+        upload: () => uploadError
+          ? Promise.resolve({ data: null, error: { message: uploadError } })
+          : Promise.resolve({ data: { path: 'path' }, error: null }),
+        remove: () => Promise.resolve({ data: null, error: null }),
+      }),
+    },
+  }
+}
+
+describe('exportSnagVisitReportAction — validation', () => {
+  it('rejects non-uuid visitId before any I/O', async () => {
+    const res = await exportSnagVisitReportAction('bad-id', PROJECT_ID)
+    expect(res).toEqual({ error: expect.any(String) })
+    expect(createClientMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects non-uuid projectId before any I/O', async () => {
+    const res = await exportSnagVisitReportAction(VISIT_ID, 'bad-id')
+    expect(res).toEqual({ error: expect.any(String) })
+    expect(createClientMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('exportSnagVisitReportAction — RBAC gate', () => {
+  it('rejects client_viewer before any service write', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'client_viewer' }))
+    createServiceClientMock.mockReturnValue(mockExportServiceClient())
+
+    const res = await exportSnagVisitReportAction(VISIT_ID, PROJECT_ID)
+    expect('error' in res).toBe(true)
+    // The role gate fires before createServiceClient() is called for writes
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects when no project access (null role)', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: null }))
+    createServiceClientMock.mockReturnValue(mockExportServiceClient())
+
+    const res = await exportSnagVisitReportAction(VISIT_ID, PROJECT_ID)
+    expect('error' in res).toBe(true)
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('exportSnagVisitReportAction — cross-project guard', () => {
+  it('rejects when visit does not belong to project', async () => {
+    createClientMock.mockResolvedValue(mockClient({ visitRow: null }))
+    createServiceClientMock.mockReturnValue(mockExportServiceClient())
+
+    const res = await exportSnagVisitReportAction(VISIT_ID, PROJECT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('not found or does not belong') })
+    // Service client is not called for writes when the guard fails
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('exportSnagVisitReportAction — happy path (no prior report)', () => {
+  it('inserts a reports row with kind=snag and returns reportId + storagePath', async () => {
+    createServiceClientMock.mockReturnValue(mockExportServiceClient({ priorReport: null }))
+
+    const res = await exportSnagVisitReportAction(VISIT_ID, PROJECT_ID)
+
+    expect(res).toEqual({
+      reportId: REPORT_ID,
+      storagePath: expect.stringContaining(`snag-visit-${VISIT_ID}-v1.pdf`),
+    })
+    expect(gatherMock).toHaveBeenCalledWith(expect.anything(), PROJECT_ID, VISIT_ID)
+    expect(renderMock).toHaveBeenCalledTimes(1)
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/projects/${PROJECT_ID}/snags/visits/${VISIT_ID}`)
+  })
+})
+
+describe('exportSnagVisitReportAction — happy path (supersede prior)', () => {
+  it('bumps version to 2 and supersedes the prior issued row', async () => {
+    const PRIOR_REPORT_ID = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+    createServiceClientMock.mockReturnValue(
+      mockExportServiceClient({ priorReport: { id: PRIOR_REPORT_ID, version: 1 } }),
+    )
+
+    const res = await exportSnagVisitReportAction(VISIT_ID, PROJECT_ID)
+
+    expect(res).toEqual({
+      reportId: REPORT_ID,
+      storagePath: expect.stringContaining(`snag-visit-${VISIT_ID}-v2.pdf`),
+    })
+  })
+})
+
+describe('exportSnagVisitReportAction — upload failure', () => {
+  it('returns error when storage upload fails (no DB insert)', async () => {
+    createServiceClientMock.mockReturnValue(
+      mockExportServiceClient({ uploadError: 'bucket full' }),
+    )
+
+    const res = await exportSnagVisitReportAction(VISIT_ID, PROJECT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('Upload failed') })
   })
 })

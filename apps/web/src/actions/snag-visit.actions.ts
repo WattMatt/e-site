@@ -13,6 +13,8 @@ import {
   updateSnagVisitSchema,
 } from '@esite/shared'
 import type { CreateSnagVisitInput, UpdateSnagVisitInput } from '@esite/shared'
+import { gatherSnagVisitReportData } from '@/lib/reports/snag-visit-report-data'
+import { renderSnagVisitReport } from '@/lib/reports/snag-visit-report'
 
 // ── Validation schemas (local — 'use server' files may NOT export schemas/consts) ──
 
@@ -348,4 +350,137 @@ export async function closeSnagOnVisitAction(
   revalidatePath(`/snags/${snagId}`)
   revalidatePath('/snags')
   return {}
+}
+
+// ── Export action ──
+
+const REPORTS_BUCKET = 'reports'
+
+export type ExportSnagVisitReportResult =
+  | { error: string }
+  | { reportId: string; storagePath: string }
+
+/**
+ * Export a Snag & Defect Report for a site visit.
+ *
+ * - RBAC: ORG_WRITE_ROLES (owner / admin / project_manager).
+ * - Renders the PDF via renderSnagVisitReport.
+ * - Uploads to `reports/{org_id}/{project_id}/snag-visit-{visitId}-v{n}.pdf`.
+ * - Inserts a `projects.reports` row (kind='snag', source_table='snag_visits').
+ * - If a prior `status='issued'` report exists for this visit, supersedes it.
+ * - Returns { reportId, storagePath } on success.
+ */
+export async function exportSnagVisitReportAction(
+  visitId: string,
+  projectId: string,
+): Promise<ExportSnagVisitReportResult> {
+  const parse = z.tuple([uuidSchema, uuidSchema]).safeParse([visitId, projectId])
+  if (!parse.success) return { error: 'Invalid parameters' }
+
+  // ── Access + role gate ────────────────────────────────────────────────────
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  // ── Cross-project guard ───────────────────────────────────────────────────
+  const visitGuard = await guardVisitBelongsToProject(visitId, projectId)
+  if (visitGuard) return { error: visitGuard.error }
+
+  // ── Gather data + render ──────────────────────────────────────────────────
+  const supabase = await createClient()
+  let pdfBuffer: Buffer
+  let brandingSnapshot: unknown
+  let visitTitle: string
+
+  try {
+    const reportData = await gatherSnagVisitReportData(supabase, projectId, visitId)
+    pdfBuffer = await renderSnagVisitReport(reportData)
+    // Serialize branding (strip data: URIs so the snapshot stays small — keep
+    // just the plain text / accent fields that describe the identity, not the
+    // embedded image bytes).
+    brandingSnapshot = {
+      accent: reportData.branding.accent,
+      issuer: reportData.branding.issuer.wordmark
+        ? { wordmark: reportData.branding.issuer.wordmark }
+        : { hasLogo: true },
+      kicker: reportData.branding.kicker,
+      projectLine: reportData.branding.projectLine,
+    }
+    visitTitle = reportData.visit.isBacklog
+      ? 'Snag & Defect Report — Initial Backlog'
+      : `Snag & Defect Report — Site Visit ${reportData.visit.visitNo}`
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[exportSnagVisitReportAction] gather/render error', err)
+    return { error: msg }
+  }
+
+  // ── Supersede check — find the current issued report for this visit ──────
+  const serviceClient = createServiceClient()
+
+  const { data: priorRow } = await (serviceClient as any)
+    .schema('projects')
+    .from('reports')
+    .select('id, version')
+    .eq('source_table', 'snag_visits')
+    .eq('source_id', visitId)
+    .eq('status', 'issued')
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const newVersion: number = priorRow ? (priorRow as { version: number }).version + 1 : 1
+
+  // ── Upload PDF to storage ─────────────────────────────────────────────────
+  const storagePath = `${guard.orgId}/${projectId}/snag-visit-${visitId}-v${newVersion}.pdf`
+  const { error: uploadError } = await serviceClient.storage
+    .from(REPORTS_BUCKET)
+    .upload(storagePath, pdfBuffer, {
+      contentType: 'application/pdf',
+      upsert: false,
+    })
+  if (uploadError) return { error: `Upload failed: ${uploadError.message}` }
+
+  // ── Insert projects.reports row ───────────────────────────────────────────
+  const { data: newReport, error: insertError } = await (serviceClient as any)
+    .schema('projects')
+    .from('reports')
+    .insert({
+      organisation_id: guard.orgId,
+      project_id: projectId,
+      kind: 'snag',
+      source_table: 'snag_visits',
+      source_id: visitId,
+      title: visitTitle,
+      storage_path: storagePath,
+      mime_type: 'application/pdf',
+      size_bytes: pdfBuffer.length,
+      status: 'issued',
+      version: newVersion,
+      branding_snapshot: brandingSnapshot,
+      generated_by: guard.userId,
+    })
+    .select('id')
+    .single()
+
+  if (insertError) {
+    // Best-effort rollback of the storage upload to avoid orphans.
+    await serviceClient.storage.from(REPORTS_BUCKET).remove([storagePath])
+    return { error: `Failed to save report record: ${insertError.message}` }
+  }
+
+  const reportId = (newReport as { id: string }).id
+
+  // ── Supersede the prior issued row ────────────────────────────────────────
+  if (priorRow) {
+    await (serviceClient as any)
+      .schema('projects')
+      .from('reports')
+      .update({ status: 'superseded', superseded_by: reportId })
+      .eq('id', (priorRow as { id: string }).id)
+    // Non-blocking: failure to supersede leaves two 'issued' rows momentarily,
+    // which the UI handles by reading the latest version.
+  }
+
+  revalidatePath(`/projects/${projectId}/snags/visits/${visitId}`)
+  return { reportId, storagePath }
 }
