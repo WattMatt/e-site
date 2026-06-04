@@ -78,6 +78,27 @@ async function guardVisitBelongsToProject(
   return null
 }
 
+/**
+ * Verify a snag row exists for projectId before acting on it.
+ * Prevents cross-project snag writes: a caller with write access to project A
+ * must not be able to close a snag that belongs to project B.
+ */
+async function guardSnagBelongsToProject(
+  snagId: string,
+  projectId: string,
+): Promise<{ error: string } | null> {
+  const supabase = await createClient()
+  const { data } = await (supabase as any)
+    .schema('field')
+    .from('snags')
+    .select('id')
+    .eq('id', snagId)
+    .eq('project_id', projectId)
+    .maybeSingle()
+  if (!data) return { error: 'Snag not found or does not belong to this project' }
+  return null
+}
+
 const SNAGS_PATH = (projectId: string) => `/projects/${projectId}/snags`
 
 // ── Visit CRUD actions ──
@@ -160,9 +181,10 @@ export async function deleteSnagVisitAction(
     revalidatePath(SNAGS_PATH(projectId))
     return {}
   } catch (err: unknown) {
-    // Surface the DB FK block (snags reference this visit) as a friendly error
+    // Surface the DB FK block (snags reference this visit) as a friendly error.
+    // Match 'foreign key' only — 'violates' alone also matches check/not-null violations.
     const msg = err instanceof Error ? err.message : String(err)
-    if (msg.includes('foreign key') || msg.includes('violates')) {
+    if (/foreign key/i.test(msg)) {
       return { error: 'This visit cannot be deleted because it still has snags linked to it. Reassign or remove the snags first.' }
     }
     return { error: msg }
@@ -193,7 +215,8 @@ export async function addSnagToVisitAction(input: {
 
   const serviceClient = createServiceClient()
 
-  // Create the snag with raised_on_visit_id forced to this visit
+  // Create the snag with raised_on_visit_id forced to this visit.
+  // No explicit status — new snags intentionally take the DB default (open), never closed.
   const { data: snag, error: snagErr } = await (serviceClient as any)
     .schema('field')
     .from('snags')
@@ -239,6 +262,12 @@ export async function closeSnagOnVisitAction(
   const visitGuard = await guardVisitBelongsToProject(visitId, projectId)
   if (visitGuard) return { error: visitGuard.error }
 
+  // Guard: snag must belong to the SAME project (Fix 1a).
+  // Without this, a caller with write access to project A could pass a snagId
+  // from project B (with a valid A visit/projectId) and close project B's snag.
+  const snagGuard = await guardSnagBelongsToProject(snagId, projectId)
+  if (snagGuard) return { error: snagGuard.error }
+
   // Verify a closeout photo exists (reusing signOffSnagAction's guard pattern)
   const { data: photos, error: photoErr } = await (supabase as any)
     .schema('field')
@@ -255,7 +284,10 @@ export async function closeSnagOnVisitAction(
 
   const serviceClient = createServiceClient()
 
-  // Update the snag: status + closed_on_visit_id
+  // Update the snag: status + closed_on_visit_id.
+  // Defense-in-depth (Fix 1b): scope by project_id as well as id so that even
+  // if the snag guard above were bypassed the service-role write still cannot
+  // touch a snag outside this project.
   const { data: snag, error: updateErr } = await (serviceClient as any)
     .schema('field')
     .from('snags')
@@ -266,6 +298,7 @@ export async function closeSnagOnVisitAction(
       signed_off_at: new Date().toISOString(),
     })
     .eq('id', snagId)
+    .eq('project_id', projectId)
     .select('title, raised_by, assigned_to, organisation_id')
     .single()
 

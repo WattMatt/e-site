@@ -45,47 +45,66 @@ const USER_ID    = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
  *
  * auth.getUser — returns a user.
  * rpc          — returns the effective project role (used by requireEffectiveRole).
- * schema       — returns a builder that settles to { data: visitRow | null, error: null }.
+ * schema       — returns a builder that settles to { data: rowData | null, error: null }.
+ *
+ * snagRow controls what guardSnagBelongsToProject sees (defaults to visitRow so
+ * both guards pass in the same way). Pass snagRow: null to simulate a snag that
+ * does not belong to this project.
  */
 function mockClient(opts: {
   role?: string | null
   visitRow?: object | null
+  snagRow?: object | null | undefined
   photoRows?: object[]
 } = {}) {
   const { role = 'owner', visitRow = { id: VISIT_ID }, photoRows = [] } = opts
+  // snagRow defaults to visitRow sentinel so both guards pass unless explicitly overridden
+  const snagRow = 'snagRow' in opts ? opts.snagRow : { id: SNAG_ID }
 
   const schemaBuilder = (overrideData: unknown) => ({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            maybeSingle: () => Promise.resolve({ data: overrideData, error: null }),
-            limit: () => Promise.resolve({ data: photoRows, error: null }),
-          }),
-          limit: () => Promise.resolve({ data: photoRows, error: null }),
-          maybeSingle: () => Promise.resolve({ data: overrideData, error: null }),
-          single: () => Promise.resolve({ data: overrideData, error: null }),
-        }),
-        maybeSingle: () => Promise.resolve({ data: overrideData, error: null }),
-        limit: () => Promise.resolve({ data: photoRows, error: null }),
-      }),
-      insert: () => ({
+    from: (table: string) => {
+      // guardSnagBelongsToProject queries 'snags'; everything else uses overrideData
+      const rowData = table === 'snags' ? snagRow : overrideData
+      return {
         select: () => ({
-          single: () => Promise.resolve({ data: { id: SNAG_ID }, error: null }),
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: rowData, error: null }),
+              limit: () => Promise.resolve({ data: photoRows, error: null }),
+            }),
+            limit: () => Promise.resolve({ data: photoRows, error: null }),
+            maybeSingle: () => Promise.resolve({ data: rowData, error: null }),
+            single: () => Promise.resolve({ data: rowData, error: null }),
+          }),
+          maybeSingle: () => Promise.resolve({ data: rowData, error: null }),
+          limit: () => Promise.resolve({ data: photoRows, error: null }),
         }),
-      }),
-      update: () => ({
-        eq: () => ({
+        insert: () => ({
           select: () => ({
-            single: () => Promise.resolve({
-              data: { title: 'Test snag', raised_by: 'u2', assigned_to: null, organisation_id: 'org-1' },
-              error: null,
+            single: () => Promise.resolve({ data: { id: SNAG_ID }, error: null }),
+          }),
+        }),
+        update: () => ({
+          eq: () => ({
+            select: () => ({
+              single: () => Promise.resolve({
+                data: { title: 'Test snag', raised_by: 'u2', assigned_to: null, organisation_id: 'org-1' },
+                error: null,
+              }),
+            }),
+            eq: () => ({
+              select: () => ({
+                single: () => Promise.resolve({
+                  data: { title: 'Test snag', raised_by: 'u2', assigned_to: null, organisation_id: 'org-1' },
+                  error: null,
+                }),
+              }),
+              eq: () => Promise.resolve({ data: null, error: null }),
             }),
           }),
-          eq: () => Promise.resolve({ data: null, error: null }),
         }),
-      }),
-    }),
+      }
+    },
   })
 
   return {
@@ -129,10 +148,17 @@ function mockServiceClient(opts: {
         }),
         update: () => ({
           eq: () => ({
+            // .eq('id', snagId) — first eq
             select: () => ({
               single: () => Promise.resolve({ data: updateResult, error: null }),
             }),
-            eq: () => Promise.resolve({ data: null, error: null }),
+            // .eq('id', snagId).eq('project_id', projectId) — defense-in-depth (Fix 1b)
+            eq: () => ({
+              select: () => ({
+                single: () => Promise.resolve({ data: updateResult, error: null }),
+              }),
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
           }),
         }),
         delete: () => ({
@@ -286,14 +312,18 @@ describe('RBAC gate (C1) — client_viewer is rejected before any write', () => 
     expect(snagVisitService.deleteVisit).not.toHaveBeenCalled()
   })
 
-  it('addSnagToVisitAction — rejected', async () => {
+  it('addSnagToVisitAction — rejected, no service write', async () => {
     const res = await addSnagToVisitAction({ visitId: VISIT_ID, projectId: PROJECT_ID, title: 'Test snag' })
     expect('error' in res).toBe(true)
+    // The role gate fires before createServiceClient() is ever called
+    expect(createServiceClientMock).not.toHaveBeenCalled()
   })
 
-  it('closeSnagOnVisitAction — rejected', async () => {
+  it('closeSnagOnVisitAction — rejected, no service write', async () => {
     const res = await closeSnagOnVisitAction(SNAG_ID, VISIT_ID, PROJECT_ID)
     expect('error' in res).toBe(true)
+    // The role gate fires before createServiceClient() is ever called
+    expect(createServiceClientMock).not.toHaveBeenCalled()
   })
 })
 
@@ -330,14 +360,37 @@ describe('cross-project guard (M1) — visit does not belong to project', () => 
     expect(snagVisitService.deleteVisit).not.toHaveBeenCalled()
   })
 
-  it('addSnagToVisitAction — cross-project rejected', async () => {
+  it('addSnagToVisitAction — cross-project rejected, no service write', async () => {
     const res = await addSnagToVisitAction({ visitId: VISIT_ID, projectId: PROJECT_ID, title: 'Test snag' })
     expect('error' in res).toBe(true)
+    // Visit guard fires before createServiceClient() is called
+    expect(createServiceClientMock).not.toHaveBeenCalled()
   })
 
-  it('closeSnagOnVisitAction — cross-project rejected', async () => {
+  it('closeSnagOnVisitAction — cross-project rejected (visit not in project), no service write', async () => {
     const res = await closeSnagOnVisitAction(SNAG_ID, VISIT_ID, PROJECT_ID)
     expect('error' in res).toBe(true)
+    // Visit guard fires before createServiceClient() is called
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-project snag guard (Fix 1) — visit is valid but snag belongs to a different project
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('cross-project snag guard (Fix 1) — valid visit, snag from wrong project', () => {
+  it('closeSnagOnVisitAction — rejected before any service write', async () => {
+    // Visit is valid (visitRow present) but snag does not belong to this project
+    createClientMock.mockResolvedValue(
+      mockClient({ visitRow: { id: VISIT_ID }, snagRow: null }),
+    )
+    createServiceClientMock.mockReturnValue(mockServiceClient())
+
+    const res = await closeSnagOnVisitAction(SNAG_ID, VISIT_ID, PROJECT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('not found or does not belong') })
+    // Guard fires before createServiceClient() is ever called
+    expect(createServiceClientMock).not.toHaveBeenCalled()
   })
 })
 
