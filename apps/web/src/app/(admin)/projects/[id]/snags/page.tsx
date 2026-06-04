@@ -237,7 +237,6 @@ export default async function ProjectSnagsPage({ params, searchParams }: Props) 
           {snags.map((snag) => {
             const raisedBy = (snag as any).raised_by_profile
             const assignedTo = (snag as any).assigned_to_profile
-            const visitNo = (snag as any).raised_on_visit_no as number | null | undefined
             return (
               <Link
                 key={snag.id}
@@ -287,9 +286,6 @@ export default async function ProjectSnagsPage({ params, searchParams }: Props) 
                     {snag.location && <span>📍 {snag.location}</span>}
                     {raisedBy && <span>By {raisedBy.full_name}</span>}
                     {assignedTo && <span>→ {assignedTo.full_name}</span>}
-                    {visitNo != null && (
-                      <span style={{ color: 'var(--c-amber)' }}>Visit {visitNo}</span>
-                    )}
                     <span>{formatDate(snag.created_at)}</span>
                   </div>
                 </div>

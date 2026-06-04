@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
-import { snagStatusBadge, priorityBadge } from '@/components/ui/Badge'
+import { snagStatusBadge } from '@/components/ui/Badge'
 import { VisitForm } from '../../_components/VisitForm'
 import {
   closeSnagOnVisitAction,

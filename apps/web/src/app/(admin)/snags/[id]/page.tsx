@@ -52,28 +52,34 @@ export default async function SnagDetailPage({ params }: Props) {
 
   let raisedOnVisitNo: number | null = null
   let closedOnVisitNo: number | null = null
+  // visitMap is also used by the photo group label renderer below.
+  const visitMap = new Map<string, { visit_no: number; is_backlog: boolean }>()
 
-  if (raisedOnVisitId || closedOnVisitId) {
+  const photoVisitIds = photoUrls.map((p: any) => p.visit_id).filter(Boolean) as string[]
+  const allVisitIdsToFetch = [...new Set([
+    raisedOnVisitId,
+    closedOnVisitId,
+    ...photoVisitIds,
+  ].filter(Boolean) as string[])]
+
+  if (allVisitIdsToFetch.length > 0) {
     try {
       const serviceClient = createServiceClient() as any
-      const idsToFetch = [...new Set([raisedOnVisitId, closedOnVisitId].filter(Boolean) as string[])]
       const { data: visitRows } = await serviceClient
         .schema('field')
         .from('snag_visits')
         .select('id, visit_no, is_backlog')
-        .in('id', idsToFetch)
-      if (visitRows) {
-        const visitMap = new Map((visitRows as any[]).map((v: any) => [v.id, v]))
-        if (raisedOnVisitId) {
-          const v = visitMap.get(raisedOnVisitId)
-          raisedOnVisitNo = v?.is_backlog ? null : (v?.visit_no ?? null)
-        }
-        if (closedOnVisitId && closedOnVisitId !== raisedOnVisitId) {
-          const v = visitMap.get(closedOnVisitId)
-          closedOnVisitNo = v?.is_backlog ? null : (v?.visit_no ?? null)
-        } else if (closedOnVisitId === raisedOnVisitId && raisedOnVisitNo !== null) {
-          closedOnVisitNo = raisedOnVisitNo
-        }
+        .in('id', allVisitIdsToFetch)
+      for (const v of visitRows ?? []) visitMap.set(v.id, v)
+      if (raisedOnVisitId) {
+        const v = visitMap.get(raisedOnVisitId)
+        raisedOnVisitNo = v?.is_backlog ? null : (v?.visit_no ?? null)
+      }
+      if (closedOnVisitId && closedOnVisitId !== raisedOnVisitId) {
+        const v = visitMap.get(closedOnVisitId)
+        closedOnVisitNo = v?.is_backlog ? null : (v?.visit_no ?? null)
+      } else if (closedOnVisitId === raisedOnVisitId && raisedOnVisitNo !== null) {
+        closedOnVisitNo = raisedOnVisitNo
       }
     } catch {
       // Graceful fallback: snag_visits table may not exist pre-migration 00120.
@@ -146,8 +152,9 @@ export default async function SnagDetailPage({ params }: Props) {
                 {hasVisitGroups ? (
                   // Grouped by visit — each group gets a small caption label.
                   Array.from(photosByVisit.entries()).map(([visitId, groupPhotos]) => {
+                    const visitNo = visitId ? visitMap.get(visitId)?.visit_no : undefined
                     const groupLabel = visitId
-                      ? `Site Visit ${(groupPhotos[0] as any)._visitNo ?? visitId.slice(0, 8)}`
+                      ? `Site Visit ${visitNo ?? visitId.slice(0, 8)}`
                       : 'General'
                     return (
                       <div key={visitId ?? '__general'} style={{ marginBottom: 16 }}>

@@ -48,4 +48,21 @@ describe('computeVisitBuckets', () => {
     expect(r.newSnags).toHaveLength(0)
     expect(r.stillOpen).toHaveLength(0)
   })
+
+  // Off-process close: status='signed_off' but closed_on_visit_id=null (legacy form close).
+  // Must NOT appear in stillOpen — the status gate catches it.
+  it('off-process close (signed_off, no closed_on_visit_id) is not in stillOpen', () => {
+    const snags = [S('a', 'v0', null, 'signed_off')]
+    const r = computeVisitBuckets(V('v2', 2), visits, snags)
+    expect(r.stillOpen).toHaveLength(0)
+    expect(r.closedThisVisit).toHaveLength(0)
+  })
+
+  // Re-open: status='open' but stale closed_on_visit_id='v1' (re-opened after visit close).
+  // Must appear in stillOpen at v2 — stale stamp is ignored when status is not closed.
+  it('re-opened snag (status=open, stale closed_on_visit_id) is in stillOpen', () => {
+    const snags = [S('a', 'v0', 'v1', 'open')]
+    const r = computeVisitBuckets(V('v2', 2), visits, snags)
+    expect(r.stillOpen.map(s => s.id)).toEqual(['a'])
+  })
 })

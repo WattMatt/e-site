@@ -5,7 +5,6 @@ import {
   projectService,
   snagVisitService,
   computeVisitBuckets,
-  formatDate,
 } from '@esite/shared'
 import { VisitDetail } from './VisitDetail'
 
