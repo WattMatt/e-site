@@ -246,6 +246,12 @@ export function TenantDocumentList({
 
   const activeDoc = documents.find((d) => d.id === activeDocId) ?? null
 
+  // This list is per (kind, node): show only the documents of THIS panel's kind.
+  // listTenantDocumentsAction returns all of a node's documents (both kinds), so
+  // without this filter the Layout panel and the Scope panel would each render the
+  // union — drawings showing under Scope of Work and vice versa.
+  const visibleDocuments = documents.filter((d) => d.kind === kind)
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -300,7 +306,7 @@ export function TenantDocumentList({
         )}
 
         {/* Empty state */}
-        {documents.length === 0 && !showAddForm && (
+        {visibleDocuments.length === 0 && !showAddForm && (
           <div style={{ fontSize: 13, color: 'var(--c-text-dim)', fontStyle: 'italic', marginBottom: 12 }}>
             No drawings yet.
           </div>
@@ -308,7 +314,7 @@ export function TenantDocumentList({
 
         {/* Document rows */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {documents.map((doc) => {
+          {visibleDocuments.map((doc) => {
             const currentRev = doc.revisions[0] ?? null
             const revCount = doc.revisions.length
             const isConfirmingDelete = confirmDeleteId === doc.id
