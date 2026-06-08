@@ -38,7 +38,8 @@ membership.
 | `/dashboard` | W | W | W | W | W | W | R |
 | `/projects` (list) | W | W | W | W | R | — | R |
 | `/projects/[id]` (overview) | W | W | W | W | R | — | R |
-| `/projects/[id]/snags` | W | W | W | W | R | — | R |
+| `/projects/[id]/snags` (list; `?view=visits\|all`) | W | W | W | W | R | — | R |
+| `/projects/[id]/snags/visits/[visitId]` (visit detail) | W | W | W | W | R | — | R |
 | `/projects/[id]/diary` | W | W | W | W | R | — | R |
 | `/projects/[id]/cables` | W | W | W | W | — | — | R¹ |
 | `/projects/[id]/equipment-schedule` | W | W | W | W | — | — | R¹ |
@@ -104,6 +105,24 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/notifications/dispatch` | bearer-token; not session-gated — **not yet audited** |
 | `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |
 | `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | — |
+| `GET /api/projects/[id]/snags/visits/[visitId]/report` | R | R | R | R | R | — | R |
+
+## Server actions (`apps/web/src/actions/*`)
+
+Read-only actions require project access (any project member). Write/export actions are gated to `ORG_WRITE_ROLES` (owner / admin / project_manager) via `requireEffectiveRole`, enforced in-app on top of RLS.
+
+### Snag site visits (`snag-visit.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `createSnagVisitAction` | W | W | W | — | — | — | — |
+| `updateSnagVisitAction` | W | W | W | — | — | — | — |
+| `deleteSnagVisitAction` | W | W | W | — | — | — | — |
+| `addSnagToVisitAction` | W | W | W | W | W | W | — |
+| `closeSnagOnVisitAction` | W | W | W | W | W | W | — |
+| `exportSnagVisitReportAction` (renders + persists to `projects.reports`, kind=`snag`) | W | W | W | — | — | — | — |
+
+> **Widened 2026-06-04:** raising/closing a snag *on a visit* (`addSnagToVisitAction`, `closeSnagOnVisitAction`) is gated to `SNAG_FIELD_ROLES` = every role **except** read-only `client_viewer` — site agents (contractor/inspector/supplier) can both raise and close snags during a visit. Creating/editing the visit and exporting the report stay `ORG_WRITE_ROLES` (owner/admin/PM).
 
 ## Public / unauthenticated
 
