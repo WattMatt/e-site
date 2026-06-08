@@ -17,6 +17,7 @@ import type { EquipmentFormValues } from './EquipmentForm'
 import type { Node } from '@esite/shared'
 import { EQUIPMENT_KINDS } from '@esite/shared'
 import type { EquipmentKind } from '@esite/shared'
+import { naturalCompare } from '@/lib/natural-compare'
 import {
   createEquipmentNodeAction,
   editEquipmentNodeAction,
@@ -635,14 +636,16 @@ export function EquipmentTable({ nodes, projectId, ordersByNodeId }: Props) {
       label: KIND_LABEL[k],
       kind: k,
       customLabel: null,
-      nodes: equipmentNodes.filter((n) => n.kind === k),
+      nodes: equipmentNodes.filter((n) => n.kind === k).sort((a, b) => naturalCompare(a.code, b.code)),
     })),
     ...customLabels.map((lbl) => ({
       key: `custom:${lbl}`,
       label: lbl,
       kind: 'custom' as EquipmentKind,
       customLabel: lbl,
-      nodes: equipmentNodes.filter((n) => n.kind === 'custom' && n.custom_kind_label === lbl),
+      nodes: equipmentNodes
+        .filter((n) => n.kind === 'custom' && n.custom_kind_label === lbl)
+        .sort((a, b) => naturalCompare(a.code, b.code)),
     })),
   ]
 

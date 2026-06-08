@@ -14,7 +14,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, listNodes, computeOrderRequiredBy, computeRagStatus } from '@esite/shared'
+import { projectService, listNodes, computeOrderRequiredBy, computeRagStatus, EQUIPMENT_KINDS } from '@esite/shared'
+import { naturalCompare } from '@/lib/natural-compare'
 import { Card, CardBody } from '@/components/ui/Card'
 import type { OrderRowData } from './_components/OrderRow'
 import type { OrderDoc } from './_components/OrderDocSlot'
@@ -321,15 +322,55 @@ export default async function MaterialOrdersPage({ params, searchParams }: Props
     }
   }
 
-  // Within each group, surface the most urgent orders first: earliest
-  // required-by date at the top, undated orders last.
+  // ── Harden the pull-through: surface equipment boards with no order row ───
+  // Materials lists node_orders, so an equipment node created outside
+  // createEquipmentNodeAction (e.g. a bulk import) has no order and would be
+  // silently absent from the buy-list — the exact gap that hid 6 Kings Walk
+  // boards. Render any such board as a synthetic 'required' row keyed to the
+  // node, so an equipment board can never be silently dropped again. Synthetic
+  // rows are read-only (no doc/status actions) until a real order exists —
+  // see OrderRow.
+  const equipmentKindSet = new Set<string>(EQUIPMENT_KINDS)
+  const nodeIdsWithEquipmentOrder = new Set(
+    rawOrders.filter((o) => o.scope_item_type_id === null).map((o) => o.node_id),
+  )
+  if (!activeStatus || activeStatus === 'required') {
+    for (const node of nodes) {
+      if (!equipmentKindSet.has(node.kind)) continue
+      if (node.status !== 'active') continue
+      if (nodeIdsWithEquipmentOrder.has(node.id)) continue
+      const requiredBy = computeOrderRequiredBy({ openingDate, tenant: null })
+      const row: OrderRowData = {
+        id: `synthetic:${node.id}`,
+        node_code: node.code,
+        node_name: node.name ?? null,
+        label: node.code,
+        status: 'required',
+        ordered_at: null,
+        received_at: null,
+        required_by: requiredBy,
+        rag: computeRagStatus(requiredBy, 'required', today),
+        notes: '',
+        documents: EMPTY_DOCS(),
+        shopDrawings: [],
+        synthetic: true,
+      }
+      if (node.kind === 'custom') {
+        const lbl = node.custom_kind_label ?? 'Custom'
+        const groupKey = `custom:${lbl}`
+        customGroupLabel.set(groupKey, lbl)
+        pushTo(groupKey, row)
+      } else {
+        pushTo(node.kind, row)
+      }
+    }
+  }
+
+  // Within each group, order boards alphanumerically by code (natural sort:
+  // DB-2 before DB-10). Replaces the prior required-by-date ordering — the RAG
+  // pill still flags urgency per row.
   for (const bucket of grouped.values()) {
-    bucket.sort((a, b) => {
-      if (a.required_by === b.required_by) return 0
-      if (!a.required_by) return 1
-      if (!b.required_by) return -1
-      return a.required_by.localeCompare(b.required_by)
-    })
+    bucket.sort((a, b) => naturalCompare(a.node_code, b.node_code))
   }
 
   // Display order: built-in groups first, then custom-type groups sorted by name.

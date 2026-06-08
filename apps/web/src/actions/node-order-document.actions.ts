@@ -254,6 +254,7 @@ export type GetNodeOrderDocumentSignedUrlResult = { url: string } | { error: str
 export async function getNodeOrderDocumentSignedUrlAction(
   projectId: string,
   storagePath: string,
+  downloadName?: string,
 ): Promise<GetNodeOrderDocumentSignedUrlResult> {
   const parsed = z
     .object({ projectId: uuidSchema, storagePath: z.string().min(1) })
@@ -263,9 +264,11 @@ export async function getNodeOrderDocumentSignedUrlAction(
   const guard = await guardProjectAccess(projectId)
   if (guard.error !== undefined) return { error: guard.error }
 
+  // downloadName set → Content-Disposition: attachment (forces a download with
+  // that filename). Omitted → inline URL for in-tab preview.
   const { data, error } = await guard.supabase.storage
     .from(BUCKET)
-    .createSignedUrl(storagePath, 300)
+    .createSignedUrl(storagePath, 300, downloadName ? { download: downloadName } : undefined)
 
   if (error || !data?.signedUrl) {
     return { error: error?.message ?? 'Could not generate signed URL' }
