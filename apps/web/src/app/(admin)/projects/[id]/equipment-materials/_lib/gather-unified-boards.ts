@@ -52,7 +52,7 @@ const EMPTY_DOCS = (): ProcLine['documents'] => ({ quote: null, order_instructio
 const GROUP_LABEL: Record<string, string> = {
   rmu: 'Ring Main Units (RMU)', mini_sub: 'Mini-Substations', generator: 'Generators',
   main_board: 'Main Boards', common_area_board: 'Common Area Boards',
-  common_area_lighting: 'Common Area Lighting', tenant_db: 'Tenant / Shop Boards',
+  common_area_lighting: 'Common Area Lighting', sub_board: 'Sub-Boards', tenant_db: 'Tenant / Shop Boards',
 }
 // built-in display order; custom groups append after, tenant_db last
 const GROUP_ORDER = ['rmu', 'mini_sub', 'generator', 'main_board', 'common_area_board', 'common_area_lighting']
@@ -98,8 +98,11 @@ export function gatherUnifiedBoards(
       const worst = lines.find((l) => l.rag === 'red') ?? lines.find((l) => l.rag === 'amber') ?? lines[0]
       summary = { status: lines[0]?.status ?? 'none', rollup, requiredBy: worst?.required_by ?? null, rag: worst?.rag ?? 'neutral' }
     } else {
+      // Equipment board: one line. An orderless equipment board is still a
+      // buy-list item that needs ordering, so it reads as 'required' (spec §6
+      // backstop) — never 'none', so it stays visible under the Required filter.
       const l = lines[0]
-      summary = { status: l?.status ?? 'none', rollup: null, requiredBy: l?.required_by ?? null, rag: l?.rag ?? 'neutral' }
+      summary = { status: l?.status ?? 'required', rollup: null, requiredBy: l?.required_by ?? null, rag: l?.rag ?? 'neutral' }
     }
 
     const board: UnifiedBoard = {
@@ -115,8 +118,13 @@ export function gatherUnifiedBoards(
   for (const arr of byKey.values()) arr.sort((a, b) => naturalCompare(a.code, b.code))
 
   const customKeys = [...byKey.keys()].filter((k) => k.startsWith('custom:')).sort((a, b) => a.localeCompare(b))
-  const orderedKeys = [...GROUP_ORDER, ...customKeys, 'tenant_db']
+  // Catch-all: any kind not in the known order (e.g. a future sub_board, or any
+  // kind added to the CHECK constraint later) still surfaces — a board must
+  // never be silently dropped (spec D5). They slot in before Tenant / Shop.
+  const placed = new Set([...GROUP_ORDER, ...customKeys, 'tenant_db'])
+  const otherKeys = [...byKey.keys()].filter((k) => !placed.has(k)).sort((a, b) => naturalCompare(a, b))
+  const orderedKeys = [...GROUP_ORDER, ...customKeys, ...otherKeys, 'tenant_db']
   return orderedKeys
     .filter((k) => (byKey.get(k)?.length ?? 0) > 0)
-    .map((k) => ({ key: k, label: GROUP_LABEL[k] ?? customLabel.get(k) ?? 'Custom', boards: byKey.get(k)! }))
+    .map((k) => ({ key: k, label: GROUP_LABEL[k] ?? customLabel.get(k) ?? k, boards: byKey.get(k)! }))
 }

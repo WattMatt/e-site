@@ -62,4 +62,33 @@ describe('gatherUnifiedBoards', () => {
     const groups = gatherUnifiedBoards(base)
     expect(groups.map((g) => g.key)).toEqual(['common_area_board', 'tenant_db'])
   })
+
+  it('never drops an unanticipated kind (e.g. sub_board) — it gets a catch-all group', () => {
+    const input: GatherInput = {
+      ...base,
+      nodes: [
+        ...base.nodes,
+        { id: 's1', code: 'SB-1', name: null, kind: 'sub_board', status: 'active', coc_required: false, custom_kind_label: null, shop_name: null, shop_number: null },
+      ],
+      orders: [
+        ...base.orders,
+        { id: 'os1', node_id: 's1', label: 'SB-1', scope_item_type_id: null, status: 'required', ordered_at: null, received_at: null, notes: '' },
+      ],
+    }
+    const sb = gatherUnifiedBoards(input).find((g) => g.key === 'sub_board')
+    expect(sb).toBeDefined()
+    expect(sb!.label).toBe('Sub-Boards')
+    expect(sb!.boards.map((b) => b.code)).toEqual(['SB-1'])
+  })
+
+  it('an orderless equipment board reads as required (so it is never hidden)', () => {
+    const input: GatherInput = {
+      ...base,
+      nodes: [{ id: 'e0', code: 'DB-99', name: null, kind: 'main_board', status: 'active', coc_required: false, custom_kind_label: null, shop_name: null, shop_number: null }],
+      orders: [],
+    }
+    const b = gatherUnifiedBoards(input).find((g) => g.key === 'main_board')!.boards[0]
+    expect(b.lines).toHaveLength(0)
+    expect(b.summary.status).toBe('required')
+  })
 })

@@ -218,8 +218,9 @@ export default async function EquipmentMaterialsPage({ params, searchParams }: P
 
   // ── Status filter ────────────────────────────────────────────────────────
   // A board is shown if ANY of its lines has the active status. Equipment
-  // boards have one line; tenant boards may have several. Boards with no lines
-  // (orderless — should not occur post-trigger) only show with no filter.
+  // boards have one line; tenant boards may have several. An orderless board
+  // (no lines — should not occur post-trigger) is matched by its summary status
+  // (equipment → 'required'), so it is never hidden behind a filter.
   const validStatuses = new Set<string>(STATUS_ORDER)
   const activeStatus: ProcStatus | null =
     statusFilter && validStatuses.has(statusFilter) ? (statusFilter as ProcStatus) : null
@@ -228,18 +229,27 @@ export default async function EquipmentMaterialsPage({ params, searchParams }: P
     ? groups
         .map((g) => ({
           ...g,
-          boards: g.boards.filter((b) => b.lines.some((l) => l.status === activeStatus)),
+          boards: g.boards.filter((b) =>
+            b.lines.length
+              ? b.lines.some((l) => l.status === activeStatus)
+              : b.summary.status === activeStatus,
+          ),
         }))
         .filter((g) => g.boards.length > 0)
     : groups
 
-  // Status pill counts — over every line of every visible board.
+  // Status pill counts — every line, plus orderless boards under their summary.
   const countByStatus: Record<ProcStatus, number> = { by_tenant: 0, required: 0, ordered: 0, received: 0 }
   let totalLines = 0
   for (const g of groups) {
     for (const b of g.boards) {
-      for (const l of b.lines) {
-        countByStatus[l.status]++
+      if (b.lines.length) {
+        for (const l of b.lines) {
+          countByStatus[l.status]++
+          totalLines++
+        }
+      } else if (b.summary.status !== 'none') {
+        countByStatus[b.summary.status]++
         totalLines++
       }
     }
