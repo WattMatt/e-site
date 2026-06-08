@@ -8,8 +8,9 @@
  *   - a loading state,
  *   - the blocked reason (Cancel only) when an issued cable revision / child
  *     boards prevent the delete, or
- *   - the destruction summary (non-zero counts) + a single "Delete permanently"
- *     danger button (no type-to-confirm, per the spec).
+ *   - the destruction summary (non-zero counts) + a type-to-confirm input (the
+ *     "Delete permanently" danger button stays disabled until the exact board
+ *     code is typed).
  *
  * On confirm → hardDeleteTenantAction → router.refresh() + onClose(); any error
  * surfaces inline. Mirrors BoardManageModals' DecommissionBoardModal
@@ -40,6 +41,7 @@ export function TenantDeleteModal({
   const router = useRouter()
   const [summary, setSummary] = useState<TenantDeleteSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [confirmText, setConfirmText] = useState('')
   const [isDeleting, startDelete] = useTransition()
 
   useEffect(() => {
@@ -152,11 +154,42 @@ export function TenantDeleteModal({
               </div>
             )}
 
+            <div style={{ marginTop: 16 }}>
+              <label
+                htmlFor="tenant-delete-confirm"
+                style={{ display: 'block', marginBottom: 6, fontSize: 12, color: 'var(--c-text-mid)', fontFamily: 'var(--font-sans)' }}
+              >
+                Type{' '}
+                <strong style={{ color: 'var(--c-text)', fontFamily: 'var(--font-mono)' }}>{code}</strong>
+                {' '}to confirm
+              </label>
+              <input
+                id="tenant-delete-confirm"
+                aria-label={`Type ${code} to confirm`}
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                autoComplete="off"
+                disabled={isDeleting}
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 6,
+                  background: 'var(--c-bg)', border: '1px solid var(--c-border)',
+                  color: 'var(--c-text)', fontSize: 13, fontFamily: 'var(--font-mono)',
+                }}
+              />
+            </div>
+
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
               <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={isDeleting}>
                 Cancel
               </Button>
-              <Button type="button" variant="danger" size="sm" onClick={handleDelete} isLoading={isDeleting} disabled={isDeleting}>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={handleDelete}
+                isLoading={isDeleting}
+                disabled={isDeleting || confirmText.trim() !== code}
+              >
                 Delete permanently
               </Button>
             </div>

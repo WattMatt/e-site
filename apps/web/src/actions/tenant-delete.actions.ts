@@ -93,6 +93,40 @@ async function serviceDelete(
   return { ok: true }
 }
 
+/** Generic service-role raw-fetch INSERT (same Content-Profile parameterisation). */
+async function serviceInsert(
+  supabaseUrl: string,
+  serviceKey: string,
+  schema: string,
+  table: string,
+  row: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  let res: Response
+  try {
+    res = await fetch(`${supabaseUrl}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        'Content-Profile': schema,
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify(row),
+    })
+  } catch (e) {
+    // A transport-level failure must become a clean { ok:false } so the caller's
+    // abort branch fires the deliberate "audit failed, delete aborted" message —
+    // rather than throwing an unhandled server-action error.
+    return { ok: false, error: `INSERT ${schema}.${table} network error: ${(e as Error).message}` }
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `INSERT ${schema}.${table} failed (HTTP ${res.status}): ${text.slice(0, 400)}` }
+  }
+  return { ok: true }
+}
+
 // ---------------------------------------------------------------------------
 // Guards (mirror tenant-documents.actions.ts)
 // ---------------------------------------------------------------------------
@@ -348,6 +382,36 @@ export async function hardDeleteTenantAction(
     for (const row of ((handoverDocs as Array<{ storage_path: string }>) ?? [])) {
       if (row.storage_path) handoverPaths.push(row.storage_path)
     }
+  }
+
+  // 2b. Write the deletion audit row BEFORE any destructive delete — a tenant
+  //     must never be deleted without a trace. If the audit write fails we abort
+  //     here, while nothing has been deleted yet (fatal, not best-effort).
+  //     `old_values.counts` is a materiality summary of the captured delete-path
+  //     variables (not the full TenantDeleteCounts); a complete per-table trace
+  //     and an in-app read surface land with the audit consumer in Phase 5.
+  const auditRow = {
+    organisation_id: guard.orgId,
+    actor_id: guard.user.id,
+    entity_type: 'tenant_db',
+    entity_id: nodeId,
+    action: 'delete',
+    old_values: {
+      code: loaded.node.code,
+      name: loaded.node.name,
+      counts: {
+        documents: docIds.length,
+        orders: orderIds.length,
+        cableSupplies: supplies.length,
+        shopDrawings: ((drawingsRes.data as unknown[]) ?? []).length,
+        handoverDocuments: handoverDocIds.length,
+        storageFiles: tenantDocPaths.length + nodeOrderPaths.length + handoverPaths.length,
+      },
+    },
+  }
+  const auditRes = await serviceInsert(supabaseUrl, serviceKey, 'public', 'audit_log', auditRow)
+  if (!auditRes.ok) {
+    return { error: `Could not record the deletion audit — delete aborted. ${auditRes.error ?? ''}`.trim() }
   }
 
   // 3. Delete the DRAFT-revision cable supplies referencing the node. The blocker
