@@ -27,9 +27,11 @@ const th: React.CSSProperties = {
 interface Props {
   group: UnifiedGroup
   projectId: string
+  /** All node codes on the project — passed to BoardRow's Edit form for the uniqueness check. */
+  existingCodes: string[]
 }
 
-export function UnifiedBoardGroup({ group, projectId }: Props) {
+export function UnifiedBoardGroup({ group, projectId, existingCodes }: Props) {
   const [collapsed, setCollapsed] = useState(true)
 
   return (
@@ -86,7 +88,7 @@ export function UnifiedBoardGroup({ group, projectId }: Props) {
               </thead>
               <tbody>
                 {group.boards.map((board) => (
-                  <BoardRow key={board.nodeId} board={board} projectId={projectId} />
+                  <BoardRow key={board.nodeId} board={board} projectId={projectId} existingCodes={existingCodes} />
                 ))}
               </tbody>
             </table>

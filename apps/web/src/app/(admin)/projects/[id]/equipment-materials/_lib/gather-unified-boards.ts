@@ -32,6 +32,8 @@ export interface ProcLine {
 }
 export interface UnifiedBoard {
   nodeId: string; code: string; name: string | null; kind: string
+  /** Set only for kind === 'custom' — the user-defined type label (for the Edit form). */
+  customKindLabel: string | null
   type: 'equipment' | 'tenant'; cocRequired: boolean; status: 'active' | 'decommissioned'
   lines: ProcLine[]
   summary: { status: ProcStatus | 'none'; rollup: string | null; requiredBy: string | null; rag: ProcLine['rag'] }
@@ -107,6 +109,7 @@ export function gatherUnifiedBoards(
 
     const board: UnifiedBoard = {
       nodeId: n.id, code: n.code, name: n.name ?? n.shop_name ?? null, kind: n.kind,
+      customKindLabel: n.custom_kind_label,
       type: isTenant ? 'tenant' : 'equipment', cocRequired: n.coc_required,
       status: n.status === 'decommissioned' ? 'decommissioned' : 'active', lines, summary,
     }

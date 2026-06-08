@@ -30,6 +30,7 @@ import {
 } from './_lib/gather-unified-boards'
 import type { ShopDrawing } from '@/app/(admin)/projects/[id]/materials/_components/ShopDrawingList'
 import { UnifiedBoardGroup } from './_components/UnifiedBoardGroup'
+import { AddBoardToolbar } from './_components/AddBoardToolbar'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Equipment & Materials' }
@@ -211,6 +212,16 @@ export default async function EquipmentMaterialsPage({ params, searchParams }: P
   // ── Shape: board-centric groups ──────────────────────────────────────────
   const showDecommissioned = showDecomParam === '1' || showDecomParam === 'true'
   const nodes = nodeRows as unknown as RawNode[]
+  // All node codes (every kind) — the uniqueness universe for the Add/Edit forms.
+  const existingCodes = nodes.map((n) => n.code)
+  // Distinct custom equipment-type labels — seeds the Add form's custom datalist.
+  const existingCustomTypes = Array.from(
+    new Set(
+      nodes
+        .filter((n) => n.kind === 'custom' && n.custom_kind_label)
+        .map((n) => n.custom_kind_label as string),
+    ),
+  ).sort((a, b) => a.localeCompare(b))
   const groups = gatherUnifiedBoards(
     { nodes, orders: rawOrders, scopeTypeById, boByNode, openingDate, today, docsByOrder, drawingsByOrder },
     { showDecommissioned },
@@ -269,6 +280,11 @@ export default async function EquipmentMaterialsPage({ params, searchParams }: P
           <h1 className="page-title">Equipment &amp; Materials</h1>
           <p className="page-subtitle">{project.name} · one board register + buy-list</p>
         </div>
+        <AddBoardToolbar
+          projectId={projectId}
+          existingCodes={existingCodes}
+          existingCustomTypes={existingCustomTypes}
+        />
       </div>
 
       {/* Status filter pills + decommissioned toggle */}
@@ -337,7 +353,7 @@ export default async function EquipmentMaterialsPage({ params, searchParams }: P
       )}
 
       {filteredGroups.map((group) => (
-        <UnifiedBoardGroup key={group.key} group={group} projectId={projectId} />
+        <UnifiedBoardGroup key={group.key} group={group} projectId={projectId} existingCodes={existingCodes} />
       ))}
     </div>
   )

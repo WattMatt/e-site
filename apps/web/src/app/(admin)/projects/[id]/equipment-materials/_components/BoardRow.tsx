@@ -6,16 +6,21 @@
  * Code · Name · Procurement summary · Required by (RAG) · COC · Manage.
  * Clicking the row toggles an expanded full-width detail row (BoardDetail).
  *
- * Equipment boards show a status badge + an "Equipment Schedule ↗" deep-link;
- * tenant boards show the scope rollup + a "Tenant Schedule ↗" deep-link. Board
- * authoring (add/edit/decommission, scope, drawings) lives on those tabs.
+ * Equipment boards manage inline in the Manage cell: Edit / Decommission while
+ * active, Reactivate once decommissioned (board authoring lives here now, not on
+ * a separate Equipment Schedule tab). Tenant boards keep the scope rollup + a
+ * "Tenant Schedule ↗" deep-link (scope/drawings/BO authoring stays there).
  */
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
+import { reactivateEquipmentNodeAction } from '@/actions/equipment.actions'
 import type { ProcStatus, UnifiedBoard } from '../_lib/gather-unified-boards'
 import { BoardDetail } from './BoardDetail'
+import { EditBoardModal, DecommissionBoardModal } from './BoardManageModals'
 
 const RAG_COLOR: Record<UnifiedBoard['summary']['rag'], string> = {
   red: 'var(--c-red)',
@@ -48,7 +53,94 @@ function statusBadge(status: ProcStatus | 'none') {
 
 const td: React.CSSProperties = { padding: '10px 12px', verticalAlign: 'top' }
 
-export function BoardRow({ board, projectId }: { board: UnifiedBoard; projectId: string }) {
+/** Manage cell for an equipment board — inline Edit / Decommission / Reactivate. */
+function EquipmentManage({
+  board,
+  projectId,
+  existingCodes,
+}: {
+  board: UnifiedBoard
+  projectId: string
+  existingCodes: string[]
+}) {
+  const router = useRouter()
+  const [editing, setEditing] = useState(false)
+  const [decommissioning, setDecommissioning] = useState(false)
+  const [reactivateError, setReactivateError] = useState<string | null>(null)
+  const [isReactivating, startReactivate] = useTransition()
+
+  function handleReactivate() {
+    setReactivateError(null)
+    startReactivate(async () => {
+      const result = await reactivateEquipmentNodeAction(projectId, board.nodeId)
+      if ('error' in result) { setReactivateError(result.error); return }
+      router.refresh()
+    })
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        {board.status === 'active' ? (
+          <>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setDecommissioning(true)}
+              style={{ color: 'var(--c-text-dim)' }}
+            >
+              Decommission
+            </Button>
+          </>
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            isLoading={isReactivating}
+            disabled={isReactivating}
+            onClick={handleReactivate}
+          >
+            Reactivate
+          </Button>
+        )}
+      </div>
+      {reactivateError && (
+        <span style={{ fontSize: 11, color: 'var(--c-red)' }} role="alert">{reactivateError}</span>
+      )}
+
+      {editing && (
+        <EditBoardModal
+          board={board}
+          projectId={projectId}
+          existingCodes={existingCodes.filter((c) => c !== board.code)}
+          onClose={() => setEditing(false)}
+        />
+      )}
+      {decommissioning && (
+        <DecommissionBoardModal
+          board={board}
+          projectId={projectId}
+          onClose={() => setDecommissioning(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+export function BoardRow({
+  board,
+  projectId,
+  existingCodes,
+}: {
+  board: UnifiedBoard
+  projectId: string
+  existingCodes: string[]
+}) {
   const [expanded, setExpanded] = useState(false)
   const isTenant = board.type === 'tenant'
 
@@ -118,8 +210,8 @@ export function BoardRow({ board, projectId }: { board: UnifiedBoard; projectId:
             <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>—</span>
           )}
         </td>
-        {/* Manage — deep-link to the authoring tab */}
-        <td style={{ ...td, whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+        {/* Manage — equipment manages inline; tenant deep-links to authoring */}
+        <td style={{ ...td, whiteSpace: 'nowrap', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
           {isTenant ? (
             <Link
               href={`/projects/${projectId}/tenant-schedule`}
@@ -128,12 +220,7 @@ export function BoardRow({ board, projectId }: { board: UnifiedBoard; projectId:
               Tenant Schedule ↗
             </Link>
           ) : (
-            <Link
-              href={`/projects/${projectId}/equipment-schedule`}
-              style={{ fontSize: 12, color: 'var(--c-amber)' }}
-            >
-              Equipment Schedule ↗
-            </Link>
+            <EquipmentManage board={board} projectId={projectId} existingCodes={existingCodes} />
           )}
         </td>
       </tr>
