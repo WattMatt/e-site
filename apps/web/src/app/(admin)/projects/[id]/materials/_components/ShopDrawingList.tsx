@@ -22,6 +22,7 @@ import {
   removeShopDrawingAction,
   getShopDrawingSignedUrlAction,
 } from '@/actions/node-order-shop-drawing.actions'
+import { previewViaSignedUrl, triggerDownload } from '@/lib/file-open'
 
 export type ShopDrawingStatus = 'awaiting' | 'received' | 'approved'
 
@@ -119,9 +120,15 @@ export function ShopDrawingList({
 
   async function handleView(d: ShopDrawing) {
     setError(null)
-    const res = await getShopDrawingSignedUrlAction(projectId, d.storage_path)
+    const { error } = await previewViaSignedUrl(() => getShopDrawingSignedUrlAction(projectId, d.storage_path))
+    if (error) setError(error)
+  }
+
+  async function handleDownload(d: ShopDrawing) {
+    setError(null)
+    const res = await getShopDrawingSignedUrlAction(projectId, d.storage_path, d.file_name)
     if ('error' in res) setError(res.error)
-    else window.open(res.url, '_blank', 'noopener,noreferrer')
+    else triggerDownload(res.url)
   }
 
   async function handleAdvance(d: ShopDrawing) {
@@ -176,6 +183,9 @@ export function ShopDrawingList({
             }}
           >
             {d.file_name}
+          </button>
+          <button type="button" onClick={() => handleDownload(d)} disabled={busy} title="Download" style={linkBtn}>
+            ↓
           </button>
           <Badge variant={STATUS_VARIANT[d.status]}>{STATUS_LABEL[d.status]}</Badge>
 

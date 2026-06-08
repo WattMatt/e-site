@@ -15,6 +15,7 @@ import {
   clearNodeOrderDocumentAction,
   getNodeOrderDocumentSignedUrlAction,
 } from '@/actions/node-order-document.actions'
+import { previewViaSignedUrl, triggerDownload } from '@/lib/file-open'
 
 export type OrderDocType = 'quote' | 'order_instruction'
 
@@ -84,9 +85,18 @@ export function OrderDocSlot({ projectId, nodeOrderId, docType, label, doc }: Pr
   async function handleView() {
     if (!doc) return
     setError(null)
-    const res = await getNodeOrderDocumentSignedUrlAction(projectId, doc.storage_path)
+    const { error } = await previewViaSignedUrl(() =>
+      getNodeOrderDocumentSignedUrlAction(projectId, doc.storage_path),
+    )
+    if (error) setError(error)
+  }
+
+  async function handleDownload() {
+    if (!doc) return
+    setError(null)
+    const res = await getNodeOrderDocumentSignedUrlAction(projectId, doc.storage_path, doc.file_name)
     if ('error' in res) setError(res.error)
-    else window.open(res.url, '_blank', 'noopener,noreferrer')
+    else triggerDownload(res.url)
   }
 
   async function handleRemove() {
@@ -128,6 +138,14 @@ export function OrderDocSlot({ projectId, nodeOrderId, docType, label, doc }: Pr
             }}
           >
             {doc.file_name}
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            title="Download"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-mid)', fontSize: 13, lineHeight: 1, padding: 0 }}
+          >
+            ↓
           </button>
           <button
             type="button"

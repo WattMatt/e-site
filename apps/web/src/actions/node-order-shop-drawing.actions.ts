@@ -557,6 +557,7 @@ export type SignedUrlResult = { url: string } | { error: string }
 export async function getShopDrawingSignedUrlAction(
   projectId: string,
   storagePath: string,
+  downloadName?: string,
 ): Promise<SignedUrlResult> {
   const parsed = z.object({ projectId: uuidSchema, storagePath: z.string().min(1) }).safeParse({ projectId, storagePath })
   if (!parsed.success) return { error: 'Invalid input' }
@@ -564,7 +565,8 @@ export async function getShopDrawingSignedUrlAction(
   const guard = await guardProjectAccess(projectId)
   if (guard.error !== undefined) return { error: guard.error }
 
-  const { data, error } = await guard.supabase.storage.from(DRAWINGS_BUCKET).createSignedUrl(storagePath, 300)
+  // downloadName set → Content-Disposition: attachment; omitted → inline preview.
+  const { data, error } = await guard.supabase.storage.from(DRAWINGS_BUCKET).createSignedUrl(storagePath, 300, downloadName ? { download: downloadName } : undefined)
   if (error || !data?.signedUrl) return { error: error?.message ?? 'Could not generate signed URL' }
   return { url: data.signedUrl }
 }

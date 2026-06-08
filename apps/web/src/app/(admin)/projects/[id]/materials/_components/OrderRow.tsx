@@ -32,6 +32,10 @@ export interface OrderRowData {
     order_instruction: OrderDoc | null
   }
   shopDrawings: ShopDrawing[]
+  /** True for an equipment board that has no node_orders row yet (surfaced by
+   *  the Materials pull-through harden). Read-only — no doc/status actions —
+   *  until a real order is created. */
+  synthetic?: boolean
 }
 
 const RAG_COLOR: Record<OrderRowData['rag'], string> = {
@@ -125,13 +129,17 @@ export function OrderRow({ order, projectId }: { order: OrderRowData; projectId:
         <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)', verticalAlign: 'top' }}>
           {order.received_at ?? '—'}
         </td>
-        {/* Documents — 3 slots */}
+        {/* Documents — 3 slots (synthetic rows have no order row to attach to) */}
         <td style={{ padding: '8px 12px', verticalAlign: 'top', minWidth: 250 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <OrderDocSlot projectId={projectId} nodeOrderId={order.id} docType="quote" label="Quote" doc={order.documents.quote} />
-            <OrderDocSlot projectId={projectId} nodeOrderId={order.id} docType="order_instruction" label="Order instr." doc={order.documents.order_instruction} />
-            <ShopDrawingList projectId={projectId} nodeOrderId={order.id} drawings={order.shopDrawings} />
-          </div>
+          {order.synthetic ? (
+            <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>—</span>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <OrderDocSlot projectId={projectId} nodeOrderId={order.id} docType="quote" label="Quote" doc={order.documents.quote} />
+              <OrderDocSlot projectId={projectId} nodeOrderId={order.id} docType="order_instruction" label="Order instr." doc={order.documents.order_instruction} />
+              <ShopDrawingList projectId={projectId} nodeOrderId={order.id} drawings={order.shopDrawings} />
+            </div>
+          )}
         </td>
         {/* Notes */}
         <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--c-text-dim)', maxWidth: 200, verticalAlign: 'top' }}>
@@ -139,15 +147,26 @@ export function OrderRow({ order, projectId }: { order: OrderRowData; projectId:
         </td>
         {/* Actions */}
         <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
-          {order.status === 'required' && (
-            <Button variant="secondary" size="sm" onClick={handleMarkOrdered} isLoading={isPendingOrdered}>
-              Mark ordered
-            </Button>
-          )}
-          {order.status === 'ordered' && (
-            <Button variant="secondary" size="sm" onClick={handleMarkReceived} isLoading={isPendingReceived}>
-              Mark received
-            </Button>
+          {order.synthetic ? (
+            <span
+              style={{ fontSize: 11, color: 'var(--c-text-dim)' }}
+              title="This board has no order row yet — it was added outside the equipment form. Re-save it in the Equipment Schedule to create one."
+            >
+              no order yet
+            </span>
+          ) : (
+            <>
+              {order.status === 'required' && (
+                <Button variant="secondary" size="sm" onClick={handleMarkOrdered} isLoading={isPendingOrdered}>
+                  Mark ordered
+                </Button>
+              )}
+              {order.status === 'ordered' && (
+                <Button variant="secondary" size="sm" onClick={handleMarkReceived} isLoading={isPendingReceived}>
+                  Mark received
+                </Button>
+              )}
+            </>
           )}
         </td>
       </tr>
