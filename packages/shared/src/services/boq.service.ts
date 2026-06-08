@@ -28,19 +28,18 @@ const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
  */
 export function computeItemAmount(item: BoqItem): number | null {
   if (item.quantityMode === 'rate_only') return null
-  if (item.rateModel === 'amount_only') return item.amount
-
-  const qty = item.quantity ?? 0
+  if (item.rateModel === 'amount_only') return item.amount ?? null
+  if (item.quantity === null) return null
 
   if (item.rateModel === 'supply_install') {
     const supply = item.supplyRate ?? 0
     const install = item.installRate ?? 0
-    return round2(qty * (supply + install))
+    return round2(item.quantity * (supply + install))
   }
 
   // single
   if (item.rate === null) return null
-  return round2(qty * item.rate)
+  return round2(item.quantity * item.rate)
 }
 
 /**

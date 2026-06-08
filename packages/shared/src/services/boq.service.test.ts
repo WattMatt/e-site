@@ -33,6 +33,14 @@ describe('computeItemAmount', () => {
   it('single: null rate => null', () => {
     expect(computeItemAmount(item('i', 's', { rateModel: 'single', quantity: 10, rate: null }))).toBeNull()
   })
+
+  it('single: null quantity => null (un-entered, not zero)', () => {
+    expect(computeItemAmount(item('i', 's', { rateModel: 'single', quantity: null, rate: 50 }))).toBeNull()
+  })
+
+  it('supply_install: null quantity => null (un-entered, not zero)', () => {
+    expect(computeItemAmount(item('i', 's', { quantity: null, supplyRate: 100, installRate: 20 }))).toBeNull()
+  })
 })
 
 describe('computeRollups', () => {
