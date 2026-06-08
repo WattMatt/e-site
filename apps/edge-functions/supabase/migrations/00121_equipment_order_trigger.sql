@@ -14,15 +14,26 @@
 -- guard make a duplicate impossible and re-runs a no-op.
 -- =============================================================================
 
+-- SECURITY DEFINER is deliberate: the equipment order must be created no matter
+-- who inserts the node. The UI path uses the service-role key today, but the
+-- invariant must also hold for future bulk-import / lower-privilege insert paths
+-- WITHOUT the node insert failing because the caller lacks INSERT on node_orders.
+-- The function only inserts the one order derived from the node just inserted
+-- (same project/org/code) — it cannot write arbitrary rows, so there is no
+-- escalation surface. All identifiers below are schema-qualified, so search_path
+-- is locked to '' (matches the 00120 SECURITY DEFINER convention).
 CREATE OR REPLACE FUNCTION structure.create_equipment_node_order()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = structure, public
+SET search_path = ''
 AS $$
 BEGIN
   -- Equipment kinds = the EQUIPMENT_KINDS set in @esite/shared
   -- (everything except 'tenant_db' and 'sub_board').
+  -- No status guard (unlike the 00089 backfill): the order is created regardless
+  -- of node status, so a board inserted-then-reactivated never lacks one. The
+  -- Materials/Equipment views filter decommissioned boards at the display layer.
   IF NEW.kind IN (
     'rmu', 'mini_sub', 'generator', 'main_board',
     'common_area_board', 'common_area_lighting', 'custom'
