@@ -1,10 +1,11 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, diaryService, formatDate, ENTRY_TYPE_LABELS } from '@esite/shared'
-import type { DiaryEntryType } from '@esite/shared'
+import { projectService, diaryService, formatDate, ENTRY_TYPE_LABELS, ORG_WRITE_ROLES } from '@esite/shared'
+import type { DiaryEntryType, OrgRole } from '@esite/shared'
 import { AddDiaryEntryForm } from './AddDiaryEntryForm'
 import { DiaryAttachmentStrip, type DiaryAttachmentView } from '@/components/diary/DiaryAttachmentStrip'
+import { DeleteDiaryEntryButton } from './DeleteDiaryEntryButton'
 
 interface Props { params: Promise<{ id: string }> }
 
@@ -33,6 +34,8 @@ export default async function DiaryPage({ params }: Props) {
 
   const orgId = mem?.organisation_id ?? ''
   const canEdit = mem?.role !== 'client_viewer'
+  const viewerRole = (mem?.role ?? null) as OrgRole | null
+  const viewerCanWrite = viewerRole !== null && ORG_WRITE_ROLES.includes(viewerRole)
 
   const [project, entries] = await Promise.all([
     projectService.getById(supabase as any, id).catch(() => null),
@@ -85,6 +88,7 @@ export default async function DiaryPage({ params }: Props) {
             const entryType: string = entry.entry_type ?? 'progress'
             const typeStyle = ENTRY_TYPE_STYLES[entryType] ?? ENTRY_TYPE_STYLES.general
             const typeLabel = ENTRY_TYPE_LABELS[entryType as DiaryEntryType] ?? entryType
+            const canDelete = entry.created_by === user!.id || viewerCanWrite
 
             return (
               <div key={entry.id} className="data-panel">
@@ -109,6 +113,7 @@ export default async function DiaryPage({ params }: Props) {
                         {entry.workers_on_site} worker{entry.workers_on_site !== 1 ? 's' : ''}
                       </span>
                     )}
+                    {canDelete && <DeleteDiaryEntryButton entryId={entry.id} />}
                   </div>
                 </div>
                 <div style={{ padding: '14px 18px' }}>
