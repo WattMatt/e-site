@@ -128,6 +128,15 @@ Read-only actions require project access (any project member). Write/export acti
 
 > **Widened 2026-06-04:** raising/closing a snag *on a visit* (`addSnagToVisitAction`, `closeSnagOnVisitAction`) is gated to `SNAG_FIELD_ROLES` = every role **except** read-only `client_viewer` — site agents (contractor/inspector/supplier) can both raise and close snags during a visit. Creating/editing the visit and exporting the report stay `ORG_WRITE_ROLES` (owner/admin/PM).
 
+### Tenant hard-delete (`tenant-delete.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `getTenantDeleteSummaryAction` | W | W | W | — | — | — | — |
+| `hardDeleteTenantAction` | W | W | W | — | — | — | — |
+
+> Permanently deletes a tenant board (`structure.nodes` kind=`tenant_db`) + its cascade (scope/units/documents/orders/drawings) + handover copies + storage objects. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireEffectiveRole` — **stricter** than the `/tenant-schedule` page row's general `W` (contractor can edit the schedule but not hard-delete a tenant). Refused when the tenant is wired into an **issued** cable revision or has child boards.
+
 ## Public / unauthenticated
 
 | Route | Access |
