@@ -13,6 +13,7 @@ import { NodeOrderCell } from '../../equipment-schedule/_components/NodeOrderCel
 import type { NodeOrderData } from '../../equipment-schedule/_components/NodeOrderCell'
 import { BoPeriodSelect, BoDateCell } from './BoCells'
 import type { TenantBoInfo } from './BoCells'
+import { TenantDeleteModal } from './TenantDeleteModal'
 
 interface Props {
   nodes: Node[]
@@ -45,6 +46,8 @@ export function ScheduleTable({
   // node_id of the currently-expanded layout panel (one at a time, independent of scope)
   const [expandedLayoutNodeId, setExpandedLayoutNodeId] = useState<string | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
+  // Tenant board pending hard-delete (opens the confirmation modal)
+  const [deletingNode, setDeletingNode] = useState<{ id: string; code: string } | null>(null)
   // Local copy of scope item types so adding a new one reflects immediately
   const [scopeItemTypes, setScopeItemTypes] = useState<ScopeItemType[]>(initialScopeItemTypes)
 
@@ -310,6 +313,24 @@ export function ScheduleTable({
                           >
                             {isLayoutExpanded ? 'Close' : 'Layout ↓'}
                           </button>
+                          <button
+                            onClick={() => setDeletingNode({ id: node.id, code: node.code })}
+                            title="Permanently delete this tenant"
+                            style={{
+                              background: 'none',
+                              border: '1px solid #6b1e1e',
+                              borderRadius: 5,
+                              cursor: 'pointer',
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              color: 'var(--c-red)',
+                              fontWeight: 600,
+                              transition: 'all 0.15s',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Delete
+                          </button>
                         </div>
                       )}
                     </Td>
@@ -378,6 +399,16 @@ export function ScheduleTable({
           orgId={orgId}
           onClose={() => setShowAddModal(false)}
           onAdded={handleScopeItemAdded}
+        />
+      )}
+
+      {/* Tenant hard-delete confirmation modal */}
+      {deletingNode && (
+        <TenantDeleteModal
+          projectId={projectId}
+          nodeId={deletingNode.id}
+          code={deletingNode.code}
+          onClose={() => setDeletingNode(null)}
         />
       )}
     </div>
