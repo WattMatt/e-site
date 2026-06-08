@@ -119,6 +119,18 @@ describe('deleteDiaryEntryAction — author-or-PM gate', () => {
     expect(res).toEqual({ error: 'You do not have permission to delete this entry.' })
     expect(hardDeleteMock).not.toHaveBeenCalled()
   })
+
+  it('does not short-circuit on a null author — a null-authored entry still requires the role gate', async () => {
+    // A null created_by must never satisfy the author check (null === uuid is false),
+    // so a non-write-role user cannot delete a null-authored entry.
+    getEntryForGateMock.mockResolvedValue({
+      id: ENTRY_ID, project_id: PROJECT_ID, organisation_id: 'org-1', created_by: null,
+    })
+    createClientMock.mockResolvedValue(mockClient({ userId: OTHER_ID, role: 'contractor' }))
+    const res = await deleteDiaryEntryAction(ENTRY_ID)
+    expect(res).toEqual({ error: 'You do not have permission to delete this entry.' })
+    expect(hardDeleteMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('deleteDiaryEntryAction — failure handling', () => {
