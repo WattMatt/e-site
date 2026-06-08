@@ -214,7 +214,7 @@ describe('getTenantDeleteSummaryAction — counts', () => {
 // ---------------------------------------------------------------------------
 
 describe('hardDeleteTenantAction — happy path orchestration', () => {
-  it('issues handover-doc delete, supply deletes, node delete, then storage removes, in order', async () => {
+  it('issues supply deletes → node delete → handover-doc delete, then storage removes, in order', async () => {
     const client = mockClient({
       role: 'owner',
       'nodes:self': { id: NODE, kind: 'tenant_db', code: 'SHOP-12', name: 'Shoprite', status: 'active' },
@@ -259,17 +259,19 @@ describe('hardDeleteTenantAction — happy path orchestration', () => {
     expect(res).toEqual({ ok: true })
 
     const deletes = calls.filter((c) => c.method === 'DELETE')
-    // Expected DELETE order: handover tenants.documents → supplies(from) →
-    // supplies(to) → structure.nodes.
+    // Expected DELETE order: supplies(from) → supplies(to) → structure.nodes →
+    // handover tenants.documents. The FK-less handover rows are deleted AFTER the
+    // node so a mid-failure can't orphan them while drawings still reference them.
     expect(deletes.length).toBeGreaterThanOrEqual(4)
-    expect(deletes[0].url).toContain('/rest/v1/documents') // tenants.documents
-    expect(deletes[0].url).toContain('hand-1')
-    expect(deletes.some((c) => c.url.includes('/rest/v1/supplies') && c.url.includes('from_node_id'))).toBe(true)
-    expect(deletes.some((c) => c.url.includes('/rest/v1/supplies') && c.url.includes('to_node_id'))).toBe(true)
-    // node delete is last
-    const last = deletes[deletes.length - 1]
-    expect(last.url).toContain('/rest/v1/nodes')
-    expect(last.url).toContain(`id=eq.${NODE}`)
+    const idxFrom = deletes.findIndex((c) => c.url.includes('/rest/v1/supplies') && c.url.includes('from_node_id'))
+    const idxTo = deletes.findIndex((c) => c.url.includes('/rest/v1/supplies') && c.url.includes('to_node_id'))
+    const idxNode = deletes.findIndex((c) => c.url.includes('/rest/v1/nodes') && c.url.includes(`id=eq.${NODE}`))
+    const idxHandover = deletes.findIndex((c) => c.url.includes('/rest/v1/documents') && c.url.includes('hand-1'))
+    expect(idxFrom).toBeGreaterThanOrEqual(0)
+    expect(idxTo).toBeGreaterThanOrEqual(0)
+    expect(idxNode).toBeGreaterThan(idxFrom)
+    expect(idxNode).toBeGreaterThan(idxTo)
+    expect(idxHandover).toBeGreaterThan(idxNode)
 
     // storage removes happen AFTER the node delete (best-effort)
     expect(client.__removeSpy).toHaveBeenCalled()

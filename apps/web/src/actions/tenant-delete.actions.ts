@@ -350,13 +350,7 @@ export async function hardDeleteTenantAction(
     }
   }
 
-  // 3. Delete the handover tenants.documents rows (no FK removes them).
-  if (handoverDocIds.length) {
-    const del = await serviceDelete(supabaseUrl, serviceKey, 'tenants', 'documents', `id=in.(${handoverDocIds.join(',')})`)
-    if (!del.ok) return { error: del.error ?? 'Failed to delete handover documents' }
-  }
-
-  // 4. Delete the DRAFT-revision cable supplies referencing the node. The blocker
+  // 3. Delete the DRAFT-revision cable supplies referencing the node. The blocker
   //    check above guarantees every referencing supply is in a DRAFT revision, so
   //    removing all referencing supplies (from + to) is safe.
   const fromDel = await serviceDelete(supabaseUrl, serviceKey, 'cable_schedule', 'supplies', `from_node_id=eq.${nodeId}`)
@@ -364,10 +358,21 @@ export async function hardDeleteTenantAction(
   const toDel = await serviceDelete(supabaseUrl, serviceKey, 'cable_schedule', 'supplies', `to_node_id=eq.${nodeId}`)
   if (!toDel.ok) return { error: toDel.error ?? 'Failed to remove cable connections' }
 
-  // 5. Delete the node — cascades tenant_details / scope / units / documents +
+  // 4. Delete the node — cascades tenant_details / scope / units / documents +
   //    revisions / orders + order-docs + shop-drawings; nulls inspection targets.
   const nodeDel = await serviceDelete(supabaseUrl, serviceKey, 'structure', 'nodes', `id=eq.${nodeId}`)
   if (!nodeDel.ok) return { error: nodeDel.error ?? 'Failed to delete the tenant board' }
+
+  // 5. Delete the FK-less handover tenants.documents rows — AFTER the node delete,
+  //    on purpose: if any step above had failed, these rows are still referenced by
+  //    the node's shop drawings and stay consistent. The node delete just cascaded
+  //    those drawings away, so the handover rows are now unreferenced. The node is
+  //    already gone, so a failure here only orphans a handover row (recoverable) —
+  //    it must NOT fail the action.
+  if (handoverDocIds.length) {
+    const del = await serviceDelete(supabaseUrl, serviceKey, 'tenants', 'documents', `id=in.(${handoverDocIds.join(',')})`)
+    if (!del.ok) console.error('tenant hard-delete: handover document cleanup failed (orphaned):', del.error)
+  }
 
   // 6. Best-effort storage cleanup — the rows are gone; orphaned objects are
   //    tolerable, so a storage failure must NOT fail the action.
