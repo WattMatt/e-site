@@ -126,6 +126,44 @@ describe('TenantDocumentList', () => {
     expect(screen.getByText('1 revision')).toBeTruthy()
   })
 
+  // ── 1b. Filters by kind — a layout panel must not show scope docs ──
+
+  it('renders ONLY documents matching its kind (the layout panel hides scope docs)', async () => {
+    const scopeDoc = {
+      id: 'doc-sc',
+      node_id: 'node-1',
+      kind: 'scope' as const,
+      title: 'Scope of Work',
+      sort_order: 0,
+      revisions: [
+        {
+          id: 'rev-sc',
+          tenant_document_id: 'doc-sc',
+          rev_label: 'Rev A',
+          storage_path: 'proj/node/scope.pdf',
+          file_name: 'scope.pdf',
+          note: null,
+          issued_at: '2026-05-01T08:00:00Z',
+          uploaded_by: null,
+          created_at: '2026-05-01T08:00:00Z',
+        },
+      ],
+    }
+    const { TenantDocumentList } = await import('./TenantDocumentList')
+    render(
+      <TenantDocumentList
+        kind="layout"
+        projectId="p-1"
+        nodeId="node-1"
+        readOnly={false}
+        initialDocuments={[doc1, scopeDoc]}
+      />,
+    )
+    // the layout doc shows; the scope doc must NOT appear under the layout panel
+    expect(screen.getByText('Electrical Layout')).toBeTruthy()
+    expect(screen.queryByText('Scope of Work')).toBeNull()
+  })
+
   // ── 2. Clicking "Revisions" opens the drawer for that document ──
 
   it('clicking Revisions opens the drawer showing that document revisions', async () => {
