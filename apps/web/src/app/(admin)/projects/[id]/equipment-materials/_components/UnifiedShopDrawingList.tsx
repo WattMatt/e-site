@@ -24,7 +24,7 @@ import {
 } from '@/actions/node-order-shop-drawing.actions'
 import { triggerDownload } from '@/lib/file-open'
 import { DocumentPreviewModal } from './DocumentPreviewModal'
-import type { ShopDrawing, ShopDrawingStatus } from '@/app/(admin)/projects/[id]/materials/_components/ShopDrawingList'
+import type { ShopDrawing, ShopDrawingStatus } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
 
 const STATUS_VARIANT: Record<ShopDrawingStatus, 'warning' | 'info' | 'success'> = {
   awaiting: 'warning',

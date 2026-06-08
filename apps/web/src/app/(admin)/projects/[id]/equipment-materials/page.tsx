@@ -28,7 +28,7 @@ import {
   type RawOrder,
   type ProcLine,
 } from './_lib/gather-unified-boards'
-import type { ShopDrawing } from '@/app/(admin)/projects/[id]/materials/_components/ShopDrawingList'
+import type { ShopDrawing } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
 import { UnifiedBoardGroup } from './_components/UnifiedBoardGroup'
 import { AddBoardToolbar } from './_components/AddBoardToolbar'
 

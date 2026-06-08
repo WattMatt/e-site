@@ -10,8 +10,7 @@
  */
 import { computeOrderRequiredBy, computeRagStatus } from '@esite/shared'
 import { naturalCompare } from '@/lib/natural-compare'
-import type { OrderDoc } from '@/app/(admin)/projects/[id]/materials/_components/OrderDocSlot'
-import type { ShopDrawing } from '@/app/(admin)/projects/[id]/materials/_components/ShopDrawingList'
+import type { OrderDoc, ShopDrawing } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
 
 export type ProcStatus = 'by_tenant' | 'required' | 'ordered' | 'received'
 

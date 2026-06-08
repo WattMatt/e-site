@@ -22,7 +22,7 @@ import {
 } from '@/actions/node-order-document.actions'
 import { triggerDownload } from '@/lib/file-open'
 import { DocumentPreviewModal } from './DocumentPreviewModal'
-import type { OrderDoc } from '@/app/(admin)/projects/[id]/materials/_components/OrderDocSlot'
+import type { OrderDoc } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
 
 export type OrderDocType = 'quote' | 'order_instruction'
 
