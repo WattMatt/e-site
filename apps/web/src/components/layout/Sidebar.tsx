@@ -8,7 +8,7 @@ import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
-  Cable, BookMarked, HardHat, Package, Store, Zap, Lock, ScrollText,
+  Cable, BookMarked, HardHat, Package, Store, Lock, ScrollText,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -73,9 +73,8 @@ function projectNav(id: string) {
     { href: `/projects/${id}/snags`,        label: 'Snags',       Icon: AlertTriangle, exact: false },
     { href: `/projects/${id}/diary`,        label: 'Site Diary',  Icon: BookOpen,      exact: false },
     { href: `/rfis?projectId=${id}`,        label: 'RFIs',        Icon: MessageSquare, exact: false },
-    { href: `/projects/${id}/materials`,    label: 'Materials',   Icon: Package,       exact: false },
+    { href: `/projects/${id}/equipment-materials`, label: 'Equipment & Materials', Icon: Package,   exact: false },
     { href: `/projects/${id}/cables`,              label: 'Cables',             Icon: Cable,         exact: false },
-    { href: `/projects/${id}/equipment-schedule`, label: 'Equipment',          Icon: Zap,           exact: false },
     { href: `/projects/${id}/tenant-schedule`,    label: 'Tenant Schedule',    Icon: Store,         exact: false },
     { href: `/projects/${id}/inspections`,     label: 'Inspections',     Icon: ClipboardCheck, exact: false },
     { href: `/projects/${id}/floor-plans`,  label: 'Floor Plans', Icon: Map,           exact: false },
