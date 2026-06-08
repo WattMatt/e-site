@@ -36,6 +36,14 @@ export interface DiaryAttachment {
   created_at: string
 }
 
+/** Minimal entry fields needed by the delete gate. */
+export interface DiaryEntryGateRow {
+  id: string
+  project_id: string
+  organisation_id: string
+  created_by: string | null
+}
+
 /** Classifies a MIME type into the attachment `kind` used for UI rendering. */
 export function attachmentKindFromMime(mime: string): DiaryAttachmentKind {
   if (mime.startsWith('image/')) return 'image'
@@ -218,5 +226,48 @@ export const diaryService = {
       .eq('id', attachment.id)
     if (error) throw error
     await client.storage.from('diary-attachments').remove([attachment.file_path])
+  },
+
+  /** Minimal entry fields for the delete gate (author + org/project resolution). */
+  async getEntryForGate(
+    client: TypedSupabaseClient,
+    entryId: string,
+  ): Promise<DiaryEntryGateRow | null> {
+    const { data, error } = await client
+      .schema('projects')
+      .from('site_diary_entries')
+      .select('id, project_id, organisation_id, created_by')
+      .eq('id', entryId)
+      .maybeSingle()
+    if (error) throw error
+    return (data ?? null) as unknown as DiaryEntryGateRow | null
+  },
+
+  /**
+   * Permanently delete a diary entry and clean up its attachment blobs.
+   *
+   * Attachment ROWS cascade via the FK (site_diary_attachments.diary_entry_id
+   * ON DELETE CASCADE), so this gathers the storage paths FIRST (the cascade
+   * drops the rows), deletes the entry, then best-effort removes the blobs.
+   * A storage failure must not fail the delete.
+   */
+  async hardDelete(client: TypedSupabaseClient, entryId: string): Promise<void> {
+    const attachments = await diaryService.listAttachments(client, [entryId])
+    const paths = attachments.map((a) => a.file_path).filter(Boolean)
+
+    const { error } = await client
+      .schema('projects')
+      .from('site_diary_entries')
+      .delete()
+      .eq('id', entryId)
+    if (error) throw error
+
+    if (paths.length > 0) {
+      try {
+        await client.storage.from('diary-attachments').remove(paths)
+      } catch {
+        /* best-effort: an orphaned blob must not fail the delete */
+      }
+    }
   },
 }
