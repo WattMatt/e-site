@@ -273,6 +273,13 @@ describe('hardDeleteTenantAction — happy path orchestration', () => {
     expect(idxNode).toBeGreaterThan(idxTo)
     expect(idxHandover).toBeGreaterThan(idxNode)
 
+    // The deletion audit row is written (POST audit_log) BEFORE the destructive
+    // node delete — a tenant must never be deleted without a trace.
+    const idxAudit = calls.findIndex((c) => c.url.includes('/rest/v1/audit_log') && c.method === 'POST')
+    const idxNodeAll = calls.findIndex((c) => c.url.includes('/rest/v1/nodes') && c.method === 'DELETE')
+    expect(idxAudit).toBeGreaterThanOrEqual(0)
+    expect(idxNodeAll).toBeGreaterThan(idxAudit)
+
     // storage removes happen AFTER the node delete (best-effort)
     expect(client.__removeSpy).toHaveBeenCalled()
     expect(revalidatePathMock).toHaveBeenCalled()
@@ -293,5 +300,34 @@ describe('hardDeleteTenantAction — happy path orchestration', () => {
     expect('error' in res).toBe(true)
     // no node DELETE should have fired
     expect(fetchMock.mock.calls.every((c: any[]) => !String(c[0]).includes('/rest/v1/nodes') || (c[1] as RequestInit).method !== 'DELETE')).toBe(true)
+  })
+
+  it('aborts with ZERO destructive deletes when the audit write fails', async () => {
+    // The audit row is the precondition for the delete. If it cannot be written,
+    // nothing may be destroyed — the core "no untraced deletion" guarantee.
+    createClientMock.mockResolvedValue(
+      mockClient({
+        role: 'owner',
+        'nodes:self': { id: NODE, kind: 'tenant_db', code: 'SHOP-12', name: 'Shoprite', status: 'active' },
+        'nodes:children': [],
+        supplies: [],
+        tenant_documents: [],
+        node_orders: [],
+        inspections: [],
+      }),
+    )
+    const fetchMock = vi.fn((url: string, init: RequestInit) => {
+      const method = (init.method as string) ?? 'GET'
+      if (String(url).includes('/rest/v1/audit_log') && method === 'POST') {
+        return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('boom') })
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('') })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await hardDeleteTenantAction(PROJECT, NODE)
+    expect('error' in res).toBe(true)
+    const anyDelete = fetchMock.mock.calls.some((c: any[]) => (c[1] as RequestInit).method === 'DELETE')
+    expect(anyDelete).toBe(false)
   })
 })
