@@ -1,5 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { listNodes, getNode, createNode, updateNode, decommissionNode } from './node.service';
+import {
+  listNodes,
+  listDeletedNodes,
+  getNode,
+  createNode,
+  updateNode,
+  decommissionNode,
+} from './node.service';
 import type { Node } from './types';
 
 // ---------------------------------------------------------------------------
@@ -11,6 +18,8 @@ import type { Node } from './types';
 function makeBuilder(resolvedData: unknown, resolvedError: unknown = null) {
   const builder = {
     eq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    not: vi.fn().mockReturnThis(),
     select: vi.fn().mockReturnThis(),
     insert: vi.fn().mockReturnThis(),
     update: vi.fn().mockReturnThis(),
@@ -33,6 +42,8 @@ const nodeFixture: Node = {
   name: 'Main Board 1',
   coc_required: true,
   status: 'active',
+  deleted_at: null,
+  deleted_by: null,
   shop_number: null,
   shop_name: null,
   shop_area_m2: null,
@@ -96,6 +107,52 @@ describe('listNodes', () => {
 
     expect(builder.eq).toHaveBeenCalledWith('kind', 'generator');
     expect(builder.eq).toHaveBeenCalledWith('status', 'active');
+  });
+
+  it('excludes soft-deleted nodes by default (is deleted_at null)', async () => {
+    const builder = makeBuilder([nodeFixture]);
+    const client = makeClient(builder);
+
+    await listNodes(client as any, 'proj-1');
+
+    expect(builder.is).toHaveBeenCalledWith('deleted_at', null);
+  });
+
+  it('includes soft-deleted nodes when includeDeleted is true (no deleted_at filter)', async () => {
+    const builder = makeBuilder([nodeFixture]);
+    const client = makeClient(builder);
+
+    await listNodes(client as any, 'proj-1', { includeDeleted: true });
+
+    expect(builder.is).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listDeletedNodes
+// ---------------------------------------------------------------------------
+
+describe('listDeletedNodes', () => {
+  it('returns only soft-deleted nodes (not deleted_at is null)', async () => {
+    const deleted = { ...nodeFixture, deleted_at: '2026-06-08T00:00:00Z', deleted_by: 'u-1' };
+    const builder = makeBuilder([deleted]);
+    const client = makeClient(builder);
+
+    const result = await listDeletedNodes(client as any, 'proj-1');
+
+    expect(result).toEqual([deleted]);
+    expect(builder.eq).toHaveBeenCalledWith('project_id', 'proj-1');
+    expect(builder.not).toHaveBeenCalledWith('deleted_at', 'is', null);
+  });
+
+  it('applies the kind filter when provided', async () => {
+    const builder = makeBuilder([]);
+    const client = makeClient(builder);
+
+    await listDeletedNodes(client as any, 'proj-1', 'tenant_db');
+
+    expect(builder.eq).toHaveBeenCalledWith('kind', 'tenant_db');
+    expect(builder.not).toHaveBeenCalledWith('deleted_at', 'is', null);
   });
 });
 

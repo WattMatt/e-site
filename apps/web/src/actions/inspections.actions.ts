@@ -127,7 +127,8 @@ export async function listProjectNodesAction(projectId: string) {
       .schema('structure')
       .from('nodes')
       .select('id, code, name')
-      .eq('project_id', revProjectId),
+      .eq('project_id', revProjectId)
+      .is('deleted_at' as never, null),
     supabase
       .schema('cable_schedule')
       .from('sources')
