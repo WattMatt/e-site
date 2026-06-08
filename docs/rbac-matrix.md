@@ -17,6 +17,7 @@ membership.
 | **W** | Can view *and* mutate (full CRUD as the route allows) |
 | **R** | Read-only — page renders or GET returns data, but writes are blocked |
 | **—** | No access — page redirects, or API returns 401/403/404 |
+| **→** | Permanent redirect to a successor route — access is governed by the target's row |
 | **?** | Behaviour not verified; flag for audit |
 
 ## Roles
@@ -42,7 +43,9 @@ membership.
 | `/projects/[id]/snags/visits/[visitId]` (visit detail) | W | W | W | W | R | — | R |
 | `/projects/[id]/diary` | W | W | W | W | R | — | R |
 | `/projects/[id]/cables` | W | W | W | W | — | — | R¹ |
-| `/projects/[id]/equipment-schedule` | W | W | W | W | — | — | R¹ |
+| `/projects/[id]/equipment-materials` | W | W | W | W | — | — | R¹ |
+| `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
+| `/projects/[id]/materials` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/tenant-schedule` | W | W | W | W | — | — | R¹ |
 | `/projects/[id]/floor-plans` | W | W | W | W | R | — | R |
 | `/projects/[id]/handover` | W | W | W | R | R | — | R |
@@ -72,6 +75,7 @@ membership.
 ³ Marketplace is Phase 2-gated by `NEXT_PUBLIC_PHASE_2_MARKETPLACE=true`.
 ⁴ `/jbcc/unlock` is visible to all authenticated org members (read-only paywall page). The `<UnlockJbccButton />` inside only renders for owner/admin; all other roles see "ask your owner/admin" text. No redirect for locked org — this IS the locked-state destination.
 ⁵ All JBCC routes under `/(gated)/` require `public.has_feature(org_id, 'jbcc') = true` — the `jbcc/layout.tsx` gate redirects locked orgs to `/jbcc/unlock` before any role check. WM-Consulting bypasses. For write-gated routes: `inspector`, `supplier`, and `client_viewer` cannot reach `/notice/[code]/new`; status/attachment mutations on tracking and CRUD on parties require `ORG_WRITE_ROLES` (owner/admin/project_manager/contractor) enforced server-side.
+⁶ `/equipment-schedule` and `/materials` were merged into `/equipment-materials` and now unconditionally `redirect()` there for every role (thin shims, no role gate of their own) — access is governed by the `/equipment-materials` row. Equipment management (add/edit/decommission boards) is inline on the unified tab and is gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) by the existing `equipment.actions` guards.
 
 ## Project settings (`apps/web/src/app/(admin)/projects/[id]/settings/*`)
 

@@ -33,6 +33,7 @@ A board exists in `nodes` but only appears in Materials if it also has a `node_o
 | D7 | File preview (popup-safe new tab) + forced download on every attached document. | DONE (Part A) | 2026-06-08 |
 | D8 | Unified tab name: **“Equipment & Materials”**. | LOCKED | 2026-06-08 |
 | D9 | Invariant enforced by a **DB trigger** (auto-create the equipment order on node insert); remove the redundant app-level insert; keep the Part-A read harden as a safety net. | LOCKED | 2026-06-08 |
+| D10 | Document **preview = an in-app modal/panel** (PDF in an `<iframe>`, image inline, other types fall back to download), with a download button — **not** a new browser tab. Supersedes D7's "new tab" for the unified tab; the Part-A `triggerDownload` helper is reused, a new `DocumentPreviewModal` replaces the new-tab `previewViaSignedUrl` here. | LOCKED | 2026-06-08 |
 
 No decision is left in PROPOSED.
 
@@ -77,7 +78,7 @@ Within each group: **natural sort by `code`** (D6). Empty groups are hidden.
 
 **Detail panel — equipment board:**
 - Procurement line: status chip + the single advance action (`Mark ordered` when Required, `Mark received` when Ordered); `required by` / `ordered` / `received` dates.
-- Documents: `Quote`, `Order instruction`, `Shop drawings`. Each attached file shows the filename with **`⤢ preview`** (popup-safe new tab) and **`↓ download`** (forced); empty slots show an upload control. (D7 — reuses the Part-A `OrderDocSlot` / `ShopDrawingList` + `previewViaSignedUrl` / `triggerDownload` helpers.)
+- Documents: `Quote`, `Order instruction`, `Shop drawings`. Each attached file shows the filename with **`⤢ preview`** (opens an **in-app preview modal** — PDF in an `<iframe>`, image inline; D10) and **`↓ download`** (forced); empty slots show an upload control. (Reuses the Part-A `triggerDownload` helper + a new `DocumentPreviewModal`; the new-tab `previewViaSignedUrl` is replaced by the modal here.)
 
 **Detail panel — tenant / shop board:**
 - The scope-order lines (DB / Lighting / Other), each with its status chip, dates, and any documents (same preview/download). `By tenant` lines are shown but carry no buy action.
