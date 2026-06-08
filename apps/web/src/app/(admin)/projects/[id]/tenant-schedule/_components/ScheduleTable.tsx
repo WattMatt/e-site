@@ -14,9 +14,12 @@ import type { NodeOrderData } from '../../equipment-schedule/_components/NodeOrd
 import { BoPeriodSelect, BoDateCell } from './BoCells'
 import type { TenantBoInfo } from './BoCells'
 import { TenantDeleteModal } from './TenantDeleteModal'
+import { TenantRecycleButton, TenantRestoreButton } from './TenantRecycleButtons'
 
 interface Props {
   nodes: Node[]
+  // Soft-deleted tenants (recycle bin) — kind='tenant_db', deleted_at set.
+  deletedNodes: Node[]
   projectId: string
   orgId: string
   scopeItemTypes: ScopeItemType[]
@@ -31,6 +34,7 @@ interface Props {
 
 export function ScheduleTable({
   nodes,
+  deletedNodes,
   projectId,
   orgId,
   scopeItemTypes: initialScopeItemTypes,
@@ -41,6 +45,8 @@ export function ScheduleTable({
   tenantBoByNode,
 }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
+  // Recycle-bin disclosure (closed by default; mirrors showDecommissioned).
+  const [showRecycleBin, setShowRecycleBin] = useState(false)
   // node_id of the currently-expanded scope panel (one at a time)
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
   // node_id of the currently-expanded layout panel (one at a time, independent of scope)
@@ -82,7 +88,13 @@ export function ScheduleTable({
     })
   }
 
-  if (nodes.length === 0) {
+  const sortedDeleted = [...deletedNodes].sort((a, b) => {
+    const aNum = a.shop_number ?? a.code ?? ''
+    const bNum = b.shop_number ?? b.code ?? ''
+    return aNum.localeCompare(bNum, undefined, { numeric: true, sensitivity: 'base' })
+  })
+
+  if (nodes.length === 0 && deletedNodes.length === 0) {
     return (
       <div
         style={{
@@ -313,24 +325,11 @@ export function ScheduleTable({
                           >
                             {isLayoutExpanded ? 'Close' : 'Layout ↓'}
                           </button>
-                          <button
-                            onClick={() => setDeletingNode({ id: node.id, code: node.code })}
-                            title="Permanently delete this tenant"
-                            style={{
-                              background: 'none',
-                              border: '1px solid #6b1e1e',
-                              borderRadius: 5,
-                              cursor: 'pointer',
-                              padding: '4px 10px',
-                              fontSize: 11,
-                              color: 'var(--c-red)',
-                              fontWeight: 600,
-                              transition: 'all 0.15s',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            Delete
-                          </button>
+                          <TenantRecycleButton
+                            projectId={projectId}
+                            nodeId={node.id}
+                            code={node.code}
+                          />
                         </div>
                       )}
                     </Td>
@@ -391,6 +390,87 @@ export function ScheduleTable({
         {activeNodes.length} active shop{activeNodes.length !== 1 ? 's' : ''}
         {decomNodes.length > 0 && ` · ${decomNodes.length} decommissioned`}
       </p>
+
+      {/* Recycle bin — soft-deleted tenants, restorable or permanently deletable */}
+      {deletedNodes.length > 0 && (
+        <div style={{ marginTop: 20, borderTop: '1px solid var(--c-border)', paddingTop: 12 }}>
+          <button
+            type="button"
+            onClick={() => setShowRecycleBin((v) => !v)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              color: 'var(--c-text-mid)',
+            }}
+            aria-expanded={showRecycleBin}
+          >
+            <span style={{ transition: 'transform 0.15s', transform: showRecycleBin ? 'rotate(90deg)' : 'none' }}>▸</span>
+            Recycle bin ({deletedNodes.length})
+          </button>
+
+          {showRecycleBin && (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {sortedDeleted.map((node) => (
+                <div
+                  key={node.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    background: 'var(--c-panel)',
+                    border: '1px solid var(--c-border)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--c-text)' }}>
+                      {node.code}
+                    </span>
+                    <span style={{ fontSize: 13, color: 'var(--c-text-mid)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {node.shop_name ?? node.name ?? '—'}
+                    </span>
+                    <Badge variant="ghost">in bin</Badge>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <TenantRestoreButton projectId={projectId} nodeId={node.id} />
+                    <button
+                      type="button"
+                      onClick={() => setDeletingNode({ id: node.id, code: node.code })}
+                      title={`Permanently delete ${node.code}`}
+                      style={{
+                        background: 'none',
+                        border: '1px solid #6b1e1e',
+                        borderRadius: 5,
+                        cursor: 'pointer',
+                        padding: '4px 10px',
+                        fontSize: 11,
+                        color: 'var(--c-red)',
+                        fontWeight: 600,
+                        transition: 'all 0.15s',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Delete permanently
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add scope item modal */}
       {showAddModal && (

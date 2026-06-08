@@ -13,7 +13,12 @@ vi.mock('@esite/shared', async () => {
   return { ...actual, projectService: { ...actual.projectService, getById: getByIdMock } }
 })
 
-import { getTenantDeleteSummaryAction, hardDeleteTenantAction } from './tenant-delete.actions'
+import {
+  getTenantDeleteSummaryAction,
+  hardDeleteTenantAction,
+  softDeleteTenantAction,
+  restoreTenantAction,
+} from './tenant-delete.actions'
 
 const PROJECT = '11111111-1111-1111-1111-111111111111'
 const NODE = '22222222-2222-2222-2222-222222222222'
@@ -329,5 +334,228 @@ describe('hardDeleteTenantAction — happy path orchestration', () => {
     expect('error' in res).toBe(true)
     const anyDelete = fetchMock.mock.calls.some((c: any[]) => (c[1] as RequestInit).method === 'DELETE')
     expect(anyDelete).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// softDeleteTenantAction — recycle bin (reversible)
+// ---------------------------------------------------------------------------
+
+describe('softDeleteTenantAction', () => {
+  it('denies a non-write role before any fetch', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({ role: 'contractor', 'nodes:self': { id: NODE, kind: 'tenant_db', code: 'T1', name: 'Shop 1', status: 'active' } }),
+    )
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await softDeleteTenantAction(PROJECT, NODE)
+    expect('error' in res).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses (no mutation) when an issued-revision supply references the node', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        role: 'owner',
+        'nodes:self': { id: NODE, kind: 'tenant_db', code: 'T1', name: null, status: 'active' },
+        supplies: [{ id: 's-1', revision: { status: 'ISSUED' } }],
+      }),
+    )
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve('') }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await softDeleteTenantAction(PROJECT, NODE)
+    expect('error' in res).toBe(true)
+    // no PATCH (soft-delete) and no DELETE (draft-supply removal) should fire
+    const mutated = fetchMock.mock.calls.some((c: any[]) => {
+      const m = (c[1] as RequestInit).method
+      return m === 'PATCH' || m === 'DELETE'
+    })
+    expect(mutated).toBe(false)
+  })
+
+  it('refuses (no mutation) when a child node exists', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        role: 'owner',
+        'nodes:self': { id: NODE, kind: 'tenant_db', code: 'T1', name: null, status: 'active' },
+        'nodes:children': [{ id: 'child-1' }],
+      }),
+    )
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve('') }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await softDeleteTenantAction(PROJECT, NODE)
+    expect('error' in res).toBe(true)
+    const mutated = fetchMock.mock.calls.some((c: any[]) => {
+      const m = (c[1] as RequestInit).method
+      return m === 'PATCH' || m === 'DELETE'
+    })
+    expect(mutated).toBe(false)
+  })
+
+  it('happy path: audit POST → draft-supply DELETEs → nodes PATCH with deleted_at, returns ok', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        role: 'owner',
+        'nodes:self': { id: NODE, kind: 'tenant_db', code: 'SHOP-12', name: 'Shoprite', status: 'active' },
+        'nodes:children': [],
+        supplies: [{ id: 's-1', revision: { status: 'DRAFT' } }],
+      }),
+    )
+    const calls: Array<{ url: string; method: string; body?: string }> = []
+    const fetchMock = vi.fn((url: string, init: RequestInit) => {
+      calls.push({ url, method: (init.method as string) ?? 'GET', body: init.body as string | undefined })
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('') })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await softDeleteTenantAction(PROJECT, NODE)
+    expect(res).toEqual({ ok: true })
+
+    // Audit POST first, before the destructive draft-supply deletes.
+    const idxAudit = calls.findIndex((c) => c.url.includes('/rest/v1/audit_log') && c.method === 'POST')
+    expect(idxAudit).toBeGreaterThanOrEqual(0)
+
+    // Draft cable supplies removed (from + to).
+    const deletes = calls.filter((c) => c.method === 'DELETE')
+    expect(deletes.some((c) => c.url.includes('/rest/v1/supplies') && c.url.includes('from_node_id'))).toBe(true)
+    expect(deletes.some((c) => c.url.includes('/rest/v1/supplies') && c.url.includes('to_node_id'))).toBe(true)
+
+    // The node is PATCHed with a deleted_at marker (the soft delete).
+    const patch = calls.find((c) => c.method === 'PATCH' && c.url.includes('/rest/v1/nodes') && c.url.includes(`id=eq.${NODE}`))
+    expect(patch).toBeTruthy()
+    expect(patch!.body).toContain('deleted_at')
+
+    // Ordering: audit → supply deletes → node PATCH.
+    const idxPatch = calls.findIndex((c) => c.method === 'PATCH' && c.url.includes('/rest/v1/nodes'))
+    const idxFirstDelete = calls.findIndex((c) => c.method === 'DELETE')
+    expect(idxFirstDelete).toBeGreaterThan(idxAudit)
+    expect(idxPatch).toBeGreaterThan(idxFirstDelete)
+
+    expect(revalidatePathMock).toHaveBeenCalled()
+  })
+
+  it('aborts with ZERO mutation when the audit write fails', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        role: 'owner',
+        'nodes:self': { id: NODE, kind: 'tenant_db', code: 'SHOP-12', name: 'Shoprite', status: 'active' },
+        'nodes:children': [],
+        supplies: [],
+      }),
+    )
+    const fetchMock = vi.fn((url: string, init: RequestInit) => {
+      const method = (init.method as string) ?? 'GET'
+      if (String(url).includes('/rest/v1/audit_log') && method === 'POST') {
+        return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('boom') })
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('') })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await softDeleteTenantAction(PROJECT, NODE)
+    expect('error' in res).toBe(true)
+    const mutated = fetchMock.mock.calls.some((c: any[]) => {
+      const m = (c[1] as RequestInit).method
+      return m === 'PATCH' || m === 'DELETE'
+    })
+    expect(mutated).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// restoreTenantAction
+// ---------------------------------------------------------------------------
+
+describe('restoreTenantAction', () => {
+  it('denies a non-write role before any fetch', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({ role: 'contractor', 'nodes:self': { id: NODE, kind: 'tenant_db', code: 'T1', name: null, status: 'active' } }),
+    )
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await restoreTenantAction(PROJECT, NODE)
+    expect('error' in res).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('happy path: audit POST then a clearing PATCH (deleted_at:null), returns ok', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        role: 'owner',
+        'nodes:self': { id: NODE, kind: 'tenant_db', code: 'SHOP-12', name: 'Shoprite', status: 'active' },
+      }),
+    )
+    const calls: Array<{ url: string; method: string; body?: string }> = []
+    const fetchMock = vi.fn((url: string, init: RequestInit) => {
+      calls.push({ url, method: (init.method as string) ?? 'GET', body: init.body as string | undefined })
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('') })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await restoreTenantAction(PROJECT, NODE)
+    expect(res).toEqual({ ok: true })
+
+    const idxAudit = calls.findIndex((c) => c.url.includes('/rest/v1/audit_log') && c.method === 'POST')
+    expect(idxAudit).toBeGreaterThanOrEqual(0)
+
+    const patch = calls.find((c) => c.method === 'PATCH' && c.url.includes('/rest/v1/nodes') && c.url.includes(`id=eq.${NODE}`))
+    expect(patch).toBeTruthy()
+    // The clearing PATCH nulls deleted_at (recycle-bin exit).
+    expect(patch!.body).toContain('deleted_at')
+    expect(JSON.parse(patch!.body as string)).toMatchObject({ deleted_at: null, deleted_by: null })
+
+    // No DELETE in the restore path (scope/docs/orders were never cascaded).
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false)
+
+    // Ordering: audit before the PATCH.
+    const idxPatch = calls.findIndex((c) => c.method === 'PATCH' && c.url.includes('/rest/v1/nodes'))
+    expect(idxPatch).toBeGreaterThan(idxAudit)
+
+    expect(revalidatePathMock).toHaveBeenCalled()
+  })
+
+  it('aborts with no PATCH when the audit write fails', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        role: 'owner',
+        'nodes:self': { id: NODE, kind: 'tenant_db', code: 'SHOP-12', name: 'Shoprite', status: 'active' },
+      }),
+    )
+    const fetchMock = vi.fn((url: string, init: RequestInit) => {
+      const method = (init.method as string) ?? 'GET'
+      if (String(url).includes('/rest/v1/audit_log') && method === 'POST') {
+        return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('boom') })
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('') })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await restoreTenantAction(PROJECT, NODE)
+    expect('error' in res).toBe(true)
+    const anyPatch = fetchMock.mock.calls.some((c: any[]) => (c[1] as RequestInit).method === 'PATCH')
+    expect(anyPatch).toBe(false)
+  })
+
+  it('refuses (before any audit/PATCH) when a live node already holds the code', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        role: 'owner',
+        'nodes:self': { id: NODE, kind: 'tenant_db', code: 'SHOP-12', name: 'Shoprite', status: 'active' },
+        // a LIVE node sharing the code (the 'id'-only clash select routes to nodes:children)
+        'nodes:children': [{ id: 'live-dup' }],
+      }),
+    )
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve('') }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await restoreTenantAction(PROJECT, NODE)
+    expect('error' in res).toBe(true)
+    if ('error' in res) expect(res.error.toLowerCase()).toContain('already exists')
+    // refused before any mutation — no audit POST, no PATCH
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

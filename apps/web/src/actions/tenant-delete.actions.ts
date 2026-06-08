@@ -64,6 +64,10 @@ export type TenantDeleteSummary =
 
 export type HardDeleteResult = { ok: true } | { error: string }
 
+export type SoftDeleteResult = { ok: true } | { error: string }
+
+export type RestoreResult = { ok: true } | { error: string }
+
 // ---------------------------------------------------------------------------
 // Generic service-role raw-fetch DELETE (mirrors structureDelete, but the
 // Content-Profile schema is a parameter — needed for cross-schema deletes).
@@ -89,6 +93,43 @@ async function serviceDelete(
   if (!res.ok) {
     const text = await res.text()
     return { ok: false, error: `DELETE ${schema}.${table} failed (HTTP ${res.status}): ${text.slice(0, 400)}` }
+  }
+  return { ok: true }
+}
+
+/**
+ * Generic service-role raw-fetch PATCH (same Content-Profile parameterisation).
+ * `filterQuery` is the PostgREST filter (e.g. `id=eq.<uuid>`); `patch` is the
+ * column set. Wrapped in try/catch like serviceInsert so a transport failure
+ * becomes a clean { ok:false } rather than an unhandled server-action throw.
+ */
+async function serviceUpdate(
+  supabaseUrl: string,
+  serviceKey: string,
+  schema: string,
+  table: string,
+  filterQuery: string,
+  patch: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  let res: Response
+  try {
+    res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterQuery}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        'Content-Profile': schema,
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify(patch),
+    })
+  } catch (e) {
+    return { ok: false, error: `PATCH ${schema}.${table} network error: ${(e as Error).message}` }
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `PATCH ${schema}.${table} failed (HTTP ${res.status}): ${text.slice(0, 400)}` }
   }
   return { ok: true }
 }
@@ -447,6 +488,146 @@ export async function hardDeleteTenantAction(
   } catch {
     // ignore — orphaned storage objects are acceptable
   }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  revalidatePath(`/projects/${projectId}/equipment-materials`)
+  revalidatePath(`/projects/${projectId}/cables`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// softDeleteTenantAction — move a tenant board to the recycle bin (reversible)
+// ---------------------------------------------------------------------------
+
+/**
+ * Soft-delete (recycle-bin) a tenant board: a single UPDATE setting
+ * deleted_at/deleted_by — NO cascade. It carries the SAME blockers as the hard
+ * delete (refuse on an issued-revision supply or any child node) and, like the
+ * hard delete, removes the node's DRAFT cable supplies so the cable schedule
+ * never shows a run to a hidden board. Restore recovers scope/docs/orders/
+ * inspections but not the draft cable wiring (cheap to recreate — intended).
+ *
+ * The audit_log row is written FIRST and the action aborts if it fails — a
+ * tenant must never leave the schedule without a trace (mirrors Phase 1).
+ */
+export async function softDeleteTenantAction(
+  projectId: string,
+  nodeId: string,
+): Promise<SoftDeleteResult> {
+  const parsed = z.object({ projectId: uuidSchema, nodeId: uuidSchema }).safeParse({ projectId, nodeId })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const loaded = await loadTenantNode(guard.supabase, nodeId, projectId)
+  if ('error' in loaded) return { error: loaded.error }
+
+  // 1. Re-check the blockers (defends against a stale pre-flight).
+  const { supplies, childCount } = await readBlockerInputs(guard.supabase, nodeId)
+  const blocked = blockerReason(supplies, childCount)
+  if (blocked) return { error: blocked }
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // 2. Write the audit row BEFORE any mutation — abort if it fails (fatal).
+  const auditRow = {
+    organisation_id: guard.orgId,
+    actor_id: guard.user.id,
+    entity_type: 'tenant_db',
+    entity_id: nodeId,
+    action: 'soft_delete',
+    old_values: { code: loaded.node.code, name: loaded.node.name },
+  }
+  const auditRes = await serviceInsert(supabaseUrl, serviceKey, 'public', 'audit_log', auditRow)
+  if (!auditRes.ok) {
+    return { error: `Could not record the recycle-bin audit — delete aborted. ${auditRes.error ?? ''}`.trim() }
+  }
+
+  // 3. Remove the DRAFT-revision cable supplies referencing the node (from + to).
+  //    The blocker check guarantees every referencing supply is DRAFT.
+  const fromDel = await serviceDelete(supabaseUrl, serviceKey, 'cable_schedule', 'supplies', `from_node_id=eq.${nodeId}`)
+  if (!fromDel.ok) return { error: fromDel.error ?? 'Failed to remove cable connections' }
+  const toDel = await serviceDelete(supabaseUrl, serviceKey, 'cable_schedule', 'supplies', `to_node_id=eq.${nodeId}`)
+  if (!toDel.ok) return { error: toDel.error ?? 'Failed to remove cable connections' }
+
+  // 4. Mark the node soft-deleted.
+  const upd = await serviceUpdate(supabaseUrl, serviceKey, 'structure', 'nodes', `id=eq.${nodeId}`, {
+    deleted_at: new Date().toISOString(),
+    deleted_by: guard.user.id,
+  })
+  if (!upd.ok) return { error: upd.error ?? 'Failed to move the tenant to the recycle bin' }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  revalidatePath(`/projects/${projectId}/equipment-materials`)
+  revalidatePath(`/projects/${projectId}/cables`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// restoreTenantAction — bring a tenant board back from the recycle bin
+// ---------------------------------------------------------------------------
+
+/**
+ * Restore a soft-deleted tenant board: clear deleted_at/deleted_by. Recovers
+ * scope/documents/orders/inspections (none were cascaded). Draft cable supplies
+ * removed at soft-delete time are NOT restored (intended). Audited (action
+ * 'restore').
+ */
+export async function restoreTenantAction(
+  projectId: string,
+  nodeId: string,
+): Promise<RestoreResult> {
+  const parsed = z.object({ projectId: uuidSchema, nodeId: uuidSchema }).safeParse({ projectId, nodeId })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const loaded = await loadTenantNode(guard.supabase, nodeId, projectId)
+  if ('error' in loaded) return { error: loaded.error }
+
+  // Refuse if a LIVE node already holds this code — the partial unique index
+  // (00123, deleted_at IS NULL) would reject the restore PATCH; pre-check here
+  // for a friendly message instead of a raw constraint error.
+  const { data: codeClash } = await (guard.supabase as any)
+    .schema('structure')
+    .from('nodes')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('code', loaded.node.code)
+    .is('deleted_at', null)
+    .neq('id', nodeId)
+  if (codeClash && codeClash.length > 0) {
+    return { error: `A tenant with code ${loaded.node.code} already exists. Rename or remove it before restoring this one.` }
+  }
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // Audit the restore BEFORE the mutation — abort if it fails (fatal, mirroring
+  // the delete path: no untraced recycle-bin transition).
+  const auditRow = {
+    organisation_id: guard.orgId,
+    actor_id: guard.user.id,
+    entity_type: 'tenant_db',
+    entity_id: nodeId,
+    action: 'restore',
+    old_values: { code: loaded.node.code, name: loaded.node.name },
+  }
+  const auditRes = await serviceInsert(supabaseUrl, serviceKey, 'public', 'audit_log', auditRow)
+  if (!auditRes.ok) {
+    return { error: `Could not record the restore audit — restore aborted. ${auditRes.error ?? ''}`.trim() }
+  }
+
+  const upd = await serviceUpdate(supabaseUrl, serviceKey, 'structure', 'nodes', `id=eq.${nodeId}`, {
+    deleted_at: null,
+    deleted_by: null,
+  })
+  if (!upd.ok) return { error: upd.error ?? 'Failed to restore the tenant' }
 
   revalidatePath(`/projects/${projectId}/tenant-schedule`)
   revalidatePath(`/projects/${projectId}/equipment-materials`)
