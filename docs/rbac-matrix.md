@@ -118,9 +118,11 @@ Read-only actions require project access (any project member). Write/export acti
 | `createSnagVisitAction` | W | W | W | — | — | — | — |
 | `updateSnagVisitAction` | W | W | W | — | — | — | — |
 | `deleteSnagVisitAction` | W | W | W | — | — | — | — |
-| `addSnagToVisitAction` | W | W | W | — | — | — | — |
-| `closeSnagOnVisitAction` | W | W | W | — | — | — | — |
+| `addSnagToVisitAction` | W | W | W | W | W | W | — |
+| `closeSnagOnVisitAction` | W | W | W | W | W | W | — |
 | `exportSnagVisitReportAction` (renders + persists to `projects.reports`, kind=`snag`) | W | W | W | — | — | — | — |
+
+> **Widened 2026-06-04:** raising/closing a snag *on a visit* (`addSnagToVisitAction`, `closeSnagOnVisitAction`) is gated to `SNAG_FIELD_ROLES` = every role **except** read-only `client_viewer` — site agents (contractor/inspector/supplier) can both raise and close snags during a visit. Creating/editing the visit and exporting the report stay `ORG_WRITE_ROLES` (owner/admin/PM).
 
 ## Public / unauthenticated
 

@@ -9,10 +9,11 @@ import {
   projectService,
   snagVisitService,
   ORG_WRITE_ROLES,
+  SNAG_FIELD_ROLES,
   createSnagVisitSchema,
   updateSnagVisitSchema,
 } from '@esite/shared'
-import type { CreateSnagVisitInput, UpdateSnagVisitInput } from '@esite/shared'
+import type { CreateSnagVisitInput, UpdateSnagVisitInput, OrgRole } from '@esite/shared'
 import { gatherSnagVisitReportData } from '@/lib/reports/snag-visit-report-data'
 import { renderSnagVisitReport } from '@/lib/reports/snag-visit-report'
 
@@ -42,7 +43,7 @@ const addSnagToVisitInputSchema = z.object({
  *
  * requireEffectiveRole honours per-project promotion (user_effective_project_role).
  */
-async function guardProjectAccess(projectId: string): Promise<
+async function guardProjectAccess(projectId: string, roles: readonly OrgRole[] = ORG_WRITE_ROLES): Promise<
   | { error: string; orgId?: undefined; userId?: undefined }
   | { error?: undefined; orgId: string; userId: string }
 > {
@@ -53,7 +54,7 @@ async function guardProjectAccess(projectId: string): Promise<
   const project = await projectService.getById(supabase as never, projectId)
   if (!project) return { error: 'Project not found' }
 
-  const roleGate = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  const roleGate = await requireEffectiveRole(supabase, projectId, roles)
   if (!roleGate.ok) return { error: roleGate.error }
 
   return { orgId: project.organisation_id as string, userId: user.id }
@@ -209,7 +210,8 @@ export async function addSnagToVisitAction(input: {
   if (!parse.success) return { error: parse.error.errors[0]?.message ?? 'Invalid input' }
   const { visitId, projectId, ...snagFields } = parse.data
 
-  const guard = await guardProjectAccess(projectId)
+  // Widened (2026-06-04): all site roles except read-only client_viewer may raise a snag on a visit.
+  const guard = await guardProjectAccess(projectId, SNAG_FIELD_ROLES)
   if (guard.error !== undefined) return { error: guard.error }
 
   const visitGuard = await guardVisitBelongsToProject(visitId, projectId)
@@ -254,7 +256,8 @@ export async function closeSnagOnVisitAction(
   const parse = z.tuple([uuidSchema, uuidSchema, uuidSchema]).safeParse([snagId, visitId, projectId])
   if (!parse.success) return { error: 'Invalid parameters' }
 
-  const guard = await guardProjectAccess(projectId)
+  // Widened (2026-06-04): all site roles except read-only client_viewer may close a snag on a visit.
+  const guard = await guardProjectAccess(projectId, SNAG_FIELD_ROLES)
   if (guard.error !== undefined) return { error: guard.error }
 
   // Use the cookie client for the closeout photo read — RLS is fine here

@@ -475,6 +475,49 @@ describe('closeSnagOnVisitAction — closeout photo guard', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RBAC widening (2026-06-04) — contractors (and other non-read-only site roles)
+// may RAISE and CLOSE snags on a visit, but NOT create/edit the visit or export
+// the report (those stay ORG_WRITE_ROLES). Exercises the real requireEffectiveRole.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('RBAC widening — contractor can raise + close snags on a visit', () => {
+  beforeEach(() => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor', photoRows: [{ id: 'photo-1' }] }))
+    createServiceClientMock.mockReturnValue(mockServiceClient())
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
+  })
+
+  it('addSnagToVisitAction — contractor allowed', async () => {
+    const res = await addSnagToVisitAction({ visitId: VISIT_ID, projectId: PROJECT_ID, title: 'Cracked tile' })
+    expect(res).toEqual({ snagId: SNAG_ID })
+  })
+
+  it('closeSnagOnVisitAction — contractor allowed (closeout photo present)', async () => {
+    const res = await closeSnagOnVisitAction(SNAG_ID, VISIT_ID, PROJECT_ID)
+    expect(res).toEqual({})
+  })
+})
+
+describe('RBAC widening boundary — contractor still cannot create a visit or export', () => {
+  beforeEach(() => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    createServiceClientMock.mockReturnValue(mockExportServiceClient())
+  })
+
+  it('createSnagVisitAction — contractor rejected (ORG_WRITE_ROLES)', async () => {
+    const res = await createSnagVisitAction({ projectId: PROJECT_ID, visitDate: '2026-06-04', attendees: [] })
+    expect('error' in res).toBe(true)
+    const { snagVisitService } = await import('@esite/shared')
+    expect(snagVisitService.createVisit).not.toHaveBeenCalled()
+  })
+
+  it('exportSnagVisitReportAction — contractor rejected (ORG_WRITE_ROLES)', async () => {
+    const res = await exportSnagVisitReportAction(VISIT_ID, PROJECT_ID)
+    expect('error' in res).toBe(true)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // exportSnagVisitReportAction
 // ─────────────────────────────────────────────────────────────────────────────
 

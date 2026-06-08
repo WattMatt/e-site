@@ -36,6 +36,14 @@ export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
 export const OWNER_ADMIN: readonly OrgRole[] = ['owner', 'admin']
 export const ORG_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager']
 /**
+ * Roles permitted to RAISE and CLOSE snags during a site visit — every active
+ * site role except the read-only client_viewer. Broader than ORG_WRITE_ROLES
+ * (which still gates visit create/edit/delete + report export); matches the
+ * open, field-level nature of snag capture. Per the 2026-06-04 decision:
+ * contractors and other site agents can both raise and close snags on a visit.
+ */
+export const SNAG_FIELD_ROLES: readonly OrgRole[] = ORG_ROLES.filter((r) => r !== 'client_viewer')
+/**
  * Roles permitted to view cost/money fields (contract_value, currency,
  * retention_pct, cable cost summaries, rate libraries). Owner + admin + PM.
  * Distinct from ORG_WRITE_ROLES even though the sets coincide today — keep
