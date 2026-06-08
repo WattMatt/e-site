@@ -215,9 +215,16 @@ export async function createEquipmentNodeAction(
     )
     if (!orderRes.ok) {
       const text = await orderRes.text()
-      // Node was created; derivation failure is surfaced but does NOT undo the node.
-      revalidatePath(`/projects/${projectId}/equipment-schedule`)
-      return { error: `Equipment node created but order derivation failed (HTTP ${orderRes.status}): ${text.slice(0, 400)}` }
+      // Migration 00121 adds a trigger that auto-creates this equipment order on
+      // node insert. A unique-violation here just means the trigger already
+      // created it — treat as success. (The app insert is kept tolerant for
+      // deploy safety; it is removed in the Phase-1 follow-up once the trigger
+      // is confirmed in prod.)
+      const isDuplicate = orderRes.status === 409 || /duplicate|unique|23505/i.test(text)
+      if (!isDuplicate) {
+        revalidatePath(`/projects/${projectId}/equipment-schedule`)
+        return { error: `Equipment node created but order derivation failed (HTTP ${orderRes.status}): ${text.slice(0, 400)}` }
+      }
     }
   }
 

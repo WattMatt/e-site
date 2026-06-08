@@ -81,6 +81,20 @@ describe('createEquipmentNodeAction — happy path', () => {
     expect(fetchMock.mock.calls[1][0]).toContain('/rest/v1/node_orders')
     expect(revalidatePathMock).toHaveBeenCalled()
   })
+
+  it('treats a duplicate node_orders insert (trigger already created it) as success', async () => {
+    createClientMock.mockResolvedValue(mockClient())
+    const fetchMock = vi.fn()
+      // 1) node insert → representation [{id}]
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([{ id: 'node-9' }]) })
+      // 2) node_orders insert → 409 conflict (the 00121 trigger won the race)
+      .mockResolvedValueOnce({ ok: false, status: 409, text: () => Promise.resolve('duplicate key value violates unique constraint "idx_node_orders_equipment_unique"') })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await createEquipmentNodeAction(UUID, 'main_board', 'MB-1', '', true)
+    expect(res).toEqual({ id: 'node-9' })
+    expect(revalidatePathMock).toHaveBeenCalled()
+  })
 })
 
 describe('role gate', () => {
