@@ -4,9 +4,9 @@
 
 **Goal:** Capture a project's priced tender BOQ (Open Nexus `.xlsx` export) into E-Site — import + reconcile against its own totals + a Main-Summary/drill-down viewer + inline supply/install rate editing — behind a new `COST_VIEW_ROLES`-gated **Rates** tab in project settings.
 
-**Architecture:** A 3-table self-referencing tree in the `projects` schema (`boq_imports` → `boq_sections` → `boq_items`). A pure, AoA-based parser in `apps/web/src/lib/boq/` (web-only, keeps `xlsx`/SheetJS out of the mobile bundle) classifies sheets, maps the SUPPLY/INSTALL-vs-RATE column variants, and emits a section tree + a reconciliation report. Shared Zod schema/mappers/service in `packages/shared`. Rollups computed on read (no triggers). Re-import replaces (new `is_current` row, prior kept for audit).
+**Architecture:** A 3-table self-referencing tree in the `projects` schema (`boq_imports` → `boq_sections` → `boq_items`). A pure, AoA-based parser in `apps/web/src/lib/boq/` (web-only; the workbook is read with `exceljs` — already an `apps/web` dependency, kept out of the mobile bundle) classifies sheets, maps the SUPPLY/INSTALL-vs-RATE column variants, and emits a section tree + a reconciliation report. The pure functions take array-of-arrays (AoA), so they're library-agnostic and trivially testable; only the thin `parse-boq-xlsx` read-shell touches `exceljs`. Shared Zod schema/mappers/service in `packages/shared`. Rollups computed on read (no triggers). Re-import replaces (new `is_current` row, prior kept for audit).
 
-**Tech Stack:** Next.js 15 (App Router), TypeScript, Supabase Postgres (RLS), `@esite/shared` (Zod + services), vitest, `xlsx` (SheetJS, NEW web-only dep), react-hook-form, the existing `Card`/`FormField` UI kit.
+**Tech Stack:** Next.js 15 (App Router), TypeScript, Supabase Postgres (RLS), `@esite/shared` (Zod + services), vitest, `exceljs` (ALREADY an `apps/web` dependency — used to read the workbook into AoA; no new dep), react-hook-form, the existing `Card`/`FormField` UI kit.
 
 **Spec:** `docs/superpowers/specs/2026-06-08-project-rates-boq-design.md`
 
@@ -20,7 +20,7 @@
 - **Service shape:** `packages/shared/src/services/<name>.service.ts` + `_<name>-mappers.ts` (snake_case ↔ camelCase). Schemas in `packages/shared/src/schemas/`.
 - **Action result shape:** `Promise<{ data: T } | { error: string }>`.
 - **Tests:** vitest. Shared: `pnpm --filter @esite/shared test`. Web: `pnpm --filter web test`. Type-check: `pnpm --filter web type-check` / `pnpm --filter @esite/shared type-check`. Use `vi.hoisted(() => ({...}))` for mocks in any web action test (the `next/cache` import-load hoisting TDZ trap).
-- **Node-only test files** (anything importing `xlsx` / using `Buffer`) carry `// @vitest-environment node` at the top.
+- **Node-only test files** (anything importing `exceljs` / using `Buffer`) carry `// @vitest-environment node` at the top.
 - **Commit** after each green step (Conventional Commits, e.g. `feat(boq): …`, `test(boq): …`).
 - **Branch:** all code on `feat/project-rates-boq` (cut in Task 0).
 
@@ -38,7 +38,7 @@
 | `apps/web/src/lib/boq/types.ts` | parser I/O types |
 | `apps/web/src/lib/boq/classify-sheet.ts` | pure: classify sheet + resolve column map (AoA in) |
 | `apps/web/src/lib/boq/parse-sheet.ts` | pure: AoA → section tree + items for one bill sheet |
-| `apps/web/src/lib/boq/parse-boq-xlsx.ts` | orchestrator: `xlsx.read` → AoA per sheet → `ParsedBoq` |
+| `apps/web/src/lib/boq/parse-boq-xlsx.ts` | orchestrator: `exceljs` workbook load → AoA per sheet → `ParsedBoq` |
 | `apps/web/src/lib/boq/reconcile.ts` | pure: recompute + compare to summary totals → report |
 | `apps/web/src/actions/boq.actions.ts` | `importBoqAction` / `listBoqAction` / `updateBoqItemRateAction` / `deleteBoqImportAction` |
 | `apps/web/src/app/api/projects/[id]/boq/import/route.ts` | upload → parse → reconcile (no persist) |
@@ -49,31 +49,15 @@
 
 ---
 
-## Task 0: Branch + dependency
+## Task 0: Branch + dependency (already satisfied — verify only)
 
-- [ ] **Step 1: Cut the feature branch**
+> The feature branch `feat/project-rates-boq` already exists as an isolated git worktree off `origin/main`, and **`exceljs` is already a direct `apps/web` dependency** — verified resolvable from `apps/web`. **Do NOT add `xlsx`/SheetJS.** This task is a one-step verification.
 
-```bash
-git checkout -b feat/project-rates-boq
-```
+- [ ] **Step 1: Verify the toolchain is ready**
 
-- [ ] **Step 2: Add the SheetJS dependency to the web app only**
-
-```bash
-pnpm --filter web add xlsx
-```
-
-- [ ] **Step 3: Verify it installed and is web-scoped**
-
-Run: `pnpm --filter web list xlsx`
-Expected: a version is printed under `web`. Confirm `apps/mobile/package.json` does NOT list `xlsx`.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add apps/web/package.json pnpm-lock.yaml
-git commit -m "build(boq): add xlsx (SheetJS) to web app"
-```
+Run: `git branch --show-current` → `feat/project-rates-boq`.
+Run: `pnpm --filter web exec node -e "require.resolve('exceljs'); console.log('exceljs ok')"`
+Expected: `exceljs ok`. No commit needed (no dependency change).
 
 ---
 
@@ -748,7 +732,7 @@ git commit -m "feat(boq): boqService client methods (getCurrent/getTree/persistI
 - Create: `apps/web/src/lib/boq/classify-sheet.ts`
 - Test: `apps/web/src/lib/boq/classify-sheet.test.ts`
 
-Pure functions operate on **AoA** (`(string|number|null)[][]`) + the sheet name — no `xlsx` dependency, so they're trivially testable. `classifySheet(name, rows)` returns `{ kind: 'bill'|'summary'|'prose', headerRowIndex, columns }` where `columns` maps logical fields to column indices, tolerating `SUPPLY/INSTALL` vs `RATE`, amount-only, and the `ITEA`/`SUPPLY RATE` noise.
+Pure functions operate on **AoA** (`(string|number|null)[][]`) + the sheet name — no spreadsheet-library dependency, so they're trivially testable. `classifySheet(name, rows)` returns `{ kind: 'bill'|'summary'|'prose', headerRowIndex, columns }` where `columns` maps logical fields to column indices, tolerating `SUPPLY/INSTALL` vs `RATE`, amount-only, and the `ITEA`/`SUPPLY RATE` noise.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -863,7 +847,7 @@ git commit -m "feat(boq): parse a single bill sheet into a section tree (pure)"
 - Test: `apps/web/src/lib/boq/reconcile.test.ts`
 - Test: `apps/web/src/lib/boq/parse-boq-xlsx.test.ts` (`// @vitest-environment node`)
 
-`parseBoqXlsx(buffer)`: `xlsx.read(buffer,{type:'buffer'})` → for each sheet `xlsx.utils.sheet_to_json(ws,{header:1,blankrows:false,defval:null})` → AoA → `classifySheet` → for bills `parseSheet`; group `1.x` sheets under a synthetic `MALL PORTION` bill, `N-NN Name` sheets each as their own bill (order from `Main Summary`); read the `Main Summary` totals + VAT line. Returns `ParsedBoq` (bills with temp-id trees + items + the expected per-bill/grand totals).
+`parseBoqXlsx(buffer)`: `const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buffer)` → for each `ws` in `wb.worksheets`, convert to a 0-indexed AoA via a small `worksheetToAoa(ws)` helper (ExcelJS is **1-indexed** — `ws.getSheetValues()` returns a leading `null` row and each row a leading `null` col; also a cell `.value` can be an object for formulas/rich-text, so coerce via `cell.result ?? cell.text ?? cell.value`) → `classifySheet` → for bills `parseSheet`; group `1.x` sheets under a synthetic `MALL PORTION` bill, `N-NN Name` sheets each as their own bill (order from `Main Summary`); read the `Main Summary` totals + VAT line. Returns `ParsedBoq` (bills with temp-id trees + items + the expected per-bill/grand totals).
 
 `reconcile(parsed)`: recompute each item amount (`computeItemAmount`-equivalent) + roll up; compare computed bill totals to the `Main Summary` expected, and the grand total; tolerance `Math.max(1, expected*0.005)`. Returns `ReconciliationReport { grandTotalComputed, grandTotalExpected, matched, billResults[], warnings[], skippedSheets[] }`.
 
@@ -904,7 +888,7 @@ it('flags a bill whose items do not sum to its expected total', () => {
 
 - [ ] **Step 3: Implement `reconcile.ts` then `parse-boq-xlsx.ts`.**
 
-- [ ] **Step 4: Add an orchestrator test on a tiny in-code workbook** (build a 2-sheet workbook with `xlsx.utils.aoa_to_sheet` + `book_append_sheet`, `xlsx.write` to a buffer, feed to `parseBoqXlsx`, assert bill count + a known amount). `// @vitest-environment node` at the top.
+- [ ] **Step 4: Add an orchestrator test on a tiny in-code workbook** (build a workbook with ExcelJS — `const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('1.3 Low Voltage'); ws.addRows(aoaRows); const buf = await wb.xlsx.writeBuffer()` — feed `Buffer.from(buf)` to `parseBoqXlsx`, assert bill count + a known amount + that prose sheets are skipped). `// @vitest-environment node` at the top.
 
 - [ ] **Step 5: Run → PASS** + type-check. **Commit**
 
