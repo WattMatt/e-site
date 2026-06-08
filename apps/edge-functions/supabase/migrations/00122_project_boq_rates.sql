@@ -7,7 +7,7 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS projects.boq_imports (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id       uuid NOT NULL REFERENCES projects.projects(id) ON DELETE CASCADE,
-  organisation_id  uuid NOT NULL REFERENCES public.organisations(id),
+  organisation_id  uuid NOT NULL REFERENCES public.organisations(id), -- ON DELETE NO ACTION (default): orgs are removed only via admin tooling.
   source_filename  text NOT NULL,
   storage_path     text,
   imported_by      uuid REFERENCES public.profiles(id),
@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS projects.boq_sections (
   node_id            uuid,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now(),
+  -- Redundant given the PK, but required as the FK target for boq_sections_parent_fk
+  -- (composite FK enforces same-import parentage).
   UNIQUE (import_id, id)
 );
 ALTER TABLE projects.boq_sections DROP CONSTRAINT IF EXISTS boq_sections_kind_check;
@@ -79,10 +81,13 @@ ALTER TABLE projects.boq_items ADD CONSTRAINT boq_items_rate_model_check
 CREATE INDEX IF NOT EXISTS boq_items_section_idx ON projects.boq_items(section_id);
 
 -- updated_at triggers (reuse the standard helper)
+DROP TRIGGER IF EXISTS boq_imports_set_updated_at ON projects.boq_imports;
 CREATE TRIGGER boq_imports_set_updated_at BEFORE UPDATE ON projects.boq_imports
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS boq_sections_set_updated_at ON projects.boq_sections;
 CREATE TRIGGER boq_sections_set_updated_at BEFORE UPDATE ON projects.boq_sections
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS boq_items_set_updated_at ON projects.boq_items;
 CREATE TRIGGER boq_items_set_updated_at BEFORE UPDATE ON projects.boq_items
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
@@ -92,15 +97,19 @@ ALTER TABLE projects.boq_imports  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects.boq_sections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects.boq_items    ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS boq_imports_select ON projects.boq_imports;
 CREATE POLICY boq_imports_select ON projects.boq_imports FOR SELECT
   USING (public.user_has_project_access(project_id));
+DROP POLICY IF EXISTS boq_imports_modify ON projects.boq_imports;
 CREATE POLICY boq_imports_modify ON projects.boq_imports FOR ALL
   USING (public.user_effective_project_role(project_id, auth.uid()) IN ('owner','admin','project_manager'))
   WITH CHECK (public.user_effective_project_role(project_id, auth.uid()) IN ('owner','admin','project_manager'));
 
+DROP POLICY IF EXISTS boq_sections_select ON projects.boq_sections;
 CREATE POLICY boq_sections_select ON projects.boq_sections FOR SELECT
   USING (EXISTS (SELECT 1 FROM projects.boq_imports i
                  WHERE i.id = import_id AND public.user_has_project_access(i.project_id)));
+DROP POLICY IF EXISTS boq_sections_modify ON projects.boq_sections;
 CREATE POLICY boq_sections_modify ON projects.boq_sections FOR ALL
   USING (EXISTS (SELECT 1 FROM projects.boq_imports i
                  WHERE i.id = import_id
@@ -109,9 +118,11 @@ CREATE POLICY boq_sections_modify ON projects.boq_sections FOR ALL
                  WHERE i.id = import_id
                    AND public.user_effective_project_role(i.project_id, auth.uid()) IN ('owner','admin','project_manager')));
 
+DROP POLICY IF EXISTS boq_items_select ON projects.boq_items;
 CREATE POLICY boq_items_select ON projects.boq_items FOR SELECT
   USING (EXISTS (SELECT 1 FROM projects.boq_sections s JOIN projects.boq_imports i ON i.id = s.import_id
                  WHERE s.id = section_id AND public.user_has_project_access(i.project_id)));
+DROP POLICY IF EXISTS boq_items_modify ON projects.boq_items;
 CREATE POLICY boq_items_modify ON projects.boq_items FOR ALL
   USING (EXISTS (SELECT 1 FROM projects.boq_sections s JOIN projects.boq_imports i ON i.id = s.import_id
                  WHERE s.id = section_id
@@ -123,15 +134,14 @@ CREATE POLICY boq_items_modify ON projects.boq_items FOR ALL
 -- Storage bucket for the original .xlsx (private; org-scoped path {org}/{project}/{import}.xlsx)
 INSERT INTO storage.buckets (id, name, public) VALUES ('boq-imports','boq-imports',false)
   ON CONFLICT (id) DO NOTHING;
+-- Path scheme: {organisation_id}/{project_id}/{import_id}.xlsx — segment [2] is the project.
+-- Mirror the table RLS read gate (project access), not just org membership.
+DROP POLICY IF EXISTS boq_imports_storage_rw ON storage.objects;
 CREATE POLICY boq_imports_storage_rw ON storage.objects FOR ALL
   USING (bucket_id = 'boq-imports'
-         AND (storage.foldername(name))[1] IN (
-            SELECT organisation_id::text FROM public.user_organisations
-            WHERE user_id = auth.uid() AND is_active))
+         AND public.user_has_project_access( ((storage.foldername(name))[2])::uuid ))
   WITH CHECK (bucket_id = 'boq-imports'
-         AND (storage.foldername(name))[1] IN (
-            SELECT organisation_id::text FROM public.user_organisations
-            WHERE user_id = auth.uid() AND is_active));
+         AND public.user_has_project_access( ((storage.foldername(name))[2])::uuid ));
 
 NOTIFY pgrst, 'reload schema';
 COMMIT;
