@@ -33,8 +33,14 @@ END $$;
 EOSQL
 )
 
-if mgmt_query "$SQL" 2>&1 | grep -q 'SMOKE_OK_ROLLBACK'; then
+# The DO block ends in `RAISE EXCEPTION 'SMOKE_OK_ROLLBACK'` to force a rollback,
+# so the Management API returns an error object and mgmt_query exits non-zero.
+# Capture the output (|| true, else `set -e` aborts) and grep the captured string
+# — piping mgmt_query straight into grep would let `set -o pipefail` surface the
+# non-zero mgmt_query exit and mask a matching grep (false FAIL on success).
+OUT="$(mgmt_query "$SQL" 2>&1 || true)"
+if printf '%s' "$OUT" | grep -q 'SMOKE_OK_ROLLBACK'; then
   echo "PASS: equipment-order trigger creates 1 order for equipment, 0 for tenant (rolled back)"
 else
-  echo "FAIL: see error above"; exit 1
+  echo "FAIL:"; printf '%s\n' "$OUT" | tail -5; exit 1
 fi
