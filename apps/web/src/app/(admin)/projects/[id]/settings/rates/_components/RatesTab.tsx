@@ -50,7 +50,8 @@ export function RatesTab({ projectId, canEdit, initial }: Props) {
   // Local item copy so inline rate edits can recompute rollups optimistically.
   const [items, setItems] = useState<BoqItem[]>(initial?.items ?? [])
 
-  const sections = initial?.sections ?? []
+  // Stable reference (initial is a server-passed prop, constant for the mount).
+  const sections = useMemo(() => initial?.sections ?? [], [initial])
   const importRow = initial?.import ?? null
 
   // Recompute rollups from the local items whenever they change; falls back to
