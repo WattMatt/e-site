@@ -129,3 +129,75 @@ describe('parseSheet — non-bill sheets return empty', () => {
     expect(items).toHaveLength(0)
   })
 })
+
+describe('parseSheet — digit-led item codes (the Shoprite 10.1 bug)', () => {
+  it('emits a digit-led code like "10.1" as an ITEM under the current category', () => {
+    // The real Shoprite row the old leading-letter-required ITEM_RE dropped.
+    const testRows = [
+      HDR,
+      ['C1', 'ISOLATORS'],
+      ['10.1', 'Supply and install isolator', 'No', 1, 458.85, 0, 458.85],
+    ]
+    const cls = classifySheet('7-18 Shoprite', testRows)
+    const { sections, items, unclassified } = parseSheet('7-18 Shoprite', testRows, cls)
+    const cat = sections.find((s) => s.code === 'C1')!
+    const item = items.find((i) => i.code === '10.1')!
+    expect(item).toBeTruthy()
+    expect(item.sectionTempId).toBe(cat.tempId)
+    expect(item.amount).toBe(458.85)
+    expect(item.supplyRate).toBe(458.85)
+    // It was captured as an item, so it is NOT also flagged as unclassified.
+    expect(unclassified).toHaveLength(0)
+  })
+})
+
+describe('parseSheet — unclassified priced-row safety net', () => {
+  it('flags an amount-bearing row whose code matches neither category nor item', () => {
+    const testRows = [
+      HDR,
+      ['C1', 'A category'],
+      ['*9.9', 'Mystery priced row', null, null, null, null, 1234.5],
+    ]
+    const cls = classifySheet('Sheet', testRows)
+    const { items, unclassified } = parseSheet('Sheet', testRows, cls)
+    // Not counted as an item.
+    expect(items.find((i) => i.code === '*9.9')).toBeUndefined()
+    // Surfaced as unclassified, with its amount preserved.
+    expect(unclassified).toHaveLength(1)
+    expect(unclassified[0]).toMatchObject({ code: '*9.9', amount: 1234.5 })
+  })
+
+  it('flags a priced row that has an amount but no code at all', () => {
+    const testRows = [HDR, ['C1', 'A category'], [null, 'Orphan priced line', null, null, null, null, 77]]
+    const cls = classifySheet('Sheet', testRows)
+    const { items, unclassified } = parseSheet('Sheet', testRows, cls)
+    expect(items).toHaveLength(0)
+    expect(unclassified).toHaveLength(1)
+    expect(unclassified[0]).toMatchObject({ code: '', description: 'Orphan priced line', amount: 77 })
+  })
+
+  it('does NOT flag a TOTAL row or a single-letter recap row', () => {
+    const testRows = [
+      HDR,
+      ['C1', 'A category'],
+      ['C1.1', 'A real line', 'm', 1, 10, 2, 12],
+      [null, 'TOTAL CARRIED TO SUMMARY', null, null, null, null, 12],
+      ['B', 'Section B recap', null, null, null, null, 12],
+    ]
+    const cls = classifySheet('Sheet', testRows)
+    const { unclassified } = parseSheet('Sheet', testRows, cls)
+    expect(unclassified).toHaveLength(0)
+  })
+
+  it('does NOT flag rate-note or blank rows (no amount)', () => {
+    const testRows = [
+      HDR,
+      ['C1', 'A category'],
+      [null, 'Rates to include for supply and fixing...'],
+      [],
+    ]
+    const cls = classifySheet('Sheet', testRows)
+    const { unclassified } = parseSheet('Sheet', testRows, cls)
+    expect(unclassified).toHaveLength(0)
+  })
+})

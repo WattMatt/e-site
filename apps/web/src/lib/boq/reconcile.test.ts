@@ -16,6 +16,7 @@ const parsed: ParsedBoq = {
         rateModel: 'supply_install', supplyRate: null, installRate: null, rate: null, amount: 200, sortOrder: 1 },
     ] }],
   skippedSheets: ['NOTES TO TENDERER'],
+  unclassifiedRows: [],
 }
 
 describe('reconcile', () => {
@@ -45,5 +46,18 @@ describe('reconcile', () => {
     expect(bill.computed).toBe(350)
     expect(r.warnings.some(w => w.includes('"1"') && /no expected total/i.test(w))).toBe(true)
     expect(r.warnings.some(w => /no expected grand total/i.test(w))).toBe(true)
+  })
+
+  it('surfaces an unclassified priced row as a warning', () => {
+    const withDropped = structuredClone(parsed)
+    withDropped.unclassifiedRows = [
+      { sheet: '7-18 Shoprite', rowIndex: 42, code: '10.1', description: 'Supply and install isolator', amount: 458.85 },
+    ]
+    const r = reconcile(withDropped)
+    expect(
+      r.warnings.some(
+        (w) => /Unparsed priced row/i.test(w) && w.includes('7-18 Shoprite') && w.includes('10.1') && w.includes('458.85'),
+      ),
+    ).toBe(true)
   })
 })
