@@ -41,11 +41,16 @@ function unwrap<T>(result: { data: any; error: unknown }): T {
 
 /**
  * List all nodes for a project.  Optionally filter by kind and/or status.
+ *
+ * Soft-deleted nodes (recycle bin, migration 00123) are EXCLUDED by default;
+ * pass `includeDeleted: true` to include them. The `deleted_at` column lags the
+ * generated DB types, so the column name is cast `as never` to bypass the
+ * column-name check (matching this file's existing cast style).
  */
 export async function listNodes(
   client: SupabaseClient,
   projectId: string,
-  filters?: { kind?: NodeKind; status?: NodeStatus },
+  filters?: { kind?: NodeKind; status?: NodeStatus; includeDeleted?: boolean },
 ): Promise<Node[]> {
   let query = nodesTable(client).select('*').eq('project_id', projectId);
 
@@ -54,6 +59,32 @@ export async function listNodes(
   }
   if (filters?.status) {
     query = query.eq('status', filters.status);
+  }
+  if (!filters?.includeDeleted) {
+    query = query.is('deleted_at' as never, null);
+  }
+
+  const result = await query;
+  return unwrap<Node[]>(result) ?? [];
+}
+
+/**
+ * List the soft-deleted nodes for a project (the recycle bin) — those with
+ * `deleted_at IS NOT NULL`. Optionally filter by kind. `deleted_at` lags the
+ * generated types, hence the `as never` cast on the column name.
+ */
+export async function listDeletedNodes(
+  client: SupabaseClient,
+  projectId: string,
+  kind?: NodeKind,
+): Promise<Node[]> {
+  let query = nodesTable(client)
+    .select('*')
+    .eq('project_id', projectId)
+    .not('deleted_at' as never, 'is', null);
+
+  if (kind) {
+    query = query.eq('kind', kind);
   }
 
   const result = await query;

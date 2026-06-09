@@ -26,6 +26,10 @@ export interface Node {
   name: string | null;
   coc_required: boolean;
   status: NodeStatus;
+  /** Soft-delete marker (recycle bin, migration 00123) — NULL = not deleted. */
+  deleted_at: string | null;
+  /** Who soft-deleted the node (migration 00123); NULL when not deleted. */
+  deleted_by: string | null;
   /** Containment parent — the board this node sits under; null for a root/lease (migration 00116). */
   parent_node_id: string | null;
   // Tenant facet

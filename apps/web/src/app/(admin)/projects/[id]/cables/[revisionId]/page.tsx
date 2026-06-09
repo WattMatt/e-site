@@ -141,6 +141,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       .from('nodes')
       .select('id, code, kind, breaker_rating_a, section')
       .eq('project_id', projectId)
+      .is('deleted_at' as never, null)
       .order('code'),
     (supabase as any)
       .schema('cable_schedule')

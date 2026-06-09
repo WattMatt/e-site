@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, listNodes, computeBoDate } from '@esite/shared'
+import { projectService, listNodes, listDeletedNodes, computeBoDate } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { ScheduleTable } from './_components/ScheduleTable'
 import { ImportFlow } from './_components/ImportFlow'
@@ -43,6 +43,14 @@ export default async function TenantSchedulePage({ params }: Props) {
     nodes = await listNodes(supabase as never, projectId, { kind: 'tenant_db' })
   } catch (err: unknown) {
     loadError = err instanceof Error ? err.message : 'Could not load tenant schedule data'
+  }
+
+  // Recycle bin — soft-deleted tenants (best-effort; failure just hides the bin).
+  let deletedNodes: Awaited<ReturnType<typeof listDeletedNodes>> = []
+  try {
+    deletedNodes = await listDeletedNodes(supabase as never, projectId, 'tenant_db')
+  } catch {
+    // Non-fatal: pre-migration-00123 the column doesn't exist — bin stays empty.
   }
 
   // ── Load scope + layout data (best-effort; failures show the table without these) ──
@@ -243,6 +251,7 @@ export default async function TenantSchedulePage({ params }: Props) {
         <CardBody>
           <ScheduleTable
             nodes={nodes}
+            deletedNodes={deletedNodes}
             projectId={projectId}
             orgId={orgId}
             scopeItemTypes={scopeItemTypes}
