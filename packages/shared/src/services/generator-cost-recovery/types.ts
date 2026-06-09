@@ -2,6 +2,10 @@ export type ShopCategory = 'standard' | 'fast_food' | 'restaurant' | 'national' 
 export type GeneratorParticipation = 'shared' | 'own' | 'none'
 
 export interface GeneratorSettings {
+  // kW/m² loading rates. NOTE: nexus's billed PDF path uses only TWO effective tiers —
+  // restaurant|fast_food → restaurantKwPerSqm, and standard|national|other → standardKwPerSqm.
+  // fastFoodKwPerSqm and nationalKwPerSqm are kept for schema/UI parity but are NOT
+  // independently read by the calc today. ⚠ Open for WM: honour 4 distinct rates, or keep nexus's 2-tier behaviour?
   standardKwPerSqm: number
   fastFoodKwPerSqm: number
   restaurantKwPerSqm: number

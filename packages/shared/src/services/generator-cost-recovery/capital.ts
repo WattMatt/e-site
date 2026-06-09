@@ -2,6 +2,10 @@ import type { GeneratorSettings, ZoneInput, TenantInput } from './types'
 
 export function calculateTotalCapitalCost(zones: ZoneInput[], tenants: TenantInput[], s: GeneratorSettings): number {
   const genTotal = zones.reduce((sum, z) => sum + z.generators.reduce((g, gen) => g + gen.cost, 0), 0)
+  // esite extends nexus's binary own_generator with a 'none' (opt-out) state.
+  // Both 'own' and 'none' are excluded from the board-mod count. nexus only checks
+  // !ownGenerator, so 'none' has no nexus equivalent — this is an esite-only model
+  // choice (D10). ⚠ Open for WM: should opt-out tenants still incur a tenant-DB capital line?
   const numTenantDBs = tenants.filter(t => t.participation === 'shared').length
   const boardModCost = numTenantDBs * s.ratePerTenantDb + s.numMainBoards * s.ratePerMainBoard
   return genTotal + s.additionalCablingCost + boardModCost + s.controlWiringCost
