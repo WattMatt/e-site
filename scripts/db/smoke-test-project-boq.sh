@@ -57,7 +57,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL: second is_current insert should have been rejected';
   EXCEPTION WHEN unique_violation THEN NULL; END;
   RAISE EXCEPTION 'SMOKE_OK_ROLLBACK';
-END \$\$;" || true)"
+END \$\$;" 2>&1 || true)"
 echo "$OUT" | grep -q 'SMOKE_OK_ROLLBACK' && pass "one-current partial unique enforced + rolled back" || { fail "smoke asserts: $OUT"; }
 
 echo ""
