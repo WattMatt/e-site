@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import type { GcrConfig } from './gcr.actions'
 import { SettingsForm } from './SettingsForm'
+import { ZonesPanel } from './ZonesPanel'
+import { TenantsPanel } from './TenantsPanel'
 
 type Tab = 'settings' | 'zones' | 'tenants'
 
@@ -62,31 +64,22 @@ export function GcrTabs({ projectId, data }: GcrTabsProps) {
       )}
 
       {active === 'zones' && (
-        <div
-          style={{
-            padding: '32px 18px',
-            textAlign: 'center',
-            color: 'var(--c-text-dim)',
-            fontSize: 13,
-            fontStyle: 'italic',
-          }}
-        >
-          Zones &amp; generators — configured next
-        </div>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        <ZonesPanel projectId={projectId} zones={data.zones as any} generators={data.generators as any} />
       )}
 
       {active === 'tenants' && (
-        <div
-          style={{
-            padding: '32px 18px',
-            textAlign: 'center',
-            color: 'var(--c-text-dim)',
-            fontSize: 13,
-            fontStyle: 'italic',
-          }}
-        >
-          Tenant assignment — configured next
-        </div>
+        <TenantsPanel
+          projectId={projectId}
+          settings={data.settings}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          zones={data.zones as any}
+          generators={data.generators}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tenants={data.tenants as any}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          assignments={data.assignments as any}
+        />
       )}
     </div>
   )
