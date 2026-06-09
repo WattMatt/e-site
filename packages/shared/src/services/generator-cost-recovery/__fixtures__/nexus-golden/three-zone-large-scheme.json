@@ -1,7 +1,7 @@
 {
   "name": "three-zone-large-scheme",
   "description": "Three zones, three generators (600+500+250 kVA), large restaurant-heavy scheme. Zero-area ATM lobby, manual override, own-generator cold store. 75% load, powerFactor 0.92, bespoke 12yr@13.25% recovery. Largest gen 600 kVA drives tariff.",
-  "source": "engi-ops-nexus/src/utils/svg-pdf/generatorReportPdfBuilder.ts (billed Generator Report PDF) + data mapping in GeneratorReportExportPDFButton.tsx. Expected values produced by transcribing nexus formulas verbatim; NOT by running the esite port.",
+  "source": "Re-anchored to WM's Rev-6 standby-power report methodology (capital recovery = annual annuity ÷ 12, ANNUAL compounding) — the AUTHORITATIVE billed source of truth — NOT nexus code, which compounds monthly and under-charges ~2.72%. PMT/apportionment fields recomputed under annual÷12; diesel/contingency/loading/capex maths unchanged (still match nexus generatorReportPdfBuilder.ts). NOT produced by running the esite port.",
   "input": {
     "settings": {
       "standardKwPerSqm": 0.03,
@@ -113,7 +113,7 @@
   "expected": {
     "totalCapitalCost": 2897700,
     "numTenantDBs": 6,
-    "monthlyCapitalRepayment": 40281.828183451464,
+    "monthlyCapitalRepayment": 41266.76429144724,
     "tariff": {
       "largestGenKva": 600,
       "netKva": 450,
@@ -131,36 +131,36 @@
         "shopNumber": "G1",
         "loadingKw": 36,
         "portionPercent": 51.20910384068279,
-        "monthly": 20627.963223389088,
-        "ratePerSqm": 17.18996935282424
+        "monthly": 21132.34017769702,
+        "ratePerSqm": 17.610283481414182
       },
       {
         "shopNumber": "R1",
         "loadingKw": 14.399999999999999,
         "portionPercent": 20.483641536273115,
-        "monthly": 8251.185289355633,
-        "ratePerSqm": 25.784954029236353
+        "monthly": 8452.936071078808,
+        "ratePerSqm": 26.415425222121275
       },
       {
         "shopNumber": "R2",
         "loadingKw": 8.1,
         "portionPercent": 11.522048364153626,
-        "monthly": 4641.291725262544,
-        "ratePerSqm": 25.784954029236356
+        "monthly": 4754.776539981829,
+        "ratePerSqm": 26.41542522212127
       },
       {
         "shopNumber": "S1",
         "loadingKw": 7.8,
         "portionPercent": 11.095305832147938,
-        "monthly": 4469.392031734302,
-        "ratePerSqm": 17.18996935282424
+        "monthly": 4578.673705167688,
+        "ratePerSqm": 17.610283481414186
       },
       {
         "shopNumber": "S2",
         "loadingKw": 4,
         "portionPercent": 5.689900426742532,
-        "monthly": 2291.9959137098986,
-        "ratePerSqm": 16.37139938364213
+        "monthly": 2348.037797521891,
+        "ratePerSqm": 16.771698553727795
       },
       {
         "shopNumber": "K1",

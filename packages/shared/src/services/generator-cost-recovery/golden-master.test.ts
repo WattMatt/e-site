@@ -10,10 +10,13 @@ import { calculateOperationalTariff } from './operational'
 import type { GeneratorCostRecoveryInput, GeneratorSettings } from './types'
 
 // ── Golden-master fixtures ──
-// Expected values were produced by transcribing nexus's ACTUAL billing maths
-// (engi-ops-nexus/src/utils/svg-pdf/generatorReportPdfBuilder.ts) verbatim and running it —
-// NOT by running this esite port. The fixtures are the source of truth; if these fail the
-// port has diverged from nexus and the engine must be fixed (never the fixtures).
+// Capital-recovery (PMT) + apportionment expectations are anchored to WM's Rev-6 standby-power
+// report methodology (annual annuity ÷ 12, ANNUAL compounding) — the AUTHORITATIVE billed
+// source of truth — which deliberately diverges from nexus's code (monthly compounding, which
+// under-charges ~2.72%). The diesel/contingency/loading/capex expectations still match nexus's
+// billing maths (generatorReportPdfBuilder.ts) verbatim. Expectations were computed by
+// replicating those formulas — NOT by running this esite port. The fixtures are the source of
+// truth; if these fail the engine has diverged and the engine must be fixed (never the fixtures).
 
 const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'nexus-golden')
 
@@ -89,7 +92,7 @@ describe.each(FIXTURE_FILES)('nexus golden-master: %s', (file) => {
     expect(numNotOwn).toBe(expected.numTenantDBs)
   })
 
-  it('monthlyCapitalRepayment (PMT, monthly compounding)', () => {
+  it('monthlyCapitalRepayment (PMT, WM Rev-6: annual annuity ÷ 12)', () => {
     expect(model.monthlyCapitalRepayment).toBeCloseTo(expected.monthlyCapitalRepayment, MONEY_DP)
     expect(calculateMonthlyCapitalRepayment(expected.totalCapitalCost, settings)).toBeCloseTo(
       expected.monthlyCapitalRepayment,

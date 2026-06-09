@@ -7,7 +7,9 @@ import type { GeneratorSettings, OperationalTariff } from './types'
 //   maintMonthly       = annual ÷ 12
 //   serviceCostPer250h = annual              (the ANNUAL figure is used directly here)
 //   costServicePerMonth = (hours ÷ 250) × serviceCostPer250h
-//   additionalService  = costServicePerMonth − maintMonthly   (NO max(0,…) clamp)
+//   additionalService  = max(0, costServicePerMonth − maintMonthly)   (clamped per WM:
+//                        maintenance must never reduce the tariff; fixes nexus's billed-path
+//                        no-clamp quirk, which let the additional term go negative)
 //   maintenancePerKwh  = additionalService ÷ (netKwh × hours)  (only the additional cost,
 //                        and divided by netKwh×hours — NOT by netKwh alone)
 //   base = dieselPerKwh + maintenancePerKwh ; +contingency%.
@@ -23,7 +25,9 @@ export function calculateOperationalTariff(
   const maintenanceCostPerMonth = s.maintenanceCostAnnual / 12
   const serviceCostPer250h = s.maintenanceCostAnnual
   const costServicePerMonth = (s.runningHoursPerMonth / 250) * serviceCostPer250h
-  const additionalServiceCost = costServicePerMonth - maintenanceCostPerMonth
+  // Clamped per WM (decision "2 clamp"): maintenance never reduces the tariff. This fixes
+  // nexus's billed-path no-clamp quirk where a low running-hours month went negative.
+  const additionalServiceCost = Math.max(0, costServicePerMonth - maintenanceCostPerMonth)
   const maintenancePerKwh =
     netKwh > 0 && s.runningHoursPerMonth > 0
       ? additionalServiceCost / (netKwh * s.runningHoursPerMonth)

@@ -1,7 +1,7 @@
 {
   "name": "multi-zone-mixed-categories-override",
   "description": "Two zones, three generators (400+150+300 kVA), mixed categories (national/fast_food/restaurant/standard), a manual kW override, an own-generator tenant, a zero-area kiosk. 60% running load to exercise fuel interpolation between table rows. Bespoke 7yr@11.5% recovery and larger diesel/maintenance.",
-  "source": "engi-ops-nexus/src/utils/svg-pdf/generatorReportPdfBuilder.ts (billed Generator Report PDF) + data mapping in GeneratorReportExportPDFButton.tsx. Expected values produced by transcribing nexus formulas verbatim; NOT by running the esite port.",
+  "source": "Re-anchored to WM's Rev-6 standby-power report methodology (capital recovery = annual annuity ÷ 12, ANNUAL compounding) — the AUTHORITATIVE billed source of truth — NOT nexus code, which compounds monthly and under-charges ~2.72%. PMT/apportionment fields recomputed under annual÷12; diesel/contingency/loading/capex maths unchanged (still match nexus generatorReportPdfBuilder.ts). NOT produced by running the esite port.",
   "input": {
     "settings": {
       "standardKwPerSqm": 0.03,
@@ -100,7 +100,7 @@
   "expected": {
     "totalCapitalCost": 2054500,
     "numTenantDBs": 5,
-    "monthlyCapitalRepayment": 35720.48375518349,
+    "monthlyCapitalRepayment": 36921.941081517376,
     "tariff": {
       "largestGenKva": 400,
       "netKva": 240,
@@ -118,29 +118,29 @@
         "shopNumber": "1",
         "loadingKw": 25.5,
         "portionPercent": 54.02542372881356,
-        "monthly": 19298.142706719897,
-        "ratePerSqm": 22.703697302023407
+        "monthly": 19947.23511819265,
+        "ratePerSqm": 23.467335433167822
       },
       {
         "shopNumber": "2",
         "loadingKw": 5.3999999999999995,
         "portionPercent": 11.440677966101696,
-        "monthly": 4086.6655143642133,
-        "ratePerSqm": 34.055545953035114
+        "monthly": 4224.120377970208,
+        "ratePerSqm": 35.201003149751735
       },
       {
         "shopNumber": "3",
         "loadingKw": 10.799999999999999,
         "portionPercent": 22.88135593220339,
-        "monthly": 8173.331028728427,
-        "ratePerSqm": 34.055545953035114
+        "monthly": 8448.240755940416,
+        "ratePerSqm": 35.201003149751735
       },
       {
         "shopNumber": "4",
         "loadingKw": 5.5,
         "portionPercent": 11.652542372881356,
-        "monthly": 4162.344505370958,
-        "ratePerSqm": 43.81415268811535
+        "monthly": 4302.344829414102,
+        "ratePerSqm": 45.287840309622126
       },
       {
         "shopNumber": "5",

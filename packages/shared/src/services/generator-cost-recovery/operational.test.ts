@@ -22,4 +22,15 @@ describe('calculateOperationalTariff', () => {
     const r = calculateOperationalTariff(DEFAULT_GENERATOR_SETTINGS, { kva: 0, fuelConsumptionLPerH: 50 })
     expect(r.finalTariff).toBe(0)
   })
+
+  it('clamps maintenance at zero when running hours are very low (WM "2 clamp")', () => {
+    // 10 h/mo: costServicePerMonth = (10/250)×18800 = 752; maintMonthly = 18800/12 = 1566.667.
+    // Un-clamped additional = 752 − 1566.667 = −814.667 → negative. WM clamp forces it to 0,
+    // so maintenancePerKwh must be 0 (maintenance never reduces the tariff). Tariff = diesel only.
+    const s = { ...DEFAULT_GENERATOR_SETTINGS, runningHoursPerMonth: 10 }
+    const r = calculateOperationalTariff(s, { kva: 250, fuelConsumptionLPerH: 50 })
+    expect(r.maintenancePerKwh).toBe(0)
+    expect(r.maintenancePerKwh).toBeGreaterThanOrEqual(0)
+    expect(r.finalTariff).toBeGreaterThan(0) // diesel still applies
+  })
 })

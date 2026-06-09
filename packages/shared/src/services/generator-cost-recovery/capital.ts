@@ -11,15 +11,20 @@ export function calculateTotalCapitalCost(zones: ZoneInput[], tenants: TenantInp
   return genTotal + s.additionalCablingCost + boardModCost + s.controlWiringCost
 }
 
-// PMT monthly repayment. Transcribed VERBATIM from nexus generatorReportPdfBuilder.ts
-// calculateMonthlyRepayment (the billed-report path): MONTHLY compounding —
-// r = (annualRate% / 100) / 12, n = years × 12, PMT = P · r(1+r)^n / ((1+r)^n − 1).
-// (Note: this differs from an annual-compounding annuity; nexus compounds monthly.)
+// PMT monthly repayment. Anchored to WM's real Rev-6 standby-power report (the AUTHORITATIVE
+// billed source of truth): ANNUAL compounding, monthly = annual annuity ÷ 12 —
+// r = annualRate% / 100, annual = P · r(1+r)^years / ((1+r)^years − 1), monthly = annual / 12.
+// Proven by the report's amortisation schedule (Year-1 interest = capex × rate, i.e. annual
+// interest), e.g. R4 455 360 @ 12% / 10y → annual R788 528.17 → /12 = R65 710.68/mo.
+// This DELIBERATELY diverges from nexus's code (calculateMonthlyRepayment in
+// generatorReportPdfBuilder.ts), which compounds MONTHLY (r/12, n=years×12) and thereby
+// under-charges by ~2.72%. WM's published report — not nexus's code — is ground truth here.
 export function calculateMonthlyCapitalRepayment(totalCapitalCost: number, s: GeneratorSettings): number {
   const years = s.capitalRecoveryPeriodYears
   if (totalCapitalCost <= 0 || years <= 0) return 0
-  const r = s.capitalRecoveryRatePercent / 100 / 12
-  if (r === 0) return totalCapitalCost / (years * 12)
-  const n = years * 12
-  return (totalCapitalCost * (r * Math.pow(1 + r, n))) / (Math.pow(1 + r, n) - 1)
+  const r = s.capitalRecoveryRatePercent / 100
+  if (r === 0) return totalCapitalCost / years / 12
+  const factor = Math.pow(1 + r, years)
+  const annual = totalCapitalCost * ((r * factor) / (factor - 1))
+  return annual / 12
 }

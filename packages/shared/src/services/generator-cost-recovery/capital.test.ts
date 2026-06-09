@@ -17,10 +17,16 @@ it('total capital cost', () => {
   expect(calculateTotalCapitalCost(zones, tenants, s)).toBe(884000)
 })
 
+it('matches WM Rev-6 report: R4,455,360 @ 12%/10y → R65,710.68/mo (annual ÷ 12)', () => {
+  const s = { ...DEFAULT_GENERATOR_SETTINGS, capitalRecoveryPeriodYears: 10, capitalRecoveryRatePercent: 12 }
+  expect(calculateMonthlyCapitalRepayment(4_455_360, s)).toBeCloseTo(65710.68, 2)
+})
+
 it('PMT monthly repayment', () => {
-  // Nexus uses MONTHLY compounding (generatorReportPdfBuilder.ts calculateMonthlyRepayment):
-  // capex 1,000,000 @ 12%/yr over 10y → r=0.01, n=120 → monthly ≈ 14,347.09.
-  expect(calculateMonthlyCapitalRepayment(1_000_000, DEFAULT_GENERATOR_SETTINGS)).toBeCloseTo(14347.09, 1)
+  // WM Rev-6 methodology: ANNUAL compounding, monthly = annual annuity ÷ 12.
+  // capex 1,000,000 @ 12%/yr over 10y → annual annuity 176,984.16 → /12 ≈ 14,748.68.
+  // (Deliberately diverges from nexus's monthly-compounding code, which gives 14,347.09.)
+  expect(calculateMonthlyCapitalRepayment(1_000_000, DEFAULT_GENERATOR_SETTINGS)).toBeCloseTo(14748.68, 1)
 })
 
 it('zero capex → 0 (no divide-by-zero)', () => {
