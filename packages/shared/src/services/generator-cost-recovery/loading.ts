@@ -11,5 +11,5 @@ export function calculateTenantLoadingKw(tenant: TenantInput, settings: Generato
     national: settings.nationalKwPerSqm,
     other: settings.standardKwPerSqm,
   }
-  return tenant.areaM2 * (rate[tenant.category] ?? settings.standardKwPerSqm)
+  return tenant.areaM2 * rate[tenant.category]
 }
