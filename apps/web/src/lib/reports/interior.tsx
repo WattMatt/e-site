@@ -584,7 +584,6 @@ interface AnnexureListProps {
 
 const SOURCE_LABEL: Record<ReportAnnexure['source'], string> = {
   attachment: 'Attachment',
-  handover: 'Handover',
 }
 
 export function AnnexureList({ annexures }: AnnexureListProps) {

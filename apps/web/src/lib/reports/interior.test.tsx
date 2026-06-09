@@ -711,7 +711,7 @@ describe('AnnexureList', () => {
   it('renders a Link element when href is provided', () => {
     const ann: ReportAnnexure = {
       name: 'Certificate',
-      source: 'handover',
+      source: 'attachment',
       href: 'https://example.com/cert.pdf',
     }
     const el = AnnexureList({ annexures: [ann] })
@@ -745,7 +745,7 @@ describe('AnnexureList', () => {
   it('renders multiple annexures', () => {
     const anns: ReportAnnexure[] = [
       { name: 'Ann A', source: 'attachment', href: null },
-      { name: 'Ann B', source: 'handover', href: null },
+      { name: 'Ann B', source: 'attachment', href: null },
     ]
     const el = AnnexureList({ annexures: anns })
     const texts = collectText(el)

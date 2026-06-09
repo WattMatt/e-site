@@ -60,7 +60,7 @@ export interface ReportSection {
 }
 export interface ReportAnnexure {
   name: string
-  source: 'attachment' | 'handover'
+  source: 'attachment'
   href: string | null             // short-lived signed URL printed as a reference link
   thumbnailDataUri?: string | null // image attachments only
   meta?: string | null            // e.g. "PDF · 142 KB" or a handover category
@@ -131,17 +131,8 @@ const PHOTO_BUCKET = 'inspection-photos'
 const ATTACHMENT_BUCKET = 'inspection-attachments'
 const SIGNATURE_BUCKET = 'inspection-signatures'
 const LOGO_BUCKET = 'report-logos'
-// tenants.documents files live in 'project-documents' — established by
-// migration 00041 (table schema + bucket) and 00042 (bucket creation).
-// Confirmed in apps/web/src/actions/handover.actions.ts const BUCKET.
-// NOT 'inspection-certificates', which is for generated cert PDFs only.
-const HANDOVER_BUCKET = 'project-documents'
-
 const MAX_PHOTOS_PER_FIELD = 24
 const SIGNED_URL_TTL = 3600
-
-// Handover categories an inspection cert files into (mirror render-inspection-pdf/index.ts).
-const HANDOVER_CATEGORIES = ['compliance_certs', 'test_certificates']
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|heic|heif|bmp)$/i
 
@@ -589,35 +580,10 @@ export async function gatherInspectionReportData(
     }),
   )
 
-  // 8b. Handover annexures (best-effort, LIST ONLY — never write). Wrapped so a
-  //     schema mismatch or missing module degrades to "no handover annexures".
-  //     Files live in HANDOVER_BUCKET ('project-documents') — confirmed by
-  //     migration 00041/00042 and handover.actions.ts const BUCKET.
-  const handoverAnnexures: ReportAnnexure[] = []
-  try {
-    const { data: docs } = await (service as any)
-      .schema('tenants')
-      .from('documents')
-      .select('name, storage_path, handover_category, mime_type')
-      .eq('project_id', inspection.project_id)
-      .in('handover_category', HANDOVER_CATEGORIES)
-    for (const d of (docs ?? []) as any[]) {
-      const href = await signedUrl(service, HANDOVER_BUCKET, d.storage_path)
-      handoverAnnexures.push({
-        name: (d.name as string) ?? 'document',
-        source: 'handover',
-        href,
-        thumbnailDataUri: null,
-        meta: (d.handover_category as string | null) ?? null,
-      })
-    }
-  } catch (err) {
-    // project has no handover module / column mismatch — skip gracefully.
-    // Log so a real programming error leaves a trace instead of vanishing.
-    console.warn('[inspection-report] handover read skipped:', err)
-  }
-
-  const annexures = [...attachmentAnnexures, ...handoverAnnexures]
+  // D5: annexures are ONLY this inspection's own file-field uploads (source:'attachment').
+  //     Project-wide handover docs are NOT pulled here; the report is pushed into
+  //     handover by other means (Task 2).
+  const annexures = attachmentAnnexures
 
   // 9. Signatures (by ROW role, not the template field).
   const signatures: ReportSignature[] = await Promise.all(

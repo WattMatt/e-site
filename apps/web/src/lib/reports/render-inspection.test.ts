@@ -161,7 +161,7 @@ const fixtureData: InspectionReportData = {
     },
     {
       name: 'Handover certificate',
-      source: 'handover',
+      source: 'attachment',
       href: null,
       meta: 'Certificate of Completion',
     },
