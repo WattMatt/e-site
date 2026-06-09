@@ -14,8 +14,15 @@ fi
 
 SUPABASE_PROJECT_REF="${SUPABASE_PROJECT_REF:-cbskbnvvgcybmfikxgky}"
 
-# Extract PAT from macOS keychain, handling the go-keyring-base64 prefix.
+# Resolve the Management API PAT. CI / non-macOS (no keychain) sets the
+# SUPABASE_ACCESS_TOKEN env var (the deploy-migrations workflow already exposes
+# it as a repo secret); locally we read it from the macOS keychain, handling the
+# go-keyring-base64 prefix.
 _get_pat() {
+  if [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+    printf '%s' "$SUPABASE_ACCESS_TOKEN"
+    return 0
+  fi
   local raw
   raw=$(security find-generic-password -s "Supabase CLI" -w)
   if [[ "$raw" == go-keyring-base64:* ]]; then
