@@ -50,6 +50,7 @@ membership.
 | `/projects/[id]/floor-plans` | W | W | W | W | R | — | R |
 | `/projects/[id]/handover` | W | W | W | R | R | — | R |
 | `/projects/[id]/inspections` | W² | W² | W² | R² | W² | — | R² |
+| `/projects/[id]/inspections/[id]/report` (cert PDF viewer)⁷ | R² | R² | R² | R² | R² | — | R² |
 | `/rfis?projectId=…` | W | W | W | W | R | — | R |
 | `/inspections/templates` | W² | W² | — | — | — | — | — |
 | `/inspections/unlock` | W | R | R | — | — | — | — |
@@ -76,6 +77,7 @@ membership.
 ⁴ `/jbcc/unlock` is visible to all authenticated org members (read-only paywall page). The `<UnlockJbccButton />` inside only renders for owner/admin; all other roles see "ask your owner/admin" text. No redirect for locked org — this IS the locked-state destination.
 ⁵ All JBCC routes under `/(gated)/` require `public.has_feature(org_id, 'jbcc') = true` — the `jbcc/layout.tsx` gate redirects locked orgs to `/jbcc/unlock` before any role check. WM-Consulting bypasses. For write-gated routes: `inspector`, `supplier`, and `client_viewer` cannot reach `/notice/[code]/new`; status/attachment mutations on tracking and CRUD on parties require `ORG_WRITE_ROLES` (owner/admin/project_manager/contractor) enforced server-side.
 ⁶ `/equipment-schedule` and `/materials` were merged into `/equipment-materials` and now unconditionally `redirect()` there for every role (thin shims, no role gate of their own) — access is governed by the `/equipment-materials` row. Equipment management (add/edit/decommission boards) is inline on the unified tab and is gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) by the existing `equipment.actions` guards.
+⁷ The `/report` sub-page reads the certificate PDF from `projects.reports` (via the `reports_select` RLS policy — any user with project access). Access inherits footnote ² (inspections paywall). Share-link and revoke are deferred. The legacy `inspections.certificates` column is no longer the source.
 
 ## Project settings (`apps/web/src/app/(admin)/projects/[id]/settings/*`)
 
@@ -114,6 +116,14 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 ## Server actions (`apps/web/src/actions/*`)
 
 Read-only actions require project access (any project member). Write/export actions are gated to `ORG_WRITE_ROLES` (owner / admin / project_manager) via `requireEffectiveRole`, enforced in-app on top of RLS.
+
+### Inspections (`inspection-report.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `regenerateInspectionReportAction` (renders + saves cert to `projects.reports`; auto-files into handover pack) | W | W | W | — | — | — | — |
+
+> Gated to `ORG_WRITE_ROLES` (owner / admin / project_manager) via `requireEffectiveRole`. Renders the inspection certificate via the react-pdf engine, persists it to `projects.reports` (kind=`inspection`), and auto-files it into the handover pack (the report PDF → `compliance_certs`; in-inspection file uploads → `test_certificates`). The certify flow (assigned verifier) triggers this automatically on certification — this action is the manual fallback / re-issue path. Requires `has_feature('inspections')` (paywall ²).
 
 ### Snag site visits (`snag-visit.actions.ts`)
 
