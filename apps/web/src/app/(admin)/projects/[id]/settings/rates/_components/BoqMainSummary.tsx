@@ -38,6 +38,10 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
       return naturalCompare(a.code ?? '', b.code ?? '')
     })
 
+  const liveExVat = bills.reduce((s, b) => s + (totals[b.id] ?? 0), 0)
+  const liveInclVat = liveExVat * 1.15
+  const isEdited = Math.abs(liveExVat - (importRow.totalExVat ?? 0)) > 1
+
   return (
     <Card>
       <CardHeader>
@@ -104,9 +108,10 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
               )}
             </tbody>
             <tfoot>
+              {/* ── Contract baseline (frozen at import) ─────────────────── */}
               <tr style={{ borderTop: '2px solid var(--c-border)' }}>
                 <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)' }}>
-                  Subtotal (ex VAT)
+                  Contract total (ex VAT) · at import
                 </td>
                 <td style={{ padding: '10px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
                   {fmtMoney(importRow.totalExVat)}
@@ -115,7 +120,7 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
               </tr>
               <tr>
                 <td style={{ padding: '6px 12px', fontSize: 12, color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)' }}>
-                  VAT
+                  VAT · at import
                 </td>
                 <td style={{ padding: '6px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
                   {fmtMoney(importRow.vatAmount)}
@@ -123,11 +128,33 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
                 <td />
               </tr>
               <tr>
-                <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 700, color: 'var(--c-text)', fontFamily: 'var(--font-sans)' }}>
-                  Total (incl VAT)
+                <td style={{ padding: '6px 12px', fontSize: 12, color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)' }}>
+                  Contract total (incl VAT) · at import
                 </td>
-                <td style={{ padding: '10px 12px', fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text)', whiteSpace: 'nowrap' }}>
+                <td style={{ padding: '6px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
                   {fmtMoney(importRow.totalInclVat)}
+                </td>
+                <td />
+              </tr>
+              {/* ── Current (live rollup) ─────────────────────────────────── */}
+              <tr style={{ borderTop: '1px dashed var(--c-border)' }}>
+                <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 700, color: 'var(--c-text)', fontFamily: 'var(--font-sans)' }}>
+                  Current total (ex VAT)
+                  {isEdited && (
+                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: 'var(--c-amber)' }}>(edited)</span>
+                  )}
+                </td>
+                <td style={{ padding: '10px 12px', fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', textAlign: 'right', color: isEdited ? 'var(--c-amber)' : 'var(--c-text)', whiteSpace: 'nowrap' }}>
+                  {fmtMoney(liveExVat)}
+                </td>
+                <td />
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 12px', fontSize: 12, color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)' }}>
+                  Current total (incl VAT)
+                </td>
+                <td style={{ padding: '6px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: isEdited ? 'var(--c-amber)' : 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
+                  {fmtMoney(liveInclVat)}
                 </td>
                 <td />
               </tr>
