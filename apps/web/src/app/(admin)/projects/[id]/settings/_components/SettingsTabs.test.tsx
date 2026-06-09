@@ -6,14 +6,14 @@ const usePathnameMock = vi.fn()
 vi.mock('next/navigation', () => ({ usePathname: usePathnameMock }))
 
 describe('SettingsTabs', () => {
-  it('renders all 12 sub-pages in spec order', async () => {
+  it('renders all 13 sub-pages in spec order', async () => {
     usePathnameMock.mockReturnValue('/projects/p1/settings/general')
     const { SettingsTabs } = await import('./SettingsTabs')
 
     render(<SettingsTabs projectId="p1" role="owner" dirtyTab={null} />)
 
     const expected = [
-      'General', 'Site', 'Dates', 'Client', 'Contract', 'Members',
+      'General', 'Site', 'Dates', 'Client', 'Contract', 'Rates', 'Members',
       'JBCC Parties', 'Operational', 'Contacts', 'Integrations',
       'Danger', 'History',
     ]
@@ -42,8 +42,9 @@ describe('SettingsTabs', () => {
     expect(screen.getByText(/Integrations/).textContent).toContain('🔒')
     // Danger is owner-only — for PMs, even more locked.
     expect(screen.getByText(/Danger/).textContent).toContain('🔒')
-    // Contract is now PM-permitted (cost-viewer role group) — no lock.
+    // Contract + Rates are PM-permitted (COST_VIEW_ROLES) — no lock.
     expect(screen.getByText(/Contract/).textContent).not.toContain('🔒')
+    expect(screen.getByText(/Rates/).textContent).not.toContain('🔒')
   })
 
   it('shows unsaved-dot ● on the dirty tab', async () => {
