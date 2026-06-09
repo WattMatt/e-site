@@ -63,7 +63,7 @@ export interface ReportAnnexure {
   source: 'attachment'
   href: string | null             // short-lived signed URL printed as a reference link
   thumbnailDataUri?: string | null // image attachments only
-  meta?: string | null            // e.g. "PDF · 142 KB" or a handover category
+  meta?: string | null            // e.g. "PDF · 142 KB" — reserved for future file metadata
 }
 export interface ReportSignature {
   role: string
@@ -567,8 +567,10 @@ export async function gatherInspectionReportData(
     })
   }
 
-  // 8. File-field annexures (source:'attachment') — signed URL + image thumbnail.
-  const attachmentAnnexures: ReportAnnexure[] = await Promise.all(
+  // 8. Annexures are ONLY this inspection's own file-field uploads (source:'attachment').
+  //    Project-wide handover docs are NOT pulled here (D5); the report is instead
+  //    pushed INTO handover by the certify/regenerate flow (see fileIntoHandover).
+  const annexures: ReportAnnexure[] = await Promise.all(
     fileAnnexureRows.map(async (ph) => {
       const name = (ph.caption as string | null) ?? 'attachment'
       const href = await signedUrl(service, ATTACHMENT_BUCKET, ph.storage_path)
@@ -579,11 +581,6 @@ export async function gatherInspectionReportData(
       return { name, source: 'attachment' as const, href, thumbnailDataUri }
     }),
   )
-
-  // D5: annexures are ONLY this inspection's own file-field uploads (source:'attachment').
-  //     Project-wide handover docs are NOT pulled here; the report is pushed into
-  //     handover by other means (Task 2).
-  const annexures = attachmentAnnexures
 
   // 9. Signatures (by ROW role, not the template field).
   const signatures: ReportSignature[] = await Promise.all(
