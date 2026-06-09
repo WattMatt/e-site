@@ -79,7 +79,7 @@ membership.
 
 ## Project settings (`apps/web/src/app/(admin)/projects/[id]/settings/*`)
 
-All 12 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narrow further per sub-page. The DB RLS gate underneath (PR-1a) is `ORG_WRITE_ROLES`; app-layer rows below narrow further. PR-1c ships these routes as placeholders ("Coming soon"); real forms land per Phase-2 PR.
+All 13 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narrow further per sub-page. The DB RLS gate underneath (PR-1a) is `ORG_WRITE_ROLES`; app-layer rows below narrow further. PR-1c ships these routes as placeholders ("Coming soon"); real forms land per Phase-2 PR.
 
 | Sub-page | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|
@@ -88,6 +88,7 @@ All 12 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narro
 | `/projects/[id]/settings/dates`         | W | W | W | R | R | R | R |
 | `/projects/[id]/settings/client`        | W | W | W | R | R | R | R |
 | `/projects/[id]/settings/contract`      | W | W | — | — | — | — | — |
+| `/projects/[id]/settings/rates`         | W | W | W | — | — | — | — |
 | `/projects/[id]/settings/members`       | W | W | — | — | — | — | — |
 | `/projects/[id]/settings/contacts`      | W | W | W | R | R | R | R |
 | `/projects/[id]/settings/jbcc-parties`  | W | W | W | R | R | R | R |
@@ -103,6 +104,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | Endpoint | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|
 | `POST /api/paystack/checkout` | W | W | — | — | — | — | — |
+| `POST /api/projects/[id]/boq/import`    | W | W | W | — | — | — | — |
 | `POST /api/paystack/cancel-subscription` | W | W | — | — | — | — | — |
 | `POST /api/paystack/callback` | n/a — public webhook, signature-validated |
 | `POST /api/inspections/delete-photo` | W | W | W | W² | W² | — | — |
