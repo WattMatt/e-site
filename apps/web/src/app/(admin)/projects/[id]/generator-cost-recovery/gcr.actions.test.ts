@@ -16,10 +16,12 @@ vi.mock('@/lib/auth/require-role', () => ({
 
 // ─── IDs ──────────────────────────────────────────────────────────────────────
 
-const PROJECT_ID = '00000000-0000-0000-0000-000000000011'
-const ORG_ID     = '00000000-0000-0000-0000-000000000001'
-const NODE_ID    = '00000000-0000-0000-0000-000000000022'
-const ZONE_ID    = '00000000-0000-0000-0000-000000000033'
+const PROJECT_ID        = '00000000-0000-0000-0000-000000000011'
+const OTHER_PROJECT_ID  = '00000000-0000-0000-0000-000000000099'
+const ORG_ID            = '00000000-0000-0000-0000-000000000001'
+const NODE_ID           = '00000000-0000-0000-0000-000000000022'
+const ZONE_ID           = '00000000-0000-0000-0000-000000000033'
+const GENERATOR_ID      = '00000000-0000-0000-0000-000000000044'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -291,5 +293,105 @@ describe('saveTenantAssignmentAction', () => {
     if ('error' in result) expect(result.error).toMatch(/FK violation/i)
     expect(structureUpdate).not.toHaveBeenCalled()
     expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─── deleteGeneratorAction ───────────────────────────────────────────────────
+
+describe('deleteGeneratorAction', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+  })
+
+  /**
+   * Build a schema mock that:
+   *  - resolves the org from projects.projects
+   *  - returns a generator row whose zone_id belongs to the given zoneProjectId
+   *  - returns that zone row with the given project_id
+   */
+  function makeDeleteSchemaChain(opts: {
+    generatorZoneId: string
+    zoneProjectId:   string
+    deleteError:     null | { message: string }
+  }) {
+    // projects.projects resolve
+    const maybeSingleProj = vi.fn().mockResolvedValue({ data: { organisation_id: ORG_ID }, error: null })
+    const eqIdProj        = vi.fn().mockReturnValue({ maybeSingle: maybeSingleProj })
+    const selectProj      = vi.fn().mockReturnValue({ eq: eqIdProj })
+    const fromProjects    = vi.fn().mockReturnValue({ select: selectProj })
+
+    // gcr.zone_generators — fetch zone_id
+    const maybeSingleGen = vi.fn().mockResolvedValue({
+      data: { zone_id: opts.generatorZoneId },
+      error: null,
+    })
+    const eqGen    = vi.fn().mockReturnValue({ maybeSingle: maybeSingleGen })
+    const selectGen = vi.fn().mockReturnValue({ eq: eqGen })
+
+    // gcr.zones — fetch project_id for that zone
+    const maybeSingleZone = vi.fn().mockResolvedValue({
+      data: { project_id: opts.zoneProjectId },
+      error: null,
+    })
+    const eqZone    = vi.fn().mockReturnValue({ maybeSingle: maybeSingleZone })
+    const selectZone = vi.fn().mockReturnValue({ eq: eqZone })
+
+    // gcr.zone_generators delete chain
+    const deleteEq2 = vi.fn().mockResolvedValue({ error: opts.deleteError })
+    const deleteEq1 = vi.fn().mockReturnValue({ eq: deleteEq2 })
+    const del       = vi.fn().mockReturnValue({ eq: deleteEq1 })
+
+    // Track which from() call we're on to route correctly
+    let gcrFromCallCount = 0
+    const fromGcr = vi.fn(() => {
+      gcrFromCallCount++
+      if (gcrFromCallCount === 1) return { select: selectGen }  // zone_generators select
+      if (gcrFromCallCount === 2) return { select: selectZone } // zones select
+      return { delete: del }                                     // zone_generators delete
+    })
+
+    const schema = vi.fn((schemaName: string) => {
+      if (schemaName === 'projects') return { from: fromProjects }
+      return { from: fromGcr }
+    })
+
+    return { schema, del }
+  }
+
+  it('refuses to delete a generator whose zone belongs to a different project', async () => {
+    const { schema } = makeDeleteSchemaChain({
+      generatorZoneId: ZONE_ID,
+      zoneProjectId:   OTHER_PROJECT_ID, // zone belongs to a SIBLING project
+      deleteError:     null,
+    })
+    createClientMock.mockResolvedValueOnce({ schema })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'owner' })
+
+    const { deleteGeneratorAction } = await import('./gcr.actions')
+    const result = await deleteGeneratorAction(PROJECT_ID, GENERATOR_ID)
+
+    expect('error' in result).toBe(true)
+    if ('error' in result) expect(result.error).toMatch(/not found/i)
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+
+  it('happy path: deletes a generator that belongs to this project', async () => {
+    const { schema, del } = makeDeleteSchemaChain({
+      generatorZoneId: ZONE_ID,
+      zoneProjectId:   PROJECT_ID, // same project — allowed
+      deleteError:     null,
+    })
+    createClientMock.mockResolvedValueOnce({ schema })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'owner' })
+
+    const { deleteGeneratorAction } = await import('./gcr.actions')
+    const result = await deleteGeneratorAction(PROJECT_ID, GENERATOR_ID)
+
+    expect(result).toEqual({ ok: true })
+    expect(del).toHaveBeenCalled()
+    expect(revalidatePathMock).toHaveBeenCalledWith(
+      `/projects/${PROJECT_ID}/generator-cost-recovery`,
+    )
   })
 })

@@ -3,7 +3,16 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
-import { ORG_WRITE_ROLES, COST_VIEW_ROLES, type OrgRole } from '@esite/shared'
+import {
+  ORG_WRITE_ROLES,
+  COST_VIEW_ROLES,
+  type OrgRole,
+  type GcrSettingsRow,
+  type GcrZoneRow,
+  type GcrZoneGeneratorRow,
+  type TenantNodeRow,
+  type GcrTenantAssignmentRow,
+} from '@esite/shared'
 
 import {
   gcrSettingsSchema,
@@ -47,11 +56,11 @@ type ActionResult = OkResult | ErrResult
 // ─── loadGcrConfigAction ─────────────────────────────────────────────────────
 
 export interface GcrConfig {
-  settings:    Record<string, unknown> | null
-  zones:       unknown[]
-  generators:  unknown[]
-  tenants:     unknown[]
-  assignments: unknown[]
+  settings:    GcrSettingsRow | null
+  zones:       GcrZoneRow[]
+  generators:  GcrZoneGeneratorRow[]
+  tenants:     TenantNodeRow[]
+  assignments: GcrTenantAssignmentRow[]
 }
 
 /**
@@ -103,11 +112,11 @@ export async function loadGcrConfigAction(
     ])
 
   return {
-    settings:    settingsRes.data ?? null,
-    zones:       zonesRes.data ?? [],
-    generators:  generatorsRes.data ?? [],
-    tenants:     tenantsRes.data ?? [],
-    assignments: assignmentsRes.data ?? [],
+    settings:    (settingsRes.data ?? null) as GcrSettingsRow | null,
+    zones:       (zonesRes.data ?? []) as GcrZoneRow[],
+    generators:  (generatorsRes.data ?? []) as GcrZoneGeneratorRow[],
+    tenants:     (tenantsRes.data ?? []) as TenantNodeRow[],
+    assignments: (assignmentsRes.data ?? []) as GcrTenantAssignmentRow[],
   }
 }
 
@@ -260,6 +269,27 @@ export async function deleteGeneratorAction(
   const guard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
 
+  // Verify the generator belongs to a zone in this project (authz scope check).
+  const { data: genRow } = await (supabase as any)
+    .schema('gcr')
+    .from('zone_generators')
+    .select('zone_id')
+    .eq('id', generatorId)
+    .maybeSingle()
+
+  if (!genRow) return { error: 'Not found' }
+
+  const { data: zoneRow } = await (supabase as any)
+    .schema('gcr')
+    .from('zones')
+    .select('project_id')
+    .eq('id', (genRow as { zone_id: string }).zone_id)
+    .maybeSingle()
+
+  if (!zoneRow || (zoneRow as { project_id: string }).project_id !== projectId) {
+    return { error: 'Not found' }
+  }
+
   const { error } = await (supabase as any)
     .schema('gcr')
     .from('zone_generators')
@@ -296,6 +326,7 @@ export async function saveTenantAssignmentAction(
 
   const { node_id, zone_id, participation, manual_kw_override, shop_category } = parsed.data
 
+  // TODO(P3): the gcr upsert + structure.nodes update aren't transactional; on a partial failure the client sees the error and a retry self-heals (the upsert is idempotent).
   // Write 1 — upsert gcr.tenant_assignments
   const { error: upsertErr } = await (supabase as any)
     .schema('gcr')

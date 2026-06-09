@@ -28,6 +28,7 @@ export interface GcrZoneRow {
 }
 
 export interface GcrZoneGeneratorRow {
+  id: string
   zone_id: string
   generator_number: number
   generator_size: string | null

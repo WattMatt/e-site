@@ -64,21 +64,17 @@ export function GcrTabs({ projectId, data }: GcrTabsProps) {
       )}
 
       {active === 'zones' && (
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        <ZonesPanel projectId={projectId} zones={data.zones as any} generators={data.generators as any} />
+        <ZonesPanel projectId={projectId} zones={data.zones} generators={data.generators} />
       )}
 
       {active === 'tenants' && (
         <TenantsPanel
           projectId={projectId}
           settings={data.settings}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          zones={data.zones as any}
+          zones={data.zones}
           generators={data.generators}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          tenants={data.tenants as any}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          assignments={data.assignments as any}
+          tenants={data.tenants}
+          assignments={data.assignments}
         />
       )}
     </div>

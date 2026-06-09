@@ -15,39 +15,19 @@ import {
   type GcrZoneRow,
   type GcrZoneGeneratorRow,
   type TenantNodeRow,
+  type GcrTenantAssignmentRow,
 } from '@esite/shared'
 import { saveTenantAssignmentAction } from './gcr.actions'
 
-// ─── Local row types ──────────────────────────────────────────────────────────
-
-interface TenantNode {
-  id: string
-  shop_number: string
-  shop_name: string | null
-  shop_area_m2: number | null
-  shop_category: string | null
-  generator_participation: 'shared' | 'own' | 'none'
-}
-
-interface AssignmentRow {
-  node_id: string
-  zone_id: string | null
-  manual_kw_override: number | null
-}
-
-interface ZoneRow {
-  id: string
-  zone_name: string
-  zone_number: number
-}
+// ─── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
   projectId: string
-  settings: Record<string, unknown> | null
-  zones: ZoneRow[]
-  generators: unknown[]
-  tenants: TenantNode[]
-  assignments: AssignmentRow[]
+  settings: GcrSettingsRow | null
+  zones: GcrZoneRow[]
+  generators: GcrZoneGeneratorRow[]
+  tenants: TenantNodeRow[]
+  assignments: GcrTenantAssignmentRow[]
 }
 
 // ─── Per-row editable state ───────────────────────────────────────────────────
@@ -80,30 +60,30 @@ const PARTICIPATION_OPTIONS: { value: GeneratorParticipation; label: string }[] 
   { value: 'none',    label: 'Not on generator' },
 ]
 
-function settingsToEngine(raw: Record<string, unknown> | null): GeneratorSettings {
+function settingsToEngine(raw: GcrSettingsRow | null): GeneratorSettings {
   if (!raw) return DEFAULT_GENERATOR_SETTINGS
   return {
-    standardKwPerSqm:             (raw.standard_kw_per_sqm as number)             ?? DEFAULT_GENERATOR_SETTINGS.standardKwPerSqm,
-    fastFoodKwPerSqm:             (raw.fast_food_kw_per_sqm as number)            ?? DEFAULT_GENERATOR_SETTINGS.fastFoodKwPerSqm,
-    restaurantKwPerSqm:           (raw.restaurant_kw_per_sqm as number)           ?? DEFAULT_GENERATOR_SETTINGS.restaurantKwPerSqm,
-    nationalKwPerSqm:             (raw.national_kw_per_sqm as number)             ?? DEFAULT_GENERATOR_SETTINGS.nationalKwPerSqm,
-    capitalRecoveryPeriodYears:   (raw.capital_recovery_period_years as number)   ?? DEFAULT_GENERATOR_SETTINGS.capitalRecoveryPeriodYears,
-    capitalRecoveryRatePercent:   (raw.capital_recovery_rate_percent as number)   ?? DEFAULT_GENERATOR_SETTINGS.capitalRecoveryRatePercent,
-    ratePerTenantDb:              (raw.rate_per_tenant_db as number)              ?? DEFAULT_GENERATOR_SETTINGS.ratePerTenantDb,
-    numMainBoards:                (raw.num_main_boards as number)                 ?? DEFAULT_GENERATOR_SETTINGS.numMainBoards,
-    ratePerMainBoard:             (raw.rate_per_main_board as number)             ?? DEFAULT_GENERATOR_SETTINGS.ratePerMainBoard,
-    additionalCablingCost:        (raw.additional_cabling_cost as number)         ?? DEFAULT_GENERATOR_SETTINGS.additionalCablingCost,
-    controlWiringCost:            (raw.control_wiring_cost as number)             ?? DEFAULT_GENERATOR_SETTINGS.controlWiringCost,
-    dieselCostPerLitre:           (raw.diesel_cost_per_litre as number)           ?? DEFAULT_GENERATOR_SETTINGS.dieselCostPerLitre,
-    runningHoursPerMonth:         (raw.running_hours_per_month as number)         ?? DEFAULT_GENERATOR_SETTINGS.runningHoursPerMonth,
-    maintenanceCostAnnual:        (raw.maintenance_cost_annual as number)         ?? DEFAULT_GENERATOR_SETTINGS.maintenanceCostAnnual,
-    powerFactor:                  (raw.power_factor as number)                    ?? DEFAULT_GENERATOR_SETTINGS.powerFactor,
-    runningLoadPercentage:        (raw.running_load_percentage as number)         ?? DEFAULT_GENERATOR_SETTINGS.runningLoadPercentage,
-    maintenanceContingencyPercent:(raw.maintenance_contingency_percent as number) ?? DEFAULT_GENERATOR_SETTINGS.maintenanceContingencyPercent,
+    standardKwPerSqm:             raw.standard_kw_per_sqm,
+    fastFoodKwPerSqm:             raw.fast_food_kw_per_sqm,
+    restaurantKwPerSqm:           raw.restaurant_kw_per_sqm,
+    nationalKwPerSqm:             raw.national_kw_per_sqm,
+    capitalRecoveryPeriodYears:   raw.capital_recovery_period_years,
+    capitalRecoveryRatePercent:   raw.capital_recovery_rate_percent,
+    ratePerTenantDb:              raw.rate_per_tenant_db,
+    numMainBoards:                raw.num_main_boards,
+    ratePerMainBoard:             raw.rate_per_main_board,
+    additionalCablingCost:        raw.additional_cabling_cost,
+    controlWiringCost:            raw.control_wiring_cost,
+    dieselCostPerLitre:           raw.diesel_cost_per_litre,
+    runningHoursPerMonth:         raw.running_hours_per_month,
+    maintenanceCostAnnual:        raw.maintenance_cost_annual,
+    powerFactor:                  raw.power_factor,
+    runningLoadPercentage:        raw.running_load_percentage,
+    maintenanceContingencyPercent:raw.maintenance_contingency_percent,
   }
 }
 
-function initRowState(tenants: TenantNode[], assignments: AssignmentRow[]): Record<string, RowState> {
+function initRowState(tenants: TenantNodeRow[], assignments: GcrTenantAssignmentRow[]): Record<string, RowState> {
   const byNode: Record<string, RowState> = {}
   for (const t of tenants) {
     const asgn = assignments.find((a) => a.node_id === t.id)
@@ -154,9 +134,9 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
       }
     })
     return checkReadiness({
-      settings: settings as GcrSettingsRow | null,
-      zones: zones as GcrZoneRow[],
-      generators: generators as GcrZoneGeneratorRow[],
+      settings,
+      zones,
+      generators,
       tenantNodes,
     })
   }, [settings, zones, generators, tenants, rows])

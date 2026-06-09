@@ -10,28 +10,14 @@ import {
   upsertGeneratorAction,
   deleteGeneratorAction,
 } from './gcr.actions'
+import type { GcrZoneRow, GcrZoneGeneratorRow } from '@esite/shared'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ZoneRow {
-  id: string
-  zone_name: string
-  zone_number: number
-  display_order: number
-}
-
-interface GeneratorRow {
-  id: string
-  zone_id: string
-  generator_number: number
-  generator_size: string | null
-  generator_cost: number
-}
-
 interface Props {
   projectId: string
-  zones: ZoneRow[]
-  generators: GeneratorRow[]
+  zones: GcrZoneRow[]
+  generators: GcrZoneGeneratorRow[]
 }
 
 // ─── ZonesPanel ───────────────────────────────────────────────────────────────
@@ -65,7 +51,7 @@ export function ZonesPanel({ projectId, zones, generators }: Props) {
     return Math.max(...zones.map((z) => z.zone_number)) + 1
   }
 
-  function generatorsForZone(zoneId: string): GeneratorRow[] {
+  function generatorsForZone(zoneId: string): GcrZoneGeneratorRow[] {
     return generators
       .filter((g) => g.zone_id === zoneId)
       .sort((a, b) => a.generator_number - b.generator_number)
@@ -103,7 +89,7 @@ export function ZonesPanel({ projectId, zones, generators }: Props) {
 
   // ─── Rename zone ──────────────────────────────────────────────────────────────
 
-  async function handleRenameZone(zone: ZoneRow) {
+  async function handleRenameZone(zone: GcrZoneRow) {
     const name = renameValue.trim()
     if (!name) return
     runAction(async () => {
