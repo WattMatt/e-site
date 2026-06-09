@@ -1,12 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
 import { saveGcrSettingsAction } from './gcr.actions'
 import { gcrSettingsSchema, type GcrSettingsInput } from './gcr.schemas'
-import { useDirtyForm } from '../settings/_components/UnsavedChangesGuard'
 import { StickySaveBar } from '../settings/_components/StickySaveBar'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { FormField, TextInput } from '@/components/ui/FormField'
@@ -63,7 +62,6 @@ interface SettingsFormProps {
 }
 
 export function SettingsForm({ projectId, settings }: SettingsFormProps) {
-  const { markDirty, markClean } = useDirtyForm()
   const [serverError, setServerError] = useState<string | null>(null)
 
   const {
@@ -76,14 +74,6 @@ export function SettingsForm({ projectId, settings }: SettingsFormProps) {
     defaultValues: buildDefaultValues(settings),
   })
 
-  useEffect(() => {
-    if (isDirty) {
-      markDirty('gcr-settings')
-    } else {
-      markClean()
-    }
-  }, [isDirty, markDirty, markClean])
-
   async function onSubmit(values: GcrSettingsInput) {
     setServerError(null)
     const result = await saveGcrSettingsAction(projectId, values)
@@ -92,7 +82,6 @@ export function SettingsForm({ projectId, settings }: SettingsFormProps) {
       throw new Error(result.error)
     }
     reset(values)
-    markClean()
   }
 
   return (
