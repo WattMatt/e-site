@@ -32,22 +32,24 @@ export async function GET(
     .eq('id', id)
     .maybeSingle() as { data: { organisation_id: string } | null }
 
-  if (projectRow) {
-    const hasSeat = await hasFeatureSeat(
-      projectRow.organisation_id,
-      user.id,
-      'generator_cost_recovery',
-      supabase,
+  if (!projectRow) {
+    return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
+
+  const hasSeat = await hasFeatureSeat(
+    projectRow.organisation_id,
+    user.id,
+    'generator_cost_recovery',
+    supabase,
+  )
+  if (!hasSeat) {
+    return NextResponse.json(
+      {
+        error: 'No generator cost-recovery seat',
+        unlockPath: `/projects/${id}/generator-cost-recovery/unlock`,
+      },
+      { status: 402 },
     )
-    if (!hasSeat) {
-      return NextResponse.json(
-        {
-          error: 'No generator cost-recovery seat',
-          unlockPath: `/projects/${id}/generator-cost-recovery/unlock`,
-        },
-        { status: 402 },
-      )
-    }
   }
 
   // ── Gather data (I/O + RBAC gate) ─────────────────────────────────────────

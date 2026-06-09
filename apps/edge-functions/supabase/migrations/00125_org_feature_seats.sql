@@ -33,6 +33,7 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER AS $$
         );
 $$;
 REVOKE EXECUTE ON FUNCTION public.has_feature_seat(UUID,UUID,TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.has_feature_seat(UUID,UUID,TEXT) TO authenticated;
 
 ALTER TABLE billing.org_feature_seats ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS org_feature_seats_select ON billing.org_feature_seats;
