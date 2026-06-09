@@ -115,6 +115,54 @@ describe('parseBoqXlsx', () => {
   })
 })
 
+// A workbook exercising the mis-numbered sheet scenario: two sheets share
+// leading number "20" but only one genuinely maps to summary item 20; the
+// other must fall through to the name-containment fallback (item 21).
+async function buildMisNumberedWorkbook(): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook()
+
+  const theFix = wb.addWorksheet('20-60 The Fix')
+  theFix.addRows([HDR, ['C1', 'DB'], ['C1.1', 'cabling', 'm', 1, 100, 0, 100]])
+
+  // Mis-numbered: leading number 20, but the genuine summary item is 21 CASHBUILD.
+  const cashbuild = wb.addWorksheet('20-93 Cashbuild')
+  cashbuild.addRows([HDR, ['C1', 'DB'], ['C1.1', 'cabling', 'm', 2, 200, 0, 400]])
+
+  const summary = wb.addWorksheet('Main Summary')
+  summary.addRows([
+    ['ITEM', 'DESCRIPTION'],
+    ['20', 'THE FIX', null, null, null, 100],
+    ['21', 'CASHBUILD', null, null, null, 400],
+    [null, 'TOTAL (EXCLUSIVE OF VAT)', null, null, null, 500],
+  ])
+
+  return Buffer.from(await wb.xlsx.writeBuffer())
+}
+
+describe('parseBoqXlsx — mis-numbered sheet fallback', () => {
+  it('resolves "20-60 The Fix" to item 20 and "20-93 Cashbuild" to item 21 via name fallback', async () => {
+    const parsed = await parseBoqXlsx(await buildMisNumberedWorkbook())
+
+    expect(parsed.bills).toHaveLength(2)
+
+    const fix = parsed.bills.find((b) => b.tempId === 'bill#20-60 The Fix')!
+    expect(fix).toBeTruthy()
+    expect(fix.code).toBe('20')
+    expect(fix.title).toBe('THE FIX')
+    expect(fix.expectedTotal).toBe(100)
+
+    const cb = parsed.bills.find((b) => b.tempId === 'bill#20-93 Cashbuild')!
+    expect(cb).toBeTruthy()
+    expect(cb.code).toBe('21')
+    expect(cb.title).toBe('CASHBUILD')
+    expect(cb.expectedTotal).toBe(400)
+
+    // Cashbuild sorts AFTER The Fix (order follows matched itemNo: 21 > 20).
+    const idx = (tempId: string) => parsed.bills.findIndex((b) => b.tempId === tempId)
+    expect(idx('bill#20-60 The Fix')).toBeLessThan(idx('bill#20-93 Cashbuild'))
+  })
+})
+
 // A workbook exercising the leading-number tenant match (Boxer vs Boxer Liquor)
 // and a non-1.x bill sheet (P&G) that must fold into the MALL portion.
 async function buildMatchWorkbook(): Promise<Buffer> {

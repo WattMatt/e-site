@@ -175,22 +175,120 @@ function tenantLeadingItemNo(sheetName: string): string | null {
 }
 
 /**
- * Match a tenant sheet to its summary entry DETERMINISTICALLY by leading number.
- * Returns null if no summary entry has that itemNo (caller leaves expectedTotal
- * null, which surfaces as a reconcile warning — fail loud, no fuzzy fallback).
+ * Normalise a sheet name or summary description for name-based matching.
+ *
+ * Steps: uppercase → strip leading `\d+-\d+` prefix (sheet numbering artefact)
+ * → collapse every run of non-alphanumeric characters to a single space → trim.
+ *
+ * "20-60 The Fix"  → "THE FIX"
+ * "THE FIX"        → "THE FIX"
+ * "20-93 Cashbuild"→ "CASHBUILD"
+ * "CASHBUILD"      → "CASHBUILD"
  */
-function matchTenantSummaryEntry(sheetName: string, entries: SummaryEntry[]): SummaryEntry | null {
-  const itemNo = tenantLeadingItemNo(sheetName)
-  if (itemNo == null) return null
-  return entries.find((e) => e.itemNo === itemNo) ?? null
+function normaliseName(s: string): string {
+  return s
+    .toUpperCase()
+    .replace(/^\d+-\d+\s*/, '')
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
 }
 
-// Order index from a tenant sheet's leading number; unknown bills sort last.
-function tenantOrder(sheetName: string): number {
-  const itemNo = tenantLeadingItemNo(sheetName)
-  if (itemNo == null) return Number.MAX_SAFE_INTEGER
-  const n = Number(itemNo)
-  return isNaN(n) ? Number.MAX_SAFE_INTEGER : n
+/**
+ * Match a set of tenant sheets to summary entries using a 3-step algorithm that
+ * handles the case where two sheets carry the same leading number (one is
+ * genuinely numbered, the other is mis-numbered in the source file):
+ *
+ * 1. **Primary (by number):** each sheet claims the summary entry whose
+ *    `itemNo` equals the sheet's leading number.
+ * 2. **Resolve collisions by name:** when two+ sheets claim the same entry,
+ *    the sheet whose normalised name matches the entry's normalised description
+ *    keeps it; the other sheet(s) become "unresolved".
+ * 3. **Fallback for unresolved (by name):** each unresolved sheet is matched to
+ *    a still-unclaimed entry via normalised-name containment (longest match wins).
+ *    Still-unresolved sheets map to null (caller emits null expectedTotal).
+ *
+ * Returns a Map<sheetName, SummaryEntry | null>.
+ */
+function matchTenantSheets(
+  sheetNames: string[],
+  entries: SummaryEntry[],
+): Map<string, SummaryEntry | null> {
+  const result = new Map<string, SummaryEntry | null>()
+
+  // Step 1: group sheets by their claimed itemNo.
+  const byItemNo = new Map<string, string[]>() // itemNo → sheetNames
+  for (const name of sheetNames) {
+    const itemNo = tenantLeadingItemNo(name)
+    if (itemNo == null) {
+      result.set(name, null) // no leading number at all → unresolvable
+      continue
+    }
+    const group = byItemNo.get(itemNo) ?? []
+    group.push(name)
+    byItemNo.set(itemNo, group)
+  }
+
+  // Track which entries have been claimed.
+  const claimed = new Set<string>() // entry.itemNo values
+  const unresolved: string[] = [] // sheet names to fall through to step 3
+
+  // Step 2: assign or declare collision.
+  for (const [itemNo, group] of byItemNo) {
+    const entry = entries.find((e) => e.itemNo === itemNo) ?? null
+
+    if (entry == null) {
+      // No summary entry for this number — all sheets in group go to fallback.
+      for (const name of group) unresolved.push(name)
+      continue
+    }
+
+    if (group.length === 1) {
+      // Unique claim — assign directly.
+      result.set(group[0], entry)
+      claimed.add(entry.itemNo)
+      continue
+    }
+
+    // Collision: multiple sheets claim the same entry.
+    // The sheet whose normalised name matches the entry description keeps it.
+    const normEntry = normaliseName(entry.description)
+    const winner = group.find((name) => normaliseName(name) === normEntry)
+
+    if (winner != null) {
+      result.set(winner, entry)
+      claimed.add(entry.itemNo)
+      for (const name of group) {
+        if (name !== winner) unresolved.push(name)
+      }
+    } else {
+      // No name match — all go to fallback.
+      for (const name of group) unresolved.push(name)
+    }
+  }
+
+  // Step 3: name-based fallback for unresolved sheets.
+  const unclaimed = entries.filter((e) => !claimed.has(e.itemNo))
+  for (const name of unresolved) {
+    const normSheet = normaliseName(name)
+    // Find the unclaimed entry whose normalised description is contained in (or
+    // equals) the sheet's normalised name, preferring the longest match.
+    let best: SummaryEntry | null = null
+    let bestLen = -1
+    for (const entry of unclaimed) {
+      const normEntry = normaliseName(entry.description)
+      if (normSheet.includes(normEntry) && normEntry.length > bestLen) {
+        best = entry
+        bestLen = normEntry.length
+      }
+    }
+    result.set(name, best)
+    if (best != null) {
+      claimed.add(best.itemNo)
+      unclaimed.splice(unclaimed.indexOf(best), 1)
+    }
+  }
+
+  return result
 }
 
 // ─── Orchestrator ───────────────────────────────────────────────────────────
@@ -302,13 +400,25 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
   }
 
   // ── Tenant bills (one per N-NN sheet) ──────────────────────────────────────
-  // Each tenant matches its summary entry DETERMINISTICALLY by the sheet name's
-  // leading number (the summary item number). No fuzzy name matching — that
-  // swapped e.g. Boxer ↔ Boxer Liquor and Shoprite ↔ Shoprite Liquor.
+  // Match ALL tenant sheets to summary entries in one pass: primary by leading
+  // number, collision-resolve by name, fallback by name containment. Bill ORDER
+  // follows the matched entry's itemNo (not the raw sheet leading number), so a
+  // mis-numbered sheet (e.g. "20-93 Cashbuild" → item 21) sorts correctly.
+  const tenantMatchMap = matchTenantSheets(
+    tenantSheets.map((s) => s.name),
+    summary.entries,
+  )
+
   const tenantBills: { bill: ParsedBill; order: number }[] = []
   for (const sheet of tenantSheets) {
     const billRootTempId = `bill#${sheet.name}`
-    const entry = matchTenantSummaryEntry(sheet.name, summary.entries)
+    const entry = tenantMatchMap.get(sheet.name) ?? null
+
+    // Sort by the MATCHED entry's itemNo, falling back to the raw leading number
+    // if the entry is null (unknown sheets sort last either way).
+    const orderItemNo = entry?.itemNo ?? tenantLeadingItemNo(sheet.name)
+    const orderN = orderItemNo != null ? Number(orderItemNo) : NaN
+    const order = isNaN(orderN) ? Number.MAX_SAFE_INTEGER : orderN
 
     const sections: ParsedSection[] = [
       {
@@ -324,7 +434,7 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
     ]
 
     tenantBills.push({
-      order: tenantOrder(sheet.name),
+      order,
       bill: {
         tempId: billRootTempId,
         code: entry?.itemNo ?? sheet.name,
