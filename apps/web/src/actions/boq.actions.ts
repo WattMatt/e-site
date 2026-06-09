@@ -63,7 +63,7 @@ export type ListBoqResult =
         import: BoqImport | null
         sections: BoqSection[]
         items: BoqItem[]
-        totals: Map<string, number>
+        totals: Record<string, number>
         importedByName: string | null
       }
     }
@@ -79,12 +79,12 @@ export async function listBoqAction(projectId: string): Promise<ListBoqResult> {
     const current = await boqService.getCurrent(supabase as any, projectId)
     if (!current) {
       return {
-        data: { import: null, sections: [], items: [], totals: new Map(), importedByName: null },
+        data: { import: null, sections: [], items: [], totals: {}, importedByName: null },
       }
     }
 
     const { sections, items } = await boqService.getTree(supabase as any, current.id)
-    const totals = computeRollups(sections, items)
+    const totals = Object.fromEntries(computeRollups(sections, items))
 
     // Resolve the importer's display name via the SERVICE client (profiles RLS
     // only returns the caller's own row to the cookie client).
@@ -117,11 +117,11 @@ export async function importBoqAction(
 ): Promise<ImportBoqResult> {
   const supabase = await createClient()
 
-  const proj = await resolveProjectOrg(supabase, projectId)
-  if (!proj) return { error: 'Project not found' }
-
   const guard = await requireEffectiveRole(supabase, projectId, COST_VIEW_ROLES)
   if (!guard.ok) return { error: guard.error }
+
+  const proj = await resolveProjectOrg(supabase, projectId)
+  if (!proj) return { error: 'Project not found' }
 
   const { data: { user } } = await supabase.auth.getUser()
 
