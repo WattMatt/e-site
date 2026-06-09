@@ -1,7 +1,14 @@
 import ExcelJS from 'exceljs'
 import { classifySheet } from './classify-sheet'
 import { parseSheet } from './parse-sheet'
-import type { Aoa, ParsedBill, ParsedBoq, ParsedItem, ParsedSection } from './types'
+import type {
+  Aoa,
+  ParsedBill,
+  ParsedBoq,
+  ParsedItem,
+  ParsedSection,
+  ParsedUnclassifiedRow,
+} from './types'
 
 // ─── Cell / worksheet coercion ──────────────────────────────────────────────
 
@@ -312,6 +319,9 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
   await wb.xlsx.load(buffer as unknown as Parameters<typeof wb.xlsx.load>[0])
 
   const skippedSheets: string[] = []
+  // Priced rows no sheet could classify, stamped with their sheet name. Surfaced
+  // so a value is never silently dropped (cf. the digit-led "10.1" Shoprite row).
+  const unclassifiedRows: ParsedUnclassifiedRow[] = []
   let summary: SummaryTotals = { entries: [], totalExVat: null, vat: null, totalInclVat: null }
 
   // Every non-tenant bill sheet (P&G, 1.x, …) belongs to the Mall portion.
@@ -337,7 +347,8 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
     }
 
     // Bill sheet: tenant (N-NN) or part of the Mall portion (everything else).
-    const { sections, items } = parseSheet(name, rows, cls)
+    const { sections, items, unclassified } = parseSheet(name, rows, cls)
+    for (const u of unclassified) unclassifiedRows.push({ sheet: name, ...u })
     const sheet: BillSheet = { name, sections, items }
     if (TENANT_SHEET_RE.test(name)) tenantSheets.push(sheet)
     else mallSheets.push(sheet)
@@ -458,5 +469,6 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
     totalInclVatExpected: summary.totalInclVat,
     bills,
     skippedSheets,
+    unclassifiedRows,
   }
 }
