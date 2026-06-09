@@ -91,18 +91,19 @@ export function parseSheet(
     const unit = unitRaw != null ? toStr(unitRaw) || null : null
     const qtyRaw = columns.qty !== undefined ? row[columns.qty] : null
 
-    // Category row: item matches ^[A-Z]+\d+$ AND no qty/rate
-    if (itemCode && CATEGORY_RE.test(itemCode)) {
-      const supplyRaw = columns.supply !== undefined ? row[columns.supply] : null
-      const installRaw = columns.install !== undefined ? row[columns.install] : null
-      const rateRaw = columns.rate !== undefined ? row[columns.rate] : null
-      const hasQtyOrRate =
-        toNum(qtyRaw) != null ||
-        toNum(supplyRaw) != null ||
-        toNum(installRaw) != null ||
-        toNum(rateRaw) != null
+    const supplyRate = columns.supply !== undefined ? toNum(row[columns.supply]) : null
+    const installRate = columns.install !== undefined ? toNum(row[columns.install]) : null
+    const rate = columns.rate !== undefined ? toNum(row[columns.rate]) : null
+    const amount = columns.amount !== undefined ? toNum(row[columns.amount]) : null
 
-      if (!hasQtyOrRate) {
+    // Category row: item matches ^[A-Z]+\d+$ with NO qty, NO supply/install/rate,
+    // AND no amount. A coded row WITH an amount (e.g. P&G's "A1 … Sum … 1139424")
+    // is a lump-sum line item, not a category header — fall through to emit it.
+    if (itemCode && CATEGORY_RE.test(itemCode)) {
+      const hasQtyOrRate =
+        toNum(qtyRaw) != null || supplyRate != null || installRate != null || rate != null
+
+      if (!hasQtyOrRate && amount == null) {
         const tempId = `${name}#${rowIndex}`
         const section: ParsedSection = {
           tempId,
@@ -118,13 +119,11 @@ export function parseSheet(
       }
     }
 
-    // Line item row: item matches ^[A-Z]+\d+\.\d+
-    if (itemCode && ITEM_RE.test(itemCode)) {
-      const supplyRate = columns.supply !== undefined ? toNum(row[columns.supply]) : null
-      const installRate = columns.install !== undefined ? toNum(row[columns.install]) : null
-      const rate = columns.rate !== undefined ? toNum(row[columns.rate]) : null
-      const amount = columns.amount !== undefined ? toNum(row[columns.amount]) : null
-
+    // Line item row: either a sub-coded row (^[A-Z]+\d+\.\d+) or a coded row
+    // (^[A-Z]+\d+$) that carries an amount — i.e. a lump sum (e.g. P&G's
+    // "A1 … Sum … 1139424"). The pure-header case already `continue`d above.
+    const isLumpSumCodedRow = itemCode != '' && CATEGORY_RE.test(itemCode) && amount != null
+    if (itemCode && (ITEM_RE.test(itemCode) || isLumpSumCodedRow)) {
       const { mode: quantityMode, quantity } = resolveQuantityMode(qtyRaw, unit, description)
 
       const item: ParsedItem = {

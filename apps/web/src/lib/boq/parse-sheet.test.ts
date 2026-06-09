@@ -92,6 +92,34 @@ describe('parseSheet — tempId and sectionTempId linkage', () => {
   })
 })
 
+describe('parseSheet — coded row with amount is a lump-sum item', () => {
+  it('a ^[A-Z]+\\d+$ row with only an amount becomes an item, not a section', () => {
+    // P&G shape: code "A1", unit "Sum", no qty/rate, but an amount.
+    const testRows = [HDR, ['A1', 'Preliminaries & General', 'Sum', null, null, null, 1139424]]
+    const cls = classifySheet('P&G', testRows)
+    const { sections, items } = parseSheet('P&G', testRows, cls)
+    expect(sections).toHaveLength(0)
+    expect(items).toHaveLength(1)
+    expect(items[0].code).toBe('A1')
+    expect(items[0].amount).toBe(1139424)
+    expect(items[0].quantityMode).toBe('lump_sum')
+    expect(items[0].rateModel).toBe(cls.rateModel)
+  })
+
+  it('a true header row (no amount, no qty/rate) stays a category', () => {
+    const testRows = [HDR, ['A1', 'A category header'], ['A1.1', 'A line', 'm', 5, 10, 2, 60]]
+    const cls = classifySheet('Sheet', testRows)
+    const { sections, items } = parseSheet('Sheet', testRows, cls)
+    const cat = sections.find(s => s.code === 'A1')!
+    expect(cat).toBeTruthy()
+    expect(cat.kind).toBe('category')
+    // The header is NOT also captured as an item.
+    expect(items.find(i => i.code === 'A1')).toBeUndefined()
+    // The real line item is parented under the header category.
+    expect(items.find(i => i.code === 'A1.1')!.sectionTempId).toBe(cat.tempId)
+  })
+})
+
 describe('parseSheet — non-bill sheets return empty', () => {
   it('prose sheet returns empty sections and items', () => {
     const proseRows = [['This is just notes'], ['No header here']]
