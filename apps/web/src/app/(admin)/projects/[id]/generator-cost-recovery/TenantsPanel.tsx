@@ -204,15 +204,39 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text-mid)' }}>
               {readiness.ready ? 'Ready to generate' : 'Not ready'}
             </span>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled
-              title="Coming in P3"
-              style={{ opacity: 0.45, cursor: 'not-allowed' }}
-            >
-              Generate report
-            </Button>
+            {readiness.ready ? (
+              <a
+                href={`/api/projects/${projectId}/generator-cost-recovery/report-preview`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '5px 12px',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  fontFamily: 'var(--font-sans)',
+                  borderRadius: 6,
+                  border: '1px solid var(--c-border)',
+                  background: 'var(--c-panel)',
+                  color: 'var(--c-text)',
+                  textDecoration: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                Generate report
+              </a>
+            ) : (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled
+                title={readiness.gaps.join(' · ')}
+                style={{ opacity: 0.45, cursor: 'not-allowed' }}
+              >
+                Generate report
+              </Button>
+            )}
           </div>
         </CardHeader>
         {!readiness.ready && (
