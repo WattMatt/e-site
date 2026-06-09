@@ -1,41 +1,20 @@
-import { computeItemAmount } from '@esite/shared'
-import type { BillReconcileResult, ParsedBoq, ParsedItem, ReconciliationReport } from './types'
+import type { BillReconcileResult, ParsedBoq, ReconciliationReport } from './types'
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
-
-/**
- * Recompute one parsed item's amount using the shared write-time rule.
- *
- * `computeItemAmount` is typed for the DB `BoqItem` shape, but it only reads
- * the rate/quantity fields that `ParsedItem` also carries. Adapt the parsed
- * item into the minimal shape the rule needs so there is a single source of
- * truth for the amount calculation.
- */
-function recomputeAmount(item: ParsedItem): number | null {
-  return computeItemAmount({
-    // identity fields are unused by the rule; supply stable stubs
-    id: '00000000-0000-0000-0000-000000000000',
-    sectionId: '00000000-0000-0000-0000-000000000000',
-    code: item.code,
-    description: item.description,
-    unit: item.unit,
-    quantity: item.quantity,
-    quantityMode: item.quantityMode,
-    rateModel: item.rateModel,
-    supplyRate: item.supplyRate,
-    installRate: item.installRate,
-    rate: item.rate,
-    amount: item.amount,
-    sortOrder: item.sortOrder,
-  })
-}
 
 const tolerance = (expected: number) => Math.max(1, Math.abs(expected) * 0.005)
 
 /**
- * Recompute every item amount, roll the amounts up per bill, and compare each
- * bill's computed total to its expected total (from the Main Summary) plus the
- * grand total to the workbook's expected ex-VAT grand total.
+ * Sum each bill's STORED item amounts, roll them up to a grand total, and
+ * compare each bill's stored sum to its expected total (from the Main Summary)
+ * plus the grand total to the workbook's expected ex-VAT grand total.
+ *
+ * The stored `amount` is the authoritative per-row source value the workbook
+ * already carried — it is correct for every row type (measured, lump-sum,
+ * allowance, PC, provisional, rate-only). Recomputing qty×rate here would yield
+ * null/0 for the non-measured rows and lose their value, so we sum the stored
+ * amounts directly (null → 0). Rate EDITS are recomputed elsewhere
+ * (`boq.service.ts` / `RateCell`); this reconcile is a source-fidelity check.
  *
  * A bill (or grand total) with no expected value cannot be contradicted, so it
  * is treated as matched but a warning is recorded.
@@ -50,7 +29,7 @@ export function reconcile(parsed: ParsedBoq): ReconciliationReport {
   for (const bill of parsed.bills) {
     let computed = 0
     for (const item of bill.items) {
-      computed += recomputeAmount(item) ?? 0
+      computed += item.amount ?? 0
     }
     computed = round2(computed)
     grandTotalComputed = round2(grandTotalComputed + computed)

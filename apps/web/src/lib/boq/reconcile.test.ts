@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { reconcile } from './reconcile'
 import type { ParsedBoq } from './types'
 
+// The bill's stored amounts are what reconcile must sum — note the second item
+// is a provisional allowance with NO qty/rate (qty×rate would be null/0), so a
+// total of 350 only holds if reconcile sums the STORED amounts, not recomputes.
 const parsed: ParsedBoq = {
   grandTotalExpected: 350, totalExVatExpected: 350, vatExpected: 52.5, totalInclVatExpected: 402.5,
   bills: [{ tempId: 'b1', code: '1', title: 'MALL', expectedTotal: 350,
@@ -9,22 +12,38 @@ const parsed: ParsedBoq = {
     items: [
       { sectionTempId: 'c1', code: 'C1.1', description: 'x', unit: 'm', quantity: 1, quantityMode: 'measured',
         rateModel: 'supply_install', supplyRate: 100, installRate: 50, rate: null, amount: 150, sortOrder: 0 },
-      { sectionTempId: 'c1', code: 'C1.2', description: 'y', unit: 'm', quantity: 2, quantityMode: 'measured',
-        rateModel: 'supply_install', supplyRate: 100, installRate: 0, rate: null, amount: 200, sortOrder: 1 },
+      { sectionTempId: 'c1', code: 'C1.2', description: 'PROVISIONAL allowance', unit: null, quantity: null, quantityMode: 'provisional',
+        rateModel: 'supply_install', supplyRate: null, installRate: null, rate: null, amount: 200, sortOrder: 1 },
     ] }],
   skippedSheets: ['NOTES TO TENDERER'],
 }
 
 describe('reconcile', () => {
-  it('matches when computed totals equal expected', () => {
+  it('matches by summing STORED amounts (including non-measured rows)', () => {
     const r = reconcile(parsed)
     expect(r.matched).toBe(true)
+    // 150 (measured) + 200 (provisional, qty×rate would be 0) = 350.
     expect(r.grandTotalComputed).toBe(350)
+    expect(r.billResults.find(b => b.tempId === 'b1')!.computed).toBe(350)
   })
-  it('flags a bill whose items do not sum to its expected total', () => {
+
+  it('flags a bill whose stored amounts do not sum to its expected total', () => {
     const bad = structuredClone(parsed); bad.bills[0].expectedTotal = 999
     const r = reconcile(bad)
     expect(r.matched).toBe(false)
     expect(r.billResults.find(b => b.tempId === 'b1')!.matched).toBe(false)
+  })
+
+  it('treats a null expected total as matched-but-warned', () => {
+    const noExpected = structuredClone(parsed)
+    noExpected.bills[0].expectedTotal = null
+    noExpected.grandTotalExpected = null
+    const r = reconcile(noExpected)
+    const bill = r.billResults.find(b => b.tempId === 'b1')!
+    expect(bill.matched).toBe(true)
+    expect(bill.expected).toBeNull()
+    expect(bill.computed).toBe(350)
+    expect(r.warnings.some(w => w.includes('"1"') && /no expected total/i.test(w))).toBe(true)
+    expect(r.warnings.some(w => /no expected grand total/i.test(w))).toBe(true)
   })
 })
