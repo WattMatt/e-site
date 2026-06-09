@@ -265,9 +265,22 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
       summary.entries.find((e) => /MALL/i.test(e.description)) ??
       null
 
-    const sections: ParsedSection[] = []
+    // Bill-root section row — matches tenant/other bills so EVERY bill's sections[]
+    // contains its own kind:'bill' root. Without this, MALL's section nodes
+    // reference a parentTempId ('bill#MALL_PORTION') that has no section row,
+    // and persistImport would orphan them (parent_section_id=null).
+    const sections: ParsedSection[] = [
+      {
+        tempId: billRootTempId,
+        parentTempId: '',
+        kind: 'bill',
+        code: mallEntry?.itemNo ?? null,
+        title: mallEntry?.description ?? 'MALL PORTION',
+        sortOrder: 0,
+      },
+    ]
     const items: ParsedItem[] = []
-    let sectionSort = 0
+    let sectionSort = 1
 
     for (const sheet of mallSheets) {
       // Each 1.x sheet becomes a section node under the MALL bill root.
