@@ -120,3 +120,29 @@ describe('boqService.updateItemRate', () => {
     expect(result.amount).toBeNull()
   })
 })
+
+// ─── getTree ──────────────────────────────────────────────────────────────────
+
+describe('boqService.getTree', () => {
+  it('pages past the 1000-row PostgREST cap and returns every section + item', async () => {
+    const section = (i: number) => ({ id: `s${i}`, import_id: 'imp1', parent_section_id: null, kind: 'category', code: `C${i}`, title: 't', sort_order: i, node_id: null })
+    const item = (i: number) => ({ id: `i${i}`, section_id: 's0', code: `C0.${i}`, description: 'x', unit: 'm', quantity: 1, quantity_mode: 'measured', rate_model: 'supply_install', supply_rate: '10', install_rate: '2', rate: null, amount: '12', sort_order: i })
+    const sections = Array.from({ length: 5 }, (_, i) => section(i)) // < 1 page
+    const items = Array.from({ length: 2300 }, (_, i) => item(i))    // 3 pages: 1000 + 1000 + 300
+    let table = ''
+    const chain = {
+      select: function () { return this },
+      eq: function () { return this },
+      order: function () { return this },
+      range: async function (from: number, to: number) {
+        const src = table === 'boq_sections' ? sections : items
+        return { data: src.slice(from, to + 1), error: null }
+      },
+    }
+    const client = { schema: () => ({ from: (t: string) => { table = t; return chain } }) } as never
+    const { sections: gotSections, items: gotItems } = await boqService.getTree(client, 'imp1')
+    expect(gotSections).toHaveLength(5)
+    expect(gotItems).toHaveLength(2300) // proves pagination — a single capped query would return 1000
+    expect(gotItems[1999].code).toBe('C0.1999')
+  })
+})
