@@ -33,15 +33,18 @@ async function buildWorkbook(): Promise<Buffer> {
     ['C1.1', 'DB cabling', 'm', 10, 5, 1, 60],
   ])
 
-  // Main Summary: item 1 = MALL (350), item 2 = Shoprite (60); totals.
+  // Main Summary: item 1 = MALL (350); item 7 = Shoprite (60) — itemNo matches
+  // the tenant sheet's leading number ("7-18 Shoprite" → 7); totals. The VAT and
+  // incl-VAT rows are intentionally UNLABELED (just a value), mirroring the real
+  // file, so the parser must read incl-VAT as the last numeric value.
   const summary = wb.addWorksheet('Main Summary')
   summary.addRows([
     ['ITEM', 'DESCRIPTION'],
     ['1', 'MALL', null, null, null, 350],
-    ['2', 'Shoprite', null, null, null, 60],
+    ['7', 'Shoprite', null, null, null, 60],
     [null, 'TOTAL (EXCLUSIVE OF VAT)', null, null, null, 410],
-    [null, 'VAT @ 15%', null, null, null, 61.5],
-    [null, 'TOTAL (INCLUSIVE OF VAT)', null, null, null, 471.5],
+    [null, null, null, null, null, 61.5],
+    [null, null, null, null, null, 471.5],
   ])
 
   // Prose sheet.
@@ -109,5 +112,79 @@ describe('parseBoqXlsx', () => {
 
     // Items reference their category.
     expect(mall.items.find((i) => i.code === 'C1.1')!.sectionTempId).toBe(cat.tempId)
+  })
+})
+
+// A workbook exercising the leading-number tenant match (Boxer vs Boxer Liquor)
+// and a non-1.x bill sheet (P&G) that must fold into the MALL portion.
+async function buildMatchWorkbook(): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook()
+
+  // P&G — a NON-tenant, non-1.x bill sheet with a single lump-sum coded row.
+  const pg = wb.addWorksheet('P&G')
+  pg.addRows([HDR, ['A1', 'Preliminaries & General', 'Sum', null, null, null, 5000]])
+
+  // A 1.x mall sheet too, so MALL has both a 1.x and the P&G section.
+  const mv = wb.addWorksheet('1.2 Medium Voltage')
+  mv.addRows([HDR, ['C1', 'MV CAT'], ['C1.1', 'MV cable', 'm', 1, 100, 0, 100]])
+
+  // Two tenants whose NAMES would collide under fuzzy matching but whose leading
+  // numbers are distinct: "2-5 Boxer" → 2, "3-6 Boxer Liquor" → 3.
+  const boxer = wb.addWorksheet('2-5 Boxer')
+  boxer.addRows([HDR, ['C1', 'DB'], ['C1.1', 'cabling', 'm', 10, 5, 1, 60]])
+  const boxerLiq = wb.addWorksheet('3-6 Boxer Liquor')
+  boxerLiq.addRows([HDR, ['C1', 'DB'], ['C1.1', 'cabling', 'm', 20, 5, 1, 120]])
+
+  // Summary: item 1 = MALL, item 2 = BOXER, item 3 = BOXER LIQUOR.
+  const summary = wb.addWorksheet('Main Summary')
+  summary.addRows([
+    ['ITEM', 'DESCRIPTION'],
+    ['1', 'MALL PORTION', null, null, null, 5100],
+    ['2', 'BOXER', null, null, null, 60],
+    ['3', 'BOXER LIQUOR', null, null, null, 120],
+    [null, 'TOTAL (EXCLUSIVE OF VAT)', null, null, null, 5280],
+  ])
+
+  return Buffer.from(await wb.xlsx.writeBuffer())
+}
+
+describe('parseBoqXlsx — tenant matching + MALL grouping', () => {
+  it('matches tenants by leading number, never swapping Boxer ↔ Boxer Liquor', async () => {
+    const parsed = await parseBoqXlsx(await buildMatchWorkbook())
+
+    const boxer = parsed.bills.find((b) => b.tempId === 'bill#2-5 Boxer')!
+    expect(boxer.code).toBe('2')
+    expect(boxer.title).toBe('BOXER')
+    expect(boxer.expectedTotal).toBe(60)
+
+    const boxerLiq = parsed.bills.find((b) => b.tempId === 'bill#3-6 Boxer Liquor')!
+    expect(boxerLiq.code).toBe('3')
+    expect(boxerLiq.title).toBe('BOXER LIQUOR')
+    expect(boxerLiq.expectedTotal).toBe(120)
+  })
+
+  it('folds a non-1.x bill sheet (P&G) into the MALL portion as a section node', async () => {
+    const parsed = await parseBoqXlsx(await buildMatchWorkbook())
+
+    // P&G is NOT its own bill — only MALL + the two tenant bills exist.
+    expect(parsed.bills.find((b) => b.tempId === 'bill#P&G')).toBeUndefined()
+    expect(parsed.bills).toHaveLength(3)
+
+    const mall = parsed.bills.find((b) => b.tempId === 'bill#MALL_PORTION')!
+    // P&G is a section node under the MALL bill root.
+    const pgNode = mall.sections.find((s) => s.tempId === 'section#P&G')!
+    expect(pgNode).toBeTruthy()
+    expect(pgNode.kind).toBe('section')
+    expect(pgNode.parentTempId).toBe('bill#MALL_PORTION')
+
+    // P&G's lump-sum item rode in under the MALL bill, value preserved.
+    const pgItem = mall.items.find((i) => i.code === 'A1')!
+    expect(pgItem.amount).toBe(5000)
+    expect(pgItem.quantityMode).toBe('lump_sum')
+
+    // MALL's stored amounts (P&G 5000 + MV 100) sum to its expected total 5100.
+    const mallStored = mall.items.reduce((s, it) => s + (it.amount ?? 0), 0)
+    expect(mallStored).toBe(5100)
+    expect(mall.expectedTotal).toBe(5100)
   })
 })

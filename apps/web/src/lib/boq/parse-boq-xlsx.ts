@@ -106,23 +106,29 @@ const ITEM_NO_RE = /^\d+$/ // a bill line in the Main Summary is numbered 1, 2, 
  * incl-VAT totals.
  *
  * Each numbered row (item = "1", "2", …) is a bill: description = bill title,
- * amount = last numeric cell. The three totals are matched by description text:
- *   - ex-VAT total:   /TOTAL.*EXCLUSIVE OF VAT/  (fallback: /SUB[- ]?TOTAL/)
- *   - VAT line:       a row whose description mentions VAT but not "exclusive"
- *   - incl-VAT total: /INCLUSIVE OF VAT/ (fallback: the largest total row)
- * If the VAT line is not identifiable, vat = inclVat − exVat (when both exist).
+ * amount = last numeric cell.
+ *
+ * The ex-VAT total row IS labeled (/TOTAL.*EXCLUSIVE OF VAT/, fallback
+ * /SUB[- ]?TOTAL/). The VAT and incl-VAT rows that follow are UNLABELED in the
+ * real file (just a value in the amount column), so they cannot be matched by
+ * text. Instead, the incl-VAT total = the LAST numeric value present anywhere in
+ * the summary (the running total ends on the incl-VAT line), and
+ * vat = inclVat − exVat when both are present.
  */
 function parseMainSummary(rows: Aoa): SummaryTotals {
   const entries: SummaryEntry[] = []
   let totalExVat: number | null = null
-  let vat: number | null = null
-  let totalInclVat: number | null = null
+  let lastNumeric: number | null = null
 
   for (const row of rows) {
     const itemNo = toStr(row[0])
     const desc = toStr(row[1])
     const amount = lastNumericInRow(row)
     if (amount == null) continue
+
+    // The last numeric value anywhere in the summary is the incl-VAT total
+    // (the unlabeled tail row r45 in the real file).
+    lastNumeric = amount
 
     const upper = desc.toUpperCase()
 
@@ -131,22 +137,16 @@ function parseMainSummary(rows: Aoa): SummaryTotals {
       continue
     }
 
-    // Total / VAT lines (no numeric item number).
-    if (/INCLUSIVE OF VAT/.test(upper)) {
-      totalInclVat = amount
-    } else if (/EXCLUSIVE OF VAT/.test(upper) || /\bSUB[- ]?TOTAL\b/.test(upper)) {
+    // Only the ex-VAT total is reliably labeled; VAT / incl-VAT rows are blank.
+    if (/EXCLUSIVE OF VAT/.test(upper) || /\bSUB[- ]?TOTAL\b/.test(upper)) {
       totalExVat = amount
-    } else if (/\bVAT\b/.test(upper)) {
-      vat = amount
     }
   }
 
-  // Derive a missing piece where we can.
-  if (vat == null && totalInclVat != null && totalExVat != null) {
+  const totalInclVat = lastNumeric
+  let vat: number | null = null
+  if (totalInclVat != null && totalExVat != null) {
     vat = Math.round((totalInclVat - totalExVat + Number.EPSILON) * 100) / 100
-  }
-  if (totalExVat == null && totalInclVat != null && vat != null) {
-    totalExVat = Math.round((totalInclVat - vat + Number.EPSILON) * 100) / 100
   }
 
   return { entries, totalExVat, vat, totalInclVat }
@@ -154,8 +154,10 @@ function parseMainSummary(rows: Aoa): SummaryTotals {
 
 // ─── Sheet → bill grouping ──────────────────────────────────────────────────
 
-const MALL_SHEET_RE = /^1\.\d/ // 1.2 Medium Voltage … 1.16 Day Works
-const TENANT_SHEET_RE = /^\d+-\d+/ // 7-18 Shoprite, 2-5 Boxer
+// A tenant sheet is named `<summaryItemNo>-<shopNo> <Name>` (e.g. "2-5 Boxer",
+// "7-18 Shoprite"). Every OTHER bill sheet (P&G, 1.2 … 1.16, any non-tenant
+// non-summary non-prose sheet) is part of the Mall portion.
+const TENANT_SHEET_RE = /^(\d+)-\d+/
 
 interface BillSheet {
   name: string
@@ -163,42 +165,31 @@ interface BillSheet {
   items: ParsedItem[]
 }
 
-// Normalise a name for fuzzy matching a tenant sheet to a summary description.
-function normaliseName(s: string): string {
-  return s
-    .toUpperCase()
-    .replace(/^[\d.\-\s]+/, '') // strip leading sheet-number prefix (e.g. "7-18 ")
-    .replace(/[^A-Z0-9]+/g, ' ')
-    .trim()
+/**
+ * A tenant sheet's Main-Summary item number is the LEADING number of its name
+ * (the part before the first '-'): "2-5 Boxer" → "2", "7-18 Shoprite" → "7".
+ */
+function tenantLeadingItemNo(sheetName: string): string | null {
+  const m = TENANT_SHEET_RE.exec(sheetName)
+  return m ? m[1] : null
 }
 
 /**
- * Find the summary entry that best matches a tenant sheet name.
- * Match on normalised-name containment in either direction; return null on no
- * confident match (the caller records a warning and leaves expectedTotal null).
+ * Match a tenant sheet to its summary entry DETERMINISTICALLY by leading number.
+ * Returns null if no summary entry has that itemNo (caller leaves expectedTotal
+ * null, which surfaces as a reconcile warning — fail loud, no fuzzy fallback).
  */
-function matchSummaryEntry(sheetName: string, entries: SummaryEntry[]): SummaryEntry | null {
-  const sheetNorm = normaliseName(sheetName)
-  if (sheetNorm === '') return null
-  // Prefer the longest matching description (most specific) to avoid e.g.
-  // "Boxer" matching "Boxer Liquor".
-  let best: SummaryEntry | null = null
-  for (const e of entries) {
-    const eNorm = normaliseName(e.description)
-    if (eNorm === '') continue
-    if (sheetNorm === eNorm || sheetNorm.includes(eNorm) || eNorm.includes(sheetNorm)) {
-      if (best == null || normaliseName(e.description).length > normaliseName(best.description).length) {
-        best = e
-      }
-    }
-  }
-  return best
+function matchTenantSummaryEntry(sheetName: string, entries: SummaryEntry[]): SummaryEntry | null {
+  const itemNo = tenantLeadingItemNo(sheetName)
+  if (itemNo == null) return null
+  return entries.find((e) => e.itemNo === itemNo) ?? null
 }
 
-// Order index from the summary (by itemNo); unknown bills sort last, stably.
-function summaryOrder(entry: SummaryEntry | null): number {
-  if (entry == null) return Number.MAX_SAFE_INTEGER
-  const n = Number(entry.itemNo)
+// Order index from a tenant sheet's leading number; unknown bills sort last.
+function tenantOrder(sheetName: string): number {
+  const itemNo = tenantLeadingItemNo(sheetName)
+  if (itemNo == null) return Number.MAX_SAFE_INTEGER
+  const n = Number(itemNo)
   return isNaN(n) ? Number.MAX_SAFE_INTEGER : n
 }
 
@@ -209,8 +200,9 @@ function summaryOrder(entry: SummaryEntry | null): number {
  *   - classify each sheet (bill / summary / prose)
  *   - prose sheets → skippedSheets
  *   - the Main Summary drives bill order + expected totals + VAT
- *   - `1.x` sheets fold into one synthetic "MALL PORTION" bill (each sheet a
- *     section node); `N-NN Name` sheets each become their own tenant bill
+ *   - every NON-tenant bill sheet (P&G, `1.x`, …) folds into one synthetic
+ *     "MALL PORTION" bill (each sheet a section node); `N-NN Name` sheets each
+ *     become their own tenant bill, matched to the summary by leading number
  *
  * Pure aside from reading the workbook buffer; no network or DB.
  */
@@ -224,10 +216,9 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
   const skippedSheets: string[] = []
   let summary: SummaryTotals = { entries: [], totalExVat: null, vat: null, totalInclVat: null }
 
+  // Every non-tenant bill sheet (P&G, 1.x, …) belongs to the Mall portion.
   const mallSheets: BillSheet[] = []
   const tenantSheets: BillSheet[] = []
-  // Bill sheets that are neither 1.x nor N-NN (e.g. a standalone "P&G").
-  const otherBillSheets: BillSheet[] = []
 
   for (const ws of wb.worksheets) {
     const name = ws.name
@@ -247,17 +238,16 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
       continue
     }
 
-    // Bill sheet.
+    // Bill sheet: tenant (N-NN) or part of the Mall portion (everything else).
     const { sections, items } = parseSheet(name, rows, cls)
     const sheet: BillSheet = { name, sections, items }
-    if (MALL_SHEET_RE.test(name)) mallSheets.push(sheet)
-    else if (TENANT_SHEET_RE.test(name)) tenantSheets.push(sheet)
-    else otherBillSheets.push(sheet)
+    if (TENANT_SHEET_RE.test(name)) tenantSheets.push(sheet)
+    else mallSheets.push(sheet)
   }
 
   const bills: ParsedBill[] = []
 
-  // ── Synthetic MALL PORTION bill (only if any 1.x sheets exist) ─────────────
+  // ── Synthetic MALL PORTION bill (all non-tenant bill sheets) ───────────────
   if (mallSheets.length > 0) {
     const billRootTempId = 'bill#MALL_PORTION'
     const mallEntry =
@@ -312,10 +302,13 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
   }
 
   // ── Tenant bills (one per N-NN sheet) ──────────────────────────────────────
+  // Each tenant matches its summary entry DETERMINISTICALLY by the sheet name's
+  // leading number (the summary item number). No fuzzy name matching — that
+  // swapped e.g. Boxer ↔ Boxer Liquor and Shoprite ↔ Shoprite Liquor.
   const tenantBills: { bill: ParsedBill; order: number }[] = []
   for (const sheet of tenantSheets) {
     const billRootTempId = `bill#${sheet.name}`
-    const entry = matchSummaryEntry(sheet.name, summary.entries)
+    const entry = matchTenantSummaryEntry(sheet.name, summary.entries)
 
     const sections: ParsedSection[] = [
       {
@@ -331,7 +324,7 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
     ]
 
     tenantBills.push({
-      order: summaryOrder(entry),
+      order: tenantOrder(sheet.name),
       bill: {
         tempId: billRootTempId,
         code: entry?.itemNo ?? sheet.name,
@@ -343,35 +336,7 @@ export async function parseBoqXlsx(buffer: Buffer): Promise<ParsedBoq> {
     })
   }
 
-  // Any uncategorised bill sheets become standalone bills too.
-  for (const sheet of otherBillSheets) {
-    const billRootTempId = `bill#${sheet.name}`
-    const entry = matchSummaryEntry(sheet.name, summary.entries)
-    const sections: ParsedSection[] = [
-      {
-        tempId: billRootTempId,
-        parentTempId: '',
-        kind: 'bill',
-        code: entry?.itemNo ?? null,
-        title: entry?.description ?? sheet.name,
-        sortOrder: 0,
-      },
-      ...sheet.sections.map((sec) => ({ ...sec, parentTempId: billRootTempId })),
-    ]
-    tenantBills.push({
-      order: summaryOrder(entry),
-      bill: {
-        tempId: billRootTempId,
-        code: entry?.itemNo ?? sheet.name,
-        title: entry?.description ?? sheet.name,
-        expectedTotal: entry?.amount ?? null,
-        sections,
-        items: sheet.items,
-      },
-    })
-  }
-
-  // Order tenant/other bills by their Main Summary position; ties keep input order.
+  // Order tenant bills by their Main Summary position; ties keep input order.
   tenantBills
     .sort((a, b) => a.order - b.order)
     .forEach(({ bill }) => bills.push(bill))
