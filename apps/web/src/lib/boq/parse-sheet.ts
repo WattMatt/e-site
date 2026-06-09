@@ -134,8 +134,27 @@ export function parseSheet(
     if (itemCode && (ITEM_RE.test(itemCode) || isLumpSumCodedRow)) {
       const { mode: quantityMode, quantity } = resolveQuantityMode(qtyRaw, unit, description)
 
+      // A priced item that appears before any recognised category header (e.g.
+      // P&G's "A1" under the unnumbered "A. PRELIMINARY & GENERAL", or cable items
+      // under a lettered "C. …" section with no "C1" sub-header) would otherwise
+      // carry an empty sectionTempId and break persistence ("Dangling item
+      // section"). Lazily create one "(Uncategorised)" category per sheet so every
+      // item has a real parent. Superseded the moment a real category appears.
+      if (currentSectionTempId === null) {
+        const tempId = `${name}#uncat`
+        sections.push({
+          tempId,
+          parentTempId: '',
+          kind: 'category',
+          code: null,
+          title: '(Uncategorised)',
+          sortOrder: sectionSortOrder++,
+        })
+        currentSectionTempId = tempId
+      }
+
       const item: ParsedItem = {
-        sectionTempId: currentSectionTempId ?? '',
+        sectionTempId: currentSectionTempId,
         code: itemCode,
         description,
         unit,
