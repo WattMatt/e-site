@@ -12,13 +12,15 @@ const ZERO_TARIFF: OperationalTariff = {
   finalTariff: 0,
 }
 
+// Tariff basis: the largest generator by kVA across all zones. Confirmed against nexus
+// generatorReportPdfBuilder.ts buildAppendixB, which derives largestGenSize via a reduce
+// using parseInt(generatorSize) and the largest of those numbers drives the tariff.
+// parseInt matches nexus exactly for "NNN kVA" rating strings.
 function parseKva(size: string): number {
-  const m = size.match(/[\d.]+/)
-  return m ? parseFloat(m[0]) : 0
+  const n = parseInt(size, 10)
+  return Number.isNaN(n) ? 0 : n
 }
 
-// NOTE: tariff basis uses the largest generator by kVA across all zones.
-// This is an interpretation — to be confirmed against Nexus in the golden-master step.
 export function buildGeneratorCostRecovery(input: GeneratorCostRecoveryInput): GeneratorCostRecoveryModel {
   const { settings, zones, tenants } = input
 
@@ -26,9 +28,10 @@ export function buildGeneratorCostRecovery(input: GeneratorCostRecoveryInput): G
   const monthlyCapitalRepayment = calculateMonthlyCapitalRepayment(totalCapitalCost, settings)
 
   const allGens = zones.flatMap(z => z.generators)
+  // Match nexus reduce: seed with the first generator, keep whichever parseInt(size) is larger.
   const largest = allGens.reduce<typeof allGens[number] | null>(
     (max, g) => (max === null || parseKva(g.size) > parseKva(max.size) ? g : max),
-    null,
+    allGens.length > 0 ? allGens[0] : null,
   )
 
   const tariff = largest

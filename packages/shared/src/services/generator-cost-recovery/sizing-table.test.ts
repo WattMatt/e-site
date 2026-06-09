@@ -14,7 +14,7 @@ describe('getFuelConsumption', () => {
     expect(getFuelConsumption('100 kVA', 62.5)).toBeCloseTo(12.59, 3)
   })
 
-  it('throws for an unknown generator size', () => {
-    expect(() => getFuelConsumption('999 kVA', 75)).toThrow()
+  it('returns 0 for an unknown generator size (matches nexus, which does not throw)', () => {
+    expect(getFuelConsumption('999 kVA', 75)).toBe(0)
   })
 })

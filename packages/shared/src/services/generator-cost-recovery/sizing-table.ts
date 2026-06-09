@@ -33,33 +33,23 @@ export const GENERATOR_SIZING_TABLE: GeneratorSizingData[] = [
   { rating: '1000 kVA', load25: 62.1, load50: 124.2, load75: 152.16, load100: 225.2 },
 ]
 
-const LOAD_POINTS: Array<{ pct: number; key: keyof GeneratorSizingData }> = [
-  { pct: 25, key: 'load25' },
-  { pct: 50, key: 'load50' },
-  { pct: 75, key: 'load75' },
-  { pct: 100, key: 'load100' },
-]
-
+// Fuel consumption (l/h) for (generator size, running-load %).
+// Transcribed VERBATIM from nexus generatorReportPdfBuilder.ts getFuelConsumption
+// (the billed-report path). Piecewise-linear over the 25/50/75/100 table columns using
+// `<=` boundaries; below 25% returns load25; above 100% extrapolates off the 75→100 slope.
+// Unknown size returns 0 (nexus returns 0 — it does NOT throw).
 export function getFuelConsumption(size: string, runningLoadPercent: number): number {
   const row = GENERATOR_SIZING_TABLE.find((r) => r.rating === size)
-  if (!row) throw new Error(`Unknown generator size: "${size}"`)
-
-  const clamped = Math.max(25, Math.min(100, runningLoadPercent))
-
-  // find surrounding load points
-  let lower = LOAD_POINTS[0]
-  let upper = LOAD_POINTS[LOAD_POINTS.length - 1]
-
-  for (let i = 0; i < LOAD_POINTS.length - 1; i++) {
-    if (clamped >= LOAD_POINTS[i].pct && clamped <= LOAD_POINTS[i + 1].pct) {
-      lower = LOAD_POINTS[i]
-      upper = LOAD_POINTS[i + 1]
-      break
-    }
+  if (!row) return 0
+  if (runningLoadPercent <= 25) return row.load25
+  if (runningLoadPercent <= 50) {
+    const r = (runningLoadPercent - 25) / 25
+    return row.load25 + r * (row.load50 - row.load25)
   }
-
-  if (lower.pct === upper.pct) return row[lower.key] as number
-
-  const t = (clamped - lower.pct) / (upper.pct - lower.pct)
-  return (row[lower.key] as number) + t * ((row[upper.key] as number) - (row[lower.key] as number))
+  if (runningLoadPercent <= 75) {
+    const r = (runningLoadPercent - 50) / 25
+    return row.load50 + r * (row.load75 - row.load50)
+  }
+  const r = (runningLoadPercent - 75) / 25
+  return row.load75 + r * (row.load100 - row.load75)
 }
