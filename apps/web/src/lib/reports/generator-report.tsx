@@ -206,7 +206,7 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
           />
           {/* Reconciliation line */}
           <Text style={ss.reconciliation}>
-            {'Σ tenant monthly '}
+            {'Total tenant monthly '}
             <Text style={ss.reconciliationMatch}>{zar(tenantMonthlySum)}</Text>
             {' = monthly repayment '}
             <Text style={ss.reconciliationMatch}>{zar(model.monthlyCapitalRepayment)}</Text>
