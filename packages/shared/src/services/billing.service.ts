@@ -58,22 +58,33 @@ export type PlanTier = keyof typeof PLANS
 
 // FEATURE_PRICES — single source of truth for paid add-on unlocks. Lives
 // alongside PLANS but operates orthogonally: an unlock is a one-time charge
-// that grants the organisation lifetime access to a discrete module,
-// independent of their subscription tier. Backed by billing.org_feature_unlocks
-// (migration 00097); webhook flow lives in /api/paystack/webhook under
-// metadata.type === 'feature_unlock'.
+// that grants access to a discrete module, independent of subscription tier.
+//
+// model: 'org'  — one unlock per organisation (billing.org_feature_unlocks, migration 00097)
+// model: 'seat' — one unlock per user within an org (billing.org_feature_seats, migration 00125)
+//
+// Webhook flow lives in /api/paystack/webhook under metadata.type === 'feature_unlock'.
 export const FEATURE_PRICES = {
   inspections: {
     key: 'inspections',
     label: 'Inspections module',
     amountKobo: 25000, // R250 lifetime
     description: 'All current and future inspection templates, lifetime access.',
+    model: 'org' as const,
   },
   jbcc: {
     key: 'jbcc',
     label: 'JBCC Procedural Toolkit',
     amountKobo: 199900, // R1,999 lifetime
     description: 'JBCC Procedural Toolkit — clause reference, notice-letter generation, time-bar tracking',
+    model: 'org' as const,
+  },
+  generator_cost_recovery: {
+    key: 'generator_cost_recovery',
+    label: 'Generator Cost-Recovery',
+    amountKobo: 200000,
+    description: 'Standby-generator cost-recovery: tenant apportionment + branded report. Per-user seat.',
+    model: 'seat' as const,
   },
 } as const
 
