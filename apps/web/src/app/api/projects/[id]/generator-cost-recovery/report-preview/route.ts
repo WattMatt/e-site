@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
 import { createClient } from '@/lib/supabase/server'
+import { hasFeatureSeat } from '@/lib/features'
 import { gatherGeneratorReportData } from '@/lib/reports/generator-report-data'
 import { resolveBranding, type BrandingInput } from '@/lib/reports/branding'
 import { renderGeneratorReport } from '@/lib/reports/render-generator'
@@ -21,6 +22,32 @@ export async function GET(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
+  // ── Seat gate: generator_cost_recovery (per-user, per-org) ────────────────
+  const { data: projectRow } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('organisation_id')
+    .eq('id', id)
+    .maybeSingle() as { data: { organisation_id: string } | null }
+
+  if (projectRow) {
+    const hasSeat = await hasFeatureSeat(
+      projectRow.organisation_id,
+      user.id,
+      'generator_cost_recovery',
+      supabase,
+    )
+    if (!hasSeat) {
+      return NextResponse.json(
+        {
+          error: 'No generator cost-recovery seat',
+          unlockPath: `/projects/${id}/generator-cost-recovery/unlock`,
+        },
+        { status: 402 },
+      )
+    }
   }
 
   // ── Gather data (I/O + RBAC gate) ─────────────────────────────────────────
