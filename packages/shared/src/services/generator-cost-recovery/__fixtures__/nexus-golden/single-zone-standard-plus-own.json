@@ -1,0 +1,107 @@
+{
+  "name": "single-zone-standard-plus-own",
+  "description": "Single zone, two generators (250+100 kVA), two standard shops + one own-generator tenant. Non-trivial capex (tenant DBs, main board, cabling, control wiring). Default 75% running load (fuel lands exactly on table 75% column).",
+  "source": "Re-anchored to WM's Rev-6 standby-power report methodology (capital recovery = annual annuity ÷ 12, ANNUAL compounding) — the AUTHORITATIVE billed source of truth — NOT nexus code, which compounds monthly and under-charges ~2.72%. PMT/apportionment fields recomputed under annual÷12; diesel/contingency/loading/capex maths unchanged (still match nexus generatorReportPdfBuilder.ts). NOT produced by running the esite port.",
+  "input": {
+    "settings": {
+      "standardKwPerSqm": 0.03,
+      "fastFoodKwPerSqm": 0.045,
+      "restaurantKwPerSqm": 0.045,
+      "nationalKwPerSqm": 0.03,
+      "capitalRecoveryPeriodYears": 10,
+      "capitalRecoveryRatePercent": 12,
+      "ratePerTenantDb": 2000,
+      "numMainBoards": 1,
+      "ratePerMainBoard": 10000,
+      "additionalCablingCost": 50000,
+      "controlWiringCost": 20000,
+      "dieselCostPerLitre": 23,
+      "runningHoursPerMonth": 100,
+      "maintenanceCostAnnual": 18800,
+      "powerFactor": 0.95,
+      "runningLoadPercentage": 75,
+      "maintenanceContingencyPercent": 10
+    },
+    "zones": [
+      {
+        "zoneName": "Zone 1",
+        "generators": [
+          {
+            "size": "250 kVA",
+            "cost": 500000
+          },
+          {
+            "size": "100 kVA",
+            "cost": 300000
+          }
+        ]
+      }
+    ],
+    "tenants": [
+      {
+        "shopNumber": "A",
+        "shopName": "Shop A",
+        "areaM2": 100,
+        "category": "standard",
+        "participation": "shared",
+        "manualKwOverride": null
+      },
+      {
+        "shopNumber": "B",
+        "shopName": "Shop B",
+        "areaM2": 200,
+        "category": "standard",
+        "participation": "shared",
+        "manualKwOverride": null
+      },
+      {
+        "shopNumber": "C",
+        "shopName": "Shop C",
+        "areaM2": 50,
+        "category": "standard",
+        "participation": "own",
+        "manualKwOverride": null
+      }
+    ]
+  },
+  "expected": {
+    "totalCapitalCost": 884000,
+    "numTenantDBs": 2,
+    "monthlyCapitalRepayment": 13037.833426441843,
+    "tariff": {
+      "largestGenKva": 250,
+      "netKva": 187.5,
+      "netKwh": 178.125,
+      "fuelConsumptionLPerH": 36.05,
+      "dieselPerKwh": 4.654877192982456,
+      "maintenancePerKwh": 0.3342222222222222,
+      "base": 4.989099415204678,
+      "contingency": 0.49890994152046786,
+      "finalTariff": 5.488009356725146
+    },
+    "totalActiveLoad": 9,
+    "allocations": [
+      {
+        "shopNumber": "A",
+        "loadingKw": 3,
+        "portionPercent": 33.33333333333333,
+        "monthly": 4345.944475480614,
+        "ratePerSqm": 43.459444754806135
+      },
+      {
+        "shopNumber": "B",
+        "loadingKw": 6,
+        "portionPercent": 66.66666666666666,
+        "monthly": 8691.888950961227,
+        "ratePerSqm": 43.459444754806135
+      },
+      {
+        "shopNumber": "C",
+        "loadingKw": 0,
+        "portionPercent": 0,
+        "monthly": 0,
+        "ratePerSqm": 0
+      }
+    ]
+  }
+}

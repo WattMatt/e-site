@@ -1,0 +1,181 @@
+{
+  "name": "three-zone-large-scheme",
+  "description": "Three zones, three generators (600+500+250 kVA), large restaurant-heavy scheme. Zero-area ATM lobby, manual override, own-generator cold store. 75% load, powerFactor 0.92, bespoke 12yr@13.25% recovery. Largest gen 600 kVA drives tariff.",
+  "source": "Re-anchored to WM's Rev-6 standby-power report methodology (capital recovery = annual annuity ÷ 12, ANNUAL compounding) — the AUTHORITATIVE billed source of truth — NOT nexus code, which compounds monthly and under-charges ~2.72%. PMT/apportionment fields recomputed under annual÷12; diesel/contingency/loading/capex maths unchanged (still match nexus generatorReportPdfBuilder.ts). NOT produced by running the esite port.",
+  "input": {
+    "settings": {
+      "standardKwPerSqm": 0.03,
+      "fastFoodKwPerSqm": 0.045,
+      "restaurantKwPerSqm": 0.045,
+      "nationalKwPerSqm": 0.03,
+      "capitalRecoveryPeriodYears": 12,
+      "capitalRecoveryRatePercent": 13.25,
+      "ratePerTenantDb": 4200,
+      "numMainBoards": 3,
+      "ratePerMainBoard": 15500,
+      "additionalCablingCost": 130000,
+      "controlWiringCost": 46000,
+      "dieselCostPerLitre": 22.8,
+      "runningHoursPerMonth": 90,
+      "maintenanceCostAnnual": 56400,
+      "powerFactor": 0.92,
+      "runningLoadPercentage": 75,
+      "maintenanceContingencyPercent": 10
+    },
+    "zones": [
+      {
+        "zoneName": "Zone 1",
+        "generators": [
+          {
+            "size": "600 kVA",
+            "cost": 1150000
+          }
+        ]
+      },
+      {
+        "zoneName": "Zone 2",
+        "generators": [
+          {
+            "size": "500 kVA",
+            "cost": 980000
+          }
+        ]
+      },
+      {
+        "zoneName": "Zone 3",
+        "generators": [
+          {
+            "size": "250 kVA",
+            "cost": 520000
+          }
+        ]
+      }
+    ],
+    "tenants": [
+      {
+        "shopNumber": "G1",
+        "shopName": "Grocer",
+        "areaM2": 1200,
+        "category": "national",
+        "participation": "shared",
+        "manualKwOverride": null
+      },
+      {
+        "shopNumber": "R1",
+        "shopName": "Steakhouse",
+        "areaM2": 320,
+        "category": "restaurant",
+        "participation": "shared",
+        "manualKwOverride": null
+      },
+      {
+        "shopNumber": "R2",
+        "shopName": "Pizza Co",
+        "areaM2": 180,
+        "category": "fast_food",
+        "participation": "shared",
+        "manualKwOverride": null
+      },
+      {
+        "shopNumber": "S1",
+        "shopName": "Pharmacy",
+        "areaM2": 260,
+        "category": "standard",
+        "participation": "shared",
+        "manualKwOverride": null
+      },
+      {
+        "shopNumber": "S2",
+        "shopName": "Optometry",
+        "areaM2": 140,
+        "category": "standard",
+        "participation": "shared",
+        "manualKwOverride": 4
+      },
+      {
+        "shopNumber": "K1",
+        "shopName": "ATM Lobby",
+        "areaM2": 0,
+        "category": "standard",
+        "participation": "shared",
+        "manualKwOverride": null
+      },
+      {
+        "shopNumber": "X1",
+        "shopName": "Cold Store",
+        "areaM2": 400,
+        "category": "national",
+        "participation": "own",
+        "manualKwOverride": null
+      }
+    ]
+  },
+  "expected": {
+    "totalCapitalCost": 2897700,
+    "numTenantDBs": 6,
+    "monthlyCapitalRepayment": 41266.76429144724,
+    "tariff": {
+      "largestGenKva": 600,
+      "netKva": 450,
+      "netKwh": 414,
+      "fuelConsumptionLPerH": 79.1,
+      "dieselPerKwh": 4.356231884057971,
+      "maintenancePerKwh": 0.41878690284487385,
+      "base": 4.775018786902844,
+      "contingency": 0.4775018786902845,
+      "finalTariff": 5.252520665593129
+    },
+    "totalActiveLoad": 70.3,
+    "allocations": [
+      {
+        "shopNumber": "G1",
+        "loadingKw": 36,
+        "portionPercent": 51.20910384068279,
+        "monthly": 21132.34017769702,
+        "ratePerSqm": 17.610283481414182
+      },
+      {
+        "shopNumber": "R1",
+        "loadingKw": 14.399999999999999,
+        "portionPercent": 20.483641536273115,
+        "monthly": 8452.936071078808,
+        "ratePerSqm": 26.415425222121275
+      },
+      {
+        "shopNumber": "R2",
+        "loadingKw": 8.1,
+        "portionPercent": 11.522048364153626,
+        "monthly": 4754.776539981829,
+        "ratePerSqm": 26.41542522212127
+      },
+      {
+        "shopNumber": "S1",
+        "loadingKw": 7.8,
+        "portionPercent": 11.095305832147938,
+        "monthly": 4578.673705167688,
+        "ratePerSqm": 17.610283481414186
+      },
+      {
+        "shopNumber": "S2",
+        "loadingKw": 4,
+        "portionPercent": 5.689900426742532,
+        "monthly": 2348.037797521891,
+        "ratePerSqm": 16.771698553727795
+      },
+      {
+        "shopNumber": "K1",
+        "loadingKw": 0,
+        "portionPercent": 0,
+        "monthly": 0,
+        "ratePerSqm": 0
+      },
+      {
+        "shopNumber": "X1",
+        "loadingKw": 0,
+        "portionPercent": 0,
+        "monthly": 0,
+        "ratePerSqm": 0
+      }
+    ]
+  }
+}
