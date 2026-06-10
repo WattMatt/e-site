@@ -40,13 +40,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     listMyOrganisations(),
   ])
   const orgMemberships = orgsResult.ok ? orgsResult.memberships : []
+  // Dark-launch switch: surface the Medium Voltage tab only for entitled users,
+  // or for everyone once the Paystack annual plan is configured (so strangers
+  // never see a locked tab whose subscribe flow would 503).
+  const mvVisible = mvUnlocked || Boolean(process.env.PAYSTACK_PLAN_MV_ANNUAL)
 
   return (
     <div className="portal-shell">
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} role={primaryRole} />
+      <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={primaryRole} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <header className="portal-header">
           <OrgSwitcher memberships={orgMemberships} />

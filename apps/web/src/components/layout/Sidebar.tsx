@@ -100,10 +100,11 @@ interface SidebarContentProps {
   inspectionsUnlocked: boolean
   jbccUnlocked: boolean
   mvUnlocked: boolean
+  mvVisible: boolean
   role: OrgRole | null
 }
 
-function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, role }: SidebarContentProps) {
+function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisible, role }: SidebarContentProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
@@ -147,7 +148,9 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, role }:
 
             <span className="sidebar-section-label" style={{ marginTop: 12 }}>Project</span>
 
-            {projectNav(projectId).map(({ href, label, Icon, exact }) => {
+            {projectNav(projectId)
+              .filter(({ href }) => mvVisible || !href.includes('/medium-voltage'))
+              .map(({ href, label, Icon, exact }) => {
               const basePath = href.split('?')[0]
               const active = exact
                 ? pathname === basePath
@@ -231,10 +234,12 @@ interface SidebarProps {
   inspectionsUnlocked?: boolean
   jbccUnlocked?: boolean
   mvUnlocked?: boolean
+  /** Dark-launch: hide the Medium Voltage entry entirely (defaults hidden). */
+  mvVisible?: boolean
   role?: OrgRole | null
 }
 
-export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvUnlocked = false, role = null }: SidebarProps = {}) {
+export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvUnlocked = false, mvVisible = false, role = null }: SidebarProps = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -244,7 +249,7 @@ export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvU
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} role={role} />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={role} />
       </Suspense>
     </aside>
   )
