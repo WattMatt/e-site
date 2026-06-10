@@ -33,6 +33,16 @@ export interface ParsedSection {
   sortOrder: number
 }
 
+// A priced row the parser could not classify as a category or item. Surfaced so
+// a value is never silently dropped (e.g. the digit-led "10.1" Shoprite row).
+export interface ParsedUnclassifiedRow {
+  sheet: string
+  rowIndex: number
+  code: string
+  description: string
+  amount: number
+}
+
 // A parsed line item
 export interface ParsedItem {
   sectionTempId: string
@@ -67,6 +77,7 @@ export interface ParsedBoq {
   totalInclVatExpected: number | null
   bills: ParsedBill[]
   skippedSheets: string[]
+  unclassifiedRows: ParsedUnclassifiedRow[]
 }
 
 // Per-bill result from reconcile()

@@ -2,7 +2,10 @@ import type { Aoa, ParsedSection, ParsedItem, SheetClassification } from './type
 import type { QuantityMode } from '@esite/shared'
 
 const CATEGORY_RE = /^[A-Z]+\d+$/
-const ITEM_RE = /^[A-Z]+\d+\.\d+/
+// Item codes: optional leading letters then `<digits>.<digits>` — matches
+// lettered codes (C1.1, B2.3) AND digit-led codes (10.1) the older
+// leading-letter-required pattern silently dropped.
+const ITEM_RE = /^[A-Za-z]*\d+\.\d+/
 
 function toNum(v: string | number | null): number | null {
   if (v == null) return null
@@ -64,18 +67,23 @@ export function parseSheet(
   name: string,
   rows: Aoa,
   classification: SheetClassification,
-): { sections: ParsedSection[]; items: ParsedItem[] } {
+): {
+  sections: ParsedSection[]
+  items: ParsedItem[]
+  unclassified: { rowIndex: number; code: string; description: string; amount: number }[]
+} {
   if (classification.kind !== 'bill') {
-    return { sections: [], items: [] }
+    return { sections: [], items: [], unclassified: [] }
   }
 
   const { headerRowIndex, columns, rateModel } = classification
   if (headerRowIndex === -1) {
-    return { sections: [], items: [] }
+    return { sections: [], items: [], unclassified: [] }
   }
 
   const sections: ParsedSection[] = []
   const items: ParsedItem[] = []
+  const unclassified: { rowIndex: number; code: string; description: string; amount: number }[] = []
 
   let currentSectionTempId: string | null = null
   let sectionSortOrder = 0
@@ -126,8 +134,27 @@ export function parseSheet(
     if (itemCode && (ITEM_RE.test(itemCode) || isLumpSumCodedRow)) {
       const { mode: quantityMode, quantity } = resolveQuantityMode(qtyRaw, unit, description)
 
+      // A priced item that appears before any recognised category header (e.g.
+      // P&G's "A1" under the unnumbered "A. PRELIMINARY & GENERAL", or cable items
+      // under a lettered "C. …" section with no "C1" sub-header) would otherwise
+      // carry an empty sectionTempId and break persistence ("Dangling item
+      // section"). Lazily create one "(Uncategorised)" category per sheet so every
+      // item has a real parent. Superseded the moment a real category appears.
+      if (currentSectionTempId === null) {
+        const tempId = `${name}#uncat`
+        sections.push({
+          tempId,
+          parentTempId: '',
+          kind: 'category',
+          code: null,
+          title: '(Uncategorised)',
+          sortOrder: sectionSortOrder++,
+        })
+        currentSectionTempId = tempId
+      }
+
       const item: ParsedItem = {
-        sectionTempId: currentSectionTempId ?? '',
+        sectionTempId: currentSectionTempId,
         code: itemCode,
         description,
         unit,
@@ -144,9 +171,23 @@ export function parseSheet(
       continue
     }
 
+    // Safety net: any row that reached here was NOT captured as a category or
+    // item (both branches `continue`). If it nonetheless carries an amount, it
+    // is a priced row the classifier missed — surface it so a value is never
+    // silently dropped. Exclude recap/total rows (which legitimately repeat a
+    // value already counted elsewhere) and rate-notes / blank rows (no amount).
+    if (amount != null) {
+      const isTotalOrRecap =
+        /TOTAL|CARRIED|SUMMARY|SUB ?TOTAL/i.test(itemCode + ' ' + description) ||
+        /^[A-Z]$/.test(itemCode)
+      if (!isTotalOrRecap) {
+        unclassified.push({ rowIndex, code: itemCode, description, amount })
+      }
+    }
+
     // Rate-note row: text in description but no item code → skip (no emission)
     // (Rows that are truly blank or unrecognised are also skipped.)
   }
 
-  return { sections, items }
+  return { sections, items, unclassified }
 }

@@ -1,0 +1,1132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Generator Cost-Recovery — E-Site (mockup)</title>
+
+<!-- Tailwind (utility helpers only; the look is driven by the esite tokens below) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- esite production fonts: Syne (display/sans) + JetBrains Mono -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/* ───────────────────────────────────────────────────────────────────────
+   Design tokens lifted verbatim from esite apps/web/src/app/globals.css
+   so this mockup reads as a native E-Site screen, not a foreign prototype.
+   ─────────────────────────────────────────────────────────────────────── */
+:root{
+  --c-base:#0B0B12; --c-surface:#13131E; --c-panel:#1C1C2A; --c-elevated:#25253A;
+  --c-border:#2C2C40; --c-border-mid:#3A3A52; --c-border-hi:#505070;
+  --c-text:#EDE8DF; --c-text-mid:#9098B0; --c-text-dim:#5C6478;
+  --c-amber:#E8923A; --c-amber-dim:#2E1A08; --c-amber-mid:#6B3510; --c-warning:#D97706;
+  --c-green:#3DB882; --c-green-dim:#0A2E1C; --c-red:#E85555; --c-red-dim:#2E0E0E;
+  --c-blue:#5B9CF6; --c-blue-dim:#0C2040; --c-orange:#F08030;
+  --font-sans:'Syne',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono','Fira Code',monospace;
+}
+*,*::before,*::after{box-sizing:border-box;}
+html{-webkit-font-smoothing:antialiased;}
+body{font-family:var(--font-sans);background:var(--c-base);color:var(--c-text);margin:0;}
+.font-mono{font-family:var(--font-mono)!important;}
+.tabular{font-variant-numeric:tabular-nums;}
+
+/* ── Shell ── */
+.portal-shell{min-height:100vh;background:var(--c-base);display:flex;}
+.sidebar{width:240px;background:var(--c-surface);border-right:1px solid var(--c-border);
+  display:flex;flex-direction:column;height:100vh;position:sticky;top:0;flex-shrink:0;}
+.sidebar-logo{padding:20px 20px 18px;border-bottom:1px solid var(--c-border);display:flex;align-items:center;gap:10px;}
+.sidebar-logo-mark{width:28px;height:28px;background:var(--c-amber);border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.sidebar-logo-text{font-size:16px;font-weight:700;letter-spacing:.04em;}
+.sidebar-version{font-family:var(--font-mono);font-size:10px;color:var(--c-text-dim);letter-spacing:.08em;margin-left:auto;}
+.sidebar-section-label{font-family:var(--font-mono);font-size:9px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--c-text-dim);padding:14px 16px 6px;}
+.sidebar-nav{flex:1;padding:8px 10px;overflow-y:auto;display:flex;flex-direction:column;gap:1px;}
+.sidebar-nav-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;font-size:13px;font-weight:500;
+  color:var(--c-text-mid);text-decoration:none;transition:all .15s;position:relative;cursor:pointer;background:none;border:none;width:100%;text-align:left;font-family:inherit;}
+.sidebar-nav-item:hover{color:var(--c-text);background:var(--c-panel);}
+.sidebar-nav-item.active{color:var(--c-amber);background:var(--c-amber-dim);}
+.sidebar-nav-item.active::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:2px;background:var(--c-amber);border-radius:0 1px 1px 0;}
+.sidebar-nav-icon{width:16px;height:16px;flex-shrink:0;opacity:.7;}
+.sidebar-nav-item.active .sidebar-nav-icon,.sidebar-nav-item:hover .sidebar-nav-icon{opacity:1;}
+.sidebar-footer{padding:10px;border-top:1px solid var(--c-border);display:flex;flex-direction:column;gap:1px;}
+.lock-badge{margin-left:auto;opacity:.7;}
+.seat-badge{margin-left:auto;font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.06em;
+  padding:1px 6px;border-radius:3px;background:var(--c-green-dim);color:var(--c-green);border:1px solid #1a5c3a;}
+
+.portal-header{height:52px;border-bottom:1px solid var(--c-border);display:flex;align-items:center;
+  justify-content:space-between;padding:0 24px;background:var(--c-surface);flex-shrink:0;gap:12px;}
+.portal-main{flex:1;overflow:auto;padding:32px;display:flex;flex-direction:column;}
+@media (max-width:760px){.portal-main{padding:18px;}}
+
+/* ── Top bar bits ── */
+.project-crumb{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--c-text-mid);}
+.project-crumb b{color:var(--c-text);font-weight:600;}
+.topbar-right{display:flex;align-items:center;gap:14px;}
+.org-switch{display:flex;align-items:center;gap:8px;padding:5px 10px;border:1px solid var(--c-border);border-radius:6px;
+  font-size:12px;color:var(--c-text-mid);background:var(--c-panel);}
+.org-dot{width:18px;height:18px;border-radius:4px;background:var(--c-amber);color:#0A0808;font-weight:800;font-size:10px;display:flex;align-items:center;justify-content:center;}
+.avatar{width:26px;height:26px;border-radius:50%;background:var(--c-elevated);border:1px solid var(--c-border-mid);
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--c-text);}
+
+/* ── Mockup banner ── */
+.mock-banner{display:flex;align-items:center;gap:10px;justify-content:center;background:var(--c-amber-dim);
+  border-bottom:1px solid var(--c-amber-mid);color:var(--c-amber);font-family:var(--font-mono);
+  font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;padding:7px 12px;}
+.mock-banner span.dot{width:6px;height:6px;border-radius:50%;background:var(--c-amber);animation:pulse 1.8s infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* ── Page header ── */
+.page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px;gap:16px;flex-wrap:wrap;}
+.page-title{font-size:22px;font-weight:700;letter-spacing:-.01em;line-height:1.1;}
+.page-subtitle{font-family:var(--font-mono);font-size:11px;color:var(--c-text-dim);letter-spacing:.06em;margin-top:5px;text-transform:uppercase;}
+.header-actions{display:flex;align-items:center;gap:10px;}
+
+/* ── Buttons ── */
+.btn-primary-amber{display:inline-flex;align-items:center;gap:8px;padding:9px 16px;background:var(--c-amber);
+  color:#0A0808;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;letter-spacing:.01em;border:none;cursor:pointer;font-family:inherit;transition:opacity .15s;}
+.btn-primary-amber:hover{opacity:.88;}
+.btn-primary-amber:disabled{opacity:.4;cursor:not-allowed;}
+.btn-ghost{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;background:var(--c-panel);color:var(--c-text-mid);
+  border:1px solid var(--c-border);border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;text-decoration:none;}
+.btn-ghost:hover{color:var(--c-text);border-color:var(--c-border-hi);background:var(--c-elevated);}
+
+/* ── KPI cards ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px;}
+@media (max-width:1100px){.kpi-grid{grid-template-columns:repeat(2,1fr);}}
+.kpi-card{background:var(--c-panel);border:1px solid var(--c-border);border-radius:8px;padding:16px;position:relative;overflow:hidden;}
+.kpi-card::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--c-border-mid);}
+.kpi-card.kpi-warning::after{background:var(--c-amber);} .kpi-card.kpi-danger::after{background:var(--c-red);} .kpi-card.kpi-success::after{background:var(--c-green);}
+.kpi-label{font-family:var(--font-mono);font-size:9px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--c-text-dim);margin-bottom:10px;}
+.kpi-value{font-family:var(--font-mono);font-size:26px;font-weight:700;line-height:1;letter-spacing:-.02em;}
+.kpi-card.kpi-warning .kpi-value{color:var(--c-amber);} .kpi-card.kpi-danger .kpi-value{color:var(--c-red);} .kpi-card.kpi-success .kpi-value{color:var(--c-green);}
+.kpi-meta{font-family:var(--font-mono);font-size:10px;color:var(--c-text-dim);margin-top:6px;}
+
+/* ── Data panels ── */
+.data-panel{background:var(--c-panel);border:1px solid var(--c-border);border-radius:8px;overflow:hidden;margin-bottom:18px;}
+.data-panel-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--c-border);gap:12px;flex-wrap:wrap;}
+.data-panel-title{font-size:12px;font-weight:600;letter-spacing:.02em;display:flex;align-items:center;gap:8px;}
+.data-panel-title::before{content:'';display:inline-block;width:3px;height:13px;background:var(--c-amber);border-radius:2px;flex-shrink:0;}
+.data-panel-body{padding:18px;}
+.panel-note{font-family:var(--font-mono);font-size:10px;color:var(--c-text-dim);letter-spacing:.04em;}
+
+/* ── Badges ── */
+.badge{font-family:var(--font-mono);font-size:9px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:3px;white-space:nowrap;display:inline-block;}
+.badge-amber{background:var(--c-amber-dim);color:var(--c-amber);border:1px solid var(--c-amber-mid);}
+.badge-green{background:var(--c-green-dim);color:var(--c-green);border:1px solid #1a5c3a;}
+.badge-red{background:var(--c-red-dim);color:var(--c-red);border:1px solid #6b1e1e;}
+.badge-blue{background:var(--c-blue-dim);color:var(--c-blue);border:1px solid #1f3d70;}
+.badge-muted{background:var(--c-elevated);color:var(--c-text-mid);border:1px solid var(--c-border-mid);}
+
+/* ── Tables (match ScheduleTable.tsx) ── */
+.tbl-wrap{overflow-x:auto;}
+table.esite{width:100%;border-collapse:collapse;font-size:13px;}
+table.esite th{padding:8px 12px;text-align:left;font-family:var(--font-mono);font-size:10px;font-weight:600;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--c-text-dim);white-space:nowrap;border-bottom:1px solid var(--c-border);}
+table.esite td{padding:9px 12px;color:var(--c-text);font-size:13px;border-bottom:1px solid var(--c-border);vertical-align:middle;}
+table.esite tr:last-child td{border-bottom:none;}
+table.esite td.mono,table.esite th.num{font-family:var(--font-mono);font-size:12px;}
+.num{text-align:right;}
+tr.deemph td{color:var(--c-text-dim) !important;background:rgba(255,255,255,.025);}
+tr.deemph td .badge{color:var(--c-text-dim) !important;background:var(--c-border) !important;border-color:var(--c-border) !important;}
+tr.deemph td.kw-cell,tr.deemph .kw-cell{color:var(--c-text-dim) !important;font-weight:400 !important;}
+tr.tenant-row:hover td{background:var(--c-elevated);}
+.foot-row td{border-top:2px solid var(--c-border-mid);font-weight:700;background:var(--c-surface);}
+
+/* ── Participation segmented control (the centrepiece idea) ── */
+.part-seg{display:inline-flex;border:1px solid var(--c-border);border-radius:6px;overflow:hidden;background:var(--c-base);}
+.part-seg button{font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  padding:5px 9px;background:none;border:none;border-right:1px solid var(--c-border);color:var(--c-text-dim);cursor:pointer;transition:all .12s;white-space:nowrap;}
+.part-seg button:last-child{border-right:none;}
+.part-seg button:hover{color:var(--c-text);}
+.part-seg button.on-shared{background:var(--c-green-dim);color:var(--c-green);box-shadow:inset 0 0 0 1px #1a5c3a;}
+.part-seg button.on-own{background:var(--c-elevated);color:var(--c-text);box-shadow:inset 0 0 0 1px var(--c-border-hi);}
+.part-seg button.on-off{background:var(--c-amber-dim);color:var(--c-amber);box-shadow:inset 0 0 0 1px var(--c-amber-mid);}
+.seg-legend{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--font-mono);font-size:10px;color:var(--c-text-mid);letter-spacing:.04em;}
+.seg-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle;}
+
+/* ── Forms ── */
+.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px 24px;}
+@media (max-width:680px){.form-grid{grid-template-columns:1fr;}}
+.fld label{display:block;font-family:var(--font-mono);font-size:9px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--c-text-dim);margin-bottom:6px;}
+.fld .in-wrap{display:flex;align-items:center;background:var(--c-base);border:1px solid var(--c-border);border-radius:6px;transition:border-color .15s;}
+.fld .in-wrap:focus-within{border-color:var(--c-amber);}
+.fld input{flex:1;background:none;border:none;padding:9px 12px;font-family:var(--font-mono);font-size:13px;color:var(--c-text);outline:none;width:100%;}
+.fld .unit{font-family:var(--font-mono);font-size:10px;color:var(--c-text-dim);padding:0 12px;letter-spacing:.04em;white-space:nowrap;}
+.subgroup-label{font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--c-amber);margin:4px 0 14px;display:flex;align-items:center;gap:10px;}
+.subgroup-label::after{content:'';flex:1;height:1px;background:var(--c-border);}
+
+/* ── Readiness ── */
+.ready-ring{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  background:conic-gradient(var(--c-green) 0 288deg,var(--c-border) 288deg 360deg);}
+.ready-ring .inner{width:50px;height:50px;border-radius:50%;background:var(--c-panel);display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.ready-ring .pct{font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--c-green);line-height:1;}
+.gap-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--c-border);border-radius:6px;background:var(--c-base);font-size:12px;}
+.gap-item .dot{width:7px;height:7px;border-radius:50%;background:var(--c-amber);flex-shrink:0;}
+.gap-item .shops{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--c-text-dim);}
+
+/* ── Paywall / unlock ── */
+.lock-hero{max-width:720px;margin:0 auto;}
+.lock-card{background:var(--c-surface);border:1px solid var(--c-border);border-radius:12px;padding:34px;position:relative;overflow:hidden;}
+.lock-card::before{content:'';position:absolute;inset:0;background-image:
+  linear-gradient(rgba(255,255,255,.015) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.015) 1px,transparent 1px);
+  background-size:34px 34px;pointer-events:none;}
+.lock-mark{width:46px;height:46px;border-radius:10px;background:var(--c-amber-dim);border:1px solid var(--c-amber-mid);
+  display:flex;align-items:center;justify-content:center;color:var(--c-amber);margin-bottom:18px;}
+.price-tag{font-family:var(--font-mono);display:inline-flex;align-items:baseline;gap:8px;margin:6px 0 2px;}
+.price-tag .amt{font-size:32px;font-weight:700;color:var(--c-text);letter-spacing:-.02em;}
+.price-tag .per{font-size:12px;color:var(--c-text-dim);letter-spacing:.06em;}
+.feat-list{list-style:none;padding:0;margin:22px 0;display:flex;flex-direction:column;gap:11px;}
+.feat-list li{display:flex;gap:11px;font-size:13px;color:var(--c-text-mid);align-items:flex-start;}
+.feat-list svg{flex-shrink:0;margin-top:1px;color:var(--c-green);}
+.note-strip{display:flex;gap:10px;align-items:flex-start;background:var(--c-base);border:1px solid var(--c-border);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--c-text-mid);margin-top:8px;}
+.note-strip svg{flex-shrink:0;color:var(--c-amber);margin-top:1px;}
+
+/* ── Report (document style) ── */
+.doc{background:#FBFAF7;color:#1A1A22;border-radius:10px;border:1px solid var(--c-border);overflow:hidden;max-width:860px;margin:0 auto;box-shadow:0 8px 40px rgba(0,0,0,.4);}
+.doc-head{padding:26px 34px;border-bottom:2px solid #E2DED3;display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap;}
+.doc-brand{display:flex;align-items:center;gap:10px;}
+.doc-brand .mk{width:30px;height:30px;background:var(--c-amber);border-radius:5px;display:flex;align-items:center;justify-content:center;}
+.doc-brand .nm{font-weight:700;font-size:15px;letter-spacing:.04em;color:#1A1A22;}
+.doc-meta{font-family:var(--font-mono);font-size:10px;color:#7A776E;text-align:right;line-height:1.7;letter-spacing:.03em;}
+.doc-title{padding:22px 34px 4px;}
+.doc-title h2{font-size:21px;font-weight:700;letter-spacing:-.01em;color:#15151c;}
+.doc-title p{font-family:var(--font-mono);font-size:11px;color:#8A877E;margin-top:4px;letter-spacing:.04em;}
+.appendix{padding:18px 34px 26px;}
+.appendix-tag{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--c-amber);}
+.appendix-tag .ttl{color:#15151c;margin-left:10px;}
+.appendix h3{font-size:14px;font-weight:700;color:#15151c;margin:6px 0 14px;border-bottom:1px solid #E2DED3;padding-bottom:8px;}
+table.doc-tbl{width:100%;border-collapse:collapse;font-size:12.5px;}
+table.doc-tbl th{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8A877E;text-align:left;padding:7px 8px;border-bottom:1px solid #D8D4C8;}
+table.doc-tbl td{padding:7px 8px;border-bottom:1px solid #ECE8DE;color:#2A2A30;}
+table.doc-tbl td.mono,table.doc-tbl th.r{font-family:var(--font-mono);}
+table.doc-tbl .r{text-align:right;}
+table.doc-tbl tr.sum td{border-top:2px solid #C9C4B6;border-bottom:none;font-weight:700;color:#15151c;}
+table.doc-tbl tr.off-row td{color:#9A9690;background:#F5F4F1;font-style:italic;}
+.doc-pill{font-family:var(--font-mono);font-size:8.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:3px;}
+.doc-pill.shared{background:#E2F3EA;color:#1F7A52;}
+.doc-pill.own{background:#ECEAE2;color:#5C5A52;}
+.doc-pill.off{background:#FBE6CC;color:#A86E16;}
+.recon{margin:18px 34px 30px;display:flex;align-items:center;gap:14px;background:#EFF6F1;border:1px solid #BFE3CF;border-radius:8px;padding:14px 18px;}
+.recon .chk{width:30px;height:30px;border-radius:50%;background:#1F7A52;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.recon .txt{font-size:12.5px;color:#1A1A22;}
+.recon .eq{font-family:var(--font-mono);font-weight:700;color:#15151c;}
+
+/* ───────────────────────────────────────────────────────────────────────
+   Report branding system — faithful reproduction of esite's PDF report.
+   Its OWN branded artifact: accent #E69500 (report default, not the chrome
+   amber), Helvetica-class sans on WHITE paper, rendered as a PDF-preview
+   pane sitting inside the dark app chrome (like a PDF viewer).
+   ─────────────────────────────────────────────────────────────────────── */
+.report-stage{ --rp-accent:#E69500; --rp-ink:#1a1a1a; --rp-ink-soft:#555; --rp-grey:#888;
+  --rp-line:#e6e3dc; --rp-paper:#ffffff;
+  font-family:'Helvetica Neue',Helvetica,Arial,system-ui,sans-serif;
+  background:repeating-linear-gradient(45deg,#0c0c14 0 14px,#0e0e18 14px 28px);
+  border:1px solid var(--c-border);border-radius:10px;padding:30px 0;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);overflow:hidden;}
+.report-stage.issued .rp-watermark{display:none;}
+
+/* one sheet of A4-ish paper */
+.rp-page{position:relative;width:760px;max-width:calc(100% - 56px);margin:0 auto 26px;
+  background:var(--rp-paper);color:var(--rp-ink);
+  box-shadow:0 18px 50px rgba(0,0,0,.55),0 2px 6px rgba(0,0,0,.4);
+  padding:0;overflow:hidden;}
+.rp-page:last-child{margin-bottom:0;}
+.rp-pad{padding:46px 54px;}
+@media (max-width:760px){.rp-pad{padding:30px 26px;}}
+
+/* faint PREVIEW watermark */
+.rp-watermark{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center;overflow:hidden;z-index:3;}
+.rp-watermark span{font-size:72px;font-weight:800;letter-spacing:.18em;color:#000;opacity:.10;
+  transform:rotate(-45deg);white-space:nowrap;text-transform:uppercase;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;}
+
+/* ── COVER (page 1) ── */
+.rp-cover-rule{height:3px;background:var(--rp-accent);width:100%;}
+.rp-issuer{display:flex;align-items:center;gap:11px;margin:34px 0 30px;}
+.rp-issuer .wordmark{font-size:26px;font-weight:800;letter-spacing:-.01em;color:var(--rp-accent);line-height:1;}
+.rp-issuer .wordmark small{display:block;font-size:9px;font-weight:600;letter-spacing:.22em;color:var(--rp-grey);text-transform:uppercase;margin-top:5px;}
+.rp-issuer .glyph{width:34px;height:34px;border-radius:5px;background:var(--rp-accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.rp-kicker{font-size:9px;font-weight:700;letter-spacing:.26em;text-transform:uppercase;color:var(--rp-grey);margin-bottom:14px;}
+.rp-title{font-size:26px;font-weight:800;letter-spacing:-.02em;color:var(--rp-ink);line-height:1.12;margin:0 0 12px;}
+.rp-project{font-size:11px;color:var(--rp-ink-soft);letter-spacing:.01em;margin:0;}
+.rp-divider{height:1px;background:var(--rp-line);margin:40px 0 26px;}
+
+/* parties strip */
+.rp-parties-label{font-size:7px;font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:var(--rp-grey);margin-bottom:16px;}
+.rp-parties{display:flex;gap:34px;flex-wrap:wrap;}
+.rp-party{display:flex;flex-direction:column;gap:9px;min-width:120px;}
+.rp-party .logo{height:46px;display:flex;align-items:center;justify-content:flex-start;}
+.rp-party .ph{display:inline-flex;align-items:center;gap:8px;border:1.5px solid var(--rp-line);border-radius:6px;padding:9px 13px;background:#fafaf8;}
+.rp-party .ph .sq{width:18px;height:18px;border-radius:3px;flex-shrink:0;}
+.rp-party .ph .lbl{font-size:12px;font-weight:700;color:#3a3a3a;letter-spacing:.01em;line-height:1.1;}
+.rp-party .role{font-size:8.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--rp-grey);}
+.rp-party .role b{color:var(--rp-ink-soft);font-weight:700;}
+
+/* cover footer + interior footers, page counters */
+.rp-cover-foot{position:absolute;left:54px;right:54px;bottom:34px;display:flex;justify-content:space-between;align-items:center;
+  font-size:9px;letter-spacing:.04em;color:var(--rp-grey);border-top:1px solid var(--rp-line);padding-top:12px;}
+.rp-cover-foot .pg{font-variant-numeric:tabular-nums;}
+.rp-cover-spacer{height:150px;}
+
+/* ── INTERIOR running header ── */
+.rp-rhead{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--rp-line);padding-bottom:10px;margin-bottom:26px;}
+.rp-rhead .iss{font-size:11px;font-weight:800;letter-spacing:-.01em;color:var(--rp-accent);}
+.rp-rhead .pg{font-size:9px;letter-spacing:.06em;color:var(--rp-grey);font-variant-numeric:tabular-nums;}
+.rp-foot{border-top:1px solid var(--rp-line);margin-top:34px;padding-top:11px;display:flex;justify-content:space-between;
+  font-size:8.5px;letter-spacing:.05em;color:var(--rp-grey);}
+
+/* section heads: 2px accent rule + 13px bold heading */
+.rp-sec{margin-bottom:26px;}
+.rp-sec:last-child{margin-bottom:0;}
+.rp-sec > .bar{height:2px;width:38px;background:var(--rp-accent);margin-bottom:9px;}
+.rp-sec h3{font-size:13px;font-weight:800;letter-spacing:-.005em;color:var(--rp-ink);margin:0 0 9px;}
+.rp-sec p{font-size:11px;line-height:1.65;color:#33332f;margin:0;}
+.rp-sec p + p{margin-top:9px;}
+.rp-eyebrow{font-size:8px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--rp-grey);margin-bottom:5px;}
+
+/* white-paper restyle of the live-injected appendix tables / pills / recon.
+   These selectors are scoped under .rp-page so the dark-UI rules elsewhere
+   are untouched, and the existing JS keeps writing the same class names. */
+.rp-page .doc-tbl{width:100%;border-collapse:collapse;font-size:11px;}
+.rp-page .doc-tbl th{font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--rp-grey);text-align:left;padding:8px 8px;border-bottom:1.5px solid #d9d5ca;}
+.rp-page .doc-tbl td{padding:7px 8px;border-bottom:1px solid #f0ede4;color:#2c2c28;}
+.rp-page .doc-tbl td.mono,.rp-page .doc-tbl th.r{font-family:var(--font-mono);font-size:10.5px;}
+.rp-page .doc-tbl .r{text-align:right;}
+.rp-page .doc-tbl tr.sum td{border-top:2px solid #c9c4b6;border-bottom:none;font-weight:700;color:var(--rp-ink);background:#fbfaf6;}
+.rp-page .doc-tbl tr.off-row td{color:#aaa9a3;background:#f6f5f2;font-style:italic;}
+.rp-page .doc-pill{font-family:var(--font-mono);font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:3px;white-space:nowrap;}
+.rp-page .doc-pill.shared{background:#eaf6ee;color:#1f7a52;}
+.rp-page .doc-pill.own{background:#eceae6;color:#9a9690;}
+.rp-page .doc-pill.off{background:#eceae6;color:#9a9690;}
+.rp-page .recon{display:flex;align-items:center;gap:13px;background:#f3f8f4;border:1px solid #cbe6d6;border-radius:7px;padding:13px 16px;margin:20px 0 0;}
+.rp-page .recon .chk{width:28px;height:28px;border-radius:50%;background:#1f7a52;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.rp-page .recon .txt{font-size:11px;color:var(--rp-ink);line-height:1.5;}
+.rp-page .recon .eq{font-family:var(--font-mono);font-weight:700;color:var(--rp-ink);}
+.rp-appx-tag{font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--rp-accent);margin-bottom:12px;}
+.rp-appx-tag .ttl{color:var(--rp-ink);margin-left:9px;}
+.rp-note{font-family:var(--font-mono);font-size:9px;color:#a86e16;margin-top:10px;letter-spacing:.02em;line-height:1.5;}
+
+/* Draft ⇄ Issued toggle (sits in the dark chrome above the stage) */
+.rp-modebar{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.rp-toggle{display:inline-flex;border:1px solid var(--c-border);border-radius:6px;overflow:hidden;background:var(--c-base);}
+.rp-toggle button{font-family:var(--font-mono);font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  padding:5px 12px;background:none;border:none;border-right:1px solid var(--c-border);color:var(--c-text-dim);cursor:pointer;transition:all .12s;}
+.rp-toggle button:last-child{border-right:none;}
+.rp-toggle button.on{background:var(--c-amber-dim);color:var(--c-amber);box-shadow:inset 0 0 0 1px var(--c-amber-mid);}
+.rp-modebar .hint-inline{font-family:var(--font-mono);font-size:10px;color:var(--c-text-dim);letter-spacing:.04em;}
+
+/* ── Zones ── */
+.zone-card{background:var(--c-panel);border:1px solid var(--c-border);border-radius:8px;overflow:hidden;margin-bottom:14px;}
+.zone-head{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--c-border);background:var(--c-surface);}
+.zone-head .zn{font-weight:700;font-size:14px;}
+.zone-head .zmeta{font-family:var(--font-mono);font-size:10px;color:var(--c-text-dim);letter-spacing:.06em;}
+.gen-row{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid var(--c-border);}
+.gen-row:last-child{border-bottom:none;}
+.gen-icon{width:34px;height:34px;border-radius:6px;background:var(--c-elevated);display:flex;align-items:center;justify-content:center;color:var(--c-amber);flex-shrink:0;}
+.gen-size{font-family:var(--font-mono);font-weight:700;font-size:14px;}
+.gen-label{font-size:12px;color:var(--c-text-mid);}
+.gen-cost{margin-left:auto;font-family:var(--font-mono);font-weight:700;font-size:14px;}
+.add-row{display:flex;align-items:center;justify-content:center;gap:8px;padding:11px;border:1px dashed var(--c-border-mid);border-radius:6px;
+  color:var(--c-text-dim);font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;cursor:pointer;transition:all .15s;background:none;width:100%;}
+.add-row:hover{border-color:var(--c-amber-mid);color:var(--c-amber);}
+
+/* ── Seats ── */
+.seat-tile{display:flex;align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--c-border);border-radius:8px;background:var(--c-panel);margin-bottom:10px;}
+.seat-no{width:34px;height:34px;border-radius:6px;background:var(--c-elevated);display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-weight:700;font-size:13px;color:var(--c-text-mid);flex-shrink:0;}
+.seat-tile.assigned .seat-no{background:var(--c-amber-dim);color:var(--c-amber);border:1px solid var(--c-amber-mid);}
+.seat-tile.free{border-style:dashed;}
+.seat-name{font-size:13px;font-weight:600;}
+.seat-sub{font-family:var(--font-mono);font-size:10px;color:var(--c-text-dim);letter-spacing:.04em;margin-top:2px;}
+
+/* ── misc ── */
+.screen{display:none;animation:fadeUp .3s ease both;}
+.screen.active{display:block;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.section-rule{height:1px;background:var(--c-border);margin:22px 0;}
+.two-col{display:grid;grid-template-columns:1.3fr 1fr;gap:18px;align-items:start;}
+@media (max-width:920px){.two-col{grid-template-columns:1fr;}}
+.hint{font-size:12px;color:var(--c-text-mid);line-height:1.55;}
+.mininav-foot{margin-top:auto;padding-top:26px;font-family:var(--font-mono);font-size:10px;color:var(--c-text-dim);letter-spacing:.06em;display:flex;gap:14px;}
+.mininav-foot a{color:var(--c-text-dim);text-decoration:none;}
+.mininav-foot a:hover{color:var(--c-amber);}
+.callout-new{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--c-amber);background:var(--c-amber-dim);border:1px solid var(--c-amber-mid);border-radius:5px;padding:4px 9px;}
+</style>
+</head>
+<body>
+
+<div class="portal-shell">
+
+  <!-- ════════ SIDEBAR ════════ -->
+  <aside class="sidebar" aria-label="Application sidebar">
+    <div class="sidebar-logo">
+      <span class="sidebar-logo-mark">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M10 2L17 7V18H13V12H7V18H3V7L10 2Z" fill="#0B0B12"/></svg>
+      </span>
+      <span class="sidebar-logo-text">E-Site</span>
+      <span class="sidebar-version">v2</span>
+    </div>
+
+    <nav class="sidebar-nav" aria-label="Generator cost-recovery navigation">
+      <span class="sidebar-section-label" style="margin-top:2px">Generator Cost-Recovery</span>
+
+      <button class="sidebar-nav-item" data-screen="unlock">
+        <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Unlock
+      </button>
+      <button class="sidebar-nav-item active" data-screen="overview">
+        <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+        Overview
+      </button>
+      <button class="sidebar-nav-item" data-screen="settings">
+        <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Generator settings
+      </button>
+      <button class="sidebar-nav-item" data-screen="zones">
+        <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+        Zones &amp; generators
+      </button>
+      <button class="sidebar-nav-item" data-screen="tenants">
+        <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-3"/><path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/></svg>
+        Tenants
+        <span class="callout-new" style="margin-left:auto;padding:1px 6px;font-size:8.5px">3-way</span>
+      </button>
+      <button class="sidebar-nav-item" data-screen="report">
+        <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+        Report preview
+      </button>
+
+      <span class="sidebar-section-label" style="margin-top:14px">Billing</span>
+      <button class="sidebar-nav-item" data-screen="seats">
+        <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 18v-6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6M5 18h14M5 18v2M19 18v2M7 10V7a3 3 0 0 1 3-3h4a3 3 0 0 1 3 3v3"/></svg>
+        Seats
+        <span class="seat-badge">2 / 3</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <a class="sidebar-nav-item" href="#" onclick="return false">
+        <svg class="sidebar-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 19-7-7 7-7M5 12h14"/></svg>
+        Back to project
+      </a>
+    </div>
+  </aside>
+
+  <!-- ════════ CONTENT COLUMN ════════ -->
+  <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">
+
+    <div class="mock-banner"><span class="dot"></span>Mockup — proposed layout, not live · data is illustrative</div>
+
+    <header class="portal-header">
+      <div class="project-crumb">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-dim)" stroke-width="2"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-3"/></svg>
+        <span>Project</span><span style="color:var(--c-text-dim)">/</span><b>Sandton Gate Mall</b>
+      </div>
+      <div class="topbar-right">
+        <div class="org-switch"><span class="org-dot">W</span>Watson Mattheus Electrical
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="avatar">AM</div>
+      </div>
+    </header>
+
+    <main class="portal-main">
+
+      <!-- ───────────── 1 · UNLOCK / PAYWALL ───────────── -->
+      <section class="screen" id="screen-unlock">
+        <div class="lock-hero">
+          <div class="lock-card">
+            <div style="position:relative">
+              <div class="lock-mark">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <div class="callout-new" style="margin-bottom:14px">Paid add-on</div>
+              <h1 style="font-size:24px;font-weight:700;letter-spacing:-.01em">Generator Cost-Recovery</h1>
+              <div class="price-tag"><span class="amt">R2 000</span><span class="per">per seat · once-off</span></div>
+              <p class="hint" style="max-width:560px;margin-top:10px">
+                Apportion the capital and running cost of a building's standby generators across its
+                tenants, and produce a defensible cost-recovery report. An <b style="color:var(--c-text)">owner</b> or
+                <b style="color:var(--c-text)">admin</b> buys a seat and assigns it to the user who will run the apportionment.
+              </p>
+
+              <ul class="feat-list">
+                <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>Three-way tenant participation — <b style="color:var(--c-text)">Shared</b>, <b style="color:var(--c-text)">Own generator</b>, or <b style="color:var(--c-text)">Not on generator</b>.</li>
+                <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>Automatic capital-recovery amortisation and a per-kWh operational tariff.</li>
+                <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg>A print-ready report with Appendices A–C and a tenant reconciliation line.</li>
+              </ul>
+
+              <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                <button class="btn-primary-amber" data-screen="seats">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg>
+                  Buy a seat — R2 000
+                </button>
+                <span class="panel-note">Billed once-off via Paystack · VAT incl.</span>
+              </div>
+
+              <div class="note-strip">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2 11 13M21 2l-7 20-4-9-9-4 20-7z"/></svg>
+                <span><b style="color:var(--c-text)">Seats are reassignable.</b> If a team member leaves or no longer needs it,
+                the freed seat returns to your organisation's pool and can be assigned to someone else — you never re-purchase.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────── 2 · OVERVIEW / READINESS ───────────── -->
+      <section class="screen active" id="screen-overview">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Generator Cost-Recovery</h1>
+            <p class="page-subtitle">Sandton Gate Mall · 2 zones · 3 generators</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn-ghost" data-screen="settings">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83M4.6 9a1.65 1.65 0 0 0-.33-1.82"/></svg>
+              Settings
+            </button>
+            <button class="btn-primary-amber" disabled title="Resolve the 8 open gaps below to enable">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              Generate report
+            </button>
+          </div>
+        </div>
+
+        <!-- summary tiles -->
+        <div class="kpi-grid">
+          <div class="kpi-card"><div class="kpi-label">Total tenants</div><div class="kpi-value">40</div><div class="kpi-meta">across 2 zones</div></div>
+          <div class="kpi-card kpi-success"><div class="kpi-label">On generator</div><div class="kpi-value">31</div><div class="kpi-meta">shared apportionment</div></div>
+          <div class="kpi-card kpi-warning"><div class="kpi-label">Opted out / own</div><div class="kpi-value">9</div><div class="kpi-meta">7 opted out · 2 own gen</div></div>
+          <div class="kpi-card"><div class="kpi-label">Total capex</div><div class="kpi-value">R3.0m</div><div class="kpi-meta">gens + boards + cabling</div></div>
+          <div class="kpi-card kpi-warning"><div class="kpi-label">Monthly recovery</div><div class="kpi-value">R43k</div><div class="kpi-meta">capital repayment / mo</div></div>
+        </div>
+
+        <!-- readiness -->
+        <div class="data-panel">
+          <div class="data-panel-header">
+            <div class="data-panel-title">Readiness check</div>
+            <span class="badge badge-amber">Not ready</span>
+          </div>
+          <div class="data-panel-body">
+            <div style="display:flex;gap:18px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
+              <div class="ready-ring"><div class="inner"><span class="pct">80%</span></div></div>
+              <div style="flex:1;min-width:220px">
+                <div style="font-size:15px;font-weight:700;margin-bottom:4px">32 of 40 tenants ready</div>
+                <p class="hint">Every tenant needs a floor area and a participation choice before the report can balance.
+                  Resolve the gaps below — the <b style="color:var(--c-text)">Generate report</b> button unlocks automatically when the count hits 40 / 40.</p>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="gap-item"><span class="dot"></span>Missing floor area <span class="badge badge-amber" style="margin-left:8px">6 shops</span><span class="shops">S21, S24, K05, K11, U07, U19</span></div>
+              <div class="gap-item"><span class="dot"></span>Missing participation <span class="badge badge-amber" style="margin-left:8px">2 shops</span><span class="shops">S33, K14</span></div>
+            </div>
+
+            <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+              <button class="btn-ghost" data-screen="tenants">Resolve in Tenants →</button>
+              <span class="panel-note" style="align-self:center">Last recalculated 2 min ago</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="data-panel" style="margin:0">
+            <div class="data-panel-header"><div class="data-panel-title">What the report will contain</div></div>
+            <div class="data-panel-body">
+              <ul class="feat-list" style="margin:0;gap:13px">
+                <li><span class="badge badge-muted" style="margin-top:1px">A</span><span style="color:var(--c-text-mid)">Capital cost breakdown — generators, board modifications, cabling and control wiring summed to total capex.</span></li>
+                <li><span class="badge badge-muted" style="margin-top:1px">B</span><span style="color:var(--c-text-mid)">Capital recovery + operational tariff — monthly amortised repayment and the final R/kWh diesel tariff.</span></li>
+                <li><span class="badge badge-muted" style="margin-top:1px">C</span><span style="color:var(--c-text-mid)">Tenant load allocation — every shop's portion, with opt-outs shown transparently as R0.</span></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="data-panel" style="margin:0">
+            <div class="data-panel-header"><div class="data-panel-title">Participation mix</div></div>
+            <div class="data-panel-body">
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div>
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span style="color:var(--c-green)">Shared</span><span class="font-mono" style="color:var(--c-text-dim)">29 · 73%</span></div>
+                  <div style="height:6px;background:var(--c-base);border-radius:3px;overflow:hidden"><div style="height:100%;width:73%;background:var(--c-green)"></div></div>
+                </div>
+                <div>
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span style="color:var(--c-text)">Own generator</span><span class="font-mono" style="color:var(--c-text-dim)">2 · 5%</span></div>
+                  <div style="height:6px;background:var(--c-base);border-radius:3px;overflow:hidden"><div style="height:100%;width:5%;background:var(--c-border-hi)"></div></div>
+                </div>
+                <div>
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span style="color:var(--c-amber)">Not on generator</span><span class="font-mono" style="color:var(--c-text-dim)">9 · 22%</span></div>
+                  <div style="height:6px;background:var(--c-base);border-radius:3px;overflow:hidden"><div style="height:100%;width:22%;background:var(--c-amber)"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────── 3 · GENERATOR SETTINGS ───────────── -->
+      <section class="screen" id="screen-settings">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Generator settings</h1>
+            <p class="page-subtitle">Loading · capital recovery · capex · operational inputs</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn-ghost">Reset to defaults</button>
+            <button class="btn-primary-amber"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>Save settings</button>
+          </div>
+        </div>
+
+        <div class="data-panel">
+          <div class="data-panel-header"><div class="data-panel-title">Loading rates</div><span class="panel-note">kW per m² of GLA, by tenant category</span></div>
+          <div class="data-panel-body">
+            <div class="form-grid">
+              <div class="fld"><label>Standard</label><div class="in-wrap"><input value="0.030"><span class="unit">kW/m²</span></div></div>
+              <div class="fld"><label>Fast food</label><div class="in-wrap"><input value="0.045"><span class="unit">kW/m²</span></div></div>
+              <div class="fld"><label>Restaurant</label><div class="in-wrap"><input value="0.045"><span class="unit">kW/m²</span></div></div>
+              <div class="fld"><label>National</label><div class="in-wrap"><input value="0.030"><span class="unit">kW/m²</span></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="data-panel" style="margin:0">
+            <div class="data-panel-header"><div class="data-panel-title">Capital recovery</div></div>
+            <div class="data-panel-body">
+              <div class="form-grid" style="grid-template-columns:1fr 1fr">
+                <div class="fld"><label>Recovery period</label><div class="in-wrap"><input value="10"><span class="unit">years</span></div></div>
+                <div class="fld"><label>Interest rate</label><div class="in-wrap"><input value="12.0"><span class="unit">% p.a.</span></div></div>
+              </div>
+              <p class="hint" style="margin-top:14px">Amortised on a reducing balance → <b style="color:var(--c-text)" class="font-mono">R43 041</b> / month over 120 months.</p>
+            </div>
+          </div>
+
+          <div class="data-panel" style="margin:0">
+            <div class="data-panel-header"><div class="data-panel-title">Operational</div></div>
+            <div class="data-panel-body">
+              <div class="form-grid" style="grid-template-columns:1fr 1fr">
+                <div class="fld"><label>Diesel price</label><div class="in-wrap"><input value="23.00"><span class="unit">R/l</span></div></div>
+                <div class="fld"><label>Running hours</label><div class="in-wrap"><input value="100"><span class="unit">hrs/mo</span></div></div>
+                <div class="fld"><label>Maintenance</label><div class="in-wrap"><input value="18 800"><span class="unit">R/yr</span></div></div>
+                <div class="fld"><label>Power factor</label><div class="in-wrap"><input value="0.95"><span class="unit">cos φ</span></div></div>
+                <div class="fld"><label>Running load</label><div class="in-wrap"><input value="75"><span class="unit">%</span></div></div>
+                <div class="fld"><label>Contingency</label><div class="in-wrap"><input value="10"><span class="unit">%</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="data-panel">
+          <div class="data-panel-header"><div class="data-panel-title">Capex inputs</div><span class="panel-note">Rates feed Appendix A</span></div>
+          <div class="data-panel-body">
+            <div class="form-grid">
+              <div class="fld"><label>Rate per tenant DB</label><div class="in-wrap"><input value="6 500"><span class="unit">R / DB</span></div></div>
+              <div class="fld"><label>Main boards</label><div class="in-wrap"><input value="120 000"><span class="unit">R</span></div></div>
+              <div class="fld"><label>Cabling</label><div class="in-wrap"><input value="298 000"><span class="unit">R</span></div></div>
+              <div class="fld"><label>Control wiring</label><div class="in-wrap"><input value="97 000"><span class="unit">R</span></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────── 4 · ZONES & GENERATORS ───────────── -->
+      <section class="screen" id="screen-zones">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Zones &amp; generators</h1>
+            <p class="page-subtitle">2 zones · 3 standby generators · R2 220 000 plant</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn-primary-amber"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Add zone</button>
+          </div>
+        </div>
+
+        <div class="zone-card">
+          <div class="zone-head">
+            <span class="badge badge-blue">Zone A</span>
+            <span class="zn">North Wing</span>
+            <span class="zmeta">· 22 tenants · 400 kVA installed</span>
+          </div>
+          <div class="gen-row">
+            <span class="gen-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
+            <div><div class="gen-size">250 kVA</div><div class="gen-label">Primary · diesel · Cummins C250 D5</div></div>
+            <span class="gen-cost">R 850 000</span>
+          </div>
+          <div class="gen-row">
+            <span class="gen-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
+            <div><div class="gen-size">150 kVA</div><div class="gen-label">Standby · diesel · FG Wilson P150</div></div>
+            <span class="gen-cost">R 520 000</span>
+          </div>
+          <div style="padding:12px 16px"><button class="add-row">+ Add generator to Zone A</button></div>
+        </div>
+
+        <div class="zone-card">
+          <div class="zone-head">
+            <span class="badge badge-blue">Zone B</span>
+            <span class="zn">South Wing &amp; Food Court</span>
+            <span class="zmeta">· 18 tenants · 250 kVA installed</span>
+          </div>
+          <div class="gen-row">
+            <span class="gen-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
+            <div><div class="gen-size">250 kVA</div><div class="gen-label">Primary · diesel · Cummins C250 D5</div></div>
+            <span class="gen-cost">R 850 000</span>
+          </div>
+          <div style="padding:12px 16px"><button class="add-row">+ Add generator to Zone B</button></div>
+        </div>
+
+        <button class="add-row" style="margin-top:4px">+ Add another zone</button>
+      </section>
+
+      <!-- ───────────── 5 · TENANTS (centrepiece) ───────────── -->
+      <section class="screen" id="screen-tenants">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Tenants</h1>
+            <p class="page-subtitle">10 of 40 shown · loading kW recomputes from participation</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn-ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Import .xlsx</button>
+            <button class="btn-primary-amber"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Add tenant</button>
+          </div>
+        </div>
+
+        <!-- The big idea, spelled out -->
+        <div class="data-panel" style="border-color:var(--c-amber-mid)">
+          <div class="data-panel-body" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+            <span class="callout-new">New · 3-way participation</span>
+            <div class="seg-legend">
+              <span><i style="background:var(--c-green)"></i>Shared — pays a portion of the standby cost</span>
+              <span><i style="background:var(--c-border-hi)"></i>Own generator — excluded, runs its own plant</span>
+              <span><i style="background:var(--c-amber)"></i>Not on generator — opted out, allocated R0</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="data-panel">
+          <div class="data-panel-header">
+            <div class="data-panel-title">Tenant schedule</div>
+            <span class="panel-note">Opted-out &amp; own-generator rows compute to Loading 0 and are de-emphasised</span>
+          </div>
+          <div class="tbl-wrap">
+            <table class="esite">
+              <thead>
+                <tr>
+                  <th>Shop No.</th><th>Tenant</th><th class="num">Area m²</th><th>Category</th>
+                  <th style="min-width:300px">Participation</th><th>Zone</th><th class="num">Manual kW</th><th class="num">Loading kW</th>
+                </tr>
+              </thead>
+              <tbody id="tenant-tbody"><!-- rows injected by JS --></tbody>
+              <tfoot>
+                <tr class="foot-row">
+                  <td class="mono" colspan="4">Totals · 8 shared · 1 own · 1 opted out</td>
+                  <td></td><td></td><td></td>
+                  <td class="mono num" style="color:var(--c-amber)">67.35 kW</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        <p class="panel-note" style="margin-top:2px">Tip — toggling a row to <b style="color:var(--c-amber)">Not on generator</b> or <b style="color:var(--c-text)">Own generator</b> zeroes its loading and removes it from the shared pool. The mockup updates the row live.</p>
+      </section>
+
+      <!-- ───────────── 6 · REPORT PREVIEW ───────────── -->
+      <section class="screen" id="screen-report">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Report preview</h1>
+            <p class="page-subtitle">Generator cost-recovery · Sandton Gate Mall</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn-ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z"/></svg>Print</button>
+            <button class="btn-primary-amber"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Download PDF</button>
+          </div>
+        </div>
+
+        <!-- Draft ⇄ Issued: hides/shows the PREVIEW watermark over the pages -->
+        <div class="rp-modebar">
+          <div class="rp-toggle" role="group" aria-label="Report mode">
+            <button id="rp-mode-draft" class="on" onclick="document.getElementById('report-stage').classList.remove('issued');this.classList.add('on');document.getElementById('rp-mode-issued').classList.remove('on');">Draft</button>
+            <button id="rp-mode-issued" onclick="document.getElementById('report-stage').classList.add('issued');this.classList.add('on');document.getElementById('rp-mode-draft').classList.remove('on');">Issued</button>
+          </div>
+          <span class="hint-inline">Draft shows a PREVIEW watermark · Issued is clean for the client</span>
+        </div>
+
+        <!-- PDF-preview pane (dark chrome) holding the white branded pages -->
+        <div class="report-stage" id="report-stage">
+
+          <!-- ══ PAGE 1 · COVER ══ -->
+          <article class="rp-page" aria-label="Report cover">
+            <div class="rp-watermark"><span>Preview</span></div>
+            <div class="rp-cover-rule"></div>
+            <div class="rp-pad">
+              <!-- issuer wordmark -->
+              <div class="rp-issuer">
+                <span class="glyph"><svg viewBox="0 0 20 20" width="18" height="18"><path d="M10 2L17 7V18H13V12H7V18H3V7L10 2Z" fill="#fff"/></svg></span>
+                <span class="wordmark">Watson Mattheus<small>Consulting Electrical Engineers</small></span>
+              </div>
+
+              <div class="rp-kicker">Standby Generator · Cost Recovery</div>
+              <h1 class="rp-title">Generator Cost-Recovery Report</h1>
+              <p class="rp-project">Sandton Gate Mall · Sandton, Gauteng · 8 June 2026</p>
+
+              <div class="rp-divider"></div>
+
+              <!-- parties strip: the other three logo roles -->
+              <div class="rp-parties-label">Prepared with</div>
+              <div class="rp-parties">
+                <div class="rp-party">
+                  <div class="logo"><span class="ph"><span class="sq" style="background:#2b5fa8"></span><span class="lbl">Sandton Gate<br>Holdings</span></span></div>
+                  <div class="role"><b>Prepared for</b> · Property fund</div>
+                </div>
+                <div class="rp-party">
+                  <div class="logo"><span class="ph"><span class="sq" style="background:#1f7a52"></span><span class="lbl">Sandton Gate<br>Mall</span></span></div>
+                  <div class="role"><b>Project</b> · Retail centre</div>
+                </div>
+                <div class="rp-party">
+                  <div class="logo"><span class="ph"><span class="sq" style="background:#c0392b"></span><span class="lbl">Volt Dynamics</span></span></div>
+                  <div class="role"><b>Contractor</b> · Electrical</div>
+                </div>
+                <!-- A missing slot (e.g. no separate consultant) is simply omitted — no empty box. -->
+              </div>
+            </div>
+
+            <div class="rp-cover-spacer"></div>
+            <div class="rp-cover-foot">
+              <span>Generated 8 June 2026 · e-site.live</span>
+              <span class="pg">1&nbsp;/&nbsp;4</span>
+            </div>
+          </article>
+
+          <!-- ══ PAGE 2 · NARRATIVE ══ -->
+          <article class="rp-page" aria-label="Report narrative">
+            <div class="rp-watermark"><span>Preview</span></div>
+            <div class="rp-pad">
+              <div class="rp-rhead">
+                <span class="iss">Watson Mattheus</span>
+                <span class="pg">page 2 / 4</span>
+              </div>
+
+              <div class="rp-sec">
+                <div class="bar"></div>
+                <h3>Executive Summary</h3>
+                <p>This report apportions the capital and operating cost of the standby generation installed at Sandton Gate Mall across its tenants on a fair, defensible and fully auditable basis. The installation comprises three diesel generator sets providing N+1 cover to the centre's essential load. Capital is recovered over a ten-year term, while diesel and maintenance are recovered through a per-kWh operational tariff. The resulting monthly recovery reconciles exactly to the amortised capital repayment, with every tenant — including those not on the generator — shown explicitly.</p>
+              </div>
+
+              <div class="rp-sec">
+                <div class="bar"></div>
+                <h3>Methodology &amp; Load Provision</h3>
+                <p>Each tenant's standby demand is derived from its lettable area and trade category, using category load densities consistent with SANS 10142 diversified-demand practice, and overridden with metered or specified figures where these are available. Loads are summed per zone to confirm that connected demand sits within the firm rating of the generators serving that zone. Tenants on their own generation, or electing not to take standby supply, contribute zero load to the shared pool and are excluded from cost recovery while remaining on the schedule for transparency.</p>
+              </div>
+
+              <div class="rp-sec">
+                <div class="bar"></div>
+                <h3>Cost Structure</h3>
+                <p>Capital cost of R3.0 million covers the generator sets, tenant and main board modifications, sub-main and reticulation cabling, and the control, metering and BMS tie-in. This principal is amortised over 120 months at 1.00% per month, giving a fixed monthly capital repayment that forms the recovery target. Running cost is treated separately as a usage-based tariff of R7.98/kWh, built up from the prevailing diesel price and a maintenance provision, with a 10% contingency applied.</p>
+              </div>
+
+              <div class="rp-foot">
+                <span>Generator Cost-Recovery Report · Sandton Gate Mall</span>
+                <span>ref GCR-2026-014 · e-site.live</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- ══ PAGE 3 · ALLOCATION APPROACH + APPENDICES A & B ══ -->
+          <article class="rp-page" aria-label="Allocation approach and appendices A and B">
+            <div class="rp-watermark"><span>Preview</span></div>
+            <div class="rp-pad">
+              <div class="rp-rhead">
+                <span class="iss">Watson Mattheus</span>
+                <span class="pg">page 3 / 4</span>
+              </div>
+
+              <div class="rp-sec">
+                <div class="bar"></div>
+                <h3>Tenant Allocation Approach</h3>
+                <p>The fixed monthly capital repayment is shared between participating tenants in direct proportion to each tenant's standby load, so that a tenant drawing twice the demand carries twice the capital share. Allocations are computed to the nearest Rand and the final participating tenant absorbs any rounding residue, guaranteeing that the sum of tenant charges equals the capital repayment to the cent. The per-kWh operational tariff is billed separately against each tenant's actual standby consumption.</p>
+              </div>
+
+              <div class="rp-sec">
+                <div class="bar"></div>
+                <h3>Recommendations</h3>
+                <p>We recommend that standby metering be commissioned per tenant so that operational tariff billing reflects measured consumption rather than estimates, and that the capital schedule be reviewed annually against actual finance cost. Tenants currently on own generation should be re-canvassed at lease renewal, as consolidating them onto the centre installation would lower the unit cost borne by all participating tenants.</p>
+              </div>
+
+              <div class="rp-sec">
+                <div class="rp-appx-tag">Appendix A<span class="ttl">Capital cost breakdown</span></div>
+                <table class="doc-tbl">
+                  <thead><tr><th>Item</th><th>Detail</th><th class="r">Amount</th></tr></thead>
+                  <tbody>
+                    <tr><td>Generators</td><td class="mono">3 units · 250 + 150 + 250 kVA</td><td class="mono r">R 2 220 000</td></tr>
+                    <tr><td>Board modifications</td><td class="mono">40 tenant DBs @ R6 500 + main boards</td><td class="mono r">R 385 000</td></tr>
+                    <tr><td>Cabling</td><td class="mono">sub-mains &amp; reticulation</td><td class="mono r">R 298 000</td></tr>
+                    <tr><td>Control wiring</td><td class="mono">ATS, metering, BMS tie-in</td><td class="mono r">R 97 000</td></tr>
+                    <tr class="sum"><td>Total capex</td><td></td><td class="mono r">R 3 000 000</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="rp-sec">
+                <div class="rp-appx-tag">Appendix B<span class="ttl">Capital recovery + operational tariff</span></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:26px">
+                  <table class="doc-tbl">
+                    <thead><tr><th>Capital recovery</th><th class="r">Value</th></tr></thead>
+                    <tbody>
+                      <tr><td>Principal</td><td class="mono r">R 3 000 000</td></tr>
+                      <tr><td>Term</td><td class="mono r">120 months</td></tr>
+                      <tr><td>Rate</td><td class="mono r">1.00% / mo</td></tr>
+                      <tr class="sum"><td>Monthly repayment</td><td class="mono r">R 43 041</td></tr>
+                    </tbody>
+                  </table>
+                  <table class="doc-tbl">
+                    <thead><tr><th>Operational tariff</th><th class="r">R/kWh</th></tr></thead>
+                    <tbody>
+                      <tr><td>Diesel fuel</td><td class="mono r">6.83</td></tr>
+                      <tr><td>Maintenance</td><td class="mono r">0.42</td></tr>
+                      <tr><td>Sub-total</td><td class="mono r">7.25</td></tr>
+                      <tr><td>Contingency +10%</td><td class="mono r">0.73</td></tr>
+                      <tr class="sum"><td>Final tariff</td><td class="mono r">R 7.98</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="rp-foot">
+                <span>Generator Cost-Recovery Report · Sandton Gate Mall</span>
+                <span>ref GCR-2026-014 · e-site.live</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- ══ PAGE 4 · APPENDIX C (LIVE) + RECONCILIATION ══ -->
+          <article class="rp-page" aria-label="Appendix C tenant load allocation">
+            <div class="rp-watermark"><span>Preview</span></div>
+            <div class="rp-pad">
+              <div class="rp-rhead">
+                <span class="iss">Watson Mattheus</span>
+                <span class="pg">page 4 / 4</span>
+              </div>
+
+              <div class="rp-sec">
+                <div class="rp-appx-tag">Appendix C<span class="ttl">Tenant load allocation</span></div>
+                <table class="doc-tbl">
+                  <thead>
+                    <tr><th>Shop</th><th>Tenant</th><th class="r">Area m²</th><th>Participation</th><th class="r">Loading kW</th><th class="r">Portion %</th><th class="r">Monthly R</th><th class="r">R/m²</th></tr>
+                  </thead>
+                  <tbody id="report-tbody"><!-- injected --></tbody>
+                  <tbody id="report-foot"><!-- sum injected --></tbody>
+                </table>
+                <p class="rp-note">Tenants on their own generator, or not on the generator, are listed explicitly at R0 — not silently dropped — so the apportionment is auditable by every party.</p>
+
+                <div class="recon">
+                  <span class="chk"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span>
+                  <span class="txt">Reconciliation — <span class="eq">Σ tenant monthly = R 43 041</span> = monthly capital repayment <span class="eq">R 43 041</span>. Balanced.</span>
+                </div>
+              </div>
+
+              <div class="rp-foot">
+                <span>Generator Cost-Recovery Report · Sandton Gate Mall</span>
+                <span>ref GCR-2026-014 · e-site.live</span>
+              </div>
+            </div>
+          </article>
+
+        </div>
+      </section>
+
+      <!-- ───────────── 7 · SEATS ───────────── -->
+      <section class="screen" id="screen-seats">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Seats</h1>
+            <p class="page-subtitle">Generator Cost-Recovery · 3 seats owned · 2 assigned</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn-primary-amber"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Buy another seat — R2 000</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+          <div class="kpi-card"><div class="kpi-label">Seats owned</div><div class="kpi-value">3</div><div class="kpi-meta">R6 000 lifetime spend</div></div>
+          <div class="kpi-card kpi-warning"><div class="kpi-label">Assigned</div><div class="kpi-value">2</div><div class="kpi-meta">active users</div></div>
+          <div class="kpi-card kpi-success"><div class="kpi-label">Free in pool</div><div class="kpi-value">1</div><div class="kpi-meta">ready to assign</div></div>
+        </div>
+
+        <div class="data-panel">
+          <div class="data-panel-header"><div class="data-panel-title">Purchased seats</div><span class="panel-note">Watson Mattheus Electrical</span></div>
+          <div class="data-panel-body">
+            <div class="seat-tile assigned">
+              <span class="seat-no">1</span>
+              <div style="flex:1"><div class="seat-name">Arno Mattheus <span class="badge badge-amber" style="margin-left:6px">Owner</span></div><div class="seat-sub">arno@watsonmattheus.com · assigned 12 May 2026</div></div>
+              <button class="btn-ghost">Reassign</button>
+            </div>
+            <div class="seat-tile assigned">
+              <span class="seat-no">2</span>
+              <div style="flex:1"><div class="seat-name">Thandi Nkosi</div><div class="seat-sub">thandi@watsonmattheus.com · assigned 03 Jun 2026</div></div>
+              <button class="btn-ghost">Reassign</button>
+            </div>
+            <div class="seat-tile free">
+              <span class="seat-no">3</span>
+              <div style="flex:1"><div class="seat-name" style="color:var(--c-text-mid)">Free seat <span class="badge badge-green" style="margin-left:6px">In pool</span></div><div class="seat-sub">unassigned · returns here whenever a user is removed</div></div>
+              <button class="btn-primary-amber" style="padding:7px 14px">Assign</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="note-strip" style="max-width:none">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2 11 13M21 2l-7 20-4-9-9-4 20-7z"/></svg>
+          <span><b style="color:var(--c-text)">Reassignable seats.</b> Removing a user frees their seat back into the pool above at no cost — you only buy a new seat when you need more than 3 people working on cost-recovery at once.</span>
+        </div>
+      </section>
+
+      <div class="mininav-foot">
+        <a href="#" onclick="return false">Terms</a><a href="#" onclick="return false">Privacy</a><a href="#" onclick="return false">POPIA</a>
+        <span style="margin-left:auto">E-Site v2 · mockup build</span>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+/* ───────────────── sample data ───────────────── */
+const RATE = { Standard:0.030, "Fast food":0.045, Restaurant:0.045, National:0.030 };
+const MONTHLY_REPAYMENT = 43041;
+
+// part: 'shared' | 'own' | 'off'
+const TENANTS = [
+  { shop:"A1",  name:"Shoprite",        area:2400, cat:"National",   zone:"A", part:"own",    manual:null },
+  { shop:"L12", name:"KFC",             area:180,  cat:"Fast food",  zone:"B", part:"shared", manual:null },
+  { shop:"L08", name:"Nando's",         area:220,  cat:"Restaurant", zone:"B", part:"shared", manual:null },
+  { shop:"S03", name:"Clicks",          area:340,  cat:"Standard",   zone:"A", part:"shared", manual:null },
+  { shop:"S05", name:"Cape Union Mart", area:290,  cat:"Standard",   zone:"A", part:"shared", manual:null },
+  { shop:"S07", name:"Sportscene",      area:260,  cat:"Standard",   zone:"A", part:"shared", manual:null },
+  { shop:"S09", name:"Totalsports",     area:300,  cat:"Standard",   zone:"A", part:"shared", manual:null },
+  { shop:"S11", name:"Vodacom Shop",    area:95,   cat:"Standard",   zone:"A", part:"shared", manual:4.2 },
+  { shop:"K02", name:"Mugg & Bean",     area:210,  cat:"Restaurant", zone:"B", part:"shared", manual:null },
+  { shop:"U14", name:"Vacant — Unit 14",area:150,  cat:"Standard",   zone:"B", part:"off",    manual:null },
+];
+
+const ZAR = n => "R " + Math.round(n).toLocaleString("en-ZA").replace(/,/g," ");
+const loadingKw = t => t.part!=="shared" ? 0 : (t.manual!=null ? t.manual : +(t.area*RATE[t.cat]).toFixed(2));
+
+/* ───────────────── Tenants table ───────────────── */
+function renderTenants(){
+  const tbody = document.getElementById("tenant-tbody");
+  tbody.innerHTML = TENANTS.map((t,idx)=>{
+    const kw = loadingKw(t);
+    const off = t.part!=="shared";
+    const seg = `
+      <div class="part-seg" data-idx="${idx}">
+        <button class="${t.part==='shared'?'on-shared':''}" data-set="shared">Shared</button>
+        <button class="${t.part==='own'?'on-own':''}" data-set="own">Own generator</button>
+        <button class="${t.part==='off'?'on-off':''}" data-set="off">Not on gen</button>
+      </div>`;
+    return `<tr class="tenant-row ${off?'deemph':''}" data-row="${idx}">
+      <td class="mono">${t.shop}</td>
+      <td>${t.name}</td>
+      <td class="mono num">${t.area.toLocaleString()}</td>
+      <td><span class="badge badge-muted">${t.cat}</span></td>
+      <td>${seg}</td>
+      <td><span class="badge badge-blue">Zone ${t.zone}</span></td>
+      <td class="mono num" style="color:var(--c-text-dim)">${t.manual!=null?t.manual.toFixed(1):'—'}</td>
+      <td class="mono num kw-cell" style="font-weight:700;color:${kw>0?'var(--c-text)':'var(--c-text-dim)'}">${kw>0?kw.toFixed(2):'0'}</td>
+    </tr>`;
+  }).join("");
+
+  // wire segmented controls
+  tbody.querySelectorAll(".part-seg button").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const idx = +btn.parentElement.dataset.idx;
+      TENANTS[idx].part = btn.dataset.set;
+      renderTenants();
+      updateTenantTotal();
+    });
+  });
+  updateTenantTotal();
+}
+function updateTenantTotal(){
+  const tot = TENANTS.reduce((s,t)=>s+loadingKw(t),0);
+  const cell = document.querySelector("#screen-tenants .foot-row .num");
+  if(cell) cell.textContent = tot.toFixed(2)+" kW";
+  const counts = TENANTS.reduce((a,t)=>{a[t.part]++;return a;},{shared:0,own:0,off:0});
+  const lbl = document.querySelector("#screen-tenants .foot-row td");
+  if(lbl) lbl.textContent = `Totals · ${counts.shared} shared · ${counts.own} own · ${counts.off} opted out`;
+}
+
+/* ───────────────── Report Appendix C ───────────────── */
+function renderReport(){
+  const shared = TENANTS.filter(t=>loadingKw(t)>0);
+  const totalKw = shared.reduce((s,t)=>s+loadingKw(t),0);
+  let allocated=0;
+  const monthlyOf = {};
+  shared.forEach((t,i)=>{
+    const m = i<shared.length-1 ? Math.round(MONTHLY_REPAYMENT*loadingKw(t)/totalKw)
+                                : MONTHLY_REPAYMENT-allocated;
+    if(i<shared.length-1) allocated+=m;
+    monthlyOf[t.shop]=m;
+  });
+
+  const pillClass = p => p==='shared'?'shared':p==='own'?'own':'off';
+  const pillTxt   = p => p==='shared'?'Shared':p==='own'?'Own gen':'Opted out';
+
+  const body = document.getElementById("report-tbody");
+  body.innerHTML = TENANTS.map(t=>{
+    const kw = loadingKw(t);
+    if(kw>0){
+      const m = monthlyOf[t.shop];
+      const portion = (100*kw/totalKw).toFixed(1);
+      const perM2 = (m/t.area).toFixed(2);
+      return `<tr>
+        <td class="mono">${t.shop}</td><td>${t.name}</td>
+        <td class="mono r">${t.area.toLocaleString()}</td>
+        <td><span class="doc-pill ${pillClass(t.part)}">${pillTxt(t.part)}</span></td>
+        <td class="mono r">${kw.toFixed(2)}</td>
+        <td class="mono r">${portion}</td>
+        <td class="mono r">${ZAR(m)}</td>
+        <td class="mono r">R ${perM2}</td>
+      </tr>`;
+    }
+    // excluded — explicit R0 row (transparency)
+    const reason = t.part==='own' ? 'Own generator' : 'Not on generator';
+    return `<tr class="off-row">
+      <td class="mono">${t.shop}</td><td>${t.name}</td>
+      <td class="mono r">${t.area.toLocaleString()}</td>
+      <td><span class="doc-pill ${pillClass(t.part)}">${pillTxt(t.part)}</span></td>
+      <td class="mono r" colspan="3">${reason} — R0</td>
+      <td class="mono r">R 0.00</td>
+    </tr>`;
+  }).join("");
+
+  const sumMonthly = Object.values(monthlyOf).reduce((s,m)=>s+m,0);
+  document.getElementById("report-foot").innerHTML = `
+    <tr class="sum">
+      <td colspan="4">Σ participating tenants (${shared.length})</td>
+      <td class="mono r">${totalKw.toFixed(2)}</td>
+      <td class="mono r">100.0</td>
+      <td class="mono r">${ZAR(sumMonthly)}</td>
+      <td class="mono r"></td>
+    </tr>`;
+
+  // keep the reconciliation line honest with whatever the user toggled
+  document.querySelectorAll(".recon .eq").forEach(el=>el.textContent = ZAR(sumMonthly));
+}
+
+/* ───────────────── Navigation ───────────────── */
+function show(screen){
+  document.querySelectorAll(".screen").forEach(s=>s.classList.toggle("active", s.id==="screen-"+screen));
+  document.querySelectorAll(".sidebar-nav-item[data-screen]").forEach(b=>b.classList.toggle("active", b.dataset.screen===screen));
+  document.querySelector(".portal-main").scrollTop = 0;
+  if(screen==="report") renderReport();   // recompute from current participation state
+}
+document.querySelectorAll("[data-screen]").forEach(el=>{
+  el.addEventListener("click", e=>{ e.preventDefault(); show(el.dataset.screen); });
+});
+
+/* init */
+renderTenants();
+renderReport();
+</script>
+</body>
+</html>

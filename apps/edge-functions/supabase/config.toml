@@ -6,7 +6,7 @@ enabled = true
 port = 54321
 # NOTE: 'compliance' was dropped by migration 00066 (replaced by 'inspections') —
 # listing it here makes PostgREST fail its schema cache on a fresh local DB.
-schemas = ["public", "projects", "field", "tenants", "suppliers", "billing", "marketplace", "structure", "cable_schedule", "inspections"]
+schemas = ["public", "projects", "field", "tenants", "suppliers", "billing", "marketplace", "gcr", "structure", "cable_schedule", "inspections"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 

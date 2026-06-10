@@ -42,6 +42,8 @@ export interface TenantImportRow {
   shop_name: string | null;
   /** Gross Lettable Area in m² from the area column. */
   shop_area_m2: number;
+  /** Shop category coerced to one of the 5 enum values, or `null` when absent/unrecognised. */
+  shop_category: string | null;
 }
 
 /** A per-row parse or validation error. */
@@ -113,6 +115,21 @@ function cellToNumber(value: ExcelJS.CellValue): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+/**
+ * Coerce a raw cell string to one of the 5 ShopCategory enum values.
+ * Returns `null` for blank / unrecognised input (set in UI, not import).
+ */
+function coerceShopCategory(raw: string | null): string | null {
+  if (!raw) return null;
+  const s = raw.trim().toLowerCase();
+  if (s === 'standard') return 'standard';
+  if (s === 'fast_food' || s === 'fast food' || s === 'fastfood') return 'fast_food';
+  if (s === 'restaurant') return 'restaurant';
+  if (s === 'national') return 'national';
+  if (s === 'other') return 'other';
+  return null;
+}
+
 /** True when the raw cell holds an Excel formula (e.g. a `=SUM(...)` total). */
 function isFormulaCell(value: ExcelJS.CellValue): boolean {
   return (
@@ -173,12 +190,20 @@ const SHOP_AREA_ALIASES = new Set([
   'gla total',
   'extent',
 ]);
+const SHOP_CATEGORY_ALIASES = new Set([
+  'category',
+  'shop category',
+  'type',
+  'tenant type',
+]);
 
-/** Resolved 1-based column indices for the three logical columns. */
+/** Resolved 1-based column indices for the three logical columns (plus optional category). */
 interface ColumnMap {
   shopNo: number;
   shopName: number;
   area: number;
+  /** -1 when no category column was found in the header. */
+  category: number;
 }
 
 /**
@@ -192,6 +217,7 @@ function resolveColumns(
   let shopNo = -1;
   let shopName = -1;
   let area = -1;
+  let category = -1;
   const foundHeaders: string[] = [];
 
   headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
@@ -205,6 +231,8 @@ function resolveColumns(
       shopName = colNumber;
     } else if (area === -1 && SHOP_AREA_ALIASES.has(norm)) {
       area = colNumber;
+    } else if (category === -1 && SHOP_CATEGORY_ALIASES.has(norm)) {
+      category = colNumber;
     }
   });
 
@@ -214,7 +242,7 @@ function resolveColumns(
   if (area === -1) missing.push('an area column (e.g. "Area (m²)" or "TOTAL GLA")');
 
   if (missing.length > 0) return { missing, foundHeaders };
-  return { columns: { shopNo, shopName, area } };
+  return { columns: { shopNo, shopName, area, category } };
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +309,7 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
     const rawShopNo = row.getCell(col.shopNo).value;
     const rawTenant = row.getCell(col.shopName).value;
     const rawGla = row.getCell(col.area).value;
+    const rawCategory = col.category !== -1 ? row.getCell(col.category).value : null;
 
     const shopNumberStr = cellToString(rawShopNo);
     const gla = cellToNumber(rawGla);
@@ -331,11 +360,15 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
     // --- Tenant name (blank → null; "VACANT" → kept as-is) ---
     const shop_name = cellToString(rawTenant);
 
+    // --- Category (optional column; unknown/empty → null) ---
+    const shop_category = coerceShopCategory(cellToString(rawCategory));
+
     rows.push({
       source_row: rowNumber,
       shop_number,
       shop_name,
       shop_area_m2: gla,
+      shop_category,
     });
   });
 

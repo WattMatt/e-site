@@ -111,26 +111,44 @@ export const boqService = {
   ): Promise<{ sections: BoqSection[]; items: BoqItem[] }> {
     const db = (client as AnyClient).schema('projects')
 
-    const { data: sectionRows, error: se } = await db
-      .from('boq_sections')
-      .select('*')
-      .eq('import_id', importId)
-      .order('sort_order')
-    if (se) throw new Error(se.message)
+    // PostgREST caps every response at ~1000 rows, so we MUST page through —
+    // a real BOQ has hundreds of sections and thousands of items (KINGSWALK:
+    // 638 sections / 2394 items). Order by a unique-enough key so paging is
+    // stable; the UI re-sorts for display.
+    const PAGE = 1000
+    const fetchAll = async (
+      build: () => AnyClient,
+    ): Promise<Record<string, unknown>[]> => {
+      const all: Record<string, unknown>[] = []
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await build().range(from, from + PAGE - 1)
+        if (error) throw new Error(error.message)
+        const rows = (data ?? []) as Record<string, unknown>[]
+        all.push(...rows)
+        if (rows.length < PAGE) break
+      }
+      return all
+    }
 
-    const { data: itemRows, error: ie } = await db
-      .from('boq_items')
-      .select('*')
-      .in(
-        'section_id',
-        (sectionRows ?? []).map((r: Record<string, unknown>) => r.id),
-      )
-      .order('sort_order')
-    if (ie) throw new Error(ie.message)
+    const sectionRows = await fetchAll(() =>
+      db.from('boq_sections').select('*').eq('import_id', importId).order('sort_order').order('id'),
+    )
+
+    // Filter items by their section's import_id via the FK embed — avoids a
+    // giant `.in('section_id', [...638 uuids])` URL that would balloon for
+    // bigger bills. The embedded `boq_sections` object is ignored by the mapper.
+    const itemRows = await fetchAll(() =>
+      db
+        .from('boq_items')
+        .select('*, boq_sections!inner(import_id)')
+        .eq('boq_sections.import_id', importId)
+        .order('sort_order')
+        .order('id'),
+    )
 
     return {
-      sections: (sectionRows ?? []).map(rowToBoqSection),
-      items: (itemRows ?? []).map(rowToBoqItem),
+      sections: sectionRows.map(rowToBoqSection),
+      items: itemRows.map(rowToBoqItem),
     }
   },
 

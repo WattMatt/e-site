@@ -76,6 +76,37 @@ export async function POST(req: NextRequest) {
     const data = event.data
     const metadata = data.metadata ?? {}
 
+    // Branch A0: per-seat feature purchase — one-time charge that assigns a
+    // discrete feature seat to a specific user within an org.
+    // Discriminated by metadata.type set in /api/paystack/feature-seat.
+    if (metadata.type === 'feature_seat' && metadata.org_id && metadata.user_id && metadata.feature_key) {
+      const amountKobo = (metadata.amount_kobo as number | undefined) ?? data.amount
+      // Idempotent on paystack_reference — duplicate webhook deliveries no-op.
+      const { error: seatErr } = await (supabase as any)
+        .schema('billing')
+        .from('org_feature_seats')
+        .upsert({
+          organisation_id:    metadata.org_id,
+          feature_key:        metadata.feature_key,
+          assigned_user_id:   metadata.user_id,
+          paystack_reference: data.reference,
+          amount_paid_kobo:   amountKobo,
+          assigned_at:        new Date().toISOString(),
+        }, { onConflict: 'paystack_reference', ignoreDuplicates: true })
+      if (seatErr) console.error('Webhook feature_seat insert error:', seatErr)
+
+      // Audit trail in billing.invoices (also idempotent on paystack_reference).
+      await billingService.recordInvoice(supabase as any, metadata.org_id as string, {
+        paystackReference: data.reference,
+        amountKobo,
+        status:      'paid',
+        description: `Seat: ${metadata.feature_key} → ${metadata.user_id}`,
+        paidAt:      new Date().toISOString(),
+      }).catch(console.error)
+
+      return NextResponse.json({ received: true })
+    }
+
     // Branch A: paid add-on feature unlock — one-time charge that grants the
     // org lifetime access to a discrete module (inspections, JBCC, …).
     // Discriminated by metadata.type set in /api/paystack/feature-unlock.

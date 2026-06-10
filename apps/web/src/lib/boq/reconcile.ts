@@ -26,6 +26,12 @@ export function reconcile(parsed: ParsedBoq): ReconciliationReport {
   const billResults: BillReconcileResult[] = []
   let grandTotalComputed = 0
 
+  // An unclassified priced row means a value the parser saw but did not capture
+  // into any bill — surface it in the report's warnings the UI already shows.
+  for (const u of parsed.unclassifiedRows) {
+    warnings.push(`Unparsed priced row: ${u.sheet} ${u.code} "${u.description}" = R${u.amount}`)
+  }
+
   for (const bill of parsed.bills) {
     let computed = 0
     for (const item of bill.items) {

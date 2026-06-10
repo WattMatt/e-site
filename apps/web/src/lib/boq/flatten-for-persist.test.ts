@@ -54,6 +54,7 @@ const valid: ParsedBoq = {
     },
   ],
   skippedSheets: ['NOTES TO TENDERER'],
+  unclassifiedRows: [],
 }
 
 describe('flattenForPersist', () => {

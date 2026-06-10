@@ -455,3 +455,72 @@ describe('parseTenantSchedule — trailing total / separator rows', () => {
     expect(result.errors[0].message).toMatch(/shop no/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// shop_category column parsing
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — shop_category column', () => {
+  it('parses a "Category" column and coerces values to enum', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'TENANT', 'TOTAL GLA', 'Category'],
+      [
+        ['S001', 'PnP', 500, 'national'],
+        ['S002', 'Steers', 120, 'fast_food'],
+        ['S003', 'Spur', 200, 'fast food'],  // alias
+        ['S004', 'Checkers', 400, 'standard'],
+        ['S005', 'Nandos', 180, 'restaurant'],
+        ['S006', 'Other Co', 90, 'other'],
+      ],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(6);
+    expect(result.rows.find((r) => r.shop_number === 'S001')!.shop_category).toBe('national');
+    expect(result.rows.find((r) => r.shop_number === 'S002')!.shop_category).toBe('fast_food');
+    expect(result.rows.find((r) => r.shop_number === 'S003')!.shop_category).toBe('fast_food');
+    expect(result.rows.find((r) => r.shop_number === 'S004')!.shop_category).toBe('standard');
+    expect(result.rows.find((r) => r.shop_number === 'S005')!.shop_category).toBe('restaurant');
+    expect(result.rows.find((r) => r.shop_number === 'S006')!.shop_category).toBe('other');
+  });
+
+  it('coerces an unknown category value to null', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'TENANT', 'TOTAL GLA', 'Category'],
+      [['S001', 'Woolworths', 300, 'supermarket']],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows[0].shop_category).toBeNull();
+  });
+
+  it('sets shop_category to null when the category cell is blank', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'TENANT', 'TOTAL GLA', 'Category'],
+      [['S001', 'Woolworths', 300, null]],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows[0].shop_category).toBeNull();
+  });
+
+  it('sets shop_category to null when no Category column is present in the file', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'TENANT', 'TOTAL GLA'],
+      [['S001', 'Woolworths', 300]],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows[0].shop_category).toBeNull();
+  });
+
+  it('recognises "Tenant Type" as a category column header alias', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'TENANT', 'TOTAL GLA', 'Tenant Type'],
+      [['S001', 'PnP', 500, 'national']],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows[0].shop_category).toBe('national');
+  });
+});
