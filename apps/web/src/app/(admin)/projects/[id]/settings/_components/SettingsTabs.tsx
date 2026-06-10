@@ -3,7 +3,7 @@
 /**
  * Top-tab nav for project settings.
  *
- * - 13 tabs in spec §8.1 order (Rates added after Contract).
+ * - 14 tabs in spec §8.1 order (Rates + Valuations added after Contract).
  * - Active tab derived from usePathname() — matches the last `/settings/<slug>`.
  * - 🔒 marker on tabs the current role can't fully access (per spec §7).
  *   The tab is still clickable for VIEW if RBAC allows; the marker
@@ -18,8 +18,8 @@ import { usePathname } from 'next/navigation'
 import { COST_VIEW_ROLES, type OrgRole } from '@esite/shared'
 
 type Slug =
-  | 'general' | 'site' | 'dates' | 'client' | 'contract' | 'rates' | 'members'
-  | 'jbcc-parties' | 'operational' | 'contacts' | 'integrations'
+  | 'general' | 'site' | 'dates' | 'client' | 'contract' | 'rates' | 'valuations'
+  | 'members' | 'jbcc-parties' | 'operational' | 'contacts' | 'integrations'
   | 'danger-zone' | 'history'
 
 interface TabDef {
@@ -46,6 +46,7 @@ const TABS: ReadonlyArray<TabDef> = [
   { slug: 'client',        label: 'Client',        viewRoles: ALL,         editRoles: ORG_WRITE },
   { slug: 'contract',      label: 'Contract',      viewRoles: COST_VIEW_ROLES, editRoles: COST_VIEW_ROLES },
   { slug: 'rates',         label: 'Rates',         viewRoles: COST_VIEW_ROLES, editRoles: COST_VIEW_ROLES },
+  { slug: 'valuations',    label: 'Valuations',    viewRoles: COST_VIEW_ROLES, editRoles: COST_VIEW_ROLES },
   { slug: 'members',       label: 'Members',       viewRoles: OWNER_ADMIN, editRoles: OWNER_ADMIN },
   { slug: 'jbcc-parties',  label: 'JBCC Parties',  viewRoles: ALL,         editRoles: ORG_WRITE },
   { slug: 'operational',   label: 'Operational',   viewRoles: ALL,         editRoles: ORG_WRITE },
