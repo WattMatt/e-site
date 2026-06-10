@@ -49,3 +49,25 @@ export interface GcrTenantAssignmentRow {
   zone_id: string | null
   manual_kw_override: number | null
 }
+
+/** Headline numbers stored on a saved report revision (gcr.report_revisions.summary). */
+export interface GcrReportSummary {
+  monthlyCapitalRepayment: number
+  finalTariff: number
+  totalCapitalCost: number
+  tenantCount: number
+}
+
+/** Mirrors migration 00127 — one immutable saved report PDF per row. */
+export interface GcrReportRevisionRow {
+  id: string
+  project_id: string
+  organisation_id: string
+  revision_number: number
+  storage_path: string
+  file_name: string
+  note: string | null
+  summary: GcrReportSummary | null
+  created_by: string | null
+  created_at: string
+}

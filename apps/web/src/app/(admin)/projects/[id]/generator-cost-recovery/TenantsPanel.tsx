@@ -28,6 +28,8 @@ interface Props {
   generators: GcrZoneGeneratorRow[]
   tenants: TenantNodeRow[]
   assignments: GcrTenantAssignmentRow[]
+  /** Report generation lives on the Reports tab — this switches to it. */
+  onNavigateToReports: () => void
 }
 
 // ─── Per-row editable state ───────────────────────────────────────────────────
@@ -104,7 +106,7 @@ function initRowState(tenants: TenantNodeRow[], assignments: GcrTenantAssignment
 
 // ─── TenantsPanel ─────────────────────────────────────────────────────────────
 
-export function TenantsPanel({ projectId, settings, zones, generators, tenants, assignments }: Props) {
+export function TenantsPanel({ projectId, settings, zones, generators, tenants, assignments, onNavigateToReports }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
@@ -204,39 +206,14 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text-mid)' }}>
               {readiness.ready ? 'Ready to generate' : 'Not ready'}
             </span>
-            {readiness.ready ? (
-              <a
-                href={`/api/projects/${projectId}/generator-cost-recovery/report-preview`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '5px 12px',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  fontFamily: 'var(--font-sans)',
-                  borderRadius: 6,
-                  border: '1px solid var(--c-border)',
-                  background: 'var(--c-panel)',
-                  color: 'var(--c-text)',
-                  textDecoration: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                Generate report
-              </a>
-            ) : (
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled
-                title={readiness.gaps.join(' · ')}
-                style={{ opacity: 0.45, cursor: 'not-allowed' }}
-              >
-                Generate report
-              </Button>
-            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onNavigateToReports}
+              title={readiness.ready ? undefined : readiness.gaps.join(' · ')}
+            >
+              Go to Reports
+            </Button>
           </div>
         </CardHeader>
         {!readiness.ready && (

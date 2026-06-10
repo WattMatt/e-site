@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { hasFeatureSeat } from '@/lib/features'
 import { Card, CardBody } from '@/components/ui/Card'
 import { loadGcrConfigAction } from './gcr.actions'
+import { listGcrReportRevisionsAction } from './gcr-reports.actions'
 import { GcrTabs } from './GcrTabs'
 
 interface Props {
@@ -94,6 +95,13 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
     )
   }
 
+  // Saved report revisions (newest first). A load failure degrades to an empty
+  // list but is flagged so the tab doesn't claim "no saved reports" when
+  // revisions exist behind a transient error.
+  const revisionsResult = await listGcrReportRevisionsAction(id)
+  const reportRevisions = Array.isArray(revisionsResult) ? revisionsResult : []
+  const revisionsLoadFailed = !Array.isArray(revisionsResult)
+
   return (
     <div className="animate-fadeup">
       <div className="page-header">
@@ -105,7 +113,12 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
         </div>
       </div>
 
-      <GcrTabs projectId={id} data={result} />
+      <GcrTabs
+        projectId={id}
+        data={result}
+        reportRevisions={reportRevisions}
+        reportRevisionsLoadFailed={revisionsLoadFailed}
+      />
     </div>
   )
 }
