@@ -122,7 +122,7 @@ export interface GeneratorReportDocumentProps {
 
 export function GeneratorReportDocument({ data, branding }: GeneratorReportDocumentProps) {
   const { accent, issuer, title } = branding
-  const { model, breakdown, settings, narrative } = data
+  const { model, breakdown, settings, narrative, zoneSummaries } = data
 
   // ── Appendix A — Capital cost ──────────────────────────────────────────────
   const capitalRows: string[][] = [
@@ -162,6 +162,22 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
     '',
   ])
 
+  // ── Plant Sizing table — per-zone connected load → required kVA ────────────
+  const sizingRows: string[][] = zoneSummaries.map((z) => [
+    z.zoneName,
+    z.totalLoadKw.toFixed(2),
+    z.requiredKva.toFixed(1),
+    z.installedKva > 0 ? z.installedKva.toFixed(0) : '—',
+  ])
+  if (sizingRows.length > 0) {
+    sizingRows.push([
+      'Total',
+      zoneSummaries.reduce((sum, z) => sum + z.totalLoadKw, 0).toFixed(2),
+      zoneSummaries.reduce((sum, z) => sum + z.requiredKva, 0).toFixed(1),
+      zoneSummaries.reduce((sum, z) => sum + z.installedKva, 0).toFixed(0),
+    ])
+  }
+
   return (
     <Document title="Generator Cost Recovery Report" producer="e-site.live">
       <Page size="A4" style={s.page}>
@@ -185,6 +201,12 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
 
         <Section title="Plant Sizing" accent={accent}>
           <Prose text={narrative.plantSizing} />
+          {sizingRows.length > 0 && (
+            <Table
+              columns={['Board / Zone', 'Connected load (kW)', 'Required (kVA)', 'Installed (kVA)']}
+              rows={sizingRows}
+            />
+          )}
         </Section>
 
         <Section title="Outline of System" accent={accent}>

@@ -66,6 +66,11 @@ const fixtureData: GeneratorReportData = {
   breakdown,
   settings,
   narrative: DEFAULT_REPORT_NARRATIVE,
+  zoneByShop: { T01: 'Zone A', T02: 'Zone B', T03: null },
+  zoneSummaries: [
+    { zoneName: 'Zone A', tenantCount: 1, totalLoadKw: 4.5, requiredKva: 4.74, installedKva: 250 },
+    { zoneName: 'Zone B', tenantCount: 1, totalLoadKw: 6.0, requiredKva: 6.32, installedKva: 150 },
+  ],
   brandingInput: {
     orgName: 'Watson Mattheus Consulting',
     orgLogoDataUri: DATA_URI,
