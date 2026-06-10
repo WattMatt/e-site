@@ -1,4 +1,4 @@
--- 00127_mv_user_subscription.sql
+-- 00131_mv_user_subscription.sql
 -- Medium-Voltage protection — the PER-USER access entitlement (paywall, Phase 7).
 --
 -- This is net-new billing and intentionally NOT modelled on the org-level
@@ -54,12 +54,21 @@ CREATE POLICY "user_mv_subscriptions_select_own"
 -- public.user_has_mv_access(user_id)
 -- ---------------------------------------------------------------------------
 -- TRUE only when the user has an active, in-date subscription AND has accepted
--- the non-validation disclaimer. SECURITY DEFINER so it can read the
--- service-role-owned table from an RLS-bounded session.
+-- the non-validation disclaimer. Members of the WM-Consulting platform-owner
+-- org bypass the gate (same convention as public.has_feature /
+-- public.has_feature_seat) — the firm's own engineers use the firm's tool.
+-- SECURITY DEFINER so it can read the service-role-owned table from an
+-- RLS-bounded session.
 CREATE OR REPLACE FUNCTION public.user_has_mv_access(p_user_id UUID)
 RETURNS BOOLEAN
 LANGUAGE sql STABLE SECURITY DEFINER AS $$
     SELECT EXISTS (
+        SELECT 1 FROM public.user_organisations
+        WHERE user_id         = p_user_id
+          AND organisation_id = 'dddddddd-0000-0000-0000-000000000001'::uuid
+          AND is_active
+    )
+    OR EXISTS (
         SELECT 1 FROM billing.user_mv_subscriptions
         WHERE user_id                = p_user_id
           AND status                 = 'active'

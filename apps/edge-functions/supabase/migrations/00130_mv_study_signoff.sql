@@ -1,4 +1,4 @@
--- 00126_mv_study_signoff.sql
+-- 00130_mv_study_signoff.sql
 -- Medium-Voltage protection — the gated-issue sign-off record (spec §9). A
 -- protection study is a facet of a cable_schedule.revision; issuing the shared
 -- revision (DRAFT→ISSUED) is gated when the revision carries MV data: the
