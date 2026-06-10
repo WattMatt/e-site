@@ -105,6 +105,21 @@ describe('ReportsPanel', () => {
     expect(iframe.src).toBe('https://signed.example/inline.pdf')
   })
 
+  it('Preview draft opens in the contained viewer modal (no new tab)', async () => {
+    await renderPanel()
+
+    await userEvent.click(screen.getByRole('button', { name: /preview draft/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeDefined()
+    })
+    const iframe = screen.getByTitle(/Draft/) as HTMLIFrameElement
+    expect(iframe.tagName).toBe('IFRAME')
+    expect(iframe.src).toContain(`/api/projects/${PROJECT_ID}/generator-cost-recovery/report-preview`)
+    // No anchor pointing at the preview route remains (the old new-tab path)
+    expect(document.querySelector('a[target="_blank"]')).toBeNull()
+  })
+
   it('Download requests the attachment disposition', async () => {
     getUrlMock.mockResolvedValue({ url: 'https://signed.example/dl.pdf' })
     await renderPanel()

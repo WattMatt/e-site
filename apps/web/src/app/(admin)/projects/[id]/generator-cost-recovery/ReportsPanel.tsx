@@ -62,7 +62,13 @@ export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones
   const [generateError, setGenerateError] = useState<string | null>(null)
   const [generateGaps, setGenerateGaps] = useState<string[]>([])
 
-  const [viewer, setViewer] = useState<{ rev: GcrReportRevisionRow; url: string } | null>(null)
+  // Viewer state covers both saved revisions and the unsaved draft preview —
+  // everything opens in the contained in-app modal, never a new tab.
+  const [viewer, setViewer] = useState<{
+    revLabel: string
+    url: string
+    rev: GcrReportRevisionRow | null // null = draft preview
+  } | null>(null)
   const [busyRevId, setBusyRevId] = useState<string | null>(null)
   const [rowError, setRowError] = useState<string | null>(null)
 
@@ -109,12 +115,30 @@ export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones
     try {
       const res = await getGcrReportUrlAction(projectId, rev.id)
       if ('error' in res) { setRowError(res.error); return }
-      setViewer({ rev, url: res.url })
+      setViewer({ revLabel: `Rev ${rev.revision_number}`, url: res.url, rev })
     } catch {
       setRowError('Request failed — check your connection and try again.')
     } finally {
       setBusyRevId(null)
     }
+  }
+
+  const previewUrl = `/api/projects/${projectId}/generator-cost-recovery/report-preview`
+
+  function handlePreviewDraft() {
+    // Same-origin route — the iframe request carries the session cookies, and
+    // the route streams the PDF inline. No save, no new tab.
+    setViewer({ revLabel: 'Draft', url: previewUrl, rev: null })
+  }
+
+  function downloadDraft() {
+    const a = document.createElement('a')
+    a.href = previewUrl
+    a.download = 'generator-cost-recovery-draft.pdf'
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
   }
 
   async function handleDownload(rev: GcrReportRevisionRow) {
@@ -166,14 +190,9 @@ export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones
               Saved reports
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <a
-                href={`/api/projects/${projectId}/generator-cost-recovery/report-preview`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ fontSize: 12, color: 'var(--c-text-mid)', textDecoration: 'underline' }}
-              >
+              <Button variant="ghost" size="sm" onClick={handlePreviewDraft} style={{ fontSize: 12 }}>
                 Preview draft
-              </a>
+              </Button>
               <Button
                 variant="primary"
                 size="sm"
@@ -321,14 +340,14 @@ export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones
         </div>
       )}
 
-      {/* Contained in-app viewer */}
+      {/* Contained in-app viewer — saved revisions and the draft preview alike */}
       {viewer && (
         <ReportViewerModal
           title="Generator Cost-Recovery Report"
-          revLabel={`Rev ${viewer.rev.revision_number}`}
+          revLabel={viewer.revLabel}
           url={viewer.url}
-          onDownload={() => handleDownload(viewer.rev)}
-          isDownloading={busyRevId === viewer.rev.id}
+          onDownload={() => (viewer.rev ? handleDownload(viewer.rev) : downloadDraft())}
+          isDownloading={viewer.rev ? busyRevId === viewer.rev.id : false}
           onClose={() => setViewer(null)}
         />
       )}
