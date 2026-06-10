@@ -395,3 +395,61 @@ describe('deleteGeneratorAction', () => {
     )
   })
 })
+
+// ─── bulkSetUncategorizedTenantsAction ───────────────────────────────────────
+
+describe('bulkSetUncategorizedTenantsAction', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+  })
+
+  /** projects resolve + structure.nodes .update().eq().eq().is().select() chain */
+  function makeBulkChain(updatedIds: unknown[], updateError: null | { message: string } = null) {
+    const maybeSingle  = vi.fn().mockResolvedValue({ data: { organisation_id: ORG_ID }, error: null })
+    const eqIdProject  = vi.fn().mockReturnValue({ maybeSingle })
+    const selectProj   = vi.fn().mockReturnValue({ eq: eqIdProject })
+    const fromProjects = vi.fn().mockReturnValue({ select: selectProj })
+
+    const select = vi.fn().mockResolvedValue({ data: updateError ? null : updatedIds, error: updateError })
+    const is     = vi.fn().mockReturnValue({ select })
+    const eq2    = vi.fn().mockReturnValue({ is })
+    const eq1    = vi.fn().mockReturnValue({ eq: eq2 })
+    const update = vi.fn().mockReturnValue({ eq: eq1 })
+    const fromNodes = vi.fn().mockReturnValue({ update })
+
+    const schema = vi.fn((name: string) =>
+      name === 'projects' ? { from: fromProjects } : { from: fromNodes },
+    )
+    return { schema, update, eq1, eq2, is }
+  }
+
+  it('returns { error } when caller lacks ORG_WRITE_ROLES', async () => {
+    const { schema } = makeBulkChain([])
+    createClientMock.mockResolvedValueOnce({ schema })
+    requireRoleMock.mockResolvedValueOnce({ ok: false, error: 'Your role (viewer) is not allowed' })
+
+    const { bulkSetUncategorizedTenantsAction } = await import('./gcr.actions')
+    const result = await bulkSetUncategorizedTenantsAction(PROJECT_ID)
+
+    expect('error' in result).toBe(true)
+  })
+
+  it('fills NULL categories only, scoped to project + tenant_db, and reports the count', async () => {
+    const { schema, update, eq1, eq2, is } = makeBulkChain([{ id: 'n1' }, { id: 'n2' }])
+    createClientMock.mockResolvedValueOnce({ schema })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'owner' })
+
+    const { bulkSetUncategorizedTenantsAction } = await import('./gcr.actions')
+    const result = await bulkSetUncategorizedTenantsAction(PROJECT_ID)
+
+    expect(result).toEqual({ ok: true, updated: 2 })
+    expect(update).toHaveBeenCalledWith({ shop_category: 'standard' })
+    expect(eq1).toHaveBeenCalledWith('project_id', PROJECT_ID)
+    expect(eq2).toHaveBeenCalledWith('kind', 'tenant_db')
+    expect(is).toHaveBeenCalledWith('shop_category', null)
+    expect(revalidatePathMock).toHaveBeenCalledWith(
+      `/projects/${PROJECT_ID}/generator-cost-recovery`,
+    )
+  })
+})
