@@ -75,6 +75,16 @@ const ss = StyleSheet.create({
     lineHeight: 1.5,
     marginBottom: spacing.smallGap,
   },
+  // Appendix C zone group (board/centre)
+  zoneGroup: {
+    marginBottom: spacing.rowGap,
+  },
+  zoneGroupHeading: {
+    fontSize: spacing.rowLabelFontSize,
+    fontFamily: 'Helvetica-Bold',
+    marginTop: spacing.smallGap,
+    marginBottom: 2,
+  },
 })
 
 // ---------------------------------------------------------------------------
@@ -122,7 +132,7 @@ export interface GeneratorReportDocumentProps {
 
 export function GeneratorReportDocument({ data, branding }: GeneratorReportDocumentProps) {
   const { accent, issuer, title } = branding
-  const { model, breakdown, settings, narrative, zoneSummaries } = data
+  const { model, breakdown, settings, narrative, zoneSummaries, zoneByShop } = data
 
   // ── Appendix A — Capital cost ──────────────────────────────────────────────
   const capitalRows: string[][] = [
@@ -133,8 +143,12 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
     ['Total capital cost', zar(breakdown.total)],
   ]
 
-  // ── Appendix C — Tenant allocation ────────────────────────────────────────
-  const allocationRows: string[][] = model.allocations.map((a) => {
+  // ── Appendix C — Tenant allocation, grouped by zone (board/centre) ──────────
+  const tenantMonthlySum = model.allocations
+    .filter((a) => a.participation === 'shared')
+    .reduce((sum, a) => sum + a.monthly, 0)
+
+  const allocRow = (a: (typeof model.allocations)[number]): string[] => {
     const isOptOut = a.participation !== 'shared'
     return [
       a.shopNumber,
@@ -145,22 +159,34 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
       isOptOut ? '—' : zar(a.monthly),
       isOptOut ? 'R0' : zar(a.ratePerSqm),
     ]
-  })
+  }
 
-  const tenantMonthlySum = model.allocations
-    .filter((a) => a.participation === 'shared')
-    .reduce((sum, a) => sum + a.monthly, 0)
-
-  // Total row
-  allocationRows.push([
-    '',
-    'Total',
-    '',
-    '',
-    '',
-    zar(tenantMonthlySum),
-    '',
-  ])
+  // Bucket allocations by zone; subtotal the shared monthly per zone.
+  const groupsMap = new Map<string, string[][]>()
+  const subtotalMap = new Map<string, number>()
+  for (const a of model.allocations) {
+    const zoneName = zoneByShop[a.shopNumber] ?? 'Unzoned'
+    if (!groupsMap.has(zoneName)) groupsMap.set(zoneName, [])
+    groupsMap.get(zoneName)!.push(allocRow(a))
+    if (a.participation === 'shared') {
+      subtotalMap.set(zoneName, (subtotalMap.get(zoneName) ?? 0) + a.monthly)
+    }
+  }
+  // Order: zones as the sizing table lists them, then any extras (e.g. Unzoned).
+  const zoneOrder = zoneSummaries.map((z) => z.zoneName)
+  const orderedZones = [
+    ...zoneOrder.filter((z) => groupsMap.has(z)),
+    ...[...groupsMap.keys()].filter((z) => !zoneOrder.includes(z)),
+  ]
+  const allocationGroups = orderedZones.map((zoneName) => ({
+    zoneName,
+    rows: groupsMap.get(zoneName)!,
+    subtotal: subtotalMap.get(zoneName) ?? 0,
+  }))
+  // Suppress the heading when there is just a single unzoned bucket.
+  const showZoneHeadings = !(
+    allocationGroups.length === 1 && allocationGroups[0].zoneName === 'Unzoned'
+  )
 
   // ── Plant Sizing table — per-zone connected load → required kVA ────────────
   const sizingRows: string[][] = zoneSummaries.map((z) => [
@@ -260,13 +286,20 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
           />
         </Section>
 
-        {/* Appendix C — Tenant allocation */}
+        {/* Appendix C — Tenant allocation, grouped by zone (board/centre) */}
         <Section title="Appendix C — Tenant allocation" accent={accent}>
-          <Table
-            columns={['Shop', 'Tenant', 'Area m²', 'Loading kW', '% of total', 'Monthly (excl VAT)', 'R/m²']}
-            rows={allocationRows}
-          />
-          {/* Reconciliation line */}
+          {allocationGroups.map((g) => (
+            <View key={g.zoneName} style={ss.zoneGroup}>
+              {showZoneHeadings && (
+                <Text style={[ss.zoneGroupHeading, { color: accent }]}>{g.zoneName}</Text>
+              )}
+              <Table
+                columns={['Shop', 'Tenant', 'Area m²', 'Loading kW', '% of total', 'Monthly (excl VAT)', 'R/m²']}
+                rows={[...g.rows, ['', 'Subtotal', '', '', '', zar(g.subtotal), '']]}
+              />
+            </View>
+          ))}
+          {/* Grand total reconciliation */}
           <Text style={ss.reconciliation}>
             {'Total tenant monthly '}
             <Text style={ss.reconciliationMatch}>{zar(tenantMonthlySum)}</Text>
