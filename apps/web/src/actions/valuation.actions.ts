@@ -516,6 +516,54 @@ export async function certifyValuationAction(
   }
 }
 
+// ─── getValuationReportUrlAction ─────────────────────────────────────────────
+
+export type GetValuationReportUrlResult = { data: { url: string } } | { error: string }
+
+/**
+ * Resolve a short-lived signed URL for a certified valuation's Payment
+ * Certificate PDF (the current `issued` projects.reports row). Read-gated on
+ * COST_VIEW_ROLES + the cross-project guard. Used by CertifyBar with
+ * previewViaSignedUrl so the click-gesture opens the PDF tab.
+ */
+export async function getValuationReportUrlAction(
+  projectId: string,
+  valuationId: string,
+): Promise<GetValuationReportUrlResult> {
+  const supabase = await createClient()
+
+  const guard = await requireEffectiveRole(supabase, projectId, COST_VIEW_ROLES)
+  if (!guard.ok) return { error: guard.error }
+
+  const service = createServiceClient()
+
+  // Cross-project guard.
+  const val = await resolveValuationForGate(service as any, projectId, valuationId)
+  if (!val) return { error: 'Not found' }
+
+  const { data: row } = await (service as any)
+    .schema('projects')
+    .from('reports')
+    .select('storage_path')
+    .eq('source_table', 'valuations')
+    .eq('source_id', valuationId)
+    .eq('status', 'issued')
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const storagePath = (row as { storage_path?: string } | null)?.storage_path
+  if (!storagePath) return { error: 'No certificate found for this valuation' }
+
+  const { data: signed, error } = await service.storage
+    .from(REPORTS_BUCKET)
+    .createSignedUrl(storagePath, 3600)
+  if (error || !signed?.signedUrl) {
+    return { error: error?.message ?? 'Could not create a download link' }
+  }
+  return { data: { url: signed.signedUrl } }
+}
+
 // ─── deleteValuationAction ───────────────────────────────────────────────────
 
 export type DeleteValuationResult = { data: { deleted: true } } | { error: string }
