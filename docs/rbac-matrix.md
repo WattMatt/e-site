@@ -43,6 +43,7 @@ membership.
 | `/projects/[id]/snags/visits/[visitId]` (visit detail) | W | W | W | W | R | — | R |
 | `/projects/[id]/diary` | W | W | W | W | R | — | R |
 | `/projects/[id]/cables` | W | W | W | W | — | — | R¹ |
+| `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W | W | W | — | — | — | — |
 | `/projects/[id]/equipment-materials` | W | W | W | W | — | — | R¹ |
 | `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/materials` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
@@ -112,6 +113,9 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |
 | `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | — |
 | `GET /api/projects/[id]/snags/visits/[visitId]/report` | R | R | R | R | R | — | R |
+| `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
+
+> `POST /api/medium-voltage/study` runs the heavy MV Z-bus + earth-fault solve and caches per-node `fault_results` for a revision. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org; refused on non-DRAFT revisions (an ISSUED snapshot is frozen). Discrimination/coordination compute is deferred to Phase 4b (device-pairing design).
 
 ## Server actions (`apps/web/src/actions/*`)
 
@@ -148,6 +152,17 @@ Read-only actions require project access (any project member). Write/export acti
 > **Delete** (`deleteDiaryEntryAction`) is gated to the entry **author** OR **`ORG_WRITE_ROLES`** (owner / admin / project_manager) — a contractor / inspector / supplier / client_viewer marked † can only delete entries they authored; owner/admin/PM can delete any entry.
 >
 > **Create** has no server action — entries are created client-side via `diaryService.create()` from `AddDiaryEntryForm`, gated only by RLS to any active org member (unchanged).
+
+### MV protection (`mv-protection.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `upsertMvStudySettings` | W | W | W | — | — | — | — |
+| `upsertFaultSource` | W | W | W | — | — | — | — |
+| `upsertProtectionDevice` | W | W | W | — | — | — | — |
+| `overrideFaultLevel` | W | W | W | — | — | — | — |
+
+> All four resolve revision → project → org and gate to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireEffectiveRole`, on top of the cable_schedule org RLS (`get_user_org_ids` + `user_is_client_viewer`). Each **refuses writes on a non-DRAFT revision** (ISSUED / SUPERSEDED are frozen — start a new revision). `overrideFaultLevel` writes `revisions.fault_level_ka` (the source prospective value `shortCircuitCheck` consumes) and records provenance in `change_log`. `issueMvStudy` (the gated DRAFT→ISSUED transition) is Phase 6.
 
 ## Public / unauthenticated
 
