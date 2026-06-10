@@ -84,7 +84,7 @@ import {
 // chain methods. Terminal single/maybeSingle resolve to the result directly.
 function qb(result: any): any {
   const p: any = Promise.resolve(result)
-  for (const m of ['schema', 'from', 'select', 'eq', 'in', 'lt', 'order', 'limit', 'update', 'insert', 'delete']) {
+  for (const m of ['schema', 'from', 'select', 'eq', 'in', 'lt', 'order', 'limit', 'update', 'insert', 'delete', 'neq']) {
     p[m] = () => qb(result)
   }
   p.single = () => Promise.resolve(result)
@@ -300,6 +300,88 @@ describe('certifyValuationAction', () => {
 
     expect('error' in res && res.error).toBe('Not found')
     expect(gatherValuationReportDataMock).not.toHaveBeenCalled()
+  })
+
+  it('SUCCESS — certifies a draft valuation: figures come from the gatherer summary, render fires, certify is called, path is revalidated', async () => {
+    const fakeFigures = { gross: 10000, retention: 500, net: 9500, previousNet: 0, thisCertificate: 9500 }
+    const fakeSummary = fakeFigures
+    const fakeBuffer = Buffer.from('PDF')
+    const fakeValuation = { id: VAL, projectId: PROJECT, status: 'certified', valuationNo: 1 }
+
+    // Cookie client: resolveProjectOrg + auth.getUser
+    createClientMock.mockResolvedValue({
+      schema: () => ({
+        from: () => ({
+          select: () => qb({ data: { organisation_id: 'org-1' }, error: null }),
+        }),
+      }),
+      auth: { getUser: async () => ({ data: { user: { id: 'u-certifier' } } }) },
+    })
+
+    // Service client: resolveValuationForGate → draft row; supersede-check → null (no prior);
+    // insert reports row → { id: 'report-1' }; supersede UPDATE (.neq) → no error.
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: (table: string) => {
+          if (table === 'valuations') {
+            return {
+              select: () =>
+                qb({ data: { id: VAL, project_id: PROJECT, status: 'draft' }, error: null }),
+            }
+          }
+          // reports table: supersede-check maybeSingle returns null; insert returns { id }
+          return {
+            select: () => ({
+              ...qb({ data: null, error: null }),
+              maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            }),
+            insert: () => ({
+              select: () => ({
+                single: () =>
+                  Promise.resolve({ data: { id: 'report-1' }, error: null }),
+              }),
+            }),
+            update: () => qb({ error: null }),
+          }
+        },
+      }),
+      storage: {
+        from: () => ({
+          upload: async () => ({ error: null }),
+          remove: async () => ({}),
+        }),
+      },
+    })
+
+    gatherValuationReportDataMock.mockResolvedValue({
+      summary: fakeSummary,
+      valuation: { no: 1 },
+      branding: {
+        accent: '#f59e0b',
+        issuer: { wordmark: 'WM Consulting' },
+        kicker: 'Payment Certificate',
+        projectLine: 'Kings Walk',
+      },
+    })
+    renderValuationReportMock.mockResolvedValue(fakeBuffer)
+    certifyMock.mockResolvedValue(fakeValuation)
+
+    const res = await certifyValuationAction(PROJECT, VAL)
+
+    expect('data' in res).toBe(true)
+    if ('data' in res) {
+      expect(res.data.reportId).toBe('report-1')
+      expect(res.data.valuation).toMatchObject({ status: 'certified' })
+    }
+
+    // The frozen figures passed to certify must be the gatherer's summary verbatim.
+    expect(certifyMock).toHaveBeenCalledWith(
+      expect.anything(),
+      VAL,
+      expect.objectContaining({ figures: fakeSummary }),
+    )
+    expect(renderValuationReportMock).toHaveBeenCalled()
+    expect(revalidatePathMock).toHaveBeenCalled()
   })
 })
 
