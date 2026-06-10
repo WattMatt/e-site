@@ -79,7 +79,7 @@ membership.
 
 ## Project settings (`apps/web/src/app/(admin)/projects/[id]/settings/*`)
 
-All 13 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narrow further per sub-page. The DB RLS gate underneath (PR-1a) is `ORG_WRITE_ROLES`; app-layer rows below narrow further. PR-1c ships these routes as placeholders ("Coming soon"); real forms land per Phase-2 PR.
+All 14 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narrow further per sub-page. The DB RLS gate underneath (PR-1a) is `ORG_WRITE_ROLES`; app-layer rows below narrow further. PR-1c ships these routes as placeholders ("Coming soon"); real forms land per Phase-2 PR.
 
 | Sub-page | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|
@@ -89,6 +89,7 @@ All 13 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narro
 | `/projects/[id]/settings/client`        | W | W | W | R | R | R | R |
 | `/projects/[id]/settings/contract`      | W | W | — | — | — | — | — |
 | `/projects/[id]/settings/rates`         | W | W | W | — | — | — | — |
+| `/projects/[id]/settings/valuations`    | W | W | W | — | — | — | — |
 | `/projects/[id]/settings/members`       | W | W | — | — | — | — | — |
 | `/projects/[id]/settings/contacts`      | W | W | W | R | R | R | R |
 | `/projects/[id]/settings/jbcc-parties`  | W | W | W | R | R | R | R |
