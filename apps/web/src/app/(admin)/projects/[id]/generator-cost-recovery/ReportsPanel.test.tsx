@@ -73,7 +73,7 @@ describe('ReportsPanel', () => {
     await renderPanel()
     expect(screen.getByText('Rev 3')).toBeDefined()
     expect(screen.getByText(REVISION.file_name)).toBeDefined()
-    expect(screen.getByText(/65[\s ,]?710[.,]68/)).toBeDefined()
+    expect(screen.getByText(/65[\s,]?710[.,]68/)).toBeDefined()
   })
 
   it('disables Generate and lists gaps when data is not ready', async () => {
