@@ -31,12 +31,25 @@ import {
 
 // ─── Public, serializable payload shape ──────────────────────────────────────
 
+/** Per-zone (board/centre) load roll-up for the Plant Sizing table. */
+export interface ZoneSummary {
+  zoneName: string
+  tenantCount: number
+  totalLoadKw: number
+  requiredKva: number
+  installedKva: number
+}
+
 export interface GeneratorReportData {
   projectName: string
   model: GeneratorCostRecoveryModel
   breakdown: CapitalBreakdown
   settings: GeneratorSettings
   narrative: ReportNarrative
+  /** shopNumber → zone (board/centre) name, or null when unassigned. */
+  zoneByShop: Record<string, string | null>
+  /** Per-zone load roll-up, ordered as zones are returned (display_order). */
+  zoneSummaries: ZoneSummary[]
   brandingInput: {
     orgName: string
     orgLogoDataUri: string | null
@@ -70,6 +83,64 @@ async function downloadToDataUri(
   } catch {
     return null
   }
+}
+
+/**
+ * Roll allocations up to their zone (board/centre) for the Plant Sizing table
+ * and the grouped schedule. Pure presentation — apportionment stays global
+ * (percent is of the site total); this only buckets by zone for display.
+ */
+function summariseZones(args: {
+  zones: Array<{ id: string; zone_name: string }>
+  generators: Array<{ zone_id: string; generator_size: string | null }>
+  tenants: Array<{ id: string; shop_number: string | null }>
+  assignments: Array<{ node_id: string; zone_id: string | null }>
+  allocations: GeneratorCostRecoveryModel['allocations']
+  powerFactor: number
+}): { zoneByShop: Record<string, string | null>; zoneSummaries: ZoneSummary[] } {
+  const { zones, generators, tenants, assignments, allocations, powerFactor } = args
+
+  const nodeByShop = new Map<string, string>()
+  for (const t of tenants) if (t.shop_number) nodeByShop.set(t.shop_number, t.id)
+
+  const zoneIdByNode = new Map<string, string>()
+  for (const a of assignments) if (a.zone_id) zoneIdByNode.set(a.node_id, a.zone_id)
+
+  const zoneNameById = new Map<string, string>()
+  for (const z of zones) zoneNameById.set(z.id, z.zone_name)
+
+  const zoneIdForShop = (shopNumber: string): string | undefined => {
+    const nodeId = nodeByShop.get(shopNumber)
+    return nodeId ? zoneIdByNode.get(nodeId) : undefined
+  }
+
+  const zoneByShop: Record<string, string | null> = {}
+  for (const a of allocations) {
+    const zoneId = zoneIdForShop(a.shopNumber)
+    zoneByShop[a.shopNumber] = zoneId ? (zoneNameById.get(zoneId) ?? null) : null
+  }
+
+  const installedByZone = new Map<string, number>()
+  for (const g of generators) {
+    const kva = parseInt(g.generator_size ?? '', 10)
+    if (!Number.isNaN(kva)) installedByZone.set(g.zone_id, (installedByZone.get(g.zone_id) ?? 0) + kva)
+  }
+
+  const pf = powerFactor > 0 ? powerFactor : 1
+
+  const zoneSummaries: ZoneSummary[] = zones.map((z) => {
+    const inZone = allocations.filter((a) => zoneIdForShop(a.shopNumber) === z.id)
+    const totalLoadKw = inZone.reduce((sum, a) => sum + a.loadingKw, 0)
+    return {
+      zoneName: z.zone_name,
+      tenantCount: inZone.length,
+      totalLoadKw,
+      requiredKva: totalLoadKw / pf,
+      installedKva: installedByZone.get(z.id) ?? 0,
+    }
+  })
+
+  return { zoneByShop, zoneSummaries }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -169,6 +240,16 @@ export async function gatherGeneratorReportData(
   const model = buildGeneratorCostRecovery(engineInput)
   const breakdown = capitalCostBreakdown(engineInput.zones, engineInput.tenants, engineInput.settings)
 
+  // Zone roll-up for the Plant Sizing table + grouped schedule (presentation only).
+  const { zoneByShop, zoneSummaries } = summariseZones({
+    zones: (zonesRes.data ?? []) as never,
+    generators: (generatorsRes.data ?? []) as never,
+    tenants: (tenantsRes.data ?? []) as never,
+    assignments: (assignmentsRes.data ?? []) as never,
+    allocations: model.allocations,
+    powerFactor: engineInput.settings.powerFactor,
+  })
+
   // 7. Download logos as data: URIs.
   const [orgLogoDataUri, clientLogoDataUri, projectMarkDataUri] = await Promise.all([
     org?.logo_url ? downloadToDataUri(service, LOGO_BUCKET, org.logo_url) : Promise.resolve(null),
@@ -189,6 +270,8 @@ export async function gatherGeneratorReportData(
     // Standing prose sections. Defaults for now; per-project editable text
     // (gcr.settings narrative columns) is wired in a later increment.
     narrative: DEFAULT_REPORT_NARRATIVE,
+    zoneByShop,
+    zoneSummaries,
     brandingInput: {
       orgName: (org?.name as string | null) ?? 'Organisation',
       orgLogoDataUri,
