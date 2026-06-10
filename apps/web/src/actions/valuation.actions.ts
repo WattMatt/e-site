@@ -71,15 +71,15 @@ async function resolveValuationForGate(
   service: any,
   projectId: string,
   valuationId: string,
-): Promise<{ id: string; status: string } | null> {
+): Promise<{ id: string; status: string; valuationNo: number } | null> {
   const { data } = await service
     .schema('projects')
     .from('valuations')
-    .select('id, project_id, status')
+    .select('id, project_id, status, valuation_no')
     .eq('id', valuationId)
     .maybeSingle()
   if (!data || data.project_id !== projectId) return null
-  return { id: data.id, status: data.status }
+  return { id: data.id, status: data.status, valuationNo: data.valuation_no }
 }
 
 /** The rate fields computeLineValue needs, mapped off a raw boq_items row. */
@@ -218,6 +218,19 @@ export async function createValuationAction(
 
   try {
     const service = createServiceClient()
+
+    // Guard 1 — one open draft at a time: refuse if there is already a draft.
+    const { data: existingDraft } = await (service as any)
+      .schema('projects')
+      .from('valuations')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('status', 'draft')
+      .limit(1)
+      .maybeSingle()
+    if (existingDraft) {
+      return { error: 'Finish (certify) the current draft valuation before starting a new one.' }
+    }
 
     // A valuation prices against the current BOQ import — refuse if none.
     const current = await boqService.getCurrent(service as any, projectId)
@@ -406,6 +419,20 @@ export async function certifyValuationAction(
   if (!val) return { error: 'Not found' }
   if (val.status === 'certified') {
     return { error: 'This valuation is already certified.' }
+  }
+
+  // Guard 2 — certify in order: refuse if any earlier valuation is not yet certified.
+  const { data: earlierUncertified } = await (service as any)
+    .schema('projects')
+    .from('valuations')
+    .select('id')
+    .eq('project_id', projectId)
+    .lt('valuation_no', val.valuationNo)
+    .neq('status', 'certified')
+    .limit(1)
+    .maybeSingle()
+  if (earlierUncertified) {
+    return { error: 'Certify earlier valuations first.' }
   }
 
   const proj = await resolveProjectOrg(supabase, projectId)

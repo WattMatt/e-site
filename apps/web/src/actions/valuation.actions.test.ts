@@ -216,12 +216,39 @@ describe('createValuationAction', () => {
       auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
     })
     boqGetCurrentMock.mockResolvedValue(null)
-    createServiceClientMock.mockReturnValue({})
+    // No existing draft — draft-check returns null; getCurrent returns null after.
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: (table: string) => ({
+          select: () => qb({ data: table === 'valuations' ? null : { retention_pct: 5 }, error: null }),
+        }),
+      }),
+    })
 
     const res = await createValuationAction(PROJECT, '2026-06-10')
 
     expect('error' in res).toBe(true)
     if ('error' in res) expect(res.error).toMatch(/Import a BOQ/i)
+    expect(createMock).not.toHaveBeenCalled()
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+
+  it('returns the "finish the current draft" error (and does NOT call create) when a draft valuation exists for the project', async () => {
+    createClientMock.mockResolvedValue({
+      schema: () => ({ from: () => ({ select: () => qb({ data: { organisation_id: 'org-1' }, error: null }) }) }),
+      auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
+    })
+    // Service client: draft-check finds an existing draft.
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: () => ({ select: () => qb({ data: { id: 'val-existing' }, error: null }) }),
+      }),
+    })
+
+    const res = await createValuationAction(PROJECT, '2026-06-10')
+
+    expect('error' in res).toBe(true)
+    if ('error' in res) expect(res.error).toMatch(/Finish.*draft/i)
     expect(createMock).not.toHaveBeenCalled()
     expect(revalidatePathMock).not.toHaveBeenCalled()
   })
@@ -232,10 +259,15 @@ describe('createValuationAction', () => {
       auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
     })
     boqGetCurrentMock.mockResolvedValue({ id: 'imp-current' })
-    // Service client resolves the project_settings.retention_pct row.
+    // Service client: draft-check returns null (no blocking draft); project_settings returns retention_pct.
     createServiceClientMock.mockReturnValue({
       schema: () => ({
-        from: () => ({ select: () => qb({ data: { retention_pct: 7.5 }, error: null }) }),
+        from: (table: string) => ({
+          select: () => qb({
+            data: table === 'valuations' ? null : { retention_pct: 7.5 },
+            error: null,
+          }),
+        }),
       }),
     })
     createMock.mockResolvedValue({ id: 'val-new', valuationNo: 1 })
@@ -270,7 +302,7 @@ describe('certifyValuationAction', () => {
       schema: () => ({
         from: () => ({
           select: () =>
-            qb({ data: { id: VAL, project_id: PROJECT, status: 'certified' }, error: null }),
+            qb({ data: { id: VAL, project_id: PROJECT, status: 'certified', valuation_no: 1 }, error: null }),
         }),
       }),
     })
@@ -291,7 +323,7 @@ describe('certifyValuationAction', () => {
     createServiceClientMock.mockReturnValue({
       schema: () => ({
         from: () => ({
-          select: () => qb({ data: { id: VAL, project_id: 'OTHER', status: 'draft' }, error: null }),
+          select: () => qb({ data: { id: VAL, project_id: 'OTHER', status: 'draft', valuation_no: 1 }, error: null }),
         }),
       }),
     })
@@ -300,6 +332,44 @@ describe('certifyValuationAction', () => {
 
     expect('error' in res && res.error).toBe('Not found')
     expect(gatherValuationReportDataMock).not.toHaveBeenCalled()
+  })
+
+  it('returns the "certify earlier valuations first" error (and does NOT call render/certify) when a lower-valuation_no valuation is still draft', async () => {
+    createClientMock.mockResolvedValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
+    })
+    // resolveValuationForGate: valuation_no = 2 (draft).
+    // sequence-check: finds an earlier uncertified row.
+    let valuationsCallCount = 0
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: (table: string) => {
+          if (table === 'valuations') {
+            valuationsCallCount++
+            if (valuationsCallCount === 1) {
+              // resolveValuationForGate
+              return {
+                select: () =>
+                  qb({ data: { id: VAL, project_id: PROJECT, status: 'draft', valuation_no: 2 }, error: null }),
+              }
+            }
+            // Guard 2 sequence-check — earlier uncertified valuation exists
+            return {
+              select: () => qb({ data: { id: 'val-1' }, error: null }),
+            }
+          }
+          return { select: () => qb({ data: null, error: null }) }
+        },
+      }),
+    })
+
+    const res = await certifyValuationAction(PROJECT, VAL)
+
+    expect('error' in res).toBe(true)
+    if ('error' in res) expect(res.error).toMatch(/Certify earlier/i)
+    expect(gatherValuationReportDataMock).not.toHaveBeenCalled()
+    expect(renderValuationReportMock).not.toHaveBeenCalled()
+    expect(certifyMock).not.toHaveBeenCalled()
   })
 
   it('SUCCESS — certifies a draft valuation: figures come from the gatherer summary, render fires, certify is called, path is revalidated', async () => {
@@ -318,15 +388,26 @@ describe('certifyValuationAction', () => {
       auth: { getUser: async () => ({ data: { user: { id: 'u-certifier' } } }) },
     })
 
-    // Service client: resolveValuationForGate → draft row; supersede-check → null (no prior);
-    // insert reports row → { id: 'report-1' }; supersede UPDATE (.neq) → no error.
+    // Service client: resolveValuationForGate → draft row (valuation_no: 1);
+    // sequence-check → null (no earlier uncertified, since valuation_no: 1 means lt(1) is empty);
+    // supersede-check → null (no prior report); insert reports row → { id: 'report-1' };
+    // supersede UPDATE (.neq) → no error.
+    let valuationsCallCount = 0
     createServiceClientMock.mockReturnValue({
       schema: () => ({
         from: (table: string) => {
           if (table === 'valuations') {
+            valuationsCallCount++
+            if (valuationsCallCount === 1) {
+              // resolveValuationForGate
+              return {
+                select: () =>
+                  qb({ data: { id: VAL, project_id: PROJECT, status: 'draft', valuation_no: 1 }, error: null }),
+              }
+            }
+            // Guard 2 sequence-check — no earlier uncertified (valuation_no 1 has no predecessors)
             return {
-              select: () =>
-                qb({ data: { id: VAL, project_id: PROJECT, status: 'draft' }, error: null }),
+              select: () => qb({ data: null, error: null }),
             }
           }
           // reports table: supersede-check maybeSingle returns null; insert returns { id }
