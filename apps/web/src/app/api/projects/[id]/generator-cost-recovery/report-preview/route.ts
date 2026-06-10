@@ -3,7 +3,8 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { hasFeatureSeat } from '@/lib/features'
 import { gatherGeneratorReportData } from '@/lib/reports/generator-report-data'
-import { resolveBranding, type BrandingInput } from '@/lib/reports/branding'
+import { resolveBranding } from '@/lib/reports/branding'
+import { buildGcrBrandingInput } from '@/lib/reports/generator-report-branding'
 import { renderGeneratorReport } from '@/lib/reports/render-generator'
 
 export const runtime = 'nodejs'
@@ -72,30 +73,9 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to load generator data' }, { status: 500 })
   }
 
-  // ── Build BrandingInput ────────────────────────────────────────────────────
+  // ── Build BrandingInput (shared with the save-a-revision route) ────────────
   const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
-  const { brandingInput } = data
-
-  const input: BrandingInput = {
-    org: {
-      name: brandingInput.orgName,
-      logoSrc: brandingInput.orgLogoDataUri ?? undefined,
-      accent: brandingInput.orgAccent,
-    },
-    project: {
-      name: data.projectName,
-      clientLogoSrc: brandingInput.clientLogoDataUri ?? undefined,
-      projectMarkSrc: brandingInput.projectMarkDataUri ?? undefined,
-      accent: brandingInput.projectAccent,
-      subtitle: brandingInput.projectSubtitle || undefined,
-    },
-    contractor: null,
-    title: 'Generator Cost-Recovery Report',
-    kicker: 'STANDBY GENERATOR · COST RECOVERY',
-    date: today,
-  }
-
-  const branding = resolveBranding(input)
+  const branding = resolveBranding(buildGcrBrandingInput(data, today))
 
   // ── Render ─────────────────────────────────────────────────────────────────
   let pdf: Buffer

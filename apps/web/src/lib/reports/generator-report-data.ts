@@ -17,6 +17,7 @@ import {
   buildGeneratorCostRecovery,
   mapDbToEngineInput,
   capitalCostBreakdown,
+  checkReadiness,
   DEFAULT_REPORT_NARRATIVE,
   type ReportNarrative,
   type GeneratorCostRecoveryModel,
@@ -46,6 +47,8 @@ export interface GeneratorReportData {
   breakdown: CapitalBreakdown
   settings: GeneratorSettings
   narrative: ReportNarrative
+  /** checkReadiness gaps — empty when the data is complete enough to publish. */
+  readinessGaps: string[]
   /** shopNumber → zone (board/centre) name, or null when unassigned. */
   zoneByShop: Record<string, string | null>
   /** Per-zone load roll-up, ordered as zones are returned (display_order). */
@@ -240,6 +243,14 @@ export async function gatherGeneratorReportData(
   const model = buildGeneratorCostRecovery(engineInput)
   const breakdown = capitalCostBreakdown(engineInput.zones, engineInput.tenants, engineInput.settings)
 
+  // Readiness — same check the UI uses to gate "Generate report".
+  const readiness = checkReadiness({
+    settings: (settingsRes.data ?? null) as GcrSettingsRow | null,
+    zones: (zonesRes.data ?? []) as GcrZoneRow[],
+    generators: (generatorsRes.data ?? []) as GcrZoneGeneratorRow[],
+    tenantNodes: (tenantsRes.data ?? []) as TenantNodeRow[],
+  })
+
   // Zone roll-up for the Plant Sizing table + grouped schedule (presentation only).
   const { zoneByShop, zoneSummaries } = summariseZones({
     zones: (zonesRes.data ?? []) as never,
@@ -270,6 +281,7 @@ export async function gatherGeneratorReportData(
     // Standing prose sections. Defaults for now; per-project editable text
     // (gcr.settings narrative columns) is wired in a later increment.
     narrative: DEFAULT_REPORT_NARRATIVE,
+    readinessGaps: readiness.gaps,
     zoneByShop,
     zoneSummaries,
     brandingInput: {

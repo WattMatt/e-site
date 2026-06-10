@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { hasFeatureSeat } from '@/lib/features'
 import { Card, CardBody } from '@/components/ui/Card'
 import { loadGcrConfigAction } from './gcr.actions'
+import { listGcrReportRevisionsAction } from './gcr-reports.actions'
 import { GcrTabs } from './GcrTabs'
 
 interface Props {
@@ -94,6 +95,10 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
     )
   }
 
+  // Saved report revisions (newest first) — errors degrade to an empty list.
+  const revisionsResult = await listGcrReportRevisionsAction(id)
+  const reportRevisions = Array.isArray(revisionsResult) ? revisionsResult : []
+
   return (
     <div className="animate-fadeup">
       <div className="page-header">
@@ -105,7 +110,7 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
         </div>
       </div>
 
-      <GcrTabs projectId={id} data={result} />
+      <GcrTabs projectId={id} data={result} reportRevisions={reportRevisions} />
     </div>
   )
 }
