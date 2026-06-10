@@ -15,6 +15,7 @@ import {
   type ProtectionDeviceSettings,
 } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { requireMvAccess } from '@/lib/mv-access'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { SandboxNotice } from '@/components/mv/SandboxNotice'
 import { TccPlot, type TccSeries } from '@/components/mv/TccPlot'
@@ -75,6 +76,11 @@ export default async function CoordinationPage({ params }: Props) {
 
   const guard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
   if (!guard.ok) redirect(`/projects/${projectId}/cables/${revisionId}`)
+
+  // Per-user MV paywall (Phase 7). Server-side gate on every MV route; the
+  // mv-unlock page itself is exempt.
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/cables/${revisionId}/mv-unlock`)
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')

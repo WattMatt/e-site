@@ -113,6 +113,54 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ received: true })
     }
 
+    // Branch A2: per-user MV subscription charge (paywall, Phase 7). Discrete
+    // from the org subscription path below — keyed on metadata.user_id, written
+    // to billing.user_mv_subscriptions. Grants on the initial charge AND each
+    // annual renewal. Idempotent on last_event_id so a duplicate delivery (or
+    // the callback recording the same charge) is a clean no-op. Returns early so
+    // it never touches the org subscription/invoice path.
+    if (metadata.type === 'mv_subscription' && metadata.user_id) {
+      const userId = metadata.user_id as string
+      const eventId = (event.id as string | undefined) ?? data.reference
+
+      const { data: existing } = await (supabase as any)
+        .schema('billing')
+        .from('user_mv_subscriptions')
+        .select('last_event_id')
+        .eq('user_id', userId)
+        .maybeSingle()
+
+      // Already processed this exact event — no-op.
+      if (existing?.last_event_id && existing.last_event_id === eventId) {
+        return NextResponse.json({ received: true })
+      }
+
+      // charge.success carries no subscription next-payment date, so default the
+      // access window to one year out. subscription.create (if it fires) and the
+      // next renewal charge will keep current_period_end fresh.
+      const periodEnd = new Date()
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1)
+
+      const { error: mvErr } = await (supabase as any)
+        .schema('billing')
+        .from('user_mv_subscriptions')
+        .upsert(
+          {
+            user_id: userId,
+            status: 'active',
+            current_period_end: periodEnd.toISOString(),
+            paystack_customer_code: data.customer?.customer_code,
+            paystack_subscription_code:
+              data.subscription?.subscription_code ?? data.plan_object?.subscription_code ?? undefined,
+            last_event_id: eventId,
+          },
+          { onConflict: 'user_id', ignoreDuplicates: false },
+        )
+      if (mvErr) console.error('Webhook mv_subscription grant error:', mvErr)
+
+      return NextResponse.json({ received: true })
+    }
+
     // Branch B: subscription charge (recurring or one-off fallback).
     const { org_id, tier, period, amount_kobo, plan_code, mode } = metadata
     if (org_id && tier) {
@@ -192,6 +240,15 @@ export async function POST(req: NextRequest) {
       .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
       .eq('paystack_subscription_code', sub.subscription_code)
     if (error) console.error('Webhook cancel error:', error)
+
+    // Additionally expire a per-user MV subscription (Phase 7) bound to this
+    // Paystack subscription. No-op when the disabled subscription is an org one.
+    const { error: mvCancelErr } = await (supabase as any)
+      .schema('billing')
+      .from('user_mv_subscriptions')
+      .update({ status: 'expired' })
+      .eq('paystack_subscription_code', sub.subscription_code)
+    if (mvCancelErr) console.error('Webhook mv cancel error:', mvCancelErr)
   }
 
   // A subscription renewal invoice failed — the primary Paystack signal for a

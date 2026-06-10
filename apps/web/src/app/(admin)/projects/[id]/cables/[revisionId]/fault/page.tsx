@@ -4,6 +4,7 @@ import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, mvProtectionService, ORG_WRITE_ROLES } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { requireMvAccess } from '@/lib/mv-access'
 import { Card, CardHeader, CardBody, KpiCard } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { SandboxNotice } from '@/components/mv/SandboxNotice'
@@ -36,6 +37,11 @@ export default async function MvFaultStudyPage({ params }: Props) {
   // the results. Denied users bounce back to the schedule (mirrors cost/page).
   const guard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
   if (!guard.ok) redirect(`/projects/${projectId}/cables/${revisionId}`)
+
+  // Per-user MV paywall (Phase 7). Server-side gate on every MV route; the
+  // mv-unlock page itself is exempt.
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/cables/${revisionId}/mv-unlock`)
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
