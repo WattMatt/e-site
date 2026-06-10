@@ -34,16 +34,38 @@ CREATE INDEX IF NOT EXISTS idx_gcr_report_revisions_project
 
 ALTER TABLE gcr.report_revisions ENABLE ROW LEVEL SECURITY;
 
+-- SELECT: project members, EXCLUDING client viewers (00118 pattern) — the
+-- summary jsonb holds cost figures that must never reach the client portal.
 DROP POLICY IF EXISTS gcr_report_revisions_select ON gcr.report_revisions;
 CREATE POLICY gcr_report_revisions_select ON gcr.report_revisions FOR SELECT TO authenticated
-  USING (public.user_has_project_access(project_id));
+  USING (
+    public.user_has_project_access(project_id)
+    AND NOT public.user_is_client_viewer(organisation_id)
+  );
 
+-- Writes: project- and role-scoped via user_can_manage_project (00085), with
+-- organisation_id pinned to the project's actual org so a member of org A can
+-- never inject a row into org B's report list. Deliberately NO UPDATE policy
+-- (and no UPDATE grant): revisions are immutable — generate appends, delete
+-- removes; nothing edits. The service-role insert path bypasses RLS as usual.
 DROP POLICY IF EXISTS gcr_report_revisions_write ON gcr.report_revisions;
-CREATE POLICY gcr_report_revisions_write ON gcr.report_revisions FOR ALL TO authenticated
-  USING (organisation_id = ANY(public.get_user_org_ids()))
-  WITH CHECK (organisation_id = ANY(public.get_user_org_ids()));
+DROP POLICY IF EXISTS gcr_report_revisions_insert ON gcr.report_revisions;
+CREATE POLICY gcr_report_revisions_insert ON gcr.report_revisions FOR INSERT TO authenticated
+  WITH CHECK (
+    public.user_can_manage_project(project_id)
+    AND organisation_id = (SELECT p.organisation_id FROM projects.projects p WHERE p.id = project_id)
+  );
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON gcr.report_revisions TO authenticated;
+DROP POLICY IF EXISTS gcr_report_revisions_delete ON gcr.report_revisions;
+CREATE POLICY gcr_report_revisions_delete ON gcr.report_revisions FOR DELETE TO authenticated
+  USING (public.user_can_manage_project(project_id));
+
+GRANT SELECT, INSERT, DELETE ON gcr.report_revisions TO authenticated; -- no UPDATE: immutable
+-- 00126's schema-level DEFAULT PRIVILEGES include UPDATE for authenticated, so
+-- this table inherited it at CREATE — revoke explicitly to match the no-UPDATE
+-- policy set (RLS already denies UPDATE; this makes the grants tell the truth).
+REVOKE UPDATE ON gcr.report_revisions FROM authenticated;
+REVOKE UPDATE ON gcr.report_revisions FROM anon;
 GRANT ALL ON gcr.report_revisions TO service_role;
 
 NOTIFY pgrst, 'reload schema';

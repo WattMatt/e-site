@@ -95,9 +95,12 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
     )
   }
 
-  // Saved report revisions (newest first) — errors degrade to an empty list.
+  // Saved report revisions (newest first). A load failure degrades to an empty
+  // list but is flagged so the tab doesn't claim "no saved reports" when
+  // revisions exist behind a transient error.
   const revisionsResult = await listGcrReportRevisionsAction(id)
   const reportRevisions = Array.isArray(revisionsResult) ? revisionsResult : []
+  const revisionsLoadFailed = !Array.isArray(revisionsResult)
 
   return (
     <div className="animate-fadeup">
@@ -110,7 +113,12 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
         </div>
       </div>
 
-      <GcrTabs projectId={id} data={result} reportRevisions={reportRevisions} />
+      <GcrTabs
+        projectId={id}
+        data={result}
+        reportRevisions={reportRevisions}
+        reportRevisionsLoadFailed={revisionsLoadFailed}
+      />
     </div>
   )
 }

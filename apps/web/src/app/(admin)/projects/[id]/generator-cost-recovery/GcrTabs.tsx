@@ -14,9 +14,10 @@ interface GcrTabsProps {
   projectId: string
   data: GcrConfig
   reportRevisions: GcrReportRevisionRow[]
+  reportRevisionsLoadFailed?: boolean
 }
 
-export function GcrTabs({ projectId, data, reportRevisions }: GcrTabsProps) {
+export function GcrTabs({ projectId, data, reportRevisions, reportRevisionsLoadFailed }: GcrTabsProps) {
   const [active, setActive] = useState<Tab>('settings')
 
   return (
@@ -87,6 +88,7 @@ export function GcrTabs({ projectId, data, reportRevisions }: GcrTabsProps) {
         <ReportsPanel
           projectId={projectId}
           revisions={reportRevisions}
+          loadFailed={reportRevisionsLoadFailed}
           settings={data.settings}
           zones={data.zones}
           generators={data.generators}

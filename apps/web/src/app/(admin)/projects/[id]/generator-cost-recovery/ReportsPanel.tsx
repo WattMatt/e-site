@@ -44,6 +44,8 @@ function formatDate(iso: string): string {
 interface Props {
   projectId: string
   revisions: GcrReportRevisionRow[]
+  /** True when the server-side revision load failed (don't claim "no reports"). */
+  loadFailed?: boolean
   settings: GcrSettingsRow | null
   zones: GcrZoneRow[]
   generators: GcrZoneGeneratorRow[]
@@ -52,7 +54,7 @@ interface Props {
 
 // ─── ReportsPanel ─────────────────────────────────────────────────────────────
 
-export function ReportsPanel({ projectId, revisions, settings, zones, generators, tenants }: Props) {
+export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones, generators, tenants }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
 
@@ -104,25 +106,35 @@ export function ReportsPanel({ projectId, revisions, settings, zones, generators
   async function handleView(rev: GcrReportRevisionRow) {
     setBusyRevId(rev.id)
     setRowError(null)
-    const res = await getGcrReportUrlAction(projectId, rev.id)
-    setBusyRevId(null)
-    if ('error' in res) { setRowError(res.error); return }
-    setViewer({ rev, url: res.url })
+    try {
+      const res = await getGcrReportUrlAction(projectId, rev.id)
+      if ('error' in res) { setRowError(res.error); return }
+      setViewer({ rev, url: res.url })
+    } catch {
+      setRowError('Request failed — check your connection and try again.')
+    } finally {
+      setBusyRevId(null)
+    }
   }
 
   async function handleDownload(rev: GcrReportRevisionRow) {
     setBusyRevId(rev.id)
     setRowError(null)
-    const res = await getGcrReportUrlAction(projectId, rev.id, { download: true })
-    setBusyRevId(null)
-    if ('error' in res) { setRowError(res.error); return }
-    // Attachment disposition — navigating triggers the download without leaving the page.
-    const a = document.createElement('a')
-    a.href = res.url
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    try {
+      const res = await getGcrReportUrlAction(projectId, rev.id, { download: true })
+      if ('error' in res) { setRowError(res.error); return }
+      // Attachment disposition — navigating triggers the download without leaving the page.
+      const a = document.createElement('a')
+      a.href = res.url
+      a.rel = 'noopener'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } catch {
+      setRowError('Request failed — check your connection and try again.')
+    } finally {
+      setBusyRevId(null)
+    }
   }
 
   // ── Delete ──────────────────────────────────────────────────────────────────
@@ -130,11 +142,16 @@ export function ReportsPanel({ projectId, revisions, settings, zones, generators
   async function handleDelete(rev: GcrReportRevisionRow) {
     setBusyRevId(rev.id)
     setRowError(null)
-    const res = await deleteGcrReportRevisionAction(projectId, rev.id)
-    setBusyRevId(null)
-    setConfirmDeleteId(null)
-    if ('error' in res) { setRowError(res.error); return }
-    startTransition(() => router.refresh())
+    try {
+      const res = await deleteGcrReportRevisionAction(projectId, rev.id)
+      if ('error' in res) { setRowError(res.error); return }
+      startTransition(() => router.refresh())
+    } catch {
+      setRowError('Request failed — check your connection and try again.')
+    } finally {
+      setBusyRevId(null)
+      setConfirmDeleteId(null)
+    }
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -221,7 +238,9 @@ export function ReportsPanel({ projectId, revisions, settings, zones, generators
       {/* Revision list */}
       {revisions.length === 0 ? (
         <div style={{ padding: '32px 18px', textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13, fontStyle: 'italic' }}>
-          No saved reports yet. Generate one to create Rev 1.
+          {loadFailed
+            ? 'Couldn’t load saved reports — refresh to try again.'
+            : 'No saved reports yet. Generate one to create Rev 1.'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

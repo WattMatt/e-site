@@ -30,7 +30,7 @@ Generating a generator cost-recovery report must produce a **saved, numbered rev
 | created_by | uuid NULL → auth.users | |
 | created_at | timestamptz NOT NULL default now() | |
 
-RLS mirrors the rest of `gcr`: SELECT via `user_has_project_access(project_id)`; ALL via `organisation_id = ANY(get_user_org_ids())`. Explicit grants to authenticated/service_role (00118 convention). Revisions are **immutable** — generate always appends; delete removes a revision (row + best-effort storage object).
+RLS (hardened after adversarial review): SELECT via `user_has_project_access(project_id) AND NOT user_is_client_viewer(organisation_id)` — the summary jsonb holds cost figures that must never reach the client portal (00118 pattern). Writes are project- and role-scoped via `user_can_manage_project(project_id)`, with `organisation_id` pinned to the project's actual org (blocks cross-org row injection). **No UPDATE policy and UPDATE revoked** — revisions are immutable at the DB layer: generate appends, delete removes, nothing edits. Explicit grants to authenticated/service_role (00118 convention).
 
 ## Generation — POST `/api/projects/[id]/generator-cost-recovery/reports`
 
