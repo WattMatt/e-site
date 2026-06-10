@@ -29,9 +29,13 @@ import {
   protectionDeviceToRow,
   rowToAdapterFaultSource,
   faultResultToRow,
+  rowToFaultResult,
+  rowToDiscriminationCheck,
   type MvStudySettingsRow,
   type MvFaultSourceRow,
   type MvProtectionDeviceRow,
+  type MvFaultResultRow,
+  type MvDiscriminationCheckRow,
   type FaultResultRow,
 } from './_mv-protection-mappers'
 import type { MvNetworkInput } from './mv-network.service'
@@ -306,5 +310,42 @@ export const mvProtectionService = {
       .upsert(rows, { onConflict: 'revision_id,node_id' })
     if (error) throw new Error(error.message)
     return rows.length
+  },
+
+  /**
+   * Read the cached per-node fault results for a revision (one row per node;
+   * empty until the study route has run). Mirrors listFaultSources.
+   */
+  async listFaultResults(
+    client: TypedSupabaseClient,
+    revisionId: string,
+  ): Promise<MvFaultResultRow[]> {
+    const { data, error } = await (client as AnyClient)
+      .schema('cable_schedule')
+      .from('fault_results')
+      .select('*')
+      .eq('revision_id', revisionId)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(rowToFaultResult)
+  },
+
+  // ─── discrimination_checks (read) ────────────────────────────────────
+
+  /**
+   * Read the cached upstream/downstream discrimination checks for a revision.
+   * Empty until device-pairing lands (Phase 4b) — the coordination view shows
+   * a "pairing pending" note in that case. Mirrors listFaultSources.
+   */
+  async listDiscriminationChecks(
+    client: TypedSupabaseClient,
+    revisionId: string,
+  ): Promise<MvDiscriminationCheckRow[]> {
+    const { data, error } = await (client as AnyClient)
+      .schema('cable_schedule')
+      .from('discrimination_checks')
+      .select('*')
+      .eq('revision_id', revisionId)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(rowToDiscriminationCheck)
   },
 }

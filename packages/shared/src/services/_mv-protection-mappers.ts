@@ -260,3 +260,72 @@ export function faultResultToRow(
     basis: res.basis,
   }
 }
+
+/**
+ * Persisted fault-result row (camelCase) — the read shape the Fault view
+ * consumes. Superset of the write `FaultResultRow` with the DB-assigned id +
+ * computed_at; numerics already coerced from PostgREST's string NUMERICs.
+ */
+export interface MvFaultResultRow {
+  id: string
+  revisionId: string
+  nodeId: string
+  ik3MaxKa: number | null
+  ik3MinKa: number | null
+  ik1MaxKa: number | null
+  ik1MinKa: number | null
+  xrRatio: number | null
+  ipKa: number | null
+  icAmps: number | null
+  basis: string | null
+  computedAt: string
+}
+
+export function rowToFaultResult(r: Record<string, unknown>): MvFaultResultRow {
+  return {
+    id: r.id as string,
+    revisionId: r.revision_id as string,
+    nodeId: r.node_id as string,
+    ik3MaxKa: num(r.ik3_max_ka),
+    ik3MinKa: num(r.ik3_min_ka),
+    ik1MaxKa: num(r.ik1_max_ka),
+    ik1MinKa: num(r.ik1_min_ka),
+    xrRatio: num(r.xr_ratio),
+    ipKa: num(r.ip_ka),
+    icAmps: num(r.ic_amps),
+    basis: (r.basis as string) ?? null,
+    computedAt: r.computed_at as string,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// discrimination_checks — computed cache (read shape).
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface MvDiscriminationCheckRow {
+  id: string
+  revisionId: string
+  upstreamDeviceId: string
+  downstreamDeviceId: string
+  atFaultA: number | null
+  tUpS: number | null
+  tDownS: number | null
+  marginMs: number | null
+  verdict: 'ok' | 'marginal' | 'fails'
+  computedAt: string
+}
+
+export function rowToDiscriminationCheck(r: Record<string, unknown>): MvDiscriminationCheckRow {
+  return {
+    id: r.id as string,
+    revisionId: r.revision_id as string,
+    upstreamDeviceId: r.upstream_device_id as string,
+    downstreamDeviceId: r.downstream_device_id as string,
+    atFaultA: num(r.at_fault_a),
+    tUpS: num(r.t_up_s),
+    tDownS: num(r.t_down_s),
+    marginMs: num(r.margin_ms),
+    verdict: r.verdict as 'ok' | 'marginal' | 'fails',
+    computedAt: r.computed_at as string,
+  }
+}
