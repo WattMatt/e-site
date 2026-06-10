@@ -103,7 +103,7 @@ export async function POST(req: Request) {
       graph.organisationId,
       rows,
     )
-    revalidatePath(`/projects/${graph.projectId}/cables/${revisionId}`)
+    revalidatePath(`/projects/${graph.projectId}/medium-voltage/${revisionId}`)
     return NextResponse.json({ data: { nodeCount, computedAt: new Date().toISOString() } })
   } catch (err) {
     return NextResponse.json(

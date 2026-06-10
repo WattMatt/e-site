@@ -19,7 +19,7 @@ import { requireMvAccess } from '@/lib/mv-access'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { SandboxNotice } from '@/components/mv/SandboxNotice'
 import { TccPlot, type TccSeries } from '@/components/mv/TccPlot'
-import { RevisionStatusBadge } from '../RevisionStatusBadge'
+import { RevisionStatusBadge } from '../../../cables/[revisionId]/RevisionStatusBadge'
 
 export const metadata: Metadata = { title: 'MV coordination' }
 
@@ -80,7 +80,7 @@ export default async function CoordinationPage({ params }: Props) {
   // Per-user MV paywall (Phase 7). Server-side gate on every MV route; the
   // mv-unlock page itself is exempt.
   const { data: { user } } = await supabase.auth.getUser()
-  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/cables/${revisionId}/mv-unlock`)
+  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/medium-voltage/${revisionId}/mv-unlock`)
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -151,7 +151,7 @@ export default async function CoordinationPage({ params }: Props) {
         </div>
         <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
           <Link
-            href={`/projects/${projectId}/cables/${revisionId}/protection`}
+            href={`/projects/${projectId}/medium-voltage/${revisionId}/protection`}
             style={{
               background: 'var(--c-panel)', border: '1px solid var(--c-border)',
               color: 'var(--c-text-mid)', borderRadius: 6, padding: '9px 16px',
@@ -175,7 +175,7 @@ export default async function CoordinationPage({ params }: Props) {
           {series.length === 0 ? (
             <div style={{ padding: '40px 18px', textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13 }}>
               📈 No curves to plot yet. Add{' '}
-              <Link href={`/projects/${projectId}/cables/${revisionId}/protection`} style={{ color: 'var(--c-amber)' }}>protection devices</Link>{' '}
+              <Link href={`/projects/${projectId}/medium-voltage/${revisionId}/protection`} style={{ color: 'var(--c-amber)' }}>protection devices</Link>{' '}
               with a curve standard + pickup setting, and they appear here.
             </div>
           ) : (

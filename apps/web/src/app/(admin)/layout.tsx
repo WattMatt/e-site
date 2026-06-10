@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import type { OrgRole } from '@esite/shared'
 import { createClient } from '@/lib/supabase/server'
 import { hasFeature } from '@/lib/features'
+import { hasMvAccess } from '@/lib/mv-access'
 import { listMyOrganisations } from '@/actions/active-organisation.actions'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { OrgSwitcher } from '@/components/layout/OrgSwitcher'
@@ -31,9 +32,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const membership = primaryMembership as { organisation_id: string; role: OrgRole } | null
   const primaryOrgId = membership?.organisation_id
   const primaryRole = membership?.role ?? null
-  const [inspectionsUnlocked, jbccUnlocked, orgsResult] = await Promise.all([
+  const [inspectionsUnlocked, jbccUnlocked, mvUnlocked, orgsResult] = await Promise.all([
     primaryOrgId ? hasFeature(primaryOrgId, 'inspections', supabase) : Promise.resolve(false),
     primaryOrgId ? hasFeature(primaryOrgId, 'jbcc', supabase) : Promise.resolve(false),
+    // MV is a per-USER subscription (lib/mv-access), not an org feature unlock.
+    hasMvAccess(user.id, supabase),
     listMyOrganisations(),
   ])
   const orgMemberships = orgsResult.ok ? orgsResult.memberships : []
@@ -43,7 +46,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} role={primaryRole} />
+      <Sidebar inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} role={primaryRole} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <header className="portal-header">
           <OrgSwitcher memberships={orgMemberships} />

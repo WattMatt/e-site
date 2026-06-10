@@ -40,7 +40,7 @@ export default async function MvUnlockPage({ params }: Props) {
 
   // Already subscribed (active + in-date + disclaimer accepted) → into the study.
   if (await hasMvAccess(user.id, supabase)) {
-    redirect(`/projects/${projectId}/cables/${revisionId}/fault`)
+    redirect(`/projects/${projectId}/medium-voltage/${revisionId}/fault`)
   }
 
   return (

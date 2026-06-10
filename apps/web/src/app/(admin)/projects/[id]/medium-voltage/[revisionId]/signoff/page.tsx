@@ -7,7 +7,7 @@ import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { requireMvAccess } from '@/lib/mv-access'
 import { KpiCard } from '@/components/ui/Card'
 import { SandboxNotice } from '@/components/mv/SandboxNotice'
-import { RevisionStatusBadge } from '../RevisionStatusBadge'
+import { RevisionStatusBadge } from '../../../cables/[revisionId]/RevisionStatusBadge'
 import { SignoffForm, type ExistingSignoff } from './SignoffForm'
 
 export const metadata: Metadata = { title: 'MV study sign-off' }
@@ -37,7 +37,7 @@ export default async function MvSignoffPage({ params }: Props) {
   // Per-user MV paywall (Phase 7). Server-side gate on every MV route; the
   // mv-unlock page itself is exempt.
   const { data: { user } } = await supabase.auth.getUser()
-  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/cables/${revisionId}/mv-unlock`)
+  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/medium-voltage/${revisionId}/mv-unlock`)
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')

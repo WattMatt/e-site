@@ -6,7 +6,7 @@ import { projectService, mvProtectionService, ORG_WRITE_ROLES } from '@esite/sha
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { requireMvAccess } from '@/lib/mv-access'
 import { SandboxNotice } from '@/components/mv/SandboxNotice'
-import { RevisionStatusBadge } from '../RevisionStatusBadge'
+import { RevisionStatusBadge } from '../../../cables/[revisionId]/RevisionStatusBadge'
 import { FaultSourcesManager } from './FaultSourcesManager'
 import type { AttachOption, ExistingFaultSource } from './FaultSourceForm'
 
@@ -33,7 +33,7 @@ export default async function FaultSourcesPage({ params }: Props) {
   // Per-user MV paywall (Phase 7). Server-side gate on every MV route; the
   // mv-unlock page itself is exempt.
   const { data: { user } } = await supabase.auth.getUser()
-  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/cables/${revisionId}/mv-unlock`)
+  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/medium-voltage/${revisionId}/mv-unlock`)
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -95,7 +95,7 @@ export default async function FaultSourcesPage({ params }: Props) {
     <div className="animate-fadeup">
       <div style={{ marginBottom: 16 }}>
         <Link
-          href={`/projects/${projectId}/cables/${revisionId}/fault`}
+          href={`/projects/${projectId}/medium-voltage/${revisionId}/fault`}
           style={{
             fontFamily: 'var(--font-mono)', fontSize: 11,
             color: 'var(--c-text-dim)', textDecoration: 'none', letterSpacing: '0.06em',

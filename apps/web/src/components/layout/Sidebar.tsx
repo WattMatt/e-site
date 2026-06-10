@@ -8,7 +8,7 @@ import {
   LayoutGrid, FolderOpen, AlertTriangle, BookOpen,
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
-  Cable, BookMarked, HardHat, Package, Store, Lock, ScrollText,
+  Cable, BookMarked, HardHat, Package, Store, Lock, ScrollText, Zap,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -40,11 +40,11 @@ function InDevBadge() {
   )
 }
 
-function LockedBadge() {
+function LockedBadge({ label = 'Locked — unlock for R250' }: { label?: string }) {
   return (
     <Lock
       size={12}
-      aria-label="Locked — unlock for R250"
+      aria-label={label}
       style={{ marginLeft: 'auto', opacity: 0.7 }}
     />
   )
@@ -75,6 +75,7 @@ function projectNav(id: string) {
     { href: `/rfis?projectId=${id}`,        label: 'RFIs',        Icon: MessageSquare, exact: false },
     { href: `/projects/${id}/equipment-materials`, label: 'Equipment & Materials', Icon: Package,   exact: false },
     { href: `/projects/${id}/cables`,              label: 'Cables',             Icon: Cable,         exact: false },
+    { href: `/projects/${id}/medium-voltage`,      label: 'Medium Voltage',     Icon: Zap,           exact: false },
     { href: `/projects/${id}/tenant-schedule`,    label: 'Tenant Schedule',    Icon: Store,         exact: false },
     { href: `/projects/${id}/inspections`,     label: 'Inspections',     Icon: ClipboardCheck, exact: false },
     { href: `/projects/${id}/floor-plans`,  label: 'Floor Plans', Icon: Map,           exact: false },
@@ -98,10 +99,11 @@ function extractProjectId(pathname: string): string | null {
 interface SidebarContentProps {
   inspectionsUnlocked: boolean
   jbccUnlocked: boolean
+  mvUnlocked: boolean
   role: OrgRole | null
 }
 
-function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarContentProps) {
+function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, role }: SidebarContentProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
@@ -151,6 +153,7 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarCont
                 ? pathname === basePath
                 : pathname === basePath || pathname.startsWith(basePath + '/')
               const isJbcc = basePath === `/projects/${projectId}/jbcc`
+              const isMv = basePath === `/projects/${projectId}/medium-voltage`
               return (
                 <Link
                   key={href}
@@ -161,6 +164,7 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarCont
                   <Icon {...IC} />
                   {label}
                   {isJbcc && !jbccUnlocked && <LockedBadge />}
+                  {isMv && !mvUnlocked && <LockedBadge label="Locked — subscribe for R2000/year" />}
                 </Link>
               )
             })}
@@ -226,10 +230,11 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarCont
 interface SidebarProps {
   inspectionsUnlocked?: boolean
   jbccUnlocked?: boolean
+  mvUnlocked?: boolean
   role?: OrgRole | null
 }
 
-export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, role = null }: SidebarProps = {}) {
+export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvUnlocked = false, role = null }: SidebarProps = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -239,7 +244,7 @@ export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, rol
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} role={role} />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} role={role} />
       </Suspense>
     </aside>
   )

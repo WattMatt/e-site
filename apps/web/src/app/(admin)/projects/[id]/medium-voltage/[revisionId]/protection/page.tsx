@@ -6,7 +6,7 @@ import { projectService, mvProtectionService, ORG_WRITE_ROLES } from '@esite/sha
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { requireMvAccess } from '@/lib/mv-access'
 import { SandboxNotice } from '@/components/mv/SandboxNotice'
-import { RevisionStatusBadge } from '../RevisionStatusBadge'
+import { RevisionStatusBadge } from '../../../cables/[revisionId]/RevisionStatusBadge'
 import { ProtectionDevicesManager } from './ProtectionDevicesManager'
 import type { AttachOption, ExistingDevice } from './ProtectionDeviceForm'
 
@@ -33,7 +33,7 @@ export default async function ProtectionDevicesPage({ params }: Props) {
   // Per-user MV paywall (Phase 7). Server-side gate on every MV route; the
   // mv-unlock page itself is exempt.
   const { data: { user } } = await supabase.auth.getUser()
-  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/cables/${revisionId}/mv-unlock`)
+  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/medium-voltage/${revisionId}/mv-unlock`)
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -128,7 +128,7 @@ export default async function ProtectionDevicesPage({ params }: Props) {
         </div>
         <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
           <Link
-            href={`/projects/${projectId}/cables/${revisionId}/coordination`}
+            href={`/projects/${projectId}/medium-voltage/${revisionId}/coordination`}
             style={{
               background: 'var(--c-panel)', border: '1px solid var(--c-border)',
               color: 'var(--c-text-mid)', borderRadius: 6, padding: '9px 16px',

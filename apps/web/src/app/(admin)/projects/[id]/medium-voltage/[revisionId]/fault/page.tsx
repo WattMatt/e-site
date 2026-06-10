@@ -8,7 +8,7 @@ import { requireMvAccess } from '@/lib/mv-access'
 import { Card, CardHeader, CardBody, KpiCard } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { SandboxNotice } from '@/components/mv/SandboxNotice'
-import { RevisionStatusBadge } from '../RevisionStatusBadge'
+import { RevisionStatusBadge } from '../../../cables/[revisionId]/RevisionStatusBadge'
 import { RunStudyButton } from './RunStudyButton'
 
 export const metadata: Metadata = { title: 'MV fault study' }
@@ -41,7 +41,7 @@ export default async function MvFaultStudyPage({ params }: Props) {
   // Per-user MV paywall (Phase 7). Server-side gate on every MV route; the
   // mv-unlock page itself is exempt.
   const { data: { user } } = await supabase.auth.getUser()
-  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/cables/${revisionId}/mv-unlock`)
+  if (user) await requireMvAccess(supabase, user.id, `/projects/${projectId}/medium-voltage/${revisionId}/mv-unlock`)
 
   const { data: rev } = await (supabase as any)
     .schema('cable_schedule')
@@ -123,7 +123,7 @@ export default async function MvFaultStudyPage({ params }: Props) {
         </div>
         <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <Link
-            href={`/projects/${projectId}/cables/${revisionId}/fault-sources`}
+            href={`/projects/${projectId}/medium-voltage/${revisionId}/fault-sources`}
             style={{
               background: 'var(--c-panel)', border: '1px solid var(--c-border)',
               color: 'var(--c-text-mid)', borderRadius: 6, padding: '9px 16px',
@@ -143,7 +143,7 @@ export default async function MvFaultStudyPage({ params }: Props) {
           <div className="data-panel-empty" style={{ padding: '48px 18px', textAlign: 'center' }}>
             ⚡ No fault results yet.
             <div style={{ fontSize: 13, color: 'var(--c-text-dim)', marginTop: 6 }}>
-              Enter the <Link href={`/projects/${projectId}/cables/${revisionId}/fault-sources`} style={{ color: 'var(--c-amber)' }}>source impedances</Link>{' '}
+              Enter the <Link href={`/projects/${projectId}/medium-voltage/${revisionId}/fault-sources`} style={{ color: 'var(--c-amber)' }}>source impedances</Link>{' '}
               (utility S″k, transformer u<sub>k</sub>%, generator x″<sub>d</sub>), then press{' '}
               <strong>⚡ Run study</strong> to solve Z-bus fault levels for every node.
             </div>

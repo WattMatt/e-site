@@ -43,6 +43,7 @@ membership.
 | `/projects/[id]/snags/visits/[visitId]` (visit detail) | W | W | W | W | R | — | R |
 | `/projects/[id]/diary` | W | W | W | W | R | — | R |
 | `/projects/[id]/cables` | W | W | W | W | — | — | R¹ |
+| `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W | W | W | — | — | — | — |
 | `/projects/[id]/equipment-materials` | W | W | W | W | — | — | R¹ |
 | `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/materials` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |

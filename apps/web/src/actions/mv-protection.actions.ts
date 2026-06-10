@@ -72,6 +72,9 @@ async function resolveWritableRevision(
 }
 
 function bust(projectId: string, revisionId: string): void {
+  revalidatePath(`/projects/${projectId}/medium-voltage/${revisionId}`)
+  // overrideFaultLevel writes revisions.fault_level_ka, which the cables
+  // workspace reads (shortCircuitCheck source value) — keep busting it too.
   revalidatePath(`/projects/${projectId}/cables/${revisionId}`)
 }
 
