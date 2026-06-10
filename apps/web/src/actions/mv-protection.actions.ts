@@ -25,8 +25,10 @@ import { createClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import {
   mvProtectionService,
+  mvSignoffComplete,
   ORG_WRITE_ROLES,
   type MvStudySettingsInput,
+  type MvStudySignoffInput,
   type FaultSourceInput,
   type ProtectionDeviceInput,
 } from '@esite/shared'
@@ -209,4 +211,49 @@ export async function overrideFaultLevel(input: {
   return { data: { faultLevelKa: input.faultLevelKa } }
 }
 
-// issueMvStudy (the gated DRAFT→ISSUED transition, spec §9) — Phase 6.
+// ─── upsertMvStudySignoff (§9 gated-issue evidence) ──────────────────────
+//
+// Captures the 4-tick Pr.Eng sign-off (spec §9). There is NO separate MV issue
+// action: the study is a facet of the same revision, so the sign-off is a
+// PRECONDITION enforced additively in issueRevisionAction (assertMvSignoffComplete).
+// When the saved record satisfies every gate, this action stamps signed_off_by
+// (the acting user) + signed_off_at (now); otherwise the stamp is cleared to
+// null so a later edit that breaks the gate doesn't leave a stale signature.
+
+export async function upsertMvStudySignoff(
+  input: MvStudySignoffInput,
+): Promise<{ data: Awaited<ReturnType<typeof mvProtectionService.upsertMvStudySignoff>> } | { error: string }> {
+  const supabase = await createClient()
+  const ctx = await resolveWritableRevision(supabase, input.revisionId)
+  if ('error' in ctx) return { error: ctx.error }
+
+  const { data: { user } } = await supabase.auth.getUser()
+
+  // The form sends the full record, so completeness of the row-as-saved is
+  // judged on the incoming input (mvSignoffComplete reads only the gate fields).
+  const { complete } = mvSignoffComplete({
+    id: '', organisationId: ctx.organisationId, revisionId: ctx.revisionId,
+    prEngName: input.prEngName ?? null,
+    prEngEcsaReg: input.prEngEcsaReg ?? null,
+    curveManualRev: input.curveManualRev ?? null,
+    sourceDataConfirmed: input.sourceDataConfirmed ?? false,
+    validationPackRef: input.validationPackRef ?? null,
+    signedOffBy: null, signedOffAt: null, createdAt: '', updatedAt: '',
+  })
+
+  try {
+    const data = await mvProtectionService.upsertMvStudySignoff(
+      supabase as any,
+      ctx.revisionId,
+      ctx.organisationId,
+      input,
+      complete
+        ? { signedOffBy: user?.id ?? null, signedOffAt: new Date().toISOString() }
+        : { signedOffBy: null, signedOffAt: null },
+    )
+    bust(ctx.projectId, ctx.revisionId)
+    return { data }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to save sign-off' }
+  }
+}

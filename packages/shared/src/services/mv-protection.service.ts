@@ -14,15 +14,19 @@
 import type { TypedSupabaseClient } from '@esite/db'
 import {
   mvStudySettingsInputSchema,
+  mvStudySignoffInputSchema,
   faultSourceInputSchema,
   protectionDeviceInputSchema,
   type MvStudySettingsInput,
+  type MvStudySignoffInput,
   type FaultSourceInput,
   type ProtectionDeviceInput,
 } from '../schemas/mv-protection.schema'
 import {
   rowToMvStudySettings,
   mvStudySettingsToRow,
+  rowToMvStudySignoff,
+  mvStudySignoffToRow,
   rowToFaultSource,
   faultSourceToRow,
   rowToProtectionDevice,
@@ -32,6 +36,7 @@ import {
   rowToFaultResult,
   rowToDiscriminationCheck,
   type MvStudySettingsRow,
+  type MvStudySignoffRow,
   type MvFaultSourceRow,
   type MvProtectionDeviceRow,
   type MvFaultResultRow,
@@ -90,6 +95,60 @@ export const mvProtectionService = {
       .single()
     if (error) throw new Error(error.message)
     return rowToMvStudySettings(data)
+  },
+
+  // ─── mv_study_signoff (§9 gated-issue evidence) ──────────────────────
+
+  /**
+   * Returns the §9 sign-off row for a revision, or null if none exists yet
+   * (cable-only revisions never create one) or RLS denies the read.
+   */
+  async getMvStudySignoff(
+    client: TypedSupabaseClient,
+    revisionId: string,
+  ): Promise<MvStudySignoffRow | null> {
+    const { data, error } = await (client as AnyClient)
+      .schema('cable_schedule')
+      .from('mv_study_signoff')
+      .select('*')
+      .eq('revision_id', revisionId)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) return null
+    return rowToMvStudySignoff(data)
+  },
+
+  /**
+   * Upserts the one-per-revision sign-off row (revision_id is UNIQUE).
+   * `organisationId` is server-resolved (from the revision) by the caller.
+   * `opts.signedOffBy` / `opts.signedOffAt` are the stamp the action sets when
+   * the gate is complete (else null) — passed through here so the row is
+   * written in one place. When `opts` is omitted the stamp columns are left
+   * untouched (defined-keys-only patch).
+   */
+  async upsertMvStudySignoff(
+    client: TypedSupabaseClient,
+    revisionId: string,
+    organisationId: string,
+    input: MvStudySignoffInput,
+    opts: { signedOffBy?: string | null; signedOffAt?: string | null } = {},
+  ): Promise<MvStudySignoffRow> {
+    const validated = mvStudySignoffInputSchema.parse({ ...input, revisionId })
+    const row: Record<string, unknown> = {
+      revision_id: revisionId,
+      organisation_id: organisationId,
+      ...mvStudySignoffToRow(validated),
+    }
+    if (opts.signedOffBy !== undefined) row.signed_off_by = opts.signedOffBy
+    if (opts.signedOffAt !== undefined) row.signed_off_at = opts.signedOffAt
+    const { data, error } = await (client as AnyClient)
+      .schema('cable_schedule')
+      .from('mv_study_signoff')
+      .upsert(row, { onConflict: 'revision_id' })
+      .select('*')
+      .single()
+    if (error) throw new Error(error.message)
+    return rowToMvStudySignoff(data)
   },
 
   // ─── fault_sources ───────────────────────────────────────────────────
@@ -348,4 +407,71 @@ export const mvProtectionService = {
     if (error) throw new Error(error.message)
     return (data ?? []).map(rowToDiscriminationCheck)
   },
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// §9 gated-issue — completeness rule + the issue guard
+// ─────────────────────────────────────────────────────────────────────────
+
+const nonEmpty = (s: string | null | undefined): boolean => typeof s === 'string' && s.trim() !== ''
+
+/**
+ * Pure completeness test for the §9 sign-off (no DB). The study may be issued
+ * only when all four gate fields carry a value AND source data is confirmed:
+ *   GATE-1  pr_eng_name + pr_eng_ecsa_reg  (named Pr.Eng approver + ECSA reg)
+ *   GATE-2  curve_manual_rev               (curve re-validation manual rev)
+ *   GATE-3  source_data_confirmed === true (impedances confirmed)
+ *   GATE-4  validation_pack_ref            (signed validation pack reference)
+ * `missing` names every gap in human-readable form (for the guard's error and
+ * the UI). Passing `null` (no row yet) reports all gates missing.
+ */
+export function mvSignoffComplete(
+  signoff: MvStudySignoffRow | null,
+): { complete: boolean; missing: string[] } {
+  const missing: string[] = []
+  if (!nonEmpty(signoff?.prEngName)) missing.push('Pr.Eng approver name')
+  if (!nonEmpty(signoff?.prEngEcsaReg)) missing.push('Pr.Eng ECSA registration')
+  if (!nonEmpty(signoff?.curveManualRev)) missing.push('curve re-validation manual revision')
+  if (signoff?.sourceDataConfirmed !== true) missing.push('source data confirmation')
+  if (!nonEmpty(signoff?.validationPackRef)) missing.push('signed validation pack reference')
+  return { complete: missing.length === 0, missing }
+}
+
+/**
+ * The issue precondition (spec §9), called additively from issueRevisionAction.
+ * MV sign-off only gates a revision that actually carries MV data — so:
+ *   (a) if the revision has no fault_sources AND no protection_devices, there
+ *       is no MV study to gate → { ok: true } (cable-only revisions unaffected);
+ *   (b) otherwise load the sign-off and run `mvSignoffComplete`; an incomplete
+ *       gate refuses the issue with a message naming the gaps.
+ */
+export async function assertMvSignoffComplete(
+  client: TypedSupabaseClient,
+  revisionId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const c = client as AnyClient
+
+  const [faultSourcesRes, devicesRes] = await Promise.all([
+    c
+      .schema('cable_schedule')
+      .from('fault_sources')
+      .select('id', { count: 'exact', head: true })
+      .eq('revision_id', revisionId),
+    c
+      .schema('cable_schedule')
+      .from('protection_devices')
+      .select('id', { count: 'exact', head: true })
+      .eq('revision_id', revisionId),
+  ])
+
+  const mvDataCount = (faultSourcesRes.count ?? 0) + (devicesRes.count ?? 0)
+  if (mvDataCount === 0) return { ok: true }
+
+  const signoff = await mvProtectionService.getMvStudySignoff(client, revisionId)
+  const { complete, missing } = mvSignoffComplete(signoff)
+  if (complete) return { ok: true }
+  return {
+    ok: false,
+    error: `MV protection study must be signed off before issue — missing: ${missing.join(', ')}`,
+  }
 }

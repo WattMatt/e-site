@@ -13,6 +13,7 @@ import type {
   FaultSourceInput,
   ProtectionDeviceInput,
   MvStudySettingsInput,
+  MvStudySignoffInput,
   FaultSourceRole,
   EarthingKind,
   DeviceRole,
@@ -39,6 +40,23 @@ export interface MvStudySettingsRow {
   cMin: number
   efFaultResistanceOhm: number
   frequencyHz: number
+  createdAt: string
+  updatedAt: string
+}
+
+// The §9 gated-issue sign-off record (one row per revision). signedOffBy /
+// signedOffAt are stamped by the action when the gate is complete.
+export interface MvStudySignoffRow {
+  id: string
+  organisationId: string
+  revisionId: string
+  prEngName: string | null
+  prEngEcsaReg: string | null
+  curveManualRev: string | null
+  sourceDataConfirmed: boolean
+  validationPackRef: string | null
+  signedOffBy: string | null
+  signedOffAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -110,6 +128,38 @@ export function mvStudySettingsToRow(patch: Partial<MvStudySettingsInput>): Reco
   if (patch.cMin !== undefined) out.c_min = patch.cMin
   if (patch.efFaultResistanceOhm !== undefined) out.ef_fault_resistance_ohm = patch.efFaultResistanceOhm
   if (patch.frequencyHz !== undefined) out.frequency_hz = patch.frequencyHz
+  return out
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// mv_study_signoff
+// ─────────────────────────────────────────────────────────────────────────
+
+export function rowToMvStudySignoff(r: Record<string, unknown>): MvStudySignoffRow {
+  return {
+    id: r.id as string,
+    organisationId: r.organisation_id as string,
+    revisionId: r.revision_id as string,
+    prEngName: (r.pr_eng_name as string) ?? null,
+    prEngEcsaReg: (r.pr_eng_ecsa_reg as string) ?? null,
+    curveManualRev: (r.curve_manual_rev as string) ?? null,
+    sourceDataConfirmed: (r.source_data_confirmed as boolean) ?? false,
+    validationPackRef: (r.validation_pack_ref as string) ?? null,
+    signedOffBy: (r.signed_off_by as string) ?? null,
+    signedOffAt: (r.signed_off_at as string) ?? null,
+    createdAt: r.created_at as string,
+    updatedAt: r.updated_at as string,
+  }
+}
+
+/** camelCase patch → snake_case row patch (defined keys only). */
+export function mvStudySignoffToRow(patch: Partial<MvStudySignoffInput>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (patch.prEngName !== undefined) out.pr_eng_name = patch.prEngName
+  if (patch.prEngEcsaReg !== undefined) out.pr_eng_ecsa_reg = patch.prEngEcsaReg
+  if (patch.curveManualRev !== undefined) out.curve_manual_rev = patch.curveManualRev
+  if (patch.sourceDataConfirmed !== undefined) out.source_data_confirmed = patch.sourceDataConfirmed
+  if (patch.validationPackRef !== undefined) out.validation_pack_ref = patch.validationPackRef
   return out
 }
 

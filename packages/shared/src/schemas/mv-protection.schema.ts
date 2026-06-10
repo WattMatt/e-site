@@ -106,6 +106,24 @@ export const protectionDeviceInputSchema = z
   )
 
 // ─────────────────────────────────────────────────────────────────────────
+// MvStudySignoffInput — write shape for cable_schedule.mv_study_signoff, the
+// §9 gated-issue evidence (one row per revision). The four gate fields plus the
+// source-data confirmation tick; `signed_off_by` / `signed_off_at` are NOT in
+// the input — the action stamps them server-side when the gate is complete.
+// All gate fields optional here (a partial save is allowed); completeness is
+// judged by `mvSignoffComplete`, and the issue guard enforces it.
+// ─────────────────────────────────────────────────────────────────────────
+
+export const mvStudySignoffInputSchema = z.object({
+  revisionId: uuid,
+  prEngName: z.string().trim().max(160).nullable().optional(),
+  prEngEcsaReg: z.string().trim().max(80).nullable().optional(),
+  curveManualRev: z.string().trim().max(120).nullable().optional(),
+  sourceDataConfirmed: z.boolean().optional(),
+  validationPackRef: z.string().trim().max(200).nullable().optional(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────
 // Inferred types
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -114,6 +132,7 @@ export type EarthingKind = (typeof EARTHING_KINDS)[number]
 export type DeviceRole = (typeof DEVICE_ROLES)[number]
 export type DeviceType = (typeof DEVICE_TYPES)[number]
 export type MvStudySettingsInput = z.infer<typeof mvStudySettingsInputSchema>
+export type MvStudySignoffInput = z.infer<typeof mvStudySignoffInputSchema>
 export type FaultSourceInput = z.infer<typeof faultSourceInputSchema>
 export type ProtectionDeviceInput = z.infer<typeof protectionDeviceInputSchema>
 export type ProtectionDeviceSettings = z.infer<typeof protectionDeviceSettingsSchema>
