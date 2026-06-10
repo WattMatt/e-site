@@ -17,6 +17,8 @@ import {
   buildGeneratorCostRecovery,
   mapDbToEngineInput,
   capitalCostBreakdown,
+  DEFAULT_REPORT_NARRATIVE,
+  type ReportNarrative,
   type GeneratorCostRecoveryModel,
   type GeneratorSettings,
   type CapitalBreakdown,
@@ -34,6 +36,7 @@ export interface GeneratorReportData {
   model: GeneratorCostRecoveryModel
   breakdown: CapitalBreakdown
   settings: GeneratorSettings
+  narrative: ReportNarrative
   brandingInput: {
     orgName: string
     orgLogoDataUri: string | null
@@ -183,6 +186,9 @@ export async function gatherGeneratorReportData(
     model,
     breakdown,
     settings: engineInput.settings,
+    // Standing prose sections. Defaults for now; per-project editable text
+    // (gcr.settings narrative columns) is wired in a later increment.
+    narrative: DEFAULT_REPORT_NARRATIVE,
     brandingInput: {
       orgName: (org?.name as string | null) ?? 'Organisation',
       orgLogoDataUri,

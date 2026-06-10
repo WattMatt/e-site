@@ -67,6 +67,14 @@ const ss = StyleSheet.create({
     color: '#166534',
     fontFamily: 'Helvetica-Bold',
   },
+  // Narrative paragraph
+  prose: {
+    fontSize: spacing.rowValueFontSize,
+    color: '#374151',
+    fontFamily: 'Helvetica',
+    lineHeight: 1.5,
+    marginBottom: spacing.smallGap,
+  },
 })
 
 // ---------------------------------------------------------------------------
@@ -89,6 +97,21 @@ function KeyValue({ label, value, bold }: KeyValueProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Prose — narrative paragraphs, separated by blank lines
+// ---------------------------------------------------------------------------
+
+function Prose({ text }: { text: string }) {
+  const paragraphs = text.split('\n\n').map((p) => p.trim()).filter(Boolean)
+  return (
+    <>
+      {paragraphs.map((p, i) => (
+        <Text key={i} style={ss.prose}>{p}</Text>
+      ))}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // GeneratorReportDocument
 // ---------------------------------------------------------------------------
 
@@ -99,7 +122,7 @@ export interface GeneratorReportDocumentProps {
 
 export function GeneratorReportDocument({ data, branding }: GeneratorReportDocumentProps) {
   const { accent, issuer, title } = branding
-  const { model, breakdown, settings } = data
+  const { model, breakdown, settings, narrative } = data
 
   // ── Appendix A — Capital cost ──────────────────────────────────────────────
   const capitalRows: string[][] = [
@@ -154,6 +177,23 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
 
         {/* Cover */}
         <Cover resolved={branding} />
+
+        {/* Narrative — standing report sections (precede the calculated tables) */}
+        <Section title="Introduction" accent={accent}>
+          <Prose text={narrative.introduction} />
+        </Section>
+
+        <Section title="Plant Sizing" accent={accent}>
+          <Prose text={narrative.plantSizing} />
+        </Section>
+
+        <Section title="Outline of System" accent={accent}>
+          <Prose text={narrative.systemOutline} />
+        </Section>
+
+        <Section title="Switching System" accent={accent}>
+          <Prose text={narrative.switching} />
+        </Section>
 
         {/* Appendix A — Capital cost breakdown */}
         <Section title="Appendix A — Capital cost" accent={accent}>

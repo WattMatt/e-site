@@ -12,6 +12,7 @@ import {
   buildGeneratorCostRecovery,
   capitalCostBreakdown,
   DEFAULT_GENERATOR_SETTINGS,
+  DEFAULT_REPORT_NARRATIVE,
   type ZoneInput,
   type TenantInput,
 } from '@esite/shared'
@@ -64,6 +65,7 @@ const fixtureData: GeneratorReportData = {
   model,
   breakdown,
   settings,
+  narrative: DEFAULT_REPORT_NARRATIVE,
   brandingInput: {
     orgName: 'Watson Mattheus Consulting',
     orgLogoDataUri: DATA_URI,
@@ -125,5 +127,19 @@ describe('renderGeneratorReport', () => {
     const optOutAlloc = fixtureData.model.allocations.find((a) => a.participation === 'none')
     expect(optOutAlloc).toBeDefined()
     await expect(renderGeneratorReport(fixtureData, fixtureResolved)).resolves.toBeDefined()
+  })
+
+  it('renders custom multi-paragraph narrative without throwing', async () => {
+    const customData: GeneratorReportData = {
+      ...fixtureData,
+      narrative: {
+        introduction: 'Intro paragraph one.\n\nIntro paragraph two.',
+        plantSizing: 'Sizing basis text.',
+        systemOutline: 'System outline text.',
+        switching: 'Switching system text.',
+      },
+    }
+    const buf = await renderGeneratorReport(customData, fixtureResolved)
+    expect(buf.subarray(0, 5).toString()).toBe('%PDF-')
   })
 })
