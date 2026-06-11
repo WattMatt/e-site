@@ -6,7 +6,7 @@ const usePathnameMock = vi.fn()
 vi.mock('next/navigation', () => ({ usePathname: usePathnameMock }))
 
 describe('SettingsTabs', () => {
-  it('renders all 14 sub-pages in spec order', async () => {
+  it('renders all 15 sub-pages in spec order', async () => {
     usePathnameMock.mockReturnValue('/projects/p1/settings/general')
     const { SettingsTabs } = await import('./SettingsTabs')
 
@@ -14,8 +14,8 @@ describe('SettingsTabs', () => {
 
     const expected = [
       'General', 'Site', 'Dates', 'Client', 'Contract', 'Rates', 'Valuations',
-      'Members', 'JBCC Parties', 'Operational', 'Contacts', 'Integrations',
-      'Danger', 'History',
+      'Variations', 'Members', 'JBCC Parties', 'Operational', 'Contacts',
+      'Integrations', 'Danger', 'History',
     ]
     const links = screen.getAllByRole('link')
     expect(links.map(a => a.textContent?.replace(/[●🔒⚠]/gu, '').trim())).toEqual(expected)
