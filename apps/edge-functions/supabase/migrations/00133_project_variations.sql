@@ -98,6 +98,11 @@ ALTER TABLE projects.boq_items ADD CONSTRAINT boq_items_origin_check
 ALTER TABLE projects.boq_items ADD COLUMN IF NOT EXISTS variation_line_id uuid
   REFERENCES projects.variation_lines(id);
 
+-- One materialized boq_item per variation line: concurrent approvals of the
+-- same VO cannot double-materialize a line (the second insert hits the index).
+CREATE UNIQUE INDEX IF NOT EXISTS boq_items_variation_line_uniq
+  ON projects.boq_items(variation_line_id) WHERE variation_line_id IS NOT NULL;
+
 -- ─── 4. updated_at triggers ───────────────────────────────────────────────────
 
 DROP TRIGGER IF EXISTS variation_orders_set_updated_at ON projects.variation_orders;

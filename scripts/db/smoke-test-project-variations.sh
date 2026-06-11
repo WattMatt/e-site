@@ -71,20 +71,21 @@ BEGIN
     RAISE EXCEPTION 'SMOKE_SKIP: no boq_item found under import %, cannot seed variation_line', imp;
   END IF;
 
-  -- First VO: vo_no should auto-fill to 1.
+  -- First VO: vo_no auto-fills RELATIVE to whatever already exists (real VOs
+  -- may be present) — assert it is a sane positive number, capture it.
   INSERT INTO projects.variation_orders(project_id, organisation_id, boq_import_id, vo_date, title)
     VALUES (p, o, imp, current_date, 'Smoke VO 1')
     RETURNING id, vo_no INTO vo1, no1;
-  IF no1 <> 1 THEN
-    RAISE EXCEPTION 'FAIL: first vo_no should be 1, got %', no1;
+  IF no1 < 1 THEN
+    RAISE EXCEPTION 'FAIL: first vo_no should be >= 1, got %', no1;
   END IF;
 
-  -- Second VO: vo_no should auto-fill to 2.
+  -- Second VO: vo_no should auto-fill to no1 + 1.
   INSERT INTO projects.variation_orders(project_id, organisation_id, boq_import_id, vo_date, title)
     VALUES (p, o, imp, current_date + 1, 'Smoke VO 2')
     RETURNING id, vo_no INTO vo2, no2;
-  IF no2 <> 2 THEN
-    RAISE EXCEPTION 'FAIL: second vo_no should be 2, got %', no2;
+  IF no2 <> no1 + 1 THEN
+    RAISE EXCEPTION 'FAIL: second vo_no should be % (no1 + 1), got %', no1 + 1, no2;
   END IF;
 
   -- Insert an 'adjust' line under vo1 (references an existing boq_item).
@@ -98,7 +99,7 @@ BEGIN
   RAISE EXCEPTION 'SMOKE_OK_ROLLBACK';
 END \$\$;" 2>&1 || true)"
 echo "$OUT" | grep -q 'SMOKE_OK_ROLLBACK' \
-  && pass "vo_no auto-fills 1,2 + adjust + add lines inserted + rolled back" \
+  && pass "vo_no auto-fills sequentially (no1, no1+1) + adjust + add lines inserted + rolled back" \
   || { fail "smoke DO-block failed — output: $OUT"; }
 
 echo ""
