@@ -506,6 +506,46 @@ export async function certifyValuationAction(
     return { error: 'Certify earlier valuations first.' }
   }
 
+  // Guard 3 — revised-cap check: an omission VO approved AFTER a line was
+  // valued leaves value_to_date above the now-lower revised cap (line entry
+  // only caps at write time). Refuse to certify until the affected lines are
+  // re-valued. Only items with approved adjustments can have a
+  // variation-lowered cap, so the item fetch is scoped to those (same pattern
+  // as getValuationAction).
+  try {
+    const result = await valuationService.get(service as any, valuationId)
+    if (!result) return { error: 'Not found' }
+    const adjustments = await variationService.getApprovedAdjustments(service as any, projectId)
+    const adjustedIds = result.lines.map((l) => l.boqItemId).filter((id) => adjustments.has(id))
+    if (adjustedIds.length > 0) {
+      const { data: itemRows } = await (service as any)
+        .schema('projects')
+        .from('boq_items')
+        .select('id, quantity, quantity_mode, amount, supply_rate, install_rate, rate, rate_model')
+        .in('id', adjustedIds)
+      const capById = new Map<string, number>()
+      for (const row of (itemRows ?? []) as any[]) {
+        const revised = computeRevisedItem(rowToRevisedInput(row), adjustments.get(row.id) ?? [])
+        capById.set(
+          row.id,
+          revised.revisedAmount ?? (row.amount == null ? Infinity : Number(row.amount)),
+        )
+      }
+      const overCap = result.lines.some((l) => {
+        const cap = capById.get(l.boqItemId)
+        return cap !== undefined && l.valueToDate > cap + 0.01
+      })
+      if (overCap) {
+        return {
+          error:
+            'Some valued lines exceed their revised amounts (a variation reduced scope) — adjust the affected lines first',
+        }
+      }
+    }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Certify failed' }
+  }
+
   const proj = await resolveProjectOrg(supabase, projectId)
   if (!proj) return { error: 'Project not found' }
 

@@ -471,6 +471,67 @@ describe('certifyValuationAction', () => {
     expect(certifyMock).not.toHaveBeenCalled()
   })
 
+  it('REFUSES certify when a valued line exceeds its revised amount (omission VO approved after valuing)', async () => {
+    // Line valued at 1000 against contract qty 10 @ R100 (amount 1000). An
+    // omission VO (delta −4) approved AFTER the line was valued → revised qty 6
+    // / revised amount 600. value_to_date 1000 > 600 + 0.01 → certify must
+    // refuse BEFORE rendering or persisting anything.
+    createClientMock.mockResolvedValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
+    })
+    let valuationsCallCount = 0
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: (table: string) => {
+          if (table === 'valuations') {
+            valuationsCallCount++
+            if (valuationsCallCount === 1) {
+              // resolveValuationForGate
+              return {
+                select: () =>
+                  qb({ data: { id: VAL, project_id: PROJECT, status: 'draft', valuation_no: 1 }, error: null }),
+              }
+            }
+            // Guard 2 sequence-check — no earlier uncertified
+            return { select: () => qb({ data: null, error: null }) }
+          }
+          // boq_items — the adjusted item, fetched by Guard 3
+          return {
+            select: () =>
+              qb({
+                data: [
+                  {
+                    id: ITEM,
+                    quantity: 10,
+                    quantity_mode: 'measured',
+                    amount: 1000,
+                    supply_rate: null,
+                    install_rate: null,
+                    rate: 100,
+                    rate_model: 'single',
+                  },
+                ],
+                error: null,
+              }),
+          }
+        },
+      }),
+    })
+    getMock.mockResolvedValue({
+      valuation: { id: VAL, projectId: PROJECT, boqImportId: 'imp-1', valuationNo: 1, status: 'draft', certifiedBy: null },
+      lines: [{ id: 'line-1', boqItemId: ITEM, valueToDate: 1000 }],
+    })
+    getApprovedAdjustmentsMock.mockResolvedValue(new Map([[ITEM, [-4]]]))
+
+    const res = await certifyValuationAction(PROJECT, VAL)
+
+    expect('error' in res).toBe(true)
+    if ('error' in res) expect(res.error).toMatch(/exceed their revised amounts/)
+    expect(gatherValuationReportDataMock).not.toHaveBeenCalled()
+    expect(renderValuationReportMock).not.toHaveBeenCalled()
+    expect(certifyMock).not.toHaveBeenCalled()
+  })
+
   it('SUCCESS — certifies a draft valuation: figures come from the gatherer summary, render fires, certify is called, path is revalidated', async () => {
     const fakeFigures = { gross: 10000, retention: 500, net: 9500, previousNet: 0, thisCertificate: 9500 }
     const fakeSummary = fakeFigures
@@ -531,6 +592,13 @@ describe('certifyValuationAction', () => {
           remove: async () => ({}),
         }),
       },
+    })
+
+    // Guard 3 (revised-cap check) loads the lines first — none valued against
+    // adjusted items here, so it passes straight through.
+    getMock.mockResolvedValue({
+      valuation: { id: VAL, projectId: PROJECT, boqImportId: 'imp-1', valuationNo: 1, status: 'draft', certifiedBy: null },
+      lines: [{ id: 'line-1', boqItemId: ITEM, valueToDate: 1000 }],
     })
 
     gatherValuationReportDataMock.mockResolvedValue({
