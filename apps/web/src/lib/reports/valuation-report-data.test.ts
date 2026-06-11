@@ -94,8 +94,8 @@ const SECTIONS = [
 ]
 
 const ITEMS = [
-  { id: 'item-a1', sectionId: 'sec-a1', code: 'A1.1', description: 'Cable', unit: 'm', quantity: 100, quantityMode: 'measured', rateModel: 'single', supplyRate: null, installRate: null, rate: 10, amount: 1000, sortOrder: 0 },
-  { id: 'item-b1', sectionId: 'bill-b', code: 'B.1', description: 'Genset', unit: 'no', quantity: 1, quantityMode: 'measured', rateModel: 'single', supplyRate: null, installRate: null, rate: 500, amount: 500, sortOrder: 0 },
+  { id: 'item-a1', sectionId: 'sec-a1', code: 'A1.1', description: 'Cable', unit: 'm', quantity: 100, quantityMode: 'measured', rateModel: 'single', supplyRate: null, installRate: null, rate: 10, amount: 1000, sortOrder: 0, origin: 'contract' as const, variationLineId: null },
+  { id: 'item-b1', sectionId: 'bill-b', code: 'B.1', description: 'Genset', unit: 'no', quantity: 1, quantityMode: 'measured', rateModel: 'single', supplyRate: null, installRate: null, rate: 500, amount: 500, sortOrder: 0, origin: 'contract' as const, variationLineId: null },
 ]
 
 // Two valuation lines — one per bill.

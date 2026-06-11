@@ -9,6 +9,7 @@ describe('boq.schema', () => {
       code: 'C1.1', description: '4C x 185mm', unit: 'm',
       quantity: 2363, quantityMode: 'measured', rateModel: 'supply_install',
       supplyRate: 540.75, installRate: 18, rate: null, amount: 1320326.25, sortOrder: 0,
+      origin: 'contract', variationLineId: null,
     })
     expect(parsed.amount).toBe(1320326.25)
   })
