@@ -4,6 +4,7 @@ import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { projectService, COST_VIEW_ROLES } from '@esite/shared'
 
 import { listBoqAction } from '@/actions/boq.actions'
+import { getApprovedAdjustmentsAction } from '@/actions/variation.actions'
 import { RatesTab } from './_components/RatesTab'
 
 interface Props {
@@ -22,11 +23,17 @@ export default async function Page({ params }: Props) {
 
   const res = await listBoqAction(id)
 
+  // Approved variation qty-deltas — drives the Contract|Revised columns. A
+  // failure (or none) degrades to the plain contract view.
+  const adjRes = await getApprovedAdjustmentsAction(id)
+  const adjustments = 'data' in adjRes ? adjRes.data.adjustments : {}
+
   return (
     <RatesTab
       projectId={id}
       canEdit={true}
       initial={'data' in res ? res.data : null}
+      adjustments={adjustments}
     />
   )
 }

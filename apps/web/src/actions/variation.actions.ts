@@ -387,6 +387,34 @@ export async function approveVariationOrderAction(
   }
 }
 
+// ─── getApprovedAdjustmentsAction ────────────────────────────────────────────
+
+export type GetApprovedAdjustmentsResult =
+  | { data: { adjustments: Record<string, number[]> } }
+  | { error: string }
+
+/**
+ * Read-only: approved qty deltas per boq_item_id (every `adjust` line whose VO
+ * is approved). Feeds the Rates tab's Contract|Revised columns. Returned as a
+ * plain Record (serializable), keyed by boq_item_id.
+ */
+export async function getApprovedAdjustmentsAction(
+  projectId: string,
+): Promise<GetApprovedAdjustmentsResult> {
+  const supabase = await createClient()
+
+  const guard = await requireEffectiveRole(supabase, projectId, COST_VIEW_ROLES)
+  if (!guard.ok) return { error: guard.error }
+
+  try {
+    const service = createServiceClient()
+    const map = await variationService.getApprovedAdjustments(service as any, projectId)
+    return { data: { adjustments: Object.fromEntries(map) } }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to load approved adjustments' }
+  }
+}
+
 // ─── deleteVariationOrderAction ──────────────────────────────────────────────
 
 export type DeleteVariationOrderResult = { data: { deleted: true } } | { error: string }

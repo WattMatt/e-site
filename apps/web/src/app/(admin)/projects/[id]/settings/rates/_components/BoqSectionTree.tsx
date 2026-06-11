@@ -9,6 +9,10 @@
  *
  * `sections` / `items` are the full import; this component filters to the
  * descendants of `bill`. Sort is by sortOrder then code.
+ *
+ * When `revised`/`revisedTotals` are set (the project has any approved
+ * variation), each section row shows Contract | Revised totals and the line
+ * tables gain a Revised column; otherwise the layout is unchanged.
  */
 
 import { useState } from 'react'
@@ -22,6 +26,10 @@ interface Props {
   sections: BoqSection[]
   items: BoqItem[]
   totals: Record<string, number>
+  /** Per-item revised amounts; null/absent = no revisions (layout unchanged). */
+  revised?: Record<string, number | null> | null
+  /** Section rollups over the revised amounts. */
+  revisedTotals?: Record<string, number> | null
   projectId: string
   canEdit: boolean
   onItemUpdated: (item: BoqItem) => void
@@ -37,6 +45,8 @@ export function BoqSectionTree({
   sections,
   items,
   totals,
+  revised,
+  revisedTotals,
   projectId,
   canEdit,
   onItemUpdated,
@@ -69,6 +79,7 @@ export function BoqSectionTree({
         <div style={{ paddingLeft: 4 }}>
           <BoqLineItemTable
             items={billItems}
+            revised={revised}
             projectId={projectId}
             canEdit={canEdit}
             onItemUpdated={onItemUpdated}
@@ -90,6 +101,8 @@ export function BoqSectionTree({
           childrenOf={childrenOf}
           itemsBySection={itemsBySection}
           totals={totals}
+          revised={revised}
+          revisedTotals={revisedTotals}
           projectId={projectId}
           canEdit={canEdit}
           onItemUpdated={onItemUpdated}
@@ -105,6 +118,8 @@ function SectionNode({
   childrenOf,
   itemsBySection,
   totals,
+  revised,
+  revisedTotals,
   projectId,
   canEdit,
   onItemUpdated,
@@ -114,6 +129,8 @@ function SectionNode({
   childrenOf: (id: string) => BoqSection[]
   itemsBySection: Map<string, BoqItem[]>
   totals: Record<string, number>
+  revised?: Record<string, number | null> | null
+  revisedTotals?: Record<string, number> | null
   projectId: string
   canEdit: boolean
   onItemUpdated: (item: BoqItem) => void
@@ -162,9 +179,14 @@ function SectionNode({
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', flex: 1 }}>
           {section.title}
         </span>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--c-text-mid)' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: revisedTotals ? 'var(--c-text-dim)' : 'var(--c-text-mid)' }}>
           {fmtMoney(total)}
         </span>
+        {revisedTotals && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--c-text)' }}>
+            {fmtMoney(revisedTotals[section.id] ?? 0)}
+          </span>
+        )}
       </button>
 
       {expanded && (
@@ -172,6 +194,7 @@ function SectionNode({
           {ownItems.length > 0 && (
             <BoqLineItemTable
               items={ownItems}
+              revised={revised}
               projectId={projectId}
               canEdit={canEdit}
               onItemUpdated={onItemUpdated}
@@ -185,6 +208,8 @@ function SectionNode({
               childrenOf={childrenOf}
               itemsBySection={itemsBySection}
               totals={totals}
+              revised={revised}
+              revisedTotals={revisedTotals}
               projectId={projectId}
               canEdit={canEdit}
               onItemUpdated={onItemUpdated}

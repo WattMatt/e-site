@@ -91,6 +91,7 @@ All 14 sub-pages live under `/projects/[id]/settings/`. View-vs-edit roles narro
 | `/projects/[id]/settings/contract`      | W | W | — | — | — | — | — |
 | `/projects/[id]/settings/rates`         | W | W | W | — | — | — | — |
 | `/projects/[id]/settings/valuations`    | W | W | W | — | — | — | — |
+| `/projects/[id]/settings/variations`    | W | W | W | — | — | — | — |
 | `/projects/[id]/settings/members`       | W | W | — | — | — | — | — |
 | `/projects/[id]/settings/contacts`      | W | W | W | R | R | R | R |
 | `/projects/[id]/settings/jbcc-parties`  | W | W | W | R | R | R | R |

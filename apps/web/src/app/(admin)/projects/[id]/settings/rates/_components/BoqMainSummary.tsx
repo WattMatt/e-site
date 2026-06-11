@@ -5,6 +5,10 @@
  * kind='bill') with each bill's rolled-up total, plus the import's grand totals
  * (ex-VAT / VAT / incl-VAT). Clicking a bill row selects it for drill-down.
  *
+ * When `revisedTotals` is set (the project has any approved variation), the
+ * bill rows split into Contract | Revised columns + a revised grand total;
+ * otherwise the layout is identical to a zero-VO project.
+ *
  * Pure presentation + a select callback; the parent (RatesTab) owns selection.
  */
 
@@ -27,10 +31,12 @@ interface Props {
   importRow: BoqImport
   sections: BoqSection[]
   totals: Record<string, number>
+  /** Section rollups over the revised amounts; null/absent = no revisions. */
+  revisedTotals?: Record<string, number> | null
   onSelectBill: (bill: BoqSection) => void
 }
 
-export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Props) {
+export function BoqMainSummary({ importRow, sections, totals, revisedTotals, onSelectBill }: Props) {
   const bills = sections
     .filter((s) => s.kind === 'bill')
     .sort((a, b) => {
@@ -41,6 +47,10 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
   const liveExVat = bills.reduce((s, b) => s + (totals[b.id] ?? 0), 0)
   const liveInclVat = liveExVat * 1.15
   const isEdited = Math.abs(liveExVat - (importRow.totalExVat ?? 0)) > 1
+
+  const showRevised = revisedTotals != null
+  const revisedExVat = showRevised ? bills.reduce((s, b) => s + (revisedTotals[b.id] ?? 0), 0) : 0
+  const revisedInclVat = revisedExVat * 1.15
 
   return (
     <Card>
@@ -60,14 +70,15 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
             <thead>
               <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
                 <th style={th}>Bill</th>
-                <th style={{ ...th, textAlign: 'right' }}>Total (ex VAT)</th>
+                <th style={{ ...th, textAlign: 'right' }}>{showRevised ? 'Contract (ex VAT)' : 'Total (ex VAT)'}</th>
+                {showRevised && <th style={{ ...th, textAlign: 'right' }}>Revised (ex VAT)</th>}
                 <th style={{ ...th, textAlign: 'right', width: 1, whiteSpace: 'nowrap' }} />
               </tr>
             </thead>
             <tbody>
               {bills.length === 0 ? (
                 <tr>
-                  <td colSpan={3} style={{ padding: '12px', fontSize: 13, color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)' }}>
+                  <td colSpan={showRevised ? 4 : 3} style={{ padding: '12px', fontSize: 13, color: 'var(--c-text-dim)', fontFamily: 'var(--font-sans)' }}>
                     No bills in this import.
                   </td>
                 </tr>
@@ -100,6 +111,20 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
                     >
                       {fmtMoney(totals[bill.id] ?? 0)}
                     </td>
+                    {showRevised && (
+                      <td
+                        style={{
+                          padding: '10px 12px',
+                          fontSize: 13,
+                          fontFamily: 'var(--font-mono)',
+                          textAlign: 'right',
+                          whiteSpace: 'nowrap',
+                          color: 'var(--c-text)',
+                        }}
+                      >
+                        {fmtMoney(revisedTotals?.[bill.id] ?? 0)}
+                      </td>
+                    )}
                     <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                       <span style={{ fontSize: 12, color: 'var(--c-amber)', whiteSpace: 'nowrap' }}>Open ↗</span>
                     </td>
@@ -116,6 +141,7 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
                 <td style={{ padding: '10px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
                   {fmtMoney(importRow.totalExVat)}
                 </td>
+                {showRevised && <td />}
                 <td />
               </tr>
               <tr>
@@ -125,6 +151,7 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
                 <td style={{ padding: '6px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
                   {fmtMoney(importRow.vatAmount)}
                 </td>
+                {showRevised && <td />}
                 <td />
               </tr>
               <tr>
@@ -134,6 +161,7 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
                 <td style={{ padding: '6px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
                   {fmtMoney(importRow.totalInclVat)}
                 </td>
+                {showRevised && <td />}
                 <td />
               </tr>
               {/* ── Current (live rollup) ─────────────────────────────────── */}
@@ -147,6 +175,11 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
                 <td style={{ padding: '10px 12px', fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', textAlign: 'right', color: isEdited ? 'var(--c-amber)' : 'var(--c-text)', whiteSpace: 'nowrap' }}>
                   {fmtMoney(liveExVat)}
                 </td>
+                {showRevised && (
+                  <td style={{ padding: '10px 12px', fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text)', whiteSpace: 'nowrap' }}>
+                    {fmtMoney(revisedExVat)}
+                  </td>
+                )}
                 <td />
               </tr>
               <tr>
@@ -156,6 +189,11 @@ export function BoqMainSummary({ importRow, sections, totals, onSelectBill }: Pr
                 <td style={{ padding: '6px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: isEdited ? 'var(--c-amber)' : 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
                   {fmtMoney(liveInclVat)}
                 </td>
+                {showRevised && (
+                  <td style={{ padding: '6px 12px', fontSize: 13, fontFamily: 'var(--font-mono)', textAlign: 'right', color: 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>
+                    {fmtMoney(revisedInclVat)}
+                  </td>
+                )}
                 <td />
               </tr>
             </tfoot>

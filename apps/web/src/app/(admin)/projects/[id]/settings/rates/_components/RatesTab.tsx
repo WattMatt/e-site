@@ -20,6 +20,7 @@
 import { useMemo, useState } from 'react'
 import {
   computeRollups,
+  computeRevisedAmounts,
   type BoqImport,
   type BoqItem,
   type BoqSection,
@@ -42,9 +43,16 @@ interface Props {
   projectId: string
   canEdit: boolean
   initial: RatesTabData | null
+  /**
+   * Approved variation qty-deltas by boq_item_id (from
+   * getApprovedAdjustmentsAction). With any adjustment — or any materialized
+   * origin='variation' item — the tab shows Contract|Revised columns; with
+   * neither, the view is identical to a zero-VO project.
+   */
+  adjustments?: Record<string, number[]>
 }
 
-export function RatesTab({ projectId, canEdit, initial }: Props) {
+export function RatesTab({ projectId, canEdit, initial, adjustments }: Props) {
   const [importing, setImporting] = useState(false)
   const [selectedBillId, setSelectedBillId] = useState<string | null>(null)
   // Local item copy so inline rate edits can recompute rollups optimistically.
@@ -60,6 +68,30 @@ export function RatesTab({ projectId, canEdit, initial }: Props) {
     () => Object.fromEntries(computeRollups(sections, items)),
     [sections, items],
   )
+
+  // ── Revised position (approved VOs) ──────────────────────────────────────
+  // Derived client-side from the local items so an optimistic rate edit moves
+  // BOTH columns consistently (revised amount = revised qty × the edited rate).
+  const adjustmentsMap = useMemo(
+    () => new Map(Object.entries(adjustments ?? {})),
+    [adjustments],
+  )
+  const hasRevisions = useMemo(
+    () => adjustmentsMap.size > 0 || items.some((it) => it.origin === 'variation'),
+    [adjustmentsMap, items],
+  )
+  /** Per-item revised amounts, or null when no revision exists anywhere. */
+  const revised = useMemo(() => {
+    if (!hasRevisions) return null
+    return Object.fromEntries(computeRevisedAmounts(items, adjustmentsMap))
+  }, [hasRevisions, items, adjustmentsMap])
+  /** Section rollups over the revised amounts (same tree util as `totals`). */
+  const revisedTotals = useMemo(() => {
+    if (!revised) return null
+    return Object.fromEntries(
+      computeRollups(sections, items.map((it) => ({ ...it, amount: revised[it.id] ?? null }))),
+    )
+  }, [revised, sections, items])
 
   function handleItemUpdated(updated: BoqItem) {
     setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)))
@@ -140,6 +172,8 @@ export function RatesTab({ projectId, canEdit, initial }: Props) {
               sections={sections}
               items={items}
               totals={totals}
+              revised={revised}
+              revisedTotals={revisedTotals}
               projectId={projectId}
               canEdit={canEdit}
               onItemUpdated={handleItemUpdated}
@@ -151,6 +185,7 @@ export function RatesTab({ projectId, canEdit, initial }: Props) {
           importRow={importRow}
           sections={sections}
           totals={totals}
+          revisedTotals={revisedTotals}
           onSelectBill={(bill) => setSelectedBillId(bill.id)}
         />
       )}
