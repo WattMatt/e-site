@@ -479,6 +479,89 @@ describe('TenantDocumentList', () => {
     expect(fileInput.getAttribute('accept')).toBe('.pdf,.xlsx,.xls')
   })
 
+  // ── 8. Choosing a file must be enough to upload (title auto-fills) ──
+
+  it('choosing a file auto-fills the title from the filename and enables Upload', async () => {
+    const { TenantDocumentList } = await import('./TenantDocumentList')
+    render(
+      <TenantDocumentList
+        kind="scope"
+        projectId="p-1"
+        nodeId="node-1"
+        readOnly={false}
+        initialDocuments={[]}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /\+ Add document/i }))
+
+    const xlsx = new File(['x'], 'SCOPE OF WORK.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    await userEvent.upload(screen.getByTestId('add-drawing-file-input'), xlsx)
+
+    // Title auto-filled from the filename (extension stripped), still editable
+    const titleInput = screen.getByPlaceholderText('Document title') as HTMLInputElement
+    expect(titleInput.value).toBe('SCOPE OF WORK')
+
+    // File + auto-filled title → Upload is live
+    const uploadBtn = screen.getByRole('button', { name: /^Upload$/i }) as HTMLButtonElement
+    expect(uploadBtn.disabled).toBe(false)
+  })
+
+  it('does not overwrite a title the user already typed', async () => {
+    const { TenantDocumentList } = await import('./TenantDocumentList')
+    render(
+      <TenantDocumentList
+        kind="scope"
+        projectId="p-1"
+        nodeId="node-1"
+        readOnly={false}
+        initialDocuments={[]}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /\+ Add document/i }))
+
+    await userEvent.type(screen.getByPlaceholderText('Document title'), 'Electrical Scope')
+    const xlsx = new File(['x'], 'SCOPE OF WORK.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    await userEvent.upload(screen.getByTestId('add-drawing-file-input'), xlsx)
+
+    expect((screen.getByPlaceholderText('Document title') as HTMLInputElement).value).toBe(
+      'Electrical Scope',
+    )
+  })
+
+  // ── 9. A disabled Upload button must say why ──
+
+  it('explains what is missing while Upload is disabled', async () => {
+    const { TenantDocumentList } = await import('./TenantDocumentList')
+    render(
+      <TenantDocumentList
+        kind="scope"
+        projectId="p-1"
+        nodeId="node-1"
+        readOnly={false}
+        initialDocuments={[]}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /\+ Add document/i }))
+
+    // Nothing provided yet → combined hint
+    expect(screen.getByText('Choose a file and enter a title to enable Upload.')).toBeTruthy()
+
+    // File chosen (title auto-fills) → hint disappears
+    const xlsx = new File(['x'], 'SCOPE.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    await userEvent.upload(screen.getByTestId('add-drawing-file-input'), xlsx)
+    expect(screen.queryByText(/to enable Upload\./)).toBeNull()
+
+    // User clears the title → title-specific hint appears
+    await userEvent.clear(screen.getByPlaceholderText('Document title'))
+    expect(screen.getByText('Enter a document title to enable Upload.')).toBeTruthy()
+  })
+
   // ── 6. Delete-document calls deleteTenantDocumentAction after confirm step ──
 
   it('delete-document calls deleteTenantDocumentAction after confirm step', async () => {
