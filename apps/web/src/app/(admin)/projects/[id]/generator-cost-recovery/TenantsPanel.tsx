@@ -17,7 +17,7 @@ import {
   type TenantNodeRow,
   type GcrTenantAssignmentRow,
 } from '@esite/shared'
-import { saveTenantAssignmentAction } from './gcr.actions'
+import { saveTenantAssignmentAction, bulkSetUncategorizedTenantsAction } from './gcr.actions'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +28,8 @@ interface Props {
   generators: GcrZoneGeneratorRow[]
   tenants: TenantNodeRow[]
   assignments: GcrTenantAssignmentRow[]
+  /** Report generation lives on the Reports tab — this switches to it. */
+  onNavigateToReports: () => void
 }
 
 // ─── Per-row editable state ───────────────────────────────────────────────────
@@ -35,7 +37,8 @@ interface Props {
 interface RowState {
   nodeId: string
   participation: GeneratorParticipation
-  category: ShopCategory
+  /** '' = uncategorized (NULL in the DB) — shown honestly, counted by readiness. */
+  category: ShopCategory | ''
   zoneId: string | null
   manualKwOverride: string // string for input binding; parsed on save
 }
@@ -88,9 +91,11 @@ function initRowState(tenants: TenantNodeRow[], assignments: GcrTenantAssignment
   for (const t of tenants) {
     const asgn = assignments.find((a) => a.node_id === t.id)
     const rawCat = t.shop_category ?? ''
-    const category: ShopCategory = VALID_CATEGORIES.has(rawCat as ShopCategory)
+    // An unset category stays visibly unset ('') — displaying a default the DB
+    // doesn't hold is how 105 "Standard"-looking rows blocked report generation.
+    const category: ShopCategory | '' = VALID_CATEGORIES.has(rawCat as ShopCategory)
       ? (rawCat as ShopCategory)
-      : 'standard'
+      : ''
     byNode[t.id] = {
       nodeId: t.id,
       participation: t.generator_participation,
@@ -104,7 +109,7 @@ function initRowState(tenants: TenantNodeRow[], assignments: GcrTenantAssignment
 
 // ─── TenantsPanel ─────────────────────────────────────────────────────────────
 
-export function TenantsPanel({ projectId, settings, zones, generators, tenants, assignments }: Props) {
+export function TenantsPanel({ projectId, settings, zones, generators, tenants, assignments, onNavigateToReports }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
@@ -118,6 +123,33 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
   // Per-row save error
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
 
+  // Bulk-categorize state
+  const [bulkError, setBulkError] = useState<string | null>(null)
+  const uncategorizedCount = useMemo(
+    () => Object.values(rows).filter((r) => r.category === '').length,
+    [rows],
+  )
+
+  function handleBulkCategorize() {
+    setBulkError(null)
+    startTransition(async () => {
+      const res = await bulkSetUncategorizedTenantsAction(projectId)
+      if ('error' in res) {
+        setBulkError(res.error)
+        return
+      }
+      // Optimistic local update — the DB now holds 'standard' for these rows.
+      setRows((prev) => {
+        const next: typeof prev = {}
+        for (const [id, r] of Object.entries(prev)) {
+          next[id] = r.category === '' ? { ...r, category: 'standard' } : r
+        }
+        return next
+      })
+      router.refresh()
+    })
+  }
+
   // ─── Readiness check ───────────────────────────────────────────────────────
 
   const readiness = useMemo(() => {
@@ -129,7 +161,8 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
         shop_number: t.shop_number,
         shop_name: t.shop_name ?? '',
         shop_area_m2: t.shop_area_m2,
-        shop_category: rs?.category ?? t.shop_category,
+        // '' (uncategorized) maps to null so readiness counts it as a gap.
+        shop_category: rs ? (rs.category === '' ? null : rs.category) : t.shop_category,
         generator_participation: rs?.participation ?? t.generator_participation,
       }
     })
@@ -168,7 +201,7 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
         zone_id: rs.zoneId,
         participation: rs.participation,
         manual_kw_override: manualOverride,
-        shop_category: rs.category,
+        shop_category: rs.category === '' ? null : rs.category,
       })
       if ('error' in res) {
         setRowErrors((prev) => ({ ...prev, [nodeId]: res.error }))
@@ -204,39 +237,14 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text-mid)' }}>
               {readiness.ready ? 'Ready to generate' : 'Not ready'}
             </span>
-            {readiness.ready ? (
-              <a
-                href={`/api/projects/${projectId}/generator-cost-recovery/report-preview`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '5px 12px',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  fontFamily: 'var(--font-sans)',
-                  borderRadius: 6,
-                  border: '1px solid var(--c-border)',
-                  background: 'var(--c-panel)',
-                  color: 'var(--c-text)',
-                  textDecoration: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                Generate report
-              </a>
-            ) : (
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled
-                title={readiness.gaps.join(' · ')}
-                style={{ opacity: 0.45, cursor: 'not-allowed' }}
-              >
-                Generate report
-              </Button>
-            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onNavigateToReports}
+              title={readiness.ready ? undefined : readiness.gaps.join(' · ')}
+            >
+              Go to Reports
+            </Button>
           </div>
         </CardHeader>
         {!readiness.ready && (
@@ -248,6 +256,21 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                 </li>
               ))}
             </ul>
+            {uncategorizedCount > 0 && (
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <Button size="sm" variant="primary" onClick={handleBulkCategorize} disabled={busy}>
+                  Set all uncategorized to Standard ({uncategorizedCount})
+                </Button>
+                <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+                  Then change individual shops (fast food, restaurant, national) below.
+                </span>
+              </div>
+            )}
+            {bulkError && (
+              <div role="alert" style={{ marginTop: 8, fontSize: 13, color: 'var(--c-red)' }}>
+                {bulkError}
+              </div>
+            )}
           </CardBody>
         )}
       </Card>
@@ -296,7 +319,8 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                           shopNumber: tenant.shop_number,
                           shopName: tenant.shop_name ?? '',
                           areaM2: tenant.shop_area_m2 ?? 0,
-                          category: rs.category,
+                          // Engine semantics: uncategorized prices as standard (from-db.ts).
+                          category: rs.category === '' ? 'standard' : rs.category,
                           participation: rs.participation,
                           manualKwOverride: manualNum != null && !isNaN(manualNum) ? manualNum : null,
                         },
@@ -322,15 +346,25 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                         {tenant.shop_area_m2 != null ? tenant.shop_area_m2.toLocaleString('en-ZA') : '—'}
                       </td>
 
-                      {/* Category */}
+                      {/* Category — '' renders an explicit placeholder, never a fake default */}
                       <td style={TD}>
                         <select
                           value={rs.category}
                           onChange={(e) => updateRow(tenant.id, { category: e.target.value as ShopCategory })}
                           onBlur={() => saveRow(tenant.id)}
                           disabled={busy}
-                          style={SELECT_STYLE}
+                          style={{
+                            ...SELECT_STYLE,
+                            ...(rs.category === ''
+                              ? { borderColor: 'var(--c-amber)', color: 'var(--c-text-dim)', fontStyle: 'italic' }
+                              : null),
+                          }}
                         >
+                          {rs.category === '' && (
+                            <option value="" disabled>
+                              — set category —
+                            </option>
+                          )}
                           {(Object.keys(CATEGORY_LABELS) as ShopCategory[]).map((cat) => (
                             <option key={cat} value={cat}>{CATEGORY_LABELS[cat]}</option>
                           ))}
@@ -356,7 +390,7 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                                     zone_id: rs2.zoneId,
                                     participation: opt.value,
                                     manual_kw_override: manualN != null && !isNaN(manualN) ? manualN : null,
-                                    shop_category: rs2.category,
+                                    shop_category: rs2.category === '' ? null : rs2.category,
                                   })
                                   router.refresh()
                                 })

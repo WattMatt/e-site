@@ -23,6 +23,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, requireRoleForRevision, ROLES_ENGINEER } from '@/lib/cable-schedule/require-role'
+import { assertMvSignoffComplete } from '@esite/shared'
 
 const uuid = z.string().uuid()
 
@@ -264,6 +265,12 @@ export async function issueRevisionAction(
   // C12: role gate — only engineers can issue revisions.
   const roleCheck = await requireRoleForRevision(supabase, parsed.data.revisionId, ROLES_ENGINEER)
   if (!roleCheck.ok) return { error: roleCheck.error }
+
+  // MV sign-off precondition (spec §9): if this revision carries MV data, the
+  // 4-tick Pr.Eng sign-off must be complete before issue. Additive — for
+  // cable-only revisions the helper returns ok and behaviour is unchanged.
+  const mvGate = await assertMvSignoffComplete(supabase as any, parsed.data.revisionId)
+  if (!mvGate.ok) return { error: mvGate.error }
 
   const { data: rev, error } = await (supabase as any)
     .schema('cable_schedule')

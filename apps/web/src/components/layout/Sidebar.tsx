@@ -40,11 +40,11 @@ function InDevBadge() {
   )
 }
 
-function LockedBadge() {
+function LockedBadge({ label = 'Locked — unlock for R250' }: { label?: string }) {
   return (
     <Lock
       size={12}
-      aria-label="Locked — unlock for R250"
+      aria-label={label}
       style={{ marginLeft: 'auto', opacity: 0.7 }}
     />
   )
@@ -75,6 +75,7 @@ function projectNav(id: string) {
     { href: `/rfis?projectId=${id}`,        label: 'RFIs',        Icon: MessageSquare, exact: false },
     { href: `/projects/${id}/equipment-materials`, label: 'Equipment & Materials', Icon: Package,   exact: false },
     { href: `/projects/${id}/cables`,              label: 'Cables',             Icon: Cable,         exact: false },
+    { href: `/projects/${id}/medium-voltage`,      label: 'Medium Voltage',     Icon: Zap,           exact: false },
     { href: `/projects/${id}/generator-cost-recovery`, label: 'Generator Cost-Recovery', Icon: Zap, exact: false },
     { href: `/projects/${id}/tenant-schedule`,    label: 'Tenant Schedule',    Icon: Store,         exact: false },
     { href: `/projects/${id}/inspections`,     label: 'Inspections',     Icon: ClipboardCheck, exact: false },
@@ -99,10 +100,12 @@ function extractProjectId(pathname: string): string | null {
 interface SidebarContentProps {
   inspectionsUnlocked: boolean
   jbccUnlocked: boolean
+  mvUnlocked: boolean
+  mvVisible: boolean
   role: OrgRole | null
 }
 
-function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarContentProps) {
+function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisible, role }: SidebarContentProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
@@ -146,12 +149,15 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarCont
 
             <span className="sidebar-section-label" style={{ marginTop: 12 }}>Project</span>
 
-            {projectNav(projectId).map(({ href, label, Icon, exact }) => {
+            {projectNav(projectId)
+              .filter(({ href }) => mvVisible || !href.includes('/medium-voltage'))
+              .map(({ href, label, Icon, exact }) => {
               const basePath = href.split('?')[0]
               const active = exact
                 ? pathname === basePath
                 : pathname === basePath || pathname.startsWith(basePath + '/')
               const isJbcc = basePath === `/projects/${projectId}/jbcc`
+              const isMv = basePath === `/projects/${projectId}/medium-voltage`
               return (
                 <Link
                   key={href}
@@ -162,6 +168,7 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarCont
                   <Icon {...IC} />
                   {label}
                   {isJbcc && !jbccUnlocked && <LockedBadge />}
+                  {isMv && !mvUnlocked && <LockedBadge label="Locked — subscribe for R2000/year" />}
                 </Link>
               )
             })}
@@ -227,10 +234,13 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, role }: SidebarCont
 interface SidebarProps {
   inspectionsUnlocked?: boolean
   jbccUnlocked?: boolean
+  mvUnlocked?: boolean
+  /** Dark-launch: hide the Medium Voltage entry entirely (defaults hidden). */
+  mvVisible?: boolean
   role?: OrgRole | null
 }
 
-export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, role = null }: SidebarProps = {}) {
+export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvUnlocked = false, mvVisible = false, role = null }: SidebarProps = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -240,7 +250,7 @@ export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, rol
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} role={role} />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={role} />
       </Suspense>
     </aside>
   )

@@ -1,19 +1,23 @@
 'use client'
 
 import { useState } from 'react'
+import type { GcrReportRevisionRow } from '@esite/shared'
 import type { GcrConfig } from './gcr.actions'
 import { SettingsForm } from './SettingsForm'
 import { ZonesPanel } from './ZonesPanel'
 import { TenantsPanel } from './TenantsPanel'
+import { ReportsPanel } from './ReportsPanel'
 
-type Tab = 'settings' | 'zones' | 'tenants'
+type Tab = 'settings' | 'zones' | 'tenants' | 'reports'
 
 interface GcrTabsProps {
   projectId: string
   data: GcrConfig
+  reportRevisions: GcrReportRevisionRow[]
+  reportRevisionsLoadFailed?: boolean
 }
 
-export function GcrTabs({ projectId, data }: GcrTabsProps) {
+export function GcrTabs({ projectId, data, reportRevisions, reportRevisionsLoadFailed }: GcrTabsProps) {
   const [active, setActive] = useState<Tab>('settings')
 
   return (
@@ -34,6 +38,7 @@ export function GcrTabs({ projectId, data }: GcrTabsProps) {
             { id: 'settings', label: 'Settings' },
             { id: 'zones',    label: 'Zones & Generators' },
             { id: 'tenants',  label: 'Tenants' },
+            { id: 'reports',  label: 'Reports' },
           ] as { id: Tab; label: string }[]
         ).map(({ id, label }) => (
           <button
@@ -75,6 +80,19 @@ export function GcrTabs({ projectId, data }: GcrTabsProps) {
           generators={data.generators}
           tenants={data.tenants}
           assignments={data.assignments}
+          onNavigateToReports={() => setActive('reports')}
+        />
+      )}
+
+      {active === 'reports' && (
+        <ReportsPanel
+          projectId={projectId}
+          revisions={reportRevisions}
+          loadFailed={reportRevisionsLoadFailed}
+          settings={data.settings}
+          zones={data.zones}
+          generators={data.generators}
+          tenants={data.tenants}
         />
       )}
     </div>

@@ -302,6 +302,40 @@ export async function deleteGeneratorAction(
   return { ok: true }
 }
 
+// ─── bulkSetUncategorizedTenantsAction ───────────────────────────────────────
+
+/**
+ * Set shop_category = 'standard' on every uncategorized (NULL) tenant_db node
+ * in the project — the one-click resolution for the readiness gap "N tenant(s)
+ * missing category". Deliberately fills NULLs only; never overwrites a category
+ * someone chose. Gate: ORG_WRITE_ROLES.
+ */
+export async function bulkSetUncategorizedTenantsAction(
+  projectId: string,
+): Promise<{ ok: true; updated: number } | ErrResult> {
+  const supabase = await createClient()
+
+  const orgId = await resolveOrgId(supabase, projectId)
+  if (!orgId) return { error: 'Project not found' }
+
+  const guard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
+  if (!guard.ok) return { error: guard.error }
+
+  const { data, error } = await (supabase as any)
+    .schema('structure')
+    .from('nodes')
+    .update({ shop_category: 'standard' })
+    .eq('project_id', projectId)
+    .eq('kind', 'tenant_db')
+    .is('shop_category', null)
+    .select('id')
+
+  if (error) return { error: error.message ?? 'Failed to update tenant categories' }
+
+  revalidatePath(GCR_PATH(projectId))
+  return { ok: true, updated: ((data ?? []) as unknown[]).length }
+}
+
 // ─── saveTenantAssignmentAction ──────────────────────────────────────────────
 
 /**
