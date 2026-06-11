@@ -106,6 +106,32 @@ describe('updateBoqItemRateAction — cross-project guard', () => {
     expect(updateItemRateMock).not.toHaveBeenCalled()
   })
 
+  it('REFUSES a rate edit on a materialized variation item (origin=variation), without writing', async () => {
+    createClientMock.mockResolvedValue({})
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: () => ({
+          select: () =>
+            qb({
+              data: {
+                id: 'item-1',
+                origin: 'variation',
+                boq_sections: { import_id: 'imp', boq_imports: { project_id: 'THIS' } },
+              },
+              error: null,
+            }),
+        }),
+      }),
+    })
+
+    const res = await updateBoqItemRateAction('THIS', 'item-1', { supplyRate: 10 })
+
+    expect('error' in res).toBe(true)
+    if ('error' in res) expect(res.error).toMatch(/approved variation order and cannot be re-rated/)
+    expect(updateItemRateMock).not.toHaveBeenCalled()
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+
   it('updates when the item belongs to this project', async () => {
     createClientMock.mockResolvedValue({})
     createServiceClientMock.mockReturnValue({
@@ -113,7 +139,7 @@ describe('updateBoqItemRateAction — cross-project guard', () => {
         from: () => ({
           select: () =>
             qb({
-              data: { id: 'item-1', boq_sections: { import_id: 'imp', boq_imports: { project_id: 'THIS' } } },
+              data: { id: 'item-1', origin: 'contract', boq_sections: { import_id: 'imp', boq_imports: { project_id: 'THIS' } } },
               error: null,
             }),
         }),
