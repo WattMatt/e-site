@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/db/smoke-test-project-valuations.sh — verifies 00127 against the live DB, ROLLBACK-safe.
+# scripts/db/smoke-test-project-valuations.sh — verifies 00132 against the live DB, ROLLBACK-safe.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/mgmt-api.sh"

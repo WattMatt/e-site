@@ -1,4 +1,4 @@
--- 00127_project_valuations.sql — dated valuations + payment-certificate lines.
+-- 00132_project_valuations.sql — dated valuations + payment-certificate lines.
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS projects.valuations (
