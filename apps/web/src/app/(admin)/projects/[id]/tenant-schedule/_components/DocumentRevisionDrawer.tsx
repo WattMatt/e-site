@@ -92,6 +92,9 @@ export function DocumentRevisionDrawer({
   const [isDeletingRevId, setIsDeletingRevId] = useState<string | null>(null)
   const [deleteRevError, setDeleteRevError] = useState<string | null>(null)
 
+  // Mirrors the upload route's kind validation (scope = PDF/Excel only; layout = any).
+  const fileAccept = document.kind === 'scope' ? '.pdf,.xlsx,.xls' : undefined
+
   // ── Download ──────────────────────────────────────────────────────────────
 
   async function handleDownload(revision: TenantDocumentRevision) {
@@ -468,6 +471,7 @@ export function DocumentRevisionDrawer({
                     <input
                       ref={fileRef}
                       type="file"
+                      accept={fileAccept}
                       style={{ display: 'none' }}
                       onChange={(e) => {
                         setSelectedFile(e.target.files?.[0] ?? null)

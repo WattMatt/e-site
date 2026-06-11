@@ -6,8 +6,12 @@
  * - Renders documents in their given order (no drag-drop; reorder not in scope)
  * - Each row: title · current rev label + issued date · revision-count badge
  * - "Revisions" button opens DocumentRevisionDrawer for that document
- * - When not readOnly: rename, delete-document (with confirm), + Add drawing form
- * - Add drawing: title input + file → upload route → createTenantDocumentAction (optimistic)
+ * - When not readOnly: rename, delete-document (with confirm), + add-document form
+ * - Add document: title input + file → upload route → createTenantDocumentAction (optimistic)
+ *
+ * UI copy is parameterised by `kind` (KIND_COPY): the layout panel manages
+ * drawings, the scope panel scope-of-work documents — distinct document types
+ * end-to-end, so the wording and file-picker restrictions differ per panel.
  *
  * Mirrors the upload-then-attach-then-rollback pattern from ScopeOfWorkPanel.
  */
@@ -41,6 +45,38 @@ function formatDate(iso: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Per-kind UI copy — the layout panel manages drawings, the scope panel
+// scope-of-work documents. `accept` mirrors the upload route's kind-specific
+// validation (scope = PDF/Excel only, 50 MB; layout = any file type, T1).
+// ---------------------------------------------------------------------------
+
+const KIND_COPY: Record<
+  TenantDocumentKind,
+  {
+    addButton: string
+    formHeading: string
+    titlePlaceholder: string
+    emptyState: string
+    accept: string | undefined
+  }
+> = {
+  layout: {
+    addButton: '+ Add drawing',
+    formHeading: 'Add Drawing',
+    titlePlaceholder: 'Drawing title',
+    emptyState: 'No drawings yet.',
+    accept: undefined,
+  },
+  scope: {
+    addButton: '+ Add document',
+    formHeading: 'Add Scope Document',
+    titlePlaceholder: 'Document title',
+    emptyState: 'No scope documents yet.',
+    accept: '.pdf,.xlsx,.xls',
+  },
+}
+
+// ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
@@ -63,6 +99,8 @@ export function TenantDocumentList({
   readOnly,
   initialDocuments,
 }: Props) {
+  const copy = KIND_COPY[kind]
+
   const [documents, setDocuments] = useState<TenantDocument[]>(initialDocuments ?? [])
   const [isLoading, setIsLoading] = useState(initialDocuments === undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -308,7 +346,7 @@ export function TenantDocumentList({
         {/* Empty state */}
         {visibleDocuments.length === 0 && !showAddForm && (
           <div style={{ fontSize: 13, color: 'var(--c-text-dim)', fontStyle: 'italic', marginBottom: 12 }}>
-            No drawings yet.
+            {copy.emptyState}
           </div>
         )}
 
@@ -518,7 +556,7 @@ export function TenantDocumentList({
                     marginBottom: 10,
                   }}
                 >
-                  Add Drawing
+                  {copy.formHeading}
                 </div>
 
                 {/* Title */}
@@ -526,7 +564,7 @@ export function TenantDocumentList({
                   <input
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="Drawing title"
+                    placeholder={copy.titlePlaceholder}
                     style={{
                       width: '100%',
                       padding: '7px 10px',
@@ -570,6 +608,7 @@ export function TenantDocumentList({
                     <input
                       ref={fileRef}
                       type="file"
+                      accept={copy.accept}
                       style={{ display: 'none' }}
                       onChange={(e) => {
                         setNewFile(e.target.files?.[0] ?? null)
@@ -628,7 +667,7 @@ export function TenantDocumentList({
                 }}
                 style={{ fontSize: 12 }}
               >
-                + Add drawing
+                {copy.addButton}
               </Button>
             )}
           </div>
