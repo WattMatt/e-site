@@ -233,26 +233,29 @@ export const valuationService = {
   /**
    * Set every item under a section to a `section`-method line at the given
    * percent. value_to_date for each is computed via computeLineValue.
+   * The optional `revised` field carries the approved-variation position so
+   * computeLineValue caps against the revised amount, not the contract amount —
+   * consistent with upsertLine's behaviour for individual line edits.
    */
   async setSectionPercent(
     client: AnyClient,
     valuationId: string,
-    items: Array<{ boqItemId: string; item: RateItem }>,
+    items: Array<{ boqItemId: string; item: RateItem; revised?: RevisedPosition }>,
     percent: number,
   ): Promise<void> {
     const db = (client as AnyClient).schema('projects')
     if (items.length === 0) return
-    const rows = items.map(({ boqItemId, item }) => ({
+    const rows = items.map(({ boqItemId, item, revised }) => ({
       valuation_id: valuationId,
       boq_item_id: boqItemId,
       input_method: 'section' as const,
       percent_complete: percent,
       qty_complete: null,
-      value_to_date: computeLineValue(item, {
-        inputMethod: 'section',
-        percentComplete: percent,
-        qtyComplete: null,
-      }),
+      value_to_date: computeLineValue(
+        item,
+        { inputMethod: 'section', percentComplete: percent, qtyComplete: null },
+        revised,
+      ),
     }))
     const { error } = await db
       .from('valuation_lines')

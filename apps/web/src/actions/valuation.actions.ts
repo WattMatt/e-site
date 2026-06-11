@@ -416,18 +416,41 @@ export async function setSectionPercentAction(
       for (const child of childrenOf.get(id) ?? []) stack.push(child.id)
     }
 
+    // Approved variation adjustments — same one-call pattern as updateValuationLineAction.
+    // Items with approved deltas must cap against the REVISED amount, not the contract amount.
+    const adjustments = await variationService.getApprovedAdjustments(service as any, projectId)
+
     const targetItems = items
       .filter((it) => inScope.has(it.sectionId))
-      .map((it) => ({
-        boqItemId: it.id,
-        item: {
-          amount: it.amount,
-          supplyRate: it.supplyRate,
-          installRate: it.installRate,
-          rate: it.rate,
-          rateModel: it.rateModel,
-        },
-      }))
+      .map((it) => {
+        const deltas = adjustments.get(it.id)
+        const revised =
+          deltas && deltas.length > 0
+            ? computeRevisedItem(
+                {
+                  quantity: it.quantity,
+                  quantityMode: it.quantityMode,
+                  amount: it.amount,
+                  supplyRate: it.supplyRate,
+                  installRate: it.installRate,
+                  rate: it.rate,
+                  rateModel: it.rateModel,
+                },
+                deltas,
+              )
+            : undefined
+        return {
+          boqItemId: it.id,
+          item: {
+            amount: it.amount,
+            supplyRate: it.supplyRate,
+            installRate: it.installRate,
+            rate: it.rate,
+            rateModel: it.rateModel,
+          },
+          revised,
+        }
+      })
 
     await valuationService.setSectionPercent(service as any, valuationId, targetItems, percent)
     bust(projectId)

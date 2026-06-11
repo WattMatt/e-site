@@ -631,6 +631,57 @@ describe('setSectionPercentAction', () => {
     if ('error' in res) expect(res.error).toMatch(/certified/i)
     expect(setSectionPercentMock).not.toHaveBeenCalled()
   })
+
+  it('passes revised position for items with approved adjustments', async () => {
+    createClientMock.mockResolvedValue({})
+    // Service client: used only by resolveValuationForGate (draft valuation).
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: () => ({
+          select: () =>
+            qb({ data: { id: VAL, project_id: PROJECT, status: 'draft' }, error: null }),
+        }),
+      }),
+    })
+    // valuationService.get → boqImportId needed for getTree
+    getMock.mockResolvedValue({
+      valuation: { id: VAL, projectId: PROJECT, boqImportId: 'imp-1', valuationNo: 1, status: 'draft', certifiedBy: null },
+      lines: [],
+    })
+    // boqService.getTree → one section + one item (qty 10 @ R100, amount 1000)
+    boqGetTreeMock.mockResolvedValue({
+      sections: [{ id: 'sec-1', parentSectionId: null, name: 'Section A' }],
+      items: [{
+        id: ITEM,
+        sectionId: 'sec-1',
+        quantity: 10,
+        quantityMode: 'measured',
+        amount: 1000,
+        supplyRate: null,
+        installRate: null,
+        rate: 100,
+        rateModel: 'single',
+      }],
+    })
+    // Approved adjustment delta of +5 → revisedQty 15, revisedAmount 1500
+    getApprovedAdjustmentsMock.mockResolvedValue(new Map([[ITEM, [5]]]))
+    setSectionPercentMock.mockResolvedValue(undefined)
+
+    const res = await setSectionPercentAction(PROJECT, VAL, 'sec-1', 50)
+
+    expect('data' in res).toBe(true)
+    expect(setSectionPercentMock).toHaveBeenCalledWith(
+      expect.anything(),
+      VAL,
+      expect.arrayContaining([
+        expect.objectContaining({
+          boqItemId: ITEM,
+          revised: { revisedQty: 15, revisedAmount: 1500 },
+        }),
+      ]),
+      50,
+    )
+  })
 })
 
 // ─── listValuationsAction ───────────────────────────────────────────────────
