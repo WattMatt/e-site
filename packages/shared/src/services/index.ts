@@ -27,6 +27,7 @@ export * from './project-settings.service'
 export * from './generator-cost-recovery'
 export * from './boq.service'
 export * from './valuation.service'
+export * from './variation.service'
 // MV protection engine (pure TS — Phase 1 mechanical port from the MV sandbox).
 export * from './mv-complex'
 export * from './mv-fault-calc.service'
