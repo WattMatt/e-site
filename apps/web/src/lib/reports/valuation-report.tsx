@@ -21,7 +21,7 @@
 import React from 'react'
 import { Page, View, Text, StyleSheet } from '@react-pdf/renderer'
 import { Cover, Document, pageStyles } from './components'
-import type { ValuationReportData, CertificateBill, CertificateSummary } from './valuation-report-data'
+import type { ValuationReportData, CertificateBill, CertificateSummary, ContractSummary } from './valuation-report-data'
 
 // ---------------------------------------------------------------------------
 // Money formatting — South African Rand, thousands-separated, 2dp.
@@ -177,6 +177,16 @@ const s = StyleSheet.create({
     color: '#111111',
   },
 
+  // ── Contract block (above summary) ────────────────────────────────────────
+  contractBlock: {
+    marginTop: 18,
+    alignSelf: 'flex-end',
+    width: '60%',
+    borderWidth: 0.5,
+    borderColor: '#D1D5DB',
+    marginBottom: 6,
+  },
+
   // ── Signature strip ────────────────────────────────────────────────────────
   signatureStrip: {
     flexDirection: 'row',
@@ -300,6 +310,35 @@ function SummaryBlock({ summary }: { summary: CertificateSummary }) {
   )
 }
 
+/**
+ * Three rows shown ABOVE the certificate summary when contract value context is
+ * available (asImported non-null) OR there are any approved variations.
+ */
+function ContractBlock({ contract }: { contract: ContractSummary }) {
+  const show = contract.asImported != null || contract.approvedVariations !== 0
+  if (!show) return null
+  return (
+    <View style={s.contractBlock} wrap={false}>
+      <View style={s.summaryRow}>
+        <Text style={s.summaryLabel}>Contract value (as imported)</Text>
+        <Text style={s.summaryValue}>
+          {contract.asImported != null ? money(contract.asImported) : '—'}
+        </Text>
+      </View>
+      <View style={s.summaryRow}>
+        <Text style={s.summaryLabel}>+ Approved variations</Text>
+        <Text style={s.summaryValue}>{money(contract.approvedVariations)}</Text>
+      </View>
+      <View style={s.summaryRowEmphasis}>
+        <Text style={s.summaryLabelEmphasis}>= Revised contract value</Text>
+        <Text style={s.summaryValueEmphasis}>
+          {contract.revised != null ? money(contract.revised) : '—'}
+        </Text>
+      </View>
+    </View>
+  )
+}
+
 function SignatureStrip({ certifiedByName }: { certifiedByName: string | null }) {
   return (
     <View style={s.signatureStrip}>
@@ -365,6 +404,9 @@ export function ValuationReportDocument({ data }: { data: ValuationReportData })
           {/* Per-bill schedule */}
           <Text style={s.groupHeader}>Schedule by bill</Text>
           <BillScheduleTable bills={data.bills} />
+
+          {/* Contract context (shown when import total or approved VOs present) */}
+          <ContractBlock contract={data.contract} />
 
           {/* Summary */}
           <Text style={s.groupHeader}>Certificate summary</Text>

@@ -32,6 +32,7 @@ const baseData: ValuationReportData = {
     { code: 'A', title: 'Bill A — Electrical', grossToDate: 500, thisPeriod: 500, retention: 50 },
     { code: 'B', title: 'Bill B — Generators', grossToDate: 200, thisPeriod: 200, retention: 20 },
   ],
+  contract: { asImported: 15000, approvedVariations: 500, revised: 15500 },
   certifiedByName: 'Pat Engineer',
 }
 
