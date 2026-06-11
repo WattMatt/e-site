@@ -611,8 +611,14 @@ export function TenantDocumentList({
                       accept={copy.accept}
                       style={{ display: 'none' }}
                       onChange={(e) => {
-                        setNewFile(e.target.files?.[0] ?? null)
+                        const f = e.target.files?.[0] ?? null
+                        setNewFile(f)
                         setAddError(null)
+                        // Choosing a file is enough to upload: derive the title
+                        // from the filename when the user hasn't typed one.
+                        if (f && !newTitle.trim()) {
+                          setNewTitle(f.name.replace(/\.[^.]+$/, ''))
+                        }
                       }}
                       disabled={isUploading}
                       data-testid="add-drawing-file-input"
@@ -656,6 +662,18 @@ export function TenantDocumentList({
                     Cancel
                   </button>
                 </div>
+
+                {/* Say WHY Upload is disabled — a dead button with no explanation
+                    reads as a broken upload (real user report, 2026-06-11). */}
+                {!isUploading && (!newFile || !newTitle.trim()) && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--c-text-dim)' }}>
+                    {!newFile && !newTitle.trim()
+                      ? 'Choose a file and enter a title to enable Upload.'
+                      : !newFile
+                        ? 'Choose a file to enable Upload.'
+                        : 'Enter a document title to enable Upload.'}
+                  </div>
+                )}
               </div>
             ) : (
               <Button
