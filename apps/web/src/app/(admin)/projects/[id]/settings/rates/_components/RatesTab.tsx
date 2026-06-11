@@ -62,11 +62,20 @@ export function RatesTab({ projectId, canEdit, initial, adjustments }: Props) {
   const sections = useMemo(() => initial?.sections ?? [], [initial])
   const importRow = initial?.import ?? null
 
-  // Recompute rollups from the local items whenever they change; falls back to
-  // the server-provided totals on first render (identical values).
+  // Contract items only (origin='contract'): used for the Contract column and
+  // the "edited" amber marker, per spec §4.1. When hasRevisions is false every
+  // item is origin='contract' so this is a no-op in the zero-VO case.
+  const contractItems = useMemo(
+    () => items.filter((it) => it.origin === 'contract'),
+    [items],
+  )
+
+  // Recompute rollups from contract items only so the Contract column does not
+  // include variation line items. Falls back to server-provided totals on first
+  // render (identical values when there are no VOs).
   const totals = useMemo(
-    () => Object.fromEntries(computeRollups(sections, items)),
-    [sections, items],
+    () => Object.fromEntries(computeRollups(sections, contractItems)),
+    [sections, contractItems],
   )
 
   // ── Revised position (approved VOs) ──────────────────────────────────────
