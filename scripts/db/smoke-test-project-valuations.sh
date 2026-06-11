@@ -37,10 +37,12 @@ section "4. valuation_no auto-numbering + cascade (transactional, rolled back vi
 OUT="$(mgmt_query "DO \$\$
 DECLARE p uuid; o uuid; imp uuid; v1 uuid; v2 uuid; no1 int; no2 int; item uuid;
 BEGIN
-  SELECT id, organisation_id INTO p, o FROM projects.projects LIMIT 1;
-  SELECT id INTO imp FROM projects.boq_imports WHERE project_id = p LIMIT 1;
+  -- Pick a project that HAS a current BOQ import (not just the first project) —
+  -- the valuation seed needs a boq_import + items to reference.
+  SELECT i.project_id, i.organisation_id, i.id INTO p, o, imp
+    FROM projects.boq_imports i WHERE i.is_current LIMIT 1;
   IF imp IS NULL THEN
-    RAISE EXCEPTION 'SMOKE_SKIP: no boq_import found for project %, cannot seed valuation', p;
+    RAISE EXCEPTION 'SMOKE_SKIP: no current boq_import anywhere, cannot seed valuation';
   END IF;
   SELECT i.id INTO item FROM projects.boq_items i
     JOIN projects.boq_sections s ON s.id = i.section_id
