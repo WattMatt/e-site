@@ -284,7 +284,9 @@ describe('variationService.approve', () => {
       description: 'Extra DB',
       unit: 'No',
       quantity: '4',
-      rate_model: 'supply_install',
+      // NULL on purpose: the patch schema lets an `add` omit rateModel while
+      // boq_items.rate_model is NOT NULL — approve must coalesce it.
+      rate_model: null,
       supply_rate: '200',
       install_rate: '50',
       rate: null,
@@ -323,7 +325,7 @@ describe('variationService.approve', () => {
     expect(item.unit).toBe('No')
     expect(item.quantity).toBe(4)
     expect(item.quantity_mode).toBe('measured')
-    expect(item.rate_model).toBe('supply_install')
+    expect(item.rate_model).toBe('supply_install') // coalesced from the line's NULL rate_model
     expect(item.supply_rate).toBe(200)
     expect(item.install_rate).toBe(50)
     expect(item.rate).toBeNull()

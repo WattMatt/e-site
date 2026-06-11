@@ -43,6 +43,12 @@ describe('computeRevisedItem', () => {
   it('amount_only passes through untouched', () => {
     expect(computeRevisedItem(item({ rateModel: 'amount_only', amount: 999, quantity: null }), [])).toEqual({ revisedQty: null, revisedAmount: 999 })
   })
+  it('quantity keeps 3dp precision (deltas are numeric(14,3)); the AMOUNT stays 2dp', () => {
+    // A 0.125 delta must stay 0.125 — 2dp rounding would corrupt it to 0.13.
+    expect(computeRevisedItem(item(), [0.125])).toEqual({ revisedQty: 10.125, revisedAmount: 1012.5 })
+    // Float-noise sums still land on clean 3dp.
+    expect(computeRevisedItem(item(), [0.1, 0.2]).revisedQty).toBe(10.3)
+  })
 })
 
 describe('computeLineValue with a revised cap', () => {

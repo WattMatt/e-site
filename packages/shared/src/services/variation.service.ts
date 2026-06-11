@@ -8,6 +8,8 @@ import { rowToVariationLine, rowToVariationOrder, variationLineToRow } from './_
 type AnyClient = any
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
+// Quantities (and deltas) are 3dp (numeric(14,3)) — money is 2dp.
+const round3 = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000
 
 type RateFields = Pick<BoqItem, 'supplyRate' | 'installRate' | 'rate' | 'rateModel'>
 const effectiveRate = (f: RateFields): number =>
@@ -43,7 +45,7 @@ export function computeRevisedItem(
   if (item.rateModel === 'amount_only') return { revisedQty: item.quantity ?? null, revisedAmount: item.amount ?? null }
   const deltaSum = approvedDeltas.reduce((s, d) => s + d, 0)
   if (approvedDeltas.length === 0) return { revisedQty: item.quantity ?? null, revisedAmount: item.amount ?? null }
-  const revisedQty = round2((item.quantity ?? 0) + deltaSum)
+  const revisedQty = round3((item.quantity ?? 0) + deltaSum)
   return { revisedQty, revisedAmount: round2(revisedQty * effectiveRate(item)) }
 }
 
@@ -277,7 +279,9 @@ export const variationService = {
           unit: line.unit,
           quantity: line.quantity,
           quantity_mode: 'measured',
-          rate_model: line.rateModel,
+          // boq_items.rate_model is NOT NULL but the patch schema lets an
+          // `add` omit rateModel (supply/install rates given directly).
+          rate_model: line.rateModel ?? 'supply_install',
           supply_rate: line.supplyRate,
           install_rate: line.installRate,
           rate: line.rate,
