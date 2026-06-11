@@ -16,6 +16,7 @@ const {
   getPreviousNetMock,
   boqGetCurrentMock,
   boqGetTreeMock,
+  getApprovedAdjustmentsMock,
   computeCertificateMock,
   gatherValuationReportDataMock,
   renderValuationReportMock,
@@ -33,6 +34,7 @@ const {
   getPreviousNetMock: vi.fn(),
   boqGetCurrentMock: vi.fn(),
   boqGetTreeMock: vi.fn(),
+  getApprovedAdjustmentsMock: vi.fn(),
   computeCertificateMock: vi.fn(),
   gatherValuationReportDataMock: vi.fn(),
   renderValuationReportMock: vi.fn(),
@@ -58,6 +60,11 @@ vi.mock('@esite/shared', async (orig) => ({
   boqService: {
     getCurrent: boqGetCurrentMock,
     getTree: boqGetTreeMock,
+  },
+  // computeRevisedItem stays REAL via the spread — only the service-client
+  // method is mocked.
+  variationService: {
+    getApprovedAdjustments: getApprovedAdjustmentsMock,
   },
   computeCertificate: computeCertificateMock,
 }))
@@ -99,6 +106,7 @@ const ITEM = '33333333-3333-3333-3333-333333333333'
 beforeEach(() => {
   vi.clearAllMocks()
   requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
+  getApprovedAdjustmentsMock.mockResolvedValue(new Map())
 })
 
 // ─── updateValuationLineAction — cross-project guard ────────────────────────
@@ -204,6 +212,97 @@ describe('updateValuationLineAction — cross-project guard', () => {
     expect('error' in res && res.error).toBe('No access to this project')
     expect(createServiceClientMock).not.toHaveBeenCalled()
     expect(upsertLineMock).not.toHaveBeenCalled()
+  })
+
+  it('passes the REVISED cap through when approved adjustments raise the item quantity', async () => {
+    createClientMock.mockResolvedValue({})
+    // Item: qty 10 @ R100 single → contract amount 1000. Approved delta +5 →
+    // revised qty 15 / revised amount 1500. A qtyComplete of 12 (R1200) exceeds
+    // contract but sits within revised — the revised position must reach
+    // valuationService.upsertLine so computeLineValue caps at 1500, not 1000.
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: (table: string) => ({
+          select: () =>
+            qb({
+              data:
+                table === 'valuations'
+                  ? { id: VAL, project_id: PROJECT, status: 'draft' }
+                  : {
+                      id: ITEM,
+                      quantity: 10,
+                      quantity_mode: 'measured',
+                      amount: 1000,
+                      supply_rate: null,
+                      install_rate: null,
+                      rate: 100,
+                      rate_model: 'single',
+                    },
+              error: null,
+            }),
+        }),
+      }),
+    })
+    getApprovedAdjustmentsMock.mockResolvedValue(new Map([[ITEM, [5]]]))
+    upsertLineMock.mockResolvedValue({ id: 'line-1', valueToDate: 1200 })
+
+    const res = await updateValuationLineAction(PROJECT, VAL, {
+      boqItemId: ITEM,
+      inputMethod: 'quantity',
+      qtyComplete: 12,
+    })
+
+    expect('data' in res).toBe(true)
+    expect(upsertLineMock).toHaveBeenCalledWith(
+      expect.anything(),
+      VAL,
+      expect.objectContaining({ qtyComplete: 12 }),
+      expect.objectContaining({ amount: 1000 }),
+      { revisedQty: 15, revisedAmount: 1500 },
+    )
+  })
+
+  it('passes NO revised position when the item has no approved adjustments', async () => {
+    createClientMock.mockResolvedValue({})
+    createServiceClientMock.mockReturnValue({
+      schema: () => ({
+        from: (table: string) => ({
+          select: () =>
+            qb({
+              data:
+                table === 'valuations'
+                  ? { id: VAL, project_id: PROJECT, status: 'draft' }
+                  : {
+                      id: ITEM,
+                      quantity: 10,
+                      quantity_mode: 'measured',
+                      amount: 1000,
+                      supply_rate: null,
+                      install_rate: null,
+                      rate: 100,
+                      rate_model: 'single',
+                    },
+              error: null,
+            }),
+        }),
+      }),
+    })
+    upsertLineMock.mockResolvedValue({ id: 'line-1', valueToDate: 1000 })
+
+    const res = await updateValuationLineAction(PROJECT, VAL, {
+      boqItemId: ITEM,
+      inputMethod: 'quantity',
+      qtyComplete: 12,
+    })
+
+    expect('data' in res).toBe(true)
+    expect(upsertLineMock).toHaveBeenCalledWith(
+      expect.anything(),
+      VAL,
+      expect.objectContaining({ qtyComplete: 12 }),
+      expect.objectContaining({ amount: 1000 }),
+      undefined,
+    )
   })
 })
 

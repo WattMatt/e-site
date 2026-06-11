@@ -190,19 +190,27 @@ export const valuationService = {
   /**
    * Upsert a progress line — recomputes value_to_date via the pure
    * computeLineValue, then upserts on (valuation_id, boq_item_id).
+   * `revised` (optional) is the item's position under approved variation
+   * adjustments — when present, computeLineValue caps against it instead of
+   * the contract amount.
    */
   async upsertLine(
     client: AnyClient,
     valuationId: string,
     patch: ValuationProgressPatch,
     item: RateItem,
+    revised?: RevisedPosition,
   ): Promise<ValuationLine> {
     const db = (client as AnyClient).schema('projects')
-    const valueToDate = computeLineValue(item, {
-      inputMethod: patch.inputMethod,
-      percentComplete: patch.percentComplete ?? null,
-      qtyComplete: patch.qtyComplete ?? null,
-    })
+    const valueToDate = computeLineValue(
+      item,
+      {
+        inputMethod: patch.inputMethod,
+        percentComplete: patch.percentComplete ?? null,
+        qtyComplete: patch.qtyComplete ?? null,
+      },
+      revised,
+    )
     const { data, error } = await db
       .from('valuation_lines')
       .upsert(
