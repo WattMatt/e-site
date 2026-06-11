@@ -251,14 +251,29 @@ export async function upsertVariationLineAction(
     }
 
     if (parsed.data.kind === 'adjust') {
-      // Load the target boq item (rates for value_change + quantity for the floor).
+      // Load the target boq item (rates for value_change + quantity for the
+      // floor) WITH its owning import/project via the section → import embed.
+      // An unscoped load would let a forged item id from another org leak its
+      // rates through the computed value_change — mirror the add path /
+      // updateBoqItemRateAction: the item must belong to THIS project's
+      // CURRENT import.
       const { data: itemRow } = await (service as any)
         .schema('projects')
         .from('boq_items')
-        .select('id, quantity, quantity_mode, amount, supply_rate, install_rate, rate, rate_model')
+        .select(
+          'id, quantity, quantity_mode, amount, supply_rate, install_rate, rate, rate_model, boq_sections!inner(import_id, boq_imports!inner(project_id))',
+        )
         .eq('id', parsed.data.boqItemId)
         .maybeSingle()
       if (!itemRow) return { error: 'Not found' }
+      const currentImport = await boqService.getCurrent(service as any, projectId)
+      if (
+        itemRow.boq_sections?.boq_imports?.project_id !== projectId ||
+        !currentImport ||
+        itemRow.boq_sections?.import_id !== currentImport.id
+      ) {
+        return { error: 'Not found' }
+      }
 
       // The >= 0 revised-quantity floor: contractQty + approved deltas + this delta.
       const adjustments = await variationService.getApprovedAdjustments(service as any, projectId)
@@ -375,6 +390,39 @@ export async function approveVariationOrderAction(
   const { data: { user } } = await supabase.auth.getUser()
 
   try {
+    // Re-enforce the >= 0 revised-quantity floor across the WHOLE VO at approve
+    // time. Entry-time validation (validateQtyDelta) only counts APPROVED
+    // deltas, so two coexisting draft VOs can each pass entry and then stack
+    // omissions below zero once both approve. Group this VO's adjust deltas per
+    // item and re-check: contractQty + approved deltas + this VO's deltas >= 0.
+    const result = await variationService.get(service as any, voId)
+    if (!result) return { error: 'Not found' }
+    const voDeltaByItem = new Map<string, number>()
+    for (const line of result.lines) {
+      if (line.kind !== 'adjust' || !line.boqItemId) continue
+      voDeltaByItem.set(line.boqItemId, (voDeltaByItem.get(line.boqItemId) ?? 0) + (line.qtyDelta ?? 0))
+    }
+    if (voDeltaByItem.size > 0) {
+      const { data: itemRows } = await (service as any)
+        .schema('projects')
+        .from('boq_items')
+        .select('id, quantity')
+        .in('id', [...voDeltaByItem.keys()])
+      const qtyById = new Map(
+        ((itemRows ?? []) as Array<{ id: string; quantity: unknown }>).map((r) => [
+          r.id,
+          r.quantity == null ? 0 : Number(r.quantity),
+        ]),
+      )
+      const approvedAdjustments = await variationService.getApprovedAdjustments(service as any, projectId)
+      for (const [itemId, voDelta] of voDeltaByItem) {
+        const approvedSum = (approvedAdjustments.get(itemId) ?? []).reduce((s, d) => s + d, 0)
+        if ((qtyById.get(itemId) ?? 0) + approvedSum + voDelta < -1e-9) {
+          return { error: "Approving would take an item's revised quantity below zero" }
+        }
+      }
+    }
+
     const approved = await variationService.approve(service as any, voId, {
       approvedBy: user?.id ?? null,
     })

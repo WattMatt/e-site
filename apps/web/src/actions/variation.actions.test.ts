@@ -96,7 +96,9 @@ const draftVo = { id: VO, project_id: PROJECT, status: 'draft', vo_no: 1 }
 const approvedVo = { id: VO, project_id: PROJECT, status: 'approved', vo_no: 1 }
 const foreignVo = { id: VO, project_id: 'OTHER', status: 'draft', vo_no: 1 }
 
-// quantity 10 @ R100 single → contract amount 1000.
+// quantity 10 @ R100 single → contract amount 1000. The boq_sections embed is
+// the ownership chain the adjust path now resolves (item → section → import →
+// project): this item belongs to THIS project's current import 'imp-1'.
 const itemRow = {
   id: ITEM,
   quantity: 10,
@@ -106,6 +108,7 @@ const itemRow = {
   install_rate: null,
   rate: 100,
   rate_model: 'single',
+  boq_sections: { import_id: 'imp-1', boq_imports: { project_id: PROJECT } },
 }
 
 const adjustPatch = { kind: 'adjust' as const, boqItemId: ITEM, qtyDelta: -3 }
@@ -114,6 +117,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
   getApprovedAdjustmentsMock.mockResolvedValue(new Map())
+  // Default current import = the one itemRow's section belongs to (tests that
+  // need a missing/different import override this).
+  boqGetCurrentMock.mockResolvedValue({ id: 'imp-1' })
 })
 
 // ─── upsertVariationLineAction ──────────────────────────────────────────────
@@ -165,6 +171,36 @@ describe('upsertVariationLineAction', () => {
     )
 
     const res = await upsertVariationLineAction(PROJECT, VO, { ...adjustPatch, id: LINE })
+
+    expect('error' in res && res.error).toBe('Not found')
+    expect(upsertLineMock).not.toHaveBeenCalled()
+  })
+
+  it('REJECTS an adjust whose boq item belongs to ANOTHER project, without writing or leaking rates', async () => {
+    createClientMock.mockResolvedValue({})
+    const foreignItem = {
+      ...itemRow,
+      boq_sections: { import_id: 'imp-1', boq_imports: { project_id: 'OTHER' } },
+    }
+    createServiceClientMock.mockReturnValue(serviceWith({ variation_orders: draftVo, boq_items: foreignItem }))
+
+    const res = await upsertVariationLineAction(PROJECT, VO, adjustPatch)
+
+    expect('error' in res && res.error).toBe('Not found')
+    expect(upsertLineMock).not.toHaveBeenCalled()
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+
+  it('REJECTS an adjust whose boq item belongs to a NON-CURRENT import, without writing', async () => {
+    createClientMock.mockResolvedValue({})
+    const staleItem = {
+      ...itemRow,
+      boq_sections: { import_id: 'imp-OLD', boq_imports: { project_id: PROJECT } },
+    }
+    createServiceClientMock.mockReturnValue(serviceWith({ variation_orders: draftVo, boq_items: staleItem }))
+    boqGetCurrentMock.mockResolvedValue({ id: 'imp-1' })
+
+    const res = await upsertVariationLineAction(PROJECT, VO, adjustPatch)
 
     expect('error' in res && res.error).toBe('Not found')
     expect(upsertLineMock).not.toHaveBeenCalled()
@@ -330,11 +366,68 @@ describe('approveVariationOrderAction', () => {
     expect(approveMock).not.toHaveBeenCalled()
   })
 
+  it('REFUSES approve when this VO’s deltas stacked on approved deltas take an item below zero (two-draft stacking)', async () => {
+    // Item qty 10. Two drafts each held −10: entry-time validateQtyDelta passed
+    // each ALONE (it only counts approved deltas). The first VO approved (−10 →
+    // revised 0). Approving THIS one (−10 on top) would land at −10 → refuse.
+    createClientMock.mockResolvedValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
+    })
+    createServiceClientMock.mockReturnValue(
+      serviceWith({ variation_orders: draftVo, boq_items: [{ id: ITEM, quantity: 10 }] }),
+    )
+    getMock.mockResolvedValue({
+      vo: { id: VO, projectId: PROJECT, status: 'draft' },
+      lines: [{ id: 'l1', kind: 'adjust', boqItemId: ITEM, qtyDelta: -10, valueChange: -1000 }],
+    })
+    getApprovedAdjustmentsMock.mockResolvedValue(new Map([[ITEM, [-10]]]))
+
+    const res = await approveVariationOrderAction(PROJECT, VO)
+
+    expect('error' in res && res.error).toBe("Approving would take an item's revised quantity below zero")
+    expect(approveMock).not.toHaveBeenCalled()
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+
+  it('entry-then-approve: a −10 delta on a qty-10 item passes ENTRY alone, and approve passes when no other VO approved', async () => {
+    // The companion to the stacking test: each side of the race is legal alone.
+    createClientMock.mockResolvedValue({
+      auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
+    })
+    createServiceClientMock.mockReturnValue(
+      serviceWith({ variation_orders: draftVo, boq_items: itemRow }),
+    )
+    upsertLineMock.mockResolvedValue({ id: LINE, kind: 'adjust', valueChange: -1000 })
+
+    // ENTRY: −10 on qty 10 with NO approved deltas → floor holds (lands at 0).
+    const entry = await upsertVariationLineAction(PROJECT, VO, { ...adjustPatch, qtyDelta: -10 })
+    expect('data' in entry).toBe(true)
+
+    // APPROVE: same VO, still no OTHER approved deltas → floor holds.
+    createServiceClientMock.mockReturnValue(
+      serviceWith({ variation_orders: draftVo, boq_items: [{ id: ITEM, quantity: 10 }] }),
+    )
+    getMock.mockResolvedValue({
+      vo: { id: VO, projectId: PROJECT, status: 'draft' },
+      lines: [{ id: LINE, kind: 'adjust', boqItemId: ITEM, qtyDelta: -10, valueChange: -1000 }],
+    })
+    approveMock.mockResolvedValue({ id: VO, status: 'approved', netChange: -1000 })
+
+    const res = await approveVariationOrderAction(PROJECT, VO)
+    expect('data' in res).toBe(true)
+    expect(approveMock).toHaveBeenCalled()
+  })
+
   it('approves a draft VO and revalidates the variations + rates + valuations paths', async () => {
     createClientMock.mockResolvedValue({
       auth: { getUser: async () => ({ data: { user: { id: 'u-approver' } } }) },
     })
     createServiceClientMock.mockReturnValue(serviceWith({ variation_orders: draftVo }))
+    // The approve-time floor check loads the VO's lines first — no adjust lines here.
+    getMock.mockResolvedValue({
+      vo: { id: VO, projectId: PROJECT, status: 'draft' },
+      lines: [{ id: 'l1', kind: 'add', boqItemId: null, sectionId: SECTION, valueChange: 2500 }],
+    })
     approveMock.mockResolvedValue({ id: VO, status: 'approved', netChange: 2500 })
 
     const res = await approveVariationOrderAction(PROJECT, VO)
