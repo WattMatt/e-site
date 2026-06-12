@@ -18,11 +18,11 @@ import {
   gcrSettingsSchema,
   gcrZoneSchema,
   gcrGeneratorSchema,
-  gcrAssignmentSchema,
+  gcrBulkAssignmentSchema,
   type GcrSettingsInput,
   type GcrZoneInput,
   type GcrGeneratorInput,
-  type GcrAssignmentInput,
+  type GcrAssignmentPatch,
 } from './gcr.schemas'
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -102,7 +102,9 @@ export async function loadGcrConfigAction(
         .from('nodes')
         .select('id, shop_number, shop_name, shop_area_m2, shop_category, generator_participation')
         .eq('project_id', projectId)
-        .eq('kind', 'tenant_db'),
+        .eq('kind', 'tenant_db')
+        .is('deleted_at', null)
+        .neq('status', 'decommissioned'),
 
       (supabase as any)
         .schema('gcr')
@@ -336,17 +338,18 @@ export async function bulkSetUncategorizedTenantsAction(
   return { ok: true, updated: ((data ?? []) as unknown[]).length }
 }
 
-// ─── saveTenantAssignmentAction ──────────────────────────────────────────────
+// ─── bulkSaveTenantAssignmentsAction ─────────────────────────────────────────
 
 /**
- * Two writes in one action (single gate):
- *   1. Upsert gcr.tenant_assignments (conflict: node_id).
- *   2. Update structure.nodes shop_category + generator_participation.
+ * One save path for single-cell edits AND bulk-bar applies.
+ * Transactional via gcr.bulk_save_tenant_assignments (SECURITY INVOKER — RLS
+ * applies to the caller). Patch fields absent = untouched; null = cleared.
  */
-export async function saveTenantAssignmentAction(
+export async function bulkSaveTenantAssignmentsAction(
   projectId: string,
-  input: GcrAssignmentInput,
-): Promise<ActionResult> {
+  nodeIds: string[],
+  patch: GcrAssignmentPatch,
+): Promise<{ ok: true; updated: number } | ErrResult> {
   const supabase = await createClient()
 
   const orgId = await resolveOrgId(supabase, projectId)
@@ -355,43 +358,32 @@ export async function saveTenantAssignmentAction(
   const guard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
 
-  const parsed = gcrAssignmentSchema.safeParse(input)
+  const parsed = gcrBulkAssignmentSchema.safeParse({ nodeIds, patch })
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const p = parsed.data.patch
 
-  const { node_id, zone_id, participation, manual_kw_override, shop_category } = parsed.data
-
-  // TODO(P3): the gcr upsert + structure.nodes update aren't transactional; on a partial failure the client sees the error and a retry self-heals (the upsert is idempotent).
-  // Write 1 — upsert gcr.tenant_assignments
-  const { error: upsertErr } = await (supabase as any)
+  const { data, error } = await (supabase as any)
     .schema('gcr')
-    .from('tenant_assignments')
-    .upsert(
-      {
-        node_id,
-        project_id: projectId,
-        organisation_id: orgId,
-        zone_id,
-        manual_kw_override,
-      },
-      { onConflict: 'node_id' },
-    )
+    .rpc('bulk_save_tenant_assignments', {
+      p_project_id:        projectId,
+      p_node_ids:          parsed.data.nodeIds,
+      p_set_zone:          p.zone_id !== undefined,
+      p_zone_id:           p.zone_id ?? null,
+      p_set_participation: p.participation !== undefined,
+      p_participation:     p.participation ?? null,
+      p_set_category:      p.shop_category !== undefined,
+      p_shop_category:     p.shop_category ?? null,
+      p_set_manual_kw:     p.manual_kw_override !== undefined,
+      p_manual_kw:         p.manual_kw_override ?? null,
+    })
 
-  if (upsertErr) return { error: upsertErr.message ?? 'Failed to save tenant assignment' }
-
-  // Write 2 — update structure.nodes facets
-  const nodeUpdate: Record<string, unknown> = {
-    generator_participation: participation,
+  if (error) {
+    console.error('[gcr-bulk-save] failed', {
+      projectId, nodeCount: parsed.data.nodeIds.length, patch: p, error: error.message,
+    })
+    return { error: error.message ?? 'Failed to save tenant assignments' }
   }
-  if (shop_category !== undefined) nodeUpdate.shop_category = shop_category
-
-  const { error: nodeErr } = await (supabase as any)
-    .schema('structure')
-    .from('nodes')
-    .update(nodeUpdate)
-    .eq('id', node_id)
-
-  if (nodeErr) return { error: nodeErr.message ?? 'Failed to update tenant node' }
 
   revalidatePath(GCR_PATH(projectId))
-  return { ok: true }
+  return { ok: true, updated: (data as number | null) ?? 0 }
 }

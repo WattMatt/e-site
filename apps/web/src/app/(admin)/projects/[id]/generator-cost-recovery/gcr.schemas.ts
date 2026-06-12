@@ -53,14 +53,20 @@ export const gcrGeneratorSchema = z.object({
 
 export type GcrGeneratorInput = z.infer<typeof gcrGeneratorSchema>
 
-// ─── Tenant assignment ────────────────────────────────────────────────────────
+// ─── Tenant assignment (bulk patch) ───────────────────────────────────────────
 
-export const gcrAssignmentSchema = z.object({
-  node_id:             z.string().uuid(),
-  zone_id:             z.string().uuid().nullable(),
-  participation:       z.enum(['shared', 'own', 'none']),
-  manual_kw_override:  z.coerce.number().nullable(),
-  shop_category:       z.enum(['standard', 'fast_food', 'restaurant', 'national', 'other']).nullable(),
+export const gcrAssignmentPatchSchema = z
+  .object({
+    zone_id:            z.string().uuid().nullable().optional(),
+    participation:      z.enum(['shared', 'own', 'none']).optional(),
+    shop_category:      z.enum(['standard', 'fast_food', 'restaurant', 'national', 'other']).nullable().optional(),
+    manual_kw_override: z.number().nonnegative().nullable().optional(),
+  })
+  .refine((p) => Object.values(p).some((v) => v !== undefined), { message: 'Nothing to save' })
+
+export const gcrBulkAssignmentSchema = z.object({
+  nodeIds: z.array(z.string().uuid()).min(1).max(500),
+  patch:   gcrAssignmentPatchSchema,
 })
 
-export type GcrAssignmentInput = z.infer<typeof gcrAssignmentSchema>
+export type GcrAssignmentPatch = z.infer<typeof gcrAssignmentPatchSchema>
