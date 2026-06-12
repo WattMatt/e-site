@@ -20,8 +20,9 @@ import {
 } from '@esite/shared'
 import { bulkSetUncategorizedTenantsAction } from './gcr.actions'
 import { useAssignmentSaves } from './useAssignmentSaves'
-import { toDisplayTenant, matchesFilter, filterCounts, needsSetup, type DisplayTenant, type TenantFilter } from './tenant-display'
+import { toDisplayTenant, matchesFilter, filterCounts, needsSetup, zoneCoverage, type DisplayTenant, type TenantFilter } from './tenant-display'
 import { BulkBar } from './BulkBar'
+import { CoverageStrip } from './CoverageStrip'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -173,6 +174,13 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
   const counts = useMemo(() => filterCounts(displayed), [displayed])
   const setupCount = useMemo(() => displayed.filter(needsSetup).length, [displayed])
 
+  // ─── Coverage (per-zone summary shown above the filter chips) ───────────────
+
+  const coverage = useMemo(
+    () => zoneCoverage(displayed, zones, generators, engineSettings),
+    [displayed, zones, generators, engineSettings],
+  )
+
   // ─── Sorted display rows (filter-aware) ─────────────────────────────────────
 
   const displayedSorted = useMemo(
@@ -277,6 +285,7 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
         </div>
       ) : (
         <Card>
+          <CoverageStrip perZone={coverage.perZone} configured={coverage.configured} total={coverage.total} />
           <BulkBar
             selectedCount={selected.size}
             zones={zones}

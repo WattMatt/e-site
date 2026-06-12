@@ -211,6 +211,31 @@ describe('TenantsPanel — filters + setup banner', () => {
   })
 })
 
+describe('TenantsPanel — coverage strip', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('shows per-zone kW, capacity when parseable, and the configured count', async () => {
+    const assignments = [{ node_id: 't1', zone_id: 'z1', manual_kw_override: null }]
+    const { TenantsPanel } = await import('./TenantsPanel')
+    render(
+      <TenantsPanel
+        projectId={PROJECT_ID}
+        settings={SETTINGS}
+        zones={ZONES}
+        generators={GENERATORS}
+        tenants={TENANTS}
+        assignments={assignments}
+        onNavigateToReports={vi.fn()}
+      />,
+    )
+    const strip = screen.getByLabelText(/coverage/i)
+    expect(within(strip).getByText('North')).toBeTruthy()
+    expect(within(strip).getByText(/1 shop/)).toBeTruthy()
+    expect(within(strip).getByText(/250 kVA/)).toBeTruthy()
+    expect(within(strip).getByText(/1 of 3 configured/i)).toBeTruthy()
+  })
+})
+
 describe('TenantsPanel — selection + bulk bar', () => {
   beforeEach(() => vi.clearAllMocks())
 
