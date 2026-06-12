@@ -21,9 +21,13 @@ interface SettledSave {
  * Save queue for tenant assignments.
  * - `pending` is the optimistic overlay (display = server + pending); it is set
  *   for EVERY commit immediately, so the UI always shows the user's intent.
- * - Commits for a node already saving WAIT on that save's promise (per-node
- *   serialization). If the awaited save FAILED, its fields are inherited into
- *   the new patch (last-write-wins per field) so nothing is silently dropped.
+ * - Per-node serialization is strict FIFO via tail-promise chaining: each commit
+ *   synchronously captures each node's current tail, registers itself as the new
+ *   tail for ALL its nodes (before any await), then awaits its predecessors once.
+ *   This closes the queue-jump window — no later commit can overtake an earlier
+ *   one on any shared node, even during the drain.
+ * - If a predecessor FAILED, its fields are inherited into the new patch
+ *   (last-write-wins per field) so nothing is silently dropped.
  * - Success: status flashes 'saved'; the node is marked settled, and reconcile
  *   drops its overlay on the NEXT props delivery (revalidatePath ran before the
  *   action returned, so that delivery contains the write) — no unbounded staleness.
@@ -55,7 +59,7 @@ export function useAssignmentSaves(projectId: string) {
     nodeIds: string[],
     patch: GcrAssignmentPatch,
   ): Promise<{ ok: true; updated: number } | { error: string }> {
-    // Show the user's intent immediately, even while waiting on earlier saves.
+    // Show the user's intent immediately, even while queued behind earlier saves.
     setPending((prev) => {
       const next = { ...prev }
       for (const id of nodeIds) next[id] = { ...next[id], ...patch }
@@ -63,68 +67,80 @@ export function useAssignmentSaves(projectId: string) {
     })
     patchState(setStatus, nodeIds, { state: 'saving' } as SaveStatus)
 
-    // Per-node serialization: wait for any in-flight saves on these nodes.
-    // Inherit the fields of FAILED predecessors so their intent isn't lost (C1).
-    let merged = patch
-    for (;;) {
-      const overlapping = [...new Set(nodeIds.filter((id) => inFlight.current.has(id)))]
-      if (overlapping.length === 0) break
-      const results = await Promise.all(overlapping.map((id) => inFlight.current.get(id)!))
-      for (const r of results) {
-        if (r.failed) merged = { ...r.patch, ...merged }
-      }
-    }
-
+    // Strict per-node FIFO: synchronously take each node's current tail promise
+    // as our predecessor and register ourselves as the new tail — BEFORE any
+    // await, so no later commit can jump the queue on any of our nodes.
+    const predecessors = [...new Set(nodeIds.map((id) => inFlight.current.get(id)).filter(Boolean))] as Promise<SettledSave>[]
     let resolveSettled!: (v: SettledSave) => void
     const settledPromise = new Promise<SettledSave>((r) => { resolveSettled = r })
     for (const id of nodeIds) inFlight.current.set(id, settledPromise)
 
-    let res: Awaited<ReturnType<typeof bulkSaveTenantAssignmentsAction>>
+    let merged = patch
+    let res!: Awaited<ReturnType<typeof bulkSaveTenantAssignmentsAction>>
     try {
-      res = await bulkSaveTenantAssignmentsAction(projectId, nodeIds, merged)
-    } catch (e) {
-      res = { error: e instanceof Error ? e.message : 'Save failed — check your connection' }
-    }
-
-    for (const id of nodeIds) {
-      if (inFlight.current.get(id) === settledPromise) inFlight.current.delete(id)
-    }
-
-    if ('error' in res) {
-      console.error('[gcr-tenants] save failed', { nodeIds, patch: merged, error: res.error })
-      // Drop ONLY the failed patch's keys; earlier still-pending fields survive.
-      setPending((prev) => {
-        const next = { ...prev }
-        for (const id of nodeIds) {
-          const entry = next[id]
-          if (!entry) continue
-          const remaining = { ...entry }
-          for (const key of Object.keys(merged) as (keyof GcrAssignmentPatch)[]) delete remaining[key]
-          if (Object.keys(remaining).length === 0) delete next[id]
-          else next[id] = remaining
+      if (predecessors.length > 0) {
+        const settledPredecessors = await Promise.all(predecessors)
+        // Inherit the fields of FAILED predecessors so their intent isn't lost.
+        for (const r of settledPredecessors) {
+          if (r.failed) merged = { ...r.patch, ...merged }
         }
-        return next
-      })
-      patchState(setStatus, nodeIds, { state: 'error', message: res.error, patch: merged } as SaveStatus)
-    } else {
-      for (const id of nodeIds) settled.current.add(id)
-      patchState(setStatus, nodeIds, { state: 'saved' } as SaveStatus)
-      for (const id of nodeIds) {
-        const existing = timers.current.get(id)
-        if (existing) clearTimeout(existing)
-        timers.current.set(id, setTimeout(() => {
-          setStatus((prev) => {
-            if (prev[id]?.state !== 'saved') return prev
-            const { [id]: dropped, ...rest } = prev
-            void dropped
-            return rest
-          })
-        }, SAVED_FLASH_MS))
+        // A failed predecessor's cleanup may have cleared our status/overlay —
+        // re-assert them (now including any inherited fields) for the dispatch.
+        setPending((prev) => {
+          const next = { ...prev }
+          for (const id of nodeIds) next[id] = { ...next[id], ...merged }
+          return next
+        })
+        patchState(setStatus, nodeIds, { state: 'saving' } as SaveStatus)
       }
-      router.refresh()
-    }
 
-    resolveSettled({ patch: merged, failed: 'error' in res })
+      try {
+        res = await bulkSaveTenantAssignmentsAction(projectId, nodeIds, merged)
+      } catch (e) {
+        res = { error: e instanceof Error ? e.message : 'Save failed — check your connection' }
+      }
+
+      for (const id of nodeIds) {
+        if (inFlight.current.get(id) === settledPromise) inFlight.current.delete(id)
+      }
+
+      if ('error' in res) {
+        console.error('[gcr-tenants] save failed', { nodeIds, patch: merged, error: res.error })
+        // Drop ONLY the failed patch's keys; earlier still-pending fields survive.
+        setPending((prev) => {
+          const next = { ...prev }
+          for (const id of nodeIds) {
+            const entry = next[id]
+            if (!entry) continue
+            const remaining = { ...entry }
+            for (const key of Object.keys(merged) as (keyof GcrAssignmentPatch)[]) delete remaining[key]
+            if (Object.keys(remaining).length === 0) delete next[id]
+            else next[id] = remaining
+          }
+          return next
+        })
+        patchState(setStatus, nodeIds, { state: 'error', message: res.error, patch: merged } as SaveStatus)
+      } else {
+        for (const id of nodeIds) settled.current.add(id)
+        patchState(setStatus, nodeIds, { state: 'saved' } as SaveStatus)
+        for (const id of nodeIds) {
+          const existing = timers.current.get(id)
+          if (existing) clearTimeout(existing)
+          timers.current.set(id, setTimeout(() => {
+            setStatus((prev) => {
+              if (prev[id]?.state !== 'saved') return prev
+              const { [id]: dropped, ...rest } = prev
+              void dropped
+              return rest
+            })
+          }, SAVED_FLASH_MS))
+        }
+        router.refresh()
+      }
+    } finally {
+      // Guaranteed resolution — successors must never hang.
+      resolveSettled({ patch: merged, failed: 'error' in res })
+    }
     return res
   }
 

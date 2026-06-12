@@ -149,4 +149,48 @@ describe('useAssignmentSaves — per-node serialization', () => {
     ])
     expect(bulkResult).toEqual({ ok: true, updated: 2 })
   })
+
+  it('I4: strict per-node FIFO — a commit queued behind a drain cannot be overtaken on its other nodes', async () => {
+    // A  → node x only (deferred)
+    // B  → nodes x, y   (must queue behind A on x; with the fix, y's tail = B)
+    // C  → node y only  (must queue behind B on y, NOT fire immediately)
+    const saveA = deferred<{ ok: true; updated: number }>()
+    bulkSaveMock
+      .mockReturnValueOnce(saveA.promise)           // call 1: A on ['x']
+      .mockResolvedValueOnce({ ok: true, updated: 2 }) // call 2: B on ['x','y']
+      .mockResolvedValueOnce({ ok: true, updated: 1 }) // call 3: C on ['y']
+    const { result } = renderSaves()
+
+    // A fires immediately (x has no predecessor)
+    act(() => result.current.commit(['x'], { zone_id: 'z1' }))
+    expect(bulkSaveMock).toHaveBeenCalledTimes(1)
+
+    // B queues behind A on x; with the fix it also claims y's tail
+    let bPromise!: Promise<unknown>
+    act(() => { bPromise = result.current.commitWithResult(['x', 'y'], { participation: 'own' }) })
+    expect(bulkSaveMock).toHaveBeenCalledTimes(1)
+
+    // C must queue behind B on y — NOT fire immediately (that was the bug)
+    let cPromise!: Promise<unknown>
+    act(() => { cPromise = result.current.commitWithResult(['y'], { shop_category: 'national' }) })
+
+    // KEY failing assertion against the old code: C fires immediately on y
+    // because B hasn't registered itself in inFlight for y yet.
+    expect(bulkSaveMock).toHaveBeenCalledTimes(1)
+
+    // Unblock the chain: resolve A → B fires → B settles → C fires
+    await act(async () => {
+      saveA.resolve({ ok: true, updated: 1 })
+      await Promise.all([bPromise, cPromise])
+    })
+
+    // Three total calls; order: A(['x']), B(['x','y']), C(['y'])
+    expect(bulkSaveMock).toHaveBeenCalledTimes(3)
+    expect(bulkSaveMock.mock.calls[1]).toEqual([
+      PROJECT_ID, ['x', 'y'], { participation: 'own' },
+    ])
+    expect(bulkSaveMock.mock.calls[2]).toEqual([
+      PROJECT_ID, ['y'], { shop_category: 'national' },
+    ])
+  })
 })
