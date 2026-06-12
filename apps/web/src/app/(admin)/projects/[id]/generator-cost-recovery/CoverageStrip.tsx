@@ -10,7 +10,7 @@ interface Props {
 
 export function CoverageStrip({ perZone, configured, total }: Props) {
   return (
-    <div aria-label="Coverage" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+    <div role="group" aria-label="Coverage" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
       <div style={cardStyle}>
         <div style={labelStyle}>Configured</div>
         <div style={valueStyle}>{configured} of {total} configured</div>

@@ -48,10 +48,11 @@ export function toDisplayTenant(
   }
 }
 
-export type TenantFilter = 'all' | 'no_zone' | 'uncategorized' | 'opted_out' | { zoneId: string }
+export type TenantFilter = 'all' | 'needs_setup' | 'no_zone' | 'uncategorized' | 'opted_out' | { zoneId: string }
 
 export function matchesFilter(t: DisplayTenant, f: TenantFilter): boolean {
   if (f === 'all') return true
+  if (f === 'needs_setup') return needsSetup(t)
   if (f === 'no_zone') return t.participation === 'shared' && t.zoneId === null
   if (f === 'uncategorized') return t.category === null
   if (f === 'opted_out') return t.participation !== 'shared'
@@ -60,8 +61,9 @@ export function matchesFilter(t: DisplayTenant, f: TenantFilter): boolean {
 
 export function filterCounts(tenants: DisplayTenant[]) {
   const byZone: Record<string, number> = {}
-  let no_zone = 0, uncategorized = 0, opted_out = 0
+  let needs_setup = 0, no_zone = 0, uncategorized = 0, opted_out = 0
   for (const t of tenants) {
+    if (needsSetup(t)) needs_setup++
     if (matchesFilter(t, 'no_zone')) no_zone++
     if (matchesFilter(t, 'uncategorized')) uncategorized++
     if (matchesFilter(t, 'opted_out')) opted_out++
@@ -69,7 +71,7 @@ export function filterCounts(tenants: DisplayTenant[]) {
     // participation. zoneCoverage counts shared-only (load model) — intentional divergence.
     if (t.zoneId) byZone[t.zoneId] = (byZone[t.zoneId] ?? 0) + 1
   }
-  return { all: tenants.length, no_zone, uncategorized, opted_out, byZone }
+  return { all: tenants.length, needs_setup, no_zone, uncategorized, opted_out, byZone }
 }
 
 /** Shared shop missing zone or category — the "needs setup" bucket. */

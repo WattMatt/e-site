@@ -169,14 +169,15 @@ describe('TenantsPanel — instant save with per-row status', () => {
 describe('TenantsPanel — filters + setup banner', () => {
   beforeEach(() => { vi.clearAllMocks(); bulkSaveMock.mockResolvedValue({ ok: true, updated: 1 }) })
 
-  it('banner reports shops needing setup and Show applies the no-zone filter', async () => {
+  it('banner reports shops needing setup and Show applies the needs-setup filter', async () => {
     const user = userEvent.setup()
     await renderPanel() // all 3 shared with no zone assignments → all need setup
     // banner text visible (all 3 are shared + missing zone)
     expect(screen.getByText(/3 shops need setup/i)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /^show$/i }))
-    // after clicking Show the no-zone chip should be aria-pressed="true"
-    expect(screen.getByRole('button', { name: /no zone \(3\)/i }).getAttribute('aria-pressed')).toBe('true')
+    // after clicking Show the needs-setup chip should be aria-pressed="true",
+    // and its count matches the banner's
+    expect(screen.getByRole('button', { name: /needs setup \(3\)/i }).getAttribute('aria-pressed')).toBe('true')
   })
 
   it('zone chip filters rows and select-all selects only the filtered set', async () => {
@@ -259,8 +260,9 @@ describe('TenantsPanel — selection + bulk bar', () => {
     await user.click(screen.getByLabelText(/select all/i))
     await user.selectOptions(screen.getByLabelText(/bulk assign zone/i), 'z1')
     await user.click(screen.getByRole('button', { name: /^apply$/i }))
-    // BulkBar renders a role="alert" span with the error and an inline Retry button
-    const alert = await screen.findByRole('alert')
+    // Per-row error spans also carry role="alert" now — scope to the toolbar's alert
+    const toolbar = screen.getByRole('toolbar')
+    const alert = await within(toolbar).findByRole('alert')
     expect(alert.textContent).toContain('Forbidden')
     // The inline Retry button is inside the alert span
     const retryBtn = within(alert).getByRole('button', { name: /retry/i })

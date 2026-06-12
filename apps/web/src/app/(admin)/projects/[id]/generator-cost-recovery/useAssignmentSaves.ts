@@ -12,21 +12,30 @@ export type SaveStatus =
 
 const SAVED_FLASH_MS = 1500
 
+interface SettledSave {
+  patch: GcrAssignmentPatch
+  failed: boolean
+}
+
 /**
  * Save queue for tenant assignments.
- * - `pending` is the optimistic overlay (display = server + pending).
- * - Saves for a node already in flight coalesce into one follow-up save.
- * - Success: status flashes 'saved', router.refresh() pulls server truth;
- *   the overlay entry is dropped by reconcile() once props match it.
- * - Failure: overlay dropped immediately (cells snap back), status carries
- *   the message and the failed patch for retry.
+ * - `pending` is the optimistic overlay (display = server + pending); it is set
+ *   for EVERY commit immediately, so the UI always shows the user's intent.
+ * - Commits for a node already saving WAIT on that save's promise (per-node
+ *   serialization). If the awaited save FAILED, its fields are inherited into
+ *   the new patch (last-write-wins per field) so nothing is silently dropped.
+ * - Success: status flashes 'saved'; the node is marked settled, and reconcile
+ *   drops its overlay on the NEXT props delivery (revalidatePath ran before the
+ *   action returned, so that delivery contains the write) — no unbounded staleness.
+ * - Failure: only the failed patch's keys leave the overlay (earlier still-pending
+ *   fields survive); status carries the message and patch for retry.
  */
 export function useAssignmentSaves(projectId: string) {
   const router = useRouter()
   const [pending, setPending] = useState<Record<string, GcrAssignmentPatch>>({})
   const [status, setStatus] = useState<Record<string, SaveStatus>>({})
-  const inFlight = useRef<Set<string>>(new Set())
-  const queued = useRef<Map<string, GcrAssignmentPatch>>(new Map())
+  const inFlight = useRef<Map<string, Promise<SettledSave>>>(new Map())
+  const settled = useRef<Set<string>>(new Set())
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   useEffect(() => () => { for (const t of timers.current.values()) clearTimeout(t) }, [])
@@ -46,57 +55,76 @@ export function useAssignmentSaves(projectId: string) {
     nodeIds: string[],
     patch: GcrAssignmentPatch,
   ): Promise<{ ok: true; updated: number } | { error: string }> {
-    const now: string[] = []
-    for (const id of nodeIds) {
-      if (inFlight.current.has(id)) {
-        queued.current.set(id, { ...queued.current.get(id), ...patch })
-      } else {
-        now.push(id)
-        inFlight.current.add(id)
-      }
-    }
-    if (now.length === 0) return { ok: true, updated: 0 } // everything coalesced into queued follow-ups
-
+    // Show the user's intent immediately, even while waiting on earlier saves.
     setPending((prev) => {
       const next = { ...prev }
-      for (const id of now) next[id] = { ...next[id], ...patch }
+      for (const id of nodeIds) next[id] = { ...next[id], ...patch }
       return next
     })
-    patchState(setStatus, now, { state: 'saving' } as SaveStatus)
+    patchState(setStatus, nodeIds, { state: 'saving' } as SaveStatus)
+
+    // Per-node serialization: wait for any in-flight saves on these nodes.
+    // Inherit the fields of FAILED predecessors so their intent isn't lost (C1).
+    let merged = patch
+    for (;;) {
+      const overlapping = [...new Set(nodeIds.filter((id) => inFlight.current.has(id)))]
+      if (overlapping.length === 0) break
+      const results = await Promise.all(overlapping.map((id) => inFlight.current.get(id)!))
+      for (const r of results) {
+        if (r.failed) merged = { ...r.patch, ...merged }
+      }
+    }
+
+    let resolveSettled!: (v: SettledSave) => void
+    const settledPromise = new Promise<SettledSave>((r) => { resolveSettled = r })
+    for (const id of nodeIds) inFlight.current.set(id, settledPromise)
 
     let res: Awaited<ReturnType<typeof bulkSaveTenantAssignmentsAction>>
     try {
-      res = await bulkSaveTenantAssignmentsAction(projectId, now, patch)
+      res = await bulkSaveTenantAssignmentsAction(projectId, nodeIds, merged)
     } catch (e) {
       res = { error: e instanceof Error ? e.message : 'Save failed — check your connection' }
     }
 
-    for (const id of now) inFlight.current.delete(id)
+    for (const id of nodeIds) {
+      if (inFlight.current.get(id) === settledPromise) inFlight.current.delete(id)
+    }
 
     if ('error' in res) {
-      console.error('[gcr-tenants] save failed', { nodeIds: now, patch, error: res.error })
-      patchState(setPending, now, undefined)
-      patchState(setStatus, now, { state: 'error', message: res.error, patch } as SaveStatus)
+      console.error('[gcr-tenants] save failed', { nodeIds, patch: merged, error: res.error })
+      // Drop ONLY the failed patch's keys; earlier still-pending fields survive.
+      setPending((prev) => {
+        const next = { ...prev }
+        for (const id of nodeIds) {
+          const entry = next[id]
+          if (!entry) continue
+          const remaining = { ...entry }
+          for (const key of Object.keys(merged) as (keyof GcrAssignmentPatch)[]) delete remaining[key]
+          if (Object.keys(remaining).length === 0) delete next[id]
+          else next[id] = remaining
+        }
+        return next
+      })
+      patchState(setStatus, nodeIds, { state: 'error', message: res.error, patch: merged } as SaveStatus)
     } else {
-      patchState(setStatus, now, { state: 'saved' } as SaveStatus)
-      for (const id of now) {
+      for (const id of nodeIds) settled.current.add(id)
+      patchState(setStatus, nodeIds, { state: 'saved' } as SaveStatus)
+      for (const id of nodeIds) {
         const existing = timers.current.get(id)
         if (existing) clearTimeout(existing)
         timers.current.set(id, setTimeout(() => {
-          setStatus((prev) => (prev[id]?.state === 'saved' ? (({ [id]: _, ...rest }) => rest)(prev) : prev))
+          setStatus((prev) => {
+            if (prev[id]?.state !== 'saved') return prev
+            const { [id]: dropped, ...rest } = prev
+            void dropped
+            return rest
+          })
         }, SAVED_FLASH_MS))
       }
       router.refresh()
     }
 
-    // Follow-ups queued while this save was in flight
-    for (const id of now) {
-      const q = queued.current.get(id)
-      if (q) {
-        queued.current.delete(id)
-        void commitWithResult([id], q)
-      }
-    }
+    resolveSettled({ patch: merged, failed: 'error' in res })
     return res
   }
 
@@ -110,14 +138,23 @@ export function useAssignmentSaves(projectId: string) {
     if (st?.state === 'error') commit([nodeId], st.patch)
   }
 
-  /** Drop pending overlays the server now agrees with (call when props change). */
+  /**
+   * Call when server props change. Drops pending overlays that the server now
+   * agrees with, and overlays whose save succeeded (settled) — that props
+   * delivery is guaranteed to contain the write. In-flight nodes are skipped.
+   */
   function reconcile(serverMatches: (nodeId: string, patch: GcrAssignmentPatch) => boolean) {
     setPending((prev) => {
       let changed = false
       const next: typeof prev = {}
-      for (const [id, patch] of Object.entries(prev)) {
-        if (!inFlight.current.has(id) && serverMatches(id, patch)) { changed = true; continue }
-        next[id] = patch
+      for (const [id, entry] of Object.entries(prev)) {
+        if (inFlight.current.has(id)) { next[id] = entry; continue }
+        if (settled.current.has(id) || serverMatches(id, entry)) {
+          settled.current.delete(id)
+          changed = true
+          continue
+        }
+        next[id] = entry
       }
       return changed ? next : prev
     })

@@ -47,9 +47,12 @@ describe('matchesFilter / filterCounts', () => {
     expect(tenants.filter((t) => matchesFilter(t, 'opted_out')).map((t) => t.id)).toEqual(['t4'])
     expect(tenants.filter((t) => matchesFilter(t, { zoneId: 'z1' })).map((t) => t.id)).toEqual(['t1', 't3'])
   })
+  it('needs_setup filter matches the needsSetup predicate (shared + missing zone or category)', () => {
+    expect(tenants.filter((t) => matchesFilter(t, 'needs_setup')).map((t) => t.id)).toEqual(['t2', 't3'])
+  })
   it('counts agree with predicates', () => {
     const c = filterCounts(tenants)
-    expect(c).toEqual({ all: 4, no_zone: 1, uncategorized: 1, opted_out: 1, byZone: { z1: 2 } })
+    expect(c).toEqual({ all: 4, needs_setup: 2, no_zone: 1, uncategorized: 1, opted_out: 1, byZone: { z1: 2 } })
   })
 
   it('byZone counts zone members regardless of participation (table filter semantics, distinct from coverage)', () => {

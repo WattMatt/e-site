@@ -1,14 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/Button'
 import type { GcrZoneRow, ShopCategory, GeneratorParticipation } from '@esite/shared'
 import type { GcrAssignmentPatch } from './gcr.schemas'
 
 interface Props {
-  selectedCount: number
+  selectedIds: string[]
   zones: GcrZoneRow[]
-  onApply: (patch: GcrAssignmentPatch) => Promise<{ ok: true; updated: number } | { error: string }>
+  onApply: (patch: GcrAssignmentPatch, ids: string[]) => Promise<{ ok: true; updated: number } | { error: string }>
   onClear: () => void
 }
 
@@ -26,16 +26,21 @@ const PARTICIPATION_OPTIONS: { value: GeneratorParticipation; label: string }[] 
   { value: 'none',   label: 'Not on generator' },
 ]
 
-export function BulkBar({ selectedCount, zones, onApply, onClear }: Props) {
+export function BulkBar({ selectedIds, zones, onApply, onClear }: Props) {
+  const selectedCount = selectedIds.length
   const [zoneId, setZoneId]               = useState('')
   const [participation, setParticipation] = useState('')
   const [category, setCategory]           = useState('')
   const [busy, setBusy]                   = useState(false)
   const [result, setResult]               = useState<
     | { kind: 'ok'; n: number }
-    | { kind: 'error'; message: string; patch: GcrAssignmentPatch }
+    | { kind: 'error'; message: string; patch: GcrAssignmentPatch; ids: string[] }
     | null
   >(null)
+
+  // A result describes the LAST apply — stale once the selection changes.
+  const idsKey = selectedIds.join(',')
+  useEffect(() => { setResult(null) }, [idsKey])
 
   function buildPatch(): GcrAssignmentPatch {
     const patch: GcrAssignmentPatch = {}
@@ -45,15 +50,15 @@ export function BulkBar({ selectedCount, zones, onApply, onClear }: Props) {
     return patch
   }
 
-  async function apply(patch: GcrAssignmentPatch) {
+  async function apply(patch: GcrAssignmentPatch, ids: string[]) {
     setBusy(true)
     setResult(null)
-    const res = await onApply(patch)
+    const res = await onApply(patch, ids)
     setBusy(false)
     if ('ok' in res) {
       setResult({ kind: 'ok', n: res.updated })
     } else {
-      setResult({ kind: 'error', message: res.error, patch })
+      setResult({ kind: 'error', message: res.error, patch, ids })
     }
   }
 
@@ -126,7 +131,7 @@ export function BulkBar({ selectedCount, zones, onApply, onClear }: Props) {
         size="sm"
         variant="primary"
         disabled={busy || Object.keys(buildPatch()).length === 0}
-        onClick={() => void apply(buildPatch())}
+        onClick={() => void apply(buildPatch(), selectedIds)}
       >
         Apply
       </Button>
@@ -146,7 +151,7 @@ export function BulkBar({ selectedCount, zones, onApply, onClear }: Props) {
           {result.message}
           <button
             type="button"
-            onClick={() => void apply(result.patch)}
+            onClick={() => void apply(result.patch, result.ids)}
             style={{
               textDecoration: 'underline',
               background: 'none',

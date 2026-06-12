@@ -20,7 +20,7 @@ import {
 } from '@esite/shared'
 import { bulkSetUncategorizedTenantsAction } from './gcr.actions'
 import { useAssignmentSaves } from './useAssignmentSaves'
-import { toDisplayTenant, matchesFilter, filterCounts, needsSetup, zoneCoverage, type DisplayTenant, type TenantFilter } from './tenant-display'
+import { toDisplayTenant, matchesFilter, filterCounts, zoneCoverage, type DisplayTenant, type TenantFilter } from './tenant-display'
 import { BulkBar } from './BulkBar'
 import { CoverageStrip } from './CoverageStrip'
 
@@ -52,6 +52,14 @@ const PARTICIPATION_OPTIONS: { value: GeneratorParticipation; label: string }[] 
   { value: 'own',     label: 'Own generator' },
   { value: 'none',    label: 'Not on generator' },
 ]
+
+/** NaN or negative draft — blocked from saving (patch schema is nonnegative). */
+function kwDraftInvalid(draft: string): boolean {
+  const trimmed = draft.trim()
+  if (trimmed === '') return false
+  const v = parseFloat(trimmed)
+  return Number.isNaN(v) || v < 0
+}
 
 function settingsToEngine(raw: GcrSettingsRow | null): GeneratorSettings {
   if (!raw) return DEFAULT_GENERATOR_SETTINGS
@@ -172,7 +180,7 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
 
   const [filter, setFilter] = useState<TenantFilter>('all')
   const counts = useMemo(() => filterCounts(displayed), [displayed])
-  const setupCount = useMemo(() => displayed.filter(needsSetup).length, [displayed])
+  const setupCount = counts.needs_setup
 
   // ─── Coverage (per-zone summary shown above the filter chips) ───────────────
 
@@ -243,14 +251,6 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                 </li>
               ))}
             </ul>
-            {setupCount > 0 && (
-              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
-                  {setupCount} shops need setup (zone or category missing).
-                </span>
-                <Button size="sm" variant="secondary" onClick={() => applyFilter('no_zone')}>Show</Button>
-              </div>
-            )}
             {uncategorizedCount > 0 && (
               <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <Button size="sm" variant="primary" onClick={handleBulkCategorize} disabled={busy}>
@@ -270,6 +270,28 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
         )}
       </Card>
 
+      {/* Needs-setup banner — always visible when shops are unconfigured,
+          regardless of overall readiness (readiness can be gated on other gaps). */}
+      {setupCount > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+            padding: '10px 14px',
+            border: '1px solid var(--c-border)',
+            borderRadius: 8,
+            background: 'var(--c-panel)',
+          }}
+        >
+          <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
+            {setupCount} shops need setup (zone or category missing).
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => applyFilter('needs_setup')}>Show</Button>
+        </div>
+      )}
+
       {/* Tenants table */}
       {tenants.length === 0 ? (
         <div
@@ -287,15 +309,16 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
         <Card>
           <CoverageStrip perZone={coverage.perZone} configured={coverage.configured} total={coverage.total} />
           <BulkBar
-            selectedCount={selected.size}
+            selectedIds={[...selected]}
             zones={zones}
-            onApply={(p) => commitWithResult([...selected], p)}
+            onApply={(p, ids) => commitWithResult(ids, p)}
             onClear={() => setSelected(new Set())}
           />
           {/* Filter chips */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 12px', borderBottom: '1px solid var(--c-border)' }}>
             {([
               { key: 'all' as const,          label: `All (${counts.all})` },
+              { key: 'needs_setup' as const,   label: `Needs setup (${counts.needs_setup})` },
               { key: 'no_zone' as const,       label: `No zone (${counts.no_zone})` },
               { key: 'uncategorized' as const, label: `Uncategorized (${counts.uncategorized})` },
               { key: 'opted_out' as const,     label: `Opted out (${counts.opted_out})` },
@@ -476,7 +499,11 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                           }}
                         />
                         {kwDrafts[t.id] !== undefined && (
-                          <span title="Not saved yet — press Enter" style={{ color: 'var(--c-amber)' }}> ●</span>
+                          kwDraftInvalid(kwDrafts[t.id]) ? (
+                            <span title="Invalid kW — enter a non-negative number" style={{ color: 'var(--c-red)' }}> ●</span>
+                          ) : (
+                            <span title="Not saved yet — press Enter" style={{ color: 'var(--c-amber)' }}> ●</span>
+                          )
                         )}
                       </td>
 
@@ -495,14 +522,28 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                       {/* Row save status */}
                       <td style={{ ...TD, width: 90 }}>
                         {rowStatus?.state === 'saving' && (
-                          <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>Saving…</span>
+                          <span role="status" style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>Saving…</span>
                         )}
                         {rowStatus?.state === 'saved' && (
-                          <span style={{ fontSize: 11, color: 'var(--c-green, #16a34a)' }}>✓ Saved</span>
+                          <span role="status" style={{ fontSize: 11, color: 'var(--c-green, #16a34a)' }}>✓ Saved</span>
                         )}
                         {rowStatus?.state === 'error' && (
-                          <span style={{ fontSize: 11, color: 'var(--c-red)', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                            <span title={rowStatus.message}>⚠ <span>{rowStatus.message}</span></span>
+                          <span role="alert" style={{ fontSize: 11, color: 'var(--c-red)', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                            <span title={rowStatus.message}>
+                              ⚠{' '}
+                              <span
+                                style={{
+                                  maxWidth: 160,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                  display: 'inline-block',
+                                  verticalAlign: 'bottom',
+                                }}
+                              >
+                                {rowStatus.message}
+                              </span>
+                            </span>
                             <button
                               type="button"
                               onClick={() => retry(t.id)}
