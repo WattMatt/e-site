@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { GcrSettingsRow, TenantNodeRow } from '@esite/shared'
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-const saveMock = vi.fn()
+const bulkSaveMock = vi.fn()
 const bulkMock = vi.fn()
 vi.mock('./gcr.actions', () => ({
-  saveTenantAssignmentAction: (...args: unknown[]) => saveMock(...args),
+  bulkSaveTenantAssignmentsAction: (...args: unknown[]) => bulkSaveMock(...args),
   bulkSetUncategorizedTenantsAction: (...args: unknown[]) => bulkMock(...args),
 }))
 
@@ -74,7 +74,7 @@ describe('TenantsPanel — uncategorized visibility + bulk action', () => {
     expect(screen.getByRole('button', { name: /set all uncategorized to standard \(2\)/i })).toBeDefined()
   })
 
-  it('bulk action calls the server action and flips local rows to standard', async () => {
+  it('bulk action calls the server action and refreshes server truth', async () => {
     bulkMock.mockResolvedValue({ ok: true, updated: 2 })
     await renderPanel()
 
@@ -84,14 +84,10 @@ describe('TenantsPanel — uncategorized visibility + bulk action', () => {
       expect(bulkMock).toHaveBeenCalledWith(PROJECT_ID)
       expect(refreshMock).toHaveBeenCalled()
     })
-    // Placeholder gone — all rows now categorized locally
-    expect(screen.queryByText('— set category —')).toBeNull()
-    // Readiness gap cleared
-    expect(screen.queryByText(/missing category/)).toBeNull()
   })
 
-  it('choosing a category on an uncategorized row saves the real value (not a default)', async () => {
-    saveMock.mockResolvedValue({ ok: true })
+  it('choosing a category on an uncategorized row commits the real value on change', async () => {
+    bulkSaveMock.mockResolvedValue({ ok: true, updated: 1 })
     await renderPanel()
 
     const selects = screen.getAllByRole('combobox')
@@ -100,14 +96,72 @@ describe('TenantsPanel — uncategorized visibility + bulk action', () => {
     ) as HTMLSelectElement[]
 
     await userEvent.selectOptions(categorySelects[1], 'restaurant')
-    categorySelects[1].blur()
-    await userEvent.tab() // trigger blur-save
 
     await waitFor(() => {
-      expect(saveMock).toHaveBeenCalledWith(
-        PROJECT_ID,
-        expect.objectContaining({ node_id: 't2', shop_category: 'restaurant' }),
-      )
+      expect(bulkSaveMock).toHaveBeenCalledWith(PROJECT_ID, ['t2'], { shop_category: 'restaurant' })
     })
+  })
+})
+
+describe('TenantsPanel — instant save with per-row status', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('zone select commits on change (no blur needed) with a single-node bulk call', async () => {
+    bulkSaveMock.mockResolvedValue({ ok: true, updated: 1 })
+    const user = userEvent.setup()
+    await renderPanel()
+    const zoneSelects = screen.getAllByLabelText(/zone for/i)
+    await user.selectOptions(zoneSelects[0], 'z1')
+    await waitFor(() =>
+      expect(bulkSaveMock).toHaveBeenCalledWith(PROJECT_ID, ['t1'], { zone_id: 'z1' }),
+    )
+    expect(refreshMock).toHaveBeenCalled()
+  })
+
+  it('participation click failure reverts the cell and shows a retry affordance', async () => {
+    bulkSaveMock.mockResolvedValue({ error: 'Forbidden' })
+    const user = userEvent.setup()
+    await renderPanel()
+    // t1 starts 'shared'; click 'Own generator' on its row
+    const row = screen.getByText('Alpha').closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Own generator' }))
+    // error surfaced with retry; the segmented control is back on Shared
+    // (plain matchers — this workspace has no @testing-library/jest-dom)
+    await waitFor(() => expect(within(row).getByRole('button', { name: /retry/i })).toBeTruthy())
+    expect(within(row).getByRole('button', { name: 'Shared' }).getAttribute('aria-pressed')).toBe('true')
+    expect(within(row).getByText('Forbidden')).toBeTruthy()
+  })
+
+  it('retry re-sends the failed patch', async () => {
+    bulkSaveMock.mockResolvedValueOnce({ error: 'boom' }).mockResolvedValueOnce({ ok: true, updated: 1 })
+    const user = userEvent.setup()
+    await renderPanel()
+    const row = screen.getByText('Alpha').closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Own generator' }))
+    await user.click(await within(row).findByRole('button', { name: /retry/i }))
+    await waitFor(() => expect(bulkSaveMock).toHaveBeenLastCalledWith(PROJECT_ID, ['t1'], { participation: 'own' }))
+  })
+
+  it('kW override commits on Enter', async () => {
+    bulkSaveMock.mockResolvedValue({ ok: true, updated: 1 })
+    const user = userEvent.setup()
+    await renderPanel()
+    const kwInputs = screen.getAllByLabelText(/manual kw for/i)
+    await user.type(kwInputs[0], '12.5{Enter}')
+    await waitFor(() =>
+      expect(bulkSaveMock).toHaveBeenCalledWith(PROJECT_ID, ['t1'], { manual_kw_override: 12.5 }),
+    )
+  })
+
+  it('a row save does NOT disable other rows', async () => {
+    let resolve!: (v: unknown) => void
+    bulkSaveMock.mockReturnValue(new Promise((r) => { resolve = r }))
+    const user = userEvent.setup()
+    await renderPanel()
+    const rows = screen.getAllByRole('row')
+    await user.click(within(rows[1]).getByRole('button', { name: 'Own generator' }))
+    // While t1 is saving, t2's controls remain enabled
+    expect((within(rows[2]).getByRole('button', { name: 'Shared' }) as HTMLButtonElement).disabled).toBe(false)
+    resolve({ ok: true, updated: 1 })
   })
 })

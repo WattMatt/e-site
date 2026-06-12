@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useMemo } from 'react'
+import { useState, useTransition, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -18,7 +18,9 @@ import {
   type TenantNodeRow,
   type GcrTenantAssignmentRow,
 } from '@esite/shared'
-import { saveTenantAssignmentAction, bulkSetUncategorizedTenantsAction } from './gcr.actions'
+import { bulkSetUncategorizedTenantsAction } from './gcr.actions'
+import { useAssignmentSaves } from './useAssignmentSaves'
+import { toDisplayTenant, type DisplayTenant } from './tenant-display'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -33,22 +35,7 @@ interface Props {
   onNavigateToReports: () => void
 }
 
-// ─── Per-row editable state ───────────────────────────────────────────────────
-
-interface RowState {
-  nodeId: string
-  participation: GeneratorParticipation
-  /** '' = uncategorized (NULL in the DB) — shown honestly, counted by readiness. */
-  category: ShopCategory | ''
-  zoneId: string | null
-  manualKwOverride: string // string for input binding; parsed on save
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const VALID_CATEGORIES = new Set<ShopCategory>([
-  'standard', 'fast_food', 'restaurant', 'national', 'other',
-])
 
 const CATEGORY_LABELS: Record<ShopCategory, string> = {
   standard:   'Standard',
@@ -87,48 +74,65 @@ function settingsToEngine(raw: GcrSettingsRow | null): GeneratorSettings {
   }
 }
 
-function initRowState(tenants: TenantNodeRow[], assignments: GcrTenantAssignmentRow[]): Record<string, RowState> {
-  const byNode: Record<string, RowState> = {}
-  for (const t of tenants) {
-    const asgn = assignments.find((a) => a.node_id === t.id)
-    const rawCat = t.shop_category ?? ''
-    // An unset category stays visibly unset ('') — displaying a default the DB
-    // doesn't hold is how 105 "Standard"-looking rows blocked report generation.
-    const category: ShopCategory | '' = VALID_CATEGORIES.has(rawCat as ShopCategory)
-      ? (rawCat as ShopCategory)
-      : ''
-    byNode[t.id] = {
-      nodeId: t.id,
-      participation: t.generator_participation,
-      category,
-      zoneId: asgn?.zone_id ?? null,
-      manualKwOverride: asgn?.manual_kw_override != null ? String(asgn.manual_kw_override) : '',
-    }
-  }
-  return byNode
-}
-
 // ─── TenantsPanel ─────────────────────────────────────────────────────────────
 
 export function TenantsPanel({ projectId, settings, zones, generators, tenants, assignments, onNavigateToReports }: Props) {
   const router = useRouter()
-  const [isPending, startTransition] = useTransition()
+  const [isPending, startTransition] = useTransition() // bulk-categorize only
 
   const engineSettings = useMemo(() => settingsToEngine(settings), [settings])
 
-  // Local editable state per row — seeded from props
-  const [rows, setRows] = useState<Record<string, RowState>>(() =>
-    initRowState(tenants, assignments),
+  const { pending, status, commit, retry, reconcile } = useAssignmentSaves(projectId)
+
+  // kW drafts: text being typed, committed on Enter/blur
+  const [kwDrafts, setKwDrafts] = useState<Record<string, string>>({})
+
+  const assignmentsByNode = useMemo(() => {
+    const m = new Map<string, GcrTenantAssignmentRow>()
+    for (const a of assignments) m.set(a.node_id, a)
+    return m
+  }, [assignments])
+
+  // Display model: server truth + pending overlay (recomputed every render —
+  // router.refresh() therefore reconciles the screen automatically).
+  const displayed: DisplayTenant[] = useMemo(
+    () => tenants.map((t) => toDisplayTenant(t, assignmentsByNode.get(t.id), pending[t.id])),
+    [tenants, assignmentsByNode, pending],
   )
 
-  // Per-row save error
-  const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
+  // Drop pending entries the server has caught up with.
+  useEffect(() => {
+    reconcile((nodeId, patch) => {
+      const node = tenants.find((t) => t.id === nodeId)
+      if (!node) return true
+      const server = toDisplayTenant(node, assignmentsByNode.get(nodeId), undefined)
+      return (
+        (patch.zone_id === undefined || server.zoneId === patch.zone_id) &&
+        (patch.participation === undefined || server.participation === patch.participation) &&
+        (patch.shop_category === undefined || server.category === patch.shop_category) &&
+        (patch.manual_kw_override === undefined || server.manualKwOverride === patch.manual_kw_override)
+      )
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenants, assignmentsByNode])
+
+  function commitKw(t: DisplayTenant) {
+    const draft = kwDrafts[t.id]
+    if (draft === undefined) return
+    const trimmed = draft.trim()
+    const value = trimmed === '' ? null : parseFloat(trimmed)
+    // NaN or negative: leave the draft + pending dot in place — no save.
+    // The patch schema is strict (z.number().nonnegative().nullable()).
+    if (value !== null && (Number.isNaN(value) || value < 0)) return
+    setKwDrafts((prev) => { const n = { ...prev }; delete n[t.id]; return n })
+    if (value !== t.manualKwOverride) commit([t.id], { manual_kw_override: value })
+  }
 
   // Bulk-categorize state
   const [bulkError, setBulkError] = useState<string | null>(null)
   const uncategorizedCount = useMemo(
-    () => Object.values(rows).filter((r) => r.category === '').length,
-    [rows],
+    () => displayed.filter((t) => t.category === null).length,
+    [displayed],
   )
 
   function handleBulkCategorize() {
@@ -139,93 +143,43 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
         setBulkError(res.error)
         return
       }
-      // Optimistic local update — the DB now holds 'standard' for these rows.
-      setRows((prev) => {
-        const next: typeof prev = {}
-        for (const [id, r] of Object.entries(prev)) {
-          next[id] = r.category === '' ? { ...r, category: 'standard' } : r
-        }
-        return next
-      })
       router.refresh()
     })
   }
 
-  // ─── Readiness check ───────────────────────────────────────────────────────
+  // ─── Readiness check (derived from the display model) ──────────────────────
 
   const readiness = useMemo(() => {
-    // Build TenantNodeRow[] from current local state for the readiness check
-    const tenantNodes: TenantNodeRow[] = tenants.map((t) => {
-      const rs = rows[t.id]
-      return {
-        id: t.id,
-        shop_number: t.shop_number,
-        shop_name: t.shop_name ?? '',
-        shop_area_m2: t.shop_area_m2,
-        // '' (uncategorized) maps to null so readiness counts it as a gap.
-        shop_category: rs ? (rs.category === '' ? null : rs.category) : t.shop_category,
-        generator_participation: rs?.participation ?? t.generator_participation,
-      }
-    })
+    const tenantNodes: TenantNodeRow[] = displayed.map((t) => ({
+      id: t.id,
+      shop_number: t.shop_number ?? '',
+      shop_name: t.shop_name ?? '',
+      shop_area_m2: t.shop_area_m2,
+      shop_category: t.category,
+      generator_participation: t.participation,
+    }))
     return checkReadiness({
       settings,
       zones,
       generators,
       tenantNodes,
     })
-  }, [settings, zones, generators, tenants, rows])
+  }, [settings, zones, generators, displayed])
 
-  // ─── Row update helper ──────────────────────────────────────────────────────
+  // ─── Sorted display rows ────────────────────────────────────────────────────
 
-  function updateRow(nodeId: string, patch: Partial<RowState>) {
-    setRows((prev) => ({
-      ...prev,
-      [nodeId]: { ...prev[nodeId], ...patch },
-    }))
-  }
-
-  // ─── Save a row ─────────────────────────────────────────────────────────────
-
-  function saveRow(nodeId: string) {
-    const rs = rows[nodeId]
-    if (!rs) return
-    const manualOverride = rs.manualKwOverride.trim() !== '' ? parseFloat(rs.manualKwOverride) : null
-    if (rs.manualKwOverride.trim() !== '' && (manualOverride === null || isNaN(manualOverride))) {
-      setRowErrors((prev) => ({ ...prev, [nodeId]: 'Invalid kW override.' }))
-      return
-    }
-    setRowErrors((prev) => { const n = { ...prev }; delete n[nodeId]; return n })
-
-    startTransition(async () => {
-      const res = await saveTenantAssignmentAction(projectId, {
-        node_id: nodeId,
-        zone_id: rs.zoneId,
-        participation: rs.participation,
-        manual_kw_override: manualOverride,
-        shop_category: rs.category === '' ? null : rs.category,
-      })
-      if ('error' in res) {
-        setRowErrors((prev) => ({ ...prev, [nodeId]: res.error }))
-      } else {
-        router.refresh()
-      }
-    })
-  }
-
-  // ─── Sorted tenants ─────────────────────────────────────────────────────────
-
-  const sorted = useMemo(
+  const displayedSorted = useMemo(
     () =>
-      [...tenants].sort((a, b) =>
+      [...displayed].sort((a, b) =>
         (a.shop_number ?? '').localeCompare(b.shop_number ?? '', undefined, {
           numeric: true,
           sensitivity: 'base',
         }),
       ),
-    [tenants],
+    [displayed],
   )
 
-  const busy = isPending
+  const busy = isPending // bulk-categorize button only — row saves never disable controls
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -303,65 +257,60 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                   <th style={TH}>Zone</th>
                   <th style={{ ...TH, textAlign: 'right' }}>Manual kW</th>
                   <th style={{ ...TH, textAlign: 'right' }}>Loading kW</th>
-                  <th style={{ ...TH, width: 60 }} />
+                  <th style={{ ...TH, width: 90 }} />
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((tenant) => {
-                  const rs = rows[tenant.id]
-                  if (!rs) return null
-
-                  const isOptOut = rs.participation === 'own' || rs.participation === 'none'
-                  const manualNum = rs.manualKwOverride.trim() !== '' ? parseFloat(rs.manualKwOverride) : null
+                {displayedSorted.map((t) => {
+                  const isOptOut = t.participation === 'own' || t.participation === 'none'
                   const loadingKw = isOptOut
                     ? 0
                     : calculateTenantLoadingKw(
                         {
-                          shopNumber: tenant.shop_number,
-                          shopName: tenant.shop_name ?? '',
-                          areaM2: tenant.shop_area_m2 ?? 0,
+                          shopNumber: t.shop_number ?? '',
+                          shopName: t.shop_name ?? '',
+                          areaM2: t.shop_area_m2 ?? 0,
                           // Engine semantics: uncategorized prices as standard (from-db.ts).
-                          category: rs.category === '' ? 'standard' : rs.category,
-                          participation: rs.participation,
-                          manualKwOverride: manualNum != null && !isNaN(manualNum) ? manualNum : null,
+                          category: t.category ?? 'standard',
+                          participation: t.participation,
+                          manualKwOverride: t.manualKwOverride,
                         },
                         engineSettings,
                       )
 
-                  const rowError = rowErrors[tenant.id]
+                  const rowStatus = status[t.id]
 
                   return (
                     <tr
-                      key={tenant.id}
+                      key={t.id}
                       style={{
                         borderTop: '1px solid var(--c-border)',
                         opacity: isOptOut ? 0.55 : 1,
                         background: isOptOut ? 'var(--c-panel-dim, rgba(0,0,0,0.03))' : undefined,
                       }}
                     >
-                      <td style={TD}>{tenant.shop_number}</td>
+                      <td style={TD}>{t.shop_number}</td>
                       <td style={{ ...TD, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {tenant.shop_name ?? '—'}
+                        {t.shop_name ?? '—'}
                       </td>
                       <td style={{ ...TD, textAlign: 'right' }}>
-                        {tenant.shop_area_m2 != null ? tenant.shop_area_m2.toLocaleString('en-ZA') : '—'}
+                        {t.shop_area_m2 != null ? t.shop_area_m2.toLocaleString('en-ZA') : '—'}
                       </td>
 
-                      {/* Category — '' renders an explicit placeholder, never a fake default */}
+                      {/* Category — commits on change; null renders an explicit placeholder, never a fake default */}
                       <td style={TD}>
                         <select
-                          value={rs.category}
-                          onChange={(e) => updateRow(tenant.id, { category: e.target.value as ShopCategory })}
-                          onBlur={() => saveRow(tenant.id)}
-                          disabled={busy}
+                          aria-label={`Category for ${t.shop_number ?? t.id}`}
+                          value={t.category ?? ''}
+                          onChange={(e) => commit([t.id], { shop_category: (e.target.value || null) as ShopCategory | null })}
                           style={{
                             ...SELECT_STYLE,
-                            ...(rs.category === ''
+                            ...(t.category === null
                               ? { borderColor: 'var(--c-amber)', color: 'var(--c-text-dim)', fontStyle: 'italic' }
                               : null),
                           }}
                         >
-                          {rs.category === '' && (
+                          {t.category === null && (
                             <option value="" disabled>
                               — set category —
                             </option>
@@ -372,44 +321,29 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                         </select>
                       </td>
 
-                      {/* Participation — 3-way segmented control */}
+                      {/* Participation — segmented control, commits on click, aria-pressed reflects display value */}
                       <td style={TD}>
                         <div style={{ display: 'flex', gap: 2 }}>
                           {PARTICIPATION_OPTIONS.map((opt) => (
                             <button
                               key={opt.value}
                               type="button"
-                              disabled={busy}
-                              onClick={() => {
-                                updateRow(tenant.id, { participation: opt.value })
-                                // save immediately on click
-                                startTransition(async () => {
-                                  const rs2 = { ...rows[tenant.id], participation: opt.value }
-                                  const manualN = rs2.manualKwOverride.trim() !== '' ? parseFloat(rs2.manualKwOverride) : null
-                                  await saveTenantAssignmentAction(projectId, {
-                                    node_id: tenant.id,
-                                    zone_id: rs2.zoneId,
-                                    participation: opt.value,
-                                    manual_kw_override: manualN != null && !isNaN(manualN) ? manualN : null,
-                                    shop_category: rs2.category === '' ? null : rs2.category,
-                                  })
-                                  router.refresh()
-                                })
-                              }}
+                              aria-pressed={t.participation === opt.value}
+                              onClick={() => { if (t.participation !== opt.value) commit([t.id], { participation: opt.value }) }}
                               style={{
                                 padding: '3px 8px',
                                 fontSize: 11,
                                 fontFamily: 'var(--font-sans)',
-                                fontWeight: rs.participation === opt.value ? 600 : 400,
+                                fontWeight: t.participation === opt.value ? 600 : 400,
                                 borderRadius: 4,
                                 border: '1px solid var(--c-border)',
-                                background: rs.participation === opt.value
+                                background: t.participation === opt.value
                                   ? 'var(--c-amber)'
                                   : 'var(--c-panel)',
-                                color: rs.participation === opt.value
+                                color: t.participation === opt.value
                                   ? 'var(--c-text-on-amber, #0D0B09)'
                                   : 'var(--c-text-mid)',
-                                cursor: busy ? 'not-allowed' : 'pointer',
+                                cursor: 'pointer',
                                 whiteSpace: 'nowrap',
                               }}
                             >
@@ -419,13 +353,12 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                         </div>
                       </td>
 
-                      {/* Zone */}
+                      {/* Zone — commits on change */}
                       <td style={TD}>
                         <select
-                          value={rs.zoneId ?? ''}
-                          onChange={(e) => updateRow(tenant.id, { zoneId: e.target.value || null })}
-                          onBlur={() => saveRow(tenant.id)}
-                          disabled={busy}
+                          aria-label={`Zone for ${t.shop_number ?? t.id}`}
+                          value={t.zoneId ?? ''}
+                          onChange={(e) => commit([t.id], { zone_id: e.target.value || null })}
                           style={SELECT_STYLE}
                         >
                           <option value="">—</option>
@@ -437,16 +370,17 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                         </select>
                       </td>
 
-                      {/* Manual kW override */}
+                      {/* Manual kW — draft → Enter/blur commit; dot while draft differs */}
                       <td style={{ ...TD, textAlign: 'right' }}>
                         <input
+                          aria-label={`Manual kW for ${t.shop_number ?? t.id}`}
                           type="number"
                           step="0.01"
                           min={0}
-                          value={rs.manualKwOverride}
-                          onChange={(e) => updateRow(tenant.id, { manualKwOverride: e.target.value })}
-                          onBlur={() => saveRow(tenant.id)}
-                          disabled={busy}
+                          value={kwDrafts[t.id] ?? (t.manualKwOverride != null ? String(t.manualKwOverride) : '')}
+                          onChange={(e) => setKwDrafts((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') commitKw(t) }}
+                          onBlur={() => commitKw(t)}
                           placeholder="—"
                           style={{
                             ...SELECT_STYLE,
@@ -454,9 +388,12 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                             textAlign: 'right',
                           }}
                         />
+                        {kwDrafts[t.id] !== undefined && (
+                          <span title="Not saved yet — press Enter" style={{ color: 'var(--c-amber)' }}> ●</span>
+                        )}
                       </td>
 
-                      {/* Loading kW — computed live */}
+                      {/* Loading kW — computed live from the display model */}
                       <td
                         style={{
                           ...TD,
@@ -468,14 +405,24 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                         {loadingKw.toFixed(2)}
                       </td>
 
-                      {/* Row error indicator */}
-                      <td style={TD}>
-                        {rowError && (
-                          <span
-                            title={rowError}
-                            style={{ fontSize: 11, color: 'var(--c-red)', cursor: 'help' }}
-                          >
-                            ⚠
+                      {/* Row save status */}
+                      <td style={{ ...TD, width: 90 }}>
+                        {rowStatus?.state === 'saving' && (
+                          <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>Saving…</span>
+                        )}
+                        {rowStatus?.state === 'saved' && (
+                          <span style={{ fontSize: 11, color: 'var(--c-green, #16a34a)' }}>✓ Saved</span>
+                        )}
+                        {rowStatus?.state === 'error' && (
+                          <span style={{ fontSize: 11, color: 'var(--c-red)', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                            <span title={rowStatus.message}>⚠ <span>{rowStatus.message}</span></span>
+                            <button
+                              type="button"
+                              onClick={() => retry(t.id)}
+                              style={{ fontSize: 11, textDecoration: 'underline', background: 'none', border: 'none', color: 'var(--c-red)', cursor: 'pointer' }}
+                            >
+                              Retry
+                            </button>
                           </span>
                         )}
                       </td>
