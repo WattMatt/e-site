@@ -102,7 +102,9 @@ export async function loadGcrConfigAction(
         .from('nodes')
         .select('id, shop_number, shop_name, shop_area_m2, shop_category, generator_participation')
         .eq('project_id', projectId)
-        .eq('kind', 'tenant_db'),
+        .eq('kind', 'tenant_db')
+        .is('deleted_at', null)
+        .neq('status', 'decommissioned'),
 
       (supabase as any)
         .schema('gcr')

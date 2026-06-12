@@ -396,6 +396,32 @@ describe('deleteGeneratorAction', () => {
   })
 })
 
+// ─── loadGcrConfigAction — tenant query filters ──────────────────────────────
+
+describe('loadGcrConfigAction — tenant query filters', () => {
+  it('excludes soft-deleted and decommissioned shops', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true })
+    const calls: Record<string, unknown[][]> = { eq: [], is: [], neq: [] }
+    // chainable query stub that records filter calls and resolves to empty data
+    const chain: any = {
+      select: vi.fn(() => chain),
+      eq: vi.fn((...a: unknown[]) => { calls.eq.push(a); return chain }),
+      is: vi.fn((...a: unknown[]) => { calls.is.push(a); return chain }),
+      neq: vi.fn((...a: unknown[]) => { calls.neq.push(a); return chain }),
+      order: vi.fn(() => chain),
+      maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null })),
+      then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+    }
+    createClientMock.mockResolvedValue({ schema: vi.fn(() => ({ from: vi.fn(() => chain) })) })
+
+    const { loadGcrConfigAction } = await import('./gcr.actions')
+    await loadGcrConfigAction(PROJECT_ID)
+
+    expect(calls.is).toContainEqual(['deleted_at', null])
+    expect(calls.neq).toContainEqual(['status', 'decommissioned'])
+  })
+})
+
 // ─── bulkSetUncategorizedTenantsAction ───────────────────────────────────────
 
 describe('bulkSetUncategorizedTenantsAction', () => {
