@@ -161,10 +161,14 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
     ]
   }
 
-  // Bucket allocations by zone; subtotal the shared monthly per zone.
+  // Bucket allocations by zone (in shop-number order); subtotal the shared
+  // monthly per zone. The engine emits allocations in DB insertion order.
+  const sortedAllocations = [...model.allocations].sort((a, b) =>
+    a.shopNumber.localeCompare(b.shopNumber, undefined, { numeric: true, sensitivity: 'base' }),
+  )
   const groupsMap = new Map<string, string[][]>()
   const subtotalMap = new Map<string, number>()
-  for (const a of model.allocations) {
+  for (const a of sortedAllocations) {
     const zoneName = zoneByShop[a.shopNumber] ?? 'Unzoned'
     if (!groupsMap.has(zoneName)) groupsMap.set(zoneName, [])
     groupsMap.get(zoneName)!.push(allocRow(a))
