@@ -65,6 +65,8 @@ export function filterCounts(tenants: DisplayTenant[]) {
     if (matchesFilter(t, 'no_zone')) no_zone++
     if (matchesFilter(t, 'uncategorized')) uncategorized++
     if (matchesFilter(t, 'opted_out')) opted_out++
+    // byZone is a table-filter count: every member of the zone regardless of
+    // participation. zoneCoverage counts shared-only (load model) — intentional divergence.
     if (t.zoneId) byZone[t.zoneId] = (byZone[t.zoneId] ?? 0) + 1
   }
   return { all: tenants.length, no_zone, uncategorized, opted_out, byZone }

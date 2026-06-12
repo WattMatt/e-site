@@ -60,7 +60,7 @@ export const gcrAssignmentPatchSchema = z
     zone_id:            z.string().uuid().nullable().optional(),
     participation:      z.enum(['shared', 'own', 'none']).optional(),
     shop_category:      z.enum(['standard', 'fast_food', 'restaurant', 'national', 'other']).nullable().optional(),
-    manual_kw_override: z.coerce.number().nullable().optional(),
+    manual_kw_override: z.number().nonnegative().nullable().optional(),
   })
   .refine((p) => Object.values(p).some((v) => v !== undefined), { message: 'Nothing to save' })
 

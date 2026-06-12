@@ -21,6 +21,15 @@ describe('toDisplayTenant', () => {
     expect(t.participation).toBe('own')  // patched
     expect(t.category).toBe('standard')  // server
   })
+
+  it('normalises an unknown server category to null', () => {
+    const t = toDisplayTenant(
+      { id: 't1', shop_number: 'T01', shop_name: 'Alpha', shop_area_m2: 100, shop_category: 'garbage' as never, generator_participation: 'shared' },
+      undefined,
+      undefined,
+    )
+    expect(t.category).toBeNull()
+  })
 })
 
 describe('matchesFilter / filterCounts', () => {
@@ -41,6 +50,11 @@ describe('matchesFilter / filterCounts', () => {
   it('counts agree with predicates', () => {
     const c = filterCounts(tenants)
     expect(c).toEqual({ all: 4, no_zone: 1, uncategorized: 1, opted_out: 1, byZone: { z1: 2 } })
+  })
+
+  it('byZone counts zone members regardless of participation (table filter semantics, distinct from coverage)', () => {
+    const optedOutInZone: DisplayTenant = { ...base, id: 't9', participation: 'own' }
+    expect(filterCounts([base, optedOutInZone]).byZone).toEqual({ z1: 2 })
   })
 })
 

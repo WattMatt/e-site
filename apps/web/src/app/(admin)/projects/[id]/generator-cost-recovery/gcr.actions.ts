@@ -385,5 +385,5 @@ export async function bulkSaveTenantAssignmentsAction(
   }
 
   revalidatePath(GCR_PATH(projectId))
-  return { ok: true, updated: (data as number | null) ?? parsed.data.nodeIds.length }
+  return { ok: true, updated: (data as number | null) ?? 0 }
 }

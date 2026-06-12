@@ -229,6 +229,24 @@ describe('bulkSaveTenantAssignmentsAction', () => {
     const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [NODE_ID], { participation: 'none' })
     expect(res).toEqual({ error: 'Forbidden' })
   })
+
+  it('rejects an empty node list', async () => {
+    requireRoleMock.mockResolvedValue({ ok: true })
+    const { schema } = makeRpcSchemaChain(ORG_ID, { data: 1, error: null })
+    createClientMock.mockResolvedValue({ schema })
+    const { bulkSaveTenantAssignmentsAction } = await import('./gcr.actions')
+    const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [], { participation: 'none' })
+    expect('error' in res).toBe(true)
+  })
+
+  it('rejects a negative manual kW override', async () => {
+    requireRoleMock.mockResolvedValue({ ok: true })
+    const { schema } = makeRpcSchemaChain(ORG_ID, { data: 1, error: null })
+    createClientMock.mockResolvedValue({ schema })
+    const { bulkSaveTenantAssignmentsAction } = await import('./gcr.actions')
+    const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [NODE_ID], { manual_kw_override: -5 })
+    expect('error' in res).toBe(true)
+  })
 })
 
 // ─── deleteGeneratorAction ───────────────────────────────────────────────────
