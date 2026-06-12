@@ -5,7 +5,7 @@ import { spacing } from './theme'
 import type { ResolvedBranding } from './branding'
 import type { GeneratorReportData } from './generator-report-data'
 import { Cover, pageStyles as s } from './components'
-import { RunningHeader, Section, Table } from './interior'
+import { RunningHeader, RunningFooter, Section, Table } from './interior'
 
 // ---------------------------------------------------------------------------
 // Local helper — South African Rand formatter
@@ -206,19 +206,23 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
 
   return (
     <Document title="Generator Cost Recovery Report" producer="e-site.live">
+      {/* Page 1 — cover only (Cover provides its own fixed footer) */}
       <Page size="A4" style={s.page}>
-        {/*
-         * RunningHeader (fixed) on every interior page.
-         * Cover provides its own fixed footer — no RunningFooter needed.
-         */}
+        <Cover resolved={branding} />
+      </Page>
+
+      {/* Content pages — running header + page-number footer repeat on every page */}
+      <Page size="A4" style={s.page}>
         <RunningHeader
           issuerLogoDataUri={issuer.logoSrc ?? null}
           title={title}
           accent={accent}
         />
-
-        {/* Cover */}
-        <Cover resolved={branding} />
+        <RunningFooter
+          contractorLogoDataUri={null}
+          stamp={title}
+          accent={accent}
+        />
 
         {/* Narrative — standing report sections (precede the calculated tables) */}
         <Section title="Introduction" accent={accent}>
@@ -231,6 +235,9 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
             <Table
               columns={['Board / Zone', 'Connected load (kW)', 'Required (kVA)', 'Installed (kVA)']}
               rows={sizingRows}
+              repeatHeader
+              unbreakableRows
+              align={['left', 'right', 'right', 'right']}
             />
           )}
         </Section>
@@ -248,6 +255,9 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
           <Table
             columns={['Item', 'Amount']}
             rows={capitalRows}
+            repeatHeader
+            unbreakableRows
+            align={['left', 'right']}
           />
         </Section>
 
@@ -291,11 +301,14 @@ export function GeneratorReportDocument({ data, branding }: GeneratorReportDocum
           {allocationGroups.map((g) => (
             <View key={g.zoneName} style={ss.zoneGroup}>
               {showZoneHeadings && (
-                <Text style={[ss.zoneGroupHeading, { color: accent }]}>{g.zoneName}</Text>
+                <Text style={[ss.zoneGroupHeading, { color: accent }]} minPresenceAhead={60}>{g.zoneName}</Text>
               )}
               <Table
                 columns={['Shop', 'Tenant', 'Area m²', 'Loading kW', '% of total', 'Monthly (excl VAT)', 'R/m²']}
                 rows={[...g.rows, ['', 'Subtotal', '', '', '', zar(g.subtotal), '']]}
+                repeatHeader
+                unbreakableRows
+                align={['left', 'left', 'right', 'right', 'right', 'right', 'right']}
               />
             </View>
           ))}
