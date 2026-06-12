@@ -483,6 +483,106 @@ describe('Table', () => {
     const texts = collectText(el)
     expect(texts.some((t) => t === 'A')).toBe(true) // header still shows
   })
+
+  // --- Task 11: pagination primitives ---
+
+  describe('repeatHeader', () => {
+    it('header row has fixed=true when repeatHeader is true', () => {
+      const el = Table({ columns: ['A', 'B'], rows: [], repeatHeader: true })
+      const rootChildren = getChildren(el)
+      const headerRow = rootChildren[0]
+      expect(getProps(headerRow).fixed).toBe(true)
+    })
+
+    it('header row has fixed=undefined when repeatHeader is omitted', () => {
+      const el = Table({ columns: ['A', 'B'], rows: [] })
+      const rootChildren = getChildren(el)
+      const headerRow = rootChildren[0]
+      expect(getProps(headerRow).fixed).toBeUndefined()
+    })
+  })
+
+  describe('unbreakableRows', () => {
+    it('body row has wrap=false when unbreakableRows is true', () => {
+      const el = Table({ columns: ['A'], rows: [['val']], unbreakableRows: true })
+      const rootChildren = getChildren(el)
+      // Second child onward are body rows
+      const firstBodyRow = rootChildren[1]
+      expect(getProps(firstBodyRow).wrap).toBe(false)
+    })
+
+    it('body row has wrap=undefined when unbreakableRows is omitted', () => {
+      const el = Table({ columns: ['A'], rows: [['val']] })
+      const rootChildren = getChildren(el)
+      const firstBodyRow = rootChildren[1]
+      expect(getProps(firstBodyRow).wrap).toBeUndefined()
+    })
+  })
+
+  describe('align', () => {
+    it('second header cell has textAlign right when align=["left","right"]', () => {
+      const el = Table({ columns: ['Label', 'Amount'], rows: [], align: ['left', 'right'] })
+      const rootChildren = getChildren(el)
+      const headerRow = rootChildren[0]
+      const headerCells = getChildren(headerRow)
+      // First cell: no textAlign override
+      expect(resolveStyleProp(getProps(headerCells[0]).style, 'textAlign')).toBeUndefined()
+      // Second cell: textAlign right
+      expect(resolveStyleProp(getProps(headerCells[1]).style, 'textAlign')).toBe('right')
+    })
+
+    it('second body cell has textAlign right when align=["left","right"]', () => {
+      const el = Table({ columns: ['Label', 'Amount'], rows: [['Fuel', '1 200']], align: ['left', 'right'] })
+      const rootChildren = getChildren(el)
+      const firstBodyRow = rootChildren[1]
+      const bodyCells = getChildren(firstBodyRow)
+      // First cell: no textAlign override
+      expect(resolveStyleProp(getProps(bodyCells[0]).style, 'textAlign')).toBeUndefined()
+      // Second cell: textAlign right
+      expect(resolveStyleProp(getProps(bodyCells[1]).style, 'textAlign')).toBe('right')
+    })
+
+    it('first column is untouched (no textAlign) when align=["left","right"]', () => {
+      const el = Table({ columns: ['Label', 'Amount'], rows: [['Fuel', '1 200']], align: ['left', 'right'] })
+      const rootChildren = getChildren(el)
+      const headerRow = rootChildren[0]
+      const headerCells = getChildren(headerRow)
+      expect(resolveStyleProp(getProps(headerCells[0]).style, 'textAlign')).toBeUndefined()
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Section pagination (Task 11)
+// ---------------------------------------------------------------------------
+
+describe('Section — minPresenceAhead', () => {
+  it('accent rule View has minPresenceAhead=40', () => {
+    const el = Section({ title: 'T', accent: ACCENT, children: null })
+    // Find the accent rule View — it has backgroundColor === ACCENT
+    function findAccentRuleMinPresence(node: unknown): boolean {
+      if (!node || typeof node !== 'object') return false
+      const p2 = getProps(node)
+      const bg = resolveStyleProp(p2.style, 'backgroundColor')
+      if (bg === ACCENT && p2.minPresenceAhead === 40) return true
+      return getChildren(node).some(findAccentRuleMinPresence)
+    }
+    expect(findAccentRuleMinPresence(el)).toBe(true)
+  })
+
+  it('heading Text has minPresenceAhead=40', () => {
+    const el = Section({ title: 'Heading check', accent: ACCENT, children: null })
+    // Find any Text node carrying the heading text AND minPresenceAhead=40
+    function findHeadingMinPresence(node: unknown): boolean {
+      if (!node || typeof node !== 'object') return false
+      const p2 = getProps(node)
+      // The heading Text carries the title as a children string
+      const childText = typeof p2.children === 'string' ? p2.children : ''
+      if (childText === 'Heading check' && p2.minPresenceAhead === 40) return true
+      return getChildren(node).some(findHeadingMinPresence)
+    }
+    expect(findHeadingMinPresence(el)).toBe(true)
+  })
 })
 
 // ---------------------------------------------------------------------------
