@@ -166,6 +166,51 @@ describe('TenantsPanel — instant save with per-row status', () => {
   })
 })
 
+describe('TenantsPanel — filters + setup banner', () => {
+  beforeEach(() => { vi.clearAllMocks(); bulkSaveMock.mockResolvedValue({ ok: true, updated: 1 }) })
+
+  it('banner reports shops needing setup and Show applies the no-zone filter', async () => {
+    const user = userEvent.setup()
+    await renderPanel() // all 3 shared with no zone assignments → all need setup
+    // banner text visible (all 3 are shared + missing zone)
+    expect(screen.getByText(/3 shops need setup/i)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /^show$/i }))
+    // after clicking Show the no-zone chip should be aria-pressed="true"
+    expect(screen.getByRole('button', { name: /no zone \(3\)/i }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('zone chip filters rows and select-all selects only the filtered set', async () => {
+    const user = userEvent.setup()
+    const assignments = [{ node_id: 't1', zone_id: 'z1', manual_kw_override: null }]
+    const { TenantsPanel } = await import('./TenantsPanel')
+    render(
+      <TenantsPanel
+        projectId={PROJECT_ID}
+        settings={SETTINGS}
+        zones={ZONES}
+        generators={GENERATORS}
+        tenants={TENANTS}
+        assignments={assignments}
+        onNavigateToReports={vi.fn()}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: /north \(1\)/i }))
+    expect(screen.getByText('Alpha')).toBeTruthy()
+    expect(screen.queryByText('Bravo')).toBeNull()
+    await user.click(screen.getByLabelText(/select all/i))
+    expect(screen.getByText(/1 selected/i)).toBeTruthy()
+  })
+
+  it('changing filter clears the selection', async () => {
+    const user = userEvent.setup()
+    await renderPanel()
+    await user.click(screen.getByLabelText(/select all/i))
+    expect(screen.getByText(/3 selected/i)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /^uncategorized/i }))
+    expect(screen.queryByText(/selected/i)).toBeNull()
+  })
+})
+
 describe('TenantsPanel — selection + bulk bar', () => {
   beforeEach(() => vi.clearAllMocks())
 

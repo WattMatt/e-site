@@ -20,7 +20,7 @@ import {
 } from '@esite/shared'
 import { bulkSetUncategorizedTenantsAction } from './gcr.actions'
 import { useAssignmentSaves } from './useAssignmentSaves'
-import { toDisplayTenant, type DisplayTenant } from './tenant-display'
+import { toDisplayTenant, matchesFilter, filterCounts, needsSetup, type DisplayTenant, type TenantFilter } from './tenant-display'
 import { BulkBar } from './BulkBar'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -167,21 +167,34 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
     })
   }, [settings, zones, generators, displayed])
 
-  // ─── Sorted display rows ────────────────────────────────────────────────────
+  // ─── Filter state ────────────────────────────────────────────────────────────
+
+  const [filter, setFilter] = useState<TenantFilter>('all')
+  const counts = useMemo(() => filterCounts(displayed), [displayed])
+  const setupCount = useMemo(() => displayed.filter(needsSetup).length, [displayed])
+
+  // ─── Sorted display rows (filter-aware) ─────────────────────────────────────
 
   const displayedSorted = useMemo(
     () =>
-      [...displayed].sort((a, b) =>
-        (a.shop_number ?? '').localeCompare(b.shop_number ?? '', undefined, {
-          numeric: true,
-          sensitivity: 'base',
-        }),
-      ),
-    [displayed],
+      [...displayed]
+        .filter((t) => matchesFilter(t, filter))
+        .sort((a, b) =>
+          (a.shop_number ?? '').localeCompare(b.shop_number ?? '', undefined, {
+            numeric: true,
+            sensitivity: 'base',
+          }),
+        ),
+    [displayed, filter],
   )
 
   // ─── Row selection ───────────────────────────────────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  function applyFilter(f: TenantFilter) {
+    setFilter(f)
+    setSelected(new Set())
+  }
 
   function toggleAll(checked: boolean) {
     setSelected(checked ? new Set(displayedSorted.map((t) => t.id)) : new Set())
@@ -222,6 +235,14 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                 </li>
               ))}
             </ul>
+            {setupCount > 0 && (
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 13, color: 'var(--c-text-mid)' }}>
+                  {setupCount} shops need setup (zone or category missing).
+                </span>
+                <Button size="sm" variant="secondary" onClick={() => applyFilter('no_zone')}>Show</Button>
+              </div>
+            )}
             {uncategorizedCount > 0 && (
               <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <Button size="sm" variant="primary" onClick={handleBulkCategorize} disabled={busy}>
@@ -262,6 +283,30 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
             onApply={(p) => commitWithResult([...selected], p)}
             onClear={() => setSelected(new Set())}
           />
+          {/* Filter chips */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 12px', borderBottom: '1px solid var(--c-border)' }}>
+            {([
+              { key: 'all' as const,          label: `All (${counts.all})` },
+              { key: 'no_zone' as const,       label: `No zone (${counts.no_zone})` },
+              { key: 'uncategorized' as const, label: `Uncategorized (${counts.uncategorized})` },
+              { key: 'opted_out' as const,     label: `Opted out (${counts.opted_out})` },
+            ]).map((c) => (
+              <button key={c.key} type="button" aria-pressed={filter === c.key} onClick={() => applyFilter(c.key)} style={chipStyle(filter === c.key)}>
+                {c.label}
+              </button>
+            ))}
+            {zones.map((z) => (
+              <button
+                key={z.id}
+                type="button"
+                aria-pressed={typeof filter === 'object' && filter.zoneId === z.id}
+                onClick={() => applyFilter({ zoneId: z.id })}
+                style={chipStyle(typeof filter === 'object' && filter.zoneId === z.id)}
+              >
+                {z.zone_name} ({counts.byZone[z.id] ?? 0})
+              </button>
+            ))}
+          </div>
           <TableScrollX>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
@@ -499,4 +544,18 @@ const SELECT_STYLE: React.CSSProperties = {
   background: 'var(--c-input)',
   color: 'var(--c-text)',
   fontFamily: 'var(--font-sans)',
+}
+
+function chipStyle(active: boolean): React.CSSProperties {
+  return {
+    fontSize: 12,
+    padding: '4px 10px',
+    borderRadius: 999,
+    cursor: 'pointer',
+    border: '1px solid var(--c-border)',
+    background: active ? 'var(--c-amber)' : 'var(--c-panel)',
+    color: active ? 'var(--c-text-on-amber, #0D0B09)' : 'var(--c-text-mid)',
+    fontWeight: active ? 600 : 400,
+    fontFamily: 'var(--font-sans)',
+  }
 }
