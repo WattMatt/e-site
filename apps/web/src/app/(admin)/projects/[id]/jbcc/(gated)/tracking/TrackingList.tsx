@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useMemo } from 'react'
 import { deadlineStatus, type JbccLetter, type JbccNotice, type DeadlineStatus } from '@esite/shared'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 
 interface Props {
   projectId: string
@@ -99,7 +100,7 @@ export function TrackingList({ projectId, letters, noticeById }: Props) {
       </div>
 
       {/* Table — 1px-border, no radius */}
-      <div style={{ border: '1px solid var(--c-border)', overflowX: 'auto' }}>
+      <TableScrollX style={{ border: '1px solid var(--c-border)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: 'var(--c-panel)', borderBottom: '1px solid var(--c-border)' }}>
@@ -229,7 +230,7 @@ export function TrackingList({ projectId, letters, noticeById }: Props) {
             })}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
     </div>
   )
 }

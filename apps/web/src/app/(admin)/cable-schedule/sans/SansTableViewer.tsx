@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState, type CSSProperties } from 'react'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 
 export interface SansColumn {
   key: string
@@ -248,7 +249,7 @@ function TableCard({ table }: { table: SansTable }) {
         )}
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
+      <TableScrollX>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             {/* row 1 — column labels */}
@@ -341,7 +342,7 @@ function TableCard({ table }: { table: SansTable }) {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
 
       {(table.notes || table.source_ref) && (
         <div

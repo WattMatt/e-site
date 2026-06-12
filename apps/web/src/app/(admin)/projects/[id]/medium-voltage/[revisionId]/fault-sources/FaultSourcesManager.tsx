@@ -11,6 +11,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/Badge'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { FaultSourceForm, type AttachOption, type ExistingFaultSource } from './FaultSourceForm'
 
 interface Props {
@@ -49,7 +50,7 @@ export function FaultSourcesManager({ revisionId, sources, attachOptions, attach
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {sources.length > 0 && (
-        <div className="data-panel" style={{ overflowX: 'auto' }}>
+        <TableScrollX className="data-panel">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--c-base)' }}>
@@ -84,7 +85,7 @@ export function FaultSourcesManager({ revisionId, sources, attachOptions, attach
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScrollX>
       )}
 
       {locked ? (

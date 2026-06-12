@@ -3,6 +3,7 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import QRCode from 'qrcode'
 import { createClient } from '@/lib/supabase/server'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { projectService } from '@esite/shared'
 import { activeLengthM, type CableForCalc } from '@esite/shared'
 import { TagControls } from './TagControls'
@@ -294,7 +295,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
             🖨  <strong style={{ color: 'var(--c-text)' }}>Two PDF outputs:</strong> <em>Download list (PDF)</em> (above) → multi-page A4 tag-schedule list, suitable as a site-coordination checklist. <em>Export → PDF</em> (from the revision page) → 10-up tag-card layout with QR codes for fabrication. An Avery-spec label-sheet export is on the roadmap. Browser Cmd-P also works for a quick screen-table print.
           </div>
           {/* Screen view: table */}
-          <div className="data-panel" style={{ overflowX: 'auto' }}>
+          <TableScrollX className="data-panel">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
               <thead>
                 <tr style={{ background: 'var(--c-base)' }}>
@@ -342,7 +343,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScrollX>
 
           {/* No in-app print view: the admin layout chrome (sidebar +
               header) can't be cleanly excluded from @media print, so any

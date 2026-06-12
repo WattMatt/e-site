@@ -7,6 +7,7 @@ import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { requireMvAccess } from '@/lib/mv-access'
 import { Card, CardHeader, CardBody, KpiCard } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { SandboxNotice } from '@/components/mv/SandboxNotice'
 import { RevisionStatusBadge } from '../../../cables/[revisionId]/RevisionStatusBadge'
 import { RunStudyButton } from './RunStudyButton'
@@ -171,7 +172,7 @@ export default async function MvFaultStudyPage({ params }: Props) {
               )}
             </CardHeader>
             <CardBody>
-              <div style={{ overflowX: 'auto' }}>
+              <TableScrollX>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: 'var(--c-base)' }}>
@@ -204,7 +205,7 @@ export default async function MvFaultStudyPage({ params }: Props) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollX>
             </CardBody>
           </Card>
         </>

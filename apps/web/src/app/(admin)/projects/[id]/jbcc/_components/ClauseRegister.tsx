@@ -1,6 +1,7 @@
 'use client'
 
 import type { JbccClause } from '@esite/shared'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 
 interface Props { clauses: JbccClause[] }
 
@@ -8,12 +9,7 @@ export function ClauseRegister({ clauses }: Props) {
   return (
     <div style={{ padding: '40px 0 64px' }}>
       {/* Table container — 1px grid lines, no border-radius */}
-      <div
-        style={{
-          border: '1px solid var(--c-border)',
-          overflowX: 'auto',
-        }}
-      >
+      <TableScrollX style={{ border: '1px solid var(--c-border)' }}>
         <table
           style={{
             width: '100%',
@@ -123,7 +119,7 @@ export function ClauseRegister({ clauses }: Props) {
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
     </div>
   )
 }

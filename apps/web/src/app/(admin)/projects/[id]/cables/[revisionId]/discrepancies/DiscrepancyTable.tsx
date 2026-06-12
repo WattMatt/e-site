@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import {
   acceptVarianceAction,
   requestRemeasureAction,
@@ -86,7 +87,7 @@ export function DiscrepancyTable({ rows, locked }: { rows: DiscRow[]; locked: bo
       {error && (
         <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{error}</div>
       )}
-      <div className="data-panel" style={{ overflowX: 'auto' }}>
+      <TableScrollX className="data-panel">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
@@ -152,7 +153,7 @@ export function DiscrepancyTable({ rows, locked }: { rows: DiscRow[]; locked: bo
             })}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
     </div>
   )
 }

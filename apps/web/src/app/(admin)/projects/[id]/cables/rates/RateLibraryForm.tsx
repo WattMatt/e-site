@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import {
   upsertRateLibraryEntriesAction,
   deleteRateLibraryEntryAction,
@@ -128,7 +129,7 @@ export function RateLibraryForm({ projectId, canEdit, initialEntries }: Props) {
 
   return (
     <form onSubmit={onSubmit}>
-      <div className="data-panel" style={{ overflowX: 'auto' }}>
+      <TableScrollX className="data-panel">
         {rows.length === 0 ? (
           <div className="data-panel-empty" style={{ padding: '48px 18px', textAlign: 'center' }}>
             {canEdit ? 'No rates yet. Click "+ Add row" to enter your first.' : 'No rates yet.'}
@@ -235,7 +236,7 @@ export function RateLibraryForm({ projectId, canEdit, initialEntries }: Props) {
             </tbody>
           </table>
         )}
-      </div>
+      </TableScrollX>
 
       {canEdit && (
         <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>

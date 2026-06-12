@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import {
   ensureCostLinesAction,
   updateCostLineAction,
@@ -154,7 +155,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
         </div>
       )}
 
-      <div className="data-panel" style={{ overflowX: 'auto' }}>
+      <TableScrollX className="data-panel">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
@@ -234,7 +235,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
     </div>
   )
 }
