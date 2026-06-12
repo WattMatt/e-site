@@ -21,6 +21,7 @@ import {
 import { bulkSetUncategorizedTenantsAction } from './gcr.actions'
 import { useAssignmentSaves } from './useAssignmentSaves'
 import { toDisplayTenant, type DisplayTenant } from './tenant-display'
+import { BulkBar } from './BulkBar'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -82,7 +83,7 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
 
   const engineSettings = useMemo(() => settingsToEngine(settings), [settings])
 
-  const { pending, status, commit, retry, reconcile } = useAssignmentSaves(projectId)
+  const { pending, status, commit, commitWithResult, retry, reconcile } = useAssignmentSaves(projectId)
 
   // kW drafts: text being typed, committed on Enter/blur
   const [kwDrafts, setKwDrafts] = useState<Record<string, string>>({})
@@ -179,6 +180,16 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
     [displayed],
   )
 
+  // ─── Row selection ───────────────────────────────────────────────────────────
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  function toggleAll(checked: boolean) {
+    setSelected(checked ? new Set(displayedSorted.map((t) => t.id)) : new Set())
+  }
+  function toggleOne(id: string, checked: boolean) {
+    setSelected((prev) => { const n = new Set(prev); if (checked) n.add(id); else n.delete(id); return n })
+  }
+
   const busy = isPending // bulk-categorize button only — row saves never disable controls
 
   // ─── Render ──────────────────────────────────────────────────────────────────
@@ -245,10 +256,24 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
         </div>
       ) : (
         <Card>
+          <BulkBar
+            selectedCount={selected.size}
+            zones={zones}
+            onApply={(p) => commitWithResult([...selected], p)}
+            onClear={() => setSelected(new Set())}
+          />
           <TableScrollX>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
+                  <th style={{ ...TH, width: 34 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all visible shops"
+                      checked={displayedSorted.length > 0 && selected.size === displayedSorted.length}
+                      onChange={(e) => toggleAll(e.target.checked)}
+                    />
+                  </th>
                   <th style={TH}>Shop #</th>
                   <th style={TH}>Name</th>
                   <th style={{ ...TH, textAlign: 'right' }}>Area (m²)</th>
@@ -289,6 +314,14 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                         background: isOptOut ? 'var(--c-panel-dim, rgba(0,0,0,0.03))' : undefined,
                       }}
                     >
+                      <td style={TD}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${t.shop_number ?? t.id}`}
+                          checked={selected.has(t.id)}
+                          onChange={(e) => toggleOne(t.id, e.target.checked)}
+                        />
+                      </td>
                       <td style={TD}>{t.shop_number}</td>
                       <td style={{ ...TD, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {t.shop_name ?? '—'}

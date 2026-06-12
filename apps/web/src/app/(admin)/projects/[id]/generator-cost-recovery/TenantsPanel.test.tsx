@@ -165,3 +165,36 @@ describe('TenantsPanel — instant save with per-row status', () => {
     resolve({ ok: true, updated: 1 })
   })
 })
+
+describe('TenantsPanel — selection + bulk bar', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('select-all + bulk zone apply sends one call with all visible ids', async () => {
+    bulkSaveMock.mockResolvedValue({ ok: true, updated: 3 })
+    const user = userEvent.setup()
+    await renderPanel()
+    await user.click(screen.getByLabelText(/select all/i))
+    await user.selectOptions(screen.getByLabelText(/bulk assign zone/i), 'z1')
+    await user.click(screen.getByRole('button', { name: /^apply$/i }))
+    await waitFor(() =>
+      expect(bulkSaveMock).toHaveBeenCalledWith(PROJECT_ID, ['t1', 't2', 't3'], { zone_id: 'z1' }),
+    )
+    expect(await screen.findByText(/applied to 3 shops/i)).toBeTruthy()
+  })
+
+  it('bulk failure shows the error and a retry', async () => {
+    bulkSaveMock.mockResolvedValueOnce({ error: 'Forbidden' }).mockResolvedValueOnce({ ok: true, updated: 3 })
+    const user = userEvent.setup()
+    await renderPanel()
+    await user.click(screen.getByLabelText(/select all/i))
+    await user.selectOptions(screen.getByLabelText(/bulk assign zone/i), 'z1')
+    await user.click(screen.getByRole('button', { name: /^apply$/i }))
+    // BulkBar renders a role="alert" span with the error and an inline Retry button
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Forbidden')
+    // The inline Retry button is inside the alert span
+    const retryBtn = within(alert).getByRole('button', { name: /retry/i })
+    await user.click(retryBtn)
+    await waitFor(() => expect(bulkSaveMock).toHaveBeenCalledTimes(2))
+  })
+})
