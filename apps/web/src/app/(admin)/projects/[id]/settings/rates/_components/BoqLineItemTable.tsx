@@ -13,6 +13,7 @@
  */
 
 import { Badge } from '@/components/ui/Badge'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { naturalCompare } from '@/lib/natural-compare'
 import type { BoqItem } from '@esite/shared'
 import { fmtMoney, fmtQty } from './format'
@@ -72,7 +73,7 @@ export function BoqLineItemTable({ items, projectId, canEdit, onItemUpdated }: P
   }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <TableScrollX>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
@@ -141,6 +142,6 @@ export function BoqLineItemTable({ items, projectId, canEdit, onItemUpdated }: P
           })}
         </tbody>
       </table>
-    </div>
+    </TableScrollX>
   )
 }

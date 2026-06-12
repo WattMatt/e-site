@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useRef, useEffect, Fragment } from 'react'
+import { useState, Fragment } from 'react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import type { Node } from '@esite/shared'
 import { ScopeOfWorkPanel } from './ScopeOfWorkPanel'
 import { LayoutIssuedPanel } from './LayoutIssuedPanel'
@@ -56,27 +57,6 @@ export function ScheduleTable({
   const [deletingNode, setDeletingNode] = useState<{ id: string; code: string } | null>(null)
   // Local copy of scope item types so adding a new one reflects immediately
   const [scopeItemTypes, setScopeItemTypes] = useState<ScopeItemType[]>(initialScopeItemTypes)
-
-  // When the table overflows horizontally, browsers latch wheel gestures onto
-  // the scroll wrapper and DISCARD the vertical delta (the wrapper has no
-  // vertical range), so the page won't scroll while the pointer is over the
-  // table — verified in Chromium with overflow-y: hidden too. Take over
-  // vertical-dominant wheel events and hand them to the page ourselves.
-  // Native listener because React's onWheel is passive (can't preventDefault).
-  const tableScrollRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = tableScrollRef.current
-    if (!el) return
-    function onWheel(e: WheelEvent) {
-      if (e.ctrlKey) return // pinch-zoom gesture — leave to the browser
-      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return // horizontal — native
-      e.preventDefault()
-      const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? window.innerHeight : 1
-      window.scrollBy({ top: e.deltaY * unit })
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [])
 
   const activeNodes = nodes.filter((n) => n.status !== 'decommissioned')
   const decomNodes = nodes.filter((n) => n.status === 'decommissioned')
@@ -179,10 +159,7 @@ export function ScheduleTable({
         </Button>
       </div>
 
-      {/* Table. overflowY explicit (overflow-x alone computes overflow-y to
-          auto); the wheel handler wired to tableScrollRef does the real work
-          of keeping vertical page-scroll alive over the table. */}
-      <div ref={tableScrollRef} style={{ overflowX: 'auto', overflowY: 'hidden' }}>
+      <TableScrollX>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
@@ -400,7 +377,7 @@ export function ScheduleTable({
             })}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
 
       <p
         style={{

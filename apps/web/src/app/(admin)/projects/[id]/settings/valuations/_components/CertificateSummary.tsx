@@ -14,6 +14,7 @@
  */
 
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { fmtMoney } from '../../rates/_components/format'
 
 /** The seven certificate figures — matches computeCertificate's return shape. */
@@ -92,7 +93,7 @@ export function CertificateSummary({ summary, bills, retentionPct }: Props) {
             </h3>
           </CardHeader>
           <CardBody>
-            <div style={{ overflowX: 'auto' }}>
+            <TableScrollX>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
@@ -122,7 +123,7 @@ export function CertificateSummary({ summary, bills, retentionPct }: Props) {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableScrollX>
           </CardBody>
         </Card>
       )}

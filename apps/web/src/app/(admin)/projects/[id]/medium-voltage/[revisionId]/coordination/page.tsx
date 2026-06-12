@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import {
   projectService,
   mvProtectionService,
@@ -201,7 +202,7 @@ export default async function CoordinationPage({ params }: Props) {
                 the study route will populate this table with per-pair margins coloured ok / marginal / fails.
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
+              <TableScrollX>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: 'var(--c-base)' }}>
@@ -230,7 +231,7 @@ export default async function CoordinationPage({ params }: Props) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableScrollX>
             )}
           </CardBody>
         </Card>

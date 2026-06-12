@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { History } from 'lucide-react'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Button } from '@/components/ui/Button'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { restoreProjectSettingsAction } from '@/actions/project-settings.actions'
 import type { ProjectSettingsHistoryRow } from '@esite/shared'
 
@@ -87,7 +88,7 @@ export function HistoryTable({ projectId, rows, nameById }: Props) {
   }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <TableScrollX>
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
         <thead>
           <tr
@@ -144,6 +145,6 @@ export function HistoryTable({ projectId, rows, nameById }: Props) {
           })}
         </tbody>
       </table>
-    </div>
+    </TableScrollX>
   )
 }

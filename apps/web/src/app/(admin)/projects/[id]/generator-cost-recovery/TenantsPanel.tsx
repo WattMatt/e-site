@@ -4,6 +4,7 @@ import { useState, useTransition, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import {
   calculateTenantLoadingKw,
   checkReadiness,
@@ -290,7 +291,7 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
         </div>
       ) : (
         <Card>
-          <div style={{ overflowX: 'auto' }}>
+          <TableScrollX>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
@@ -483,7 +484,7 @@ export function TenantsPanel({ projectId, settings, zones, generators, tenants, 
                 })}
               </tbody>
             </table>
-          </div>
+          </TableScrollX>
         </Card>
       )}
     </div>

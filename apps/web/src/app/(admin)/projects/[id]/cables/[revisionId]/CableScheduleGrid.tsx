@@ -14,6 +14,7 @@ import {
 } from './LengthEditPopover'
 import { EditableCell } from './EditableCell'
 import { CableFormModal, type DrawerState } from './CableFormModal'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { useRouter } from 'next/navigation'
 import {
   updateSupplyAction,
@@ -620,7 +621,7 @@ export function CableScheduleGrid({
         )}
       </div>
 
-      <div className="data-panel" style={{ overflowX: 'auto', overflowY: 'visible' }}>
+      <TableScrollX className="data-panel">
         <table
           style={{
             width: '100%',
@@ -1141,7 +1142,7 @@ export function CableScheduleGrid({
             })}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
 
       {/* Single centered modal — covers all four modes plus duplicate. */}
       {drawer && (

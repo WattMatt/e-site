@@ -12,6 +12,7 @@
  */
 
 import { Badge } from '@/components/ui/Badge'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import type { ReconciliationReport } from '@/lib/boq/types'
 import { fmtMoney } from './format'
 
@@ -82,7 +83,7 @@ export function BoqReconciliationReport({ report }: { report: ReconciliationRepo
 
       {/* Per-bill table */}
       {report.billResults.length > 0 && (
-        <div style={{ overflowX: 'auto' }}>
+        <TableScrollX>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
@@ -117,7 +118,7 @@ export function BoqReconciliationReport({ report }: { report: ReconciliationRepo
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScrollX>
       )}
 
       {/* Warnings */}
