@@ -21,6 +21,7 @@ import { useState } from 'react'
 import type { BoqItem, ValuationLine, ValuationProgressPatch } from '@esite/shared'
 import { isOverMeasure } from '@esite/shared'
 import { Badge } from '@/components/ui/Badge'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { naturalCompare } from '@/lib/natural-compare'
 import { fmtMoney, fmtQty } from '../../rates/_components/format'
 
@@ -84,7 +85,7 @@ export function ValuationLineTable({ items, linesByItem, revisedByItem, canEdit,
   }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <TableScrollX>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
@@ -110,7 +111,7 @@ export function ValuationLineTable({ items, linesByItem, revisedByItem, canEdit,
           ))}
         </tbody>
       </table>
-    </div>
+    </TableScrollX>
   )
 }
 

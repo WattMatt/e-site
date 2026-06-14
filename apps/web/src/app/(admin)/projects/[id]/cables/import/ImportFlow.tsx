@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 
 interface ImportedCable {
   source_row: number
@@ -175,7 +176,7 @@ export function ImportFlow({ projectId, projectName }: { projectId: string; proj
               {' '}mapped {Object.keys(parsed.preview.detected_columns).length} columns
             </div>
 
-            <div style={{ overflowX: 'auto' }}>
+            <TableScrollX>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
                 <thead>
                   <tr style={{ background: 'var(--c-base)' }}>
@@ -223,7 +224,7 @@ export function ImportFlow({ projectId, projectName }: { projectId: string; proj
                   })}
                 </tbody>
               </table>
-            </div>
+            </TableScrollX>
           </div>
 
           {/* Step 3: commit */}

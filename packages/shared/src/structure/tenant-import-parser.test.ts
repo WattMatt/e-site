@@ -384,6 +384,35 @@ describe('parseTenantSchedule — tolerant header matching', () => {
     });
   });
 
+  it('parses colon-suffixed headers ("SHOP NO:" / "SHOP NAME:" / "AREA:")', async () => {
+    // Real client file (2026-06-11): label-style headers with trailing colons.
+    const buf = await buildWorkbook(
+      ['SHOP NO:', 'SHOP NAME:', 'AREA:'],
+      [
+        ['01', 'VACANT', 131.66],
+        ['02', 'SLEEPMASTERS', 150.49],
+      ],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0]).toMatchObject({
+      shop_number: '01',
+      shop_name: 'VACANT',
+      shop_area_m2: 131.66,
+    });
+  });
+
+  it('parses a unit annotation followed by a colon ("AREA (m²):")', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO:', 'SHOP NAME:', 'AREA (m²):'],
+      [['1', 'PEP', 501.52]],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows[0].shop_area_m2).toBe(501.52);
+  });
+
   it('still accepts the legacy "TENANT" / "TOTAL GLA" wording', async () => {
     const buf = await buildWorkbook(
       ['SHOP NO.', 'TENANT', 'TOTAL GLA'],

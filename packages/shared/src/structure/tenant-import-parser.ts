@@ -146,7 +146,9 @@ function isFormulaCell(value: ExcelJS.CellValue): boolean {
 /**
  * Normalise a header cell for tolerant matching: lowercase, fold the `²`/`³`
  * superscripts, collapse whitespace, drop a trailing `(…)` unit annotation
- * (so `Area (m²)` → `area`), and drop trailing dots (so `SHOP NO.` → `shop no`).
+ * (so `Area (m²)` → `area`), and drop trailing label punctuation — dots and
+ * colons (so `SHOP NO.` and `SHOP NO:` → `shop no`). Punctuation is stripped
+ * both before and after the unit annotation so `AREA (m²):` also resolves.
  */
 function normaliseHeader(value: ExcelJS.CellValue): string {
   const raw = cellToString(value);
@@ -156,8 +158,9 @@ function normaliseHeader(value: ExcelJS.CellValue): string {
     .replace(/²/g, '2')
     .replace(/³/g, '3')
     .replace(/\s+/g, ' ')
+    .replace(/[.:\s]+$/, '') // strip trailing dots / colons / whitespace
     .replace(/\s*\([^)]*\)\s*$/, '') // strip a trailing "(...)" unit annotation
-    .replace(/[.\s]+$/, '') // strip trailing dots / whitespace
+    .replace(/[.:\s]+$/, '') // strip trailing dots / colons / whitespace
     .trim();
 }
 

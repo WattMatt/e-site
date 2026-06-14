@@ -399,9 +399,9 @@ interface SectionProps {
 export function Section({ title, accent, children }: SectionProps) {
   return (
     <View style={s.section} wrap>
-      {/* Accent rule */}
-      <View style={[s.sectionRule, { backgroundColor: accent, height: spacing.sectionRuleHeight }]} />
-      <Text style={s.sectionHeading}>{title}</Text>
+      {/* Accent rule — minPresenceAhead keeps heading with its content at page breaks */}
+      <View style={[s.sectionRule, { backgroundColor: accent, height: spacing.sectionRuleHeight }]} minPresenceAhead={40} />
+      <Text style={s.sectionHeading} minPresenceAhead={40}>{title}</Text>
       {children}
     </View>
   )
@@ -488,22 +488,31 @@ export function ResultRow({ row }: ResultRowProps) {
 interface TableProps {
   columns: string[]
   rows: string[][]
+  /** Repeat the header row at the top of every page this table spans. */
+  repeatHeader?: boolean
+  /** Prevent body rows from splitting across a page break. */
+  unbreakableRows?: boolean
+  /** Per-column horizontal alignment (default left). */
+  align?: ('left' | 'right')[]
 }
 
-export function Table({ columns, rows }: TableProps) {
+export function Table({ columns, rows, repeatHeader, unbreakableRows, align }: TableProps) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cellStyle = (base: any, i: number): any =>
+    align?.[i] === 'right' ? [base, { textAlign: 'right' as const }] : base
   return (
     <View>
-      {/* Header */}
-      <View style={s.tableHeaderRow}>
+      {/* Header — `fixed` repeats it on every page the table flows across */}
+      <View style={s.tableHeaderRow} fixed={repeatHeader || undefined}>
         {columns.map((col, i) => (
-          <Text key={i} style={s.tableHeaderCell}>{col}</Text>
+          <Text key={i} style={cellStyle(s.tableHeaderCell, i)}>{col}</Text>
         ))}
       </View>
       {/* Body */}
       {rows.map((row, ri) => (
-        <View key={ri} style={s.tableBodyRow}>
+        <View key={ri} style={s.tableBodyRow} wrap={unbreakableRows ? false : undefined}>
           {row.map((cell, ci) => (
-            <Text key={ci} style={s.tableBodyCell}>{cell}</Text>
+            <Text key={ci} style={cellStyle(s.tableBodyCell, ci)}>{cell}</Text>
           ))}
         </View>
       ))}

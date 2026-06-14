@@ -165,134 +165,87 @@ describe('saveGcrSettingsAction', () => {
   })
 })
 
-// ─── saveTenantAssignmentAction ──────────────────────────────────────────────
+// ─── bulkSaveTenantAssignmentsAction ─────────────────────────────────────────
 
-describe('saveTenantAssignmentAction', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    vi.clearAllMocks()
+function makeRpcSchemaChain(orgId: string, rpcResult: { data: unknown; error: null | { message: string } }) {
+  const maybeSingle  = vi.fn().mockResolvedValue({ data: { organisation_id: orgId }, error: null })
+  const eqId         = vi.fn().mockReturnValue({ maybeSingle })
+  const select       = vi.fn().mockReturnValue({ eq: eqId })
+  const fromProjects = vi.fn().mockReturnValue({ select })
+  const rpc          = vi.fn().mockResolvedValue(rpcResult)
+  const schema = vi.fn((name: string) =>
+    name === 'projects' ? { from: fromProjects } : { rpc },
+  )
+  return { schema, rpc }
+}
+
+describe('bulkSaveTenantAssignmentsAction', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('rejects an empty patch', async () => {
+    requireRoleMock.mockResolvedValue({ ok: true })
+    const { schema } = makeRpcSchemaChain(ORG_ID, { data: 1, error: null })
+    createClientMock.mockResolvedValue({ schema })
+    const { bulkSaveTenantAssignmentsAction } = await import('./gcr.actions')
+    const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [NODE_ID], {})
+    expect(res).toEqual({ error: 'Nothing to save' })
   })
 
-  const validAssignment = {
-    node_id: NODE_ID,
-    zone_id: ZONE_ID,
-    participation: 'shared' as const,
-    manual_kw_override: null,
-    shop_category: 'standard' as const,
-  }
-
-  it('returns { error } when project is not found (resolveOrgId returns null)', async () => {
-    const schema = makeProjectSchemaChain(null)
-    createClientMock.mockResolvedValueOnce({ schema })
-
-    const { saveTenantAssignmentAction } = await import('./gcr.actions')
-    const result = await saveTenantAssignmentAction(PROJECT_ID, validAssignment)
-
-    expect('error' in result).toBe(true)
-    if ('error' in result) expect(result.error).toMatch(/Project not found/i)
-    expect(requireRoleMock).not.toHaveBeenCalled()
-  })
-
-  it('returns { error } when caller role is not in ORG_WRITE_ROLES', async () => {
-    const schema = makeProjectSchemaChain(ORG_ID)
-    createClientMock.mockResolvedValueOnce({ schema })
-    requireRoleMock.mockResolvedValueOnce({ ok: false, error: 'Your role (contractor) is not allowed to perform this action' })
-
-    const { saveTenantAssignmentAction } = await import('./gcr.actions')
-    const result = await saveTenantAssignmentAction(PROJECT_ID, validAssignment)
-
-    expect('error' in result).toBe(true)
-    if ('error' in result) expect(result.error).toMatch(/contractor/i)
-    expect(revalidatePathMock).not.toHaveBeenCalled()
-  })
-
-  it('happy path: upserts tenant_assignments AND updates structure.nodes, then revalidates', async () => {
-    // Need two separate write calls on different schemas. Build a more
-    // granular mock so we can assert both writes.
-    const maybeSingle  = vi.fn().mockResolvedValue({ data: { organisation_id: ORG_ID }, error: null })
-    const eqIdProject  = vi.fn().mockReturnValue({ maybeSingle })
-    const selectProj   = vi.fn().mockReturnValue({ eq: eqIdProject })
-    const fromProjects = vi.fn().mockReturnValue({ select: selectProj })
-
-    // gcr.tenant_assignments upsert
-    const gcrUpsert = vi.fn().mockResolvedValue({ error: null })
-    const fromGcr   = vi.fn().mockReturnValue({ upsert: gcrUpsert })
-
-    // structure.nodes update
-    const structureUpdateEq = vi.fn().mockResolvedValue({ error: null })
-    const structureUpdate   = vi.fn().mockReturnValue({ eq: structureUpdateEq })
-    const fromStructure     = vi.fn().mockReturnValue({ update: structureUpdate })
-
-    const schema = vi.fn((schemaName: string) => {
-      if (schemaName === 'projects') return { from: fromProjects }
-      if (schemaName === 'gcr')      return { from: fromGcr }
-      if (schemaName === 'structure') return { from: fromStructure }
-      return { from: vi.fn() }
+  it('maps the patch to set-flag rpc params (null zone = explicit clear)', async () => {
+    requireRoleMock.mockResolvedValue({ ok: true })
+    const { schema, rpc } = makeRpcSchemaChain(ORG_ID, { data: 2, error: null })
+    createClientMock.mockResolvedValue({ schema })
+    const { bulkSaveTenantAssignmentsAction } = await import('./gcr.actions')
+    const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [NODE_ID, ZONE_ID], { zone_id: null, participation: 'own' })
+    expect(rpc).toHaveBeenCalledWith('bulk_save_tenant_assignments', {
+      p_project_id: PROJECT_ID,
+      p_node_ids: [NODE_ID, ZONE_ID],
+      p_set_zone: true,
+      p_zone_id: null,
+      p_set_participation: true,
+      p_participation: 'own',
+      p_set_category: false,
+      p_shop_category: null,
+      p_set_manual_kw: false,
+      p_manual_kw: null,
     })
-
-    createClientMock.mockResolvedValueOnce({ schema })
-    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'owner' })
-
-    const { saveTenantAssignmentAction } = await import('./gcr.actions')
-    const result = await saveTenantAssignmentAction(PROJECT_ID, validAssignment)
-
-    expect(result).toEqual({ ok: true })
-
-    // Write 1 — gcr.tenant_assignments upsert
-    expect(gcrUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        node_id: NODE_ID,
-        project_id: PROJECT_ID,
-        organisation_id: ORG_ID,
-        zone_id: ZONE_ID,
-        manual_kw_override: null,
-      }),
-      { onConflict: 'node_id' },
-    )
-
-    // Write 2 — structure.nodes update
-    expect(structureUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        generator_participation: 'shared',
-        shop_category: 'standard',
-      }),
-    )
-    expect(structureUpdateEq).toHaveBeenCalledWith('id', NODE_ID)
-
-    expect(revalidatePathMock).toHaveBeenCalledWith(
-      `/projects/${PROJECT_ID}/generator-cost-recovery`,
-    )
+    expect(res).toEqual({ ok: true, updated: 2 })
   })
 
-  it('returns { error } and does NOT update structure.nodes when the gcr upsert fails', async () => {
-    const maybeSingle  = vi.fn().mockResolvedValue({ data: { organisation_id: ORG_ID }, error: null })
-    const eqIdProject  = vi.fn().mockReturnValue({ maybeSingle })
-    const selectProj   = vi.fn().mockReturnValue({ eq: eqIdProject })
-    const fromProjects = vi.fn().mockReturnValue({ select: selectProj })
+  it('returns the rpc error message on failure', async () => {
+    requireRoleMock.mockResolvedValue({ ok: true })
+    const { schema } = makeRpcSchemaChain(ORG_ID, { data: null, error: { message: 'One or more shops do not belong to this project' } })
+    createClientMock.mockResolvedValue({ schema })
+    const { bulkSaveTenantAssignmentsAction } = await import('./gcr.actions')
+    const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [NODE_ID], { participation: 'none' })
+    expect(res).toEqual({ error: 'One or more shops do not belong to this project' })
+  })
 
-    const gcrUpsert = vi.fn().mockResolvedValue({ error: { message: 'FK violation' } })
-    const fromGcr   = vi.fn().mockReturnValue({ upsert: gcrUpsert })
+  it('gates on role', async () => {
+    requireRoleMock.mockResolvedValue({ ok: false, error: 'Forbidden' })
+    const { schema } = makeRpcSchemaChain(ORG_ID, { data: 1, error: null })
+    createClientMock.mockResolvedValue({ schema })
+    const { bulkSaveTenantAssignmentsAction } = await import('./gcr.actions')
+    const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [NODE_ID], { participation: 'none' })
+    expect(res).toEqual({ error: 'Forbidden' })
+  })
 
-    const structureUpdate = vi.fn()
-    const fromStructure   = vi.fn().mockReturnValue({ update: structureUpdate })
+  it('rejects an empty node list', async () => {
+    requireRoleMock.mockResolvedValue({ ok: true })
+    const { schema } = makeRpcSchemaChain(ORG_ID, { data: 1, error: null })
+    createClientMock.mockResolvedValue({ schema })
+    const { bulkSaveTenantAssignmentsAction } = await import('./gcr.actions')
+    const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [], { participation: 'none' })
+    expect('error' in res).toBe(true)
+  })
 
-    const schema = vi.fn((schemaName: string) => {
-      if (schemaName === 'projects')  return { from: fromProjects }
-      if (schemaName === 'gcr')       return { from: fromGcr }
-      if (schemaName === 'structure') return { from: fromStructure }
-      return { from: vi.fn() }
-    })
-
-    createClientMock.mockResolvedValueOnce({ schema })
-    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
-
-    const { saveTenantAssignmentAction } = await import('./gcr.actions')
-    const result = await saveTenantAssignmentAction(PROJECT_ID, validAssignment)
-
-    expect('error' in result).toBe(true)
-    if ('error' in result) expect(result.error).toMatch(/FK violation/i)
-    expect(structureUpdate).not.toHaveBeenCalled()
-    expect(revalidatePathMock).not.toHaveBeenCalled()
+  it('rejects a negative manual kW override', async () => {
+    requireRoleMock.mockResolvedValue({ ok: true })
+    const { schema } = makeRpcSchemaChain(ORG_ID, { data: 1, error: null })
+    createClientMock.mockResolvedValue({ schema })
+    const { bulkSaveTenantAssignmentsAction } = await import('./gcr.actions')
+    const res = await bulkSaveTenantAssignmentsAction(PROJECT_ID, [NODE_ID], { manual_kw_override: -5 })
+    expect('error' in res).toBe(true)
   })
 })
 
@@ -393,6 +346,32 @@ describe('deleteGeneratorAction', () => {
     expect(revalidatePathMock).toHaveBeenCalledWith(
       `/projects/${PROJECT_ID}/generator-cost-recovery`,
     )
+  })
+})
+
+// ─── loadGcrConfigAction — tenant query filters ──────────────────────────────
+
+describe('loadGcrConfigAction — tenant query filters', () => {
+  it('excludes soft-deleted and decommissioned shops', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true })
+    const calls: Record<string, unknown[][]> = { eq: [], is: [], neq: [] }
+    // chainable query stub that records filter calls and resolves to empty data
+    const chain: any = {
+      select: vi.fn(() => chain),
+      eq: vi.fn((...a: unknown[]) => { calls.eq.push(a); return chain }),
+      is: vi.fn((...a: unknown[]) => { calls.is.push(a); return chain }),
+      neq: vi.fn((...a: unknown[]) => { calls.neq.push(a); return chain }),
+      order: vi.fn(() => chain),
+      maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null })),
+      then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+    }
+    createClientMock.mockResolvedValue({ schema: vi.fn(() => ({ from: vi.fn(() => chain) })) })
+
+    const { loadGcrConfigAction } = await import('./gcr.actions')
+    await loadGcrConfigAction(PROJECT_ID)
+
+    expect(calls.is).toContainEqual(['deleted_at', null])
+    expect(calls.neq).toContainEqual(['status', 'decommissioned'])
   })
 })
 

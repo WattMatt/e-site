@@ -10,6 +10,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/Badge'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { ProtectionDeviceForm, type AttachOption, type ExistingDevice } from './ProtectionDeviceForm'
 
 interface Props {
@@ -38,7 +39,7 @@ export function ProtectionDevicesManager({ revisionId, devices, attachOptions, a
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {devices.length > 0 && (
-        <div className="data-panel" style={{ overflowX: 'auto' }}>
+        <TableScrollX className="data-panel">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--c-base)' }}>
@@ -79,7 +80,7 @@ export function ProtectionDevicesManager({ revisionId, devices, attachOptions, a
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScrollX>
       )}
 
       {locked ? (

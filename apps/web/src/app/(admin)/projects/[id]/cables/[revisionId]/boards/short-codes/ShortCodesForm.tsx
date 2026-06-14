@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { updateBoardShortCodesAction } from '@/actions/board-short-code.actions'
 
 interface BoardWithSuggestion {
@@ -60,7 +61,7 @@ export function ShortCodesForm({ projectId, revisionId, isDraft, boards }: Props
 
   return (
     <form onSubmit={onSubmit}>
-      <div className="data-panel" style={{ overflowX: 'auto' }}>
+      <TableScrollX className="data-panel">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
@@ -90,7 +91,7 @@ export function ShortCodesForm({ projectId, revisionId, isDraft, boards }: Props
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
 
       <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <button

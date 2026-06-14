@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import { projectService, diffRevisions, type DiffableCable } from '@esite/shared'
 
 export const metadata: Metadata = { title: 'Revision diff' }
@@ -172,7 +173,7 @@ export default async function RevisionDiffPage({ params, searchParams }: Props) 
         />
       </div>
 
-      <div className="data-panel" style={{ overflowX: 'auto' }}>
+      <TableScrollX className="data-panel">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
           <thead>
             <tr style={{ background: 'var(--c-base)' }}>
@@ -251,7 +252,7 @@ export default async function RevisionDiffPage({ params, searchParams }: Props) 
             )}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
     </div>
   )
 }

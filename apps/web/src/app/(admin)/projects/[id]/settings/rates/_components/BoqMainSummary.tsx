@@ -13,6 +13,7 @@
  */
 
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import type { BoqImport, BoqSection } from '@esite/shared'
 import { naturalCompare } from '@/lib/natural-compare'
 import { fmtMoney } from './format'
@@ -65,7 +66,7 @@ export function BoqMainSummary({ importRow, sections, totals, revisedTotals, onS
         </div>
       </CardHeader>
       <CardBody>
-        <div style={{ overflowX: 'auto', margin: '-14px -18px' }}>
+        <TableScrollX style={{ margin: '-14px -18px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
@@ -198,7 +199,7 @@ export function BoqMainSummary({ importRow, sections, totals, revisedTotals, onS
               </tr>
             </tfoot>
           </table>
-        </div>
+        </TableScrollX>
       </CardBody>
     </Card>
   )

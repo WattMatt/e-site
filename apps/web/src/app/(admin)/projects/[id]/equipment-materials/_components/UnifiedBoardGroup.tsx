@@ -11,6 +11,7 @@
 import { useState } from 'react'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import type { UnifiedGroup } from '../_lib/gather-unified-boards'
 import { BoardRow } from './BoardRow'
 
@@ -74,7 +75,7 @@ export function UnifiedBoardGroup({ group, projectId, existingCodes }: Props) {
       </CardHeader>
       {!collapsed && (
         <CardBody>
-          <div style={{ overflowX: 'auto', margin: '-14px -18px' }}>
+          <TableScrollX style={{ margin: '-14px -18px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--c-border)', background: 'var(--c-panel-alt, var(--c-panel))' }}>
@@ -92,7 +93,7 @@ export function UnifiedBoardGroup({ group, projectId, existingCodes }: Props) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScrollX>
         </CardBody>
       )}
     </Card>

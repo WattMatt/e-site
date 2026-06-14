@@ -3,6 +3,7 @@
 import { useState, Fragment } from 'react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { TableScrollX } from '@/components/ui/TableScrollX'
 import type { Node } from '@esite/shared'
 import { ScopeOfWorkPanel } from './ScopeOfWorkPanel'
 import { LayoutIssuedPanel } from './LayoutIssuedPanel'
@@ -158,8 +159,7 @@ export function ScheduleTable({
         </Button>
       </div>
 
-      {/* Table */}
-      <div style={{ overflowX: 'auto' }}>
+      <TableScrollX>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
@@ -377,7 +377,7 @@ export function ScheduleTable({
             })}
           </tbody>
         </table>
-      </div>
+      </TableScrollX>
 
       <p
         style={{
