@@ -200,6 +200,32 @@ describe('valuationService.upsertLine', () => {
   })
 })
 
+// ─── setSectionPercent — revised cap forwarded to computeLineValue ──────────────
+
+describe('valuationService.setSectionPercent', () => {
+  it('forwards revised to computeLineValue so value caps at revised amount, not contract amount', async () => {
+    // Contract amount 1000, revised amount 1300 (approved +R300 delta).
+    // At 50 % section-percent: value_to_date = 50% × 1300 = 650, NOT 50% × 1000 = 500.
+    const item = { amount: 1000, supplyRate: null, installRate: null, rate: 100, rateModel: 'single' }
+    const revised = { revisedAmount: 1300, revisedQty: null }
+    const { client, inserts } = fakeClient([ok(null)])
+    await valuationService.setSectionPercent(
+      client,
+      'v1',
+      [{ boqItemId: 'itemR', item, revised }],
+      50,
+    )
+    const up = inserts.find((i) => i.table === 'valuation_lines')!
+    const rows = up.rows as Array<Record<string, unknown>>
+    const row = rows[0]
+    expect(row.boq_item_id).toBe('itemR')
+    expect(row.input_method).toBe('section')
+    expect(row.percent_complete).toBe(50)
+    // Must be 650 (revised cap), not 500 (contract cap).
+    expect(row.value_to_date).toBe(650)
+  })
+})
+
 // ─── list / getPreviousNet ──────────────────────────────────────────────────────
 
 describe('valuationService.list', () => {

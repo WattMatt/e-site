@@ -7,7 +7,8 @@ const sec = (id: string, parent: string | null, kind: BoqSection['kind']): BoqSe
 
 const item = (id: string, sectionId: string, over: Partial<BoqItem>): BoqItem =>
   ({ id, sectionId, code: null, description: 'x', unit: 'm', quantity: 0, quantityMode: 'measured',
-     rateModel: 'supply_install', supplyRate: null, installRate: null, rate: null, amount: null, sortOrder: 0, ...over })
+     rateModel: 'supply_install', supplyRate: null, installRate: null, rate: null, amount: null, sortOrder: 0,
+     origin: 'contract', variationLineId: null, ...over })
 
 describe('computeItemAmount', () => {
   it('supply_install: qty x (supply+install), rounded to 2dp', () => {

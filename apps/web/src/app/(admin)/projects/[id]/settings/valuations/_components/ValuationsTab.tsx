@@ -23,6 +23,8 @@ import { CertifyBar } from './CertifyBar'
 interface DetailState {
   valuation: Valuation
   lines: ValuationLine[]
+  /** Revised amount per boqItemId — null entry means no approved adjustment for that item. */
+  revisedByItem: Map<string, number | null>
   certificate: {
     grossToDate: number
     retention: number
@@ -66,11 +68,16 @@ export function ValuationsTab({ projectId, canEdit, valuations: initialValuation
         setDetail(null)
         return
       }
+      const revisedByItem = new Map<string, number | null>()
+      for (const l of res.data.lines) {
+        revisedByItem.set(l.boqItemId, l.revisedAmount)
+      }
       setDetail({
         valuation: res.data.valuation,
         lines: res.data.lines,
         certificate: res.data.certificate,
         certifiedByName: res.data.certifiedByName,
+        revisedByItem,
       })
     },
     [projectId],
@@ -111,6 +118,7 @@ export function ValuationsTab({ projectId, canEdit, valuations: initialValuation
               projectId={projectId}
               valuation={detail.valuation}
               lines={detail.lines}
+              revisedByItem={detail.revisedByItem}
               sections={sections}
               items={items}
               certificate={detail.certificate}

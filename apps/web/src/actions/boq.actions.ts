@@ -171,13 +171,19 @@ export async function updateBoqItemRateAction(
   const { data: owner } = await (service as any)
     .schema('projects')
     .from('boq_items')
-    .select('id, boq_sections!inner(import_id, boq_imports!inner(project_id))')
+    .select('id, origin, boq_sections!inner(import_id, boq_imports!inner(project_id))')
     .eq('id', itemId)
     .maybeSingle()
 
   const ownerProjectId = owner?.boq_sections?.boq_imports?.project_id
   if (!owner || ownerProjectId !== projectId) {
     return { error: 'Not found' }
+  }
+
+  // A materialized variation item's amount IS the approved VO's value_change —
+  // re-rating it would silently diverge the item from the locked VO figures.
+  if (owner.origin === 'variation') {
+    return { error: 'This item comes from an approved variation order and cannot be re-rated' }
   }
 
   try {

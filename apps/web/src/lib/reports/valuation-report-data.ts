@@ -55,6 +55,15 @@ export interface CertificateSummary {
   dueInclVat: number
 }
 
+export interface ContractSummary {
+  /** The BOQ import's total_ex_vat — null when the import has no contract value. */
+  asImported: number | null
+  /** Sum of net_change on approved variation orders for this project. 0 when none. */
+  approvedVariations: number
+  /** asImported + approvedVariations, or null when asImported is null. */
+  revised: number | null
+}
+
 export interface ValuationReportData {
   /** Resolved branding for the Cover. */
   branding: ResolvedBranding
@@ -75,6 +84,9 @@ export interface ValuationReportData {
 
   /** Per-bill schedule. Totals reconcile to summary.grossToDate. */
   bills: CertificateBill[]
+
+  /** Contract value context: original import total + approved variation delta. */
+  contract: ContractSummary
 
   /** Resolved certifier name (the engineer/PQS who certified, or will). */
   certifiedByName: string | null
@@ -236,7 +248,37 @@ export async function gatherValuationReportData(
     }
   })
 
-  // 7. Branding — logos to data: URIs.
+  // 7. Contract context: import's total_ex_vat + sum of approved VO net_changes.
+  const [importRow, voRows] = await Promise.all([
+    (service as any)
+      .schema('projects')
+      .from('boq_imports')
+      .select('id, total_ex_vat')
+      .eq('id', valuation.boqImportId)
+      .maybeSingle()
+      .then(({ data }: { data: { total_ex_vat: number | null } | null }) => data),
+    (service as any)
+      .schema('projects')
+      .from('variation_orders')
+      .select('net_change')
+      .eq('project_id', projectId)
+      .eq('status', 'approved')
+      .then(({ data }: { data: Array<{ net_change: number | null }> | null }) => data ?? []),
+  ])
+
+  const asImported: number | null =
+    importRow?.total_ex_vat != null ? Number(importRow.total_ex_vat) : null
+  const approvedVariations: number = (voRows as Array<{ net_change: number | null }>).reduce(
+    (sum, row) => sum + (row.net_change != null ? Number(row.net_change) : 0),
+    0,
+  )
+  const contract: ContractSummary = {
+    asImported,
+    approvedVariations,
+    revised: asImported != null ? round2(asImported + approvedVariations) : null,
+  }
+
+  // 8. Branding — logos to data: URIs.
   const [clientLogoSrc, projectMarkSrc, orgLogoSrc] = await Promise.all([
     project.client_logo_url ? logoToDataUri(service, project.client_logo_url) : Promise.resolve(null),
     project.project_logo_url ? logoToDataUri(service, project.project_logo_url) : Promise.resolve(null),
@@ -286,6 +328,7 @@ export async function gatherValuationReportData(
     },
     summary,
     bills,
+    contract,
     certifiedByName,
   }
 }

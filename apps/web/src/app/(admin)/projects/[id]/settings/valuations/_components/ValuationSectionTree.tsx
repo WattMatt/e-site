@@ -22,6 +22,8 @@ interface Props {
   sections: BoqSection[]
   items: BoqItem[]
   linesByItem: Map<string, ValuationLine>
+  /** Revised amount per boqItemId — from approved variation adjustments. */
+  revisedByItem?: Map<string, number | null>
   valueBySection: Record<string, number>
   canEdit: boolean
   onCommit: (patch: ValuationProgressPatch) => Promise<string | null>
@@ -39,6 +41,7 @@ export function ValuationSectionTree({
   sections,
   items,
   linesByItem,
+  revisedByItem,
   valueBySection,
   canEdit,
   onCommit,
@@ -68,7 +71,7 @@ export function ValuationSectionTree({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {billItems.length > 0 && (
         <div style={{ paddingLeft: 4 }}>
-          <ValuationLineTable items={billItems} linesByItem={linesByItem} canEdit={canEdit} onCommit={onCommit} />
+          <ValuationLineTable items={billItems} linesByItem={linesByItem} revisedByItem={revisedByItem} canEdit={canEdit} onCommit={onCommit} />
         </div>
       )}
 
@@ -86,6 +89,7 @@ export function ValuationSectionTree({
           childrenOf={childrenOf}
           itemsBySection={itemsBySection}
           linesByItem={linesByItem}
+          revisedByItem={revisedByItem}
           valueBySection={valueBySection}
           canEdit={canEdit}
           onCommit={onCommit}
@@ -102,6 +106,7 @@ function SectionNode({
   childrenOf,
   itemsBySection,
   linesByItem,
+  revisedByItem,
   valueBySection,
   canEdit,
   onCommit,
@@ -112,6 +117,7 @@ function SectionNode({
   childrenOf: (id: string) => BoqSection[]
   itemsBySection: Map<string, BoqItem[]>
   linesByItem: Map<string, ValuationLine>
+  revisedByItem?: Map<string, number | null>
   valueBySection: Record<string, number>
   canEdit: boolean
   onCommit: (patch: ValuationProgressPatch) => Promise<string | null>
@@ -167,7 +173,7 @@ function SectionNode({
       {expanded && (
         <div style={{ padding: '8px 0 8px 8px' }}>
           {ownItems.length > 0 && (
-            <ValuationLineTable items={ownItems} linesByItem={linesByItem} canEdit={canEdit} onCommit={onCommit} />
+            <ValuationLineTable items={ownItems} linesByItem={linesByItem} revisedByItem={revisedByItem} canEdit={canEdit} onCommit={onCommit} />
           )}
           {subSections.map((child) => (
             <SectionNode
@@ -177,6 +183,7 @@ function SectionNode({
               childrenOf={childrenOf}
               itemsBySection={itemsBySection}
               linesByItem={linesByItem}
+              revisedByItem={revisedByItem}
               valueBySection={valueBySection}
               canEdit={canEdit}
               onCommit={onCommit}

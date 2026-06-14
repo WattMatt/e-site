@@ -26,6 +26,8 @@ interface Props {
   projectId: string
   valuation: Valuation
   lines: ValuationLine[]
+  /** Revised amount per boqItemId from approved variation adjustments. */
+  revisedByItem?: Map<string, number | null>
   /** The current BOQ tree (from the page's listBoqAction). */
   sections: BoqSection[]
   items: BoqItem[]
@@ -96,6 +98,7 @@ export function ValuationDetail({
   projectId,
   valuation,
   lines,
+  revisedByItem,
   sections,
   items,
   certificate,
@@ -214,6 +217,7 @@ export function ValuationDetail({
               sections={sections}
               items={items}
               linesByItem={linesByItem}
+              revisedByItem={revisedByItem}
               valueBySection={valueBySection}
               canEdit={editable}
               onCommit={handleCommit}

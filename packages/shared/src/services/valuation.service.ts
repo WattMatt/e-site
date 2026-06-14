@@ -8,19 +8,23 @@ type AnyClient = any
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
 
+export interface RevisedPosition { revisedAmount: number | null; revisedQty: number | null }
+
 export function computeLineValue(
   item: { amount: number | null; supplyRate: number | null; installRate: number | null; rate: number | null; rateModel: string },
   line: { inputMethod: InputMethod; percentComplete: number | null; qtyComplete: number | null },
+  revised?: RevisedPosition,
 ): number {
+  const capAmount = revised?.revisedAmount ?? item.amount
   if (line.inputMethod === 'quantity') {
     const rate = item.rateModel === 'single' ? (item.rate ?? 0) : (item.supplyRate ?? 0) + (item.installRate ?? 0)
     let v = round2(Math.max(0, line.qtyComplete ?? 0) * rate)
-    if (item.amount != null) v = Math.min(v, item.amount) // over-measure capped at contract (a Variations concern)
+    if (capAmount != null) v = Math.min(v, capAmount)
     return v
   }
   // percent | section
   const pct = Math.min(100, Math.max(0, line.percentComplete ?? 0))
-  return round2((item.amount ?? 0) * (pct / 100))
+  return round2((capAmount ?? 0) * (pct / 100))
 }
 
 export function computeCertificate(
@@ -37,14 +41,17 @@ export function computeCertificate(
   return { grossToDate, retention, netToDate, previousNet, dueExVat, vat, dueInclVat }
 }
 
-/** True when a quantity line values more than the contract amount (over-measure → Variations). */
+/** True when a quantity line values more than the contract (or revised) amount (over-measure → Variations). */
 export function isOverMeasure(
   item: { amount: number | null; supplyRate: number | null; installRate: number | null; rate: number | null; rateModel: string },
   line: { inputMethod: InputMethod; qtyComplete: number | null },
+  revised?: RevisedPosition,
 ): boolean {
-  if (line.inputMethod !== 'quantity' || item.amount == null) return false
+  if (line.inputMethod !== 'quantity') return false
+  const capAmount = revised?.revisedAmount ?? item.amount
+  if (capAmount == null) return false
   const rate = item.rateModel === 'single' ? (item.rate ?? 0) : (item.supplyRate ?? 0) + (item.installRate ?? 0)
-  return round2((line.qtyComplete ?? 0) * rate) > item.amount
+  return round2((line.qtyComplete ?? 0) * rate) > capAmount
 }
 
 // ─── Service client methods ───────────────────────────────────────────────────
@@ -183,19 +190,27 @@ export const valuationService = {
   /**
    * Upsert a progress line — recomputes value_to_date via the pure
    * computeLineValue, then upserts on (valuation_id, boq_item_id).
+   * `revised` (optional) is the item's position under approved variation
+   * adjustments — when present, computeLineValue caps against it instead of
+   * the contract amount.
    */
   async upsertLine(
     client: AnyClient,
     valuationId: string,
     patch: ValuationProgressPatch,
     item: RateItem,
+    revised?: RevisedPosition,
   ): Promise<ValuationLine> {
     const db = (client as AnyClient).schema('projects')
-    const valueToDate = computeLineValue(item, {
-      inputMethod: patch.inputMethod,
-      percentComplete: patch.percentComplete ?? null,
-      qtyComplete: patch.qtyComplete ?? null,
-    })
+    const valueToDate = computeLineValue(
+      item,
+      {
+        inputMethod: patch.inputMethod,
+        percentComplete: patch.percentComplete ?? null,
+        qtyComplete: patch.qtyComplete ?? null,
+      },
+      revised,
+    )
     const { data, error } = await db
       .from('valuation_lines')
       .upsert(
@@ -218,26 +233,29 @@ export const valuationService = {
   /**
    * Set every item under a section to a `section`-method line at the given
    * percent. value_to_date for each is computed via computeLineValue.
+   * The optional `revised` field carries the approved-variation position so
+   * computeLineValue caps against the revised amount, not the contract amount —
+   * consistent with upsertLine's behaviour for individual line edits.
    */
   async setSectionPercent(
     client: AnyClient,
     valuationId: string,
-    items: Array<{ boqItemId: string; item: RateItem }>,
+    items: Array<{ boqItemId: string; item: RateItem; revised?: RevisedPosition }>,
     percent: number,
   ): Promise<void> {
     const db = (client as AnyClient).schema('projects')
     if (items.length === 0) return
-    const rows = items.map(({ boqItemId, item }) => ({
+    const rows = items.map(({ boqItemId, item, revised }) => ({
       valuation_id: valuationId,
       boq_item_id: boqItemId,
       input_method: 'section' as const,
       percent_complete: percent,
       qty_complete: null,
-      value_to_date: computeLineValue(item, {
-        inputMethod: 'section',
-        percentComplete: percent,
-        qtyComplete: null,
-      }),
+      value_to_date: computeLineValue(
+        item,
+        { inputMethod: 'section', percentComplete: percent, qtyComplete: null },
+        revised,
+      ),
     }))
     const { error } = await db
       .from('valuation_lines')

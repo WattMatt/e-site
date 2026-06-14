@@ -29,7 +29,9 @@ import { requireEffectiveRole } from '@/lib/auth/require-role'
 import {
   valuationService,
   boqService,
+  variationService,
   computeCertificate,
+  computeRevisedItem,
   valuationProgressPatchSchema,
   COST_VIEW_ROLES,
   ORG_WRITE_ROLES,
@@ -101,6 +103,19 @@ function rowToRateItem(row: any): RateItem {
   }
 }
 
+/** The fields computeRevisedItem needs, mapped off a raw boq_items row. */
+function rowToRevisedInput(row: any): Parameters<typeof computeRevisedItem>[0] {
+  return {
+    quantity: row.quantity === null || row.quantity === undefined ? null : Number(row.quantity),
+    quantityMode: row.quantity_mode,
+    amount: row.amount === null || row.amount === undefined ? null : Number(row.amount),
+    supplyRate: row.supply_rate === null || row.supply_rate === undefined ? null : Number(row.supply_rate),
+    installRate: row.install_rate === null || row.install_rate === undefined ? null : Number(row.install_rate),
+    rate: row.rate === null || row.rate === undefined ? null : Number(row.rate),
+    rateModel: row.rate_model,
+  }
+}
+
 // ─── listValuationsAction ────────────────────────────────────────────────────
 
 export type ListValuationsResult = { data: { valuations: Valuation[] } } | { error: string }
@@ -126,7 +141,8 @@ export type GetValuationResult =
   | {
       data: {
         valuation: Valuation
-        lines: ValuationLine[]
+        /** revisedAmount = the item's amount under approved variation adjustments (null = no adjustments). */
+        lines: Array<ValuationLine & { revisedAmount: number | null }>
         certificate: ReturnType<typeof computeCertificate>
         certifiedByName: string | null
         createdByName: string | null
@@ -150,6 +166,29 @@ export async function getValuationAction(
     if (!result || result.valuation.projectId !== projectId) return { error: 'Not found' }
 
     const { valuation, lines } = result
+
+    // Revised amounts under approved variation adjustments — fetched once,
+    // then attached per line so the UI can show "Revised" next to "Contract".
+    const adjustments = await variationService.getApprovedAdjustments(service as any, projectId)
+    const revisedByItem = new Map<string, number | null>()
+    const adjustedIds = lines.map((l) => l.boqItemId).filter((id) => adjustments.has(id))
+    if (adjustedIds.length > 0) {
+      const { data: itemRows } = await (service as any)
+        .schema('projects')
+        .from('boq_items')
+        .select('id, quantity, quantity_mode, amount, supply_rate, install_rate, rate, rate_model')
+        .in('id', adjustedIds)
+      for (const row of (itemRows ?? []) as any[]) {
+        revisedByItem.set(
+          row.id,
+          computeRevisedItem(rowToRevisedInput(row), adjustments.get(row.id) ?? []).revisedAmount,
+        )
+      }
+    }
+    const linesWithRevised = lines.map((l) => ({
+      ...l,
+      revisedAmount: revisedByItem.get(l.boqItemId) ?? null,
+    }))
 
     // Live certificate figures (recomputed; the frozen figures only exist once
     // certified). previousNet = the prior certified valuation's net.
@@ -192,7 +231,7 @@ export async function getValuationAction(
       createdByName = createdById ? byId.get(createdById) ?? null : null
     }
 
-    return { data: { valuation, lines, certificate, certifiedByName, createdByName } }
+    return { data: { valuation, lines: linesWithRevised, certificate, certifiedByName, createdByName } }
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to load valuation' }
   }
@@ -295,16 +334,25 @@ export async function updateValuationLineAction(
     const { data: itemRow } = await (service as any)
       .schema('projects')
       .from('boq_items')
-      .select('id, amount, supply_rate, install_rate, rate, rate_model')
+      .select('id, quantity, quantity_mode, amount, supply_rate, install_rate, rate, rate_model')
       .eq('id', parsed.data.boqItemId)
       .maybeSingle()
     if (!itemRow) return { error: 'Not found' }
+
+    // Revised position under approved variation adjustments — when the item
+    // has approved qty deltas, computeLineValue must cap against the REVISED
+    // amount, not the contract amount.
+    const adjustments = await variationService.getApprovedAdjustments(service as any, projectId)
+    const deltas = adjustments.get(parsed.data.boqItemId)
+    const revised =
+      deltas && deltas.length > 0 ? computeRevisedItem(rowToRevisedInput(itemRow), deltas) : undefined
 
     const line = await valuationService.upsertLine(
       service as any,
       valuationId,
       parsed.data,
       rowToRateItem(itemRow),
+      revised,
     )
     bust(projectId)
     return { data: { line } }
@@ -368,18 +416,41 @@ export async function setSectionPercentAction(
       for (const child of childrenOf.get(id) ?? []) stack.push(child.id)
     }
 
+    // Approved variation adjustments — same one-call pattern as updateValuationLineAction.
+    // Items with approved deltas must cap against the REVISED amount, not the contract amount.
+    const adjustments = await variationService.getApprovedAdjustments(service as any, projectId)
+
     const targetItems = items
       .filter((it) => inScope.has(it.sectionId))
-      .map((it) => ({
-        boqItemId: it.id,
-        item: {
-          amount: it.amount,
-          supplyRate: it.supplyRate,
-          installRate: it.installRate,
-          rate: it.rate,
-          rateModel: it.rateModel,
-        },
-      }))
+      .map((it) => {
+        const deltas = adjustments.get(it.id)
+        const revised =
+          deltas && deltas.length > 0
+            ? computeRevisedItem(
+                {
+                  quantity: it.quantity,
+                  quantityMode: it.quantityMode,
+                  amount: it.amount,
+                  supplyRate: it.supplyRate,
+                  installRate: it.installRate,
+                  rate: it.rate,
+                  rateModel: it.rateModel,
+                },
+                deltas,
+              )
+            : undefined
+        return {
+          boqItemId: it.id,
+          item: {
+            amount: it.amount,
+            supplyRate: it.supplyRate,
+            installRate: it.installRate,
+            rate: it.rate,
+            rateModel: it.rateModel,
+          },
+          revised,
+        }
+      })
 
     await valuationService.setSectionPercent(service as any, valuationId, targetItems, percent)
     bust(projectId)
@@ -433,6 +504,46 @@ export async function certifyValuationAction(
     .maybeSingle()
   if (earlierUncertified) {
     return { error: 'Certify earlier valuations first.' }
+  }
+
+  // Guard 3 — revised-cap check: an omission VO approved AFTER a line was
+  // valued leaves value_to_date above the now-lower revised cap (line entry
+  // only caps at write time). Refuse to certify until the affected lines are
+  // re-valued. Only items with approved adjustments can have a
+  // variation-lowered cap, so the item fetch is scoped to those (same pattern
+  // as getValuationAction).
+  try {
+    const result = await valuationService.get(service as any, valuationId)
+    if (!result) return { error: 'Not found' }
+    const adjustments = await variationService.getApprovedAdjustments(service as any, projectId)
+    const adjustedIds = result.lines.map((l) => l.boqItemId).filter((id) => adjustments.has(id))
+    if (adjustedIds.length > 0) {
+      const { data: itemRows } = await (service as any)
+        .schema('projects')
+        .from('boq_items')
+        .select('id, quantity, quantity_mode, amount, supply_rate, install_rate, rate, rate_model')
+        .in('id', adjustedIds)
+      const capById = new Map<string, number>()
+      for (const row of (itemRows ?? []) as any[]) {
+        const revised = computeRevisedItem(rowToRevisedInput(row), adjustments.get(row.id) ?? [])
+        capById.set(
+          row.id,
+          revised.revisedAmount ?? (row.amount == null ? Infinity : Number(row.amount)),
+        )
+      }
+      const overCap = result.lines.some((l) => {
+        const cap = capById.get(l.boqItemId)
+        return cap !== undefined && l.valueToDate > cap + 0.01
+      })
+      if (overCap) {
+        return {
+          error:
+            'Some valued lines exceed their revised amounts (a variation reduced scope) — adjust the affected lines first',
+        }
+      }
+    }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Certify failed' }
   }
 
   const proj = await resolveProjectOrg(supabase, projectId)

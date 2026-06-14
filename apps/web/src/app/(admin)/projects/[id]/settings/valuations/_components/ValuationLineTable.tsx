@@ -66,12 +66,14 @@ interface Props {
   items: BoqItem[]
   /** The valuation line for an item id (its current progress), if any. */
   linesByItem: Map<string, ValuationLine>
+  /** Revised amount per boqItemId from approved variation adjustments (null = no adjustment). */
+  revisedByItem?: Map<string, number | null>
   canEdit: boolean
   /** Commit a progress patch for one item; resolves to an error string or null. */
   onCommit: (patch: ValuationProgressPatch) => Promise<string | null>
 }
 
-export function ValuationLineTable({ items, linesByItem, canEdit, onCommit }: Props) {
+export function ValuationLineTable({ items, linesByItem, revisedByItem, canEdit, onCommit }: Props) {
   const sorted = [...items].sort((a, b) => naturalCompare(a.code ?? '', b.code ?? ''))
 
   if (sorted.length === 0) {
@@ -102,6 +104,7 @@ export function ValuationLineTable({ items, linesByItem, canEdit, onCommit }: Pr
               key={item.id}
               item={item}
               line={linesByItem.get(item.id) ?? null}
+              revisedAmount={revisedByItem ? (revisedByItem.get(item.id) ?? null) : null}
               canEdit={canEdit}
               onCommit={onCommit}
             />
@@ -115,22 +118,28 @@ export function ValuationLineTable({ items, linesByItem, canEdit, onCommit }: Pr
 function LineRow({
   item,
   line,
+  revisedAmount,
   canEdit,
   onCommit,
 }: {
   item: BoqItem
   line: ValuationLine | null
+  /** Revised amount from approved variation adjustments, or null when none. */
+  revisedAmount: number | null
   canEdit: boolean
   onCommit: (patch: ValuationProgressPatch) => Promise<string | null>
 }) {
   const rateOnly = isRateOnly(item)
   const valueToDate = line?.valueToDate ?? 0
 
-  // Over-measure: only meaningful for quantity lines against a contract amount.
+  // Over-measure: only meaningful for quantity lines against a (revised) amount.
+  // When the item has an approved VO the revised amount replaces the contract
+  // cap — so an approved over-measure VO correctly suppresses the badge.
   const over = line
     ? isOverMeasure(
         { amount: item.amount, supplyRate: item.supplyRate, installRate: item.installRate, rate: item.rate, rateModel: item.rateModel },
         { inputMethod: line.inputMethod, qtyComplete: line.qtyComplete },
+        revisedAmount != null ? { revisedAmount, revisedQty: null } : undefined,
       )
     : false
 

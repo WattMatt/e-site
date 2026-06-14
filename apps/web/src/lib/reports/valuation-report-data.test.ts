@@ -20,12 +20,16 @@ const {
   mockValuationGet,
   mockValuationGetPreviousNet,
   mockBoqGetTree,
+  mockServiceVariationQuery,
+  mockServiceBoqImportQuery,
 } = vi.hoisted(() => ({
   mockRequireEffectiveRole: vi.fn(),
   mockCreateServiceClient: vi.fn(),
   mockValuationGet: vi.fn(),
   mockValuationGetPreviousNet: vi.fn(),
   mockBoqGetTree: vi.fn(),
+  mockServiceVariationQuery: vi.fn(),
+  mockServiceBoqImportQuery: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/require-role', () => ({
@@ -94,8 +98,8 @@ const SECTIONS = [
 ]
 
 const ITEMS = [
-  { id: 'item-a1', sectionId: 'sec-a1', code: 'A1.1', description: 'Cable', unit: 'm', quantity: 100, quantityMode: 'measured', rateModel: 'single', supplyRate: null, installRate: null, rate: 10, amount: 1000, sortOrder: 0 },
-  { id: 'item-b1', sectionId: 'bill-b', code: 'B.1', description: 'Genset', unit: 'no', quantity: 1, quantityMode: 'measured', rateModel: 'single', supplyRate: null, installRate: null, rate: 500, amount: 500, sortOrder: 0 },
+  { id: 'item-a1', sectionId: 'sec-a1', code: 'A1.1', description: 'Cable', unit: 'm', quantity: 100, quantityMode: 'measured', rateModel: 'single', supplyRate: null, installRate: null, rate: 10, amount: 1000, sortOrder: 0, origin: 'contract' as const, variationLineId: null },
+  { id: 'item-b1', sectionId: 'bill-b', code: 'B.1', description: 'Genset', unit: 'no', quantity: 1, quantityMode: 'measured', rateModel: 'single', supplyRate: null, installRate: null, rate: 500, amount: 500, sortOrder: 0, origin: 'contract' as const, variationLineId: null },
 ]
 
 // Two valuation lines — one per bill.
@@ -133,6 +137,14 @@ const PREVIOUS_NET = 100
 // valuation + BOQ reads go through the mocked services).
 // ---------------------------------------------------------------------------
 
+// Default approved-VO result used by most tests (two approved VOs summing to 500).
+const DEFAULT_VO_ROWS = [
+  { net_change: 300 },
+  { net_change: 200 },
+]
+// Default boq_imports row — total_ex_vat present.
+const DEFAULT_IMPORT_ROW = { id: 'imp-1', total_ex_vat: 15000 }
+
 function buildServiceMock() {
   function makeQuery(result: unknown) {
     const q: any = {
@@ -153,6 +165,8 @@ function buildServiceMock() {
     schema: (name: string) => ({
       from: (table: string) => {
         if (name === 'projects' && table === 'projects') return makeQuery(PROJECT_ROW)
+        if (name === 'projects' && table === 'boq_imports') return mockServiceBoqImportQuery()
+        if (name === 'projects' && table === 'variation_orders') return mockServiceVariationQuery()
         return makeQuery(null)
       },
     }),
@@ -175,6 +189,30 @@ function buildServiceMock() {
   }
 }
 
+/** Build a chainable mock that terminates in a list result (for the VO query). */
+function makeListQuery(rows: unknown[]) {
+  const q: any = {
+    schema: () => q,
+    from: () => q,
+    select: () => q,
+    eq: () => q,
+    then: (resolve: any) => Promise.resolve({ data: rows, error: null }).then(resolve),
+  }
+  return q
+}
+
+/** Build a chainable mock that terminates in a maybeSingle result (for the import query). */
+function makeSingleQuery(row: unknown) {
+  const q: any = {
+    schema: () => q,
+    from: () => q,
+    select: () => q,
+    eq: () => q,
+    maybeSingle: () => Promise.resolve({ data: row, error: null }),
+  }
+  return q
+}
+
 function buildCookieMock() {
   return { auth: { getUser: async () => ({ data: { user: { id: USER_ID } } }) } }
 }
@@ -186,6 +224,9 @@ function buildCookieMock() {
 describe('gatherValuationReportData', () => {
   beforeEach(() => {
     mockRequireEffectiveRole.mockResolvedValue({ ok: true, role: 'project_manager' })
+    // Default: VO query returns two rows summing to 500; import query returns total_ex_vat 15000.
+    mockServiceVariationQuery.mockReturnValue(makeListQuery(DEFAULT_VO_ROWS))
+    mockServiceBoqImportQuery.mockReturnValue(makeSingleQuery(DEFAULT_IMPORT_ROW))
     mockCreateServiceClient.mockReturnValue(buildServiceMock())
     mockValuationGet.mockResolvedValue({ valuation: VALUATION_ROW, lines: VAL_LINES })
     mockValuationGetPreviousNet.mockResolvedValue(PREVIOUS_NET)
@@ -276,5 +317,43 @@ describe('gatherValuationReportData', () => {
     await gatherValuationReportData(buildCookieMock() as any, PROJECT_ID, VALUATION_ID)
     expect(mockBoqGetTree).toHaveBeenCalledWith(expect.anything(), 'imp-1')
     expect(mockValuationGetPreviousNet).toHaveBeenCalledWith(expect.anything(), PROJECT_ID, 2)
+  })
+
+  // ── Task 7: contract summary ──────────────────────────────────────────────
+
+  it('contract.revised = asImported + approvedVariations when asImported is non-null', async () => {
+    // DEFAULT_IMPORT_ROW.total_ex_vat = 15000; DEFAULT_VO_ROWS sum = 500.
+    const { gatherValuationReportData } = await import('./valuation-report-data')
+    const data = await gatherValuationReportData(buildCookieMock() as any, PROJECT_ID, VALUATION_ID)
+    expect(data.contract.asImported).toBe(15000)
+    expect(data.contract.approvedVariations).toBe(500)
+    expect(data.contract.revised).toBe(15500)
+  })
+
+  it('contract.approvedVariations is 0 and revised equals asImported when no approved VOs', async () => {
+    mockServiceVariationQuery.mockReturnValue(makeListQuery([]))
+    const { gatherValuationReportData } = await import('./valuation-report-data')
+    const data = await gatherValuationReportData(buildCookieMock() as any, PROJECT_ID, VALUATION_ID)
+    expect(data.contract.approvedVariations).toBe(0)
+    expect(data.contract.asImported).toBe(15000)
+    expect(data.contract.revised).toBe(15000)
+  })
+
+  it('contract.asImported is null and contract.revised is null when the import has no total_ex_vat', async () => {
+    mockServiceBoqImportQuery.mockReturnValue(makeSingleQuery({ id: 'imp-1', total_ex_vat: null }))
+    const { gatherValuationReportData } = await import('./valuation-report-data')
+    const data = await gatherValuationReportData(buildCookieMock() as any, PROJECT_ID, VALUATION_ID)
+    expect(data.contract.asImported).toBeNull()
+    expect(data.contract.revised).toBeNull()
+    // approvedVariations is still the real sum (500) even without asImported.
+    expect(data.contract.approvedVariations).toBe(500)
+  })
+
+  it('contract.asImported is null when the import row is not found', async () => {
+    mockServiceBoqImportQuery.mockReturnValue(makeSingleQuery(null))
+    const { gatherValuationReportData } = await import('./valuation-report-data')
+    const data = await gatherValuationReportData(buildCookieMock() as any, PROJECT_ID, VALUATION_ID)
+    expect(data.contract.asImported).toBeNull()
+    expect(data.contract.revised).toBeNull()
   })
 })

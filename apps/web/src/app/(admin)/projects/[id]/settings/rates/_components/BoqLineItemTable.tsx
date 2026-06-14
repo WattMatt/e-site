@@ -3,9 +3,11 @@
 /**
  * BoqLineItemTable — priced leaf rows for one selected section/category.
  *
- * Columns: code · description · unit · qty · supply · install · amount.
- * Rows are natural-sorted by code (DB-2 before DB-10). Badges flag the quantity
- * mode: RATE ONLY (info), provisional / PC sum (warning).
+ * Columns: code · description · unit · qty · supply · install · amount
+ * (+ revised, only when the project has any approved variation — `revised`
+ * set). Rows are natural-sorted by code (DB-2 before DB-10). Badges flag the
+ * quantity mode: RATE ONLY (info), provisional / PC sum (warning); items
+ * materialized from an approved VO carry a `variation` badge (info).
  *
  * Supply/install/single rate cells are editable (RateCell) when canEdit; commits
  * bubble up via onItemUpdated so the parent can refresh rollups. Read-only
@@ -55,13 +57,15 @@ function quantityModeBadge(mode: BoqItem['quantityMode']) {
 
 interface Props {
   items: BoqItem[]
+  /** Per-item revised amounts; null/absent = no revisions (no Revised column). */
+  revised?: Record<string, number | null> | null
   projectId: string
   canEdit: boolean
   /** Bubbled when a rate edit commits, so the parent can recompute rollups. */
   onItemUpdated: (item: BoqItem) => void
 }
 
-export function BoqLineItemTable({ items, projectId, canEdit, onItemUpdated }: Props) {
+export function BoqLineItemTable({ items, revised, projectId, canEdit, onItemUpdated }: Props) {
   const sorted = [...items].sort((a, b) => naturalCompare(a.code ?? '', b.code ?? ''))
 
   if (sorted.length === 0) {
@@ -83,7 +87,8 @@ export function BoqLineItemTable({ items, projectId, canEdit, onItemUpdated }: P
             <th style={thNum}>Qty</th>
             <th style={thNum}>Supply</th>
             <th style={thNum}>Install</th>
-            <th style={thNum}>Amount</th>
+            <th style={thNum}>{revised ? 'Contract' : 'Amount'}</th>
+            {revised && <th style={thNum}>Revised</th>}
           </tr>
         </thead>
         <tbody>
@@ -96,11 +101,14 @@ export function BoqLineItemTable({ items, projectId, canEdit, onItemUpdated }: P
                 <td style={{ ...td, fontFamily: 'var(--font-mono)', color: 'var(--c-text)', whiteSpace: 'nowrap' }}>
                   {item.code ?? <span style={{ color: 'var(--c-text-dim)' }}>—</span>}
                 </td>
-                {/* Description + mode badge */}
+                {/* Description + mode/origin badges */}
                 <td style={{ ...td, color: 'var(--c-text-mid)', minWidth: 240 }}>
                   <span>{item.description}</span>
                   {item.quantityMode !== 'measured' && item.quantityMode !== 'lump_sum' && (
                     <span style={{ marginLeft: 8 }}>{quantityModeBadge(item.quantityMode)}</span>
+                  )}
+                  {item.origin === 'variation' && (
+                    <span style={{ marginLeft: 8 }}><Badge variant="info">variation</Badge></span>
                   )}
                 </td>
                 {/* Unit */}
@@ -135,8 +143,16 @@ export function BoqLineItemTable({ items, projectId, canEdit, onItemUpdated }: P
                     fmtMoney(item.installRate)
                   )}
                 </td>
-                {/* Amount */}
-                <td style={{ ...tdNum, color: 'var(--c-text)', fontWeight: 600 }}>{fmtMoney(item.amount)}</td>
+                {/* Amount (contract) */}
+                <td style={{ ...tdNum, color: revised ? 'var(--c-text-mid)' : 'var(--c-text)', fontWeight: revised ? 400 : 600 }}>
+                  {fmtMoney(item.amount)}
+                </td>
+                {/* Revised (only when the project has any approved variation) */}
+                {revised && (
+                  <td style={{ ...tdNum, color: 'var(--c-text)', fontWeight: 600 }}>
+                    {fmtMoney(revised[item.id] ?? null)}
+                  </td>
+                )}
               </tr>
             )
           })}

@@ -17,6 +17,8 @@ export function rowToBoqItem(r: Record<string, unknown>): BoqItem {
     rate: num(r.rate),
     amount: num(r.amount),
     sortOrder: Number(r.sort_order ?? 0),
+    origin: ((r.origin as string) ?? 'contract') as BoqItem['origin'],
+    variationLineId: (r.variation_line_id as string) ?? null,
   }
 }
 

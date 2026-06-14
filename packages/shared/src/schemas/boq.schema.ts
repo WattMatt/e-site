@@ -18,6 +18,8 @@ export const boqItemSchema = z.object({
   rate: z.number().nullable(),
   amount: z.number().nullable(),
   sortOrder: z.number().int(),
+  origin: z.enum(['contract', 'variation']),
+  variationLineId: z.string().uuid().nullable(),
 })
 
 export const boqSectionSchema = z.object({
