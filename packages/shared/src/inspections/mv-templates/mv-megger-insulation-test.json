@@ -1,0 +1,73 @@
+{
+  "template_id": "mv-megger-insulation-test",
+  "name": "Megger (Insulation) Test Record Sheet",
+  "version": "1.0",
+  "applies_to_node_types": ["source", "any"],
+  "node_subtypes": ["mv_switchgear"],
+  "sans_reference": "SANS 10142-2",
+  "deliverable_type": "inspection_only",
+  "sections": [
+    {
+      "section_id": "details",
+      "title": "Details",
+      "fields": [
+        { "field_id": "res_charge_no", "label": "R.E.S / Charge No", "type": "text" },
+        { "field_id": "area", "label": "Area", "type": "text" },
+        { "field_id": "unit_no", "label": "Unit No", "type": "text" },
+        { "field_id": "contractor", "label": "Contractor", "type": "text" },
+        { "field_id": "project_title", "label": "Project Title", "type": "text" },
+        { "field_id": "conditions_note", "label": "Conditions", "type": "textarea", "help_text": "State switch/transformer state, e.g. 'All switches closed and transformers open.'" }
+      ]
+    },
+    {
+      "section_id": "mv_busbar",
+      "title": "MV Busbar",
+      "fields": [
+        { "field_id": "test_voltage", "label": "Test voltage", "type": "number", "unit": "kV", "help_text": "e.g. 24 kV for 1 minute." },
+        { "field_id": "duration", "label": "Duration", "type": "number", "unit": "min" },
+        { "field_id": "busbar_reading_unit", "label": "Reading unit", "type": "dropdown", "options": ["GΩ", "MΩ"] },
+        { "field_id": "red_white", "label": "RED → WHITE", "type": "number" },
+        { "field_id": "red_blue", "label": "RED → BLUE", "type": "number" },
+        { "field_id": "white_blue", "label": "WHITE → BLUE", "type": "number" },
+        { "field_id": "red_earth", "label": "RED → EARTH", "type": "number" },
+        { "field_id": "white_earth", "label": "WHITE → EARTH", "type": "number" },
+        { "field_id": "blue_earth", "label": "BLUE → EARTH", "type": "number" },
+        { "field_id": "tested_by", "label": "Tested by", "type": "text" },
+        { "field_id": "date", "label": "Date", "type": "date" }
+      ]
+    },
+    {
+      "section_id": "mv_cable",
+      "title": "MV Cable",
+      "fields": [
+        {
+          "field_id": "cable",
+          "label": "Cable",
+          "type": "repeating_group",
+          "item_label_template": "{{cable_id}}",
+          "help_text": "e.g. 24 kV for 15 min, 0.1 Hz.",
+          "fields": [
+            { "field_id": "cable_id", "label": "Cable ID / description", "type": "text" },
+            { "field_id": "voltage", "label": "Test voltage", "type": "number", "unit": "kV" },
+            { "field_id": "duration", "label": "Duration", "type": "number", "unit": "min" },
+            { "field_id": "frequency", "label": "Frequency", "type": "text", "default_value": "0.1 Hz" },
+            { "field_id": "cable_reading_unit", "label": "Reading unit", "type": "dropdown", "options": ["GΩ", "MΩ"] },
+            { "field_id": "red_white", "label": "RED → WHITE", "type": "number" },
+            { "field_id": "red_blue", "label": "RED → BLUE", "type": "number" },
+            { "field_id": "white_blue", "label": "WHITE → BLUE", "type": "number" },
+            { "field_id": "rwb_earth", "label": "RWB → EARTH", "type": "number" },
+            { "field_id": "tested_by", "label": "Tested by", "type": "text" },
+            { "field_id": "date", "label": "Date", "type": "date" }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "sign_off",
+      "title": "Sign-off",
+      "fields": [
+        { "field_id": "signature", "label": "Signature", "type": "signature" }
+      ]
+    }
+  ]
+}
