@@ -1,0 +1,58 @@
+{
+  "template_id": "mv-phasing-test-record",
+  "name": "Phasing Test Record Sheet",
+  "version": "1.0",
+  "applies_to_node_types": ["source", "any"],
+  "node_subtypes": ["mv_switchgear"],
+  "sans_reference": "SANS 10142-2",
+  "deliverable_type": "inspection_only",
+  "sections": [
+    {
+      "section_id": "details",
+      "title": "Details",
+      "fields": [
+        { "field_id": "res_charge_no", "label": "R.E.S / Charge No", "type": "text" },
+        { "field_id": "area", "label": "Area", "type": "text" },
+        { "field_id": "unit_no", "label": "Unit No", "type": "text", "default_value": "Medium voltage" },
+        { "field_id": "contractor", "label": "Contractor", "type": "text" },
+        { "field_id": "project_title", "label": "Project Title", "type": "text" }
+      ]
+    },
+    {
+      "section_id": "phasing_tests",
+      "title": "Phasing tests",
+      "fields": [
+        {
+          "field_id": "equipment_item",
+          "label": "Equipment item",
+          "type": "repeating_group",
+          "min_count": 1,
+          "item_label_template": "{{equipment_description}}",
+          "help_text": "On a correctly-phased system: like→like = 0 kV; cross-phase = line voltage (e.g. 11 kV).",
+          "fields": [
+            { "field_id": "equipment_description", "label": "Equipment description (e.g. Spoor–OHL MV Cable)", "type": "text" },
+            { "field_id": "red_red", "label": "RED → RED", "type": "number", "unit": "kV" },
+            { "field_id": "red_blue", "label": "RED → BLUE", "type": "number", "unit": "kV" },
+            { "field_id": "red_white", "label": "RED → WHITE", "type": "number", "unit": "kV" },
+            { "field_id": "white_white", "label": "WHITE → WHITE", "type": "number", "unit": "kV" },
+            { "field_id": "white_blue", "label": "WHITE → BLUE", "type": "number", "unit": "kV" },
+            { "field_id": "white_red", "label": "WHITE → RED", "type": "number", "unit": "kV" },
+            { "field_id": "blue_blue", "label": "BLUE → BLUE", "type": "number", "unit": "kV" },
+            { "field_id": "blue_red", "label": "BLUE → RED", "type": "number", "unit": "kV" },
+            { "field_id": "blue_white", "label": "BLUE → WHITE", "type": "number", "unit": "kV" },
+            { "field_id": "tested_by", "label": "Tested by", "type": "text" },
+            { "field_id": "date", "label": "Date", "type": "date" }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "sign_off",
+      "title": "Sign-off",
+      "fields": [
+        { "field_id": "signature", "label": "Signature (Contractor)", "type": "signature" },
+        { "field_id": "copies_to", "label": "Copies to", "type": "text" }
+      ]
+    }
+  ]
+}

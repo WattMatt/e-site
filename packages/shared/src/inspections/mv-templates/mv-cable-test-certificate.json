@@ -1,0 +1,58 @@
+{
+  "template_id": "mv-cable-test-certificate",
+  "name": "MV Cable Test Certificate (VLF)",
+  "version": "1.0",
+  "applies_to_node_types": ["source", "any"],
+  "node_subtypes": ["mv_switchgear"],
+  "sans_reference": "SANS 1507 / SANS 97 / SANS 0198",
+  "deliverable_type": "inspection_only",
+  "sections": [
+    {
+      "section_id": "contractor",
+      "title": "Contractor",
+      "fields": [
+        { "field_id": "contractor_name", "label": "Contractor name", "type": "text" },
+        { "field_id": "vat_no", "label": "VAT No", "type": "text" },
+        { "field_id": "contractor_no", "label": "Contractor No", "type": "text" },
+        { "field_id": "address", "label": "Address", "type": "textarea" },
+        { "field_id": "email", "label": "Email", "type": "text" },
+        { "field_id": "cell", "label": "Cell", "type": "text" }
+      ]
+    },
+    {
+      "section_id": "test_details",
+      "title": "Test details",
+      "fields": [
+        { "field_id": "test_date", "label": "Date", "type": "date" },
+        { "field_id": "order_no", "label": "Order No", "type": "text" },
+        { "field_id": "res_charge_no", "label": "R.E.S / Charge No", "type": "text" },
+        { "field_id": "cable_between", "label": "Cable between (A) and (B)", "type": "text" },
+        { "field_id": "test_method", "label": "Test method", "type": "dropdown", "options": ["VLF", "DC HV"], "default_value": "VLF" },
+        { "field_id": "instrument_used", "label": "Instrument used", "type": "text", "help_text": "e.g. HVA30 VLF & DC HV Test System" },
+        { "field_id": "serial_no", "label": "Instrument serial No", "type": "text" },
+        { "field_id": "calibration_expires", "label": "Calibration expires", "type": "date" },
+        { "field_id": "location_of_test", "label": "Location of test", "type": "text" },
+        { "field_id": "cable_type_insulation", "label": "Cable type & insulation", "type": "text", "help_text": "e.g. XLPE 50mm² Al" },
+        { "field_id": "insulation_resistance_ohms", "label": "Insulation resistance", "type": "number", "unit": "Ω" },
+        { "field_id": "rated_voltage", "label": "Rated test voltage", "type": "text", "help_text": "e.g. 22 kV rms, 0.1 Hz" },
+        { "field_id": "duration_min", "label": "Duration", "type": "number", "unit": "min" }
+      ]
+    },
+    {
+      "section_id": "results",
+      "title": "Results",
+      "fields": [
+        { "field_id": "test_phase_to_earth", "label": "Test phase ↔ earth", "type": "pass_fail" },
+        { "field_id": "test_phase_to_phase", "label": "Test phase ↔ phase", "type": "pass_fail" },
+        { "field_id": "test_completed_successfully", "label": "Test completed successfully", "type": "pass_fail", "help_text": "Standards: SANS 1507, SANS 97, SANS 0198 (part XIII). Acceptance criterion is typically a percentage of the relevant SANS test value — confirm against the current edition of the cited standards." }
+      ]
+    },
+    {
+      "section_id": "sign_off",
+      "title": "Sign-off",
+      "fields": [
+        { "field_id": "signature", "label": "Signature", "type": "signature" }
+      ]
+    }
+  ]
+}

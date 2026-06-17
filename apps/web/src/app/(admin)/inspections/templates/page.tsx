@@ -54,12 +54,24 @@ export default async function TemplateLibraryPage() {
     )
   }
 
-  // Group by template_id so multiple versions cluster under one header.
-  const grouped = new Map<string, TemplateRow[]>()
+  // Group by category, then by template_id (so multiple versions cluster).
+  const CATEGORY_LABELS: Record<string, string> = { medium_voltage: 'Medium Voltage' }
+  const humanise = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  const GENERAL = '__general__'
+  const byCategory = new Map<string, Map<string, TemplateRow[]>>()
   for (const t of templates) {
-    if (!grouped.has(t.template_id)) grouped.set(t.template_id, [])
-    grouped.get(t.template_id)!.push(t)
+    const cat = t.category ?? GENERAL
+    if (!byCategory.has(cat)) byCategory.set(cat, new Map())
+    const fam = byCategory.get(cat)!
+    if (!fam.has(t.template_id)) fam.set(t.template_id, [])
+    fam.get(t.template_id)!.push(t)
   }
+  // Named categories first (alpha by display label), "General" last.
+  const categoryOrder = Array.from(byCategory.keys()).sort((a, b) => {
+    if (a === GENERAL) return 1
+    if (b === GENERAL) return -1
+    return (CATEGORY_LABELS[a] ?? humanise(a)).localeCompare(CATEGORY_LABELS[b] ?? humanise(b))
+  })
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 960 }}>
@@ -73,7 +85,7 @@ export default async function TemplateLibraryPage() {
         </Link>
       </div>
 
-      {grouped.size === 0 && (
+      {templates.length === 0 && (
         <Card>
           <CardBody>
             <div style={{ padding: '40px 12px', textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13 }}>
@@ -86,8 +98,16 @@ export default async function TemplateLibraryPage() {
         </Card>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {Array.from(grouped.entries()).map(([templateId, versions]) => {
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+        {categoryOrder.map((cat) => {
+          const families = byCategory.get(cat)!
+          const categoryLabel = cat === GENERAL ? 'General' : (CATEGORY_LABELS[cat] ?? humanise(cat))
+          return (
+            <div key={cat} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--c-text-dim)' }}>
+                {categoryLabel}
+              </div>
+              {Array.from(families.entries()).map(([templateId, versions]) => {
           const latest = versions[0]
           return (
             <Card key={templateId}>
@@ -166,6 +186,9 @@ export default async function TemplateLibraryPage() {
                 </table>
               </CardBody>
             </Card>
+          )
+              })}
+            </div>
           )
         })}
       </div>

@@ -26,7 +26,7 @@ export default function DropdownField({ field, response, readOnly, onChange }: R
           color: 'var(--c-text)',
           fontFamily: 'inherit',
         }}
-        value={isMulti ? (response?.value_array ?? []) : (response?.value_text ?? '')}
+        value={isMulti ? (response?.value_array ?? []) : (response?.value_text ?? (field.default_value != null ? String(field.default_value) : ''))}
         onChange={(e) => {
           if (isMulti) {
             const arr = Array.from(e.target.selectedOptions).map((o) => o.value)

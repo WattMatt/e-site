@@ -1,0 +1,50 @@
+{
+  "template_id": "mv-protection-settings-summary",
+  "name": "MV Protection Settings Summary",
+  "version": "1.0",
+  "applies_to_node_types": ["source", "any"],
+  "node_subtypes": ["mv_switchgear"],
+  "sans_reference": "SANS 10142-2",
+  "deliverable_type": "inspection_only",
+  "sections": [
+    {
+      "section_id": "network",
+      "title": "Network",
+      "fields": [
+        { "field_id": "voltage_kv", "label": "Voltage", "type": "number", "unit": "kV" },
+        { "field_id": "fault_level_ka", "label": "Fault level", "type": "number", "unit": "kA" },
+        { "field_id": "default_relay", "label": "Default relay", "type": "text", "default_value": "P122", "help_text": "Default relay device (e.g. Schneider MiCOM P122)." },
+        { "field_id": "default_curve", "label": "Default curve", "type": "dropdown", "options": ["SI", "VI", "EI", "DT"], "default_value": "SI", "help_text": "IEC/IEEE curve: SI (Standard Inverse), VI (Very Inverse), EI (Extremely Inverse), DT (Definite Time). High-set (I>>) stage left blank where not applied. Pick-ups are primary amps. Verify Panel-5 low values against the issued document." }
+      ]
+    },
+    {
+      "section_id": "relay_settings",
+      "title": "Relay settings",
+      "fields": [
+        {
+          "field_id": "relay_feeder",
+          "label": "Relay / feeder",
+          "type": "repeating_group",
+          "min_count": 1,
+          "item_label_template": "Panel {{panel}} — {{feeder}}",
+          "fields": [
+            { "field_id": "panel", "label": "Panel", "type": "text" },
+            { "field_id": "feeder", "label": "Feeder / description", "type": "text" },
+            { "field_id": "relay", "label": "Relay device", "type": "text", "default_value": "P122" },
+            { "field_id": "cable_size", "label": "Cable", "type": "text", "help_text": "e.g. 185mm" },
+            { "field_id": "ctr", "label": "CT ratio", "type": "text", "help_text": "e.g. 400/1" },
+            { "field_id": "oc_lowset_curve", "label": "O/C I> (low-set) curve", "type": "dropdown", "options": ["SI", "VI", "EI", "DT"], "default_value": "SI", "help_text": "IEC/IEEE curve for the low-set overcurrent stage." },
+            { "field_id": "oc_lowset_pu", "label": "O/C I> (low-set) pick-up", "type": "number", "unit": "A", "help_text": "Pick-up, primary amps." },
+            { "field_id": "oc_lowset_tm", "label": "O/C I> (low-set) time multiplier", "type": "number", "help_text": "Time multiplier." },
+            { "field_id": "oc_highset_curve", "label": "O/C I>> (high-set) curve", "type": "dropdown", "options": ["SI", "VI", "EI", "DT"], "help_text": "IEC/IEEE curve for the high-set overcurrent stage. Leave blank where not applied." },
+            { "field_id": "oc_highset_pu", "label": "O/C I>> (high-set) pick-up", "type": "number", "unit": "A", "help_text": "Pick-up, primary amps." },
+            { "field_id": "oc_highset_tm", "label": "O/C I>> (high-set) time multiplier", "type": "number", "help_text": "Time multiplier." },
+            { "field_id": "ef_curve", "label": "E/F Io> curve", "type": "dropdown", "options": ["SI", "VI", "EI", "DT"], "default_value": "SI", "help_text": "IEC/IEEE curve for the earth-fault stage." },
+            { "field_id": "ef_pu", "label": "E/F Io> pick-up", "type": "number", "unit": "A", "help_text": "Pick-up, primary amps." },
+            { "field_id": "ef_tm", "label": "E/F Io> time multiplier", "type": "number", "help_text": "Time multiplier." }
+          ]
+        }
+      ]
+    }
+  ]
+}

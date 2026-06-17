@@ -28,14 +28,14 @@ export default function TextField({ field, response, readOnly, onChange }: Rende
           disabled={readOnly}
           style={sharedStyle}
           rows={3}
-          value={response?.value_text ?? ''}
+          value={response?.value_text ?? (field.default_value != null ? String(field.default_value) : '')}
           onChange={(e) => onChange({ value_text: e.target.value })}
         />
       ) : (
         <input
           disabled={readOnly}
           style={sharedStyle}
-          value={response?.value_text ?? ''}
+          value={response?.value_text ?? (field.default_value != null ? String(field.default_value) : '')}
           onChange={(e) => onChange({ value_text: e.target.value })}
         />
       )}

@@ -1,0 +1,82 @@
+{
+  "template_id": "mv-safety-report-annex-b",
+  "name": "MV Installation Safety Report — SANS 10142-2 Annex B",
+  "version": "1.0",
+  "applies_to_node_types": ["source", "any"],
+  "node_subtypes": ["mv_switchgear", "substation"],
+  "sans_reference": "SANS 10142-2 Annex B",
+  "deliverable_type": "coc",
+  "sections": [
+    {
+      "section_id": "declaration",
+      "title": "Declaration",
+      "fields": [
+        { "field_id": "declaration_statement", "label": "Declaration", "type": "header", "help_text": "Design approved per SANS 10142-2 and installation safe for operation as intended." },
+        { "field_id": "ip_note", "label": "Issuing note", "type": "header", "help_text": "This is the statutory Annex B form published in SANS 10142-2. Issue on the official SANS Annex B blank; this is for data capture only and intentionally does not reproduce the standard's checklist wording." },
+        { "field_id": "registered_person_signature", "label": "Registered person — signature", "type": "signature", "required_qualifications": ["registered_person"] },
+        { "field_id": "ecsa_reg_no", "label": "ECSA Professional Registration No", "type": "text" },
+        { "field_id": "physical_address", "label": "Physical address", "type": "text" },
+        { "field_id": "telephone", "label": "Telephone", "type": "text" },
+        { "field_id": "cellular", "label": "Cellular", "type": "text" },
+        { "field_id": "contractor_signature", "label": "Contractor — signature", "type": "signature" },
+        { "field_id": "contractor_name", "label": "Contractor name", "type": "text" },
+        { "field_id": "business_registration", "label": "Business registration", "type": "text" },
+        { "field_id": "eir_registration_no", "label": "Registration No (Electrical Installation Regulations)", "type": "text" },
+        { "field_id": "telephone_c", "label": "Telephone (contractor)", "type": "text" },
+        { "field_id": "cellular_c", "label": "Cellular (contractor)", "type": "text" }
+      ]
+    },
+    {
+      "section_id": "installation_details",
+      "title": "Installation details",
+      "fields": [
+        { "field_id": "installation_name", "label": "Installation name", "type": "text" },
+        { "field_id": "gps_coordinates", "label": "GPS coordinates", "type": "text" },
+        { "field_id": "municipality", "label": "Municipality", "type": "text" },
+        { "field_id": "supply_authority", "label": "Supply authority", "type": "text" },
+        { "field_id": "voltage_kv", "label": "Voltage", "type": "number", "unit": "kV" },
+        { "field_id": "fault_level_ka", "label": "Fault level", "type": "number", "unit": "kA" },
+        { "field_id": "sld_description", "label": "Feeder configuration (per SLD)", "type": "textarea" },
+        { "field_id": "continuation_notes", "label": "Continuation / additional notes", "type": "textarea", "help_text": "SANS 10142-2 Annex B.1.3 — any additional notes." }
+      ]
+    },
+    {
+      "section_id": "inspection_checklist",
+      "title": "Inspection checklist",
+      "fields": [
+        {
+          "field_id": "checklist_item",
+          "label": "Checklist item",
+          "type": "repeating_group",
+          "item_label_template": "{{clause_ref}}",
+          "help_text": "Populate clause_ref from the SANS 10142-2 Annex B.2 numbered items; do not transcribe the standard's wording.",
+          "fields": [
+            { "field_id": "clause_ref", "label": "Clause ref", "type": "text" },
+            { "field_id": "result", "label": "Result", "type": "pass_fail" },
+            { "field_id": "comment", "label": "Comment", "type": "text" }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "test_results",
+      "title": "Test results",
+      "fields": [
+        { "field_id": "earth_resistance_ohm", "label": "Earth resistance", "type": "number", "unit": "Ω" },
+        { "field_id": "earth_instrument", "label": "Earth instrument", "type": "text" },
+        { "field_id": "insulation_resistance", "label": "Insulation resistance", "type": "number", "help_text": "e.g. KEW4106 / KEW416" },
+        { "field_id": "insulation_instrument", "label": "Insulation instrument", "type": "text" },
+        { "field_id": "continuity", "label": "Continuity", "type": "pass_fail" },
+        { "field_id": "phase_rotation", "label": "Phase rotation", "type": "dropdown", "options": ["R,W,B", "R,B,W"] }
+      ]
+    },
+    {
+      "section_id": "acceptance",
+      "title": "Acceptance",
+      "fields": [
+        { "field_id": "accepted_by_signature", "label": "Accepted by — signature", "type": "signature" },
+        { "field_id": "acceptance_date", "label": "Acceptance date", "type": "date" }
+      ]
+    }
+  ]
+}

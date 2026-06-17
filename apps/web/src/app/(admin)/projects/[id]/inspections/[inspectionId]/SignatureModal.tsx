@@ -18,10 +18,14 @@ const FIELD_STYLE: React.CSSProperties = {
 export default function SignatureModal({
   inspectionId,
   role,
+  fieldId,
+  sectionId,
   onClose,
 }: {
   inspectionId: string
   role: 'inspector' | 'verifier' | 'client' | 'witness'
+  fieldId?: string
+  sectionId?: string
   onClose: () => void
 }) {
   const ref = useRef<SignatureCanvas>(null)
@@ -49,6 +53,8 @@ export default function SignatureModal({
       fd.append('file', blob, 'signature.png')
       fd.append('inspectionId', inspectionId)
       fd.append('role', role)
+      if (fieldId) fd.append('fieldId', fieldId)
+      if (sectionId) fd.append('sectionId', sectionId)
       fd.append('signatoryName', name.trim())
       fd.append('signatoryTitle', title.trim())
       fd.append('registrationNumber', regNo.trim())

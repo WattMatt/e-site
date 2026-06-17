@@ -5,6 +5,7 @@ type PassState = 'pass' | 'fail' | 'na' | 'not_checked';
 export function evaluateField(field: Field, value: Response): { passState: PassState; reason?: string } {
   switch (field.type) {
     case 'pass_fail':
+      if (value.pass_state === 'na') return { passState: 'na' };
       if (value.value_bool === true) return { passState: 'pass' };
       if (value.value_bool === false) return { passState: 'fail', reason: value.fail_reason ?? undefined };
       return { passState: 'not_checked' };
@@ -339,7 +340,9 @@ export function evaluateInspection(
       (response.value_bool !== undefined && response.value_bool !== null) ||
       (response.value_number !== undefined && response.value_number !== null) ||
       (!!response.value_text && response.value_text.length > 0) ||
-      (!!response.value_array && response.value_array.length > 0)
+      (!!response.value_array && response.value_array.length > 0) ||
+      // An explicit N/A on a pass_fail field is a deliberate answer.
+      response.pass_state === 'na'
     );
 
     if (hasAnswer) answeredFieldCount++;

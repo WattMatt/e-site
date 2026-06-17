@@ -4,7 +4,7 @@ import type { RendererProps } from '../FieldRenderer'
 import { useState } from 'react'
 import SignatureModal from '../SignatureModal'
 
-export default function SignatureField({ field, inspectionId, readOnly }: RendererProps) {
+export default function SignatureField({ field, sectionId, inspectionId, readOnly }: RendererProps) {
   const [open, setOpen] = useState(false)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -37,6 +37,8 @@ export default function SignatureField({ field, inspectionId, readOnly }: Render
         <SignatureModal
           inspectionId={inspectionId}
           role="inspector"
+          fieldId={field.field_id}
+          sectionId={sectionId}
           onClose={() => setOpen(false)}
         />
       )}

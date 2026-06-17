@@ -25,7 +25,7 @@ export default function DateField({ field, response, readOnly, onChange }: Rende
           fontFamily: 'inherit',
           maxWidth: 220,
         }}
-        value={response?.value_text ?? ''}
+        value={response?.value_text ?? (field.default_value != null ? String(field.default_value) : '')}
         onChange={(e) => onChange({ value_text: e.target.value })}
       />
     </div>

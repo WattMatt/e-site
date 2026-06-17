@@ -19,6 +19,8 @@ export async function POST(req: NextRequest) {
   const file = fd.get('file') as File | null
   const inspectionId = fd.get('inspectionId') as string | null
   const role = fd.get('role') as string | null
+  const fieldId = (fd.get('fieldId') as string | null) || null
+  const sectionId = (fd.get('sectionId') as string | null) || null
   const signatoryName = fd.get('signatoryName') as string | null
   const signatoryTitle = fd.get('signatoryTitle') as string | null
   const registrationNumber = fd.get('registrationNumber') as string | null
@@ -62,17 +64,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'server misconfigured: SUPABASE_SERVICE_ROLE_KEY missing' }, { status: 500 })
   }
 
+  const restHeaders = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+    'Content-Profile': 'inspections',
+    Prefer: 'return=minimal',
+  }
+
+  // Re-signing a field-keyed signature: clear the prior row first so the
+  // (inspection_id, section_id, field_id) unique index doesn't reject the
+  // replacement. Legacy role-keyed rows (no fieldId) keep append behaviour.
+  if (fieldId) {
+    const q = new URLSearchParams({
+      inspection_id: `eq.${inspectionId}`,
+      field_id: `eq.${fieldId}`,
+    })
+    if (sectionId) q.set('section_id', `eq.${sectionId}`)
+    await fetch(`${supabaseUrl}/rest/v1/signatures?${q.toString()}`, {
+      method: 'DELETE',
+      headers: restHeaders,
+    }).catch(() => {})
+  }
+
   const insertRes = await fetch(`${supabaseUrl}/rest/v1/signatures`, {
     method: 'POST',
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      'Content-Type': 'application/json',
-      'Content-Profile': 'inspections',
-      Prefer: 'return=minimal',
-    },
+    headers: restHeaders,
     body: JSON.stringify({
       inspection_id: inspectionId,
+      section_id: sectionId,
+      field_id: fieldId,
       role,
       signatory_name: signatoryName,
       signatory_title: signatoryTitle || null,
