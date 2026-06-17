@@ -109,10 +109,12 @@ export default async function TemplateLibraryPage() {
           const families = byCategory.get(cat)!
           const categoryLabel = cat === GENERAL ? 'General' : (CATEGORY_LABELS[cat] ?? humanise(cat))
           return (
-            <div key={cat} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--c-text-dim)' }}>
+            <details key={cat} open>
+              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--c-text-dim)', padding: '4px 0' }}>
                 {categoryLabel}
-              </div>
+                <span style={{ marginLeft: 8, fontWeight: 400 }}>({families.size})</span>
+              </summary>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 16 }}>
               {Array.from(families.entries()).map(([templateId, versions]) => {
           const latest = versions[0]
           return (
@@ -194,7 +196,8 @@ export default async function TemplateLibraryPage() {
             </Card>
           )
               })}
-            </div>
+              </div>
+            </details>
           )
         })}
       </div>
