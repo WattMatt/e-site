@@ -711,6 +711,54 @@ describe('gatherInspectionReportData — repeating_group photo sub-fields', () =
 
 // ─── Summary tally + failed list ───────────────────────────────────────────
 
+// ─── D5: only own file-field uploads as annexures ─────────────────────────
+// Design decision D5: the report annexes ONLY the inspection's own file-field
+// uploads (source:'attachment'). Project-wide handover docs (tenants.documents)
+// are no longer pulled into the report — the report is pushed into handover by
+// other means. This test is a true red→green: the harness routes tenants.documents
+// through `schema('tenants').from('documents')`, so providing a handover doc in
+// the mock would have produced a source:'handover' annexure under the old code.
+// After the code change, the tenants.documents query is gone, so none appears.
+
+describe('gatherInspectionReportData — annexures are own file-field uploads only (D5)', () => {
+  it('produces no handover-source annexures even when tenants.documents has matching rows', async () => {
+    // Seed a project-wide handover doc in tenants.documents. Under the old code
+    // this would produce an annexure with source:'handover'. Under the new code
+    // (no handover pull) it must be absent.
+    setup({
+      serviceOver: {
+        'tenants.documents': {
+          data: [
+            {
+              name: 'Compliance Certificate.pdf',
+              storage_path: 'hv/compliance-cert.pdf',
+              handover_category: 'compliance_certs',
+              mime_type: 'application/pdf',
+            },
+          ],
+          error: null,
+        },
+      },
+    })
+    const data = await gatherInspectionReportData(INSPECTION_ID)
+
+    // No annexure may have source:'handover'.
+    expect(data.annexures.some((a) => (a as any).source === 'handover')).toBe(false)
+
+    // The handover doc must NOT appear in annexures at all.
+    expect(data.annexures.some((a) => a.name === 'Compliance Certificate.pdf')).toBe(false)
+  })
+
+  it('every annexure has source === attachment', async () => {
+    // Standard setup includes one file-field upload (file_cert / prior-cert.pdf).
+    setup()
+    const data = await gatherInspectionReportData(INSPECTION_ID)
+
+    // All annexures (if any) are own file-field uploads.
+    expect(data.annexures.every((a) => a.source === 'attachment')).toBe(true)
+  })
+})
+
 describe('gatherInspectionReportData — summary tally + failed list', () => {
   it('counts pass/fail/na across all pass_fail responses incl. group entries', async () => {
     setup()

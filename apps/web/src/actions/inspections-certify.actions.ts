@@ -17,6 +17,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { dispatchNotification } from '@/lib/notifications'
 import { requireFeature } from '@/lib/features'
+import { generateAndFileInspectionReport } from '@/lib/reports/file-inspection-report'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -235,15 +236,23 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
     .eq('id', input.inspectionId)
   if (updErr) throw updErr
 
-  // Best-effort PDF render — Phase 6 ships the edge function; this swallows
-  // failures so the cert state remains valid and the render can be retried.
+  // Render + save the branded certificate to projects.reports and auto-file it
+  // (plus the in-inspection file uploads) into the handover pack. Best-effort:
+  // certification is a committed DB fact; a render/file failure leaves the cert
+  // valid and the /report page exposes a Regenerate action. Replaces the
+  // retired render-inspection-pdf edge function (it 500s on ✓/✗/Ω glyphs).
   try {
-    const { error: fnErr } = await supabase.functions.invoke('render-inspection-pdf', {
-      body: { inspection_id: input.inspectionId },
+    const result = await generateAndFileInspectionReport({
+      inspectionId: input.inspectionId,
+      projectId: input.projectId,
+      orgId: insp.organisation_id,
+      userId: user.id,
     })
-    if (fnErr) console.warn('render-inspection-pdf failed (Phase 6 pending):', fnErr.message)
+    if ('error' in result) {
+      console.warn('inspection report generation failed (regenerate available):', result.error)
+    }
   } catch (e) {
-    console.warn('render-inspection-pdf invocation failed:', (e as Error).message)
+    console.warn('inspection report generation threw (regenerate available):', (e as Error).message)
   }
 
   // Best-effort validation for all deliverable types. The cert is valid even if
