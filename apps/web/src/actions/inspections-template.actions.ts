@@ -52,7 +52,7 @@ export async function listTemplatesAction(organisationId: string) {
     .schema('inspections')
     .from('templates')
     .select(
-      'id, template_id, version, name, description, applies_to_node_types, node_subtypes, deliverable_type, is_active, created_at, updated_at',
+      'id, template_id, version, name, description, category, applies_to_node_types, node_subtypes, deliverable_type, is_active, created_at, updated_at',
     )
     .eq('organisation_id', organisationId)
     .order('template_id', { ascending: true })
@@ -65,6 +65,7 @@ export async function listTemplatesAction(organisationId: string) {
     version: string
     name: string
     description: string | null
+    category: string | null
     applies_to_node_types: string[]
     node_subtypes: string[] | null
     deliverable_type: 'coc' | 'inspection_only' | 'factory_test'
