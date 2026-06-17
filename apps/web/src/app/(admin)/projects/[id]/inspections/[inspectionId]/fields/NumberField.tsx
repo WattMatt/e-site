@@ -47,7 +47,7 @@ export default function NumberField({ field, response, readOnly, onChange }: Ren
             background: 'var(--c-panel)',
             color: 'var(--c-text)',
           }}
-          value={response?.value_number ?? ''}
+          value={response?.value_number ?? (typeof field.default_value === 'number' ? field.default_value : '')}
           onChange={(e) =>
             onChange({
               value_number: e.target.value === '' ? null : parseFloat(e.target.value),

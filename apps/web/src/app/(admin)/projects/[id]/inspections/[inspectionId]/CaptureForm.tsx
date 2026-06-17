@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback, useRef } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { evaluateInspection, isFieldVisible } from '@esite/shared'
 import type { Template, Response as InspectionResponse, Section, SubSection, Field } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
@@ -136,6 +136,35 @@ export default function CaptureForm({
     },
     [inspectionId, isPreview],
   )
+
+  // Seed template default_value into responses once on mount, so a field's
+  // default is both shown AND persisted to the DB (the fill widgets only show
+  // defaults; without this, an untouched default never lands in inspections.
+  // responses). Repeating-group sub-fields are seeded per entry by their own
+  // widgets, not here. Runs once; skipped in read-only/preview.
+  const seededDefaultsRef = useRef(false)
+  useEffect(() => {
+    if (seededDefaultsRef.current) return
+    seededDefaultsRef.current = true
+    if (readOnly) return
+    const seedable = new Set(['text', 'textarea', 'number', 'date', 'dropdown'])
+    const consider = (sectionId: string, f: Field) => {
+      if (!seedable.has(f.type) || f.default_value == null) return
+      const exists = responses.some((r) => r.section_id === sectionId && r.field_id === f.field_id)
+      if (exists) return
+      if (f.type === 'number') {
+        if (typeof f.default_value !== 'number') return
+        updateResponse(sectionId, f.field_id, { value_number: f.default_value })
+      } else {
+        updateResponse(sectionId, f.field_id, { value_text: String(f.default_value) })
+      }
+    }
+    for (const s of template.sections) {
+      for (const f of s.fields ?? []) consider(s.section_id, f)
+      for (const ss of s.subsections ?? []) for (const f of ss.fields) consider(s.section_id, f)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const onSubmit = async () => {
     if (evaluation.missingRequired.length > 0) {
