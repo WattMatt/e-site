@@ -2,6 +2,8 @@ import type { NextConfig } from 'next'
 
 import path from 'path'
 
+import { buildContentSecurityPolicy } from './src/lib/security/csp'
+
 const config: NextConfig = {
   transpilePackages: ['@esite/shared', '@esite/db'],
   // Point Next.js at the monorepo root so file tracing works correctly
@@ -153,19 +155,9 @@ const config: NextConfig = {
           // Connect-src covers Supabase realtime, PostHog ingest, Sentry DSN, Paystack.
           {
             key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://app.posthog.com https://js.sentry-cdn.com",
-              "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob: https://*.supabase.co https://avatars.githubusercontent.com",
-              "font-src 'self' data:",
-              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.powersync.co wss://*.powersync.co https://app.posthog.com https://ingest.sentry.io https://api.paystack.co",
-              "frame-src 'none'",
-              "object-src 'none'",
-              "base-uri 'self'",
-              "form-action 'self'",
-              "upgrade-insecure-requests",
-            ].join('; '),
+            // Built in src/lib/security/csp.ts so the policy is unit-tested —
+            // frame-src must permit the preview <iframe> sources (see csp.test.ts).
+            value: buildContentSecurityPolicy({ dev: process.env.NODE_ENV !== 'production' }),
           },
         ],
       },
