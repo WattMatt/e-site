@@ -55,7 +55,13 @@ export default async function TemplateLibraryPage() {
   }
 
   // Group by category, then by template_id (so multiple versions cluster).
-  const CATEGORY_LABELS: Record<string, string> = { medium_voltage: 'Medium Voltage' }
+  const CATEGORY_LABELS: Record<string, string> = {
+    medium_voltage: 'Medium Voltage',
+    generators: 'Generators',
+    solar_pv: 'Solar PV',
+    low_voltage: 'Low Voltage',
+    reports_site: 'Reports & Site',
+  }
   const humanise = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
   const GENERAL = '__general__'
   const byCategory = new Map<string, Map<string, TemplateRow[]>>()
