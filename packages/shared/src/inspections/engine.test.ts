@@ -600,6 +600,29 @@ describe('repeating_group — synthetic field_id helpers', () => {
   });
 });
 
+describe('pass_fail N/A (SANS checklist support)', () => {
+  const naField: Field = { field_id: 'clause', label: 'Clause', type: 'pass_fail', required: true };
+
+  it('evaluateField returns na for an explicit pass_state na', () => {
+    const r = evaluateField(naField, { section_id: 's', field_id: 'clause', value_bool: null, pass_state: 'na' });
+    expect(r.passState).toBe('na');
+  });
+
+  it('a required pass_fail answered N/A counts as answered (not missingRequired) and does not fail', () => {
+    const template: Template = {
+      template_id: 'na-t', name: 'NA', version: '1.0',
+      applies_to_node_types: ['any'], deliverable_type: 'inspection_only',
+      sections: [{ section_id: 's', title: 'S', fields: [naField] }],
+    };
+    const r = evaluateInspection(template, [
+      { section_id: 's', field_id: 'clause', value_bool: null, pass_state: 'na' },
+    ]);
+    expect(r.missingRequired).toHaveLength(0);
+    expect(r.failedFields).toHaveLength(0);
+    expect(r.overallResult).toBe('pass');
+  });
+});
+
 describe('evaluateInspection — repeating_group', () => {
   const groupField: Field = {
     field_id: 'snags',
