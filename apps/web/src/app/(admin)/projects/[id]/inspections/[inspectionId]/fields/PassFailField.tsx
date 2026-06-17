@@ -4,6 +4,7 @@ import type { RendererProps } from '../FieldRenderer'
 
 export default function PassFailField({ field, response, readOnly, onChange }: RendererProps) {
   const v = response?.value_bool
+  const isNa = response?.pass_state === 'na'
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -64,6 +65,25 @@ export default function PassFailField({ field, response, readOnly, onChange }: R
           }}
         >
           ✗ Fail
+        </button>
+        <button
+          type="button"
+          disabled={readOnly}
+          onClick={() => onChange({ value_bool: null, pass_state: 'na', fail_reason: null })}
+          style={{
+            flex: 1,
+            padding: '8px 12px',
+            borderRadius: 6,
+            border: isNa ? '1px solid var(--c-text-mid)' : '1px solid var(--c-border)',
+            background: isNa ? 'var(--c-panel-dim, rgba(0,0,0,0.06))' : 'var(--c-panel)',
+            color: isNa ? 'var(--c-text)' : 'var(--c-text-dim)',
+            fontWeight: isNa ? 600 : 400,
+            fontSize: 13,
+            cursor: readOnly ? 'not-allowed' : 'pointer',
+            opacity: readOnly ? 0.6 : 1,
+          }}
+        >
+          N/A
         </button>
       </div>
       {v === false && (
