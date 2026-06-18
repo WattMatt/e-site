@@ -1,18 +1,24 @@
 /**
  * Edge Function: send-email
  *
- * Sends transactional emails via Resend.
+ * Sends transactional notification emails via Resend, using the shared light
+ * branded template (the dark baseTemplate was retired in Phase 1).
  *
  * Supported types:
  *   - rfi-assigned: notify assignee of new RFI
  *   - snag-assigned: notify assignee of new snag
- *   - invite: send org invite email with token link
+ *   - data-subject-request: POPIA DSR notification (public form)
  *   - coc-status: notify org members when COC status changes
+ *
+ * NOTE: the `invite` type is GONE. Member invites are now sent by the
+ * `auth-email-hook` Send Email hook via auth.admin.inviteUserByEmail.
  *
  * Request body:
  *   { type: EmailType, payload: Record<string, any> }
  *   Authorization: Bearer <service_role_key>
  */
+
+import { brandedTemplate } from '../_shared/email-templates/branded.ts'
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 const FROM = 'E-Site <noreply@e-site.live>'
@@ -35,16 +41,6 @@ async function sendEmail(payload: EmailPayload): Promise<void> {
     const body = await res.text()
     throw new Error(`Resend error ${res.status}: ${body}`)
   }
-}
-
-function baseTemplate(content: string) {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-  <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0F172A;color:#E2E8F0;margin:0;padding:32px}
-  .card{background:#1E293B;border:1px solid #334155;border-radius:12px;padding:28px;max-width:480px;margin:0 auto}
-  h2{color:#fff;font-size:18px;margin:0 0 12px}p{font-size:14px;line-height:1.6;color:#94A3B8;margin:0 0 12px}
-  .btn{display:inline-block;background:#2563EB;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600;font-size:14px;margin-top:8px}
-  .footer{margin-top:24px;font-size:11px;color:#475569;text-align:center}</style></head>
-  <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${SITE_URL}" style="color:#3B82F6">app.e-site.live</a></div></div></body></html>`
 }
 
 // Decode JWT role claim without re-verifying — Supabase gateway already verified the signature.
@@ -83,35 +79,23 @@ Deno.serve(async (req) => {
       })
     }
 
-    if (type === 'invite') {
-      const { to, orgName, inviterName, role, token } = payload
-      const link = `${SITE_URL}/onboarding/join?token=${token}`
-      await sendEmail({
-        to,
-        subject: `You've been invited to join ${orgName} on E-Site`,
-        html: baseTemplate(`
-          <h2>You're invited!</h2>
-          <p><strong>${inviterName}</strong> has invited you to join <strong>${orgName}</strong> on E-Site as a <strong>${role}</strong>.</p>
-          <p>Click the button below to accept the invitation (expires in 7 days).</p>
-          <a class="btn" href="${link}">Accept Invitation</a>
-          <p style="margin-top:16px;font-size:12px">Or copy this link: ${link}</p>
-        `),
-      })
-    }
-
-    else if (type === 'rfi-assigned') {
+    if (type === 'rfi-assigned') {
       const { to, assigneeName, rfiSubject, projectName, rfiId, raisedByName, dueDate } = payload
       const link = `${SITE_URL}/rfis/${rfiId}`
       await sendEmail({
         to,
         subject: `RFI assigned: ${rfiSubject}`,
-        html: baseTemplate(`
-          <h2>RFI Assigned to You</h2>
-          <p>Hi ${assigneeName},</p>
-          <p><strong>${raisedByName}</strong> has assigned you an RFI on project <strong>${projectName}</strong>.</p>
-          <p><strong>Subject:</strong> ${rfiSubject}${dueDate ? `<br><strong>Due:</strong> ${dueDate}` : ''}</p>
-          <a class="btn" href="${link}">View RFI</a>
-        `),
+        html: brandedTemplate({
+          org: null,
+          heading: 'RFI assigned to you',
+          bodyHtml: `<p>Hi ${assigneeName},</p>
+            <p><strong>${raisedByName}</strong> assigned you an RFI on <strong>${projectName}</strong>.</p>
+            <p><strong>Subject:</strong> ${rfiSubject}${dueDate ? `<br><strong>Due:</strong> ${dueDate}` : ''}</p>`,
+          ctaLabel: 'View RFI',
+          ctaHref: link,
+          fallbackLink: link,
+          siteUrl: SITE_URL,
+        }),
       })
     }
 
@@ -123,14 +107,18 @@ Deno.serve(async (req) => {
       await sendEmail({
         to,
         subject: `Snag assigned: ${snagTitle}`,
-        html: baseTemplate(`
-          <h2>Snag Assigned to You</h2>
-          <p>Hi ${assigneeName},</p>
-          <p><strong>${raisedByName}</strong> has assigned you a snag on project <strong>${projectName}</strong>.</p>
-          <p><strong>Defect:</strong> ${snagTitle}<br>
-          <strong>Priority:</strong> <span style="color:${color};font-weight:700">${priority}</span></p>
-          <a class="btn" href="${link}">View Snag</a>
-        `),
+        html: brandedTemplate({
+          org: null,
+          heading: 'Snag assigned to you',
+          bodyHtml: `<p>Hi ${assigneeName},</p>
+            <p><strong>${raisedByName}</strong> assigned you a snag on <strong>${projectName}</strong>.</p>
+            <p><strong>Defect:</strong> ${snagTitle}<br>
+            <strong>Priority:</strong> <span style="color:${color};font-weight:700">${priority}</span></p>`,
+          ctaLabel: 'View snag',
+          ctaHref: link,
+          fallbackLink: link,
+          siteUrl: SITE_URL,
+        }),
       })
     }
 
@@ -139,14 +127,19 @@ Deno.serve(async (req) => {
       await sendEmail({
         to,
         subject,
-        html: baseTemplate(`
-          <h2>POPIA data subject request</h2>
-          <p><strong>Type:</strong> ${requestTypeLabel}</p>
-          <p><strong>From:</strong> ${requester.name} &lt;${requester.email}&gt;</p>
-          <p><strong>Received:</strong> ${receivedAt}</p>
-          <p style="white-space:pre-wrap;border-left:3px solid #334155;padding-left:12px;font-style:italic">${String(description).replace(/</g, '&lt;')}</p>
-          <p style="font-size:12px;color:#64748B">POPIA §23 / §24 — respond within 30 days. Log this request per the Information Officer procedure.</p>
-        `),
+        html: brandedTemplate({
+          org: null,
+          heading: 'POPIA data subject request',
+          bodyHtml: `<p><strong>Type:</strong> ${requestTypeLabel}</p>
+            <p><strong>From:</strong> ${requester.name} &lt;${requester.email}&gt;</p>
+            <p><strong>Received:</strong> ${receivedAt}</p>
+            <p style="white-space:pre-wrap;border-left:3px solid #E2E5EA;padding-left:12px;font-style:italic">${String(description).replace(/</g, '&lt;')}</p>
+            <p style="font-size:12px;color:#9AA2AF">POPIA §23 / §24 — respond within 30 days. Log this request per the Information Officer procedure.</p>`,
+          ctaLabel: 'Open admin',
+          ctaHref: SITE_URL,
+          fallbackLink: SITE_URL,
+          siteUrl: SITE_URL,
+        }),
       })
     }
 
@@ -157,12 +150,16 @@ Deno.serve(async (req) => {
       await sendEmail({
         to,
         subject: `COC status update: ${siteName} — ${subsectionName}`,
-        html: baseTemplate(`
-          <h2>COC Status Update</h2>
-          <p>Hi ${recipientName},</p>
-          <p>The COC status for <strong>${subsectionName}</strong> on site <strong>${siteName}</strong> has changed to <strong>${statusLabels[newStatus] ?? newStatus}</strong>.</p>
-          <a class="btn" href="${link}">View Compliance</a>
-        `),
+        html: brandedTemplate({
+          org: null,
+          heading: 'COC status update',
+          bodyHtml: `<p>Hi ${recipientName},</p>
+            <p>The COC status for <strong>${subsectionName}</strong> on site <strong>${siteName}</strong> has changed to <strong>${statusLabels[newStatus] ?? newStatus}</strong>.</p>`,
+          ctaLabel: 'View compliance',
+          ctaHref: link,
+          fallbackLink: link,
+          siteUrl: SITE_URL,
+        }),
       })
     }
 
