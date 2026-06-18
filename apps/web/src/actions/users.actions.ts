@@ -19,7 +19,7 @@ import { rateLimit } from '@/lib/rate-limit'
 import { getOrgContext, isOrgAdmin } from '@/lib/auth-org'
 import { logAuthEvent, orgRoleSchema } from '@esite/shared'
 
-type ActionResult = { ok: true; warning?: string } | { ok: false; error: string }
+type ActionResult = { ok: true } | { ok: false; error: string }
 
 const createUserSchema = z.object({
   email:    z.string().email('Enter a valid email address.'),
