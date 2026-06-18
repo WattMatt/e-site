@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 00140 — public.client_site_grants (per-site client access)
+-- Migration 00142 — public.client_site_grants (per-site client access)
 -- =============================================================================
 -- A client's GCR review visibility derives ONLY from this table, NOT from
 -- org-level client_viewer membership (spec D5/§8). One row = one client user may
