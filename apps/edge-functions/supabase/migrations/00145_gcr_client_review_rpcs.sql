@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 00143 — gcr.get_client_review RPC (the ONLY client GCR read path)
+-- Migration 00145 — gcr.get_client_review RPC (the ONLY client GCR read path)
 -- =============================================================================
 -- Returns the latest published review snapshot's outputs-only payload for a
 -- granted client. SECURITY DEFINER so it can read gcr.review_snapshots without
@@ -22,11 +22,15 @@ BEGIN
     RAISE EXCEPTION 'Not authorised to review this site';
   END IF;
 
+  -- Deterministic latest-snapshot selection: if two snapshots share the same
+  -- published_for_client_at (e.g. rapid double-publish), break ties by created_at
+  -- then id so the same row is always returned (matches the client read path and
+  -- the submit-time snapshot pin).
   SELECT rs.payload
     INTO v_payload
   FROM gcr.review_snapshots rs
   WHERE rs.project_id = p_project_id
-  ORDER BY rs.published_for_client_at DESC
+  ORDER BY rs.published_for_client_at DESC, rs.created_at DESC, rs.id DESC
   LIMIT 1;
 
   -- No published snapshot yet -> null (caller renders an empty state).

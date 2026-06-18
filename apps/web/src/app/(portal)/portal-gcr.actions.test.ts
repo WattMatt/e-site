@@ -109,7 +109,9 @@ describe('submitGcrChangeRequestsAction', () => {
   function makeCookieClient(snap: any, insert = vi.fn().mockResolvedValue({ error: null })) {
     const snapMaybeSingle = vi.fn().mockResolvedValue({ data: snap, error: null })
     const snapLimit = vi.fn().mockReturnValue({ maybeSingle: snapMaybeSingle })
-    const snapOrder = vi.fn().mockReturnValue({ limit: snapLimit })
+    // chain: .select().eq().order().order().order().limit().maybeSingle()
+    const snapOrder: any = vi.fn()
+    snapOrder.mockReturnValue({ order: snapOrder, limit: snapLimit })
     const snapEq = vi.fn().mockReturnValue({ order: snapOrder })
     const snapSelect = vi.fn().mockReturnValue({ eq: snapEq })
 

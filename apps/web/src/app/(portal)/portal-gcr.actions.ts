@@ -68,13 +68,17 @@ export async function submitGcrChangeRequestsAction(
 
   const userId = userData.user.id
 
-  // Pin to the latest published snapshot (deterministic order matches the RPC).
+  // Pin to the latest published snapshot. Deterministic tiebreakers mirror the
+  // gcr.get_client_review RPC so the client comments on the exact snapshot they
+  // were served.
   const { data: snap } = await (supabase as any)
     .schema('gcr')
     .from('review_snapshots')
     .select('id, organisation_id')
     .eq('project_id', projectId)
     .order('published_for_client_at', { ascending: false })
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (!snap) return { error: 'No published review to comment on' }
