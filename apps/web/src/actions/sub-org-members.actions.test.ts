@@ -533,4 +533,128 @@ describe('bulkInviteSubOrgMembers', () => {
     }
     expect(revalidatePathMock).toHaveBeenCalledWith(`/settings/sub-organizations/${SUB_ORG_ID}`)
   })
+
+  it('mixed batch: one invite fails on the auth call, one succeeds — loop completes', async () => {
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+    rateLimitMock.mockReturnValueOnce(true)
+
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+    const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const subOrgEqId = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
+    const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
+
+    // existing members query (empty)
+    const existingEqActive = vi.fn().mockResolvedValueOnce({ data: [], error: null })
+    const existingEqOrg = vi.fn().mockReturnValueOnce({ eq: existingEqActive })
+    const existingSelect = vi.fn().mockReturnValueOnce({ eq: existingEqOrg })
+
+    const supabaseFrom = vi.fn()
+      .mockReturnValueOnce({ select: subOrgSelect })
+      .mockReturnValueOnce({ select: existingSelect })
+
+    createClientMock.mockResolvedValueOnce({ from: supabaseFrom })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    // First email's invite fails on the auth call; second succeeds.
+    const inviteUserByEmail = vi.fn()
+      .mockResolvedValueOnce({ data: null, error: { message: 'smtp blew up' } })
+      .mockResolvedValueOnce({ data: { user: { id: '00000000-0000-0000-0000-000000000093' } }, error: null })
+    const deleteUser = vi.fn()
+    // Only the second email reaches the insert.
+    const insertOk = vi.fn().mockResolvedValueOnce({ error: null })
+
+    createServiceClientMock.mockReturnValue({
+      auth: { admin: { inviteUserByEmail, deleteUser } },
+      from: vi.fn().mockReturnValueOnce({ insert: insertOk }),
+    })
+
+    const { bulkInviteSubOrgMembers } = await import('./sub-org-members.actions')
+    const result = await bulkInviteSubOrgMembers({
+      subOrgId: SUB_ORG_ID,
+      emails: ['bad@example.com', 'good@example.com'],
+      role: 'contractor',
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.summary.failed).toBe(1)
+      expect(result.summary.invited).toBe(1)
+      expect(result.details).toHaveLength(2)
+      expect(result.details[0]?.status).toBe('failed')
+      expect(result.details[1]?.status).toBe('invited')
+    }
+    // The failed email never created a user → no rollback delete.
+    expect(deleteUser).not.toHaveBeenCalled()
+  })
+
+  it('existing user whose membership insert fails is NOT deleted (createdHere=false)', async () => {
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+    rateLimitMock.mockReturnValueOnce(true)
+
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+    const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const subOrgEqId = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
+    const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
+
+    const existingEqActive = vi.fn().mockResolvedValueOnce({ data: [], error: null })
+    const existingEqOrg = vi.fn().mockReturnValueOnce({ eq: existingEqActive })
+    const existingSelect = vi.fn().mockReturnValueOnce({ eq: existingEqOrg })
+
+    const supabaseFrom = vi.fn()
+      .mockReturnValueOnce({ select: subOrgSelect })
+      .mockReturnValueOnce({ select: existingSelect })
+
+    createClientMock.mockResolvedValueOnce({ from: supabaseFrom })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    const existingUserId = '00000000-0000-0000-0000-000000000088'
+
+    // invite → collision; profiles look-up resolves existing id (createdHere=false);
+    // user_organisations insert then FAILS.
+    const profilesMaybeSingle = vi.fn().mockResolvedValueOnce({ data: { id: existingUserId }, error: null })
+    const profilesEqEmail     = vi.fn().mockReturnValueOnce({ maybeSingle: profilesMaybeSingle })
+    const profilesSelect      = vi.fn().mockReturnValueOnce({ eq: profilesEqEmail })
+
+    const insertFail = vi.fn().mockResolvedValueOnce({ error: { message: 'membership insert failed' } })
+    const deleteUser = vi.fn()
+
+    createServiceClientMock.mockReturnValue({
+      auth: {
+        admin: {
+          inviteUserByEmail: vi.fn().mockResolvedValueOnce({
+            data: null,
+            error: { message: 'User already registered' },
+          }),
+          deleteUser,
+        },
+      },
+      from: vi.fn()
+        .mockReturnValueOnce({ select: profilesSelect })  // profiles look-up
+        .mockReturnValueOnce({ insert: insertFail }),      // user_organisations insert (fails)
+    })
+
+    const { bulkInviteSubOrgMembers } = await import('./sub-org-members.actions')
+    const result = await bulkInviteSubOrgMembers({
+      subOrgId: SUB_ORG_ID,
+      emails: ['existing@example.com'],
+      role: 'contractor',
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.summary.failed).toBe(1)
+      expect(result.summary.invited).toBe(0)
+      expect(result.summary.added).toBe(0)
+    }
+    // The user pre-existed (createdHere=false) → must NOT be deleted.
+    expect(deleteUser).not.toHaveBeenCalled()
+  })
 })
