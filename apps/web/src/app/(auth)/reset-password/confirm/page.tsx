@@ -8,6 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { updatePasswordSchema, type UpdatePasswordInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { recordAuthEventAction } from '@/actions/auth-event.actions'
+import { markInviteAccepted } from '@/actions/invite-accept.actions'
 import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter'
 import type { PasswordEvaluation } from '@/lib/password-strength'
 import { resolveConfirmFlow } from './confirm-flow'
@@ -75,8 +76,10 @@ export default function ResetPasswordConfirmPage() {
       .catch(() => { /* audit best-effort */ })
 
     if (flow.kind === 'invite') {
-      // Brand-new user: keep the session they just established and land them
-      // in-app rather than bouncing back to /login.
+      // Brand-new user: stamp invite acceptance (accepted_at was NULL at invite
+      // time), then keep the session they just established and land them in-app
+      // rather than bouncing back to /login.
+      await markInviteAccepted().catch(() => { /* audit best-effort */ })
       router.replace(flow.redirectTo)
       return
     }

@@ -221,9 +221,9 @@ export async function bulkAddOrInviteProjectMembers(
         user_id: newUserId,
         organisation_id: orgId,
         role: orgRoleForNewUsers,
-        is_active: true,
+        is_active: true,            // access is gated on is_active, not accepted_at
         invited_by: ctx.userId,
-        accepted_at: new Date().toISOString(),
+        accepted_at: null,          // stamped when the invitee actually accepts
       })
       if (memErr) {
         // Roll back the orphaned auth user only if we just created them.

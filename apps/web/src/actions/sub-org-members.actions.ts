@@ -237,9 +237,9 @@ export async function addSubOrgMember(
       user_id:         newUserId,
       organisation_id: subOrgId,
       role,
-      is_active:       true,
+      is_active:       true,            // access is gated on is_active, not accepted_at
       invited_by:      ctx.userId,
-      accepted_at:     new Date().toISOString(),
+      accepted_at:     null,            // stamped when the invitee actually accepts
     })
     .select('id, user_id, organisation_id, role, is_active, created_at, profiles!user_organisations_user_id_fkey(full_name, email)')
     .single()
@@ -509,9 +509,9 @@ export async function bulkInviteSubOrgMembers(
           user_id:         newUserId,
           organisation_id: parsed.data.subOrgId,
           role,
-          is_active:       true,
+          is_active:       true,            // access is gated on is_active, not accepted_at
           invited_by:      ctx.userId,
-          accepted_at:     new Date().toISOString(),
+          accepted_at:     null,            // stamped when the invitee actually accepts
         })
 
       if (memErr) {
