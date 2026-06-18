@@ -54,6 +54,24 @@ describe('createUserAction invite', () => {
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ user_id: NEW_ID, organisation_id: ORG_ID, role: 'inspector' }))
   })
 
+  it('rejects a client_viewer invite before any auth/DB write', async () => {
+    const inviteUserByEmail = vi.fn()
+    const insert = vi.fn()
+    createServiceClientMock.mockReturnValue({
+      auth: { admin: { inviteUserByEmail, deleteUser: vi.fn() } },
+      from: vi.fn().mockReturnValue({ insert }),
+    })
+
+    const { createUserAction } = await import('./users.actions')
+    const res = await createUserAction({ email: 'client@example.com', fullName: 'Client Person', role: 'client_viewer' })
+
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error).toMatch(/per-site/i)
+    // No auth user provisioned and no user_organisations row written.
+    expect(inviteUserByEmail).not.toHaveBeenCalled()
+    expect(insert).not.toHaveBeenCalled()
+  })
+
   it('returns a friendly error when the email already exists', async () => {
     const inviteUserByEmail = vi.fn().mockResolvedValue({ data: null, error: { message: 'User already registered' } })
     createServiceClientMock.mockReturnValue({

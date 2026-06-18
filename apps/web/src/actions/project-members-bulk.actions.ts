@@ -29,7 +29,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { requireRole } from '@/lib/auth/require-role'
 import { getOrgContext } from '@/lib/auth-org'
-import { ORG_WRITE_ROLES, logAuthEvent } from '@esite/shared'
+import { ORG_WRITE_ROLES, logAuthEvent, isPerSiteOnlyRole, PER_SITE_INVITE_REJECTION } from '@esite/shared'
 
 const PROJECT_MEMBER_ROLES = [
   'project_manager',
@@ -170,6 +170,18 @@ export async function bulkAddOrInviteProjectMembers(
         }
         added++
         details.push({ email, status: 'added' })
+        continue
+      }
+
+      // A new user would be provisioned as an ORG member with orgRoleForNewUsers.
+      // Per-site (client) roles must never become an org membership — that would
+      // expose every project in the org via org RLS. Reject before any auth/DB
+      // write; record as a per-row failure rather than aborting the batch.
+      // (Existing org users are only added to project_members above, which is
+      // per-site and therefore allowed.)
+      if (isPerSiteOnlyRole(orgRoleForNewUsers)) {
+        failed++
+        details.push({ email, status: 'failed', reason: PER_SITE_INVITE_REJECTION })
         continue
       }
 

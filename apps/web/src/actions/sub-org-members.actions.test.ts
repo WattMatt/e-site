@@ -152,6 +152,47 @@ describe('addSubOrgMember', () => {
     if (!result.ok) expect(result.error).toMatch(/email/i)
   })
 
+  it('rejects a client_viewer invite before any auth/DB write', async () => {
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+    rateLimitMock.mockReturnValueOnce(true)
+
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+    const maybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const eqId = vi.fn().mockReturnValueOnce({ maybeSingle })
+    const select = vi.fn().mockReturnValueOnce({ eq: eqId })
+    const from = vi.fn().mockReturnValueOnce({ select })
+    createClientMock.mockResolvedValueOnce({ from })
+
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    // The action rejects before reaching the service client, so we must NOT
+    // queue an unconsumed mockReturnValueOnce here (it would leak into the next
+    // test — vi.clearAllMocks does not flush queued Once implementations).
+    const inviteUserByEmail = vi.fn()
+    const insertFn = vi.fn()
+    createServiceClientMock.mockReturnValue({
+      auth: { admin: { inviteUserByEmail, deleteUser: vi.fn() } },
+      from: vi.fn().mockReturnValue({ insert: insertFn }),
+    })
+
+    const { addSubOrgMember } = await import('./sub-org-members.actions')
+    const result = await addSubOrgMember(SUB_ORG_ID, {
+      email: 'client@example.com',
+      fullName: 'Client Person',
+      role: 'client_viewer',
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/per-site/i)
+    // No auth user provisioned and no membership row written.
+    expect(inviteUserByEmail).not.toHaveBeenCalled()
+    expect(insertFn).not.toHaveBeenCalled()
+  })
+
   it('provisions a new user and inserts membership into sub-org', async () => {
     getOrgContextMock.mockResolvedValueOnce({
       userId: USER_ID,
@@ -532,6 +573,57 @@ describe('bulkInviteSubOrgMembers', () => {
       expect(result.details[1]?.status).toBe('invited')
     }
     expect(revalidatePathMock).toHaveBeenCalledWith(`/settings/sub-organizations/${SUB_ORG_ID}`)
+  })
+
+  it('rejects every row when the batch role is client_viewer (per-row failure, no invites)', async () => {
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+    rateLimitMock.mockReturnValueOnce(true)
+
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+    const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const subOrgEqId = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
+    const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
+
+    const existingEqActive = vi.fn().mockResolvedValueOnce({ data: [], error: null })
+    const existingEqOrg = vi.fn().mockReturnValueOnce({ eq: existingEqActive })
+    const existingSelect = vi.fn().mockReturnValueOnce({ eq: existingEqOrg })
+
+    const supabaseFrom = vi.fn()
+      .mockReturnValueOnce({ select: subOrgSelect })
+      .mockReturnValueOnce({ select: existingSelect })
+
+    createClientMock.mockResolvedValueOnce({ from: supabaseFrom })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    const inviteUserByEmail = vi.fn()
+    const insertFn = vi.fn()
+    createServiceClientMock.mockReturnValue({
+      auth: { admin: { inviteUserByEmail, deleteUser: vi.fn() } },
+      from: vi.fn().mockReturnValue({ insert: insertFn }),
+    })
+
+    const { bulkInviteSubOrgMembers } = await import('./sub-org-members.actions')
+    const result = await bulkInviteSubOrgMembers({
+      subOrgId: SUB_ORG_ID,
+      emails: ['a@example.com', 'b@example.com'],
+      role: 'client_viewer',
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.summary.failed).toBe(2)
+      expect(result.summary.invited).toBe(0)
+      expect(result.details).toHaveLength(2)
+      expect(result.details.every((d) => d.status === 'failed')).toBe(true)
+      expect(result.details[0]?.reason).toMatch(/per-site/i)
+    }
+    // No auth users provisioned and no membership rows written.
+    expect(inviteUserByEmail).not.toHaveBeenCalled()
+    expect(insertFn).not.toHaveBeenCalled()
   })
 
   it('mixed batch: one invite fails on the auth call, one succeeds — loop completes', async () => {

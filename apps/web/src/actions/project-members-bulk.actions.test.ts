@@ -332,6 +332,90 @@ describe('bulkAddOrInviteProjectMembers', () => {
     expect(deleteUser).not.toHaveBeenCalled()
   })
 
+  it('rejects a NEW-user client_viewer invite per-row (no auth user, no org row)', async () => {
+    createClientMock.mockResolvedValue(
+      makeCookieClient({ project: { organisation_id: ORG_ID, name: 'Kingswalk Mall' } }),
+    )
+
+    const inviteUserByEmail = vi.fn()
+    const uoInsert = vi.fn()
+    const pmInsert = vi.fn()
+
+    createServiceClientMock.mockReturnValue({
+      auth: { admin: { inviteUserByEmail, deleteUser: vi.fn() } },
+      from: vi.fn().mockReturnValue({ insert: uoInsert }),
+      schema: vi.fn().mockReturnValue({ from: vi.fn().mockReturnValue({ insert: pmInsert }) }),
+    })
+
+    const { bulkAddOrInviteProjectMembers } = await import('./project-members-bulk.actions')
+    const result = await bulkAddOrInviteProjectMembers({
+      projectId: PROJECT_ID,
+      emails: ['client@example.com'],
+      projectRole: 'client_viewer',
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.summary.failed).toBe(1)
+      expect(result.summary.invited).toBe(0)
+      expect(result.details[0]?.status).toBe('failed')
+      expect(result.details[0]?.reason).toMatch(/per-site/i)
+    }
+    // No invite (auth user) and no user_organisations org-membership write.
+    expect(inviteUserByEmail).not.toHaveBeenCalled()
+    expect(uoInsert).not.toHaveBeenCalled()
+  })
+
+  it('still adds an EXISTING org user to a project as client_viewer (per-site is allowed)', async () => {
+    const cookie = makeCookieClient({
+      project: { organisation_id: ORG_ID, name: 'Kingswalk Mall' },
+      orgUsers: [{ user_id: 'u-existing', role: 'contractor', profiles: { email: 'existing@example.com' } }],
+    })
+    const cookiePmInsert = vi.fn().mockResolvedValue({ error: null })
+    cookie.schema = vi.fn().mockImplementation(() => ({
+      from: (table: string) =>
+        table === 'projects'
+          ? {
+              select: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { organisation_id: ORG_ID, name: 'Kingswalk Mall' },
+                    error: null,
+                  }),
+                }),
+              }),
+            }
+          : {
+              select: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: [], error: null }) }),
+              insert: cookiePmInsert,
+            },
+    }))
+    createClientMock.mockResolvedValue(cookie)
+
+    const inviteUserByEmail = vi.fn()
+    createServiceClientMock.mockReturnValue({
+      auth: { admin: { inviteUserByEmail, deleteUser: vi.fn() } },
+      from: vi.fn(),
+      schema: vi.fn(),
+    })
+
+    const { bulkAddOrInviteProjectMembers } = await import('./project-members-bulk.actions')
+    const result = await bulkAddOrInviteProjectMembers({
+      projectId: PROJECT_ID,
+      emails: ['existing@example.com'],
+      projectRole: 'client_viewer',
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.summary.added).toBe(1)
+      expect(result.details[0]?.status).toBe('added')
+    }
+    // No invite — existing user added per-site only.
+    expect(inviteUserByEmail).not.toHaveBeenCalled()
+    expect(cookiePmInsert).toHaveBeenCalledWith(expect.objectContaining({ user_id: 'u-existing', role: 'client_viewer' }))
+  })
+
   it('rolls back the orphaned auth user when the membership insert fails', async () => {
     createClientMock.mockResolvedValue(
       makeCookieClient({ project: { organisation_id: ORG_ID, name: 'Kingswalk Mall' } }),

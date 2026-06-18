@@ -19,7 +19,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { getOrgContext } from '@/lib/auth-org'
 import { requireRole } from '@/lib/auth/require-role'
-import { ORG_WRITE_ROLES, logAuthEvent } from '@esite/shared'
+import { ORG_WRITE_ROLES, logAuthEvent, isPerSiteOnlyRole, PER_SITE_INVITE_REJECTION } from '@esite/shared'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -185,6 +185,12 @@ export async function addSubOrgMember(
   }
   const { fullName, role } = parsed.data
   const email = parsed.data.email.trim().toLowerCase()
+
+  // Per-site (client) roles must never become an org membership — reject before
+  // any auth/DB write (client access is granted per-site, not via an invite).
+  if (isPerSiteOnlyRole(role)) {
+    return { ok: false, error: PER_SITE_INVITE_REJECTION }
+  }
 
   const service = createServiceClient()
 
@@ -438,6 +444,15 @@ export async function bulkInviteSubOrgMembers(
 
   for (const email of emails) {
     try {
+      // Per-site (client) roles must never become an org membership. The role is
+      // batch-wide, so every row fails with the same reason — recorded per-row
+      // rather than aborting the batch.
+      if (isPerSiteOnlyRole(role)) {
+        failed++
+        details.push({ email, status: 'failed', reason: PER_SITE_INVITE_REJECTION })
+        continue
+      }
+
       // Already active in sub-org.
       if (inSubOrgByEmail.has(email)) {
         skipped++

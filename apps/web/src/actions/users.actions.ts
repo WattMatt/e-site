@@ -17,7 +17,7 @@ import { z } from 'zod'
 import { createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { getOrgContext, isOrgAdmin } from '@/lib/auth-org'
-import { logAuthEvent, orgRoleSchema } from '@esite/shared'
+import { logAuthEvent, orgRoleSchema, isPerSiteOnlyRole, PER_SITE_INVITE_REJECTION } from '@esite/shared'
 
 type ActionResult = { ok: true } | { ok: false; error: string }
 
@@ -62,6 +62,12 @@ export async function createUserAction(input: {
 
   if (role === 'owner') {
     return { ok: false, error: 'The owner role cannot be assigned at creation. Add the user, then transfer ownership.' }
+  }
+
+  // Per-site (client) roles must never become an org membership — an org row
+  // exposes every project in the org via org RLS. Reject before any write.
+  if (isPerSiteOnlyRole(role)) {
+    return { ok: false, error: PER_SITE_INVITE_REJECTION }
   }
 
   const service = createServiceClient()
