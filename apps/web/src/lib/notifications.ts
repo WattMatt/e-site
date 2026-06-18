@@ -54,3 +54,36 @@ export async function dispatchNotification({
     // Notification failure must never propagate.
   }
 }
+
+/**
+ * Best-effort transactional email dispatch via the `send-email` Edge Function.
+ *
+ * MUST be service-role: send-email rejects every non-public `type` unless the
+ * caller's JWT role is `service_role` (send-email/index.ts). Invoking via the
+ * cookie/user client therefore 403s and the email silently never sends. This
+ * helper sets `Authorization: Bearer <SERVICE_ROLE_KEY>` directly — mirroring
+ * dispatchNotification — so internal email types actually reach Resend.
+ *
+ * Same never-throw contract: email failure must never propagate to the action.
+ */
+export async function dispatchEmail(
+  type: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!supabaseUrl || !serviceKey) return
+
+    await fetch(`${supabaseUrl}/functions/v1/send-email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ type, payload }),
+    }).catch(() => {/* non-blocking */})
+  } catch {
+    // Email failure must never propagate.
+  }
+}

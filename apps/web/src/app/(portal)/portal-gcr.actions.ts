@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { dispatchNotification } from '@/lib/notifications'
+import { dispatchNotification, dispatchEmail } from '@/lib/notifications'
 import {
   ORG_WRITE_ROLES,
   type ClientGcrReviewPayload,
@@ -137,14 +137,11 @@ export async function submitGcrChangeRequestsAction(
         .filter((e): e is string => Boolean(e))
 
       if (to.length > 0) {
-        await supabase.functions
-          .invoke('send-email', {
-            body: {
-              type: 'gcr-client-request',
-              payload: { to, projectId, requestCount: rows.length },
-            },
-          })
-          .catch(() => {/* email failure must never block submit */})
+        // Service-role dispatch: send-email rejects this non-public type for the
+        // cookie client (403). dispatchEmail uses the service key, never throws.
+        await dispatchEmail('gcr-client-request', {
+          to, projectId, requestCount: rows.length,
+        })
       }
     }
   } catch {

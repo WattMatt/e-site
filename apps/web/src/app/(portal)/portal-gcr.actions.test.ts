@@ -5,12 +5,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const createClientMock = vi.fn()
 const createServiceClientMock = vi.fn()
 const dispatchNotificationMock = vi.fn()
+const dispatchEmailMock = vi.fn()
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: createClientMock,
   createServiceClient: createServiceClientMock,
 }))
-vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificationMock }))
+vi.mock('@/lib/notifications', () => ({
+  dispatchNotification: dispatchNotificationMock,
+  dispatchEmail: dispatchEmailMock,
+}))
 
 // ─── IDs ──────────────────────────────────────────────────────────────────────
 
@@ -26,6 +30,9 @@ const userAuth = (id: string | null) => ({
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  // dispatchEmail reads these to build the service-role fetch.
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://proj.supabase.co'
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key'
 })
 
 // ─── getClientSitesAction ────────────────────────────────────────────────────
@@ -172,7 +179,7 @@ describe('submitGcrChangeRequestsAction', () => {
     )
   })
 
-  it('emails the admins via send-email with resolved recipients', async () => {
+  it('emails the admins via the service-role dispatchEmail (not the cookie client)', async () => {
     const cookie = makeCookieClient({ id: SNAP_ID, organisation_id: 'org1' })
     createClientMock.mockResolvedValue(cookie)
     createServiceClientMock.mockReturnValue(makeServiceClient(
@@ -184,12 +191,13 @@ describe('submitGcrChangeRequestsAction', () => {
     await submitGcrChangeRequestsAction(PROJECT_ID, [
       { nodeId: NODE_ID, field: 'participation', oldValue: 'shared', newValue: 'own', comment: null },
     ])
-    expect(cookie.functions.invoke).toHaveBeenCalledWith('send-email', {
-      body: expect.objectContaining({
-        type: 'gcr-client-request',
-        payload: expect.objectContaining({ to: ['pm@x.com'], projectId: PROJECT_ID, requestCount: 1 }),
-      }),
-    })
+    // CRITICAL: the branded email must go out via the service-role helper, NOT
+    // the cookie client (send-email 403s non-public types for non-service_role).
+    expect(dispatchEmailMock).toHaveBeenCalledWith(
+      'gcr-client-request',
+      expect.objectContaining({ to: ['pm@x.com'], projectId: PROJECT_ID, requestCount: 1 }),
+    )
+    expect(cookie.functions.invoke).not.toHaveBeenCalled()
   })
 
   it('errors when no snapshot has been published', async () => {
@@ -217,5 +225,31 @@ describe('submitGcrChangeRequestsAction', () => {
       { nodeId: NODE_ID, field: 'participation', oldValue: 'shared', newValue: 'own', comment: null },
     ])
     expect('error' in res).toBe(true)
+  })
+})
+
+// ─── dispatchEmail (real helper) ─────────────────────────────────────────────
+// Proves the email mechanism hits send-email with the SERVICE-ROLE bearer token
+// — the whole point of Fix 1. Imports the actual module (bypassing the mock).
+
+describe('dispatchEmail (service-role mechanism)', () => {
+  it('POSTs to send-email with the service-role bearer header', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const actual = await vi.importActual<typeof import('@/lib/notifications')>('@/lib/notifications')
+    await actual.dispatchEmail('gcr-client-request', { to: ['pm@x.com'], projectId: PROJECT_ID, requestCount: 1 })
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchSpy.mock.calls[0]
+    expect(url).toBe('https://proj.supabase.co/functions/v1/send-email')
+    expect(init.method).toBe('POST')
+    expect(init.headers.Authorization).toBe('Bearer service-role-key')
+    expect(JSON.parse(init.body)).toEqual({
+      type: 'gcr-client-request',
+      payload: { to: ['pm@x.com'], projectId: PROJECT_ID, requestCount: 1 },
+    })
+
+    vi.unstubAllGlobals()
   })
 })

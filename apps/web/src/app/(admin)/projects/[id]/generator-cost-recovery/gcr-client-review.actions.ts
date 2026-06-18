@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
-import { dispatchNotification } from '@/lib/notifications'
+import { dispatchNotification, dispatchEmail } from '@/lib/notifications'
 import {
   ORG_WRITE_ROLES,
   COST_VIEW_ROLES,
@@ -367,20 +367,15 @@ export async function actionGcrChangeRequestAction(
       .maybeSingle()
     const to = profile?.email as string | undefined
     if (to) {
-      await supabase.functions
-        .invoke('send-email', {
-          body: {
-            type: 'gcr-request-actioned',
-            payload: {
-              to,
-              projectId,
-              status,
-              field: req.field,
-              reply: args.reply ?? null,
-            },
-          },
-        })
-        .catch(() => {/* email failure must never block the action */})
+      // Service-role dispatch: send-email rejects this non-public type for the
+      // cookie client (403). dispatchEmail uses the service key, never throws.
+      await dispatchEmail('gcr-request-actioned', {
+        to,
+        projectId,
+        status,
+        field: req.field,
+        reply: args.reply ?? null,
+      })
     }
   } catch {
     /* email is best-effort */

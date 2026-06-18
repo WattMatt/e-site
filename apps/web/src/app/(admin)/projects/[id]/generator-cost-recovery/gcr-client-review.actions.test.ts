@@ -7,6 +7,7 @@ const createServiceClientMock = vi.fn()
 const revalidatePathMock = vi.fn()
 const requireRoleMock = vi.fn()
 const dispatchNotificationMock = vi.fn()
+const dispatchEmailMock = vi.fn()
 const loadGcrConfigActionMock = vi.fn()
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -15,7 +16,10 @@ vi.mock('@/lib/supabase/server', () => ({
 }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
 vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
-vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificationMock }))
+vi.mock('@/lib/notifications', () => ({
+  dispatchNotification: dispatchNotificationMock,
+  dispatchEmail: dispatchEmailMock,
+}))
 vi.mock('./gcr.actions', () => ({ loadGcrConfigAction: loadGcrConfigActionMock }))
 
 // ─── IDs ──────────────────────────────────────────────────────────────────────
@@ -358,6 +362,29 @@ describe('actionGcrChangeRequestAction', () => {
     expect(rpc).not.toHaveBeenCalled()
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ status: 'declined', admin_reply: 'Not feasible' }))
     expect(dispatchNotificationMock).toHaveBeenCalled()
+  })
+
+  it('emails the client via the service-role dispatchEmail (not the cookie client)', async () => {
+    const { schema, fromPublic } = makeChain({
+      id: REQ_ID, project_id: PROJECT_ID, organisation_id: ORG_ID, node_id: NODE_ID,
+      client_id: CLIENT_ID, field: 'participation', new_value: 'own', status: 'open',
+    })
+    const cookie = {
+      schema, from: fromPublic, ...noFunctions,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'admin1' } } }) },
+    }
+    createClientMock.mockResolvedValue(cookie)
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { actionGcrChangeRequestAction } = await import('./gcr-client-review.actions')
+    await actionGcrChangeRequestAction(PROJECT_ID, REQ_ID, { decision: 'accept' })
+    // CRITICAL: branded client email must dispatch via the service-role helper,
+    // never the cookie client (send-email 403s non-public types otherwise).
+    expect(dispatchEmailMock).toHaveBeenCalledWith(
+      'gcr-request-actioned',
+      expect.objectContaining({ to: 'client@x.com', projectId: PROJECT_ID, status: 'accepted', field: 'participation' }),
+    )
+    expect(cookie.functions.invoke).not.toHaveBeenCalled()
   })
 
   it('reply: sets admin_reply without changing status, no RPC', async () => {
