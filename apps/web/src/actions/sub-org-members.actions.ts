@@ -75,8 +75,9 @@ function bustSubOrg(subOrgId: string): void {
 // ─── Task 1: listSubOrgMembers ────────────────────────────────────────────────
 
 /**
- * Returns active user_organisations rows on the sub-org, joined with profile
- * (full_name + email).
+ * Returns user_organisations rows on the sub-org (active AND inactive), joined
+ * with profile (full_name + email). Active members are returned first so the UI
+ * can render them above the deactivated ones (which carry a Reactivate action).
  */
 export async function listSubOrgMembers(
   subOrgId: string,
@@ -105,7 +106,8 @@ export async function listSubOrgMembers(
     .from('user_organisations')
     .select('id, user_id, organisation_id, role, is_active, created_at, profiles!user_organisations_user_id_fkey(full_name, email)')
     .eq('organisation_id', subOrgId)
-    .eq('is_active', true)
+    .order('is_active', { ascending: false })
+    .order('created_at', { ascending: true })
   if (error) return { ok: false, error: error.message }
 
   const members: SubOrgMember[] = ((data ?? []) as Array<{
@@ -339,6 +341,54 @@ export async function removeSubOrgMember(
   const { error: updateErr } = await (supabase as any)
     .from('user_organisations')
     .update({ is_active: false })
+    .eq('id', memberId)
+  if (updateErr) return { ok: false, error: updateErr.message }
+
+  bustSubOrg(subOrgId)
+  return { ok: true }
+}
+
+// ─── Task 3b: reactivateSubOrgMember ──────────────────────────────────────────
+
+/**
+ * Re-activate a soft-deactivated sub-org membership (is_active=false → true).
+ * The mirror of removeSubOrgMember. Gate: caller must be ORG_WRITE_ROLES on the
+ * sub-org's parent org.
+ */
+export async function reactivateSubOrgMember(
+  memberId: string,
+): Promise<{ ok: true } | ActionErr> {
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+
+  if (!uuidSchema.safeParse(memberId).success) {
+    return { ok: false, error: 'Invalid member id.' }
+  }
+
+  const supabase = await createClient()
+
+  const { data: memberRow, error: memberErr } = await (supabase as any)
+    .from('user_organisations')
+    .select('id, user_id, organisation_id, role, is_active')
+    .eq('id', memberId)
+    .maybeSingle()
+  if (memberErr) return { ok: false, error: memberErr.message }
+  if (!memberRow) return { ok: false, error: 'Member not found.' }
+
+  const subOrgId = (memberRow as { organisation_id: string }).organisation_id
+
+  const subOrg = await resolveSubOrg(supabase, subOrgId)
+  if (!subOrg) return { ok: false, error: 'This membership does not belong to a sub-organisation.' }
+  if (!subOrg.parent_organisation_id) {
+    return { ok: false, error: 'Sub-organisation has been claimed and is no longer managed by you.' }
+  }
+
+  const guard = await requireRole(supabase, subOrg.parent_organisation_id, ORG_WRITE_ROLES)
+  if (!guard.ok) return { ok: false, error: guard.error }
+
+  const { error: updateErr } = await (supabase as any)
+    .from('user_organisations')
+    .update({ is_active: true })
     .eq('id', memberId)
   if (updateErr) return { ok: false, error: updateErr.message }
 

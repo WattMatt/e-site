@@ -79,9 +79,11 @@ describe('listSubOrgMembers', () => {
     const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
     const fromOrgs = vi.fn().mockReturnValueOnce({ select: subOrgSelect })
 
-    // Second from() call: resolve members
-    const membersEqActive = vi.fn().mockResolvedValueOnce({ data: [memberRow], error: null })
-    const membersEqOrg = vi.fn().mockReturnValueOnce({ eq: membersEqActive })
+    // Second from() call: resolve members — now includes inactive rows, ordered
+    // by is_active DESC then created_at ASC (no is_active filter).
+    const membersOrderCreated = vi.fn().mockResolvedValueOnce({ data: [memberRow], error: null })
+    const membersOrderActive = vi.fn().mockReturnValueOnce({ order: membersOrderCreated })
+    const membersEqOrg = vi.fn().mockReturnValueOnce({ order: membersOrderActive })
     const membersSelect = vi.fn().mockReturnValueOnce({ eq: membersEqOrg })
     const fromMembers = vi.fn().mockReturnValueOnce({ select: membersSelect })
 
@@ -481,6 +483,88 @@ describe('removeSubOrgMember', () => {
     expect(update).toHaveBeenCalledWith({ is_active: false })
     expect(updateEqId).toHaveBeenCalledWith('id', MEMBER_ROW_ID)
     expect(revalidatePathMock).toHaveBeenCalledWith(`/settings/sub-organizations/${SUB_ORG_ID}`)
+  })
+})
+
+// ─── Task 3b: reactivateSubOrgMember ──────────────────────────────────────────
+
+describe('reactivateSubOrgMember', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+  })
+
+  it('returns ok:false when not authenticated', async () => {
+    getOrgContextMock.mockResolvedValueOnce(null)
+    const { reactivateSubOrgMember } = await import('./sub-org-members.actions')
+    const result = await reactivateSubOrgMember(MEMBER_ROW_ID)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/Not authenticated/i)
+  })
+
+  it('sets is_active=true on the member row (reactivate)', async () => {
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+
+    const memberRow = {
+      id: MEMBER_ROW_ID,
+      user_id: USER_ID,
+      organisation_id: SUB_ORG_ID,
+      role: 'contractor',
+      is_active: false,
+    }
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+
+    const memberMaybeSingle = vi.fn().mockResolvedValueOnce({ data: memberRow, error: null })
+    const memberEqId = vi.fn().mockReturnValueOnce({ maybeSingle: memberMaybeSingle })
+    const memberSelect = vi.fn().mockReturnValueOnce({ eq: memberEqId })
+
+    const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const subOrgEqId = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
+    const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
+
+    const updateEqId = vi.fn().mockResolvedValueOnce({ error: null })
+    const update = vi.fn().mockReturnValueOnce({ eq: updateEqId })
+
+    const from = vi.fn()
+      .mockReturnValueOnce({ select: memberSelect })   // fetch member
+      .mockReturnValueOnce({ select: subOrgSelect })   // fetch sub-org to verify parent
+      .mockReturnValueOnce({ update })                 // update is_active=true
+
+    createClientMock.mockResolvedValueOnce({ from })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    const { reactivateSubOrgMember } = await import('./sub-org-members.actions')
+    const result = await reactivateSubOrgMember(MEMBER_ROW_ID)
+
+    expect(result.ok).toBe(true)
+    expect(update).toHaveBeenCalledWith({ is_active: true })
+    expect(updateEqId).toHaveBeenCalledWith('id', MEMBER_ROW_ID)
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/settings/sub-organizations/${SUB_ORG_ID}`)
+  })
+
+  it('rejects when the member row does not exist', async () => {
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+
+    const memberMaybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null })
+    const memberEqId = vi.fn().mockReturnValueOnce({ maybeSingle: memberMaybeSingle })
+    const memberSelect = vi.fn().mockReturnValueOnce({ eq: memberEqId })
+    const from = vi.fn().mockReturnValueOnce({ select: memberSelect })
+
+    createClientMock.mockResolvedValueOnce({ from })
+
+    const { reactivateSubOrgMember } = await import('./sub-org-members.actions')
+    const result = await reactivateSubOrgMember(MEMBER_ROW_ID)
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/not found/i)
   })
 })
 
