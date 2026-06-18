@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button'
 import {
   addSubOrgMember,
   removeSubOrgMember,
+  reactivateSubOrgMember,
   getProjectMembershipsForUser,
   type SubOrgMember,
 } from '@/actions/sub-org-members.actions'
@@ -67,7 +68,9 @@ export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpe
   const [formError, setFormError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  const activeCount = initialMembers.length
+  const activeMembers = initialMembers.filter((m) => m.is_active)
+  const inactiveMembers = initialMembers.filter((m) => !m.is_active)
+  const activeCount = activeMembers.length
 
   function showToast(msg: string) {
     setToast(msg)
@@ -129,6 +132,18 @@ export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpe
         alert(result.error)
         return
       }
+      router.refresh()
+    })
+  }
+
+  function handleReactivate(member: SubOrgMember) {
+    startTransition(async () => {
+      const result = await reactivateSubOrgMember(member.id)
+      if (!result.ok) {
+        alert(result.error)
+        return
+      }
+      showToast('Member reactivated.')
       router.refresh()
     })
   }
@@ -248,8 +263,8 @@ export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpe
         </div>
       )}
 
-      {/* Member rows */}
-      {initialMembers.map((member) => (
+      {/* Active member rows */}
+      {activeMembers.map((member) => (
         <div
           key={member.id}
           style={{
@@ -298,6 +313,60 @@ export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpe
           </Button>
         </div>
       ))}
+
+      {/* Deactivated members — reactivatable */}
+      {inactiveMembers.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <p style={{ ...labelStyle, marginBottom: 8 }}>Deactivated</p>
+          {inactiveMembers.map((member) => (
+            <div
+              key={member.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '12px 0',
+                borderTop: '1px solid var(--c-border)',
+                flexWrap: 'wrap',
+                opacity: 0.6,
+              }}
+            >
+              <div style={{
+                width: 32, height: 32, borderRadius: '50%',
+                background: 'var(--c-elevated)',
+                border: '1px solid var(--c-border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: 'var(--font-mono)', fontSize: 12,
+                color: 'var(--c-text-mid)',
+                flexShrink: 0,
+              }}>
+                {(member.full_name ?? member.email ?? '?')[0].toUpperCase()}
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 13, color: 'var(--c-text)', fontWeight: 500, margin: 0 }}>
+                  {member.full_name ?? '(no name)'}
+                </p>
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', margin: 0 }}>
+                  {member.email ?? '—'}
+                </p>
+              </div>
+
+              <span className={ROLE_BADGE[member.role] ?? 'badge badge-muted'}>
+                {member.role.replace(/_/g, ' ')}
+              </span>
+              <span className="badge badge-muted">inactive</span>
+
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleReactivate(member)}
+                disabled={isPending}
+              >
+                Reactivate
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
