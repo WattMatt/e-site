@@ -87,6 +87,17 @@ Deno.serve(async (req) => {
     })
   }
 
+  // Fail fast on misconfiguration: an empty hook secret would make
+  // verifyHookSignature reject EVERY request (a silent 401 for all auth mail).
+  // Surface it as a loud 500 so the operator fixes the env var, not the inbox.
+  if (!HOOK_SECRET) {
+    console.error('auth-email-hook: SEND_EMAIL_HOOK_SECRET is unset — refusing to process auth emails')
+    return new Response(
+      JSON.stringify({ error: { http_code: 500, message: 'Hook secret not configured' } }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    )
+  }
+
   // Must read the RAW body for signature verification — re-stringifying changes bytes.
   const rawBody = await req.text()
   const headers = {

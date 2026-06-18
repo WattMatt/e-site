@@ -68,4 +68,22 @@ describe('buildAuthEmail', () => {
     expect(out.subject).toMatch(/invited/i)
     expect(out.html).toContain(`${SITE}/accept-invite?token_hash=HASH&type=invite`)
   })
+
+  it('HTML-escapes a hostile token before rendering the OTP code block', () => {
+    const out = buildAuthEmail(
+      payload({ email_action_type: 'recovery', token: '<img src=x onerror=alert(1)>' }),
+      { siteUrl: SITE, org: null },
+    )
+    expect(out.html).not.toContain('<img src=x onerror=alert(1)>')
+    expect(out.html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  })
+
+  it('throws on an unknown email_action_type (exhaustiveness guard)', () => {
+    expect(() =>
+      buildAuthEmail(
+        payload({ email_action_type: 'bogus' as AuthHookPayload['email_data']['email_action_type'] }),
+        { siteUrl: SITE, org: null },
+      ),
+    ).toThrow(/Unsupported email_action_type/i)
+  })
 })

@@ -2,6 +2,7 @@
 // Replaces the dark baseTemplate. Inline CSS only (email clients strip <style>).
 
 import type { OrgBranding } from '../auth-email/types.ts'
+import { PLATFORM_NAME } from '../auth-email/types.ts'
 
 export interface BrandedTemplateVars {
   heading: string
@@ -47,9 +48,9 @@ export function brandedTemplate(v: BrandedTemplateVars): string {
     const mark = v.org.logoSrc
       ? `<img src="${v.org.logoSrc}" alt="${escape(v.org.name)}" style="max-height:36px;max-width:180px;display:block">`
       : `<span style="font-size:18px;font-weight:700;color:${PALETTE.text}">${escape(v.org.name)}</span>`
-    header = `${mark}<div style="margin-top:6px;font-size:11px;letter-spacing:0.08em;color:${PALETTE.textDim};text-transform:uppercase">via E-Site</div>`
+    header = `${mark}<div style="margin-top:6px;font-size:11px;letter-spacing:0.08em;color:${PALETTE.textDim};text-transform:uppercase">via ${escape(PLATFORM_NAME)}</div>`
   } else {
-    header = `<span style="font-size:18px;font-weight:700;letter-spacing:0.04em;color:${accent}">E-Site</span>`
+    header = `<span style="font-size:18px;font-weight:700;letter-spacing:0.04em;color:${accent}">${escape(PLATFORM_NAME)}</span>`
   }
 
   const expiry = v.expiryLabel
@@ -79,7 +80,7 @@ export function brandedTemplate(v: BrandedTemplateVars): string {
     </p>
   </td></tr>
   <tr><td style="padding:20px 4px 0;font-size:11px;color:${PALETTE.textDim};line-height:1.5">
-    E-Site · Construction management for SA electrical contractors.<br>
+    ${escape(PLATFORM_NAME)} · Construction management for SA electrical contractors.<br>
     <a href="${siteUrl}" style="color:${PALETTE.textMid};text-decoration:underline">app.e-site.live</a>
   </td></tr>
 </table>

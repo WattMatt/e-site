@@ -7,9 +7,6 @@ export interface AuthHookPayload {
     redirect_to: string
     email_action_type: 'signup' | 'recovery' | 'invite' | 'magiclink' | 'email_change'
     site_url: string
-    /** Present only for some flows; carried through when set. */
-    token_new?: string
-    token_hash_new?: string
   }
 }
 

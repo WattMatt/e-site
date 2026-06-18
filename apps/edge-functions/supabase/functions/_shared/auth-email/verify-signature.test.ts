@@ -62,4 +62,11 @@ describe('verifyHookSignature', () => {
     }, FULL_SECRET)
     expect(ok).toBe(true)
   })
+
+  it('fails closed when the webhook-signature header is missing/undefined', async () => {
+    const ok = await verifyHookSignature(BODY, {
+      'webhook-id': ID, 'webhook-timestamp': TS, 'webhook-signature': undefined,
+    }, FULL_SECRET)
+    expect(ok).toBe(false)
+  })
 })

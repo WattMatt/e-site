@@ -1,4 +1,5 @@
 import type { AuthHookPayload, OrgBranding } from './types.ts'
+import { PLATFORM_NAME } from './types.ts'
 import { brandedTemplate, escape } from '../email-templates/branded.ts'
 
 export interface BuildOpts {
@@ -44,11 +45,11 @@ export function buildAuthEmail(payload: AuthHookPayload, opts: BuildOpts): Built
       const inviterLine = inviter ? `<strong>${escape(inviter)}</strong> invited you` : 'You have been invited'
       return {
         to,
-        subject: `You've been invited to ${orgName === 'your team' ? 'E-Site' : orgName}`,
+        subject: `You've been invited to ${orgName === 'your team' ? PLATFORM_NAME : orgName}`,
         html: brandedTemplate({
           org,
           heading: 'Accept your invitation',
-          bodyHtml: `<p>${inviterLine} to join <strong>${escape(orgName)}</strong> on E-Site${roleLine}${siteLine}.</p>
+          bodyHtml: `<p>${inviterLine} to join <strong>${escape(orgName)}</strong> on ${escape(PLATFORM_NAME)}${roleLine}${siteLine}.</p>
             <p>Click below to accept and set your password.</p>
             ${codeBlock('Or use this one-time code on the set-password page:')}`,
           ctaLabel: 'Accept invitation & set password',
@@ -67,7 +68,7 @@ export function buildAuthEmail(payload: AuthHookPayload, opts: BuildOpts): Built
         html: brandedTemplate({
           org,
           heading: 'Reset your password',
-          bodyHtml: `<p>We received a request to reset your E-Site password. Click below to choose a new one.</p>
+          bodyHtml: `<p>We received a request to reset your ${escape(PLATFORM_NAME)} password. Click below to choose a new one.</p>
             ${codeBlock('Or enter this one-time code on the set-password page:')}`,
           ctaLabel: 'Reset password',
           ctaHref,
@@ -81,11 +82,11 @@ export function buildAuthEmail(payload: AuthHookPayload, opts: BuildOpts): Built
       const ctaHref = link(siteUrl, '/auth/callback?next=/onboarding', 'signup', token_hash)
       return {
         to,
-        subject: 'Confirm your E-Site account',
+        subject: `Confirm your ${PLATFORM_NAME} account`,
         html: brandedTemplate({
           org,
           heading: 'Confirm your account',
-          bodyHtml: `<p>Welcome to E-Site. Confirm your email to activate your account.</p>`,
+          bodyHtml: `<p>Welcome to ${escape(PLATFORM_NAME)}. Confirm your email to activate your account.</p>`,
           ctaLabel: 'Confirm account',
           ctaHref,
           expiryLabel: 'This link expires in 60 minutes.',
@@ -98,10 +99,10 @@ export function buildAuthEmail(payload: AuthHookPayload, opts: BuildOpts): Built
       const ctaHref = link(siteUrl, '/auth/callback?next=/dashboard', 'magiclink', token_hash)
       return {
         to,
-        subject: 'Your E-Site sign-in link',
+        subject: `Your ${PLATFORM_NAME} sign-in link`,
         html: brandedTemplate({
           org,
-          heading: 'Sign in to E-Site',
+          heading: `Sign in to ${PLATFORM_NAME}`,
           bodyHtml: `<p>Click below to sign in. This link is single-use.</p>`,
           ctaLabel: 'Sign in',
           ctaHref,
@@ -119,7 +120,7 @@ export function buildAuthEmail(payload: AuthHookPayload, opts: BuildOpts): Built
         html: brandedTemplate({
           org,
           heading: 'Confirm your new email',
-          bodyHtml: `<p>Confirm this address to finish changing your E-Site email.</p>`,
+          bodyHtml: `<p>Confirm this address to finish changing your ${escape(PLATFORM_NAME)} email.</p>`,
           ctaLabel: 'Confirm new email',
           ctaHref,
           expiryLabel: 'This link expires in 60 minutes.',
