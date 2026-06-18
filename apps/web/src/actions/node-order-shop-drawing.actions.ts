@@ -20,12 +20,12 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { ensureHandoverCategoryRoot } from '@/lib/handover/handover-filing'
 import {
   projectService,
   resolveHandoverCategory,
   buildHandoverDrawingName,
   ALL_CATEGORIES,
-  CATEGORY_LABELS,
   type HandoverCategory,
 } from '@esite/shared'
 
@@ -217,45 +217,6 @@ async function loadDrawingContext(
       scopeTypeOverride,
     },
   }
-}
-
-/** Find or create the category root handover folder; returns its id + path + org. */
-async function ensureHandoverCategoryRoot(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  orgId: string,
-  projectId: string,
-  category: HandoverCategory,
-  userId: string,
-): Promise<{ id: string; folder_path: string; organisation_id: string } | { error: string }> {
-  const { data: existing } = await (supabase as any)
-    .schema('tenants')
-    .from('handover_folders')
-    .select('id, folder_path, organisation_id')
-    .eq('project_id', projectId)
-    .eq('category', category)
-    .is('parent_folder_id', null)
-    .maybeSingle()
-  if (existing) return existing as { id: string; folder_path: string; organisation_id: string }
-
-  const { data: inserted, error } = await (supabase as any)
-    .schema('tenants')
-    .from('handover_folders')
-    .insert({
-      organisation_id: orgId,
-      project_id: projectId,
-      parent_folder_id: null,
-      name: CATEGORY_LABELS[category],
-      category,
-      cloud_provider: null,
-      cloud_folder_id: null,
-      cloud_folder_path: null,
-      cloud_synced_at: null,
-      created_by: userId,
-    })
-    .select('id, folder_path, organisation_id')
-    .single()
-  if (error || !inserted) return { error: `Failed to create handover folder: ${(error as { message?: string } | null)?.message ?? 'unknown'}` }
-  return inserted as { id: string; folder_path: string; organisation_id: string }
 }
 
 function revalidate(projectId: string): void {
