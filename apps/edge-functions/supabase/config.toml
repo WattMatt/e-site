@@ -29,7 +29,12 @@ enabled = true
 [auth]
 enabled = true
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["exp://localhost:8081"]
+additional_redirect_urls = [
+  "exp://localhost:8081",
+  "http://localhost:3000/accept-invite",
+  "http://localhost:3000/reset-password/confirm",
+  "http://localhost:3000/auth/callback",
+]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
@@ -39,6 +44,17 @@ enable_signup = true
 enable_signup = true
 double_confirm_changes = true
 enable_confirmations = false
+
+# Send Email auth hook — routes ALL auth emails (signup, recovery, invite,
+# magiclink, email_change) through the auth-email-hook edge function, which
+# renders the branded template and sends via Resend. The secret is read from
+# the env var SEND_EMAIL_HOOK_SECRET (set in .env for local; Supabase dashboard
+# in prod — see the deploy checklist). PRODUCTION uses HOSTED Supabase, so this
+# block governs LOCAL behaviour only; prod is configured in the dashboard.
+[auth.hook.send_email]
+enabled = true
+uri = "http://host.docker.internal:54321/functions/v1/auth-email-hook"
+secrets = "env(SEND_EMAIL_HOOK_SECRET)"
 
 [edge_runtime]
 enabled = true
