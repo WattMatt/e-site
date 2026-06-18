@@ -5,9 +5,10 @@
  * Replaces the deleted team-invite subsystem (spec sections 5.3, 11 steps 2-3).
  *
  * All actions are gated to owner/admin of the caller's organisation.
- * createUserAction provisions an auth.users row with NO password, then sends a
- * "set your password" email through the standard recovery flow — admin-created
- * and existing users share one password flow (spec section 5.4).
+ * createUserAction invites the user via auth.admin.inviteUserByEmail — this
+ * provisions an auth.users row with NO password AND fires the Supabase Send
+ * Email hook, which renders the branded, role-aware invite. Role/org context
+ * rides in user_metadata (`data`) so the hook can co-brand the email.
  */
 
 import { headers } from 'next/headers'
@@ -34,7 +35,7 @@ const updateUserSchema = z.object({
 
 const removeUserSchema = z.object({ userId: z.string().uuid() })
 
-/** Create an organisation member directly and email them a set-password link. */
+/** Invite an organisation member; the branded invite email is sent by the hook. */
 export async function createUserAction(input: {
   email: string
   fullName: string
@@ -65,15 +66,22 @@ export async function createUserAction(input: {
 
   const service = createServiceClient()
 
-  // 1. Create the auth user with no password. email_confirm:true marks the
-  //    address admin-verified so they skip the verify-email gate.
-  const { data: created, error: createErr } = await service.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    user_metadata: { full_name: fullName },
+  // 1. Invite the user — provisions the auth row (no password) AND triggers the
+  //    Supabase Send Email hook, which renders the branded role-aware invite.
+  //    Role/org context rides in `data` (user_metadata) for the hook; org_name
+  //    is left null and backfilled by the hook from the organisation row.
+  const { data: invited, error: inviteErr } = await service.auth.admin.inviteUserByEmail(email, {
+    data: {
+      full_name:    fullName,
+      invited_role: role,
+      org_id:       ctx.organisationId,
+      org_name:     null,
+      inviter_name: null,
+    },
+    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/accept-invite`,
   })
-  if (createErr || !created?.user) {
-    const msg = createErr?.message ?? 'Could not create the user.'
+  if (inviteErr || !invited?.user) {
+    const msg = inviteErr?.message ?? 'Could not invite the user.'
     return {
       ok: false,
       error: /already|exist|registered/i.test(msg)
@@ -81,9 +89,9 @@ export async function createUserAction(input: {
         : msg,
     }
   }
-  const newUserId = created.user.id
+  const newUserId = invited.user.id
 
-  // The handle_new_user trigger has created public.profiles. Add the membership.
+  // 2. Add the org membership (handle_new_user already created public.profiles).
   const { error: memberErr } = await service.from('user_organisations').insert({
     user_id:         newUserId,
     organisation_id: ctx.organisationId,
@@ -98,27 +106,17 @@ export async function createUserAction(input: {
     return { ok: false, error: `Could not add the user to your organisation: ${memberErr.message}` }
   }
 
-  // 2. Send the "set your password" email via the standard recovery flow.
-  let warning: string | undefined
-  const { error: mailErr } = await service.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-  })
-  if (mailErr) {
-    console.error('createUserAction: set-password email failed', { newUserId, error: mailErr })
-    warning = 'User created, but the set-password email could not be sent. They can use “Forgot password” on the login page.'
-  }
-
   // 3. Audit.
   await logAuthEvent(service, {
     userId:    newUserId,
     eventType: 'user_created',
     ipAddress: ip === 'unknown' ? null : ip,
     userAgent: ua,
-    metadata:  { created_by: ctx.userId, organisation_id: ctx.organisationId, role },
+    metadata:  { created_by: ctx.userId, organisation_id: ctx.organisationId, role, via: 'invite' },
   })
 
   revalidatePath('/settings/users')
-  return warning ? { ok: true, warning } : { ok: true }
+  return { ok: true }
 }
 
 /** Change a member's role and/or active status. */
