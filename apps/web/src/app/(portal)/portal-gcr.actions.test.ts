@@ -134,8 +134,23 @@ describe('submitGcrChangeRequestsAction', () => {
     }
   }
 
-  /** Service client resolving PM recipients (project_members + profiles). */
-  function makeServiceClient(members: any[], profiles: any[]) {
+  /**
+   * Service client serving (1) the structure.nodes project-scope lookup, (2) PM
+   * recipients (projects.project_members), (3) profile emails (public.profiles).
+   * `liveNodes` defaults to the canonical NODE_ID so the scope check passes.
+   */
+  function makeServiceClient(
+    members: any[], profiles: any[], liveNodes: { id: string }[] = [{ id: NODE_ID }],
+  ) {
+    // structure.nodes: .select('id').eq().eq().is().in() -> { data: liveNodes }
+    const nodesIn = vi.fn().mockResolvedValue({ data: liveNodes, error: null })
+    const nodesIs = vi.fn().mockReturnValue({ in: nodesIn })
+    const nodesEq2 = vi.fn().mockReturnValue({ is: nodesIs })
+    const nodesEq1 = vi.fn().mockReturnValue({ eq: nodesEq2 })
+    const nodesSelect = vi.fn().mockReturnValue({ eq: nodesEq1 })
+    const fromStructure = vi.fn((table: string) =>
+      table === 'nodes' ? { select: nodesSelect } : ({} as any))
+
     // chain: .select('user_id, role').eq('project_id', x).in('role', roles)
     const pmIn = vi.fn().mockResolvedValue({ data: members, error: null })
     const pmEq1 = vi.fn().mockReturnValue({ in: pmIn })
@@ -149,6 +164,7 @@ describe('submitGcrChangeRequestsAction', () => {
 
     return {
       schema: vi.fn((name: string) =>
+        name === 'structure' ? { from: fromStructure } :
         name === 'projects' ? { from: fromProjects } : ({} as any)),
       from: fromPublic,
     }
@@ -203,6 +219,9 @@ describe('submitGcrChangeRequestsAction', () => {
   it('errors when no snapshot has been published', async () => {
     const cookie = makeCookieClient(null)
     createClientMock.mockResolvedValue(cookie)
+    // Node-scope check (service client) runs first; the node is valid so we
+    // reach the snapshot lookup, which returns null.
+    createServiceClientMock.mockReturnValue(makeServiceClient([], []))
 
     const { submitGcrChangeRequestsAction } = await import('./portal-gcr.actions')
     const res = await submitGcrChangeRequestsAction(PROJECT_ID, [
@@ -211,11 +230,37 @@ describe('submitGcrChangeRequestsAction', () => {
     expect('error' in res).toBe(true)
   })
 
-  it('errors on empty batch', async () => {
+  it('errors on empty batch (Zod min(1))', async () => {
     createClientMock.mockResolvedValue({ auth: userAuth(CLIENT_ID) })
     const { submitGcrChangeRequestsAction } = await import('./portal-gcr.actions')
     const res = await submitGcrChangeRequestsAction(PROJECT_ID, [])
     expect('error' in res).toBe(true)
+  })
+
+  it('rejects an invalid field (Zod enum)', async () => {
+    createClientMock.mockResolvedValue({ auth: userAuth(CLIENT_ID) })
+    const { submitGcrChangeRequestsAction } = await import('./portal-gcr.actions')
+    const res = await submitGcrChangeRequestsAction(PROJECT_ID, [
+      { nodeId: NODE_ID, field: 'monthly' as any, oldValue: null, newValue: '1', comment: null },
+    ])
+    expect('error' in res).toBe(true)
+    // Validation must short-circuit before the snapshot/insert path.
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a node that belongs to another project', async () => {
+    const cookie = makeCookieClient({ id: SNAP_ID, organisation_id: 'org1' })
+    const insertSpy = cookie._insert
+    createClientMock.mockResolvedValue(cookie)
+    // The structure.nodes lookup returns NO matching live nodes for this project.
+    createServiceClientMock.mockReturnValue(makeServiceClient([], [], []))
+
+    const { submitGcrChangeRequestsAction } = await import('./portal-gcr.actions')
+    const res = await submitGcrChangeRequestsAction(PROJECT_ID, [
+      { nodeId: NODE_ID, field: 'participation', oldValue: 'shared', newValue: 'own', comment: null },
+    ])
+    expect(res).toEqual({ error: 'One or more tenants are not part of this site' })
+    expect(insertSpy).not.toHaveBeenCalled()
   })
 
   it('errors when not authenticated', async () => {

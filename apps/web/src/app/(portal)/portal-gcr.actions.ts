@@ -4,6 +4,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { dispatchNotification, dispatchEmail } from '@/lib/notifications'
 import {
   ORG_WRITE_ROLES,
+  gcrChangeRequestBatchSchema,
   type ClientGcrReviewPayload,
   type GcrChangeRequestInput,
 } from '@esite/shared'
@@ -64,9 +65,37 @@ export async function submitGcrChangeRequestsAction(
   const supabase = await createClient()
   const { data: userData } = await supabase.auth.getUser()
   if (!userData?.user) return { error: 'Not authenticated' }
-  if (requests.length === 0) return { error: 'Nothing to submit' }
+
+  // Validate shape before anything touches the DB: known field enum, uuid node,
+  // bounded value/comment. (Batch min(1) covers the empty-submit case.)
+  const parsed = gcrChangeRequestBatchSchema.safeParse(requests)
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid change request' }
+  }
+  const validRequests = parsed.data
 
   const userId = userData.user.id
+
+  // Project-scope every node_id. The FK on change_requests.node_id does NOT
+  // enforce that the node belongs to THIS project — a malicious client could
+  // pin a comment to another project's node. Resolve the project's live
+  // tenant_db node ids with the service client (elevated read; the user is
+  // already authenticated and the actual insert is still RLS-gated) and reject
+  // any request whose node is not in the set.
+  const service = createServiceClient() as any
+  const requestedNodeIds = [...new Set(validRequests.map((r) => r.nodeId))]
+  const { data: liveNodes } = await service
+    .schema('structure')
+    .from('nodes')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('kind', 'tenant_db')
+    .is('deleted_at', null)
+    .in('id', requestedNodeIds)
+  const liveNodeIds = new Set(((liveNodes ?? []) as { id: string }[]).map((n) => n.id))
+  if (requestedNodeIds.some((id) => !liveNodeIds.has(id))) {
+    return { error: 'One or more tenants are not part of this site' }
+  }
 
   // Pin to the latest published snapshot. Deterministic tiebreakers mirror the
   // gcr.get_client_review RPC so the client comments on the exact snapshot they
@@ -83,7 +112,7 @@ export async function submitGcrChangeRequestsAction(
     .maybeSingle()
   if (!snap) return { error: 'No published review to comment on' }
 
-  const rows = requests.map((r) => ({
+  const rows = validRequests.map((r) => ({
     project_id: projectId,
     organisation_id: snap.organisation_id,
     snapshot_id: snap.id,
@@ -106,7 +135,6 @@ export async function submitGcrChangeRequestsAction(
   // RLS — resolve recipients with the service client (elevated read after the
   // RLS-gated insert already authorised the submit). Best-effort throughout.
   try {
-    const service = createServiceClient() as any
     const { data: members } = await service
       .schema('projects')
       .from('project_members')
