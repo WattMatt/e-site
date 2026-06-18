@@ -138,12 +138,12 @@ export async function listSubOrgMembers(
  * Flow mirrors createUserAction:
  * 1. Resolve sub-org → confirm shadow + parent matches caller's org.
  * 2. Rate-limit.
- * 3. auth.admin.createUser — handle "already exists" by looking up existing user.
+ * 3. auth.admin.inviteUserByEmail — provisions auth + fires the branded invite
+ *    hook; handle "already exists" by looking up the existing user.
  * 4. Insert user_organisations row targeting the sub-org.
- * 5. resetPasswordForEmail (non-fatal).
- * 6. logAuthEvent.
- * 7. revalidatePath.
- * 8. Return the new SubOrgMember row.
+ * 5. logAuthEvent.
+ * 6. revalidatePath.
+ * 7. Return the new SubOrgMember row.
  */
 export async function addSubOrgMember(
   subOrgId: string,
@@ -188,17 +188,23 @@ export async function addSubOrgMember(
 
   const service = createServiceClient()
 
-  // 3. Provision auth user.
+  // 3. Invite the user — provisions auth + fires the branded role-aware hook.
   let newUserId: string
+  let createdHere = false
 
-  const { data: created, error: createErr } = await service.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    user_metadata: { full_name: fullName },
+  const { data: invited, error: inviteErr } = await service.auth.admin.inviteUserByEmail(email, {
+    data: {
+      full_name:           fullName,
+      invited_role:        role,
+      org_id:              subOrg.parent_organisation_id,
+      sub_organisation_id: subOrgId,
+      inviter_name:        null,
+    },
+    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/accept-invite`,
   })
 
-  if (createErr || !created?.user) {
-    const msg = createErr?.message ?? ''
+  if (inviteErr || !invited?.user) {
+    const msg = inviteErr?.message ?? ''
     if (/already|exist|registered/i.test(msg)) {
       // Email collision (spec 6.5): look up existing user id via profiles table.
       const { data: existing } = await (service as any)
@@ -211,10 +217,11 @@ export async function addSubOrgMember(
       }
       newUserId = existing.id
     } else {
-      return { ok: false, error: msg || 'Could not create the user.' }
+      return { ok: false, error: msg || 'Could not invite the user.' }
     }
   } else {
-    newUserId = created.user.id
+    newUserId = invited.user.id
+    createdHere = true
   }
 
   // 4. Insert user_organisations row targeting the sub-org.
@@ -233,20 +240,13 @@ export async function addSubOrgMember(
 
   if (memberErr) {
     // Roll back orphaned auth user only if we just created them.
-    if (created?.user) {
+    if (createdHere) {
       await service.auth.admin.deleteUser(newUserId).catch(() => {})
     }
     return { ok: false, error: `Could not add the member: ${memberErr.message}` }
   }
 
-  // 5. resetPasswordForEmail — non-fatal.
-  await service.auth
-    .resetPasswordForEmail(email, {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-    })
-    .catch(() => {})
-
-  // 6. Audit.
+  // 5. Audit.
   await logAuthEvent(service, {
     userId:    newUserId,
     eventType: 'user_created',
@@ -261,10 +261,10 @@ export async function addSubOrgMember(
     },
   })
 
-  // 7. Cache bust.
+  // 6. Cache bust.
   bustSubOrg(subOrgId)
 
-  // 8. Return the new member row.
+  // 7. Return the new member row.
   const raw = memberData as {
     id: string
     user_id: string
@@ -448,15 +448,21 @@ export async function bulkInviteSubOrgMembers(
       // Try to provision new user.
       let newUserId: string
       let isExisting = false
+      let createdHere = false
 
-      const { data: created, error: createErr } = await service.auth.admin.createUser({
-        email,
-        email_confirm: true,
-        user_metadata: { full_name: email.split('@')[0] },
+      const { data: inviteRes, error: inviteErr } = await service.auth.admin.inviteUserByEmail(email, {
+        data: {
+          full_name:           email.split('@')[0],
+          invited_role:        role,
+          org_id:              subOrg.parent_organisation_id,
+          sub_organisation_id: parsed.data.subOrgId,
+          inviter_name:        null,
+        },
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/accept-invite`,
       })
 
-      if (createErr || !created?.user) {
-        const msg = createErr?.message ?? ''
+      if (inviteErr || !inviteRes?.user) {
+        const msg = inviteErr?.message ?? ''
         if (/already|exist|registered/i.test(msg)) {
           // Email collision: look up via profiles.
           const { data: existing } = await (service as any)
@@ -473,11 +479,12 @@ export async function bulkInviteSubOrgMembers(
           isExisting = true
         } else {
           failed++
-          details.push({ email, status: 'failed', reason: msg || 'Could not create user.' })
+          details.push({ email, status: 'failed', reason: msg || 'Could not invite user.' })
           continue
         }
       } else {
-        newUserId = created.user.id
+        newUserId = inviteRes.user.id
+        createdHere = true
       }
 
       // Insert user_organisations row for the sub-org.
@@ -493,20 +500,13 @@ export async function bulkInviteSubOrgMembers(
         })
 
       if (memErr) {
-        if (!isExisting && created?.user) {
+        if (createdHere) {
           await service.auth.admin.deleteUser(newUserId).catch(() => {})
         }
         failed++
         details.push({ email, status: 'failed', reason: memErr.message })
         continue
       }
-
-      // Set-password email — non-fatal.
-      await service.auth
-        .resetPasswordForEmail(email, {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-        })
-        .catch(() => {})
 
       if (!isExisting) {
         await logAuthEvent(service, {

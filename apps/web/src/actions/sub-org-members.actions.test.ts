@@ -190,18 +190,12 @@ describe('addSubOrgMember', () => {
     const memberSelect = vi.fn().mockReturnValueOnce({ eq: memberEqId })
     const fromUO2 = vi.fn().mockReturnValueOnce({ select: memberSelect })
 
-    const resetPasswordForEmail = vi.fn().mockResolvedValueOnce({ error: null })
+    const inviteUserByEmail = vi.fn().mockResolvedValueOnce({ data: { user: { id: newUserId } }, error: null })
     const logAuthEventSpy = vi.fn().mockResolvedValueOnce(undefined)
 
     createServiceClientMock.mockReturnValueOnce({
       auth: {
-        admin: {
-          createUser: vi.fn().mockResolvedValueOnce({
-            data: { user: { id: newUserId } },
-            error: null,
-          }),
-        },
-        resetPasswordForEmail,
+        admin: { inviteUserByEmail, deleteUser: vi.fn() },
       },
       from: vi.fn()
         .mockReturnValueOnce({ insert: vi.fn().mockReturnValueOnce({ select: insertSelect }) })
@@ -226,6 +220,13 @@ describe('addSubOrgMember', () => {
       expect(result.member.organisation_id).toBe(SUB_ORG_ID)
       expect(result.member.role).toBe('contractor')
     }
+    expect(inviteUserByEmail).toHaveBeenCalledWith(
+      'mike@example.com',
+      expect.objectContaining({
+        data: expect.objectContaining({ invited_role: 'contractor', org_id: PARENT_ORG_ID, sub_organisation_id: SUB_ORG_ID }),
+        redirectTo: expect.stringContaining('/accept-invite'),
+      }),
+    )
     expect(revalidatePathMock).toHaveBeenCalledWith(`/settings/sub-organizations/${SUB_ORG_ID}`)
   })
 
@@ -273,18 +274,15 @@ describe('addSubOrgMember', () => {
     const insertSelect = vi.fn().mockReturnValueOnce({ single: insertSingle })
     const insertFn     = vi.fn().mockReturnValueOnce({ select: insertSelect })
 
-    const resetPasswordForEmail = vi.fn().mockResolvedValue({ error: null })
-
     createServiceClientMock.mockReturnValueOnce({
       auth: {
         admin: {
-          createUser: vi.fn().mockResolvedValueOnce({
+          inviteUserByEmail: vi.fn().mockResolvedValueOnce({
             data: null,
             error: { message: 'User already registered' },
           }),
           deleteUser: vi.fn().mockResolvedValue({}),
         },
-        resetPasswordForEmail,
       },
       from: vi.fn()
         .mockReturnValueOnce({ select: profilesSelect })   // profiles look-up
@@ -353,12 +351,12 @@ describe('addSubOrgMember', () => {
     createServiceClientMock.mockReturnValueOnce({
       auth: {
         admin: {
-          createUser: vi.fn().mockResolvedValueOnce({
+          inviteUserByEmail: vi.fn().mockResolvedValueOnce({
             data: { user: { id: newUserId } },
             error: null,
           }),
+          deleteUser: vi.fn(),
         },
-        resetPasswordForEmail: vi.fn().mockResolvedValue({ error: null }),
       },
       from: vi.fn().mockReturnValueOnce({ insert: insertFn }),
     })
@@ -506,11 +504,11 @@ describe('bulkInviteSubOrgMembers', () => {
     const mockServiceClient = {
       auth: {
         admin: {
-          createUser: vi.fn()
+          inviteUserByEmail: vi.fn()
             .mockResolvedValueOnce({ data: { user: { id: userId1 } }, error: null })
             .mockResolvedValueOnce({ data: { user: { id: userId2 } }, error: null }),
+          deleteUser: vi.fn(),
         },
-        resetPasswordForEmail: vi.fn().mockResolvedValue({ error: null }),
       },
       from: serviceFrom,
     }
