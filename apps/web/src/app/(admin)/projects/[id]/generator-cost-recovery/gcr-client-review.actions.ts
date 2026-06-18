@@ -24,6 +24,23 @@ const GCR_PATH = (projectId: string) =>
 type ActionResult = { ok: true } | { error: string }
 
 /**
+ * Coerce a numeric change-request value (area, manual kW) for the accept path.
+ * null passes through (means "clear the field"). Non-finite, NaN, or negative
+ * input is rejected so garbage never reaches the DB as NaN. Returns the parsed
+ * number or `{ error }`.
+ */
+function parseNonNegativeNumber(
+  raw: string | null,
+): { value: number | null } | { error: string } {
+  if (raw === null) return { value: null }
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) {
+    return { error: 'Proposed value must be a non-negative number.' }
+  }
+  return { value: n }
+}
+
+/**
  * Resolve organisation_id from projects.projects, mirroring gcr.actions.ts.
  */
 async function resolveOrgId(
@@ -297,6 +314,17 @@ export async function actionGcrChangeRequestAction(
     return { error: 'Request does not belong to this project' }
   }
 
+  // Idempotency: accept/decline may run exactly once, while the request is open.
+  // A second click (or a stale queue) must not re-apply the change to the live
+  // schedule or fire a duplicate client notification. REPLY stays allowed — it
+  // never changes status and admins may reply more than once.
+  if (
+    (args.decision === 'accept' || args.decision === 'decline') &&
+    req.status !== 'open'
+  ) {
+    return { error: 'This request has already been actioned.' }
+  }
+
   const { data: userData } = await supabase.auth.getUser()
   const adminId = userData?.user?.id ?? null
   const now = new Date().toISOString()
@@ -305,15 +333,22 @@ export async function actionGcrChangeRequestAction(
   if (args.decision === 'accept') {
     if (req.field === 'area') {
       // 'area' is a structure.nodes facet not covered by the bulk RPC.
-      const area = req.new_value === null ? null : Number(req.new_value)
+      const parsed = parseNonNegativeNumber(req.new_value)
+      if ('error' in parsed) return { error: parsed.error }
       const { error } = await (supabase as any)
         .schema('structure')
         .from('nodes')
-        .update({ shop_area_m2: area })
+        .update({ shop_area_m2: parsed.value })
         .eq('id', req.node_id)
         .eq('project_id', projectId)
       if (error) return { error: error.message ?? 'Failed to apply area change' }
     } else {
+      // Guard the only other numeric field before it reaches bulkParamsFor's
+      // bare Number() coercion (else a non-numeric value lands as NaN).
+      if (req.field === 'manual_kw_override') {
+        const parsed = parseNonNegativeNumber(req.new_value)
+        if ('error' in parsed) return { error: parsed.error }
+      }
       const params = bulkParamsFor(
         req.field as GcrChangeRequestField,
         projectId,

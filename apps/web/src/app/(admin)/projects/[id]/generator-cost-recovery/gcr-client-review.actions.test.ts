@@ -433,6 +433,100 @@ describe('actionGcrChangeRequestAction', () => {
     const res = await actionGcrChangeRequestAction(PROJECT_ID, REQ_ID, { decision: 'accept' })
     expect('error' in res).toBe(true)
   })
+
+  // ─── Fix 3: numeric coercion guard ──────────────────────────────────────────
+
+  it('accept (manual_kw_override): rejects a non-numeric value before the RPC', async () => {
+    const { schema, rpc, update, fromPublic } = makeChain({
+      id: REQ_ID, project_id: PROJECT_ID, organisation_id: ORG_ID, node_id: NODE_ID,
+      client_id: CLIENT_ID, field: 'manual_kw_override', new_value: 'abc', status: 'open',
+    })
+    createClientMock.mockResolvedValue({
+      schema, from: fromPublic, ...noFunctions,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'admin1' } } }) },
+    })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { actionGcrChangeRequestAction } = await import('./gcr-client-review.actions')
+    const res = await actionGcrChangeRequestAction(PROJECT_ID, REQ_ID, { decision: 'accept' })
+    expect(res).toEqual({ error: 'Proposed value must be a non-negative number.' })
+    expect(rpc).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('accept (area): rejects a negative value before the DB update', async () => {
+    const chain = makeChain({
+      id: REQ_ID, project_id: PROJECT_ID, organisation_id: ORG_ID, node_id: NODE_ID,
+      client_id: CLIENT_ID, field: 'area', new_value: '-5', status: 'open',
+    })
+    createClientMock.mockResolvedValue({
+      schema: chain.schema, from: chain.fromPublic, ...noFunctions,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'admin1' } } }) },
+    })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { actionGcrChangeRequestAction } = await import('./gcr-client-review.actions')
+    const res = await actionGcrChangeRequestAction(PROJECT_ID, REQ_ID, { decision: 'accept' })
+    expect(res).toEqual({ error: 'Proposed value must be a non-negative number.' })
+    expect(chain.nodesUpdate).not.toHaveBeenCalled()
+    expect(chain.update).not.toHaveBeenCalled()
+  })
+
+  // ─── Fix 4: idempotency guard ───────────────────────────────────────────────
+
+  it('accept: rejects a request that is already accepted (no re-apply, no notify)', async () => {
+    const { schema, rpc, update, fromPublic } = makeChain({
+      id: REQ_ID, project_id: PROJECT_ID, organisation_id: ORG_ID, node_id: NODE_ID,
+      client_id: CLIENT_ID, field: 'participation', new_value: 'own', status: 'accepted',
+    })
+    createClientMock.mockResolvedValue({
+      schema, from: fromPublic, ...noFunctions,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'admin1' } } }) },
+    })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { actionGcrChangeRequestAction } = await import('./gcr-client-review.actions')
+    const res = await actionGcrChangeRequestAction(PROJECT_ID, REQ_ID, { decision: 'accept' })
+    expect(res).toEqual({ error: 'This request has already been actioned.' })
+    expect(rpc).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+    expect(dispatchNotificationMock).not.toHaveBeenCalled()
+  })
+
+  it('decline: rejects a request that is already declined', async () => {
+    const { schema, update, fromPublic } = makeChain({
+      id: REQ_ID, project_id: PROJECT_ID, organisation_id: ORG_ID, node_id: NODE_ID,
+      client_id: CLIENT_ID, field: 'participation', new_value: 'own', status: 'declined',
+    })
+    createClientMock.mockResolvedValue({
+      schema, from: fromPublic, ...noFunctions,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'admin1' } } }) },
+    })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { actionGcrChangeRequestAction } = await import('./gcr-client-review.actions')
+    const res = await actionGcrChangeRequestAction(PROJECT_ID, REQ_ID, { decision: 'decline', reply: 'no' })
+    expect(res).toEqual({ error: 'This request has already been actioned.' })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('reply: still allowed on an already-accepted request (does not change status)', async () => {
+    const { schema, update, fromPublic } = makeChain({
+      id: REQ_ID, project_id: PROJECT_ID, organisation_id: ORG_ID, node_id: NODE_ID,
+      client_id: CLIENT_ID, field: 'participation', new_value: 'own', status: 'accepted',
+    })
+    createClientMock.mockResolvedValue({
+      schema, from: fromPublic, ...noFunctions,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'admin1' } } }) },
+    })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { actionGcrChangeRequestAction } = await import('./gcr-client-review.actions')
+    const res = await actionGcrChangeRequestAction(PROJECT_ID, REQ_ID, { decision: 'reply', reply: 'FYI' })
+    expect(res).toEqual({ ok: true })
+    // status preserved as 'accepted'
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ status: 'accepted', admin_reply: 'FYI' }))
+  })
 })
 
 // ─── listGcrChangeRequestsAction ─────────────────────────────────────────────
