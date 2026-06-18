@@ -9,6 +9,8 @@
  *   - snag-assigned: notify assignee of new snag
  *   - data-subject-request: POPIA DSR notification (public form)
  *   - coc-status: notify org members when COC status changes
+ *   - gcr-client-request: notify project managers a client submitted GCR change requests
+ *   - gcr-request-actioned: notify a client their GCR change request was actioned
  *
  * NOTE: the `invite` type is GONE. Member invites are now sent by the
  * `auth-email-hook` Send Email hook via auth.admin.inviteUserByEmail.
@@ -25,7 +27,7 @@ const FROM = 'E-Site <noreply@e-site.live>'
 const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://app.e-site.live'
 
 interface EmailPayload {
-  to: string
+  to: string | string[]
   subject: string
   html: string
 }
@@ -156,6 +158,67 @@ Deno.serve(async (req) => {
           bodyHtml: `<p>Hi ${recipientName},</p>
             <p>The COC status for <strong>${subsectionName}</strong> on site <strong>${siteName}</strong> has changed to <strong>${statusLabels[newStatus] ?? newStatus}</strong>.</p>`,
           ctaLabel: 'View compliance',
+          ctaHref: link,
+          fallbackLink: link,
+          siteUrl: SITE_URL,
+        }),
+      })
+    }
+
+    else if (type === 'gcr-client-request') {
+      // Notify project managers that a client submitted GCR change requests.
+      // `to` is resolved by the caller (the submitting client is not an org
+      // member, so recipient emails are resolved server-side with service role).
+      const { to, projectId, requestCount } = payload as {
+        to: string | string[]; projectId: string; requestCount: number
+      }
+      const recipients = Array.isArray(to) ? to.filter(Boolean) : (to ? [to] : [])
+      if (recipients.length === 0) {
+        return new Response(JSON.stringify({ sent: false, reason: 'no recipients' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      const link = `${SITE_URL}/projects/${projectId}/generator-cost-recovery`
+      await sendEmail({
+        to: recipients,
+        subject: `New client cost-recovery requests (${requestCount})`,
+        html: brandedTemplate({
+          org: null,
+          heading: 'Client cost-recovery requests',
+          bodyHtml: `<p>A client submitted <strong>${requestCount}</strong> change request(s) on a generator cost-recovery review.</p>
+            <p>Open the project's GCR module to review and action them.</p>`,
+          ctaLabel: 'Open GCR module',
+          ctaHref: link,
+          fallbackLink: link,
+          siteUrl: SITE_URL,
+        }),
+      })
+    }
+
+    else if (type === 'gcr-request-actioned') {
+      // Notify a client that their GCR change request was actioned.
+      const { to, projectId, status, field, reply } = payload as {
+        to: string; projectId: string; status: string; field: string; reply: string | null
+      }
+      if (!to) {
+        return new Response(JSON.stringify({ sent: false, reason: 'no recipient' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      const link = `${SITE_URL}/portal/sites/${projectId}/gcr`
+      const statusLabels: Record<string, string> = {
+        accepted: 'Accepted ✓', declined: 'Declined ✗', open: 'Updated',
+      }
+      const label = statusLabels[status] ?? status
+      await sendEmail({
+        to,
+        subject: `Your cost-recovery request was ${status}`,
+        html: brandedTemplate({
+          org: null,
+          heading: 'Cost-recovery request update',
+          bodyHtml: `<p>Your request to change <strong>${field}</strong> on the generator cost-recovery schedule was <strong>${label}</strong>.</p>
+            ${reply ? `<p style="white-space:pre-wrap;border-left:3px solid #E2E5EA;padding-left:12px;font-style:italic">${String(reply).replace(/</g, '&lt;')}</p>` : ''}`,
+          ctaLabel: 'View your review',
           ctaHref: link,
           fallbackLink: link,
           siteUrl: SITE_URL,
