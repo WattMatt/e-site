@@ -159,12 +159,6 @@ const fixtureData: InspectionReportData = {
       thumbnailDataUri: DATA_URI,
       meta: 'JPEG · 2.4 MB',
     },
-    {
-      name: 'Handover certificate',
-      source: 'handover',
-      href: null,
-      meta: 'Certificate of Completion',
-    },
   ],
   signatures: [
     {
