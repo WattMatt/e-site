@@ -6,8 +6,9 @@
  * Takes a list of emails and a project role. For each email:
  *   - If a user with that email already exists in this org → add them to
  *     project_members with the chosen role.
- *   - Else → provision an org user (auth.users + user_organisations +
- *     set-password email), then add to project_members.
+ *   - Else → invite an org user via auth.admin.inviteUserByEmail (provisions
+ *     auth.users with no password AND fires the branded role/site-aware invite
+ *     hook) + user_organisations, then add to project_members.
  *
  * The bulk role determines BOTH the project_members.role AND the new user's
  * org role — EXCEPT when the bulk role is 'project_manager'. In that case
@@ -78,15 +79,16 @@ export async function bulkAddOrInviteProjectMembers(
 
   const supabase = await createClient()
 
-  // Resolve project's org.
+  // Resolve project's org (+ name for the invite email's site_name).
   const { data: project } = await (supabase as any)
     .schema('projects')
     .from('projects')
-    .select('organisation_id')
+    .select('organisation_id, name')
     .eq('id', parsed.data.projectId)
     .maybeSingle()
   if (!project) return { ok: false, error: 'Project not found.' }
-  const orgId = (project as { organisation_id: string }).organisation_id
+  const orgId = (project as { organisation_id: string; name: string | null }).organisation_id
+  const projectName = (project as { organisation_id: string; name: string | null }).name
 
   const guard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
   if (!guard.ok) return { ok: false, error: guard.error }
@@ -171,24 +173,37 @@ export async function bulkAddOrInviteProjectMembers(
         continue
       }
 
-      // Provision new user.
-      const { data: created, error: createErr } = await service.auth.admin.createUser({
-        email,
-        email_confirm: true,
-        user_metadata: { full_name: email.split('@')[0] }, // placeholder; user can update on signup
+      // Invite new user — provisions the auth row (no password) AND fires the
+      // branded role/site-aware invite hook. Role/org/site context rides in
+      // `data` (user_metadata); org_name + inviter_name are null and backfilled
+      // by the hook. An existing-but-not-in-org email is reported, not added.
+      let newUserId: string
+      let createdHere = false
+
+      const { data: inviteRes, error: inviteErr } = await service.auth.admin.inviteUserByEmail(email, {
+        data: {
+          full_name:    email.split('@')[0], // placeholder; user can update on signup
+          invited_role: orgRoleForNewUsers,
+          org_id:       orgId,
+          org_name:     null,
+          inviter_name: null,
+          ...(projectName ? { site_name: projectName } : {}),
+        },
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/accept-invite`,
       })
-      if (createErr || !created?.user) {
+      if (inviteErr || !inviteRes?.user) {
         failed++
         details.push({
           email,
           status: 'failed',
-          reason: /already|exist|registered/i.test(createErr?.message ?? '')
+          reason: /already|exist|registered/i.test(inviteErr?.message ?? '')
             ? 'A user with that email already exists but isn’t in your org.'
-            : (createErr?.message ?? 'Could not create user.'),
+            : (inviteErr?.message ?? 'Could not invite user.'),
         })
         continue
       }
-      const newUserId = created.user.id
+      newUserId = inviteRes.user.id
+      createdHere = true
 
       const { error: memErr } = await service.from('user_organisations').insert({
         user_id: newUserId,
@@ -199,18 +214,14 @@ export async function bulkAddOrInviteProjectMembers(
         accepted_at: new Date().toISOString(),
       })
       if (memErr) {
-        await service.auth.admin.deleteUser(newUserId).catch(() => {})
+        // Roll back the orphaned auth user only if we just created them.
+        if (createdHere) {
+          await service.auth.admin.deleteUser(newUserId).catch(() => {})
+        }
         failed++
         details.push({ email, status: 'failed', reason: memErr.message })
         continue
       }
-
-      // Set-password email — non-fatal if it fails.
-      await service.auth
-        .resetPasswordForEmail(email, {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-        })
-        .catch(() => {})
 
       await logAuthEvent(service, {
         userId: newUserId,
