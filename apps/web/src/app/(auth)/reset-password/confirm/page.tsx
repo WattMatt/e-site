@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { updatePasswordSchema, type UpdatePasswordInput } from '@esite/shared'
@@ -9,6 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import { recordAuthEventAction } from '@/actions/auth-event.actions'
 import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter'
 import type { PasswordEvaluation } from '@/lib/password-strength'
+import { resolveConfirmFlow } from './confirm-flow'
 
 // Same reason as /verify-email/page.tsx — createClient() at component-eval
 // requires NEXT_PUBLIC_SUPABASE_* env vars not present during prerender.
@@ -32,6 +34,8 @@ type Status = 'checking' | 'ready' | 'invalid' | 'updated'
  */
 export default function ResetPasswordConfirmPage() {
   const supabase = createClient()
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [status, setStatus] = useState<Status>('checking')
   const [serverError, setServerError] = useState<string | null>(null)
   const [pwEval, setPwEval] = useState<PasswordEvaluation | null>(null)
@@ -66,8 +70,18 @@ export default function ResetPasswordConfirmPage() {
       setServerError(error.message)
       return
     }
-    void recordAuthEventAction('password_changed', { via: 'reset_otp' })
+    const flow = resolveConfirmFlow(new URLSearchParams(searchParams?.toString() ?? ''))
+    void recordAuthEventAction('password_changed', { via: flow.kind === 'invite' ? 'invite_accept' : 'reset_otp' })
       .catch(() => { /* audit best-effort */ })
+
+    if (flow.kind === 'invite') {
+      // Brand-new user: keep the session they just established and land them
+      // in-app rather than bouncing back to /login.
+      router.replace(flow.redirectTo)
+      return
+    }
+
+    // Password RESET: end the session and send them to /login (historic flow).
     await supabase.auth.signOut()
     setStatus('updated')
   }

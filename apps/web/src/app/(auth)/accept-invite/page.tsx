@@ -41,7 +41,7 @@ export default function AcceptInvitePage() {
         const { error } = await supabase.auth.exchangeCodeForSession(action.code)
         if (cancelled) return
         if (error) { setServerError(error.message); setStatus('code'); return }
-        router.replace('/reset-password/confirm')
+        router.replace('/reset-password/confirm?flow=invite')
         return
       }
       // verify_otp
@@ -52,7 +52,7 @@ export default function AcceptInvitePage() {
         setStatus('code')
         return
       }
-      router.replace('/reset-password/confirm')
+      router.replace('/reset-password/confirm?flow=invite')
     }
     void run()
     return () => { cancelled = true }
@@ -68,7 +68,7 @@ export default function AcceptInvitePage() {
     const { error } = await supabase.auth.verifyOtp({ email: email.trim().toLowerCase(), token: code, type: 'invite' })
     setVerifying(false)
     if (error) { setServerError(error.message); setCode(''); return }
-    router.replace('/reset-password/confirm')
+    router.replace('/reset-password/confirm?flow=invite')
   }
 
   if (status === 'working') {
