@@ -105,6 +105,55 @@ describe('getClientGcrReviewAction', () => {
   })
 })
 
+// ─── getClientReviewNodesAction ──────────────────────────────────────────────
+
+describe('getClientReviewNodesAction', () => {
+  it('maps shop_number -> node_id from the grant-gated RPC', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: [
+        { shop_number: 'S1', node_id: NODE_ID },
+        { shop_number: 'S2', node_id: '00000000-0000-0000-0000-0000000000dd' },
+      ],
+      error: null,
+    })
+    createClientMock.mockResolvedValue({
+      schema: vi.fn(() => ({ rpc })),
+      auth: userAuth(CLIENT_ID),
+    })
+
+    const { getClientReviewNodesAction } = await import('./portal-gcr.actions')
+    const res = await getClientReviewNodesAction(PROJECT_ID)
+    expect(rpc).toHaveBeenCalledWith('get_client_review_nodes', { p_project_id: PROJECT_ID })
+    expect(res).toEqual({
+      nodeIdByShop: { S1: NODE_ID, S2: '00000000-0000-0000-0000-0000000000dd' },
+    })
+  })
+
+  it('returns an error when the RPC raises (no grant)', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: 'Not authorised to review this site' } })
+    createClientMock.mockResolvedValue({
+      schema: vi.fn(() => ({ rpc })),
+      auth: userAuth(CLIENT_ID),
+    })
+
+    const { getClientReviewNodesAction } = await import('./portal-gcr.actions')
+    const res = await getClientReviewNodesAction(PROJECT_ID)
+    expect('error' in res).toBe(true)
+  })
+
+  it('returns an empty map when no nodes exist', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null })
+    createClientMock.mockResolvedValue({
+      schema: vi.fn(() => ({ rpc })),
+      auth: userAuth(CLIENT_ID),
+    })
+
+    const { getClientReviewNodesAction } = await import('./portal-gcr.actions')
+    const res = await getClientReviewNodesAction(PROJECT_ID)
+    expect(res).toEqual({ nodeIdByShop: {} })
+  })
+})
+
 // ─── submitGcrChangeRequestsAction ───────────────────────────────────────────
 
 describe('submitGcrChangeRequestsAction', () => {

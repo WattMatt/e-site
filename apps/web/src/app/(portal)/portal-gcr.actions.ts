@@ -54,6 +54,33 @@ export async function getClientGcrReviewAction(
 }
 
 /**
+ * Resolve shopNumber -> live structure.nodes.id for a granted client. The frozen
+ * snapshot carries shopNumber only, but a captured proposal must target a real
+ * live node id (submitGcrChangeRequestsAction scope-checks it). A client has no
+ * org membership and cannot read structure.nodes under RLS, so this goes through
+ * the same grant-gated SECURITY DEFINER RPC family as get_client_review. The RPC
+ * exposes ONLY { shop_number, node_id } — no cost data ever.
+ */
+export async function getClientReviewNodesAction(
+  projectId: string,
+): Promise<{ nodeIdByShop: Record<string, string> } | { error: string }> {
+  const supabase = await createClient()
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData?.user) return { error: 'Not authenticated' }
+
+  const { data, error } = await (supabase as any)
+    .schema('gcr')
+    .rpc('get_client_review_nodes', { p_project_id: projectId })
+  if (error) return { error: error.message }
+
+  const nodeIdByShop: Record<string, string> = {}
+  for (const r of (data ?? []) as { shop_number: string | null; node_id: string }[]) {
+    if (r.shop_number != null) nodeIdByShop[r.shop_number] = r.node_id
+  }
+  return { nodeIdByShop }
+}
+
+/**
  * Submit a batch of captured proposals + comments, pinned to the latest
  * published snapshot. RLS gates the insert (granted client only). Then notifies
  * the project's write-role members (in-app + branded email), best-effort.
