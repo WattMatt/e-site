@@ -1,23 +1,36 @@
 'use client'
 
 import { useState } from 'react'
-import type { GcrReportRevisionRow } from '@esite/shared'
+import type { GcrReportRevisionRow, GcrChangeRequestRow } from '@esite/shared'
 import type { GcrConfig } from './gcr.actions'
+import type { ClientSiteAccessRow } from './gcr-client-review.actions'
 import { SettingsForm } from './SettingsForm'
 import { ZonesPanel } from './ZonesPanel'
 import { TenantsPanel } from './TenantsPanel'
 import { ReportsPanel } from './ReportsPanel'
+import { ClientReviewPanel } from './ClientReviewPanel'
 
-type Tab = 'settings' | 'zones' | 'tenants' | 'reports'
+type Tab = 'settings' | 'zones' | 'tenants' | 'reports' | 'client'
 
 interface GcrTabsProps {
   projectId: string
   data: GcrConfig
   reportRevisions: GcrReportRevisionRow[]
   reportRevisionsLoadFailed?: boolean
+  clientGrants: ClientSiteAccessRow[]
+  clientRequests: GcrChangeRequestRow[]
+  clientLastPublishedAt: string | null
 }
 
-export function GcrTabs({ projectId, data, reportRevisions, reportRevisionsLoadFailed }: GcrTabsProps) {
+export function GcrTabs({
+  projectId,
+  data,
+  reportRevisions,
+  reportRevisionsLoadFailed,
+  clientGrants,
+  clientRequests,
+  clientLastPublishedAt,
+}: GcrTabsProps) {
   const [active, setActive] = useState<Tab>('settings')
 
   return (
@@ -39,6 +52,7 @@ export function GcrTabs({ projectId, data, reportRevisions, reportRevisionsLoadF
             { id: 'zones',    label: 'Zones & Generators' },
             { id: 'tenants',  label: 'Tenants' },
             { id: 'reports',  label: 'Reports' },
+            { id: 'client',   label: 'Client review' },
           ] as { id: Tab; label: string }[]
         ).map(({ id, label }) => (
           <button
@@ -93,6 +107,15 @@ export function GcrTabs({ projectId, data, reportRevisions, reportRevisionsLoadF
           zones={data.zones}
           generators={data.generators}
           tenants={data.tenants}
+        />
+      )}
+
+      {active === 'client' && (
+        <ClientReviewPanel
+          projectId={projectId}
+          grants={clientGrants}
+          requests={clientRequests}
+          lastPublishedAt={clientLastPublishedAt}
         />
       )}
     </div>
