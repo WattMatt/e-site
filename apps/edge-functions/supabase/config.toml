@@ -56,6 +56,13 @@ enabled = true
 uri = "http://host.docker.internal:54321/functions/v1/auth-email-hook"
 secrets = "env(SEND_EMAIL_HOOK_SECRET)"
 
+# The Send Email hook calls this function with a standardwebhooks-signed request
+# (header `webhook-signature`), NOT a Supabase user JWT. JWT verification must be
+# OFF or the gateway 401s every hook call before our signature check runs. The
+# function authenticates itself by verifying SEND_EMAIL_HOOK_SECRET.
+[functions.auth-email-hook]
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 policy = "oneshot"
