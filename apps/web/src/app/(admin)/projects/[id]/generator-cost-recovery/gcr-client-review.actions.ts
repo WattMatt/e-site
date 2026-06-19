@@ -213,6 +213,76 @@ export async function listClientSiteAccessAction(
   }))
 }
 
+// ─── getLatestClientReviewPublishAction ──────────────────────────────────────
+
+/**
+ * Read the timestamp of the latest published review snapshot for this project so
+ * the admin panel can show "Last published …". Returns { publishedAt: null }
+ * when nothing has been published yet. Gate: COST_VIEW_ROLES (read).
+ */
+export async function getLatestClientReviewPublishAction(
+  projectId: string,
+): Promise<{ publishedAt: string | null } | { error: string }> {
+  const supabase = await createClient()
+
+  const orgId = await resolveOrgId(supabase, projectId)
+  if (!orgId) return { error: 'Project not found' }
+
+  const guard = await requireRole(supabase, orgId, COST_VIEW_ROLES)
+  if (!guard.ok) return { error: guard.error }
+
+  const { data, error } = await (supabase as any)
+    .schema('gcr')
+    .from('review_snapshots')
+    .select('published_for_client_at')
+    .eq('project_id', projectId)
+    .order('published_for_client_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return { error: error.message }
+
+  return { publishedAt: data?.published_for_client_at ?? null }
+}
+
+// ─── resolveClientByEmailAction ──────────────────────────────────────────────
+
+/**
+ * Resolve a client's email to their profile id so the admin can grant access by
+ * email (the UI never asks an admin to type a UUID). Surfaces the same
+ * "invite them first" error as the grant path when no account exists, so the
+ * panel can show one consistent message. Read-only lookup via the service
+ * client (an admin may not otherwise see a profile outside their org).
+ * Gate: ORG_WRITE_ROLES (this is a grant precursor).
+ */
+export async function resolveClientByEmailAction(
+  projectId: string,
+  email: string,
+): Promise<{ userId: string } | { error: string }> {
+  const supabase = await createClient()
+
+  const orgId = await resolveOrgId(supabase, projectId)
+  if (!orgId) return { error: 'Project not found' }
+
+  const guard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
+  if (!guard.ok) return { error: guard.error }
+
+  const normalised = email.trim().toLowerCase()
+  if (!normalised) return { error: 'Enter a client email address' }
+
+  const svc = createServiceClient() as any
+  const { data: profile, error } = await svc
+    .from('profiles')
+    .select('id')
+    .ilike('email', normalised)
+    .maybeSingle()
+  if (error) return { error: error.message ?? 'Failed to look up client' }
+  if (!profile) {
+    return { error: 'No client account for that email — invite them first' }
+  }
+
+  return { userId: profile.id as string }
+}
+
 // ─── listGcrChangeRequestsAction ─────────────────────────────────────────────
 
 /** List change requests for the admin queue (newest first). */

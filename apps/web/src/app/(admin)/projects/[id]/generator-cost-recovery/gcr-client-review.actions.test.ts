@@ -549,3 +549,96 @@ describe('listGcrChangeRequestsAction', () => {
     expect(res).toEqual(rows)
   })
 })
+
+// ─── resolveClientByEmailAction ──────────────────────────────────────────────
+
+describe('resolveClientByEmailAction', () => {
+  it('returns the profile id for a known client email', async () => {
+    const schema = vi.fn((name: string) =>
+      name === 'projects' ? { from: projectsSchemaChain(ORG_ID) } : ({} as any))
+    createClientMock.mockResolvedValue({ schema })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const svcMaybeSingle = vi.fn().mockResolvedValue({ data: { id: CLIENT_ID }, error: null })
+    const svcIlike = vi.fn().mockReturnValue({ maybeSingle: svcMaybeSingle })
+    const svcSelect = vi.fn().mockReturnValue({ ilike: svcIlike })
+    createServiceClientMock.mockReturnValue({ from: vi.fn().mockReturnValue({ select: svcSelect }) })
+
+    const { resolveClientByEmailAction } = await import('./gcr-client-review.actions')
+    const res = await resolveClientByEmailAction(PROJECT_ID, '  Client@Example.com ')
+    expect(res).toEqual({ userId: CLIENT_ID })
+    // email is normalised (trimmed + lower-cased) before lookup
+    expect(svcIlike).toHaveBeenCalledWith('email', 'client@example.com')
+  })
+
+  it('surfaces "invite them first" when no account exists', async () => {
+    const schema = vi.fn((name: string) =>
+      name === 'projects' ? { from: projectsSchemaChain(ORG_ID) } : ({} as any))
+    createClientMock.mockResolvedValue({ schema })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const svcMaybeSingle = vi.fn().mockResolvedValue({ data: null, error: null })
+    const svcIlike = vi.fn().mockReturnValue({ maybeSingle: svcMaybeSingle })
+    const svcSelect = vi.fn().mockReturnValue({ ilike: svcIlike })
+    createServiceClientMock.mockReturnValue({ from: vi.fn().mockReturnValue({ select: svcSelect }) })
+
+    const { resolveClientByEmailAction } = await import('./gcr-client-review.actions')
+    const res = await resolveClientByEmailAction(PROJECT_ID, 'nobody@example.com')
+    expect(res).toEqual({ error: 'No client account for that email — invite them first' })
+  })
+
+  it('gates on ORG_WRITE_ROLES', async () => {
+    const schema = vi.fn((name: string) =>
+      name === 'projects' ? { from: projectsSchemaChain(ORG_ID) } : ({} as any))
+    createClientMock.mockResolvedValue({ schema })
+    requireRoleMock.mockResolvedValue({ ok: false, error: 'Your role (contractor) is not allowed' })
+
+    const { resolveClientByEmailAction } = await import('./gcr-client-review.actions')
+    const res = await resolveClientByEmailAction(PROJECT_ID, 'client@example.com')
+    expect('error' in res).toBe(true)
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─── getLatestClientReviewPublishAction ──────────────────────────────────────
+
+describe('getLatestClientReviewPublishAction', () => {
+  it('returns the latest published_for_client_at timestamp', async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: { published_for_client_at: '2026-06-18T10:00:00Z' },
+      error: null,
+    })
+    const limit = vi.fn().mockReturnValue({ maybeSingle })
+    const order = vi.fn().mockReturnValue({ limit })
+    const eq = vi.fn().mockReturnValue({ order })
+    const select = vi.fn().mockReturnValue({ eq })
+    const fromGcr = vi.fn((table: string) =>
+      table === 'review_snapshots' ? { select } : ({} as any))
+    const schema = vi.fn((name: string) =>
+      name === 'projects' ? { from: projectsSchemaChain(ORG_ID) } : { from: fromGcr })
+    createClientMock.mockResolvedValue({ schema })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { getLatestClientReviewPublishAction } = await import('./gcr-client-review.actions')
+    const res = await getLatestClientReviewPublishAction(PROJECT_ID)
+    expect(res).toEqual({ publishedAt: '2026-06-18T10:00:00Z' })
+  })
+
+  it('returns null when nothing has been published yet', async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null })
+    const limit = vi.fn().mockReturnValue({ maybeSingle })
+    const order = vi.fn().mockReturnValue({ limit })
+    const eq = vi.fn().mockReturnValue({ order })
+    const select = vi.fn().mockReturnValue({ eq })
+    const fromGcr = vi.fn((table: string) =>
+      table === 'review_snapshots' ? { select } : ({} as any))
+    const schema = vi.fn((name: string) =>
+      name === 'projects' ? { from: projectsSchemaChain(ORG_ID) } : { from: fromGcr })
+    createClientMock.mockResolvedValue({ schema })
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { getLatestClientReviewPublishAction } = await import('./gcr-client-review.actions')
+    const res = await getLatestClientReviewPublishAction(PROJECT_ID)
+    expect(res).toEqual({ publishedAt: null })
+  })
+})
