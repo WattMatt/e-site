@@ -9,10 +9,15 @@
 
 import type { HandoverCategory } from '@esite/shared'
 
+export type OrderDocKind = 'original' | 'revision' | 'variation'
+
 /** A single attached order document (Quote / Order instruction). */
 export interface OrderDoc {
+  id: string
   storage_path: string
   file_name: string
+  label: string | null
+  kind: OrderDocKind
 }
 
 export type ShopDrawingStatus = 'awaiting' | 'received' | 'approved'

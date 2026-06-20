@@ -26,7 +26,7 @@ export interface ProcLine {
   orderId: string; scopeLabel: string | null // null = the equipment line
   status: ProcStatus; ordered_at: string | null; received_at: string | null
   required_by: string | null; rag: 'red' | 'amber' | 'green' | 'neutral'
-  documents: { quote: OrderDoc | null; order_instruction: OrderDoc | null }
+  documents: { quote: OrderDoc[]; order_instruction: OrderDoc[] }
   shopDrawings: ShopDrawing[]
 }
 export interface UnifiedBoard {
@@ -48,7 +48,7 @@ export interface GatherInput {
   drawingsByOrder: Map<string, ShopDrawing[]>
 }
 
-const EMPTY_DOCS = (): ProcLine['documents'] => ({ quote: null, order_instruction: null })
+const EMPTY_DOCS = (): ProcLine['documents'] => ({ quote: [], order_instruction: [] })
 
 const GROUP_LABEL: Record<string, string> = {
   rmu: 'Ring Main Units (RMU)', mini_sub: 'Mini-Substations', generator: 'Generators',
