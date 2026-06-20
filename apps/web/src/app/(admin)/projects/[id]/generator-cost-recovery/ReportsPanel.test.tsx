@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { GcrReportRevisionRow, GcrSettingsRow, TenantNodeRow } from '@esite/shared'
@@ -69,6 +69,10 @@ describe('ReportsPanel', () => {
     vi.clearAllMocks()
   })
 
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('renders the revision list with rev number and summary numbers', async () => {
     await renderPanel()
     expect(screen.getByText('Rev 3')).toBeDefined()
@@ -105,7 +109,17 @@ describe('ReportsPanel', () => {
     expect(iframe.src).toBe('https://signed.example/inline.pdf')
   })
 
-  it('Preview draft opens in the contained viewer modal (no new tab)', async () => {
+  it('Preview draft fetches the route and frames a blob URL, never the same-origin route', async () => {
+    // The same-origin route carries X-Frame-Options: DENY, so framing it
+    // directly blanks the iframe. The draft path must fetch → blob: → frame.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(new Blob(['%PDF-1.4'], { type: 'application/pdf' })),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    URL.createObjectURL = vi.fn(() => 'blob:http://localhost/draft-123')
+    URL.revokeObjectURL = vi.fn()
+
     await renderPanel()
 
     await userEvent.click(screen.getByRole('button', { name: /preview draft/i }))
@@ -113,11 +127,31 @@ describe('ReportsPanel', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeDefined()
     })
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/projects/${PROJECT_ID}/generator-cost-recovery/report-preview`,
+    )
     const iframe = screen.getByTitle(/Draft/) as HTMLIFrameElement
     expect(iframe.tagName).toBe('IFRAME')
-    expect(iframe.src).toContain(`/api/projects/${PROJECT_ID}/generator-cost-recovery/report-preview`)
+    expect(iframe.src).toContain('blob:')
+    expect(iframe.src).not.toContain('/api/projects')
     // No anchor pointing at the preview route remains (the old new-tab path)
     expect(document.querySelector('a[target="_blank"]')).toBeNull()
+  })
+
+  it('Preview draft surfaces the route error body instead of a silent blank frame', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: 'PDF render failed' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await renderPanel()
+
+    await userEvent.click(screen.getByRole('button', { name: /preview draft/i }))
+
+    expect(await screen.findByText('PDF render failed')).toBeDefined()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('Download requests the attachment disposition', async () => {

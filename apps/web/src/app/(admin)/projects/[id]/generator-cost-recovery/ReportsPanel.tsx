@@ -10,7 +10,7 @@
  * - Delete → confirm, ORG_WRITE enforced by the server action
  */
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -72,6 +72,15 @@ export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones
   const [busyRevId, setBusyRevId] = useState<string | null>(null)
   const [rowError, setRowError] = useState<string | null>(null)
 
+  // Draft preview: the same-origin route can't be framed directly — every app
+  // response carries X-Frame-Options: DENY (next.config.ts), which blanks the
+  // iframe. So we fetch the PDF and frame a blob: URL instead (frame-src allows
+  // blob:, and blob URLs carry no X-Frame-Options). This ref holds the URL so
+  // we can revoke it. Saved revisions are unaffected — they frame cross-origin
+  // Supabase signed URLs, which don't carry our header.
+  const draftBlobRef = useRef<string | null>(null)
+  const [isPreviewingDraft, setIsPreviewingDraft] = useState(false)
+
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const readiness = useMemo(
@@ -125,15 +134,49 @@ export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones
 
   const previewUrl = `/api/projects/${projectId}/generator-cost-recovery/report-preview`
 
-  function handlePreviewDraft() {
-    // Same-origin route — the iframe request carries the session cookies, and
-    // the route streams the PDF inline. No save, no new tab.
-    setViewer({ revLabel: 'Draft', url: previewUrl, rev: null })
+  function revokeDraftBlob() {
+    if (draftBlobRef.current) {
+      URL.revokeObjectURL(draftBlobRef.current)
+      draftBlobRef.current = null
+    }
+  }
+
+  // Revoke any outstanding draft object URL when the panel unmounts.
+  useEffect(() => revokeDraftBlob, [])
+
+  function closeViewer() {
+    revokeDraftBlob()
+    setViewer(null)
+  }
+
+  async function handlePreviewDraft() {
+    // Fetch the same-origin route (cookie auth) and frame the resulting blob:
+    // URL — framing the route directly is blocked by X-Frame-Options: DENY.
+    // Surfacing the route's error body turns a silent blank frame into a message.
+    setIsPreviewingDraft(true)
+    setRowError(null)
+    revokeDraftBlob()
+    try {
+      const res = await fetch(previewUrl)
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        setRowError(body.error ?? `Preview failed (HTTP ${res.status})`)
+        return
+      }
+      const url = URL.createObjectURL(await res.blob())
+      draftBlobRef.current = url
+      setViewer({ revLabel: 'Draft', url, rev: null })
+    } catch {
+      setRowError('Failed to render the report preview — check your connection and try again.')
+    } finally {
+      setIsPreviewingDraft(false)
+    }
   }
 
   function downloadDraft() {
     const a = document.createElement('a')
-    a.href = previewUrl
+    // Reuse the already-fetched blob; fall back to the route if it's gone.
+    a.href = draftBlobRef.current ?? previewUrl
     a.download = 'generator-cost-recovery-draft.pdf'
     a.rel = 'noopener'
     document.body.appendChild(a)
@@ -190,7 +233,14 @@ export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones
               Saved reports
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Button variant="ghost" size="sm" onClick={handlePreviewDraft} style={{ fontSize: 12 }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handlePreviewDraft}
+                disabled={isPreviewingDraft}
+                isLoading={isPreviewingDraft}
+                style={{ fontSize: 12 }}
+              >
                 Preview draft
               </Button>
               <Button
@@ -348,7 +398,7 @@ export function ReportsPanel({ projectId, revisions, loadFailed, settings, zones
           url={viewer.url}
           onDownload={() => (viewer.rev ? handleDownload(viewer.rev) : downloadDraft())}
           isDownloading={viewer.rev ? busyRevId === viewer.rev.id : false}
-          onClose={() => setViewer(null)}
+          onClose={closeViewer}
         />
       )}
     </div>
