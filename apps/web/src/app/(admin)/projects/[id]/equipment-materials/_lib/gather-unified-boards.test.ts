@@ -91,4 +91,29 @@ describe('gatherUnifiedBoards', () => {
     expect(b.lines).toHaveLength(0)
     expect(b.summary.status).toBe('required')
   })
+
+  it('carries multiple labelled documents per slot (quote + order_instruction lists)', () => {
+    const docsByOrder: GatherInput['docsByOrder'] = new Map([
+      [
+        'o1',
+        {
+          quote: [
+            { id: 'd1', storage_path: 'p/q1', file_name: 'supA.pdf', label: 'Supplier A', kind: 'original' },
+            { id: 'd2', storage_path: 'p/q2', file_name: 'supB.pdf', label: 'Supplier B', kind: 'original' },
+          ],
+          order_instruction: [
+            { id: 'd3', storage_path: 'p/o1', file_name: 'order.pdf', label: null, kind: 'original' },
+            { id: 'd4', storage_path: 'p/o2', file_name: 'var.pdf', label: 'RFI-12', kind: 'variation' },
+          ],
+        },
+      ],
+    ])
+    const input: GatherInput = { ...base, docsByOrder }
+    const ca = gatherUnifiedBoards(input).find((g) => g.key === 'common_area_board')!
+    const db10 = ca.boards.find((x) => x.code === 'DB-10')! // node n1 → order o1
+    const line = db10.lines[0]
+    expect(line.documents.quote).toHaveLength(2)
+    expect(line.documents.quote.map((d) => d.label)).toEqual(['Supplier A', 'Supplier B'])
+    expect(line.documents.order_instruction.map((d) => d.kind)).toEqual(['original', 'variation'])
+  })
 })

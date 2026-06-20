@@ -4,8 +4,9 @@
  * node-order-document.actions.ts — server actions for node-order documents
  * (quote / order instruction) in the Material Order Tracker.
  *
- *   - attachNodeOrderDocumentAction       — record an uploaded doc in a slot
- *   - clearNodeOrderDocumentAction        — remove a doc from a slot
+ *   - addNodeOrderDocumentAction          — append a document to a slot
+ *   - updateNodeOrderDocumentMetaAction   — edit a document's label + kind
+ *   - deleteNodeOrderDocumentAction       — remove a document (row + storage)
  *   - getNodeOrderDocumentSignedUrlAction — short-lived signed URL for view/download
  *
  * Cross-schema write pattern (CLAUDE.md 2026-05-18 gotcha): writes to
@@ -71,6 +72,25 @@ async function structureDelete(
   return { ok: true }
 }
 
+async function structurePatch(
+  supabaseUrl: string,
+  serviceKey: string,
+  table: string,
+  filterQuery: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterQuery}`, {
+    method: 'PATCH',
+    headers: structureHeaders(serviceKey),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    return { ok: false, error: `PATCH structure.${table} failed (HTTP ${res.status}): ${text.slice(0, 300)}` }
+  }
+  return { ok: true }
+}
+
 // ---------------------------------------------------------------------------
 // Auth + ownership guards
 // ---------------------------------------------------------------------------
@@ -111,32 +131,37 @@ async function guardOrderBelongsToProject(
 }
 
 // ---------------------------------------------------------------------------
-// attachNodeOrderDocumentAction
+// addNodeOrderDocumentAction — append a document to a slot (no replace)
 // ---------------------------------------------------------------------------
 
-const attachSchema = z.object({
+const docKindSchema = z.enum(['original', 'revision', 'variation'])
+
+const addSchema = z.object({
   projectId: uuidSchema,
   nodeOrderId: uuidSchema,
   docType: docTypeSchema,
   storagePath: z.string().min(1),
   fileName: z.string().min(1).max(255),
+  label: z.string().max(120).nullable().optional(),
+  kind: docKindSchema.optional(),
 })
 
-export type AttachNodeOrderDocumentResult = { ok: true } | { error: string }
+export type AddNodeOrderDocumentResult = { ok: true } | { error: string }
 
 /**
- * Record an uploaded document against a node order's slot. Each (order, type)
- * is a single slot — an existing document of the same type is replaced (its row
- * removed and its storage object cleaned up).
+ * Record an uploaded document against a node order's slot. Multiple documents
+ * per (order, type) are allowed — this always inserts (append), never replaces.
  */
-export async function attachNodeOrderDocumentAction(
+export async function addNodeOrderDocumentAction(
   projectId: string,
   nodeOrderId: string,
   docType: string,
   storagePath: string,
   fileName: string,
-): Promise<AttachNodeOrderDocumentResult> {
-  const parsed = attachSchema.safeParse({ projectId, nodeOrderId, docType, storagePath, fileName })
+  label?: string | null,
+  kind?: 'original' | 'revision' | 'variation',
+): Promise<AddNodeOrderDocumentResult> {
+  const parsed = addSchema.safeParse({ projectId, nodeOrderId, docType, storagePath, fileName, label, kind })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
   const guard = await guardProjectAccess(projectId)
@@ -148,96 +173,122 @@ export async function attachNodeOrderDocumentAction(
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
-
-  // Capture any existing document in this slot so its storage object can be
-  // cleaned up after the replacement is committed.
-  const { data: existing } = await (guard.supabase as never as {
-    schema: (s: string) => { from: (t: string) => any }
-  })
-    .schema('structure')
-    .from('node_order_documents')
-    .select('storage_path')
-    .eq('node_order_id', nodeOrderId)
-    .eq('doc_type', docType)
-    .maybeSingle()
-  const oldPath = (existing as { storage_path: string } | null)?.storage_path ?? null
-
-  // Replace the slot: delete the old row, then insert the new one.
-  const del = await structureDelete(
-    supabaseUrl,
-    serviceKey,
-    'node_order_documents',
-    `node_order_id=eq.${nodeOrderId}&doc_type=eq.${docType}`,
-  )
-  if (!del.ok) return { error: del.error ?? 'Failed to replace existing document' }
 
   const ins = await structureInsert(supabaseUrl, serviceKey, 'node_order_documents', {
     node_order_id: nodeOrderId,
     doc_type: parsed.data.docType,
     storage_path: parsed.data.storagePath,
     file_name: parsed.data.fileName,
+    label: parsed.data.label ?? null,
+    kind: parsed.data.kind ?? 'original',
     uploaded_by: guard.user.id,
   })
   if (!ins.ok) return { error: ins.error ?? 'Failed to record document' }
-
-  // Best-effort: remove the superseded storage object.
-  if (oldPath && oldPath !== parsed.data.storagePath) {
-    await guard.supabase.storage.from(BUCKET).remove([oldPath])
-  }
 
   revalidatePath(`/projects/${projectId}/materials`)
   return { ok: true }
 }
 
 // ---------------------------------------------------------------------------
-// clearNodeOrderDocumentAction
+// Shared: confirm a document belongs to the project, returning its row
 // ---------------------------------------------------------------------------
 
-export type ClearNodeOrderDocumentResult = { ok: true } | { error: string }
-
-/** Remove a document from a node order's slot (DB row + storage object). */
-export async function clearNodeOrderDocumentAction(
+/** Read a doc row (RLS-gated) and confirm its order is in the project. */
+async function guardDocumentInProject(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  documentId: string,
   projectId: string,
-  nodeOrderId: string,
-  docType: string,
-): Promise<ClearNodeOrderDocumentResult> {
-  const parsed = z
-    .object({ projectId: uuidSchema, nodeOrderId: uuidSchema, docType: docTypeSchema })
-    .safeParse({ projectId, nodeOrderId, docType })
+): Promise<{ error: string } | { row: { node_order_id: string; storage_path: string } }> {
+  const { data: doc } = await (supabase as never as {
+    schema: (s: string) => { from: (t: string) => any }
+  })
+    .schema('structure')
+    .from('node_order_documents')
+    .select('node_order_id, storage_path')
+    .eq('id', documentId)
+    .maybeSingle()
+  const row = doc as { node_order_id: string; storage_path: string } | null
+  if (!row) return { error: 'Document not found' }
+
+  const orderErr = await guardOrderBelongsToProject(supabase, row.node_order_id, projectId)
+  if (orderErr) return orderErr
+  return { row }
+}
+
+// ---------------------------------------------------------------------------
+// updateNodeOrderDocumentMetaAction — edit a document's label + kind
+// ---------------------------------------------------------------------------
+
+const updateMetaSchema = z.object({
+  projectId: uuidSchema,
+  documentId: uuidSchema,
+  label: z.string().max(120).nullable(),
+  kind: docKindSchema,
+})
+
+export type UpdateNodeOrderDocumentMetaResult = { ok: true } | { error: string }
+
+export async function updateNodeOrderDocumentMetaAction(
+  projectId: string,
+  documentId: string,
+  meta: { label: string | null; kind: 'original' | 'revision' | 'variation' },
+): Promise<UpdateNodeOrderDocumentMetaResult> {
+  const parsed = updateMetaSchema.safeParse({ projectId, documentId, label: meta.label, kind: meta.kind })
   if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
 
   const guard = await guardProjectAccess(projectId)
   if (guard.error !== undefined) return { error: guard.error }
 
-  const orderErr = await guardOrderBelongsToProject(guard.supabase, nodeOrderId, projectId)
-  if (orderErr) return orderErr
+  const owned = await guardDocumentInProject(guard.supabase, documentId, projectId)
+  if ('error' in owned) return owned
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
 
-  const { data: existing } = await (guard.supabase as never as {
-    schema: (s: string) => { from: (t: string) => any }
+  const patch = await structurePatch(supabaseUrl, serviceKey, 'node_order_documents', `id=eq.${documentId}`, {
+    // Coerce a blank label to NULL so the stored representation matches `add`.
+    label: parsed.data.label && parsed.data.label.length > 0 ? parsed.data.label : null,
+    kind: parsed.data.kind,
   })
-    .schema('structure')
-    .from('node_order_documents')
-    .select('storage_path')
-    .eq('node_order_id', nodeOrderId)
-    .eq('doc_type', docType)
-    .maybeSingle()
-  const path = (existing as { storage_path: string } | null)?.storage_path ?? null
+  if (!patch.ok) return { error: patch.error ?? 'Failed to update document' }
 
-  // Clear the DB row first (source of truth), then remove the storage object.
-  const del = await structureDelete(
-    supabaseUrl,
-    serviceKey,
-    'node_order_documents',
-    `node_order_id=eq.${nodeOrderId}&doc_type=eq.${docType}`,
-  )
+  revalidatePath(`/projects/${projectId}/materials`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// deleteNodeOrderDocumentAction — remove one document (row + storage object)
+// ---------------------------------------------------------------------------
+
+export type DeleteNodeOrderDocumentResult = { ok: true } | { error: string }
+
+/** Delete a single document by id (DB row + its storage object). */
+export async function deleteNodeOrderDocumentAction(
+  projectId: string,
+  documentId: string,
+): Promise<DeleteNodeOrderDocumentResult> {
+  const parsed = z
+    .object({ projectId: uuidSchema, documentId: uuidSchema })
+    .safeParse({ projectId, documentId })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const owned = await guardDocumentInProject(guard.supabase, documentId, projectId)
+  if ('error' in owned) return owned
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  // DB row first (source of truth), then best-effort storage cleanup.
+  const del = await structureDelete(supabaseUrl, serviceKey, 'node_order_documents', `id=eq.${documentId}`)
   if (!del.ok) return { error: del.error ?? 'Failed to remove document' }
 
-  if (path) {
-    await guard.supabase.storage.from(BUCKET).remove([path])
+  if (owned.row.storage_path) {
+    await guard.supabase.storage.from(BUCKET).remove([owned.row.storage_path])
   }
 
   revalidatePath(`/projects/${projectId}/materials`)
