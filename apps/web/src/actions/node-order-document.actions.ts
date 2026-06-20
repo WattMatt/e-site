@@ -18,6 +18,7 @@ import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
+import { shouldAdvanceToOrdered, type NodeOrderStatus } from '@/lib/orders/order-status-advance'
 
 const BUCKET = 'node-order-documents'
 const uuidSchema = z.string().uuid()
@@ -184,6 +185,34 @@ export async function addNodeOrderDocumentAction(
     uploaded_by: guard.user.id,
   })
   if (!ins.ok) return { error: ins.error ?? 'Failed to record document' }
+
+  // An order-instruction upload on a still-`required` order means the order was
+  // placed → advance it to `ordered` with today's date (one-way; quotes and
+  // orders past `required` are untouched). Best-effort: the document is already
+  // recorded (source of truth); a failed status patch must not fail the upload.
+  if (parsed.data.docType === 'order_instruction') {
+    const { data: orderRow } = await (guard.supabase as never as {
+      schema: (s: string) => { from: (t: string) => any }
+    })
+      .schema('structure')
+      .from('node_orders')
+      .select('status')
+      .eq('id', nodeOrderId)
+      .maybeSingle()
+    const status = (orderRow as { status: NodeOrderStatus } | null)?.status
+    if (status && shouldAdvanceToOrdered('order_instruction', status)) {
+      const adv = await structurePatch(supabaseUrl, serviceKey, 'node_orders', `id=eq.${nodeOrderId}`, {
+        status: 'ordered',
+        ordered_at: new Date().toISOString().slice(0, 10),
+      })
+      if (adv.ok) {
+        revalidatePath(`/projects/${projectId}/tenant-schedule`)
+        revalidatePath(`/projects/${projectId}/equipment-schedule`)
+      } else {
+        console.warn('[addNodeOrderDocument] auto-advance to ordered failed:', adv.error)
+      }
+    }
+  }
 
   revalidatePath(`/projects/${projectId}/materials`)
   return { ok: true }
