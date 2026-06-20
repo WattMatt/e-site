@@ -17,6 +17,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
 
+  // Authorization is VIEW-level by design: gatherTenantScheduleReportData gates on
+  // project access (RLS SELECT), not a manage role. A tenant schedule report is a
+  // read-derived snapshot exposing nothing the viewer can't already see, so any
+  // project member may generate + save one. (This is intentionally more permissive
+  // than the projects.reports manage-only RLS write policy, which the service
+  // client bypasses here.) Tighten to owner/admin/project_manager if that changes.
+
   // Gather (enforces project access) + render.
   let data: Awaited<ReturnType<typeof gatherTenantScheduleReportData>>
   try {
