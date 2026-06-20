@@ -47,7 +47,7 @@ const STATUS_LABEL: Record<ProcStatus, string> = {
 }
 const STATUS_ORDER: ProcStatus[] = ['required', 'ordered', 'received', 'by_tenant']
 
-const EMPTY_DOCS = (): ProcLine['documents'] => ({ quote: null, order_instruction: null })
+const EMPTY_DOCS = (): ProcLine['documents'] => ({ quote: [], order_instruction: [] })
 
 // ---------------------------------------------------------------------------
 // Props
@@ -152,22 +152,32 @@ export default async function EquipmentMaterialsPage({ params, searchParams }: P
       })
         .schema('structure')
         .from('node_order_documents')
-        .select('node_order_id, doc_type, storage_path, file_name')
+        .select('id, node_order_id, doc_type, storage_path, file_name, label, kind, created_at')
         .in('node_order_id', orderIds)
+        .order('created_at', { ascending: false })
       for (const d of (docs ?? []) as Array<{
+        id: string
         node_order_id: string
         doc_type: string
         storage_path: string
         file_name: string
+        label: string | null
+        kind: 'original' | 'revision' | 'variation'
       }>) {
         let entry = docsByOrder.get(d.node_order_id)
         if (!entry) {
           entry = EMPTY_DOCS()
           docsByOrder.set(d.node_order_id, entry)
         }
-        const ref = { storage_path: d.storage_path, file_name: d.file_name }
-        if (d.doc_type === 'quote') entry.quote = ref
-        else if (d.doc_type === 'order_instruction') entry.order_instruction = ref
+        const ref = {
+          id: d.id,
+          storage_path: d.storage_path,
+          file_name: d.file_name,
+          label: d.label ?? null,
+          kind: d.kind,
+        }
+        if (d.doc_type === 'quote') entry.quote.push(ref)
+        else if (d.doc_type === 'order_instruction') entry.order_instruction.push(ref)
       }
     } catch {
       // Non-fatal — boards still render, with empty doc slots.
