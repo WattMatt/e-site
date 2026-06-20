@@ -123,7 +123,7 @@ export async function gatherTenantScheduleReportData(projectId: string): Promise
     activeNodes: activeNodesRaw.map((n) => ({
       id: n.id,
       shopNumber: (n as { shop_number?: string | null }).shop_number ?? (n as { code?: string }).code ?? '—',
-      shopName: (n as { shop_name?: string | null }).shop_name ?? '—',
+      shopName: (n as { shop_name?: string | null }).shop_name ?? (n as { name?: string | null }).name ?? '—',
       glaM2: (n as { shop_area_m2?: number | null }).shop_area_m2 ?? null,
     })),
     decommissionedCount,
