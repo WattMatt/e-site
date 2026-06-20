@@ -112,8 +112,8 @@ function LineBlock({
         </span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        <UnifiedDocSlot projectId={projectId} nodeOrderId={line.orderId} docType="quote" label="Quote" doc={line.documents.quote} />
-        <UnifiedDocSlot projectId={projectId} nodeOrderId={line.orderId} docType="order_instruction" label="Order instr." doc={line.documents.order_instruction} />
+        <UnifiedDocSlot projectId={projectId} nodeOrderId={line.orderId} docType="quote" label="Quote" docs={line.documents.quote} />
+        <UnifiedDocSlot projectId={projectId} nodeOrderId={line.orderId} docType="order_instruction" label="Order instr." docs={line.documents.order_instruction} />
         <UnifiedShopDrawingList projectId={projectId} nodeOrderId={line.orderId} drawings={line.shopDrawings} />
       </div>
     </div>

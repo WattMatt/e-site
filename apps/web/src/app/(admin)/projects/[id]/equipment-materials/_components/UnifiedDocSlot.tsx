@@ -1,48 +1,57 @@
 'use client'
 
 /**
- * UnifiedDocSlot — a single document slot (Quote / Order Instruction) on an
+ * UnifiedDocSlot — a multi-document slot (Quote / Order Instruction) on an
  * Equipment & Materials procurement line.
  *
- * Copy of the Materials tab's OrderDocSlot, with one change for D10: the
- * filename click opens an in-app DocumentPreviewModal instead of a new browser
- * tab (the new-tab `previewViaSignedUrl` is replaced by the modal here).
- *
- * Empty → an upload button. Filled → the file name (modal preview) + download +
- * remove. Upload goes through /api/node-order-documents then
- * attachNodeOrderDocumentAction.
+ * Each slot holds a labelled list of documents (newest first). A document
+ * carries a kind (Original / Revision / Variation) and an optional supplier /
+ * note label, both editable inline. Upload appends via /api/node-order-documents
+ * then addNodeOrderDocumentAction; the filename opens an in-app
+ * DocumentPreviewModal.
  */
 
 import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  attachNodeOrderDocumentAction,
-  clearNodeOrderDocumentAction,
+  addNodeOrderDocumentAction,
+  updateNodeOrderDocumentMetaAction,
+  deleteNodeOrderDocumentAction,
   getNodeOrderDocumentSignedUrlAction,
 } from '@/actions/node-order-document.actions'
 import { triggerDownload } from '@/lib/file-open'
 import { DocumentPreviewModal } from './DocumentPreviewModal'
-import type { OrderDoc } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
+import type { OrderDoc, OrderDocKind } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
 
 export type OrderDocType = 'quote' | 'order_instruction'
+
+const KIND_OPTIONS: { value: OrderDocKind; label: string }[] = [
+  { value: 'original', label: 'Original' },
+  { value: 'revision', label: 'Revision' },
+  { value: 'variation', label: 'Variation' },
+]
 
 interface Props {
   projectId: string
   nodeOrderId: string
   docType: OrderDocType
   label: string
-  doc: OrderDoc | null
+  docs: OrderDoc[]
 }
 
-export function UnifiedDocSlot({ projectId, nodeOrderId, docType, label, doc }: Props) {
+export function UnifiedDocSlot({ projectId, nodeOrderId, docType, label, docs }: Props) {
   const router = useRouter()
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [previewing, setPreviewing] = useState(false)
+  const [preview, setPreview] = useState<OrderDoc | null>(null)
   const [, startTransition] = useTransition()
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  function refresh() {
+    startTransition(() => router.refresh())
+  }
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
     setError(null)
@@ -60,23 +69,22 @@ export function UnifiedDocSlot({ projectId, nodeOrderId, docType, label, doc }: 
         throw new Error(json.error ?? `Upload failed (HTTP ${res.status})`)
       }
 
-      const attach = await attachNodeOrderDocumentAction(
+      const add = await addNodeOrderDocumentAction(
         projectId,
         nodeOrderId,
         docType,
         json.storagePath,
         json.fileName ?? file.name,
       )
-      if ('error' in attach) {
-        // Upload succeeded but the DB attach failed — clean up the orphan.
+      if ('error' in add) {
         await fetch('/api/node-order-documents', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ storagePath: json.storagePath }),
         }).catch(() => {/* best-effort */})
-        throw new Error(attach.error)
+        throw new Error(add.error)
       }
-      startTransition(() => router.refresh())
+      refresh()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -85,21 +93,40 @@ export function UnifiedDocSlot({ projectId, nodeOrderId, docType, label, doc }: 
     }
   }
 
-  async function handleDownload() {
-    if (!doc) return
+  async function handleDownload(d: OrderDoc) {
     setError(null)
-    const res = await getNodeOrderDocumentSignedUrlAction(projectId, doc.storage_path, doc.file_name)
+    const res = await getNodeOrderDocumentSignedUrlAction(projectId, d.storage_path, d.file_name)
     if ('error' in res) setError(res.error)
     else triggerDownload(res.url)
   }
 
-  async function handleRemove() {
+  async function handleMeta(d: OrderDoc, next: { label?: string | null; kind?: OrderDocKind }) {
+    const label = next.label !== undefined ? next.label : d.label
+    const kind = next.kind ?? d.kind
+    if (label === d.label && kind === d.kind) return
     setError(null)
     setBusy(true)
     try {
-      const res = await clearNodeOrderDocumentAction(projectId, nodeOrderId, docType)
+      const res = await updateNodeOrderDocumentMetaAction(projectId, d.id, {
+        label: label && label.length > 0 ? label : null,
+        kind,
+      })
       if ('error' in res) throw new Error(res.error)
-      startTransition(() => router.refresh())
+      refresh()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Update failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRemove(d: OrderDoc) {
+    setError(null)
+    setBusy(true)
+    try {
+      const res = await deleteNodeOrderDocumentAction(projectId, d.id)
+      if ('error' in res) throw new Error(res.error)
+      refresh()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Remove failed')
     } finally {
@@ -108,83 +135,81 @@ export function UnifiedDocSlot({ projectId, nodeOrderId, docType, label, doc }: 
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, minHeight: 22 }}>
-      <span style={{ color: 'var(--c-text-dim)', minWidth: 84, flexShrink: 0 }}>{label}</span>
-      {doc ? (
-        <>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11 }}>
+      <span style={{ color: 'var(--c-text-dim)' }}>{label}</span>
+
+      {docs.length === 0 && <span style={{ color: 'var(--c-text-dim)' }}>—</span>}
+
+      {docs.map((d) => (
+        <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <button
             type="button"
-            onClick={() => setPreviewing(true)}
-            title={doc.file_name}
+            onClick={() => setPreview(d)}
+            title={d.file_name}
             style={{
-              background: 'var(--c-panel)',
-              border: '1px solid var(--c-border)',
-              borderRadius: 4,
-              padding: '1px 6px',
-              maxWidth: 140,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              cursor: 'pointer',
-              color: 'var(--c-text)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 11,
+              maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              fontFamily: 'var(--font-mono)', color: 'var(--c-text)',
+              background: 'var(--c-panel)', border: '1px solid var(--c-border)', borderRadius: 4,
+              padding: '1px 6px', cursor: 'pointer',
             }}
           >
-            {doc.file_name}
+            {d.file_name}
           </button>
-          <button
-            type="button"
-            onClick={handleDownload}
-            title="Download"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-mid)', fontSize: 13, lineHeight: 1, padding: 0 }}
-          >
+          <button type="button" onClick={() => handleDownload(d)} disabled={busy} title="Download" style={linkBtn}>
             ↓
           </button>
-          <button
-            type="button"
-            onClick={handleRemove}
+          <select
+            value={d.kind}
             disabled={busy}
-            title="Remove"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-red)', fontSize: 13, lineHeight: 1, padding: 0 }}
+            onChange={(e) => handleMeta(d, { kind: e.target.value as OrderDocKind })}
+            title="Document kind"
+            style={{ fontSize: 11, padding: '1px 4px' }}
           >
+            {KIND_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            defaultValue={d.label ?? ''}
+            disabled={busy}
+            placeholder="Supplier / note"
+            onBlur={(e) => handleMeta(d, { label: e.target.value })}
+            style={{
+              fontSize: 11, padding: '1px 6px', width: 130,
+              background: 'var(--c-panel)', border: '1px solid var(--c-border)', borderRadius: 4,
+              color: 'var(--c-text)',
+            }}
+          />
+          <button type="button" onClick={() => handleRemove(d)} disabled={busy} title="Remove" style={removeBtn}>
             ×
           </button>
-          {previewing && (
-            <DocumentPreviewModal
-              fileName={doc.file_name}
-              fetchUrl={(download) =>
-                getNodeOrderDocumentSignedUrlAction(
-                  projectId,
-                  doc.storage_path,
-                  download ? doc.file_name : undefined,
-                )
-              }
-              onClose={() => setPreviewing(false)}
-            />
-          )}
-        </>
-      ) : (
-        <label
-          style={{
-            cursor: busy ? 'default' : 'pointer',
-            color: 'var(--c-amber)',
-            border: '1px dashed var(--c-border)',
-            borderRadius: 4,
-            padding: '1px 6px',
-          }}
-        >
-          {busy ? 'Uploading…' : '↑ upload'}
-          <input
-            ref={fileRef}
-            type="file"
-            style={{ display: 'none' }}
-            onChange={handleFile}
-            disabled={busy}
-          />
-        </label>
-      )}
+        </div>
+      ))}
+
+      <label style={{ cursor: busy ? 'default' : 'pointer', color: 'var(--c-amber)', border: '1px dashed var(--c-border)', borderRadius: 4, padding: '1px 6px', alignSelf: 'flex-start' }}>
+        {busy ? 'Working…' : '+ Add document'}
+        <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={handleUpload} disabled={busy} />
+      </label>
+
       {error && <span style={{ color: 'var(--c-red)' }}>{error}</span>}
+
+      {preview && (
+        <DocumentPreviewModal
+          fileName={preview.file_name}
+          fetchUrl={(download) =>
+            getNodeOrderDocumentSignedUrlAction(projectId, preview.storage_path, download ? preview.file_name : undefined)
+          }
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   )
+}
+
+const linkBtn: React.CSSProperties = {
+  background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 12, padding: 0,
+}
+const removeBtn: React.CSSProperties = {
+  background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-red)', fontSize: 13, lineHeight: 1, padding: 0,
 }
