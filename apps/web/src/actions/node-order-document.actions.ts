@@ -247,7 +247,8 @@ export async function updateNodeOrderDocumentMetaAction(
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
 
   const patch = await structurePatch(supabaseUrl, serviceKey, 'node_order_documents', `id=eq.${documentId}`, {
-    label: parsed.data.label,
+    // Coerce a blank label to NULL so the stored representation matches `add`.
+    label: parsed.data.label && parsed.data.label.length > 0 ? parsed.data.label : null,
     kind: parsed.data.kind,
   })
   if (!patch.ok) return { error: patch.error ?? 'Failed to update document' }
