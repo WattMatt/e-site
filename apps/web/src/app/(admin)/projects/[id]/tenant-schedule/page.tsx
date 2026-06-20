@@ -7,6 +7,7 @@ import { Card, CardBody } from '@/components/ui/Card'
 import { ScheduleTable } from './_components/ScheduleTable'
 import { ImportFlow } from './_components/ImportFlow'
 import { OpeningDateControl } from './_components/OpeningDateControl'
+import { TenantScheduleReportButton } from './_components/TenantScheduleReportButton'
 import type { ScopeItemType, TenantScopeItem, TenantDetails } from './_components/ScopeOfWorkPanel'
 import type { LayoutDetails } from './_components/LayoutIssuedPanel'
 import type { TenantBoInfo } from './_components/BoCells'
@@ -220,7 +221,10 @@ export default async function TenantSchedulePage({ params }: Props) {
               ` · ${activeCount} active shop${activeCount !== 1 ? 's' : ''}${totalCount !== activeCount ? ` (${totalCount} total)` : ''}`}
           </p>
         </div>
-        <ImportFlow projectId={projectId} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <TenantScheduleReportButton projectId={projectId} />
+          <ImportFlow projectId={projectId} />
+        </div>
       </div>
 
       {/* Opening date — anchors every tenant's beneficial-occupation date */}
