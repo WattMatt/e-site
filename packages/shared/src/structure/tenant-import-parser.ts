@@ -139,6 +139,33 @@ function isFormulaCell(value: ExcelJS.CellValue): boolean {
   );
 }
 
+/** SHOP NO. labels some schedules type onto a grand-total / subtotal line. */
+const SUMMARY_ROW_LABELS = new Set([
+  'total',
+  'totals',
+  'total gla',
+  'total area',
+  'subtotal',
+  'sub total',
+  'grand total',
+  'sum',
+]);
+
+/**
+ * True when a SHOP NO. cell holds a totals/summary label ("TOTAL", "GRAND
+ * TOTAL", …) rather than a real shop id. Matched tolerantly: lowercased,
+ * whitespace-collapsed, trailing dots/colons stripped. Keyed on the shop-number
+ * column only, so a real tenant merely *named* "TOTALSPORTS" is unaffected.
+ */
+function isSummaryRowLabel(shopNumber: string): boolean {
+  const norm = shopNumber
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[.:\s]+$/, '')
+    .trim();
+  return SUMMARY_ROW_LABELS.has(norm);
+}
+
 // ---------------------------------------------------------------------------
 // Header matching — tolerant column resolution
 // ---------------------------------------------------------------------------
@@ -324,6 +351,15 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
     //     A blank-shop-number row with a *literal* area is treated as a real
     //     data-entry mistake below (errored, not skipped).
     if (!shopNumberStr && (gla === null || isFormulaCell(rawGla))) {
+      return;
+    }
+
+    // --- Labelled totals / summary row: some schedules put the grand-total on a
+    //     line whose SHOP NO. cell reads "TOTAL" / "GRAND TOTAL" (with a literal
+    //     summed area), which the blank-shop-number guard above doesn't catch.
+    //     Importing it creates a phantom tenant whose area double-counts the whole
+    //     schedule (ITONKA's report showed 2× the real GLA). Skip it silently.
+    if (shopNumberStr && isSummaryRowLabel(shopNumberStr)) {
       return;
     }
 
