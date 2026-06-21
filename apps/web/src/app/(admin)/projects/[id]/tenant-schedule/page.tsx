@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, listNodes, listDeletedNodes, computeBoDate } from '@esite/shared'
+import { projectService, listNodes, listDeletedNodes, computeBoDate, ORG_WRITE_ROLES } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { ScheduleTable } from './_components/ScheduleTable'
 import { ImportFlow } from './_components/ImportFlow'
@@ -12,6 +12,9 @@ import type { ScopeItemType, TenantScopeItem, TenantDetails } from './_component
 import type { LayoutDetails } from './_components/LayoutIssuedPanel'
 import type { TenantBoInfo } from './_components/BoCells'
 import type { NodeOrderData } from '../equipment-schedule/_components/NodeOrderCell'
+import { requireRole } from '@/lib/auth/require-role'
+import { listProjectReportsAction } from '@/actions/project-reports.actions'
+import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Tenant Schedule' }
@@ -193,6 +196,12 @@ export default async function TenantSchedulePage({ params }: Props) {
   const activeCount = nodes.filter((n) => n.status !== 'decommissioned').length
   const totalCount = nodes.length
 
+  // Saved tenant-schedule reports (best-effort; failure just hides the card).
+  const reportsRes = await listProjectReportsAction(projectId, 'tenant_schedule')
+  const savedReports = Array.isArray(reportsRes) ? reportsRes : []
+  const manageGuard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
+  const canManageReports = manageGuard.ok
+
   return (
     <div className="animate-fadeup">
       {/* Breadcrumb */}
@@ -267,6 +276,16 @@ export default async function TenantSchedulePage({ params }: Props) {
           />
         </CardBody>
       </Card>
+
+      {/* Saved reports */}
+      <div style={{ marginTop: 16 }}>
+        <SavedReportsPanel
+          projectId={projectId}
+          kind="tenant_schedule"
+          reports={savedReports}
+          canManage={canManageReports}
+        />
+      </div>
     </div>
   )
 }
