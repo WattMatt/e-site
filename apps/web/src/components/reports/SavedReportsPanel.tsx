@@ -32,6 +32,8 @@ interface Props {
   /** Hide Delete when false. Default true — deleteProjectReportAction is the real gate. */
   canManage?: boolean
   title?: string
+  /** Bump to force a self-loading panel to re-fetch (e.g. after the host creates a report). */
+  reloadKey?: number
 }
 
 function formatDate(iso: string): string {
@@ -42,7 +44,7 @@ function formatDate(iso: string): string {
   }
 }
 
-export function SavedReportsPanel({ projectId, kind, source, reports, canManage = true, title = 'Saved reports' }: Props) {
+export function SavedReportsPanel({ projectId, kind, source, reports, canManage = true, title = 'Saved reports', reloadKey }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
 
@@ -64,7 +66,7 @@ export function SavedReportsPanel({ projectId, kind, source, reports, canManage 
     })
     return () => { live = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selfLoad, projectId, kind, source?.table, source?.id])
+  }, [selfLoad, projectId, kind, source?.table, source?.id, reloadKey])
 
   async function refetch() {
     const res = await listProjectReportsAction(projectId, kind, source)

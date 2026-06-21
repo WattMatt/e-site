@@ -146,36 +146,7 @@ export default async function VisitDetailPage({ params }: Props) {
 
   const conductedByName = conductedById ? (profileMap.get(conductedById) ?? null) : null
 
-  // ── Last exported report for this visit ──
-  // Read the latest status='issued' row from projects.reports for this visit.
-  // Used to render the "Last exported · re-download" banner on load.
-  let lastExported: { date: string; downloadUrl: string } | null = null
-  {
-    const { data: reportRow } = await serviceClient
-      .schema('projects')
-      .from('reports')
-      .select('generated_at, storage_path')
-      .eq('source_table', 'snag_visits')
-      .eq('source_id', visitId)
-      .eq('status', 'issued')
-      .order('version', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (reportRow) {
-      // Signed URL (1-hour TTL) so the download link works on page load.
-      const { data: signed } = await serviceClient.storage
-        .from('reports')
-        .createSignedUrl((reportRow as any).storage_path, 3600)
-
-      if (signed?.signedUrl) {
-        lastExported = {
-          date: (reportRow as any).generated_at ?? new Date().toISOString(),
-          downloadUrl: signed.signedUrl,
-        }
-      }
-    }
-  }
+  // Saved reports are shown by VisitDetail via the self-loading SavedReportsPanel.
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 900 }}>
@@ -222,7 +193,6 @@ export default async function VisitDetailPage({ params }: Props) {
         visitNoById={Object.fromEntries(visitNoById)}
         members={memberRows}
         currentUserId={currentUserId}
-        lastExported={lastExported}
       />
     </div>
   )
