@@ -14,9 +14,11 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 
 export function TenantScheduleReportButton({ projectId }: { projectId: string }) {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -82,7 +84,7 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
     setError(null)
     try {
       const res = await fetch(`/api/projects/${projectId}/tenant-schedule/reports`, { method: 'POST' })
-      if (res.status === 201) { setSaved(true); return }
+      if (res.status === 201) { setSaved(true); router.refresh(); return }
       const body = (await res.json().catch(() => ({}))) as { error?: string }
       setError(body.error ?? `Save failed (HTTP ${res.status})`)
     } catch {
