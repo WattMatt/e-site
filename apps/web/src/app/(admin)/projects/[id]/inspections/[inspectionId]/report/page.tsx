@@ -5,6 +5,10 @@ import { createClient } from '@/lib/supabase/server'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import RegenerateButton from './RegenerateButton'
+import { projectService, ORG_WRITE_ROLES } from '@esite/shared'
+import { requireRole } from '@/lib/auth/require-role'
+import { listProjectReportsAction } from '@/actions/project-reports.actions'
+import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Certificate' }
@@ -47,6 +51,13 @@ export default async function ReportPage({ params }: Props) {
 
   const isCertified = insp.status === 'certified'
   const coc = (insp.coc_number as string | null) ?? null
+
+  // Saved certificate history for this inspection (entity-scoped panel).
+  const project = await projectService.getById(supabase as never, projectId).catch(() => null)
+  const orgId = (project?.organisation_id as string | undefined) ?? undefined
+  const canManageReports = orgId ? (await requireRole(supabase, orgId, ORG_WRITE_ROLES)).ok : false
+  const reportsRes = await listProjectReportsAction(projectId, 'inspection', { table: 'inspections', id: inspectionId })
+  const savedReports = Array.isArray(reportsRes) ? reportsRes : []
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 1280 }}>
@@ -117,6 +128,17 @@ export default async function ReportPage({ params }: Props) {
             : 'This inspection is not certified yet. The certificate appears here once it is certified.'}
         </div>
       )}
+
+      <div style={{ marginTop: 16 }}>
+        <SavedReportsPanel
+          projectId={projectId}
+          kind="inspection"
+          source={{ table: 'inspections', id: inspectionId }}
+          reports={savedReports}
+          canManage={canManageReports}
+          title="Certificate history"
+        />
+      </div>
     </div>
   )
 }
