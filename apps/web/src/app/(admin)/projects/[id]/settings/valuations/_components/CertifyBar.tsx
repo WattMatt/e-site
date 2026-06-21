@@ -16,8 +16,8 @@ import { useState } from 'react'
 import type { Valuation } from '@esite/shared'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
-import { certifyValuationAction, getValuationReportUrlAction } from '@/actions/valuation.actions'
-import { previewViaSignedUrl } from '@/lib/file-open'
+import { certifyValuationAction } from '@/actions/valuation.actions'
+import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 
 interface Props {
   projectId: string
@@ -41,43 +41,35 @@ export function CertifyBar({ projectId, valuation, canEdit, certifiedByName, onC
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function viewCertificate() {
-    setError(null)
-    const res = await previewViaSignedUrl(async () => {
-      const r = await getValuationReportUrlAction(projectId, valuation.id)
-      return 'error' in r ? { error: r.error } : { url: r.data.url }
-    })
-    if (res.error) setError(res.error)
-  }
-
-  // ── Certified: locked banner + view link ──────────────────────────────────
+  // ── Certified: locked banner + saved-reports panel ─────────────────────────
   if (valuation.status === 'certified') {
     return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          flexWrap: 'wrap',
-          background: 'var(--c-panel)',
-          border: '1px solid var(--c-border)',
-          borderRadius: 8,
-          padding: '12px 16px',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+            background: 'var(--c-panel)',
+            border: '1px solid var(--c-border)',
+            borderRadius: 8,
+            padding: '12px 16px',
+          }}
+        >
           <Badge variant="success">certified</Badge>
           <span style={{ fontSize: 12, color: 'var(--c-text-dim)', fontFamily: 'var(--font-mono)' }}>
             {certifiedByName ? `by ${certifiedByName}` : ''}
             {valuation.certifiedAt ? ` · ${fmtDateTime(valuation.certifiedAt)}` : ''}
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {error && <span style={{ fontSize: 12, color: 'var(--c-red)' }}>{error}</span>}
-          <Button variant="secondary" size="sm" onClick={viewCertificate}>
-            View certificate
-          </Button>
+        <div style={{ marginTop: 12 }}>
+          <SavedReportsPanel
+            projectId={projectId}
+            kind="valuation"
+            source={{ table: 'valuations', id: valuation.id }}
+            title="Payment certificate"
+          />
         </div>
       </div>
     )
