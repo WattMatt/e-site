@@ -5,7 +5,9 @@ import type { ProjectReportRow } from '@/actions/project-reports.actions'
 
 const getUrlMock = vi.fn()
 const deleteMock = vi.fn()
+const listMock = vi.fn()
 vi.mock('@/actions/project-reports.actions', () => ({
+  listProjectReportsAction: (...a: unknown[]) => listMock(...a),
   getProjectReportUrlAction: (...a: unknown[]) => getUrlMock(...a),
   deleteProjectReportAction: (...a: unknown[]) => deleteMock(...a),
 }))
@@ -76,5 +78,18 @@ describe('SavedReportsPanel', () => {
   it('hides Delete when canManage is false', async () => {
     await renderPanel({ canManage: false })
     expect(screen.queryByRole('button', { name: /^delete$/i })).toBeNull()
+  })
+
+  it('self-loads (source-scoped) when reports is omitted, and defaults canManage to true', async () => {
+    listMock.mockResolvedValue([ROW])
+    const { SavedReportsPanel } = await import('./SavedReportsPanel')
+    render(<SavedReportsPanel projectId={PROJECT_ID} kind="inspection" source={{ table: 'inspections', id: 'i1' }} />)
+
+    await waitFor(() =>
+      expect(listMock).toHaveBeenCalledWith(PROJECT_ID, 'inspection', { table: 'inspections', id: 'i1' }),
+    )
+    expect(await screen.findByText('v3')).toBeDefined()
+    // canManage defaults to true → Delete visible
+    expect(screen.getByRole('button', { name: /^delete$/i })).toBeDefined()
   })
 })
