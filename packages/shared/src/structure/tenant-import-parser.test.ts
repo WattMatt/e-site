@@ -483,6 +483,53 @@ describe('parseTenantSchedule — trailing total / separator rows', () => {
     expect(result.errors[0].source_row).toBe(3);
     expect(result.errors[0].message).toMatch(/shop no/i);
   });
+
+  it('skips a labelled "TOTAL" summary row (shop no. filled in, literal area) — the ITONKA case', async () => {
+    // The real ITONKA file ended with a grand-total line whose SHOP NO. cell was
+    // filled in as "TOTAL" (tenant "TOTAL", area = Σ of all shops). The blank-
+    // shop-number guard didn't catch it, so it imported as a phantom tenant whose
+    // area double-counted the whole schedule (report showed 2× the real GLA).
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'Area (m²)'],
+      [
+        ['01', 'VACANT', 131.66],
+        ['02', 'SLEEPMASTERS', 150.49],
+        ['TOTAL', 'TOTAL', 282.15], // labelled grand-total — must be skipped, not imported
+      ],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.find((r) => r.shop_number === 'TOTAL')).toBeUndefined();
+  });
+
+  it('skips SUBTOTAL / GRAND TOTAL labelled summary rows too', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'Area (m²)'],
+      [
+        ['01', 'VACANT', 131.66],
+        ['SUBTOTAL', '', 131.66],
+        ['GRAND TOTAL', 'TOTAL', 263.32],
+      ],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].shop_number).toBe('01');
+  });
+
+  it('does NOT skip a real shop whose tenant name merely contains "total"', async () => {
+    // The skip keys on the SHOP NO. column only — a real shop with a tenant like
+    // "TOTALSPORTS" must still import.
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'Area (m²)'],
+      [['S12', 'TOTALSPORTS', 450]],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ shop_number: 'S12', shop_name: 'TOTALSPORTS', shop_area_m2: 450 });
+  });
 });
 
 // ---------------------------------------------------------------------------
