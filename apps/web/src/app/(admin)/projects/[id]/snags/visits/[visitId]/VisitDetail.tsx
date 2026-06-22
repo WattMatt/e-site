@@ -11,6 +11,7 @@ import {
   addSnagToVisitAction,
   exportSnagVisitReportAction,
 } from '@/actions/snag-visit.actions'
+import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -59,8 +60,6 @@ interface Props {
   visitNoById: Record<string, number>
   members: Member[]
   currentUserId: string
-  /** Last exported report, if any. Populated by the server page on load. */
-  lastExported?: { date: string; downloadUrl: string } | null
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -563,16 +562,14 @@ export function VisitDetail({
   visitNoById,
   members,
   currentUserId,
-  lastExported: initialLastExported,
 }: Props) {
   const [showEditForm, setShowEditForm] = useState(false)
   const [showAddSnag, setShowAddSnag] = useState(false)
   const [openCollapsed, setOpenCollapsed] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
-  const [lastExported, setLastExported] = useState<{ date: string; downloadUrl: string } | null>(
-    initialLastExported ?? null,
-  )
+  // Bumped after an export so the (self-loading) saved-reports panel re-fetches.
+  const [reportsKey, setReportsKey] = useState(0)
 
   // All hooks unconditionally above any conditional render — React #310 rule.
 
@@ -684,10 +681,8 @@ export function VisitDetail({
               // current visit live (equivalent for the latest report). The server-load
               // path serves the frozen storage_path artifact via a signed URL instead.
               const previewUrl = `/api/projects/${projectId}/snags/visits/${visit.id}/report`
-              setLastExported({
-                date: new Date().toISOString(),
-                downloadUrl: previewUrl,
-              })
+              // The export saved a new projects.reports row — refresh the panel.
+              setReportsKey((k) => k + 1)
               // Open inline in a new tab so the browser's native PDF viewer handles it.
               window.open(previewUrl, '_blank', 'noopener')
             }}
@@ -723,38 +718,16 @@ export function VisitDetail({
         </p>
       )}
 
-      {/* ── Last exported banner ──────────────────────────────────────── */}
-      {lastExported && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 11,
-            color: 'var(--c-text-dim)',
-            fontFamily: 'var(--font-mono)',
-            margin: '6px 0 0',
-          }}
-        >
-          <span>
-            Last exported{' '}
-            {new Date(lastExported.date).toLocaleDateString('en-ZA', {
-              day: 'numeric',
-              month: 'short',
-              year: 'numeric',
-            })}
-          </span>
-          <span style={{ color: 'var(--c-border)' }}>·</span>
-          <a
-            href={lastExported.downloadUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: 'var(--c-amber)', textDecoration: 'none' }}
-          >
-            re-download
-          </a>
-        </div>
-      )}
+      {/* ── Saved reports ─────────────────────────────────────────────── */}
+      <div style={{ marginTop: 12 }}>
+        <SavedReportsPanel
+          projectId={projectId}
+          kind="snag"
+          source={{ table: 'snag_visits', id: visit.id }}
+          reloadKey={reportsKey}
+          title="Saved reports"
+        />
+      </div>
 
       {/* ── Inline forms ──────────────────────────────────────────────── */}
       {showEditForm && (

@@ -48,8 +48,11 @@ function makeSupabase(opts: {
   const fromProjects = vi.fn().mockReturnValue({ select: projSelect })
 
   // list:   select → eq(project) → eq(kind) → in(status) → order
+  //   with source: → in(status) → eq(source_table) → eq(source_id) → order
   const order = vi.fn().mockResolvedValue({ data: listRows, error: listError })
-  const inFn = vi.fn().mockReturnValue({ order })
+  const srcEqId = vi.fn().mockReturnValue({ order })
+  const srcEqTable = vi.fn().mockReturnValue({ eq: srcEqId })
+  const inFn = vi.fn().mockReturnValue({ order, eq: srcEqTable })
   // single: select → eq(id) → eq(project) → maybeSingle
   const repMaybeSingle = vi.fn().mockResolvedValue({ data: reportRow, error: null })
   const eq2 = vi.fn().mockReturnValue({ in: inFn, maybeSingle: repMaybeSingle })
@@ -67,7 +70,7 @@ function makeSupabase(opts: {
 
   return {
     client: { schema, auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } } }) } },
-    del, order,
+    del, order, srcEqTable, srcEqId,
   }
 }
 
@@ -108,6 +111,18 @@ describe('listProjectReportsAction', () => {
     const result = await listProjectReportsAction(PROJECT_ID, 'tenant_schedule')
 
     expect('error' in result).toBe(true)
+  })
+
+  it('adds source_table/source_id filters when source is given', async () => {
+    const sup = makeSupabase({ listRows: [REPORT_ROW] })
+    createClientMock.mockResolvedValue(sup.client)
+
+    const { listProjectReportsAction } = await import('./project-reports.actions')
+    const result = await listProjectReportsAction(PROJECT_ID, 'inspection', { table: 'inspections', id: 'insp-1' })
+
+    expect(Array.isArray(result)).toBe(true)
+    expect(sup.srcEqTable).toHaveBeenCalledWith('source_table', 'inspections')
+    expect(sup.srcEqId).toHaveBeenCalledWith('source_id', 'insp-1')
   })
 })
 

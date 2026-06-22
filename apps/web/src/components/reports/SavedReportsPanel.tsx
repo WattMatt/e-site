@@ -1,15 +1,21 @@
 'use client'
 
 /**
- * SavedReportsPanel — lists a project's saved reports of one kind, with in-app
- * Preview, Download, and (manager-only) Delete. Generic over projects.reports;
- * the same panel serves every section and the Reports hub.
+ * SavedReportsPanel — lists a project's saved reports (optionally scoped to one
+ * source entity), with in-app Preview, Download, and (manager-only) Delete.
+ *
+ * Two modes:
+ *  - Server-fed: pass `reports` (the host server component pre-loads them).
+ *  - Self-loading: omit `reports` → the panel fetches via listProjectReportsAction
+ *    on mount and when the scope changes. Used by client-component hosts
+ *    (e.g. CertifyBar, VisitDetail) that can't easily pre-load.
  */
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import {
+  listProjectReportsAction,
   getProjectReportUrlAction,
   deleteProjectReportAction,
   type ProjectReportRow,
@@ -19,10 +25,15 @@ import { ReportViewerModal } from './ReportViewerModal'
 interface Props {
   projectId: string
   kind: string
-  reports: ProjectReportRow[]
-  canManage: boolean
-  /** Card title; defaults to "Saved reports". */
+  /** Scope to one source entity (inspection/snag/valuation). Omit for project-level. */
+  source?: { table: string; id: string }
+  /** Server-loaded rows. Omit to self-load via the list action. */
+  reports?: ProjectReportRow[]
+  /** Hide Delete when false. Default true — deleteProjectReportAction is the real gate. */
+  canManage?: boolean
   title?: string
+  /** Bump to force a self-loading panel to re-fetch (e.g. after the host creates a report). */
+  reloadKey?: number
 }
 
 function formatDate(iso: string): string {
@@ -33,14 +44,37 @@ function formatDate(iso: string): string {
   }
 }
 
-export function SavedReportsPanel({ projectId, kind: _kind, reports, canManage, title = 'Saved reports' }: Props) {
+export function SavedReportsPanel({ projectId, kind, source, reports, canManage = true, title = 'Saved reports', reloadKey }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
+
+  const selfLoad = reports === undefined
+  const [fetched, setFetched] = useState<ProjectReportRow[] | null>(null)
 
   const [viewer, setViewer] = useState<{ label: string; url: string; reportId: string } | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [rowError, setRowError] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
+  // Self-load: fetch this project/kind/source's rows on mount + when the scope changes.
+  useEffect(() => {
+    if (!selfLoad) return
+    let live = true
+    setFetched(null)
+    listProjectReportsAction(projectId, kind, source).then((res) => {
+      if (live) setFetched(Array.isArray(res) ? res : [])
+    })
+    return () => { live = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selfLoad, projectId, kind, source?.table, source?.id, reloadKey])
+
+  async function refetch() {
+    const res = await listProjectReportsAction(projectId, kind, source)
+    setFetched(Array.isArray(res) ? res : [])
+  }
+
+  const rows = selfLoad ? fetched : reports!
+  const loading = selfLoad && fetched === null
 
   async function handlePreview(rep: ProjectReportRow) {
     setBusyId(rep.id)
@@ -81,7 +115,8 @@ export function SavedReportsPanel({ projectId, kind: _kind, reports, canManage, 
     try {
       const res = await deleteProjectReportAction(projectId, rep.id)
       if ('error' in res) { setRowError(res.error); return }
-      startTransition(() => router.refresh())
+      if (selfLoad) await refetch()
+      else startTransition(() => router.refresh())
     } catch {
       setRowError('Request failed — check your connection and try again.')
     } finally {
@@ -102,13 +137,15 @@ export function SavedReportsPanel({ projectId, kind: _kind, reports, canManage, 
           </div>
         )}
 
-        {reports.length === 0 ? (
+        {loading ? (
+          <div style={{ padding: '24px 8px', textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13 }}>Loading…</div>
+        ) : !rows || rows.length === 0 ? (
           <div style={{ padding: '24px 8px', textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13, fontStyle: 'italic' }}>
             No saved reports yet.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {reports.map((rep) => {
+            {rows.map((rep) => {
               const busy = busyId === rep.id
               const confirming = confirmDeleteId === rep.id
               return (
@@ -141,7 +178,7 @@ export function SavedReportsPanel({ projectId, kind: _kind, reports, canManage, 
           label={viewer.label}
           url={viewer.url}
           onDownload={() => {
-            const rep = reports.find((r) => r.id === viewer.reportId)
+            const rep = (rows ?? []).find((r) => r.id === viewer.reportId)
             if (rep) handleDownload(rep)
           }}
           isDownloading={busyId === viewer.reportId}

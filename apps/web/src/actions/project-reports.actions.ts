@@ -54,16 +54,22 @@ async function resolveOrgId(
 export async function listProjectReportsAction(
   projectId: string,
   kind: string,
+  source?: { table: string; id: string },
 ): Promise<ProjectReportRow[] | ErrResult> {
   const supabase = await createClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (supabase as any)
+  let query = (supabase as any)
     .schema('projects').from('reports')
     .select(SELECT_COLS)
     .eq('project_id', projectId)
     .eq('kind', kind)
     .in('status', ['issued', 'superseded'])
-    .order('version', { ascending: false })
+  // Per-entity sections (inspection/snag/valuation) scope to one source row;
+  // project-level sections (tenant_schedule) pass no source.
+  if (source) {
+    query = query.eq('source_table', source.table).eq('source_id', source.id)
+  }
+  const { data, error } = await query.order('version', { ascending: false })
 
   if (error) return { error: error.message ?? 'Failed to load saved reports' }
   return (data ?? []) as ProjectReportRow[]
