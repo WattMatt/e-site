@@ -6,8 +6,9 @@
  * Takes a list of emails and a project role. For each email:
  *   - If a user with that email already exists in this org → add them to
  *     project_members with the chosen role.
- *   - Else → provision an org user (auth.users + user_organisations +
- *     set-password email), then add to project_members.
+ *   - Else → invite an org user via auth.admin.inviteUserByEmail (provisions
+ *     auth.users with no password AND fires the branded role/site-aware invite
+ *     hook) + user_organisations, then add to project_members.
  *
  * The bulk role determines BOTH the project_members.role AND the new user's
  * org role — EXCEPT when the bulk role is 'project_manager'. In that case
@@ -28,7 +29,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { requireRole } from '@/lib/auth/require-role'
 import { getOrgContext } from '@/lib/auth-org'
-import { ORG_WRITE_ROLES, logAuthEvent } from '@esite/shared'
+import { ORG_WRITE_ROLES, logAuthEvent, isPerSiteOnlyRole, PER_SITE_INVITE_REJECTION } from '@esite/shared'
 
 const PROJECT_MEMBER_ROLES = [
   'project_manager',
@@ -78,15 +79,16 @@ export async function bulkAddOrInviteProjectMembers(
 
   const supabase = await createClient()
 
-  // Resolve project's org.
+  // Resolve project's org (+ name for the invite email's site_name).
   const { data: project } = await (supabase as any)
     .schema('projects')
     .from('projects')
-    .select('organisation_id')
+    .select('organisation_id, name')
     .eq('id', parsed.data.projectId)
     .maybeSingle()
   if (!project) return { ok: false, error: 'Project not found.' }
-  const orgId = (project as { organisation_id: string }).organisation_id
+  const orgId = (project as { organisation_id: string; name: string | null }).organisation_id
+  const projectName = (project as { organisation_id: string; name: string | null }).name
 
   const guard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
   if (!guard.ok) return { ok: false, error: guard.error }
@@ -171,46 +173,67 @@ export async function bulkAddOrInviteProjectMembers(
         continue
       }
 
-      // Provision new user.
-      const { data: created, error: createErr } = await service.auth.admin.createUser({
-        email,
-        email_confirm: true,
-        user_metadata: { full_name: email.split('@')[0] }, // placeholder; user can update on signup
+      // A new user would be provisioned as an ORG member with orgRoleForNewUsers.
+      // Per-site (client) roles must never become an org membership — that would
+      // expose every project in the org via org RLS. Reject before any auth/DB
+      // write; record as a per-row failure rather than aborting the batch.
+      // (Existing org users are only added to project_members above, which is
+      // per-site and therefore allowed.)
+      if (isPerSiteOnlyRole(orgRoleForNewUsers)) {
+        failed++
+        details.push({ email, status: 'failed', reason: PER_SITE_INVITE_REJECTION })
+        continue
+      }
+
+      // Invite new user — provisions the auth row (no password) AND fires the
+      // branded role/site-aware invite hook. Role/org/site context rides in
+      // `data` (user_metadata); org_name + inviter_name are null and backfilled
+      // by the hook. An existing-but-not-in-org email is reported, not added.
+      let newUserId: string
+      let createdHere = false
+
+      const { data: inviteRes, error: inviteErr } = await service.auth.admin.inviteUserByEmail(email, {
+        data: {
+          full_name:    email.split('@')[0], // placeholder; user can update on signup
+          invited_role: orgRoleForNewUsers,
+          org_id:       orgId,
+          org_name:     null,
+          inviter_name: null,
+          ...(projectName ? { site_name: projectName } : {}),
+        },
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/accept-invite`,
       })
-      if (createErr || !created?.user) {
+      if (inviteErr || !inviteRes?.user) {
         failed++
         details.push({
           email,
           status: 'failed',
-          reason: /already|exist|registered/i.test(createErr?.message ?? '')
+          reason: /already|exist|registered/i.test(inviteErr?.message ?? '')
             ? 'A user with that email already exists but isn’t in your org.'
-            : (createErr?.message ?? 'Could not create user.'),
+            : (inviteErr?.message ?? 'Could not invite user.'),
         })
         continue
       }
-      const newUserId = created.user.id
+      newUserId = inviteRes.user.id
+      createdHere = true
 
       const { error: memErr } = await service.from('user_organisations').insert({
         user_id: newUserId,
         organisation_id: orgId,
         role: orgRoleForNewUsers,
-        is_active: true,
+        is_active: true,            // access is gated on is_active, not accepted_at
         invited_by: ctx.userId,
-        accepted_at: new Date().toISOString(),
+        accepted_at: null,          // stamped when the invitee actually accepts
       })
       if (memErr) {
-        await service.auth.admin.deleteUser(newUserId).catch(() => {})
+        // Roll back the orphaned auth user only if we just created them.
+        if (createdHere) {
+          await service.auth.admin.deleteUser(newUserId).catch(() => {})
+        }
         failed++
         details.push({ email, status: 'failed', reason: memErr.message })
         continue
       }
-
-      // Set-password email — non-fatal if it fails.
-      await service.auth
-        .resetPasswordForEmail(email, {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-        })
-        .catch(() => {})
 
       await logAuthEvent(service, {
         userId: newUserId,

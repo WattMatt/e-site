@@ -14,6 +14,7 @@ export type AuthEventType =
   | 'user_created'
   | 'user_updated'
   | 'user_removed'
+  | 'invite_resent'
 
 export interface LogAuthEventArgs {
   userId:     string | null

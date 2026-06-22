@@ -11,20 +11,22 @@ import { useRouter } from 'next/navigation'
 import { Select } from '@/components/ui/FormField'
 import { Button } from '@/components/ui/Button'
 import { ORG_ROLES, ORG_ROLE_LABELS, type OrgRole } from '@esite/shared'
-import { updateUserAction, removeUserAction } from '@/actions/users.actions'
+import { updateUserAction, removeUserAction, resendInviteAction } from '@/actions/users.actions'
 
 interface Props {
   userId:     string
   role:       string
   isActive:   boolean
+  isPending:  boolean
   isSelf:     boolean
   callerRole: OrgRole
 }
 
-export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: Props) {
+export function UserRowActions({ userId, role, isActive, isPending: isPendingMember, isSelf, callerRole }: Props) {
   const router = useRouter()
   const [roleVal, setRoleVal] = useState(role)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [isPending, startTransition] = useTransition()
 
@@ -54,6 +56,7 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
 
   function run(fn: () => Promise<{ ok: boolean; error?: string }>) {
     setError(null)
+    setNotice(null)
     startTransition(async () => {
       const result = await fn()
       if (!result.ok) {
@@ -62,6 +65,19 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
       }
       setConfirmRemove(false)
       router.refresh()
+    })
+  }
+
+  function resend() {
+    setError(null)
+    setNotice(null)
+    startTransition(async () => {
+      const result = await resendInviteAction({ userId })
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      setNotice('Invite re-sent.')
     })
   }
 
@@ -81,6 +97,17 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
           <option key={r} value={r}>{ORG_ROLE_LABELS[r]}</option>
         ))}
       </Select>
+
+      {isPendingMember && isActive && (
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={isPending}
+          onClick={resend}
+        >
+          Resend invite
+        </Button>
+      )}
 
       <Button
         variant="secondary"
@@ -114,6 +141,12 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
       {error && (
         <span role="alert" style={{ fontSize: 11, color: 'var(--c-red)', width: '100%', textAlign: 'right' }}>
           {error}
+        </span>
+      )}
+
+      {notice && (
+        <span role="status" style={{ fontSize: 11, color: 'var(--c-green)', width: '100%', textAlign: 'right' }}>
+          {notice}
         </span>
       )}
     </div>

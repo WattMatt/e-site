@@ -53,6 +53,23 @@ export const COST_VIEW_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_m
 export type ProjectRole = 'project_manager' | 'contractor' | 'client_viewer'
 
 /**
+ * Roles that are PER-SITE only and must never be granted via an org invite —
+ * a `user_organisations` row for these would expose every project in the org
+ * through org RLS. Client access is granted per-site via "Manage client access"
+ * (a future client_site_grants row), never as an org membership.
+ */
+export const PER_SITE_ONLY_ROLES: readonly string[] = ['client_viewer']
+
+/** True if the role must be granted per-site, not as an org membership. */
+export function isPerSiteOnlyRole(role: string): boolean {
+  return PER_SITE_ONLY_ROLES.includes(role)
+}
+
+/** Shared rejection message for an org invite that resolves to a per-site role. */
+export const PER_SITE_INVITE_REJECTION =
+  'Client access is granted per-site via “Manage client access”, not an org invite.'
+
+/**
  * Sub-organisation entity. A `public.organisations` row marked as a shadow
  * (is_shadow=TRUE, parent_organisation_id=parent). Holds contact details
  * and acts as the identity boundary for external site agents (Bob's

@@ -19,12 +19,13 @@ const ROLE_BADGE: Record<string, string> = {
 }
 
 interface MemberRow {
-  id:         string
-  user_id:    string
-  role:       string
-  is_active:  boolean
-  created_at: string
-  profile:    { full_name: string | null; email: string | null } | null
+  id:          string
+  user_id:     string
+  role:        string
+  is_active:   boolean
+  accepted_at: string | null
+  created_at:  string
+  profile:     { full_name: string | null; email: string | null } | null
 }
 
 const monoDim: React.CSSProperties = {
@@ -56,7 +57,7 @@ export default async function UsersPage() {
   const [{ data: membersRaw }, { data: org }, usersList] = await Promise.all([
     service
       .from('user_organisations')
-      .select('id, user_id, role, is_active, created_at, profile:profiles!user_organisations_user_id_fkey(full_name, email)')
+      .select('id, user_id, role, is_active, accepted_at, created_at, profile:profiles!user_organisations_user_id_fkey(full_name, email)')
       .eq('organisation_id', ctx.organisationId)
       .order('created_at'),
     service
@@ -137,7 +138,11 @@ export default async function UsersPage() {
                   </p>
                 </div>
                 <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
-                {!m.is_active && <span className="badge badge-muted">inactive</span>}
+                {!m.is_active
+                  ? <span className="badge badge-muted">inactive</span>
+                  : m.accepted_at === null
+                    ? <span className="badge badge-blue">pending</span>
+                    : <span className="badge badge-green">active</span>}
                 <div style={{ textAlign: 'right', minWidth: 96 }}>
                   <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
                     {lastSeen.has(m.user_id)
@@ -152,6 +157,7 @@ export default async function UsersPage() {
                   userId={m.user_id}
                   role={m.role}
                   isActive={m.is_active}
+                  isPending={m.accepted_at === null}
                   isSelf={m.user_id === ctx.userId}
                   callerRole={ctx.role}
                 />

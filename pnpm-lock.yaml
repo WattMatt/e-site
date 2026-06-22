@@ -45,6 +45,12 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
+  apps/edge-functions:
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.17)(jsdom@20.0.3)(lightningcss@1.27.0)(terser@5.46.1)
+
   apps/mobile:
     dependencies:
       '@esite/db':

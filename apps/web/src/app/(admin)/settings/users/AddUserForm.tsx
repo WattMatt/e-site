@@ -22,7 +22,6 @@ type FormValues = z.infer<typeof schema>
 export function AddUserForm() {
   const router = useRouter()
   const [success, setSuccess] = useState<string | null>(null)
-  const [warning, setWarning] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
@@ -34,7 +33,6 @@ export function AddUserForm() {
   function onSubmit(values: FormValues) {
     setError(null)
     setSuccess(null)
-    setWarning(null)
     startTransition(async () => {
       const result = await createUserAction({
         email: values.email,
@@ -46,7 +44,6 @@ export function AddUserForm() {
         return
       }
       setSuccess(values.email)
-      if (result.warning) setWarning(result.warning)
       reset({ email: '', fullName: '', role: 'contractor' })
       router.refresh()
     })
@@ -87,7 +84,7 @@ export function AddUserForm() {
         <div role="status" style={{ background: 'var(--c-green-dim)', color: 'var(--c-green)', border: '1px solid rgba(61,184,130,0.3)', borderRadius: 6, padding: '14px 16px' }}>
           <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>User created — {success}</p>
           <p style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 4, marginBottom: 0 }}>
-            {warning ?? "They've been emailed a link to set their password and sign in."}
+            They&rsquo;ve been emailed a link to set their password and sign in.
           </p>
         </div>
       )}

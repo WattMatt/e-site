@@ -19,7 +19,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { getOrgContext } from '@/lib/auth-org'
 import { requireRole } from '@/lib/auth/require-role'
-import { ORG_WRITE_ROLES, logAuthEvent } from '@esite/shared'
+import { ORG_WRITE_ROLES, logAuthEvent, isPerSiteOnlyRole, PER_SITE_INVITE_REJECTION } from '@esite/shared'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,8 +75,9 @@ function bustSubOrg(subOrgId: string): void {
 // ─── Task 1: listSubOrgMembers ────────────────────────────────────────────────
 
 /**
- * Returns active user_organisations rows on the sub-org, joined with profile
- * (full_name + email).
+ * Returns user_organisations rows on the sub-org (active AND inactive), joined
+ * with profile (full_name + email). Active members are returned first so the UI
+ * can render them above the deactivated ones (which carry a Reactivate action).
  */
 export async function listSubOrgMembers(
   subOrgId: string,
@@ -105,7 +106,8 @@ export async function listSubOrgMembers(
     .from('user_organisations')
     .select('id, user_id, organisation_id, role, is_active, created_at, profiles!user_organisations_user_id_fkey(full_name, email)')
     .eq('organisation_id', subOrgId)
-    .eq('is_active', true)
+    .order('is_active', { ascending: false })
+    .order('created_at', { ascending: true })
   if (error) return { ok: false, error: error.message }
 
   const members: SubOrgMember[] = ((data ?? []) as Array<{
@@ -138,12 +140,12 @@ export async function listSubOrgMembers(
  * Flow mirrors createUserAction:
  * 1. Resolve sub-org → confirm shadow + parent matches caller's org.
  * 2. Rate-limit.
- * 3. auth.admin.createUser — handle "already exists" by looking up existing user.
+ * 3. auth.admin.inviteUserByEmail — provisions auth + fires the branded invite
+ *    hook; handle "already exists" by looking up the existing user.
  * 4. Insert user_organisations row targeting the sub-org.
- * 5. resetPasswordForEmail (non-fatal).
- * 6. logAuthEvent.
- * 7. revalidatePath.
- * 8. Return the new SubOrgMember row.
+ * 5. logAuthEvent.
+ * 6. revalidatePath.
+ * 7. Return the new SubOrgMember row.
  */
 export async function addSubOrgMember(
   subOrgId: string,
@@ -186,19 +188,31 @@ export async function addSubOrgMember(
   const { fullName, role } = parsed.data
   const email = parsed.data.email.trim().toLowerCase()
 
+  // Per-site (client) roles must never become an org membership — reject before
+  // any auth/DB write (client access is granted per-site, not via an invite).
+  if (isPerSiteOnlyRole(role)) {
+    return { ok: false, error: PER_SITE_INVITE_REJECTION }
+  }
+
   const service = createServiceClient()
 
-  // 3. Provision auth user.
+  // 3. Invite the user — provisions auth + fires the branded role-aware hook.
   let newUserId: string
+  let createdHere = false
 
-  const { data: created, error: createErr } = await service.auth.admin.createUser({
-    email,
-    email_confirm: true,
-    user_metadata: { full_name: fullName },
+  const { data: invited, error: inviteErr } = await service.auth.admin.inviteUserByEmail(email, {
+    data: {
+      full_name:           fullName,
+      invited_role:        role,
+      org_id:              subOrg.parent_organisation_id,
+      sub_organisation_id: subOrgId,
+      inviter_name:        null,
+    },
+    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/accept-invite`,
   })
 
-  if (createErr || !created?.user) {
-    const msg = createErr?.message ?? ''
+  if (inviteErr || !invited?.user) {
+    const msg = inviteErr?.message ?? ''
     if (/already|exist|registered/i.test(msg)) {
       // Email collision (spec 6.5): look up existing user id via profiles table.
       const { data: existing } = await (service as any)
@@ -211,10 +225,11 @@ export async function addSubOrgMember(
       }
       newUserId = existing.id
     } else {
-      return { ok: false, error: msg || 'Could not create the user.' }
+      return { ok: false, error: msg || 'Could not invite the user.' }
     }
   } else {
-    newUserId = created.user.id
+    newUserId = invited.user.id
+    createdHere = true
   }
 
   // 4. Insert user_organisations row targeting the sub-org.
@@ -224,29 +239,22 @@ export async function addSubOrgMember(
       user_id:         newUserId,
       organisation_id: subOrgId,
       role,
-      is_active:       true,
+      is_active:       true,            // access is gated on is_active, not accepted_at
       invited_by:      ctx.userId,
-      accepted_at:     new Date().toISOString(),
+      accepted_at:     null,            // stamped when the invitee actually accepts
     })
     .select('id, user_id, organisation_id, role, is_active, created_at, profiles!user_organisations_user_id_fkey(full_name, email)')
     .single()
 
   if (memberErr) {
     // Roll back orphaned auth user only if we just created them.
-    if (created?.user) {
+    if (createdHere) {
       await service.auth.admin.deleteUser(newUserId).catch(() => {})
     }
     return { ok: false, error: `Could not add the member: ${memberErr.message}` }
   }
 
-  // 5. resetPasswordForEmail — non-fatal.
-  await service.auth
-    .resetPasswordForEmail(email, {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-    })
-    .catch(() => {})
-
-  // 6. Audit.
+  // 5. Audit.
   await logAuthEvent(service, {
     userId:    newUserId,
     eventType: 'user_created',
@@ -261,10 +269,10 @@ export async function addSubOrgMember(
     },
   })
 
-  // 7. Cache bust.
+  // 6. Cache bust.
   bustSubOrg(subOrgId)
 
-  // 8. Return the new member row.
+  // 7. Return the new member row.
   const raw = memberData as {
     id: string
     user_id: string
@@ -333,6 +341,54 @@ export async function removeSubOrgMember(
   const { error: updateErr } = await (supabase as any)
     .from('user_organisations')
     .update({ is_active: false })
+    .eq('id', memberId)
+  if (updateErr) return { ok: false, error: updateErr.message }
+
+  bustSubOrg(subOrgId)
+  return { ok: true }
+}
+
+// ─── Task 3b: reactivateSubOrgMember ──────────────────────────────────────────
+
+/**
+ * Re-activate a soft-deactivated sub-org membership (is_active=false → true).
+ * The mirror of removeSubOrgMember. Gate: caller must be ORG_WRITE_ROLES on the
+ * sub-org's parent org.
+ */
+export async function reactivateSubOrgMember(
+  memberId: string,
+): Promise<{ ok: true } | ActionErr> {
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+
+  if (!uuidSchema.safeParse(memberId).success) {
+    return { ok: false, error: 'Invalid member id.' }
+  }
+
+  const supabase = await createClient()
+
+  const { data: memberRow, error: memberErr } = await (supabase as any)
+    .from('user_organisations')
+    .select('id, user_id, organisation_id, role, is_active')
+    .eq('id', memberId)
+    .maybeSingle()
+  if (memberErr) return { ok: false, error: memberErr.message }
+  if (!memberRow) return { ok: false, error: 'Member not found.' }
+
+  const subOrgId = (memberRow as { organisation_id: string }).organisation_id
+
+  const subOrg = await resolveSubOrg(supabase, subOrgId)
+  if (!subOrg) return { ok: false, error: 'This membership does not belong to a sub-organisation.' }
+  if (!subOrg.parent_organisation_id) {
+    return { ok: false, error: 'Sub-organisation has been claimed and is no longer managed by you.' }
+  }
+
+  const guard = await requireRole(supabase, subOrg.parent_organisation_id, ORG_WRITE_ROLES)
+  if (!guard.ok) return { ok: false, error: guard.error }
+
+  const { error: updateErr } = await (supabase as any)
+    .from('user_organisations')
+    .update({ is_active: true })
     .eq('id', memberId)
   if (updateErr) return { ok: false, error: updateErr.message }
 
@@ -438,6 +494,15 @@ export async function bulkInviteSubOrgMembers(
 
   for (const email of emails) {
     try {
+      // Per-site (client) roles must never become an org membership. The role is
+      // batch-wide, so every row fails with the same reason — recorded per-row
+      // rather than aborting the batch.
+      if (isPerSiteOnlyRole(role)) {
+        failed++
+        details.push({ email, status: 'failed', reason: PER_SITE_INVITE_REJECTION })
+        continue
+      }
+
       // Already active in sub-org.
       if (inSubOrgByEmail.has(email)) {
         skipped++
@@ -448,15 +513,21 @@ export async function bulkInviteSubOrgMembers(
       // Try to provision new user.
       let newUserId: string
       let isExisting = false
+      let createdHere = false
 
-      const { data: created, error: createErr } = await service.auth.admin.createUser({
-        email,
-        email_confirm: true,
-        user_metadata: { full_name: email.split('@')[0] },
+      const { data: inviteRes, error: inviteErr } = await service.auth.admin.inviteUserByEmail(email, {
+        data: {
+          full_name:           email.split('@')[0],
+          invited_role:        role,
+          org_id:              subOrg.parent_organisation_id,
+          sub_organisation_id: parsed.data.subOrgId,
+          inviter_name:        null,
+        },
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/accept-invite`,
       })
 
-      if (createErr || !created?.user) {
-        const msg = createErr?.message ?? ''
+      if (inviteErr || !inviteRes?.user) {
+        const msg = inviteErr?.message ?? ''
         if (/already|exist|registered/i.test(msg)) {
           // Email collision: look up via profiles.
           const { data: existing } = await (service as any)
@@ -473,11 +544,12 @@ export async function bulkInviteSubOrgMembers(
           isExisting = true
         } else {
           failed++
-          details.push({ email, status: 'failed', reason: msg || 'Could not create user.' })
+          details.push({ email, status: 'failed', reason: msg || 'Could not invite user.' })
           continue
         }
       } else {
-        newUserId = created.user.id
+        newUserId = inviteRes.user.id
+        createdHere = true
       }
 
       // Insert user_organisations row for the sub-org.
@@ -487,26 +559,19 @@ export async function bulkInviteSubOrgMembers(
           user_id:         newUserId,
           organisation_id: parsed.data.subOrgId,
           role,
-          is_active:       true,
+          is_active:       true,            // access is gated on is_active, not accepted_at
           invited_by:      ctx.userId,
-          accepted_at:     new Date().toISOString(),
+          accepted_at:     null,            // stamped when the invitee actually accepts
         })
 
       if (memErr) {
-        if (!isExisting && created?.user) {
+        if (createdHere) {
           await service.auth.admin.deleteUser(newUserId).catch(() => {})
         }
         failed++
         details.push({ email, status: 'failed', reason: memErr.message })
         continue
       }
-
-      // Set-password email — non-fatal.
-      await service.auth
-        .resetPasswordForEmail(email, {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-        })
-        .catch(() => {})
 
       if (!isExisting) {
         await logAuthEvent(service, {
