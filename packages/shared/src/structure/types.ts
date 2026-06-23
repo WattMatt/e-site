@@ -42,6 +42,15 @@ export interface Node {
   section: string | null;
   rating_kva: number | null;
   voltage_v: number | null;
+  // Derived incoming-supply electrical (migration 00144) — persisted by recompute
+  incomer_breaker_a: number | null;
+  incomer_pole_config: string | null;
+  incomer_load_a: number | null;
+  incomer_capacity_a: number | null;
+  incomer_under_protected: boolean;
+  incomer_multiple_feeds: boolean;
+  incomer_source_revision_id: string | null;
+  incomer_computed_at: string | null;
   // General
   notes: string | null;
   decommission_reason: string | null;
