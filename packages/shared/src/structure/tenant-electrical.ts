@@ -54,7 +54,12 @@ export function computeTenantElectrical(
       (s.design_load_a ?? -Infinity) > (best.design_load_a ?? -Infinity) ? s : best,
     )
     const cables = cablesBySupply.get(incomer.id) ?? []
-    const capacityA = cables.length > 0 ? supplyParallelCapacity(cables) : null
+    // Capacity is unknown (null) until at least one cable has a computed derated
+    // rating — otherwise a not-yet-rated cable would read as 0 A and wrongly trip
+    // the under-protected flag. supplyParallelCapacity treats null strands as 0,
+    // which is the right conservative sum once any strand IS rated.
+    const hasRating = cables.some((c) => c.derated_current_rating_a != null)
+    const capacityA = hasRating ? supplyParallelCapacity(cables) : null
     const cores = cables.find((c) => c.cores != null)?.cores ?? null
     const derived = deriveIncomerBreaker({
       designLoadA: incomer.design_load_a,

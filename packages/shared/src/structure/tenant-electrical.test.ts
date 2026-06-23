@@ -65,6 +65,20 @@ describe('computeTenantElectrical', () => {
     expect(out.has('n2')).toBe(false)
   })
 
+  it('treats cables with no computed rating as unknown capacity (not zero)', () => {
+    const out = computeTenantElectrical(
+      ['n1'],
+      [{ id: 's1', to_node_id: 'n1', design_load_a: 800 }],
+      new Map([['s1', [{ derated_current_rating_a: null, cores: '4' }]]]),
+      REV,
+    )
+    const r = out.get('n1')!
+    expect(r.capacityA).toBeNull()
+    expect(r.underProtected).toBe(false)
+    expect(r.breakerA).toBe(800)
+    expect(r.poleConfig).toBe('TP')
+  })
+
   it('reports null capacity when the incomer has no cables', () => {
     const out = computeTenantElectrical(
       ['n1'],
