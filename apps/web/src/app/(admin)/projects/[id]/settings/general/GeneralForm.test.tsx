@@ -53,8 +53,30 @@ describe('GeneralForm', () => {
     expect(nameInput.value).toBe('')
 
     // Status should default to 'active'
-    const statusSelect = screen.getByRole('combobox') as HTMLSelectElement
+    const statusSelect = document.querySelector('select[name="status"]') as HTMLSelectElement
     expect(statusSelect.value).toBe('active')
+  })
+
+  it('reflects and submits the project type', async () => {
+    mockUpdateProjectAction.mockResolvedValueOnce({ ok: true })
+    const { GeneralForm } = await import('./GeneralForm')
+    render(
+      <GeneralForm
+        projectId="proj-uuid"
+        initial={{ name: 'Test', code: 'TP01', status: 'active', project_type: 'commercial' }}
+      />,
+    )
+
+    const typeSelect = document.querySelector('select[name="projectType"]') as HTMLSelectElement
+    expect(typeSelect.value).toBe('commercial')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(mockUpdateProjectAction).toHaveBeenCalledWith(
+        'proj-uuid',
+        expect.objectContaining({ projectType: 'commercial' }),
+      )
+    })
   })
 
   it('marks isDirty=true via context when a field changes', async () => {

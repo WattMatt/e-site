@@ -307,6 +307,7 @@ export async function updateProjectAction(
   if (parsed.data.city !== undefined)          row.city = parsed.data.city
   if (parsed.data.province !== undefined)      row.province = parsed.data.province
   if (parsed.data.status !== undefined)        row.status = parsed.data.status
+  if (parsed.data.projectType !== undefined)   row.project_type = parsed.data.projectType
   if (parsed.data.startDate !== undefined)     row.start_date = parsed.data.startDate
   if (parsed.data.endDate !== undefined)       row.end_date = parsed.data.endDate
   if (parsed.data.clientName !== undefined)    row.client_name = parsed.data.clientName

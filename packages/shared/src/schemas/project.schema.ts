@@ -10,6 +10,10 @@ export const createProjectSchema = z.object({
     'Free State', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape',
   ]).optional(),
   status: z.enum(['planning', 'active', 'on_hold', 'completed', 'cancelled']).default('active'),
+  projectType: z.enum([
+    'commercial', 'residential', 'retail', 'industrial', 'civil',
+    'mixed_use', 'healthcare', 'education', 'electrical_mv', 'other',
+  ]).nullable().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   contractValue: z.number().min(0).optional(),
