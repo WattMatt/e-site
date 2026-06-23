@@ -62,6 +62,15 @@ export function RatesTab({ projectId, canEdit, initial, adjustments }: Props) {
   const sections = useMemo(() => initial?.sections ?? [], [initial])
   const importRow = initial?.import ?? null
 
+  // Top-level bills (sections with kind='bill'). A tender with exactly ONE bill
+  // — e.g. a mall-only BOQ with no tenant shops — would otherwise show a single
+  // summary row equal to the grand total, hiding the whole breakdown one click
+  // in. Render that sole bill's section tree directly below the summary instead.
+  const soleBill = useMemo(() => {
+    const bills = sections.filter((s) => s.kind === 'bill')
+    return bills.length === 1 ? bills[0] : null
+  }, [sections])
+
   // Contract items only (origin='contract'): used for the Contract column and
   // the "edited" amber marker, per spec §4.1. When hasRevisions is false every
   // item is origin='contract' so this is a no-op in the zero-VO case.
@@ -190,13 +199,33 @@ export function RatesTab({ projectId, canEdit, initial, adjustments }: Props) {
           </div>
         </div>
       ) : (
-        <BoqMainSummary
-          importRow={importRow}
-          sections={sections}
-          totals={totals}
-          revisedTotals={revisedTotals}
-          onSelectBill={(bill) => setSelectedBillId(bill.id)}
-        />
+        <>
+          <BoqMainSummary
+            importRow={importRow}
+            sections={sections}
+            totals={totals}
+            revisedTotals={revisedTotals}
+            onSelectBill={(bill) => setSelectedBillId(bill.id)}
+          />
+          {soleBill && (
+            <div>
+              <h3 style={{ margin: '0 0 8px', fontFamily: 'var(--font-sans)', fontSize: 15, fontWeight: 600, color: 'var(--c-text)' }}>
+                Breakdown · {soleBill.title}
+              </h3>
+              <BoqSectionTree
+                bill={soleBill}
+                sections={sections}
+                items={items}
+                totals={totals}
+                revised={revised}
+                revisedTotals={revisedTotals}
+                projectId={projectId}
+                canEdit={canEdit}
+                onItemUpdated={handleItemUpdated}
+              />
+            </div>
+          )}
+        </>
       )}
 
       {importing && <BoqImportDialog projectId={projectId} onClose={() => setImporting(false)} />}

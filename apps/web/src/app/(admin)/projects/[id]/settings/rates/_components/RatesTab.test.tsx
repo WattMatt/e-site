@@ -158,3 +158,79 @@ describe('RatesTab — Contract column excludes variation items (spec §4.1)', (
     expect(screen.getByText('Revised (ex VAT)')).toBeTruthy()
   })
 })
+
+describe('RatesTab — single-bill auto-breakdown', () => {
+  const importRow = {
+    id: 'imp1',
+    projectId: 'p1',
+    organisationId: 'o1',
+    sourceFilename: 'mall.xlsx',
+    storagePath: null,
+    importedBy: null,
+    importedAt: '2026-06-08T00:00:00Z',
+    totalExVat: 100,
+    vatAmount: 15,
+    totalInclVat: 115,
+    lineItemCount: 1,
+    isCurrent: true,
+  }
+  // One bill (MALL PORTION) with one section node (1.1 P&G) nested under it.
+  const sections = [
+    { id: 'b1', importId: 'imp1', parentSectionId: null, kind: 'bill' as const, code: '1', title: 'MALL PORTION', sortOrder: 0, nodeId: null },
+    { id: 's1', importId: 'imp1', parentSectionId: 'b1', kind: 'section' as const, code: null, title: '1.1 P&G', sortOrder: 1, nodeId: null },
+  ]
+
+  it('shows the sole bill’s section tree below the summary without a click', () => {
+    render(
+      <RatesTab
+        projectId="p1"
+        canEdit
+        initial={{ import: importRow, sections, items: [], totals: { b1: 100, s1: 100 }, importedByName: null }}
+      />,
+    )
+    // The Main Summary still renders (it owns the grand totals).
+    expect(screen.getByText('Main Summary')).toBeTruthy()
+    // The breakdown (section node) is visible WITHOUT selecting the bill.
+    expect(screen.getByText('1.1 P&G')).toBeTruthy()
+    expect(screen.getByText(/Breakdown/)).toBeTruthy()
+  })
+})
+
+describe('RatesTab — multi-bill summary unchanged', () => {
+  const importRow = {
+    id: 'imp1',
+    projectId: 'p1',
+    organisationId: 'o1',
+    sourceFilename: 'centre.xlsx',
+    storagePath: null,
+    importedBy: null,
+    importedAt: '2026-06-08T00:00:00Z',
+    totalExVat: 150,
+    vatAmount: 22.5,
+    totalInclVat: 172.5,
+    lineItemCount: 0,
+    isCurrent: true,
+  }
+  // Two bills (MALL PORTION, SHOPRITE) + a section node under the first.
+  const sections = [
+    { id: 'b1', importId: 'imp1', parentSectionId: null, kind: 'bill' as const, code: '1', title: 'MALL PORTION', sortOrder: 0, nodeId: null },
+    { id: 'b2', importId: 'imp1', parentSectionId: null, kind: 'bill' as const, code: '2', title: 'SHOPRITE', sortOrder: 1, nodeId: null },
+    { id: 's1', importId: 'imp1', parentSectionId: 'b1', kind: 'section' as const, code: null, title: '1.1 P&G', sortOrder: 2, nodeId: null },
+  ]
+  const initial = { import: importRow, sections, items: [], totals: { b1: 100, b2: 50, s1: 100 }, importedByName: null }
+
+  it('lists every bill and does NOT auto-render the breakdown', () => {
+    render(<RatesTab projectId="p1" canEdit initial={initial} />)
+    expect(screen.getByText('MALL PORTION')).toBeTruthy()
+    expect(screen.getByText('SHOPRITE')).toBeTruthy()
+    // The breakdown is hidden until a bill is clicked.
+    expect(screen.queryByText('1.1 P&G')).toBeNull()
+  })
+
+  it('drills into a bill on click, showing its tree and a back control', () => {
+    render(<RatesTab projectId="p1" canEdit initial={initial} />)
+    fireEvent.click(screen.getByText('MALL PORTION'))
+    expect(screen.getByText('1.1 P&G')).toBeTruthy()
+    expect(screen.getByText(/Back to Main Summary/)).toBeTruthy()
+  })
+})
