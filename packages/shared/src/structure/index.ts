@@ -48,3 +48,12 @@ export {
 export type { AnchorGroup, LeaseBoInputs } from './owning-lease';
 export { nextStatus, prevStatus, canAdvanceTo } from './shop-drawing-status';
 export type { ShopDrawingStatus } from './shop-drawing-status';
+export {
+  STANDARD_BREAKER_SERIES,
+  nextStandardBreaker,
+  poleConfigFromCores,
+  deriveIncomerBreaker,
+} from './breaker-sizing';
+export type { PoleConfig, DerivedBreaker } from './breaker-sizing';
+export { computeTenantElectrical } from './tenant-electrical';
+export type { SupplyRow, CableRow, TenantElectrical } from './tenant-electrical';
