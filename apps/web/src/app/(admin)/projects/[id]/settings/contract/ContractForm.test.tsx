@@ -4,14 +4,9 @@ import userEvent from '@testing-library/user-event'
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-const mockUpdateProjectAction = vi.fn()
-vi.mock('@/actions/project.actions', () => ({
-  updateProjectAction: (...args: unknown[]) => mockUpdateProjectAction(...args),
-}))
-
-const mockUpdateProjectSettingsAction = vi.fn()
+const mockUpdateContractAction = vi.fn()
 vi.mock('@/actions/project-settings.actions', () => ({
-  updateProjectSettingsAction: (...args: unknown[]) => mockUpdateProjectSettingsAction(...args),
+  updateContractAction: (...args: unknown[]) => mockUpdateContractAction(...args),
 }))
 
 const mockMarkDirty = vi.fn()
@@ -105,9 +100,8 @@ describe('ContractForm', () => {
     })
   })
 
-  it('calls BOTH updateProjectAction and updateProjectSettingsAction on submit with correctly-split patches', async () => {
-    mockUpdateProjectAction.mockResolvedValueOnce({ ok: true })
-    mockUpdateProjectSettingsAction.mockResolvedValueOnce({ settings: baseSettings })
+  it('calls updateContractAction once with the combined patch on submit', async () => {
+    mockUpdateContractAction.mockResolvedValueOnce({ ok: true })
 
     const { ContractForm } = await import('./ContractForm')
     render(<ContractForm projectId="proj-uuid" project={baseProject} settings={baseSettings} />)
@@ -115,18 +109,11 @@ describe('ContractForm', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => {
-      // projects.projects patch
-      expect(mockUpdateProjectAction).toHaveBeenCalledWith(
+      expect(mockUpdateContractAction).toHaveBeenCalledWith(
         'proj-uuid',
         expect.objectContaining({
           contractValue: 1500000,
           currency: 'ZAR',
-        }),
-      )
-      // project_settings patch
-      expect(mockUpdateProjectSettingsAction).toHaveBeenCalledWith(
-        'proj-uuid',
-        expect.objectContaining({
           contractType: 'jbcc_pba',
           contractSignedDate: '2025-03-01',
           practicalCompletionDate: '2026-06-30',
@@ -136,9 +123,8 @@ describe('ContractForm', () => {
     })
   })
 
-  it('shows error banner when either action returns { error }', async () => {
-    mockUpdateProjectAction.mockResolvedValueOnce({ ok: true })
-    mockUpdateProjectSettingsAction.mockResolvedValueOnce({ error: 'Permission denied' })
+  it('shows error banner when the action returns { error }', async () => {
+    mockUpdateContractAction.mockResolvedValueOnce({ error: 'Permission denied' })
 
     const { ContractForm } = await import('./ContractForm')
     render(<ContractForm projectId="proj-uuid" project={baseProject} settings={baseSettings} />)

@@ -257,6 +257,10 @@ const updateProjectSchema = z.object({
   city: z.string().max(120).nullable().optional(),
   province: z.string().max(120).nullable().optional(),
   status: z.enum(['planning', 'active', 'on_hold', 'completed', 'cancelled']).optional(),
+  projectType: z.enum([
+    'commercial', 'residential', 'retail', 'industrial', 'civil',
+    'mixed_use', 'healthcare', 'education', 'electrical_mv', 'other',
+  ]).nullable().optional(),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   clientName: z.string().max(200).nullable().optional(),
