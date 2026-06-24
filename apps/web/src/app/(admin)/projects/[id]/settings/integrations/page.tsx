@@ -56,6 +56,8 @@ export default async function Page({ params }: Props) {
 
   const notifyRfiEmail = settings?.notifyRfiEmail ?? false
   const notifyInspectionEmail = settings?.notifyInspectionEmail ?? false
+  const notifySnagEmail = settings?.notifySnagEmail ?? true
+  const notifyDiaryEmail = settings?.notifyDiaryEmail ?? true
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -111,6 +113,8 @@ export default async function Page({ params }: Props) {
         projectId={id}
         initialNotifyRfiEmail={notifyRfiEmail}
         initialNotifyInspectionEmail={notifyInspectionEmail}
+        initialNotifySnagEmail={notifySnagEmail}
+        initialNotifyDiaryEmail={notifyDiaryEmail}
       />
     </div>
   )

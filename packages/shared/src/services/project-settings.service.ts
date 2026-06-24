@@ -373,12 +373,16 @@ export const projectSettingsService = {
         rfiEmail: projectSettingsDefaults.notifyRfiEmail,
         rfiTo: projectSettingsDefaults.notifyRfiTo,
         inspectionEmail: projectSettingsDefaults.notifyInspectionEmail,
+        snagEmail: projectSettingsDefaults.notifySnagEmail,
+        diaryEmail: projectSettingsDefaults.notifyDiaryEmail,
       }
     }
     return {
       rfiEmail: s.notifyRfiEmail,
       rfiTo: s.notifyRfiTo,
       inspectionEmail: s.notifyInspectionEmail,
+      snagEmail: s.notifySnagEmail,
+      diaryEmail: s.notifyDiaryEmail,
     }
   },
 

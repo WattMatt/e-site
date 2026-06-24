@@ -4,9 +4,50 @@ import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { dispatchNotification } from '@/lib/notifications'
+import { notifySnagCreated, dispatchSnagStatusEmail } from '@/lib/snag-email'
 
 const uuidSchema = z.string().uuid()
 const snagStatusSchema = z.enum(['open', 'in_progress', 'resolved', 'pending_sign_off', 'signed_off', 'closed'])
+
+/**
+ * notifySnagCreatedAction — fans out bell + roster email after a snag is
+ * created. The web create form inserts the snag client-side (RLS + photo
+ * upload), then calls this so the whole project roster is notified server-side
+ * (service-role recipient resolve, gated by `notifySnagEmail`).
+ *
+ * The snag is re-loaded with the cookie/RLS client first — that read only
+ * returns rows the caller can see, so it doubles as the access/tenancy gate and
+ * binds the notification to the snag's OWN project_id. Best-effort: always
+ * returns {} so a notification hiccup never surfaces in the create flow.
+ */
+export async function notifySnagCreatedAction(snagId: string): Promise<{ error?: string }> {
+  const idParse = uuidSchema.safeParse(snagId)
+  if (!idParse.success) return {}
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return {}
+
+  const { data: snag } = await supabase
+    .schema('field')
+    .from('snags')
+    .select('id, project_id, title, priority, raised_by, assigned_to')
+    .eq('id', snagId)
+    .single()
+  if (!snag) return {}
+
+  await notifySnagCreated({
+    snagId: snag.id,
+    projectId: snag.project_id,
+    title: snag.title,
+    priority: snag.priority,
+    assigneeId: snag.assigned_to ?? null,
+    raiserId: snag.raised_by ?? user.id,
+  })
+
+  return {}
+}
 
 /**
  * signOffSnagAction — validates closeout photo before allowing sign-off.
@@ -50,7 +91,7 @@ export async function signOffSnagAction(
       signed_off_at: new Date().toISOString(),
     })
     .eq('id', snagId)
-    .select('title, raised_by, organisation_id')
+    .select('title, raised_by, assigned_to, organisation_id')
     .single()
 
   if (error) return { error: error.message }
@@ -60,6 +101,27 @@ export async function signOffSnagAction(
     project_id: projectId,
     org_id: snag.organisation_id,
     new_status: 'signed_off',
+  })
+
+  // Targeted bell to raiser + assignee (minus the actor) …
+  await dispatchNotification({
+    userIds: [snag.raised_by, snag.assigned_to].filter(
+      (id): id is string => Boolean(id) && id !== user.id,
+    ),
+    title: 'Snag signed off',
+    body: `"${snag.title}" was signed off`,
+    route: `/snags/${snagId}`,
+    type: 'snag_status_changed',
+    entityType: 'snag',
+    entityId: snagId,
+  })
+  // … plus a roster email (gated by notifySnagEmail).
+  await dispatchSnagStatusEmail({
+    snagId,
+    projectId,
+    title: snag.title,
+    statusLabel: STATUS_LABELS.signed_off,
+    changedById: user.id,
   })
 
   revalidatePath(`/snags/${snagId}`)
@@ -151,6 +213,15 @@ export async function updateSnagStatusAction(
   } catch {
     // Notification failure must not block the status update
   }
+
+  // Roster email on every status change (gated by notifySnagEmail).
+  await dispatchSnagStatusEmail({
+    snagId: validSnagId,
+    projectId: validProjectId,
+    title: snag.title,
+    statusLabel: STATUS_LABELS[validStatus] ?? validStatus,
+    changedById: user.id,
+  })
 
   revalidatePath(`/snags/${validSnagId}`)
   revalidatePath(`/projects/${validProjectId}`)

@@ -4,36 +4,71 @@ import { useState, useTransition } from 'react'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { updateProjectSettingsAction } from '@/actions/project-settings.actions'
 
+type ToggleField =
+  | 'notifyRfiEmail'
+  | 'notifyInspectionEmail'
+  | 'notifySnagEmail'
+  | 'notifyDiaryEmail'
+
 interface Props {
   projectId: string
   initialNotifyRfiEmail: boolean
   initialNotifyInspectionEmail: boolean
+  initialNotifySnagEmail: boolean
+  initialNotifyDiaryEmail: boolean
 }
 
 export function IntegrationsPanel({
   projectId,
   initialNotifyRfiEmail,
   initialNotifyInspectionEmail,
+  initialNotifySnagEmail,
+  initialNotifyDiaryEmail,
 }: Props) {
-  const [notifyRfiEmail, setNotifyRfiEmail] = useState(initialNotifyRfiEmail)
-  const [notifyInspectionEmail, setNotifyInspectionEmail] = useState(initialNotifyInspectionEmail)
+  const [values, setValues] = useState<Record<ToggleField, boolean>>({
+    notifyRfiEmail: initialNotifyRfiEmail,
+    notifyInspectionEmail: initialNotifyInspectionEmail,
+    notifySnagEmail: initialNotifySnagEmail,
+    notifyDiaryEmail: initialNotifyDiaryEmail,
+  })
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
-  function toggle(field: 'notifyRfiEmail' | 'notifyInspectionEmail', value: boolean) {
-    if (field === 'notifyRfiEmail') setNotifyRfiEmail(value)
-    else setNotifyInspectionEmail(value)
+  function toggle(field: ToggleField, value: boolean) {
+    setValues(v => ({ ...v, [field]: value }))
     setError(null)
     startTransition(async () => {
       const result = await updateProjectSettingsAction(projectId, { [field]: value })
       if ('error' in result) {
         // Roll back optimistic update
-        if (field === 'notifyRfiEmail') setNotifyRfiEmail(!value)
-        else setNotifyInspectionEmail(!value)
+        setValues(v => ({ ...v, [field]: !value }))
         setError(result.error)
       }
     })
   }
+
+  const TOGGLES: { field: ToggleField; label: string; description: string }[] = [
+    {
+      field: 'notifyRfiEmail',
+      label: 'RFI email notifications',
+      description: 'Send an email to the project team when an RFI is raised, responded to, or closed on this project.',
+    },
+    {
+      field: 'notifySnagEmail',
+      label: 'Snag email notifications',
+      description: 'Send an email to the project team when a snag is raised, its status changes, or it is signed off on this project.',
+    },
+    {
+      field: 'notifyDiaryEmail',
+      label: 'Site diary email notifications',
+      description: 'Send an email to the project team for every site diary entry logged on this project.',
+    },
+    {
+      field: 'notifyInspectionEmail',
+      label: 'Inspection email notifications',
+      description: 'Send an email when an inspection is scheduled or completed on this project.',
+    },
+  ]
 
   return (
     <Card>
@@ -45,55 +80,33 @@ export function IntegrationsPanel({
       </CardHeader>
       <CardBody>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 12,
-              cursor: isPending ? 'wait' : 'pointer',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={notifyRfiEmail}
-              disabled={isPending}
-              onChange={e => toggle('notifyRfiEmail', e.target.checked)}
-              style={{ marginTop: 2, accentColor: 'var(--c-amber)', width: 15, height: 15, flexShrink: 0 }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-text)' }}>
-                RFI email notifications
+          {TOGGLES.map(({ field, label, description }) => (
+            <label
+              key={field}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 12,
+                cursor: isPending ? 'wait' : 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={values[field]}
+                disabled={isPending}
+                onChange={e => toggle(field, e.target.checked)}
+                style={{ marginTop: 2, accentColor: 'var(--c-amber)', width: 15, height: 15, flexShrink: 0 }}
+              />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-text)' }}>
+                  {label}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 2 }}>
+                  {description}
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 2 }}>
-                Send an email when a new RFI is created or updated on this project.
-              </div>
-            </div>
-          </label>
-
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 12,
-              cursor: isPending ? 'wait' : 'pointer',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={notifyInspectionEmail}
-              disabled={isPending}
-              onChange={e => toggle('notifyInspectionEmail', e.target.checked)}
-              style={{ marginTop: 2, accentColor: 'var(--c-amber)', width: 15, height: 15, flexShrink: 0 }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-text)' }}>
-                Inspection email notifications
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 2 }}>
-                Send an email when an inspection is scheduled or completed on this project.
-              </div>
-            </div>
-          </label>
+            </label>
+          ))}
 
           {error && (
             <p style={{ fontSize: 12, color: 'var(--c-red)', margin: 0 }}>
