@@ -168,7 +168,6 @@ export function ScheduleTable({
               <Th>GLA (m²)</Th>
               <Th>DB Code</Th>
               <Th>Breaker</Th>
-              <Th>Load</Th>
               <Th>Scope Status</Th>
               <Th>BO Period</Th>
               <Th>BO Date</Th>
@@ -217,17 +216,6 @@ export function ScheduleTable({
                           <Badge variant="warning">under-rated</Badge>
                         </span>
                       )}
-                    </Td>
-                    <Td mono>
-                      <span
-                        title={
-                          node.incomer_multiple_feeds
-                            ? 'Multiple feeds — largest shown'
-                            : undefined
-                        }
-                      >
-                        {formatAmps(node.incomer_load_a)}
-                      </span>
                     </Td>
 
                     {/* Scope status */}
@@ -362,7 +350,7 @@ export function ScheduleTable({
                   {isExpanded && (
                     <tr>
                       <td
-                        colSpan={12 + scopeItemTypes.length * 2}
+                        colSpan={11 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <ScopeOfWorkPanel
@@ -382,7 +370,7 @@ export function ScheduleTable({
                   {isLayoutExpanded && (
                     <tr>
                       <td
-                        colSpan={12 + scopeItemTypes.length * 2}
+                        colSpan={11 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <LayoutIssuedPanel
@@ -563,8 +551,4 @@ function formatBreaker(node: Node): string {
   if (a == null) return '—'
   const poles = node.pole_config ?? node.incomer_pole_config
   return poles ? `${a} A ${poles}` : `${a} A`
-}
-
-function formatAmps(value: number | null): string {
-  return value != null ? `${value.toLocaleString()} A` : '—'
 }
