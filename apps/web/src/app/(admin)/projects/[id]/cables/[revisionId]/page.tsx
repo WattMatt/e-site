@@ -569,6 +569,10 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       length_status: worstStatus,
       combined_capacity_a: combinedCap,
       under_rated: combinedCap != null && head.load_a != null && combinedCap < head.load_a,
+      // Grid doesn't surface the destination breaker yet; exports populate it
+      // from the to-node in export-payload.ts. Null here keeps the type honest.
+      breaker_a: null,
+      pole_config: null,
       vd_pct: head.vd_pct,
       cumulative_vd_pct: head.cumulative_vd_pct,
       mixed_properties: { fields: mixedFields },
