@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { X, Map } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { X, Map, FileText } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { loadPdfForRaster, isPdfPath, isImagePath, type LoadedPdf } from '@/lib/pdf-raster'
 import { FloorPlanAnnotator } from './FloorPlanAnnotator'
 import type { AnnotationData, StagedAttachment } from './types'
 
@@ -12,6 +13,16 @@ interface FloorPlan {
   level: string | null
   file_path: string
   signedUrl?: string
+  isPdf?: boolean
+}
+
+// What gets fed to the (image-only) annotator: an image URL or a rasterised
+// PDF-page data URL, plus the page it came from (for PDF re-edit).
+interface AnnotatorSource {
+  url: string
+  floorPlanId: string | null
+  name: string
+  pageIndex?: number
 }
 
 interface Props {
@@ -27,26 +38,49 @@ interface Props {
   }
 }
 
+const planLabel = (p: { name: string; level: string | null }) =>
+  `${p.name}${p.level ? ` · ${p.level}` : ''}`
+
 export function FloorPlanAttachDialog({ projectId, onClose, onStage, initial }: Props) {
   const [plans, setPlans] = useState<FloorPlan[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!initial)
   const [error, setError] = useState<string | null>(null)
+
   const [picked, setPicked] = useState<FloorPlan | null>(null)
-  const [annotatorOpen, setAnnotatorOpen] = useState(!!initial)
+  const [pdfPages, setPdfPages] = useState<number | null>(null) // >1 → show page picker
+  const [preparing, setPreparing] = useState(false)
+  const [annotatorSource, setAnnotatorSource] = useState<AnnotatorSource | null>(null)
+  const pdfRef = useRef<LoadedPdf | null>(null)
 
-  // If we're re-editing, synth a "picked" plan so the annotator has its source URL.
-  const editingPlan: FloorPlan | null = initial
-    ? {
-        id: initial.sourceFloorPlanId ?? 'source-deleted',
-        name: initial.floorPlanName,
-        level: null,
-        file_path: '',
-        signedUrl: initial.sourceImageUrl,
-      }
-    : null
-
+  // ── Re-edit: prepare the source (rasterise the stored PDF page if any) ──
   useEffect(() => {
-    if (initial) return // skip list fetch when re-editing
+    if (!initial) return
+    let cancelled = false
+    ;(async () => {
+      const pageIndex = initial.annotationData.sourcePageIndex
+      if (pageIndex) {
+        try {
+          setPreparing(true)
+          const pdf = await loadPdfForRaster(initial.sourceImageUrl)
+          const { dataUrl } = await pdf.renderPage(pageIndex)
+          if (!cancelled) {
+            setAnnotatorSource({ url: dataUrl, floorPlanId: initial.sourceFloorPlanId, name: initial.floorPlanName, pageIndex })
+          }
+        } catch (e) {
+          if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load PDF page')
+        } finally {
+          if (!cancelled) setPreparing(false)
+        }
+      } else {
+        setAnnotatorSource({ url: initial.sourceImageUrl, floorPlanId: initial.sourceFloorPlanId, name: initial.floorPlanName })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [initial])
+
+  // ── List floor plans (images + PDFs) ──
+  useEffect(() => {
+    if (initial) return
     let cancelled = false
     ;(async () => {
       const supabase = createClient()
@@ -61,14 +95,12 @@ export function FloorPlanAttachDialog({ projectId, onClose, onStage, initial }: 
       if (error) { setError(error.message); setLoading(false); return }
       const rows = (data ?? []) as FloorPlan[]
 
-      // Only images can be annotated on a canvas. Filter non-image plans
-      // (PDFs / DWGs) out of the picker for v1.
-      const imageRows = rows.filter(r => /\.(png|jpe?g|webp|heic)$/i.test(r.file_path))
-
+      // Annotatable plans: raster/vector images AND PDFs (rasterised on pick).
+      const supported = rows.filter(r => isImagePath(r.file_path) || isPdfPath(r.file_path))
       const signed = await Promise.all(
-        imageRows.map(async r => {
+        supported.map(async r => {
           const { data: s } = await supabase.storage.from('drawings').createSignedUrl(r.file_path, 60 * 60)
-          return { ...r, signedUrl: s?.signedUrl }
+          return { ...r, signedUrl: s?.signedUrl, isPdf: isPdfPath(r.file_path) }
         }),
       )
       if (!cancelled) {
@@ -79,35 +111,72 @@ export function FloorPlanAttachDialog({ projectId, onClose, onStage, initial }: 
     return () => { cancelled = true }
   }, [projectId, initial])
 
-  function handlePick(plan: FloorPlan) {
+  async function handlePick(plan: FloorPlan) {
+    if (!plan.signedUrl) return
+    setError(null)
+    if (!plan.isPdf) {
+      setAnnotatorSource({ url: plan.signedUrl, floorPlanId: plan.id, name: planLabel(plan) })
+      return
+    }
+    // PDF — load the document, then rasterise (single page) or offer a page picker.
     setPicked(plan)
-    setAnnotatorOpen(true)
+    setPreparing(true)
+    try {
+      const pdf = await loadPdfForRaster(plan.signedUrl)
+      pdfRef.current = pdf
+      if (pdf.numPages === 1) {
+        const { dataUrl } = await pdf.renderPage(1)
+        setAnnotatorSource({ url: dataUrl, floorPlanId: plan.id, name: planLabel(plan), pageIndex: 1 })
+      } else {
+        setPdfPages(pdf.numPages)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to open PDF floor plan')
+    } finally {
+      setPreparing(false)
+    }
   }
 
-  const activeSource = editingPlan ?? picked
+  async function handlePagePick(pageNum: number) {
+    if (!pdfRef.current || !picked) return
+    setPreparing(true)
+    try {
+      const { dataUrl } = await pdfRef.current.renderPage(pageNum)
+      setAnnotatorSource({ url: dataUrl, floorPlanId: picked.id, name: planLabel(picked), pageIndex: pageNum })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to render PDF page')
+    } finally {
+      setPreparing(false)
+    }
+  }
 
-  if (annotatorOpen && activeSource?.signedUrl) {
+  // ── Annotator (image or rasterised-PDF source) ──
+  if (annotatorSource) {
     return (
       <FloorPlanAnnotator
-        floorPlanName={`${activeSource.name}${activeSource.level ? ` · ${activeSource.level}` : ''}`}
-        sourceImageUrl={activeSource.signedUrl}
-        sourceFloorPlanId={activeSource.id === 'source-deleted' ? null : activeSource.id}
+        floorPlanName={annotatorSource.name}
+        sourceImageUrl={annotatorSource.url}
+        sourceFloorPlanId={annotatorSource.floorPlanId}
         initialAnnotation={initial?.annotationData}
         onCancel={() => {
           if (initial) onClose()
-          else { setAnnotatorOpen(false); setPicked(null) }
+          else { setAnnotatorSource(null); setPicked(null); setPdfPages(null); pdfRef.current = null }
         }}
         onSave={({ blob, annotationData, previewUrl }) => {
+          // For PDF sources, record the page and drop the (large) rasterised
+          // image from the scene graph — re-edit re-rasterises from the source.
+          const finalData: AnnotationData = annotatorSource.pageIndex
+            ? { ...annotationData, sourcePageIndex: annotatorSource.pageIndex, baseImage: { ...annotationData.baseImage, signedUrl: undefined } }
+            : annotationData
           const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-          const fileName = `floorplan-markup-${stamp}.png`
           onStage({
             kind: 'annotation',
             id: Math.random().toString(36).slice(2, 10),
             blob,
-            fileName,
+            fileName: `floorplan-markup-${stamp}.png`,
             previewUrl,
-            sourceFloorPlanId: activeSource.id === 'source-deleted' ? null : activeSource.id,
-            annotationData,
+            sourceFloorPlanId: annotatorSource.floorPlanId,
+            annotationData: finalData,
           })
           onClose()
         }}
@@ -142,7 +211,7 @@ export function FloorPlanAttachDialog({ projectId, onClose, onStage, initial }: 
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-text)' }}>Attach floor plan</div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
-              Pick a plan to mark up
+              {pdfPages ? `Pick a page to mark up · ${picked?.name ?? ''}` : 'Pick a plan to mark up'}
             </div>
           </div>
           <button
@@ -161,29 +230,55 @@ export function FloorPlanAttachDialog({ projectId, onClose, onStage, initial }: 
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', padding: 14 }}>
-          {loading && (
+          {(loading || preparing) && (
             <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-dim)' }}>
-              Loading floor plans…
+              {preparing ? 'Preparing PDF…' : 'Loading floor plans…'}
             </p>
           )}
           {error && (
             <p role="alert" style={{ color: '#fca5a5', fontSize: 12 }}>{error}</p>
           )}
-          {!loading && !error && plans.length === 0 && (
+
+          {/* Multi-page PDF — page picker */}
+          {!preparing && pdfPages && pdfPages > 1 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 8 }}>
+              {Array.from({ length: pdfPages }, (_, idx) => idx + 1).map(n => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => handlePagePick(n)}
+                  style={{
+                    background: 'var(--c-base)', border: '1px solid var(--c-border)',
+                    borderRadius: 8, padding: '14px 0', cursor: 'pointer',
+                    color: 'var(--c-text)', fontSize: 13, fontWeight: 600,
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--c-amber)' }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--c-border)' }}
+                >
+                  Page {n}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!loading && !preparing && !pdfPages && !error && plans.length === 0 && (
             <div style={{
               padding: '22px 16px', textAlign: 'center',
               border: '1px dashed var(--c-border)', borderRadius: 8,
             }}>
               <Map size={24} color="var(--c-text-dim)" style={{ margin: '0 auto 8px' }} />
               <p style={{ fontSize: 12, color: 'var(--c-text-mid)' }}>
-                No image floor plans found for this project.
+                No floor plans found for this project.
               </p>
               <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 6 }}>
-                Upload a PNG or JPG floor plan from the project page first.
+                Upload a floor plan (PDF, PNG or JPG) from the project&apos;s Floor Plans page first.
               </p>
             </div>
           )}
-          {!loading && plans.length > 0 && (
+
+          {/* Plan grid */}
+          {!loading && !preparing && !pdfPages && plans.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
               {plans.map(p => (
                 <button
@@ -199,14 +294,20 @@ export function FloorPlanAttachDialog({ projectId, onClose, onStage, initial }: 
                   onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--c-amber)' }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--c-border)' }}
                 >
-                  <div style={{ aspectRatio: '4 / 3', background: 'var(--c-surface, #13131E)', overflow: 'hidden' }}>
-                    {p.signedUrl && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={p.signedUrl}
-                        alt={p.name}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
+                  <div style={{
+                    aspectRatio: '4 / 3', background: 'var(--c-surface, #13131E)', overflow: 'hidden',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {p.isPdf ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: 'var(--c-text-dim)' }}>
+                        <FileText size={26} />
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em' }}>PDF</span>
+                      </div>
+                    ) : (
+                      p.signedUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={p.signedUrl} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      )
                     )}
                   </div>
                   <div style={{ padding: '8px 10px' }}>
