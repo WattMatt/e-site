@@ -73,6 +73,7 @@ export default async function ProjectDetailPage({ params }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className={statusBadge(project.status)}>{project.status.replace('_', ' ')}</span>
           <ReportButton type="snag-list" entityId={id} label="↓ Snag Report" />
+          <Link href={`/rfis/new?projectId=${id}`} className="btn-primary-amber">+ RFI</Link>
           <Link href={`/projects/${id}/snags/new`} className="btn-primary-amber">+ Snag</Link>
         </div>
       </div>

@@ -119,12 +119,27 @@ function NewRfiForm() {
       <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div className="data-panel">
           <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <FormField label="Project" required error={errors.projectId?.message}>
-              <Select {...register('projectId')} invalid={!!errors.projectId}>
-                <option value="">Select project…</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </Select>
-            </FormField>
+            {defaultProjectId ? (
+              // Launched from a project — the project is fixed, not a choice.
+              <FormField label="Project" required>
+                <input type="hidden" {...register('projectId')} />
+                <div
+                  style={{
+                    padding: '9px 12px', fontSize: 14, color: 'var(--c-text)',
+                    background: 'var(--c-panel)', border: '1px solid var(--c-border)', borderRadius: 6,
+                  }}
+                >
+                  {projects.find(p => p.id === defaultProjectId)?.name ?? 'Loading project…'}
+                </div>
+              </FormField>
+            ) : (
+              <FormField label="Project" required error={errors.projectId?.message}>
+                <Select {...register('projectId')} invalid={!!errors.projectId}>
+                  <option value="">Select project…</option>
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </Select>
+              </FormField>
+            )}
 
             <FormField label="Subject" required error={errors.subject?.message}>
               <TextInput {...register('subject')} autoFocus invalid={!!errors.subject} placeholder="Describe the query…" />

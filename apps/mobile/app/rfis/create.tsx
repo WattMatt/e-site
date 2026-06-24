@@ -112,19 +112,28 @@ export default function CreateRfiScreen() {
       <View style={styles.form}>
         <View style={styles.field}>
           <Text style={styles.label}>Project <Text style={styles.req}>*</Text></Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.pills}>
-              {projects.map(p => (
-                <TouchableOpacity
-                  key={p.id}
-                  style={[styles.pill, projectId === p.id && styles.pillActive]}
-                  onPress={() => setProjectId(p.id)}
-                >
-                  <Text style={[styles.pillText, projectId === p.id && styles.pillActiveText]}>{p.name}</Text>
-                </TouchableOpacity>
-              ))}
+          {params.projectId ? (
+            // Launched from a project — the project is fixed, not a choice.
+            <View style={[styles.pill, styles.pillActive]}>
+              <Text style={[styles.pillText, styles.pillActiveText]}>
+                {projects.find(p => p.id === projectId)?.name ?? 'Loading…'}
+              </Text>
             </View>
-          </ScrollView>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={styles.pills}>
+                {projects.map(p => (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[styles.pill, projectId === p.id && styles.pillActive]}
+                    onPress={() => setProjectId(p.id)}
+                  >
+                    <Text style={[styles.pillText, projectId === p.id && styles.pillActiveText]}>{p.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          )}
         </View>
 
         <View style={styles.field}>
