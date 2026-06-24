@@ -7,12 +7,14 @@ const {
   revalidatePathMock,
   getEntryForGateMock,
   hardDeleteMock,
+  createMock,
 } = vi.hoisted(() => ({
   createClientMock: vi.fn(),
   createServiceClientMock: vi.fn(),
   revalidatePathMock: vi.fn(),
   getEntryForGateMock: vi.fn(),
   hardDeleteMock: vi.fn(),
+  createMock: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -28,11 +30,12 @@ vi.mock('@esite/shared', async () => {
       ...actual.diaryService,
       getEntryForGate: getEntryForGateMock,
       hardDelete: hardDeleteMock,
+      create: createMock,
     },
   }
 })
 
-import { deleteDiaryEntryAction } from './diary.actions'
+import { deleteDiaryEntryAction, createDiaryEntryAction } from './diary.actions'
 
 const ENTRY_ID   = '11111111-1111-1111-1111-111111111111'
 const PROJECT_ID = '22222222-2222-2222-2222-222222222222'
@@ -54,6 +57,7 @@ beforeEach(() => {
   revalidatePathMock.mockReset()
   getEntryForGateMock.mockReset()
   hardDeleteMock.mockReset()
+  createMock.mockReset()
 
   createClientMock.mockResolvedValue(mockClient())
   createServiceClientMock.mockReturnValue({})
@@ -138,5 +142,81 @@ describe('deleteDiaryEntryAction — failure handling', () => {
     hardDeleteMock.mockRejectedValue(new Error('db exploded'))
     const res = await deleteDiaryEntryAction(ENTRY_ID)
     expect(res).toEqual({ error: 'db exploded' })
+  })
+})
+
+// ─── createDiaryEntryAction ──────────────────────────────────────────────
+
+/** Cookie/RLS client: auth.getUser + the user_organisations membership chain. */
+function mockCreateClient(opts: { user?: unknown; mem?: unknown; memError?: unknown } = {}) {
+  const { user = { id: AUTHOR_ID }, mem = { organisation_id: 'org-1' }, memError = null } = opts
+  const chain: any = {
+    select: () => chain,
+    eq: () => chain,
+    limit: () => chain,
+    single: () => Promise.resolve({ data: mem, error: memError }),
+  }
+  return {
+    auth: { getUser: () => Promise.resolve({ data: { user } }) },
+    from: () => chain,
+  }
+}
+
+const validCreateInput = {
+  projectId: PROJECT_ID,
+  entryDate: '2026-06-24',
+  entryType: 'progress' as const,
+  progressNotes: 'Poured the slab on grid B.',
+}
+
+describe('createDiaryEntryAction — validation + server-forced tenancy', () => {
+  it('rejects invalid input before any I/O', async () => {
+    const res = await createDiaryEntryAction({ ...validCreateInput, progressNotes: '   ' })
+    expect(res.error).toEqual(expect.any(String))
+    expect(createClientMock).not.toHaveBeenCalled()
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects when unauthenticated', async () => {
+    createClientMock.mockResolvedValue(mockCreateClient({ user: null }))
+    const res = await createDiaryEntryAction(validCreateInput)
+    expect(res).toEqual({ error: 'Not authenticated' })
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('errors when the user has no active organisation membership', async () => {
+    createClientMock.mockResolvedValue(mockCreateClient({ mem: null, memError: { message: 'none' } }))
+    const res = await createDiaryEntryAction(validCreateInput)
+    expect(res).toEqual({ error: 'No active organisation membership' })
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('forces created_by + organisation_id from the session, returns the entry id, and revalidates', async () => {
+    createClientMock.mockResolvedValue(
+      mockCreateClient({ user: { id: 'auth-user' }, mem: { organisation_id: 'auth-org' } }),
+    )
+    createMock.mockResolvedValue({ id: 'new-entry' })
+
+    const res = await createDiaryEntryAction(validCreateInput)
+
+    // org + user are sourced from auth/membership, never from the client payload.
+    expect(createMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'auth-org',
+      'auth-user',
+      expect.objectContaining({
+        projectId: PROJECT_ID,
+        progressNotes: validCreateInput.progressNotes,
+      }),
+    )
+    expect(res).toEqual({ entryId: 'new-entry' })
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/projects/${PROJECT_ID}/diary`)
+  })
+
+  it('surfaces a service create error', async () => {
+    createClientMock.mockResolvedValue(mockCreateClient())
+    createMock.mockRejectedValue(new Error('insert failed'))
+    const res = await createDiaryEntryAction(validCreateInput)
+    expect(res).toEqual({ error: 'insert failed' })
   })
 })

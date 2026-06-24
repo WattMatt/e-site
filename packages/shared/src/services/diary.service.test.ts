@@ -109,3 +109,67 @@ describe('diaryService.hardDelete', () => {
     await expect(diaryService.hardDelete(client as never, 'e1')).resolves.toBeUndefined()
   })
 })
+
+/** Captures the row handed to .insert(): schema().from().insert().select().single(). */
+function buildInsertCaptureClient() {
+  const captured: { payload?: any } = {}
+  const single = vi.fn(() =>
+    Promise.resolve({ data: { id: 'diary-1', ...(captured.payload ?? {}) }, error: null }),
+  )
+  const select = vi.fn(() => ({ single }))
+  const insert = vi.fn((payload: any) => {
+    captured.payload = payload
+    return { select }
+  })
+  const from = vi.fn(() => ({ insert }))
+  const schema = vi.fn(() => ({ from }))
+  return { client: { schema } as any, captured }
+}
+
+const baseCreateInput = {
+  projectId: 'project-1',
+  entryDate: '2026-06-24',
+  progressNotes: 'Poured the slab on grid B.',
+}
+
+describe('diaryService.create — server-forced tenancy + field mapping', () => {
+  it('binds organisation_id and created_by to its arguments, ignoring any input-borne values', async () => {
+    const { client, captured } = buildInsertCaptureClient()
+
+    await diaryService.create(
+      client,
+      'org-real',
+      'user-real',
+      // A hostile caller cannot smuggle tenancy in through the input object.
+      { ...baseCreateInput, organisation_id: 'org-evil', created_by: 'user-evil' } as any,
+    )
+
+    expect(captured.payload.organisation_id).toBe('org-real')
+    expect(captured.payload.created_by).toBe('user-real')
+  })
+
+  it('defaults entry_type to "progress" when none is supplied', async () => {
+    const { client, captured } = buildInsertCaptureClient()
+    await diaryService.create(client, 'o', 'u', { ...baseCreateInput })
+    expect(captured.payload.entry_type).toBe('progress')
+  })
+
+  it('writes quality_notes for a quality entry (backs the wired-in Quality field)', async () => {
+    const { client, captured } = buildInsertCaptureClient()
+    await diaryService.create(client, 'o', 'u', {
+      ...baseCreateInput,
+      entryType: 'quality',
+      qualityNotes: 'Concrete cube test passed at 30 MPa.',
+    })
+    expect(captured.payload.entry_type).toBe('quality')
+    expect(captured.payload.quality_notes).toBe('Concrete cube test passed at 30 MPa.')
+  })
+
+  it('coerces omitted optional notes to null', async () => {
+    const { client, captured } = buildInsertCaptureClient()
+    await diaryService.create(client, 'o', 'u', { ...baseCreateInput })
+    expect(captured.payload.safety_notes).toBeNull()
+    expect(captured.payload.quality_notes).toBeNull()
+    expect(captured.payload.delay_notes).toBeNull()
+  })
+})

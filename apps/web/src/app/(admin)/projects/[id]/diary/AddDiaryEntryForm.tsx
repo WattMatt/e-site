@@ -3,7 +3,8 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
+import { ENTRY_TYPE_LABELS } from '@esite/shared'
+import { createDiaryEntryAction } from '@/actions/diary.actions'
 import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT_DOC } from '@/lib/diary-attachments'
 import type { DiaryEntryType } from '@esite/shared'
 
@@ -33,46 +34,69 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
   const [entryType, setEntryType] = useState<DiaryEntryType>('progress')
   const [progressNotes, setProgressNotes] = useState('')
   const [safetyNotes, setSafetyNotes] = useState('')
+  const [qualityNotes, setQualityNotes] = useState('')
   const [delayNotes, setDelayNotes] = useState('')
   const [weather, setWeather] = useState('')
   const [workers, setWorkers] = useState('')
   const [delays, setDelays] = useState('')
   const [error, setError] = useState('')
   const [files, setFiles] = useState<File[]>([])
+  // Holds the id of an entry created on a prior submit whose attachment upload
+  // failed — a retry reuses it instead of creating a duplicate entry.
+  const [createdEntryId, setCreatedEntryId] = useState<string | null>(null)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!progressNotes.trim()) { setError('Progress notes are required.'); return }
     setError('')
-    const client = createClient()
-    try {
-      const entry = await diaryService.create(client as any, orgId, userId, {
+
+    // Create the entry once. If a previous submit created it but the attachment
+    // upload failed, reuse that id so the retry doesn't insert a duplicate.
+    let entryId = createdEntryId
+    if (!entryId) {
+      const res = await createDiaryEntryAction({
         projectId,
         entryDate,
         entryType,
         progressNotes: progressNotes.trim(),
         safetyNotes: safetyNotes.trim() || undefined,
+        qualityNotes: qualityNotes.trim() || undefined,
         delayNotes: delayNotes.trim() || undefined,
         weather: weather || undefined,
         workersOnSite: workers ? parseInt(workers, 10) : undefined,
         delays: delays.trim() || undefined,
       })
-      if (files.length > 0) {
-        await uploadDiaryAttachments(client as any, {
-          orgId, projectId, entryId: (entry as { id: string }).id, userId, files,
-        })
+      if (res.error || !res.entryId) {
+        setError(res.error ?? 'Failed to save entry.')
+        return
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save entry.')
-      return
+      entryId = res.entryId
+      setCreatedEntryId(entryId)
     }
+
+    if (files.length > 0) {
+      try {
+        await uploadDiaryAttachments(
+          createClient() as any,
+          { orgId, projectId, entryId, userId, files },
+          // Drop each committed file so a retry resumes with only what's left.
+          (uploaded) => setFiles(prev => prev.filter(f => f !== uploaded)),
+        )
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to upload attachments.')
+        return
+      }
+    }
+
     setProgressNotes('')
     setSafetyNotes('')
+    setQualityNotes('')
     setDelayNotes('')
     setWeather('')
     setWorkers('')
     setDelays('')
     setFiles([])
+    setCreatedEntryId(null)
     setOpen(false)
     startTransition(() => router.refresh())
   }
@@ -196,6 +220,21 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
               placeholder="Safety observations, near-misses, incidents…"
               className="ob-input"
               style={{ marginTop: 4, resize: 'vertical', borderColor: '#7f1d1d' }}
+            />
+          </div>
+        )}
+
+        {/* Quality notes */}
+        {(entryType === 'quality' || entryType === 'general') && (
+          <div>
+            <label className="ob-label" style={{ color: '#c084fc' }}>Quality notes</label>
+            <textarea
+              value={qualityNotes}
+              onChange={e => setQualityNotes(e.target.value)}
+              rows={2}
+              placeholder="Inspections, test results, defects, sign-offs…"
+              className="ob-input"
+              style={{ marginTop: 4, resize: 'vertical', borderColor: '#6b21a8' }}
             />
           </div>
         )}

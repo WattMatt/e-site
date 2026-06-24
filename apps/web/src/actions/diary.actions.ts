@@ -4,9 +4,56 @@ import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { diaryService, ORG_WRITE_ROLES } from '@esite/shared'
+import { diaryService, createDiarySchema, ORG_WRITE_ROLES, type CreateDiaryInput } from '@esite/shared'
 
 const uuidSchema = z.string().uuid()
+
+/**
+ * Create a site diary entry.
+ *
+ * Mirrors createRfiAction: validates with Zod, then writes via the cookie/RLS
+ * client so migration 00143's INSERT policy is the write-role gate. `created_by`
+ * is forced to the authenticated user and `organisation_id` is resolved from the
+ * caller's active membership — never trusted from the client payload. Attachments
+ * stay client-side (browser File objects + storage upload); this returns the new
+ * entry's id so the caller commits them against it idempotently.
+ */
+export async function createDiaryEntryAction(
+  input: CreateDiaryInput,
+): Promise<{ entryId?: string; error?: string }> {
+  const parsed = createDiarySchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: mem, error: memErr } = await supabase
+    .from('user_organisations')
+    .select('organisation_id')
+    .eq('user_id', user.id)
+    .eq('is_active', true)
+    .limit(1)
+    .single()
+  if (memErr || !mem) return { error: 'No active organisation membership' }
+
+  let entry: { id: string }
+  try {
+    entry = (await diaryService.create(
+      supabase as never,
+      mem.organisation_id,
+      user.id,
+      parsed.data,
+    )) as { id: string }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+
+  revalidatePath(`/projects/${parsed.data.projectId}/diary`)
+  revalidatePath('/diary')
+  revalidatePath('/diary/weekly')
+  return { entryId: entry.id }
+}
 
 /**
  * Permanently delete a site diary entry.

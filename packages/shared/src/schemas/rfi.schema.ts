@@ -7,7 +7,13 @@ export const createRfiSchema = z.object({
   priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
   category: z.string().max(100).optional(),
   dueDate: z.string().optional(),
-  assignedTo: z.string().uuid().optional(),
+  // The web form's default "Unassigned" <option value=""> submits ''. Treat a
+  // blank string as "no assignee chosen" (undefined) so it doesn't fail the
+  // uuid check — the create path then applies the project default if any.
+  assignedTo: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().uuid().optional(),
+  ),
 })
 
 export const respondToRfiSchema = z.object({
