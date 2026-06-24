@@ -14,6 +14,7 @@ import {
   renderRfiCreatedEmail,
 } from '@esite/shared'
 import { createServiceClient } from '@/lib/supabase/server'
+import { resolveProjectRecipients } from './recipients'
 
 export interface DispatchRfiEmailArgs {
   projectId: string
@@ -43,42 +44,23 @@ export async function dispatchRfiEmail(args: DispatchRfiEmailArgs): Promise<void
     const cfg = await projectSettingsService.getNotificationConfig(svc as any, args.projectId)
     if (!cfg.rfiEmail) return
 
-    // Recipients = everyone on the project roster (active members). The
-    // assignee + raiser are included defensively in case the resolved assignee
-    // is a project-default who isn't (yet) a member.
-    const { data: memberRows } = await (svc as any)
-      .schema('projects')
-      .from('project_members')
-      .select('user_id')
-      .eq('project_id', args.projectId)
-      .eq('is_active', true)
-    const memberIds: string[] = (memberRows ?? []).map((m: any) => m.user_id)
-
-    const ids = [...new Set([...memberIds, args.assigneeId, args.raiserId].filter(
-      (x): x is string => Boolean(x),
-    ))]
-    const { data: profileRows } = await svc
-      .from('profiles')
-      .select('id, full_name, email')
-      .in('id', ids)
-    const profiles: Record<string, { full_name: string | null; email: string | null }> =
-      Object.fromEntries((profileRows ?? []).map((p: any) => [p.id, p]))
-
-    const { data: project } = await (svc as any)
-      .schema('projects')
-      .from('projects')
-      .select('name')
-      .eq('id', args.projectId)
-      .maybeSingle()
-
-    const assignee = args.assigneeId ? profiles[args.assigneeId] : null
-    const raiser = profiles[args.raiserId] ?? null
-
-    const recipients = buildRfiEmailRecipients({
-      notifyRfiEmail: cfg.rfiEmail,
-      emails: ids.map((id) => profiles[id]?.email),
-    })
+    // Canonical recipient list — every active member + implicit org admins,
+    // resolved live (00146 project_notification_recipients). Email goes to the
+    // whole roster, including the raiser.
+    const { emails: rosterEmails } = await resolveProjectRecipients(args.projectId)
+    const recipients = buildRfiEmailRecipients({ notifyRfiEmail: cfg.rfiEmail, emails: rosterEmails })
     if (recipients.length === 0) return
+
+    // Names for the email body (raiser, assignee, project).
+    const nameIds = [args.assigneeId, args.raiserId].filter((x): x is string => Boolean(x))
+    const { data: profileRows } = await svc
+      .from('profiles').select('id, full_name').in('id', nameIds)
+    const profiles: Record<string, { full_name: string | null }> =
+      Object.fromEntries((profileRows ?? []).map((p: any) => [p.id, p]))
+    const { data: project } = await (svc as any)
+      .schema('projects').from('projects').select('name').eq('id', args.projectId).maybeSingle()
+    const raiser = profiles[args.raiserId] ?? null
+    const assignee = args.assigneeId ? profiles[args.assigneeId] : null
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live'
     const { subject, html } = renderRfiCreatedEmail({
@@ -102,7 +84,7 @@ export async function dispatchRfiEmail(args: DispatchRfiEmailArgs): Promise<void
         body: JSON.stringify({ type: 'rfi-created', payload: { to: recipients, subject, html } }),
       })
       if (res.ok) {
-        console.warn('[rfi-email] sent', { projectId: args.projectId, members: memberIds.length, recipients: recipients.length })
+        console.warn('[rfi-email] sent', { projectId: args.projectId, recipients: recipients.length })
       } else {
         const body = await res.text().catch(() => '')
         console.error('[rfi-email] send-email failed', { projectId: args.projectId, recipients: recipients.length, status: res.status, body: body.slice(0, 300) })

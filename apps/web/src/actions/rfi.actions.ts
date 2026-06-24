@@ -15,7 +15,8 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
+import { resolveProjectRecipients } from '@/lib/recipients'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
 import {
   createRfiSchema,
@@ -77,28 +78,13 @@ export async function createRfiAction(
     priority: i.priority,
   })
 
-  // In-app bell → the whole project team (active members, minus the raiser).
-  // RFIs are team-wide; same audience as the email (see dispatchRfiEmail).
-  // Read the roster with the service-role client: the raiser can't read
-  // project_members/profiles of cross-org or sub-org members under RLS, which
-  // would otherwise collapse the audience to just the raiser.
-  const svc = createServiceClient()
-  const { data: memberRows } = await (svc as any)
-    .schema('projects')
-    .from('project_members')
-    .select('user_id')
-    .eq('project_id', i.projectId)
-    .eq('is_active', true)
-  const memberIds: string[] = [
-    ...new Set(
-      ((memberRows ?? []) as { user_id: string }[])
-        .map((m) => m.user_id)
-        .filter((uid) => uid && uid !== user.id),
-    ),
-  ]
-  if (memberIds.length) {
+  // In-app bell → the whole project team (every active member + implicit org
+  // owners/admins/PMs), resolved live (00146), minus the raiser. Same audience
+  // as the email.
+  const { userIds: bellUserIds } = await resolveProjectRecipients(i.projectId, { excludeUserId: user.id })
+  if (bellUserIds.length) {
     await dispatchNotification({
-      userIds: memberIds,
+      userIds: bellUserIds,
       title: 'New RFI raised',
       body: `"${rfi.subject}" — ${i.priority} priority${i.dueDate ? ` · due ${i.dueDate}` : ''}`,
       route: `/rfis/${rfi.id}`,
