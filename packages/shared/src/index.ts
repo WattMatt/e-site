@@ -10,6 +10,9 @@ export * from './types'
 // Utils
 export * from './utils'
 
+// Email (transactional render + recipient resolution)
+export * from './email/rfi-email'
+
 // Inspections (Phase 2 — engine + template schema)
 export * from './inspections'
 

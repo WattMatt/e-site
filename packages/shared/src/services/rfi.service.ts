@@ -1,6 +1,7 @@
 import type { TypedSupabaseClient } from '@esite/db'
 import type { CreateRfiInput, RespondToRfiInput } from '../schemas/rfi.schema'
 import { fetchProfileMap } from './_utils'
+import { projectSettingsService } from './project-settings.service'
 
 export const rfiService = {
   async listByOrg(client: TypedSupabaseClient, orgId: string) {
@@ -72,6 +73,15 @@ export const rfiService = {
   },
 
   async create(client: TypedSupabaseClient, orgId: string, userId: string, input: CreateRfiInput) {
+    // Resolve the assignee: an explicit choice wins; otherwise fall back to the
+    // project's configured default assignee (defaultRfiAssigneeId). M3-safe —
+    // resolves to null when neither is set, which is a valid "unassigned" RFI.
+    let assignedTo = input.assignedTo || null
+    if (!assignedTo) {
+      const defaults = await projectSettingsService.getRfiDefaults(client, input.projectId)
+      assignedTo = defaults.assigneeId || null
+    }
+
     const { data, error } = await client
       .schema('projects')
       .from('rfis')
@@ -82,9 +92,11 @@ export const rfiService = {
         subject: input.subject,
         description: input.description,
         priority: input.priority,
-        category: input.category,
-        due_date: input.dueDate,
-        assigned_to: input.assignedTo,
+        // Empty strings → null: category is free text, but due_date is a DATE
+        // column that rejects '' (mobile/web send '' when the field is blank).
+        category: input.category || null,
+        due_date: input.dueDate || null,
+        assigned_to: assignedTo,
         status: 'open',
       })
       .select()

@@ -20,12 +20,14 @@ import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
 import {
   createRfiSchema,
   respondToRfiSchema,
+  rfiService,
   type CreateRfiInput,
   type RespondToRfiInput,
 } from '@esite/shared'
 import { z } from 'zod'
 
 import { dispatchNotification } from '@/lib/notifications'
+import { dispatchRfiEmail } from '@/lib/rfi-email'
 
 const uuidSchema = z.string().uuid()
 
@@ -51,38 +53,34 @@ export async function createRfiAction(
   if (memErr || !mem) return { error: 'No active organisation membership' }
 
   const i = parsed.data
-  const { data: rfi, error } = await (supabase as any)
-    .schema('projects')
-    .from('rfis')
-    .insert({
-      project_id: i.projectId,
-      organisation_id: mem.organisation_id,
-      raised_by: user.id,
-      subject: i.subject,
-      description: i.description,
-      priority: i.priority,
-      category: i.category ?? null,
-      due_date: i.dueDate || null,
-      assigned_to: i.assignedTo || null,
-      status: 'open',
-    })
-    .select('id, subject')
-    .single()
 
-  if (error || !rfi) return { error: error?.message ?? 'Failed to create RFI' }
+  // Delegate the insert to the shared service so the project-default assignee
+  // fallback + empty-string coercion apply uniformly across web, mobile, and
+  // the floor-plan markup caller.
+  let rfi: { id: string; subject: string; assigned_to: string | null }
+  try {
+    rfi = (await rfiService.create(supabase as any, mem.organisation_id, user.id, i)) as any
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Failed to create RFI' }
+  }
+
+  // Diagnostic: record where the assignee came from so we can confirm
+  // post-deploy how many RFIs still land unassigned and via which path.
+  const assigneeSource = i.assignedTo ? 'explicit' : rfi.assigned_to ? 'project_default' : 'none'
 
   await trackServer(user.id, ANALYTICS_EVENTS.RFI_CREATED, {
     rfi_id: rfi.id,
     project_id: i.projectId,
     org_id: mem.organisation_id,
-    has_assignee: !!i.assignedTo,
+    has_assignee: !!rfi.assigned_to,
+    assignee_source: assigneeSource,
     priority: i.priority,
   })
 
-  // Notify the assignee (skip if they raised it themselves).
-  if (i.assignedTo && i.assignedTo !== user.id) {
+  // Notify the resolved assignee (skip if they raised it themselves).
+  if (rfi.assigned_to && rfi.assigned_to !== user.id) {
     await dispatchNotification({
-      userIds: [i.assignedTo],
+      userIds: [rfi.assigned_to],
       title: 'New RFI assigned to you',
       body: `"${rfi.subject}" — ${i.priority} priority${i.dueDate ? ` · due ${i.dueDate}` : ''}`,
       route: `/rfis/${rfi.id}`,
@@ -91,6 +89,18 @@ export async function createRfiAction(
       entityId: rfi.id,
     })
   }
+
+  // Email channel (assignee + raiser + notifyRfiTo, gated on notifyRfiEmail).
+  await dispatchRfiEmail({
+    client: supabase,
+    projectId: i.projectId,
+    rfiId: rfi.id,
+    rfiSubject: rfi.subject,
+    priority: i.priority,
+    dueDate: i.dueDate ?? null,
+    assigneeId: rfi.assigned_to,
+    raiserId: user.id,
+  })
 
   revalidatePath('/rfis')
   revalidatePath(`/projects/${i.projectId}`)

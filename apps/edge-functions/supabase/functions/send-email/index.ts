@@ -4,7 +4,7 @@
  * Sends transactional emails via Resend.
  *
  * Supported types:
- *   - rfi-assigned: notify assignee of new RFI
+ *   - rfi-created: new-RFI email (pre-rendered html forwarded from the web app)
  *   - snag-assigned: notify assignee of new snag
  *   - invite: send org invite email with token link
  *   - coc-status: notify org members when COC status changes
@@ -99,20 +99,18 @@ Deno.serve(async (req) => {
       })
     }
 
-    else if (type === 'rfi-assigned') {
-      const { to, assigneeName, rfiSubject, projectName, rfiId, raisedByName, dueDate } = payload
-      const link = `${SITE_URL}/rfis/${rfiId}`
-      await sendEmail({
-        to,
-        subject: `RFI assigned: ${rfiSubject}`,
-        html: baseTemplate(`
-          <h2>RFI Assigned to You</h2>
-          <p>Hi ${assigneeName},</p>
-          <p><strong>${raisedByName}</strong> has assigned you an RFI on project <strong>${projectName}</strong>.</p>
-          <p><strong>Subject:</strong> ${rfiSubject}${dueDate ? `<br><strong>Due:</strong> ${dueDate}` : ''}</p>
-          <a class="btn" href="${link}">View RFI</a>
-        `),
-      })
+    else if (type === 'rfi-created') {
+      // The web `dispatchRfiEmail` helper renders the HTML (shared
+      // renderRfiCreatedEmail) and forwards { to, subject, html } here. This
+      // branch is a thin Resend passthrough — keeps the template logic in one
+      // unit-tested place (packages/shared) rather than duplicated in Deno.
+      const { to, subject, html } = payload
+      if (!to || !subject || !html) {
+        return new Response(JSON.stringify({ error: 'rfi-created requires to, subject, html' }), {
+          status: 400, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      await sendEmail({ to, subject, html })
     }
 
     else if (type === 'snag-assigned') {
