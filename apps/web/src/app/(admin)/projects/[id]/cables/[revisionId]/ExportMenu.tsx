@@ -282,6 +282,21 @@ export function ExportMenu({ projectId, revisionId, filterQuery }: Props) {
               </button>
             )
           })}
+          {filterQuery && (
+            <div
+              role="note"
+              style={{
+                marginTop: 6,
+                padding: '8px 12px',
+                fontSize: 11,
+                color: 'var(--c-text-dim)',
+                borderTop: '1px solid var(--c-border)',
+              }}
+            >
+              Active grid filter applies to CSV exports only — Excel, PDF and ZIP
+              export the full revision.
+            </div>
+          )}
           {error && (
             <div
               role="alert"
