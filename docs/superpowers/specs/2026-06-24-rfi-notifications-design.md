@@ -7,7 +7,7 @@
 ## Problem
 
 RFIs were landing unassigned (fixed separately: schema coercion + project-default
-resolution in `rfiService.create`, migration `00143` for diary RLS). This spec
+resolution in `rfiService.create`, migration `00145` for diary RLS). This spec
 covers the **notification** side: making sure the right people are actually told
 when an RFI is raised, on both channels.
 

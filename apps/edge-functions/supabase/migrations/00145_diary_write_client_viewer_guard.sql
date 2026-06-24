@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- 00143_diary_write_client_viewer_guard.sql
+-- 00145_diary_write_client_viewer_guard.sql
 -- Security fix: stop read-only client_viewers writing site diary data.
 --
 -- Problem (privilege escalation):

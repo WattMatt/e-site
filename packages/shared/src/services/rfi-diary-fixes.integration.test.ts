@@ -6,7 +6,7 @@ import { projectSettingsService } from './project-settings.service'
 /**
  * Live-DB battle test for two fixes:
  *   1. rfiService.create resolves the project default assignee (was dead code).
- *   2. Migration 00143 denies a read-only client_viewer from writing diary
+ *   2. Migration 00145 denies a read-only client_viewer from writing diary
  *      entries (was an org-wide RLS hole).
  *
  * Self-contained: creates its own org, two auth users (an internal PM and a
@@ -144,7 +144,7 @@ describe.skipIf(!runIntegration)('RFI assignee + diary write RLS — INTEGRATION
     })
   })
 
-  describe('site diary INSERT RLS — 00143 client_viewer guard', () => {
+  describe('site diary INSERT RLS — 00145 client_viewer guard', () => {
     const diaryRow = (createdBy: string) => ({
       project_id: projectId,
       organisation_id: orgId,
