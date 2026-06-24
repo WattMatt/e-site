@@ -17,6 +17,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
+import { recomputeTenantElectrical } from '@/lib/tenant-electrical/recompute'
 import { lookupCableProperties, lookupDeratingFactors, deratedRating, requiredParallelSet } from '@esite/shared'
 import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
 import { requireRole, ROLES_ENGINEER, type OrgRole } from '@/lib/cable-schedule/require-role'
@@ -371,6 +372,7 @@ export async function deleteSupplyAction(id: string): Promise<{ ok?: true; error
     userId: user?.id ?? null,
   })
   revalidatePath(`/projects/${guard.projectId}/cables/${revId}`)
+  await recomputeTenantElectrical(guard.projectId).catch(() => {})
   return { ok: true }
 }
 
@@ -440,6 +442,7 @@ export async function updateSupplyAction(
 
   await (supabase as any).schema('cable_schedule').from('change_log').insert(events)
   revalidatePath(`/projects/${s.revision.project_id}/cables/${s.revision_id}`)
+  await recomputeTenantElectrical(s.revision.project_id).catch(() => {})
   return { ok: true }
 }
 
@@ -627,6 +630,7 @@ export async function addParallelCableSetAction(
   }
 
   revalidatePath(`/projects/${guard.projectId}/cables/${parsed.data.revisionId}`)
+  await recomputeTenantElectrical(guard.projectId).catch(() => {})
   return { supplyId, createdCount: effectiveCount }
 }
 
@@ -891,6 +895,7 @@ export async function addCableAction(
     .single()
   if (error) return { error: error.message }
   revalidatePath(`/projects/${guard.projectId}/cables/${s.revision_id}`)
+  await recomputeTenantElectrical(guard.projectId).catch(() => {})
   return {
     id: (data as { id: string }).id,
     cableNo: (data as { cable_no: number }).cable_no,
@@ -951,6 +956,7 @@ export async function deleteCableAction(id: string): Promise<{ ok?: true; error?
     }
   }
   revalidatePath(`/projects/${guard.projectId}/cables/${cable.revision_id}`)
+  await recomputeTenantElectrical(guard.projectId).catch(() => {})
   return { ok: true }
 }
 
@@ -1211,6 +1217,7 @@ export async function updateCableAction(
     await (supabase as any).schema('cable_schedule').from('change_log').insert(events)
   }
   revalidatePath(`/projects/${c.revision.project_id}/cables/${c.revision_id}`)
+  await recomputeTenantElectrical(c.revision.project_id).catch(() => {})
   return { ok: true, recomputed }
 }
 
@@ -1296,6 +1303,7 @@ export async function repointSupplyAction(
     await (supabase as any).schema('cable_schedule').from('change_log').insert(events)
   }
   revalidatePath(`/projects/${s.revision.project_id}/cables/${s.revision_id}`)
+  await recomputeTenantElectrical(s.revision.project_id).catch(() => {})
   return { ok: true }
 }
 

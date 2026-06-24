@@ -257,6 +257,10 @@ const updateProjectSchema = z.object({
   city: z.string().max(120).nullable().optional(),
   province: z.string().max(120).nullable().optional(),
   status: z.enum(['planning', 'active', 'on_hold', 'completed', 'cancelled']).optional(),
+  projectType: z.enum([
+    'commercial', 'residential', 'retail', 'industrial', 'civil',
+    'mixed_use', 'healthcare', 'education', 'electrical_mv', 'other',
+  ]).nullable().optional(),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   clientName: z.string().max(200).nullable().optional(),
@@ -307,6 +311,7 @@ export async function updateProjectAction(
   if (parsed.data.city !== undefined)          row.city = parsed.data.city
   if (parsed.data.province !== undefined)      row.province = parsed.data.province
   if (parsed.data.status !== undefined)        row.status = parsed.data.status
+  if (parsed.data.projectType !== undefined)   row.project_type = parsed.data.projectType
   if (parsed.data.startDate !== undefined)     row.start_date = parsed.data.startDate
   if (parsed.data.endDate !== undefined)       row.end_date = parsed.data.endDate
   if (parsed.data.clientName !== undefined)    row.client_name = parsed.data.clientName

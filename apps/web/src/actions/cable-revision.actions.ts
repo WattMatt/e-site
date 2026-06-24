@@ -22,6 +22,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
+import { recomputeTenantElectrical } from '@/lib/tenant-electrical/recompute'
 import { requireRole, requireRoleForRevision, ROLES_ENGINEER } from '@/lib/cable-schedule/require-role'
 import { assertMvSignoffComplete } from '@esite/shared'
 
@@ -249,6 +250,7 @@ export async function createRevisionAction(
   }
 
   revalidatePath(`/projects/${parsed.data.projectId}/cables`)
+  await recomputeTenantElectrical(parsed.data.projectId).catch(() => {})
   return { id: newRevisionId, code: (row as { code: string }).code }
 }
 
@@ -313,6 +315,7 @@ export async function issueRevisionAction(
     })
 
   revalidatePath(`/projects/${r.project_id}/cables`)
+  await recomputeTenantElectrical(r.project_id).catch(() => {})
   return { ok: true }
 }
 
@@ -347,6 +350,7 @@ export async function deleteDraftRevisionAction(
   if (error) return { error: error.message }
 
   if (r.project_id) revalidatePath(`/projects/${r.project_id}/cables`)
+  if (r.project_id) await recomputeTenantElectrical(r.project_id).catch(() => {})
   return { ok: true }
 }
 

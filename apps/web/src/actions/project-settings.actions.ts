@@ -71,6 +71,72 @@ export async function updateProjectSettingsAction(
   }
 }
 
+// ── Contract: atomic-ish save across projects + project_settings ──────────────
+
+export type UpdateContractResult = { ok: true } | { error: string }
+
+export interface UpdateContractInput {
+  contractValue: number | null
+  currency: string | null
+  contractType: 'jbcc_pba' | 'jbcc_mwa' | 'nec3' | 'nec4' | 'fidic_red' | 'custom' | 'none'
+  contractSignedDate: string | null
+  practicalCompletionDate: string | null
+  retentionPct: number
+}
+
+/**
+ * Save the Contract tab in ONE action across two tables. The previous form did
+ * two parallel non-transactional writes, so a partial failure split the figures.
+ * Here the writes are sequenced and the projects-table write is reverted if the
+ * project_settings write fails — best-effort, but the values never end up split.
+ * (A future Postgres RPC could make this a true transaction.)
+ */
+export async function updateContractAction(
+  projectId: string,
+  input: UpdateContractInput,
+  allowedRoles: readonly OrgRole[] = ORG_WRITE_ROLES,
+): Promise<UpdateContractResult> {
+  const supabase = await createClient()
+  const proj = await resolveProjectOrg(supabase, projectId)
+  if (!proj) return { error: 'Project not found' }
+
+  const guard = await requireRole(supabase, proj.organisationId, allowedRoles)
+  if (!guard.ok) return { error: guard.error }
+
+  // Snapshot the projects-table fields so we can revert if step 2 fails.
+  const { data: prior } = await (supabase as any)
+    .schema('projects').from('projects')
+    .select('contract_value, currency')
+    .eq('id', projectId)
+    .maybeSingle()
+
+  // 1) projects.projects
+  const { error: projErr } = await (supabase as any)
+    .schema('projects').from('projects')
+    .update({ contract_value: input.contractValue, currency: input.currency })
+    .eq('id', projectId)
+  if (projErr) return { error: projErr.message }
+
+  // 2) project_settings — revert (1) on failure so the figures never split.
+  try {
+    await projectSettingsService.update(supabase as any, projectId, {
+      contractType: input.contractType,
+      contractSignedDate: input.contractSignedDate,
+      practicalCompletionDate: input.practicalCompletionDate,
+      retentionPct: input.retentionPct,
+    })
+  } catch (err) {
+    await (supabase as any).schema('projects').from('projects')
+      .update({ contract_value: (prior as any)?.contract_value ?? null, currency: (prior as any)?.currency ?? null })
+      .eq('id', projectId)
+    return { error: err instanceof Error ? err.message : 'Contract update failed' }
+  }
+
+  bust(projectId)
+  revalidatePath(`/projects/${projectId}`, 'layout')
+  return { ok: true }
+}
+
 export async function resetProjectSettingsAction(
   projectId: string,
   fields: ReadonlyArray<keyof ProjectSettingsPatch>,

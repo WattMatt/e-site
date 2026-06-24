@@ -167,6 +167,9 @@ export function ScheduleTable({
               <Th>Tenant</Th>
               <Th>GLA (m²)</Th>
               <Th>DB Code</Th>
+              <Th>Breaker</Th>
+              <Th>Load</Th>
+              <Th>Amps</Th>
               <Th>Scope Status</Th>
               <Th>BO Period</Th>
               <Th>BO Date</Th>
@@ -206,6 +209,28 @@ export function ScheduleTable({
                       {node.shop_area_m2 != null ? node.shop_area_m2.toLocaleString() : '—'}
                     </Td>
                     <Td mono>{node.code}</Td>
+
+                    {/* Incoming-supply electrical (derived from cable schedule) */}
+                    <Td mono>
+                      {formatBreaker(node)}
+                      {node.incomer_under_protected && (
+                        <span style={{ marginLeft: 6 }}>
+                          <Badge variant="warning">under-rated</Badge>
+                        </span>
+                      )}
+                    </Td>
+                    <Td mono>
+                      <span
+                        title={
+                          node.incomer_multiple_feeds
+                            ? 'Multiple feeds — largest shown'
+                            : undefined
+                        }
+                      >
+                        {formatAmps(node.incomer_load_a)}
+                      </span>
+                    </Td>
+                    <Td mono>{formatAmps(node.incomer_capacity_a)}</Td>
 
                     {/* Scope status */}
                     <Td>
@@ -339,7 +364,7 @@ export function ScheduleTable({
                   {isExpanded && (
                     <tr>
                       <td
-                        colSpan={10 + scopeItemTypes.length * 2}
+                        colSpan={13 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <ScopeOfWorkPanel
@@ -359,7 +384,7 @@ export function ScheduleTable({
                   {isLayoutExpanded && (
                     <tr>
                       <td
-                        colSpan={10 + scopeItemTypes.length * 2}
+                        colSpan={13 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <LayoutIssuedPanel
@@ -529,4 +554,19 @@ function Td({ children, mono }: { children: React.ReactNode; mono?: boolean }) {
       {children}
     </td>
   )
+}
+
+/**
+ * Breaker for display: a manually-set node value (mostly boards) wins; otherwise
+ * the derived incomer breaker. Poles append when known (e.g. "63 A TP").
+ */
+function formatBreaker(node: Node): string {
+  const a = node.breaker_rating_a ?? node.incomer_breaker_a
+  if (a == null) return '—'
+  const poles = node.pole_config ?? node.incomer_pole_config
+  return poles ? `${a} A ${poles}` : `${a} A`
+}
+
+function formatAmps(value: number | null): string {
+  return value != null ? `${value.toLocaleString()} A` : '—'
 }

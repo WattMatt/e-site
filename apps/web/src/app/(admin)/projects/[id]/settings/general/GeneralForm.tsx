@@ -31,6 +31,8 @@ const generalFormSchema = z.object({
       'Uppercase letters, digits, and hyphens only — must start with a letter or digit (e.g. 643, STP24, 2024-A)',
     ),
   status: z.enum(['planning', 'active', 'on_hold', 'completed', 'cancelled']),
+  // Loose here ('' = not set); the DB CHECK + action schema enforce the enum.
+  projectType: z.string().optional(),
 })
 
 type GeneralFormValues = z.infer<typeof generalFormSchema>
@@ -45,6 +47,20 @@ const STATUSES = [
   { value: 'cancelled', label: 'Cancelled' },
 ] as const
 
+const PROJECT_TYPES = [
+  { value: '',              label: '— Not set —' },
+  { value: 'commercial',    label: 'Commercial' },
+  { value: 'residential',   label: 'Residential' },
+  { value: 'retail',        label: 'Retail' },
+  { value: 'industrial',    label: 'Industrial' },
+  { value: 'civil',         label: 'Civil / infrastructure' },
+  { value: 'mixed_use',     label: 'Mixed-use' },
+  { value: 'healthcare',    label: 'Healthcare' },
+  { value: 'education',     label: 'Education' },
+  { value: 'electrical_mv', label: 'Electrical / MV' },
+  { value: 'other',         label: 'Other' },
+] as const
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 interface ProjectLike {
@@ -52,6 +68,7 @@ interface ProjectLike {
   description?: string | null
   code?: string | null
   status?: string | null
+  project_type?: string | null
 }
 
 function buildDefaultValues(initial: ProjectLike | null): GeneralFormValues {
@@ -60,6 +77,7 @@ function buildDefaultValues(initial: ProjectLike | null): GeneralFormValues {
     description: initial?.description ?? '',
     code: initial?.code ?? '',
     status: (initial?.status as GeneralFormValues['status']) ?? 'active',
+    projectType: initial?.project_type ?? '',
   }
 }
 
@@ -100,6 +118,8 @@ export function GeneralForm({ projectId, initial }: GeneralFormProps) {
       // Code is required by the DB CHECK + NOT NULL — pass it verbatim.
       code: values.code,
       status: values.status,
+      // '' (Not set) → null clears it; otherwise the chosen enum value.
+      projectType: (values.projectType || null) as Parameters<typeof updateProjectAction>[1]['projectType'],
     })
     if ('error' in result) {
       setServerError(result.error)
@@ -191,6 +211,14 @@ export function GeneralForm({ projectId, initial }: GeneralFormProps) {
               <Select {...register('status')} invalid={!!errors.status}>
                 {STATUSES.map(s => (
                   <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </Select>
+            </FormField>
+
+            <FormField label="Project type" hint="Sector / classification. Optional.">
+              <Select {...register('projectType')}>
+                {PROJECT_TYPES.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </Select>
             </FormField>

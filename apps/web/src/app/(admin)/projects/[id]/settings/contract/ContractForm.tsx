@@ -9,8 +9,7 @@ import {
   projectSettingsDefaults,
   type ProjectSettings,
 } from '@esite/shared'
-import { updateProjectAction } from '@/actions/project.actions'
-import { updateProjectSettingsAction } from '@/actions/project-settings.actions'
+import { updateContractAction } from '@/actions/project-settings.actions'
 import { useDirtyForm } from '../_components/UnsavedChangesGuard'
 import { StickySaveBar } from '../_components/StickySaveBar'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
@@ -40,8 +39,8 @@ const contractFormSchema = z.object({
   currency: z.string().max(8).nullable(),
   // From project_settings:
   contractType: z.enum(['jbcc_pba', 'jbcc_mwa', 'nec3', 'nec4', 'fidic_red', 'custom', 'none']),
-  contractSignedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
-  practicalCompletionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  contractSignedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal('')).nullable(),
+  practicalCompletionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal('')).nullable(),
   retentionPct: z.number().min(0).max(100),
 })
 
@@ -100,30 +99,20 @@ export function ContractForm({ projectId, project, settings }: Props) {
   async function onSubmit(values: ContractFormValues) {
     setServerError(null)
 
-    // Split patch by table and fire both in parallel.
-    // NOTE: these two writes are NOT transactional — if one fails after the
-    // other has already committed, the committed write stays. This is an
-    // acceptable v1 limitation; a future custom RPC could wrap them atomically.
-    const [projResult, settingsResult] = await Promise.all([
-      updateProjectAction(projectId, {
-        contractValue: values.contractValue,
-        currency: values.currency,
-      }),
-      updateProjectSettingsAction(projectId, {
-        contractType: values.contractType,
-        contractSignedDate: values.contractSignedDate,
-        practicalCompletionDate: values.practicalCompletionDate,
-        retentionPct: values.retentionPct,
-      }),
-    ])
+    // One action writes both tables (sequenced; reverts the projects write if
+    // the settings write fails) so the contract figures never end up split.
+    const result = await updateContractAction(projectId, {
+      contractValue: values.contractValue,
+      currency: values.currency,
+      contractType: values.contractType,
+      contractSignedDate: values.contractSignedDate || null,
+      practicalCompletionDate: values.practicalCompletionDate || null,
+      retentionPct: values.retentionPct,
+    })
 
-    if ('error' in projResult) {
-      setServerError(projResult.error)
-      throw new Error(projResult.error) // so StickySaveBar shows error state
-    }
-    if ('error' in settingsResult) {
-      setServerError(settingsResult.error)
-      throw new Error(settingsResult.error)
+    if ('error' in result) {
+      setServerError(result.error)
+      throw new Error(result.error) // so StickySaveBar shows error state
     }
 
     // Both succeeded — reset to committed state.
@@ -233,24 +222,22 @@ export function ContractForm({ projectId, project, settings }: Props) {
             <FormField
               label="Contract signed date"
               error={errors.contractSignedDate?.message}
-              hint="YYYY-MM-DD"
             >
               <TextInput
+                type="date"
                 {...register('contractSignedDate')}
                 invalid={!!errors.contractSignedDate}
-                placeholder="YYYY-MM-DD"
               />
             </FormField>
 
             <FormField
               label="Practical completion date"
               error={errors.practicalCompletionDate?.message}
-              hint="YYYY-MM-DD"
             >
               <TextInput
+                type="date"
                 {...register('practicalCompletionDate')}
                 invalid={!!errors.practicalCompletionDate}
-                placeholder="YYYY-MM-DD"
               />
             </FormField>
 
