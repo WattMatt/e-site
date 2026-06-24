@@ -22,6 +22,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireServiceRole } from '../_shared/auth.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -41,17 +42,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     })
   }
 
-  // Service-role gate — match cloud-sync-project.
-  const authHeader = req.headers.get('Authorization') ?? ''
-  if (!authHeader.startsWith('Bearer ')) {
-    return json({ error: 'Unauthorized' }, 401)
-  }
-  try {
-    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]!))
-    if (payload.role !== 'service_role') return json({ error: 'Forbidden' }, 403)
-  } catch {
-    return json({ error: 'Invalid token' }, 401)
-  }
+  // Service-role gate — prove the caller holds the service-role secret
+  // (decoded JWT role claims are forgeable under --no-verify-jwt).
+  const authError = requireServiceRole(req)
+  if (authError) return authError
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },

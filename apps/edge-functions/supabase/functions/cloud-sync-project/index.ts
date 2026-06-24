@@ -50,6 +50,7 @@ import {
   type TokenBundle,
 } from '../_shared/cloud-storage/index.ts'
 import { decryptToken, encryptToken } from '../_shared/encryption.ts'
+import { requireServiceRole } from '../_shared/auth.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -112,17 +113,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     })
   }
 
-  // Service-role gate — match the send-notification pattern.
-  const authHeader = req.headers.get('Authorization') ?? ''
-  if (!authHeader.startsWith('Bearer ')) {
-    return json({ error: 'Unauthorized' }, 401)
-  }
-  try {
-    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]!))
-    if (payload.role !== 'service_role') return json({ error: 'Forbidden' }, 403)
-  } catch {
-    return json({ error: 'Invalid token' }, 401)
-  }
+  // Service-role gate — prove the caller holds the service-role secret.
+  // Decoded JWT role claims are forgeable under --no-verify-jwt (see _shared/auth.ts).
+  const authError = requireServiceRole(req)
+  if (authError) return authError
 
   let body: SyncRequest
   try {
