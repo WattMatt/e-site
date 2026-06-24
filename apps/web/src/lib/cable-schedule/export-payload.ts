@@ -211,6 +211,10 @@ export interface EnrichedRun {
   combined_capacity_a: number | null
   /** True when combined capacity is below design load. */
   under_rated: boolean
+  /** Destination board/DB breaker rating (A), from the supply's to-node. */
+  breaker_a: number | null
+  /** Destination pole config (SP/TP), from the supply's to-node. */
+  pole_config: string | null
   /** Voltage drop % for the run (same for all strands — supply-level). */
   vd_pct: number
   cumulative_vd_pct: number
@@ -579,6 +583,7 @@ export async function getRevisionExportPayload(
     }
     const designLoad = supply.design_load_a == null ? null : Number(supply.design_load_a)
     const underRated = combinedCap != null && designLoad != null && combinedCap < designLoad
+    const toNode = supply.to_node_id ? nodeById.get(supply.to_node_id) : undefined
 
     runs.push({
       supply_id: supply.id,
@@ -603,6 +608,8 @@ export async function getRevisionExportPayload(
 
       combined_capacity_a: combinedCap,
       under_rated: underRated,
+      breaker_a: toNode?.breaker_rating_a ?? null,
+      pole_config: toNode?.pole_config ?? null,
       vd_pct: supplyVdById.get(supply.id) ?? 0,
       cumulative_vd_pct: cumulativeMap.get(supply.id) ?? 0,
 
