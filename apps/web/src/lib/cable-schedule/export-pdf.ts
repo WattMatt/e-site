@@ -278,6 +278,7 @@ function drawSchedulePages(
     { key: 'to_label', label: 'To', width: 60, align: 'left', format: (run) => run.to_label },
     { key: 'voltage_v', label: 'V', width: 30, align: 'right', format: (run) => fmt(run.voltage_v) },
     { key: 'load_a', label: 'Load A', width: 38, align: 'right', format: (run) => fmt(run.load_a) },
+    { key: 'breaker_a', label: 'Brkr', width: 46, align: 'right', format: (run) => run.breaker_a == null ? '' : (run.pole_config ? `${run.breaker_a} ${run.pole_config}` : String(run.breaker_a)) },
     { key: 'size_mm2', label: 'Size', width: 32, align: 'right', format: (run) => fmt(run.size_mm2) },
     { key: 'cores', label: 'Cores', width: 32, align: 'center', format: (run) => String(run.cores) },
     { key: 'conductor', label: 'Mat', width: 26, align: 'center', format: (run) => run.conductor === 'CU' ? 'Cu' : 'Al' },
