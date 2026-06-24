@@ -365,6 +365,16 @@ function drawSchedulePages(
     if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
     drawLandscapeHeader(page, payload, helv, helvB, pageIdx + 1, pages.length)
     drawScheduleColumnHeader(page, cols, startX, LAND_H - HEADER_BAND, helvB)
+    if (items.length === 0) {
+      // Explicit placeholder so a header-only page doesn't read like a bug.
+      page.drawText('No cables in this revision yet.', {
+        x: startX,
+        y: LAND_H - HEADER_BAND - 30,
+        size: 11,
+        font: helv,
+        color: TEXT_MID,
+      })
+    }
     let y = LAND_H - HEADER_BAND - ROW_H
     let rowZebra = false
     for (const item of items) {

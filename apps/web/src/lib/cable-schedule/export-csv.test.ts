@@ -66,6 +66,14 @@ describe('renderCsv schedule — breaker columns', () => {
   })
 })
 
+describe('renderCsv schedule — empty state', () => {
+  it('emits a placeholder row when there are no runs', () => {
+    const empty = { runs: [], cables: [], cableTags: [] } as unknown as ExportPayload
+    const csv = renderCsv('schedule', empty)
+    expect(csv).toContain('No cables in this revision yet')
+  })
+})
+
 describe('renderCsv tags — per-cable derated amps', () => {
   it('includes derated_current_rating_a column with the value', () => {
     const csv = renderCsv('tags', payload)
