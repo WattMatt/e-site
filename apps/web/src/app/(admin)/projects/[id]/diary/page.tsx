@@ -141,6 +141,12 @@ export default async function DiaryPage({ params }: Props) {
                         <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{entry.safety_notes}</p>
                       </div>
                     )}
+                    {entry.quality_notes && (
+                      <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#c084fc', marginBottom: 4 }}>Quality</p>
+                        <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{entry.quality_notes}</p>
+                      </div>
+                    )}
                     {(entry.delays || entry.delay_notes) && (
                       <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
                         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-amber)', marginBottom: 4 }}>Delays</p>

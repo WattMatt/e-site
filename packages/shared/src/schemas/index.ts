@@ -1,6 +1,7 @@
 export * from './snag.schema'
 export * from './snag-visit.schema'
 export * from './rfi.schema'
+export * from './diary.schema'
 export * from './project.schema'
 export * from './auth.schema'
 export * from './org.schema'

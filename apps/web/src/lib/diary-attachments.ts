@@ -12,10 +12,17 @@ export const DIARY_ATTACHMENT_ACCEPT_DOC =
 
 export const DIARY_ATTACHMENT_MAX_BYTES = 104857600 // 100 MiB
 
-/** Uploads files to the diary-attachments bucket and inserts attachment rows. */
+/**
+ * Uploads files to the diary-attachments bucket and inserts attachment rows.
+ *
+ * `onFileUploaded` fires after each file's row is committed. The caller uses it
+ * to drop committed files from its pending list, so a retry after a mid-loop
+ * failure resumes with only the not-yet-uploaded files (no duplicate rows).
+ */
 export async function uploadDiaryAttachments(
   supabase: SupabaseClient,
   opts: { orgId: string; projectId: string; entryId: string; userId: string; files: File[] },
+  onFileUploaded?: (file: File) => void,
 ): Promise<void> {
   const { orgId, projectId, entryId, userId, files } = opts
   for (let i = 0; i < files.length; i++) {
@@ -47,5 +54,6 @@ export async function uploadDiaryAttachments(
       await supabase.storage.from('diary-attachments').remove([path]).catch(() => {})
       throw rowErr
     }
+    onFileUploaded?.(file)
   }
 }
