@@ -184,6 +184,8 @@ export async function syncProjectCloudFolderAction(
   intent?: 'drawings' | 'documents',
 ): Promise<{
   sent: number
+  updated: number
+  newVersions: number
   skipped: number
   failed: number
   classified: { floor_plans: number; documents: number }
@@ -212,7 +214,7 @@ export async function syncProjectCloudFolderAction(
       Authorization: `Bearer ${serviceKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ projectId, callerUserId: user.id, intent }),
+    body: JSON.stringify({ projectId, callerUserId: user.id, intent, trigger: 'manual' }),
   })
   if (!res.ok) {
     const body = await res.text()
@@ -224,4 +226,63 @@ export async function syncProjectCloudFolderAction(
   revalidatePath(`/projects/${projectId}/floor-plans`)
   revalidatePath(`/projects/${projectId}/documents`)
   return result
+}
+
+/**
+ * Adopt the latest synced revision of a drawing as its active file. The sync
+ * never moves the active file on its own (markup / snag pins / calibration are
+ * pinned to the active version's geometry), so this is the explicit user
+ * "migrate" step behind the "Newer version available" badge.
+ *
+ * Existing annotations remain attached to the drawing; the user is warned in
+ * the UI that pins may shift if the new revision's geometry differs.
+ *
+ * RLS-gated: the UPDATE on tenants.floor_plans is governed by the existing
+ * floor_plans policies, so a caller without manage rights gets a 403.
+ */
+export async function updateFloorPlanToLatestAction(
+  floorPlanId: string,
+  projectId: string,
+): Promise<{ ok: true }> {
+  if (!/^[0-9a-f-]{36}$/i.test(floorPlanId) || !/^[0-9a-f-]{36}$/i.test(projectId)) {
+    throw new Error('Invalid id')
+  }
+  const supabase = await createClient()
+  // Columns/tables added in migration 00148 aren't in generated types yet.
+  const db = supabase as any
+
+  const { data: fp, error: fpErr } = await db
+    .schema('tenants')
+    .from('floor_plans')
+    .select('id, latest_revision_id')
+    .eq('id', floorPlanId)
+    .single()
+  if (fpErr || !fp) throw new Error(`Drawing not found: ${fpErr?.message ?? 'no row'}`)
+  if (!fp.latest_revision_id) throw new Error('No newer version to apply')
+
+  const { data: ver, error: verErr } = await db
+    .schema('tenants')
+    .from('floor_plan_versions')
+    .select('file_path, file_size_bytes, source_revision_id')
+    .eq('floor_plan_id', floorPlanId)
+    .eq('source_revision_id', fp.latest_revision_id)
+    .single()
+  if (verErr || !ver) throw new Error(`Latest version not found: ${verErr?.message ?? 'no row'}`)
+
+  const { error: udErr } = await db
+    .schema('tenants')
+    .from('floor_plans')
+    .update({
+      file_path: ver.file_path,
+      file_size_bytes: ver.file_size_bytes,
+      source_revision_id: ver.source_revision_id,
+      synced_at: new Date().toISOString(),
+      has_newer_version: false,
+    })
+    .eq('id', floorPlanId)
+  if (udErr) throw new Error(`Failed to apply version: ${udErr.message}`)
+
+  revalidatePath(`/projects/${projectId}/floor-plans`)
+  revalidatePath(`/projects/${projectId}/floor-plans/${floorPlanId}`)
+  return { ok: true }
 }

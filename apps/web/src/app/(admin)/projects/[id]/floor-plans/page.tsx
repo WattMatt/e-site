@@ -46,6 +46,7 @@ export default async function FloorPlansPage({ params }: Props) {
     previewUrl: null,
     source_path: (plan as { source_path?: string | null }).source_path ?? null,
     file_path: plan.file_path,
+    has_newer_version: (plan as { has_newer_version?: boolean }).has_newer_version ?? false,
   }))
 
   return (
