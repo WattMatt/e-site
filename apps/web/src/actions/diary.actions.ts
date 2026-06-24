@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { diaryService, createDiarySchema, ORG_WRITE_ROLES, type CreateDiaryInput } from '@esite/shared'
+import { notifyDiaryEntryCreated } from '@/lib/diary-email'
 
 const uuidSchema = z.string().uuid()
 
@@ -48,6 +49,15 @@ export async function createDiaryEntryAction(
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
   }
+
+  // Notify the whole project roster (bell + email) — best-effort, never throws.
+  await notifyDiaryEntryCreated({
+    entryId: entry.id,
+    projectId: parsed.data.projectId,
+    entryDate: parsed.data.entryDate,
+    progressNotes: parsed.data.progressNotes,
+    authorId: user.id,
+  })
 
   revalidatePath(`/projects/${parsed.data.projectId}/diary`)
   revalidatePath('/diary')

@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { createSnagSchema, type CreateSnagInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { notifySnagCreatedAction } from '@/actions/snag.actions'
 import Link from 'next/link'
 
 const CATEGORIES = ['general', 'electrical', 'mechanical', 'civil', 'safety', 'quality', 'documentation']
@@ -83,6 +84,9 @@ export default function NewSnagPage({ params }: Props) {
         assigned_to: input.assignedTo || null,
       }).select().single()
       if (snagErr) throw snagErr
+
+      // Notify the whole project roster (bell + email) — best-effort, server-side.
+      await notifySnagCreatedAction(snag.id)
 
       if (photoFiles.length > 0) {
         await Promise.all(photoFiles.map(async (file, i) => {

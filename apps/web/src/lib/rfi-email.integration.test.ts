@@ -63,9 +63,12 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
     member3Id = await mkUser(member3Email, 'Carol Member')
     inactiveId = await mkUser(inactiveEmail, 'Dave Inactive')
 
+    // Contractors so project-membership governs recipients (org PMs/admins are
+    // always included via the resolver's implicit-access clause, which would
+    // otherwise also pull in the "inactive" user and break that assertion).
     await (admin as any).from('user_organisations').insert(
       [assigneeId, raiserId, member3Id, inactiveId].map((user_id) => ({
-        user_id, organisation_id: orgId, role: 'project_manager', is_active: true,
+        user_id, organisation_id: orgId, role: 'contractor', is_active: true,
       })),
     )
 

@@ -83,3 +83,83 @@ export function renderRfiCreatedEmail(v: RfiCreatedEmailVars): { subject: string
   )
   return { subject, html }
 }
+
+export interface SnagCreatedEmailVars {
+  raisedByName: string
+  assigneeName: string | null
+  snagTitle: string
+  projectName: string
+  priority: string
+  dueDate?: string | null
+  snagId: string
+  siteUrl: string
+}
+
+/** Render the "new snag" email (description + deep link). */
+export function renderSnagCreatedEmail(v: SnagCreatedEmailVars): { subject: string; html: string } {
+  const link = `${v.siteUrl}/snags/${v.snagId}`
+  const assignee = v.assigneeName ?? 'Unassigned'
+  const subject = `New snag: ${v.snagTitle}`
+  const html = baseEmailTemplate(
+    `<h2>New snag raised</h2>
+    <p><strong>${escapeHtml(v.raisedByName)}</strong> raised a snag on project <strong>${escapeHtml(v.projectName)}</strong>.</p>
+    <p><strong>Defect:</strong> ${escapeHtml(v.snagTitle)}<br>
+    <strong>Assigned to:</strong> ${escapeHtml(assignee)}<br>
+    <strong>Priority:</strong> ${escapeHtml(v.priority)}${v.dueDate ? `<br><strong>Due:</strong> ${escapeHtml(v.dueDate)}` : ''}</p>
+    <a class="btn" href="${link}">View snag</a>`,
+    v.siteUrl,
+  )
+  return { subject, html }
+}
+
+export interface SnagStatusEmailVars {
+  snagTitle: string
+  projectName: string
+  /** Human-readable new status, e.g. "Signed Off". */
+  statusLabel: string
+  /** Who changed the status (null → omit the actor line). */
+  changedByName: string | null
+  snagId: string
+  siteUrl: string
+}
+
+/** Render the "snag status changed / signed off" email (status + deep link). */
+export function renderSnagStatusEmail(v: SnagStatusEmailVars): { subject: string; html: string } {
+  const link = `${v.siteUrl}/snags/${v.snagId}`
+  const subject = `Snag ${v.statusLabel}: ${v.snagTitle}`
+  const actorLine = v.changedByName
+    ? `<p>Updated by <strong>${escapeHtml(v.changedByName)}</strong>.</p>`
+    : ''
+  const html = baseEmailTemplate(
+    `<h2>Snag status updated</h2>
+    <p><strong>${escapeHtml(v.snagTitle)}</strong> on project <strong>${escapeHtml(v.projectName)}</strong> is now <strong>${escapeHtml(v.statusLabel)}</strong>.</p>
+    ${actorLine}
+    <a class="btn" href="${link}">View snag</a>`,
+    v.siteUrl,
+  )
+  return { subject, html }
+}
+
+export interface DiaryCreatedEmailVars {
+  authorName: string
+  projectName: string
+  entryDate: string
+  /** Short excerpt of the entry's progress notes. */
+  summary: string
+  projectId: string
+  siteUrl: string
+}
+
+/** Render the "new site diary entry" email (excerpt + deep link to the diary). */
+export function renderDiaryCreatedEmail(v: DiaryCreatedEmailVars): { subject: string; html: string } {
+  const link = `${v.siteUrl}/projects/${v.projectId}/diary`
+  const subject = `Site diary — ${v.projectName} (${v.entryDate})`
+  const html = baseEmailTemplate(
+    `<h2>New site diary entry</h2>
+    <p><strong>${escapeHtml(v.authorName)}</strong> logged a diary entry on <strong>${escapeHtml(v.projectName)}</strong> for <strong>${escapeHtml(v.entryDate)}</strong>.</p>
+    <p style="white-space:pre-wrap">${escapeHtml(v.summary)}</p>
+    <a class="btn" href="${link}">View diary</a>`,
+    v.siteUrl,
+  )
+  return { subject, html }
+}

@@ -16,6 +16,7 @@ import {
 import type { CreateSnagVisitInput, UpdateSnagVisitInput, OrgRole } from '@esite/shared'
 import { gatherSnagVisitReportData } from '@/lib/reports/snag-visit-report-data'
 import { renderSnagVisitReport } from '@/lib/reports/snag-visit-report'
+import { notifySnagCreated, dispatchSnagStatusEmail } from '@/lib/snag-email'
 
 // ── Validation schemas (local — 'use server' files may NOT export schemas/consts) ──
 
@@ -243,6 +244,16 @@ export async function addSnagToVisitAction(input: {
 
   const snagId = (snag as { id: string }).id
 
+  // Notify the whole project roster (bell + email) — best-effort.
+  await notifySnagCreated({
+    snagId,
+    projectId,
+    title: snagFields.title,
+    priority: snagFields.priority ?? 'medium',
+    assigneeId: snagFields.assignedTo ?? null,
+    raiserId: guard.userId,
+  })
+
   revalidatePath(SNAGS_PATH(projectId))
   revalidatePath(`/projects/${projectId}/snags/visits/${visitId}`)
   return { snagId }
@@ -347,6 +358,15 @@ export async function closeSnagOnVisitAction(
   } catch {
     // Notification failure must not block the close
   }
+
+  // Roster email on sign-off (gated by notifySnagEmail).
+  await dispatchSnagStatusEmail({
+    snagId,
+    projectId,
+    title: snag.title,
+    statusLabel: 'Signed Off',
+    changedById: guard.userId,
+  })
 
   revalidatePath(SNAGS_PATH(projectId))
   revalidatePath(`/projects/${projectId}/snags/visits/${visitId}`)
