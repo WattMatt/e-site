@@ -90,6 +90,7 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
     payload.revision.fault_level_ka != null
       ? `Fault level: ${payload.revision.fault_level_ka} kA`
       : null,
+    payload.costRedacted ? 'Cost data redacted for your role' : null,
   ].filter(Boolean)
   ws.mergeCells('A3:K3')
   ws.getCell('A3').value = issuedBits.join('  ·  ')
@@ -211,6 +212,15 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
       rowIdx++
       runNumber++
     }
+  }
+
+  if (payload.runs.length === 0) {
+    // Explicit placeholder — header-only sheet reads like a bug.
+    ws.mergeCells(`A${rowIdx}:U${rowIdx}`)
+    const cell = ws.getCell(`A${rowIdx}`)
+    cell.value = 'No cables in this revision yet.'
+    cell.font = { italic: true, size: 11, color: { argb: 'FF808080' } }
+    cell.alignment = { horizontal: 'left', vertical: 'middle' }
   }
 }
 

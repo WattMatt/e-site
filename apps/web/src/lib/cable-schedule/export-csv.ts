@@ -160,6 +160,10 @@ function scheduleCsv(payload: ExportPayload): string {
     )
     runNo++
   }
+  if (payload.runs.length === 0) {
+    // Explicit placeholder — an empty body (header only) reads like a bug.
+    lines.push(esc('No cables in this revision yet.'))
+  }
   return lines.join(NL) + NL
 }
 
