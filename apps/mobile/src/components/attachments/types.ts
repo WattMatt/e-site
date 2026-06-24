@@ -12,6 +12,12 @@ export interface AnnotationData {
   canvas: { width: number; height: number }
   baseImage: { naturalWidth: number; naturalHeight: number; signedUrl?: string }
   shapes: AnnotationShape[]
+  /**
+   * For PDF-sourced markups: the 1-based page that was rasterised. Lets re-edit
+   * re-rasterise the same page from the source PDF (we don't persist the large
+   * rasterised image in JSONB). Absent for image-sourced markups. Mirrors web.
+   */
+  sourcePageIndex?: number
 }
 
 export type AnnotationColor = '#ef4444' | '#f59e0b' | '#22c55e' | '#3b82f6' | '#ffffff' | '#000000'
