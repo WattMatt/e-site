@@ -14,6 +14,7 @@
 
 import type { ExportPayload } from './export-payload'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
+import { formatDecimal } from './export-format'
 
 const NL = '\r\n' // Windows-style — Excel + LibreOffice both happy
 
@@ -295,8 +296,7 @@ function esc(v: unknown): string {
 }
 
 function round2(n: number): string {
-  if (!Number.isFinite(n)) return ''
-  return (Math.round(n * 100) / 100).toFixed(2)
+  return formatDecimal(n, 2)
 }
 
 function renderJson(v: unknown): string {

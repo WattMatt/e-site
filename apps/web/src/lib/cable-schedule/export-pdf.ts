@@ -11,6 +11,7 @@
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import QRCode from 'qrcode'
+import { formatDecimal } from './export-format'
 import type { EnrichedCable, ExportPayload } from './export-payload'
 import { stampPdfDraft } from './export-watermark'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
@@ -840,8 +841,7 @@ function drawPortraitHeader(
 }
 
 function fmt(n: number | null | undefined, dp = 0): string {
-  if (n == null || !Number.isFinite(n)) return ''
-  return dp > 0 ? n.toFixed(dp) : Math.round(n).toString()
+  return formatDecimal(n, dp)
 }
 
 function clipText(text: string, maxWidth: number, font: PDFFont, size: number): string {
