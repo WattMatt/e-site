@@ -77,20 +77,34 @@ export async function createRfiAction(
     priority: i.priority,
   })
 
-  // Notify the resolved assignee (skip if they raised it themselves).
-  if (rfi.assigned_to && rfi.assigned_to !== user.id) {
+  // In-app bell → the whole project team (active members, minus the raiser).
+  // RFIs are team-wide; same audience as the email (see dispatchRfiEmail).
+  const { data: memberRows } = await (supabase as any)
+    .schema('projects')
+    .from('project_members')
+    .select('user_id')
+    .eq('project_id', i.projectId)
+    .eq('is_active', true)
+  const memberIds: string[] = [
+    ...new Set(
+      ((memberRows ?? []) as { user_id: string }[])
+        .map((m) => m.user_id)
+        .filter((uid) => uid && uid !== user.id),
+    ),
+  ]
+  if (memberIds.length) {
     await dispatchNotification({
-      userIds: [rfi.assigned_to],
-      title: 'New RFI assigned to you',
+      userIds: memberIds,
+      title: 'New RFI raised',
       body: `"${rfi.subject}" — ${i.priority} priority${i.dueDate ? ` · due ${i.dueDate}` : ''}`,
       route: `/rfis/${rfi.id}`,
-      type: 'rfi_assigned',
+      type: 'rfi_created',
       entityType: 'rfi',
       entityId: rfi.id,
     })
   }
 
-  // Email channel (assignee + raiser + notifyRfiTo, gated on notifyRfiEmail).
+  // Email channel → all active project members, gated on notifyRfiEmail.
   await dispatchRfiEmail({
     client: supabase,
     projectId: i.projectId,

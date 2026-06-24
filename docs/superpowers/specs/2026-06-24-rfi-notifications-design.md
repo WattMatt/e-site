@@ -26,9 +26,11 @@ Current state discovered during investigation:
 
 ## Goal
 
-When an RFI is created, send an email (description + deep link) to the **assignee,
-the raiser, and the project `notifyRfiTo` list**, gated by the project
-`notifyRfiEmail` toggle. In-app/push behaviour is unchanged. Email is **create-only**.
+RFIs are **team-wide**: there is no per-RFI assignee field (removed). When an RFI
+is created, **every active project member** is notified on **both** channels — the
+in-app bell and email (description + deep link) — minus the raiser. Email is gated
+by the project `notifyRfiEmail` toggle and is **create-only**. (Superseded the
+earlier assignee+raiser+`notifyRfiTo` email model and the single-assignee bell.)
 
 ## Decisions (locked)
 

@@ -24,7 +24,6 @@ function NewRfiForm() {
   const defaultProjectId = params.get('projectId') ?? ''
   const [error, setError] = useState<string | null>(null)
   const [projects, setProjects] = useState<any[]>([])
-  const [members, setMembers] = useState<any[]>([])
   const [attachments, setAttachments] = useState<StagedAttachment[]>([])
 
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<CreateRfiInput>({
@@ -44,15 +43,6 @@ function NewRfiForm() {
       setProjects(projs ?? [])
     })
   }, [])
-
-  useEffect(() => {
-    if (!projectId) return
-    const supabase = createClient()
-    supabase.schema('projects').from('project_members')
-      .select('user_id, profile:profiles(id, full_name)')
-      .eq('project_id', projectId).eq('is_active', true)
-      .then(({ data }) => setMembers(data ?? []))
-  }, [projectId])
 
   async function onSubmit(input: CreateRfiInput) {
     setError(null)
@@ -163,17 +153,11 @@ function NewRfiForm() {
               </FormField>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <FormField label="Assign to" error={errors.assignedTo?.message}>
-                <Select {...register('assignedTo')} invalid={!!errors.assignedTo}>
-                  <option value="">Unassigned</option>
-                  {members.map((m: any) => <option key={m.user_id} value={m.user_id}>{(m.profile as any)?.full_name}</option>)}
-                </Select>
-              </FormField>
-              <FormField label="Due date" error={errors.dueDate?.message}>
-                <TextInput {...register('dueDate')} type="date" invalid={!!errors.dueDate} />
-              </FormField>
-            </div>
+            {/* No assignee field — RFIs are team-wide: every active project
+                member is notified (bell + email). See dispatchRfiEmail. */}
+            <FormField label="Due date" error={errors.dueDate?.message}>
+              <TextInput {...register('dueDate')} type="date" invalid={!!errors.dueDate} />
+            </FormField>
 
             <AttachmentStaging
               projectId={projectId || null}
