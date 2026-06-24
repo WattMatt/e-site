@@ -15,7 +15,7 @@
  */
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
 import {
   createRfiSchema,
@@ -79,7 +79,11 @@ export async function createRfiAction(
 
   // In-app bell → the whole project team (active members, minus the raiser).
   // RFIs are team-wide; same audience as the email (see dispatchRfiEmail).
-  const { data: memberRows } = await (supabase as any)
+  // Read the roster with the service-role client: the raiser can't read
+  // project_members/profiles of cross-org or sub-org members under RLS, which
+  // would otherwise collapse the audience to just the raiser.
+  const svc = createServiceClient()
+  const { data: memberRows } = await (svc as any)
     .schema('projects')
     .from('project_members')
     .select('user_id')
@@ -106,7 +110,6 @@ export async function createRfiAction(
 
   // Email channel → all active project members, gated on notifyRfiEmail.
   await dispatchRfiEmail({
-    client: supabase,
     projectId: i.projectId,
     rfiId: rfi.id,
     rfiSubject: rfi.subject,

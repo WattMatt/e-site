@@ -113,7 +113,7 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
     await projectSettingsService.update(admin as any, projectId, { notifyRfiEmail: false })
     const { calls, spy } = mockFetch()
     await dispatchRfiEmail({
-      client: admin, projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
+      projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
       priority: 'high', dueDate: '2026-07-01', assigneeId, raiserId,
     })
     expect(calls).toHaveLength(0)
@@ -124,7 +124,7 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
     await projectSettingsService.update(admin as any, projectId, { notifyRfiEmail: true })
     const { calls, spy } = mockFetch()
     await dispatchRfiEmail({
-      client: admin, projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
+      projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
       priority: 'high', dueDate: '2026-07-01', assigneeId, raiserId,
     })
 

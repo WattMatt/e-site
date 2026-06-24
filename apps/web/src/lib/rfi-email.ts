@@ -8,16 +8,14 @@
  * surface from) RFI creation.
  */
 
-import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   projectSettingsService,
   buildRfiEmailRecipients,
   renderRfiCreatedEmail,
 } from '@esite/shared'
+import { createServiceClient } from '@/lib/supabase/server'
 
 export interface DispatchRfiEmailArgs {
-  /** Server Supabase client (user RLS scope is sufficient for the reads). */
-  client: SupabaseClient
   projectId: string
   rfiId: string
   rfiSubject: string
@@ -35,14 +33,20 @@ export async function dispatchRfiEmail(args: DispatchRfiEmailArgs): Promise<void
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!supabaseUrl || !serviceKey) return
 
+    // Resolve recipients with the service-role client (bypasses RLS). The raiser
+    // can't read the profiles/emails of project members who belong to a
+    // different org or sub-org, so an RLS-scoped read collapses the recipient
+    // list to just the raiser — this guarantees the full roster.
+    const svc = createServiceClient()
+
     // Toggle gates the whole RFI email feature for this project.
-    const cfg = await projectSettingsService.getNotificationConfig(args.client as any, args.projectId)
+    const cfg = await projectSettingsService.getNotificationConfig(svc as any, args.projectId)
     if (!cfg.rfiEmail) return
 
     // Recipients = everyone on the project roster (active members). The
     // assignee + raiser are included defensively in case the resolved assignee
     // is a project-default who isn't (yet) a member.
-    const { data: memberRows } = await (args.client as any)
+    const { data: memberRows } = await (svc as any)
       .schema('projects')
       .from('project_members')
       .select('user_id')
@@ -53,14 +57,14 @@ export async function dispatchRfiEmail(args: DispatchRfiEmailArgs): Promise<void
     const ids = [...new Set([...memberIds, args.assigneeId, args.raiserId].filter(
       (x): x is string => Boolean(x),
     ))]
-    const { data: profileRows } = await args.client
+    const { data: profileRows } = await svc
       .from('profiles')
       .select('id, full_name, email')
       .in('id', ids)
     const profiles: Record<string, { full_name: string | null; email: string | null }> =
       Object.fromEntries((profileRows ?? []).map((p: any) => [p.id, p]))
 
-    const { data: project } = await (args.client as any)
+    const { data: project } = await (svc as any)
       .schema('projects')
       .from('projects')
       .select('name')
