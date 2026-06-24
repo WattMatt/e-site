@@ -1,8 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
+import { updateFloorPlanToLatestAction } from '@/actions/cloud-storage.actions'
 
 export type DrawingListItem = {
   id: string
@@ -13,6 +15,7 @@ export type DrawingListItem = {
   previewUrl: string | null
   source_path: string | null
   file_path: string
+  has_newer_version: boolean
 }
 
 const naturalCmp = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare
@@ -193,17 +196,38 @@ function Row({
     >
       <span style={{ fontSize: 18, lineHeight: 1 }} aria-hidden="true">📄</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: 'var(--c-text)',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {plan.name}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: 'var(--c-text)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {plan.name}
+          </span>
+          {plan.has_newer_version && (
+            <span
+              title="A newer revision is available from the linked cloud folder"
+              style={{
+                flexShrink: 0,
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: 'var(--c-amber)',
+                background: 'var(--c-amber-mid)',
+                border: '1px solid var(--c-amber)',
+                borderRadius: 4,
+                padding: '2px 6px',
+              }}
+            >
+              Newer available
+            </span>
+          )}
         </div>
         {(plan.source_path || plan.level) && (
           <div
@@ -236,6 +260,9 @@ function Row({
         {plan.file_size_bytes && <span>{formatBytes(plan.file_size_bytes)}</span>}
       </div>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {plan.has_newer_version && (
+          <UpdateButton projectId={projectId} planId={plan.id} name={plan.name} />
+        )}
         <ViewLink projectId={projectId} planId={plan.id} name={plan.name} />
         <MarkupLink projectId={projectId} planId={plan.id} name={plan.name} />
         <DownloadButton filePath={plan.file_path} name={plan.name} />
@@ -345,6 +372,59 @@ function DownloadButton({ filePath, name }: { filePath: string; name: string }) 
       style={{ ...actionButtonStyle, cursor: busy ? 'progress' : 'pointer' }}
     >
       {busy ? '…' : '↓'}
+    </button>
+  )
+}
+
+function UpdateButton({
+  projectId,
+  planId,
+  name,
+}: {
+  projectId: string
+  planId: string
+  name: string
+}) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  function onClick() {
+    if (pending) return
+    // Warn: markup/pins/calibration stay attached but may not line up if the
+    // new revision's layout differs (this is exactly why sync doesn't do it
+    // automatically).
+    if (
+      !confirm(
+        `Update “${name}” to the latest cloud revision?\n\n` +
+          'Existing markup, snag pins and calibration stay attached to this drawing. ' +
+          "If the new revision's layout differs, pins may no longer line up and should be re-checked.",
+      )
+    ) {
+      return
+    }
+    startTransition(async () => {
+      try {
+        await updateFloorPlanToLatestAction(planId, projectId)
+        router.refresh()
+      } catch (e) {
+        alert(`Update failed: ${e instanceof Error ? e.message : 'unknown'}`)
+      }
+    })
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={pending}
+      aria-label={`Update ${name} to latest version`}
+      title="Adopt the latest cloud revision as the active drawing"
+      style={{
+        ...actionButtonStyle,
+        color: 'var(--c-amber)',
+        borderColor: 'var(--c-amber)',
+        cursor: pending ? 'progress' : 'pointer',
+      }}
+    >
+      {pending ? '…' : 'Update'}
     </button>
   )
 }

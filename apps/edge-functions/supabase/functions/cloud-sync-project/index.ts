@@ -1,12 +1,24 @@
 /**
  * Edge Function: cloud-sync-project
  *
- * Phase 1 milestone #5 of the cloud-storage integration. Walks a project's
- * mapped cloud folder, downloads new files, classifies them as drawings
- * vs generic documents, and inserts rows into tenants.floor_plans /
- * tenants.documents. Idempotent — re-runs skip files already imported,
- * keyed by (project_id, source_provider, source_file_id) UNIQUE-WHERE
- * indexes from migration 00041.
+ * Change-detecting sync. Walks a project's mapped cloud folder and, per
+ * file, compares the live provider revision (`rev` / etag) against the one
+ * stored at last import:
+ *   - unchanged (rev matches)  → skip
+ *   - new file (no row yet)    → download + insert (drawings also get a v1
+ *                                tenants.floor_plan_versions row)
+ *   - changed document         → overwrite bytes + update row IN PLACE (docs
+ *                                carry no annotations, so this is safe)
+ *   - changed drawing          → download the new revision as a NEW
+ *                                tenants.floor_plan_versions row and flag the
+ *                                drawing `has_newer_version`. The active file
+ *                                the markup / snag pins / calibration are
+ *                                pinned to is NOT moved until a user migrates
+ *                                (see updateFloorPlanToLatest server action),
+ *                                so existing annotations are never silently
+ *                                invalidated.
+ * Every run writes a tenants.cloud_sync_runs diagnostics row (migration
+ * 00148) so manual + cron syncs are observable without redeploying.
  *
  * Request body:
  *   {
@@ -38,6 +50,7 @@ import {
   type TokenBundle,
 } from '../_shared/cloud-storage/index.ts'
 import { decryptToken, encryptToken } from '../_shared/encryption.ts'
+import { requireServiceRole } from '../_shared/auth.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -62,11 +75,15 @@ const DRAWING_FOLDER_RE = /(^|\/)(drawings?|plans?|floor[ -]?plans?)(\/|$)/i
 
 interface SyncRequest {
   projectId: string
-  callerUserId: string
+  // Audit actor for inserted rows (uploaded_by). Optional: cron has no user,
+  // so when omitted we fall back to the connection's connected_by profile.
+  callerUserId?: string
   // When set, overrides the extension+folder-name classifier so every file
   // in this run is routed to the corresponding table/bucket. Driven by
   // which tab the user clicked "Sync now" from in the web UI.
   intent?: 'drawings' | 'documents'
+  // Provenance for the cloud_sync_runs diagnostics row. Defaults to 'manual'.
+  trigger?: 'manual' | 'cron'
 }
 
 interface ProjectRow {
@@ -83,6 +100,7 @@ interface ConnectionRow {
   access_token_enc: string
   refresh_token_enc: string
   expires_at: string | null
+  connected_by: string
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -95,17 +113,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     })
   }
 
-  // Service-role gate — match the send-notification pattern.
-  const authHeader = req.headers.get('Authorization') ?? ''
-  if (!authHeader.startsWith('Bearer ')) {
-    return json({ error: 'Unauthorized' }, 401)
-  }
-  try {
-    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]!))
-    if (payload.role !== 'service_role') return json({ error: 'Forbidden' }, 403)
-  } catch {
-    return json({ error: 'Invalid token' }, 401)
-  }
+  // Service-role gate — prove the caller holds the service-role secret.
+  // Decoded JWT role claims are forgeable under --no-verify-jwt (see _shared/auth.ts).
+  const authError = requireServiceRole(req)
+  if (authError) return authError
 
   let body: SyncRequest
   try {
@@ -113,8 +124,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   } catch {
     return json({ error: 'Invalid JSON body' }, 400)
   }
-  if (!body.projectId || !body.callerUserId) {
-    return json({ error: 'projectId and callerUserId required' }, 400)
+  if (!body.projectId) {
+    return json({ error: 'projectId required' }, 400)
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -132,8 +143,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 })
 
 interface SyncResult {
-  sent: number
-  skipped: number
+  sent: number          // new files inserted
+  updated: number       // documents overwritten in place (rev changed)
+  newVersions: number   // drawing revisions versioned (rev changed)
+  skipped: number       // unchanged (rev matched)
   failed: number
   classified: { floor_plans: number; documents: number }
   // Echoes the request's intent (or 'auto' when the classifier ran).
@@ -146,6 +159,7 @@ async function syncProject(
   supabase: SupabaseClient,
   req: SyncRequest,
 ): Promise<SyncResult> {
+  const startedAt = new Date().toISOString()
   // 1. Load project + verify it has a mapping.
   const { data: project, error: pe } = await supabase
     .schema('projects')
@@ -162,11 +176,16 @@ async function syncProject(
   // 2. Load + decrypt connection. Refresh if expired.
   const { data: connRow, error: ce } = await supabase
     .from('org_storage_connections')
-    .select('id, provider, organisation_id, access_token_enc, refresh_token_enc, expires_at')
+    .select('id, provider, organisation_id, access_token_enc, refresh_token_enc, expires_at, connected_by')
     .eq('id', proj.cloud_storage_connection_id)
     .single()
   if (ce || !connRow) throw new Error(`connection not found: ${ce?.message ?? 'no row'}`)
   const conn = connRow as unknown as ConnectionRow
+
+  // Audit actor for inserted rows. Manual sync passes the signed-in user;
+  // cron omits it, so attribute to whoever connected the integration
+  // (connected_by is NOT NULL, and floor_plans.uploaded_by is NOT NULL).
+  const actorUserId = req.callerUserId ?? conn.connected_by
 
   let accessToken = await decryptToken(hexToUint8(conn.access_token_enc))
   const expMs = conn.expires_at ? Date.parse(conn.expires_at) : 0
@@ -209,9 +228,11 @@ async function syncProject(
     } while (pageToken && files.length < MAX_FILES)
   }
 
-  // 4. For each file: dedup-check, download, upload to bucket, insert row.
+  // 4. For each file: compare rev, then insert / update-in-place / version.
   const result: SyncResult = {
     sent: 0,
+    updated: 0,
+    newVersions: 0,
     skipped: 0,
     failed: 0,
     classified: { floor_plans: 0, documents: 0 },
@@ -221,39 +242,98 @@ async function syncProject(
 
   for (const { item, parentPath } of files) {
     try {
-      const target =
+      // Classification only decides where a NEW file lands. If the file was
+      // already imported (into EITHER table), it stays there — otherwise an
+      // auto-classified cron run could disagree with an intent-forced manual
+      // run and duplicate the same source file across both tables.
+      const classifiedTarget =
         req.intent === 'drawings'
           ? 'floor_plans'
           : req.intent === 'documents'
             ? 'documents'
             : classify(item, parentPath)
-      const exists = await dedupCheck(supabase, target, proj.id, conn.provider, item.id)
-      if (exists) {
+
+      const existing = await findExisting(supabase, proj.id, conn.provider, item.id)
+      const target = existing ? existing.table : classifiedTarget
+      const liveRev = item.revisionId ?? null
+
+      // Unchanged: a row exists and its stored rev matches the live one.
+      // This is the dedup path — one metadata listing, no download.
+      if (existing && (existing.source_revision_id ?? '') === (liveRev ?? '')) {
         result.skipped++
         continue
       }
+
       const dl = await provider.downloadFile({ fileId: item.id, accessToken })
       const ab = await new Response(dl.body).arrayBuffer()
-      // Wrap in Blob so supabase-js storage receives the canonical
-      // BlobPart shape — Uint8Array works in current versions but the
-      // Blob form makes intent + content-type explicit and forward-
-      // compatible with future SDK changes.
+      // Wrap in Blob so supabase-js storage receives the canonical BlobPart
+      // shape — explicit content-type, forward-compatible with SDK changes.
       const blob = new Blob([ab], { type: dl.contentType })
-
+      const size = dl.contentLength ?? blob.size
       const ext = (item.name.match(/\.[a-z0-9]+$/i)?.[0] ?? '').toLowerCase()
-      const bucket = target === 'floor_plans' ? FLOOR_PLANS_BUCKET : DOCUMENTS_BUCKET
-      const storagePath = `${proj.organisation_id}/${proj.id}/${item.id}${ext}`
+      const srcPath = parentPath ? `${parentPath}/${item.name}` : item.name
 
+      if (target === 'documents') {
+        // Documents carry no annotations → overwrite bytes + update the row
+        // in place. Stable id-keyed path so the upload replaces the old object.
+        const storagePath = `${proj.organisation_id}/${proj.id}/${item.id}${ext}`
+        const { error: upErr } = await supabase.storage
+          .from(DOCUMENTS_BUCKET)
+          .upload(storagePath, blob, { contentType: dl.contentType, upsert: true })
+        if (upErr) throw new Error(`storage upload: ${upErr.message}`)
+
+        if (existing) {
+          const { error: udErr } = await supabase
+            .schema('tenants')
+            .from('documents')
+            .update({
+              mime_type: dl.contentType,
+              size_bytes: size,
+              source_revision_id: liveRev,
+              source_path: srcPath,
+              synced_at: new Date().toISOString(),
+            })
+            .eq('id', existing.id)
+          if (udErr) throw new Error(`documents update: ${udErr.message}`)
+          result.updated++
+        } else {
+          const { error: insErr } = await supabase
+            .schema('tenants')
+            .from('documents')
+            .insert({
+              organisation_id: proj.organisation_id,
+              project_id: proj.id,
+              name: item.name,
+              category: parentPath.split('/')[0] || 'misc',
+              storage_path: storagePath,
+              mime_type: dl.contentType,
+              size_bytes: size,
+              source_provider: conn.provider,
+              source_file_id: item.id,
+              source_revision_id: liveRev,
+              source_path: srcPath,
+              synced_at: new Date().toISOString(),
+              uploaded_by: actorUserId,
+            })
+          if (insErr) throw new Error(`documents insert: ${insErr.message}`)
+          result.classified.documents++
+          result.sent++
+        }
+        continue
+      }
+
+      // target === 'floor_plans': versioned. Rev-keyed path so old version
+      // bytes survive when a newer revision is pulled.
+      const revKey = liveRev ?? 'v0'
+      const storagePath = `${proj.organisation_id}/${proj.id}/${item.id}/${revKey}${ext}`
       const { error: upErr } = await supabase.storage
-        .from(bucket)
-        .upload(storagePath, blob, {
-          contentType: dl.contentType,
-          upsert: true,
-        })
+        .from(FLOOR_PLANS_BUCKET)
+        .upload(storagePath, blob, { contentType: dl.contentType, upsert: true })
       if (upErr) throw new Error(`storage upload: ${upErr.message}`)
 
-      if (target === 'floor_plans') {
-        const { error: insErr } = await supabase
+      if (!existing) {
+        // New drawing: insert the floor_plans row (active = this revision)...
+        const { data: fpRow, error: insErr } = await supabase
           .schema('tenants')
           .from('floor_plans')
           .insert({
@@ -261,40 +341,59 @@ async function syncProject(
             project_id: proj.id,
             name: item.name,
             file_path: storagePath,
-            file_size_bytes: dl.contentLength ?? blob.size,
-            uploaded_by: req.callerUserId,
+            file_size_bytes: size,
+            uploaded_by: actorUserId,
             source_provider: conn.provider,
             source_file_id: item.id,
-            source_revision_id: item.revisionId ?? null,
-            source_path: parentPath ? `${parentPath}/${item.name}` : item.name,
+            source_revision_id: liveRev,
+            source_path: srcPath,
             synced_at: new Date().toISOString(),
+            latest_revision_id: liveRev,
+            latest_synced_at: new Date().toISOString(),
             is_active: true,
           })
-        if (insErr) throw new Error(`floor_plans insert: ${insErr.message}`)
+          .select('id')
+          .single()
+        if (insErr || !fpRow) {
+          throw new Error(`floor_plans insert: ${insErr?.message ?? 'no row'}`)
+        }
+        // ...and record it as the v1 version.
+        await insertVersion(supabase, {
+          orgId: proj.organisation_id,
+          projectId: proj.id,
+          floorPlanId: (fpRow as { id: string }).id,
+          rev: revKey,
+          filePath: storagePath,
+          size,
+          modifiedAt: item.modifiedAt,
+        })
         result.classified.floor_plans++
+        result.sent++
       } else {
-        const { error: insErr } = await supabase
+        // Changed drawing: record the new revision WITHOUT moving the active
+        // file. Flag has_newer_version so the UI shows a badge; the user
+        // migrates explicitly (markup stays pinned to the active version).
+        await insertVersion(supabase, {
+          orgId: proj.organisation_id,
+          projectId: proj.id,
+          floorPlanId: existing.id,
+          rev: revKey,
+          filePath: storagePath,
+          size,
+          modifiedAt: item.modifiedAt,
+        })
+        const { error: udErr } = await supabase
           .schema('tenants')
-          .from('documents')
-          .insert({
-            organisation_id: proj.organisation_id,
-            project_id: proj.id,
-            name: item.name,
-            category: parentPath.split('/')[0] || 'misc',
-            storage_path: storagePath,
-            mime_type: dl.contentType,
-            size_bytes: dl.contentLength ?? blob.size,
-            source_provider: conn.provider,
-            source_file_id: item.id,
-            source_revision_id: item.revisionId ?? null,
-            source_path: parentPath ? `${parentPath}/${item.name}` : item.name,
-            synced_at: new Date().toISOString(),
-            uploaded_by: req.callerUserId,
+          .from('floor_plans')
+          .update({
+            has_newer_version: true,
+            latest_revision_id: liveRev,
+            latest_synced_at: new Date().toISOString(),
           })
-        if (insErr) throw new Error(`documents insert: ${insErr.message}`)
-        result.classified.documents++
+          .eq('id', existing.id)
+        if (udErr) throw new Error(`floor_plans flag: ${udErr.message}`)
+        result.newVersions++
       }
-      result.sent++
     } catch (e) {
       result.failed++
       const msg = e instanceof Error ? e.message : String(e)
@@ -309,6 +408,30 @@ async function syncProject(
     .update({ cloud_storage_last_sync_at: new Date().toISOString() })
     .eq('id', proj.id)
 
+  // 6. Diagnostics row — observable history of every sync (migration 00148).
+  // Best-effort: a logging failure must not fail the sync itself.
+  const { error: runErr } = await supabase
+    .schema('tenants')
+    .from('cloud_sync_runs')
+    .insert({
+      organisation_id: proj.organisation_id,
+      project_id: proj.id,
+      trigger: req.trigger ?? 'manual',
+      intent: result.intent,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      sent: result.sent,
+      updated: result.updated,
+      new_versions: result.newVersions,
+      skipped: result.skipped,
+      failed: result.failed,
+      error_text:
+        result.errors && result.errors.length
+          ? result.errors.join(' | ').slice(0, 2000)
+          : null,
+    })
+  if (runErr) console.error('cloud_sync_runs insert failed:', runErr.message)
+
   return result
 }
 
@@ -319,23 +442,72 @@ function classify(item: CloudItem, parentPath: string): 'floor_plans' | 'documen
   return 'documents'
 }
 
-async function dedupCheck(
+/**
+ * Find the already-imported row for a source file across BOTH target tables,
+ * returning which table holds it + its id + stored revision. null = not yet
+ * imported anywhere. Cross-table so a file keeps its original classification:
+ * once a PDF is a drawing it stays a drawing, even if a later auto-classified
+ * cron run would have called it a document (which would otherwise duplicate
+ * it). Checks floor_plans first (the rarer, intent-forced case).
+ */
+async function findExisting(
   supabase: SupabaseClient,
-  target: 'floor_plans' | 'documents',
   projectId: string,
   provider: ProviderName,
   sourceFileId: string,
-): Promise<boolean> {
-  const { data } = await supabase
+): Promise<{ table: 'floor_plans' | 'documents'; id: string; source_revision_id: string | null } | null> {
+  for (const table of ['floor_plans', 'documents'] as const) {
+    const { data } = await supabase
+      .schema('tenants')
+      .from(table)
+      .select('id, source_revision_id')
+      .eq('project_id', projectId)
+      .eq('source_provider', provider)
+      .eq('source_file_id', sourceFileId)
+      .limit(1)
+      .maybeSingle()
+    if (data) {
+      const row = data as { id: string; source_revision_id: string | null }
+      return { table, id: row.id, source_revision_id: row.source_revision_id }
+    }
+  }
+  return null
+}
+
+/**
+ * Record one imported revision of a drawing. UNIQUE (floor_plan_id,
+ * source_revision_id) makes this idempotent — a re-run after a partial
+ * failure ignores the duplicate rather than erroring.
+ */
+async function insertVersion(
+  supabase: SupabaseClient,
+  v: {
+    orgId: string
+    projectId: string
+    floorPlanId: string
+    rev: string
+    filePath: string
+    size: number
+    modifiedAt?: Date
+  },
+): Promise<void> {
+  const { error } = await supabase
     .schema('tenants')
-    .from(target)
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('source_provider', provider)
-    .eq('source_file_id', sourceFileId)
-    .limit(1)
-    .maybeSingle()
-  return !!data
+    .from('floor_plan_versions')
+    .upsert(
+      {
+        organisation_id: v.orgId,
+        project_id: v.projectId,
+        floor_plan_id: v.floorPlanId,
+        source_revision_id: v.rev,
+        file_path: v.filePath,
+        file_size_bytes: v.size,
+        source_modified_at: v.modifiedAt ? v.modifiedAt.toISOString() : null,
+        synced_at: new Date().toISOString(),
+      },
+      { onConflict: 'floor_plan_id,source_revision_id', ignoreDuplicates: true },
+    )
+  if (error) throw new Error(`floor_plan_versions insert: ${error.message}`)
 }
 
 async function refreshAndPersist(

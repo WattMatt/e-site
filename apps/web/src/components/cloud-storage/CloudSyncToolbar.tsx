@@ -78,8 +78,10 @@ export function CloudSyncToolbar(props: Props) {
     startSyncTransition(async () => {
       try {
         const r = await syncProjectCloudFolderAction(props.projectId, props.intent)
+        const drawingUpd = r.newVersions === 1 ? '1 drawing update' : `${r.newVersions} drawing updates`
+        const docUpd = r.updated === 1 ? '1 doc update' : `${r.updated} doc updates`
         setFlash(
-          `Sync done — ${r.sent} new (${r.classified.documents} docs / ${r.classified.floor_plans} drawings), ${r.skipped} skipped, ${r.failed} failed.`,
+          `Sync done — ${r.sent} new, ${drawingUpd}, ${docUpd}, ${r.skipped} unchanged, ${r.failed} failed.`,
         )
         router.refresh()
       } catch (e) {
