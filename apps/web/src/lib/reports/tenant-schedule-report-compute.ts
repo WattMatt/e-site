@@ -18,7 +18,17 @@ export function orderStateLabel(status: OrderStatus | null): string {
 }
 
 export interface ComputeInput {
-  activeNodes: Array<{ id: string; shopNumber: string; shopName: string; glaM2: number | null }>
+  activeNodes: Array<{
+    id: string
+    shopNumber: string
+    shopName: string
+    glaM2: number | null
+    /** Incoming-supply breaker (A) for the tenant's DB — manual value or derived. */
+    breakerA: number | null
+    poleConfig: string | null
+    /** Incoming-supply design load (A). */
+    loadA: number | null
+  }>
   decommissionedCount: number
   scopeTypeIdByKey: { db: string | null; lighting: string | null }
   detailsByNode: Map<string, { scopeReceived: boolean; layoutIssued: boolean }>
@@ -32,6 +42,9 @@ export interface ShopRow {
   shopNumber: string
   tenantName: string
   glaM2: number | null
+  breakerA: number | null
+  poleConfig: string | null
+  loadA: number | null
   db: OrderStatus | null
   lights: OrderStatus | null
   layoutIssued: boolean
@@ -73,6 +86,9 @@ export function computeReportModel(input: ComputeInput): { kpis: ReportKpis; sho
         shopNumber: n.shopNumber,
         tenantName: n.shopName,
         glaM2: n.glaM2,
+        breakerA: n.breakerA,
+        poleConfig: n.poleConfig,
+        loadA: n.loadA,
         db: stateFor(n.id, scopeTypeIdByKey.db),
         lights: stateFor(n.id, scopeTypeIdByKey.lighting),
         layoutIssued: det?.layoutIssued ?? false,

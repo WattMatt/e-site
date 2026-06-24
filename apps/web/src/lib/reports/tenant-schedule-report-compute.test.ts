@@ -3,9 +3,9 @@ import { computeReportModel, orderStateLabel, type ComputeInput } from './tenant
 
 const base: ComputeInput = {
   activeNodes: [
-    { id: 'n1', shopNumber: 'L01', shopName: 'Woolworths', glaM2: 1240 },
-    { id: 'n2', shopNumber: 'L02', shopName: 'Mr Price', glaM2: 480 },
-    { id: 'n3', shopNumber: 'L03', shopName: 'Clicks', glaM2: 320 },
+    { id: 'n1', shopNumber: 'L01', shopName: 'Woolworths', glaM2: 1240, breakerA: 63, poleConfig: 'TP', loadA: 60 },
+    { id: 'n2', shopNumber: 'L02', shopName: 'Mr Price', glaM2: 480, breakerA: null, poleConfig: null, loadA: null },
+    { id: 'n3', shopNumber: 'L03', shopName: 'Clicks', glaM2: 320, breakerA: 100, poleConfig: 'TP', loadA: 80 },
   ],
   decommissionedCount: 1,
   scopeTypeIdByKey: { db: 'tdb', lighting: 'tlt' },
@@ -43,6 +43,9 @@ describe('computeReportModel', () => {
   it('builds one row per active shop, sorted by shop number, with DB/Lights states', () => {
     expect(shopRows.map((r) => r.shopNumber)).toEqual(['L01', 'L02', 'L03'])
     expect(shopRows[0]).toMatchObject({ tenantName: 'Woolworths', db: 'ordered', lights: 'received', layoutIssued: true, boOverdue: false })
+    // electrical fields pass through from the node
+    expect(shopRows[0]).toMatchObject({ breakerA: 63, poleConfig: 'TP', loadA: 60 })
+    expect(shopRows[1]).toMatchObject({ breakerA: null, loadA: null })
     expect(shopRows[2]).toMatchObject({ db: 'required', lights: null, layoutIssued: false })
   })
 

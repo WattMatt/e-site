@@ -14,8 +14,8 @@ const baseData: TenantScheduleReportData = {
     byTenantCount: 2, bo: { upcoming: 1, overdue: 1, noDate: 1 },
   },
   shopRows: [
-    { shopNumber: 'L01', tenantName: 'Woolworths', glaM2: 1240, db: 'ordered', lights: 'received', layoutIssued: true, boDate: '2026-08-15', boOverdue: false },
-    { shopNumber: 'L02', tenantName: 'Mr Price', glaM2: 480, db: 'by_tenant', lights: 'by_tenant', layoutIssued: true, boDate: '2026-05-01', boOverdue: true },
+    { shopNumber: 'L01', tenantName: 'Woolworths', glaM2: 1240, breakerA: 63, poleConfig: 'TP', loadA: 60, db: 'ordered', lights: 'received', layoutIssued: true, boDate: '2026-08-15', boOverdue: false },
+    { shopNumber: 'L02', tenantName: 'Mr Price', glaM2: 480, breakerA: null, poleConfig: null, loadA: null, db: 'by_tenant', lights: 'by_tenant', layoutIssued: true, boDate: '2026-05-01', boOverdue: true },
   ],
   brandingInput: {
     orgName: 'Watson Mattheus', orgLogoDataUri: null, orgAccent: null, projectAccent: null,
@@ -39,7 +39,7 @@ describe('renderTenantScheduleReport', () => {
     expect((await render(empty)).slice(0, 5).toString('ascii')).toBe('%PDF-')
     const sparse = {
       ...baseData,
-      shopRows: [{ shopNumber: 'X1', tenantName: 'Vacant', glaM2: null, db: null, lights: null, layoutIssued: false, boDate: null, boOverdue: false }],
+      shopRows: [{ shopNumber: 'X1', tenantName: 'Vacant', glaM2: null, breakerA: null, poleConfig: null, loadA: null, db: null, lights: null, layoutIssued: false, boDate: null, boOverdue: false }],
     }
     expect((await render(sparse)).slice(0, 5).toString('ascii')).toBe('%PDF-')
   })

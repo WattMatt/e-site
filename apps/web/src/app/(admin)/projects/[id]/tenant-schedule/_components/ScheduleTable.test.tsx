@@ -31,18 +31,17 @@ const base = {
 }
 
 describe('ScheduleTable electrical columns', () => {
-  it('renders Breaker, Load and Amps headers', () => {
+  it('renders Breaker and Load headers, and no Amps column', () => {
     render(<ScheduleTable nodes={[tenant({})]} {...base} />)
     // getByText throws if absent, so a truthy result asserts presence.
     expect(screen.getByText('Breaker')).toBeTruthy()
     expect(screen.getByText('Load')).toBeTruthy()
-    expect(screen.getByText('Amps')).toBeTruthy()
+    expect(screen.queryByText('Amps')).toBeNull()
   })
-  it('formats breaker with poles, load and amps', () => {
+  it('formats breaker with poles and load', () => {
     render(<ScheduleTable nodes={[tenant({})]} {...base} />)
     expect(screen.getByText('63 A TP')).toBeTruthy()
     expect(screen.getByText('60 A')).toBeTruthy()
-    expect(screen.getByText('170 A')).toBeTruthy()
   })
   it('shows an em-dash when electrical data is absent', () => {
     render(
@@ -54,6 +53,6 @@ describe('ScheduleTable electrical columns', () => {
         {...base}
       />,
     )
-    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(3)
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
   })
 })

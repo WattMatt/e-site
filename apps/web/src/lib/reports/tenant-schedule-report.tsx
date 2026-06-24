@@ -39,6 +39,8 @@ const shopCell = (r: ShopRow): string[] => [
   r.shopNumber,
   r.tenantName,
   r.glaM2 != null ? r.glaM2.toLocaleString('en-ZA') : '—',
+  r.breakerA != null ? (r.poleConfig ? `${r.breakerA} A ${r.poleConfig}` : `${r.breakerA} A`) : '—',
+  r.loadA != null ? `${r.loadA} A` : '—',
   orderStateLabel(r.db),
   orderStateLabel(r.lights),
   r.layoutIssued ? 'Issued' : 'Not issued',
@@ -97,11 +99,11 @@ export function TenantScheduleReportDocument({ data, branding }: TenantScheduleR
 
         <Section title="Shop summary" accent={accent}>
           <Table
-            columns={['Shop', 'Tenant', 'GLA m²', 'DB', 'Lights', 'Layout', 'BO date']}
-            rows={shopRows.length > 0 ? shopRows.map(shopCell) : [['—', 'No active shops', '—', '—', '—', '—', '—']]}
+            columns={['Shop', 'Tenant', 'GLA m²', 'Breaker', 'Load', 'DB', 'Lights', 'Layout', 'BO date']}
+            rows={shopRows.length > 0 ? shopRows.map(shopCell) : [['—', 'No active shops', '—', '—', '—', '—', '—', '—', '—']]}
             repeatHeader
             unbreakableRows
-            align={['left', 'left', 'right', 'left', 'left', 'left', 'left']}
+            align={['left', 'left', 'right', 'right', 'right', 'left', 'left', 'left', 'left']}
           />
         </Section>
       </Page>
