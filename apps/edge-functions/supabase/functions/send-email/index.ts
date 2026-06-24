@@ -37,6 +37,27 @@ async function sendEmail(payload: EmailPayload): Promise<void> {
   }
 }
 
+// Send many emails in one request via Resend's batch endpoint (up to 100 per
+// call). Avoids the per-request rate limit that drops recipients when many
+// individual sends fire concurrently. Each array entry is its own email
+// (separate `to`), so recipients are not exposed to each other.
+async function sendEmailBatch(messages: EmailPayload[]): Promise<void> {
+  if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not set')
+  if (messages.length === 0) return
+  for (let i = 0; i < messages.length; i += 100) {
+    const chunk = messages.slice(i, i + 100).map((m) => ({ from: FROM, ...m }))
+    const res = await fetch('https://api.resend.com/emails/batch', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(chunk),
+    })
+    if (!res.ok) {
+      const body = await res.text()
+      throw new Error(`Resend batch error ${res.status}: ${body}`)
+    }
+  }
+}
+
 function baseTemplate(content: string) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
   <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0F172A;color:#E2E8F0;margin:0;padding:32px}
@@ -101,16 +122,17 @@ Deno.serve(async (req) => {
 
     else if (type === 'rfi-created') {
       // The web `dispatchRfiEmail` helper renders the HTML (shared
-      // renderRfiCreatedEmail) and forwards { to, subject, html } here. This
-      // branch is a thin Resend passthrough — keeps the template logic in one
-      // unit-tested place (packages/shared) rather than duplicated in Deno.
+      // renderRfiCreatedEmail) and forwards { to, subject, html } here. `to` may
+      // be a single address or an array of all project members — sent as one
+      // Resend batch so the per-request rate limit can't silently drop members.
       const { to, subject, html } = payload
       if (!to || !subject || !html) {
         return new Response(JSON.stringify({ error: 'rfi-created requires to, subject, html' }), {
           status: 400, headers: { 'Content-Type': 'application/json' },
         })
       }
-      await sendEmail({ to, subject, html })
+      const recipients: string[] = Array.isArray(to) ? to : [to]
+      await sendEmailBatch(recipients.map((addr) => ({ to: addr, subject, html })))
     }
 
     else if (type === 'snag-assigned') {

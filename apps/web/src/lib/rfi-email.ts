@@ -92,19 +92,24 @@ export async function dispatchRfiEmail(args: DispatchRfiEmailArgs): Promise<void
       siteUrl,
     })
 
-    // One personalised email per recipient (privacy: no shared To: header).
-    await Promise.all(
-      recipients.map((to) =>
-        fetch(`${supabaseUrl}/functions/v1/send-email`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${serviceKey}`,
-          },
-          body: JSON.stringify({ type: 'rfi-created', payload: { to, subject, html } }),
-        }).catch(() => {/* non-blocking */}),
-      ),
-    )
+    // One batched request — send-email fans out via Resend's batch endpoint, so
+    // the per-request rate limit can't silently drop recipients (each gets their
+    // own email; no shared To:). Logged so dropped/failed sends are visible.
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/send-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({ type: 'rfi-created', payload: { to: recipients, subject, html } }),
+      })
+      if (res.ok) {
+        console.warn('[rfi-email] sent', { projectId: args.projectId, members: memberIds.length, recipients: recipients.length })
+      } else {
+        const body = await res.text().catch(() => '')
+        console.error('[rfi-email] send-email failed', { projectId: args.projectId, recipients: recipients.length, status: res.status, body: body.slice(0, 300) })
+      }
+    } catch (e) {
+      console.error('[rfi-email] send-email threw', { projectId: args.projectId, recipients: recipients.length, err: String(e) })
+    }
   } catch {
     // Email failures must never propagate to the user-visible action result.
   }
