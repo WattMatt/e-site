@@ -29,10 +29,13 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
   let projectId: string
   let assigneeId: string
   let raiserId: string
+  let member3Id: string
+  let inactiveId: string
   const ts = Date.now()
   const assigneeEmail = `it-assignee-${ts}@example.com`
   const raiserEmail = `it-raiser-${ts}@example.com`
-  const watcherEmail = `it-watcher-${ts}@example.com`
+  const member3Email = `it-member3-${ts}@example.com`
+  const inactiveEmail = `it-inactive-${ts}@example.com`
 
   beforeAll(async () => {
     if (!URL || !SERVICE) throw new Error('Set NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY')
@@ -57,11 +60,14 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
     }
     assigneeId = await mkUser(assigneeEmail, 'Bob Assignee')
     raiserId = await mkUser(raiserEmail, 'Jane Raiser')
+    member3Id = await mkUser(member3Email, 'Carol Member')
+    inactiveId = await mkUser(inactiveEmail, 'Dave Inactive')
 
-    await (admin as any).from('user_organisations').insert([
-      { user_id: assigneeId, organisation_id: orgId, role: 'project_manager', is_active: true },
-      { user_id: raiserId, organisation_id: orgId, role: 'project_manager', is_active: true },
-    ])
+    await (admin as any).from('user_organisations').insert(
+      [assigneeId, raiserId, member3Id, inactiveId].map((user_id) => ({
+        user_id, organisation_id: orgId, role: 'project_manager', is_active: true,
+      })),
+    )
 
     const { data: proj, error: projErr } = await (admin as any)
       .schema('projects').from('projects')
@@ -69,13 +75,21 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
       .select('id').single()
     if (projErr) throw projErr
     projectId = proj.id
+
+    // Roster: assignee + raiser + member3 are active; inactive is is_active=false.
+    await (admin as any).schema('projects').from('project_members').insert([
+      { project_id: projectId, organisation_id: orgId, user_id: assigneeId, is_active: true },
+      { project_id: projectId, organisation_id: orgId, user_id: raiserId, is_active: true },
+      { project_id: projectId, organisation_id: orgId, user_id: member3Id, is_active: true },
+      { project_id: projectId, organisation_id: orgId, user_id: inactiveId, is_active: false },
+    ])
   }, 60_000)
 
   afterAll(async () => {
     try { if (projectId) await (admin as any).schema('projects').from('projects').delete().eq('id', projectId) } catch { /* ignore */ }
     try { if (orgId) await (admin as any).from('user_organisations').delete().eq('organisation_id', orgId) } catch { /* ignore */ }
     try { if (orgId) await (admin as any).from('organisations').delete().eq('id', orgId) } catch { /* ignore */ }
-    for (const uid of [assigneeId, raiserId]) { try { if (uid) await admin.auth.admin.deleteUser(uid) } catch { /* ignore */ } }
+    for (const uid of [assigneeId, raiserId, member3Id, inactiveId]) { try { if (uid) await admin.auth.admin.deleteUser(uid) } catch { /* ignore */ } }
     vi.restoreAllMocks()
   }, 60_000)
 
@@ -96,7 +110,7 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
   }
 
   it('sends nothing when notifyRfiEmail is OFF', async () => {
-    await projectSettingsService.update(admin as any, projectId, { notifyRfiEmail: false, notifyRfiTo: [watcherEmail] })
+    await projectSettingsService.update(admin as any, projectId, { notifyRfiEmail: false })
     const { calls, spy } = mockFetch()
     await dispatchRfiEmail({
       client: admin, projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
@@ -106,8 +120,8 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
     spy.mockRestore()
   }, 30_000)
 
-  it('emails assignee + raiser + notifyRfiTo with the link + description when ON', async () => {
-    await projectSettingsService.update(admin as any, projectId, { notifyRfiEmail: true, notifyRfiTo: [watcherEmail] })
+  it('emails every ACTIVE project member (not inactive, not non-members) when ON', async () => {
+    await projectSettingsService.update(admin as any, projectId, { notifyRfiEmail: true })
     const { calls, spy } = mockFetch()
     await dispatchRfiEmail({
       client: admin, projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
@@ -117,7 +131,9 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
     // One send-email call per recipient.
     expect(calls.every((c) => c.url.endsWith('/functions/v1/send-email'))).toBe(true)
     const recipients = calls.map((c) => c.body.payload.to.toLowerCase()).sort()
-    expect(recipients).toEqual([assigneeEmail, raiserEmail, watcherEmail].sort())
+    // assignee + raiser + member3 (active) — NOT inactive member.
+    expect(recipients).toEqual([assigneeEmail, raiserEmail, member3Email].sort())
+    expect(recipients).not.toContain(inactiveEmail)
 
     // Each carries the deep link + description.
     for (const c of calls) {

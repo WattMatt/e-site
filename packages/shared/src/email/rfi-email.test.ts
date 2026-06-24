@@ -2,41 +2,32 @@ import { describe, it, expect } from 'vitest'
 import { buildRfiEmailRecipients, renderRfiCreatedEmail } from './rfi-email'
 
 describe('buildRfiEmailRecipients', () => {
-  const base = {
-    notifyRfiEmail: true,
-    assigneeEmail: 'assignee@example.com',
-    raiserEmail: 'raiser@example.com',
-    notifyRfiTo: ['watcher@example.com'],
-  }
-
   it('returns [] when notifyRfiEmail is off (toggle gates everything)', () => {
-    expect(buildRfiEmailRecipients({ ...base, notifyRfiEmail: false })).toEqual([])
+    expect(buildRfiEmailRecipients({ notifyRfiEmail: false, emails: ['a@example.com'] })).toEqual([])
   })
 
-  it('unions assignee + raiser + notifyRfiTo when on', () => {
-    expect(buildRfiEmailRecipients(base).sort()).toEqual(
-      ['assignee@example.com', 'raiser@example.com', 'watcher@example.com'].sort(),
-    )
+  it('returns the deduped valid emails when on (e.g. project members)', () => {
+    expect(
+      buildRfiEmailRecipients({ notifyRfiEmail: true, emails: ['a@example.com', 'b@example.com'] }).sort(),
+    ).toEqual(['a@example.com', 'b@example.com'])
   })
 
-  it('dedupes case-insensitively (assignee == a watcher)', () => {
+  it('dedupes case-insensitively', () => {
     const r = buildRfiEmailRecipients({
-      ...base,
-      raiserEmail: null,
-      notifyRfiTo: ['ASSIGNEE@example.com', 'watcher@example.com'],
+      notifyRfiEmail: true,
+      emails: ['A@example.com', 'a@example.com', 'b@example.com'],
     })
     expect(r).toHaveLength(2)
-    expect(r.map((e) => e.toLowerCase()).sort()).toEqual(['assignee@example.com', 'watcher@example.com'])
+    expect(r.map((e) => e.toLowerCase()).sort()).toEqual(['a@example.com', 'b@example.com'])
   })
 
   it('drops null/empty/invalid entries', () => {
-    const r = buildRfiEmailRecipients({
-      notifyRfiEmail: true,
-      assigneeEmail: null,
-      raiserEmail: '',
-      notifyRfiTo: ['not-an-email', '  ', 'ok@example.com'],
-    })
-    expect(r).toEqual(['ok@example.com'])
+    expect(
+      buildRfiEmailRecipients({
+        notifyRfiEmail: true,
+        emails: [null, '', '  ', 'not-an-email', 'ok@example.com'],
+      }),
+    ).toEqual(['ok@example.com'])
   })
 })
 

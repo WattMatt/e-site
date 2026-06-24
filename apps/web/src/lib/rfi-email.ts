@@ -39,7 +39,20 @@ export async function dispatchRfiEmail(args: DispatchRfiEmailArgs): Promise<void
     const cfg = await projectSettingsService.getNotificationConfig(args.client as any, args.projectId)
     if (!cfg.rfiEmail) return
 
-    const ids = [args.assigneeId, args.raiserId].filter((x): x is string => Boolean(x))
+    // Recipients = everyone on the project roster (active members). The
+    // assignee + raiser are included defensively in case the resolved assignee
+    // is a project-default who isn't (yet) a member.
+    const { data: memberRows } = await (args.client as any)
+      .schema('projects')
+      .from('project_members')
+      .select('user_id')
+      .eq('project_id', args.projectId)
+      .eq('is_active', true)
+    const memberIds: string[] = (memberRows ?? []).map((m: any) => m.user_id)
+
+    const ids = [...new Set([...memberIds, args.assigneeId, args.raiserId].filter(
+      (x): x is string => Boolean(x),
+    ))]
     const { data: profileRows } = await args.client
       .from('profiles')
       .select('id, full_name, email')
@@ -59,9 +72,7 @@ export async function dispatchRfiEmail(args: DispatchRfiEmailArgs): Promise<void
 
     const recipients = buildRfiEmailRecipients({
       notifyRfiEmail: cfg.rfiEmail,
-      assigneeEmail: assignee?.email,
-      raiserEmail: raiser?.email,
-      notifyRfiTo: cfg.rfiTo ?? [],
+      emails: ids.map((id) => profiles[id]?.email),
     })
     if (recipients.length === 0) return
 

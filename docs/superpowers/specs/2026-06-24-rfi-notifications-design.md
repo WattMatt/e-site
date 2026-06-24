@@ -34,7 +34,7 @@ the raiser, and the project `notifyRfiTo` list**, gated by the project
 
 | Decision | Choice |
 |---|---|
-| Recipients | assignee + raiser + `notifyRfiTo` (deduped by lowercased email) |
+| Recipients | **all active `project_members`** (+ assignee/raiser defensively), deduped by lowercased email. (Superseded the earlier assignee+raiser+`notifyRfiTo` model — roster-driven so new members are auto-included; `notifyRfiTo` no longer drives RFI recipients.) |
 | Gating | `notifyRfiEmail` toggle gates **all** RFI email (off → none) |
 | Triggers | created/assigned only (respond/close = later follow-up) |
 | Self-skip | **none** for email — the raiser gets a "logged & assigned" email even if they are the actor. (In-app push keeps its existing skip-self for the assignee.) |

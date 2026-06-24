@@ -18,10 +18,8 @@ function escapeHtml(s: string): string {
 export interface RfiEmailRecipientInput {
   /** Project `notifyRfiEmail` toggle — when false, no RFI emails at all. */
   notifyRfiEmail: boolean
-  assigneeEmail?: string | null
-  raiserEmail?: string | null
-  /** Project `notifyRfiTo` distribution list (already email strings). */
-  notifyRfiTo: string[]
+  /** Candidate recipient emails (e.g. active project members + assignee/raiser). */
+  emails: (string | null | undefined)[]
 }
 
 /**
@@ -32,10 +30,9 @@ export interface RfiEmailRecipientInput {
  */
 export function buildRfiEmailRecipients(input: RfiEmailRecipientInput): string[] {
   if (!input.notifyRfiEmail) return []
-  const candidates = [input.assigneeEmail, input.raiserEmail, ...input.notifyRfiTo]
   const seen = new Set<string>()
   const out: string[] = []
-  for (const raw of candidates) {
+  for (const raw of input.emails) {
     if (!raw) continue
     const trimmed = raw.trim()
     const norm = trimmed.toLowerCase()
