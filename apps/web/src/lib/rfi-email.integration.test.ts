@@ -128,21 +128,23 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
       priority: 'high', dueDate: '2026-07-01', assigneeId, raiserId,
     })
 
-    // One send-email call per recipient.
-    expect(calls.every((c) => c.url.endsWith('/functions/v1/send-email'))).toBe(true)
-    const recipients = calls.map((c) => c.body.payload.to.toLowerCase()).sort()
-    // assignee + raiser + member3 (active) — NOT inactive member.
+    // ONE batched send-email call carrying all recipients in `to` (array).
+    expect(calls).toHaveLength(1)
+    const call = calls[0]
+    expect(call.url.endsWith('/functions/v1/send-email')).toBe(true)
+    expect(call.body.type).toBe('rfi-created')
+    expect(Array.isArray(call.body.payload.to)).toBe(true)
+
+    const recipients = (call.body.payload.to as string[]).map((e) => e.toLowerCase()).sort()
+    // assignee + raiser + member3 (active) — NOT inactive member, NOT non-members.
     expect(recipients).toEqual([assigneeEmail, raiserEmail, member3Email].sort())
     expect(recipients).not.toContain(inactiveEmail)
 
-    // Each carries the deep link + description.
-    for (const c of calls) {
-      expect(c.body.type).toBe('rfi-created')
-      expect(c.body.payload.subject).toBe('New RFI: Busbar query')
-      expect(c.body.payload.html).toContain('/rfis/rfi-xyz')
-      expect(c.body.payload.html).toContain('Busbar query')
-      expect(c.body.payload.html).toContain('Bob Assignee') // resolved assignee name
-    }
+    // The batch carries the deep link + description.
+    expect(call.body.payload.subject).toBe('New RFI: Busbar query')
+    expect(call.body.payload.html).toContain('/rfis/rfi-xyz')
+    expect(call.body.payload.html).toContain('Busbar query')
+    expect(call.body.payload.html).toContain('Bob Assignee') // resolved assignee name
     spy.mockRestore()
   }, 30_000)
 })
