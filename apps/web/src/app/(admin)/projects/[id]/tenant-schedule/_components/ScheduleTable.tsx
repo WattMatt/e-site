@@ -169,7 +169,6 @@ export function ScheduleTable({
               <Th>DB Code</Th>
               <Th>Breaker</Th>
               <Th>Load</Th>
-              <Th>Amps</Th>
               <Th>Scope Status</Th>
               <Th>BO Period</Th>
               <Th>BO Date</Th>
@@ -230,7 +229,6 @@ export function ScheduleTable({
                         {formatAmps(node.incomer_load_a)}
                       </span>
                     </Td>
-                    <Td mono>{formatAmps(node.incomer_capacity_a)}</Td>
 
                     {/* Scope status */}
                     <Td>
@@ -364,7 +362,7 @@ export function ScheduleTable({
                   {isExpanded && (
                     <tr>
                       <td
-                        colSpan={13 + scopeItemTypes.length * 2}
+                        colSpan={12 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <ScopeOfWorkPanel
@@ -384,7 +382,7 @@ export function ScheduleTable({
                   {isLayoutExpanded && (
                     <tr>
                       <td
-                        colSpan={13 + scopeItemTypes.length * 2}
+                        colSpan={12 + scopeItemTypes.length * 2}
                         style={{ padding: 0 }}
                       >
                         <LayoutIssuedPanel

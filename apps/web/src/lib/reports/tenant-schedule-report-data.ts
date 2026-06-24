@@ -125,6 +125,15 @@ export async function gatherTenantScheduleReportData(projectId: string): Promise
       shopNumber: (n as { shop_number?: string | null }).shop_number ?? (n as { code?: string }).code ?? '—',
       shopName: (n as { shop_name?: string | null }).shop_name ?? (n as { name?: string | null }).name ?? '—',
       glaM2: (n as { shop_area_m2?: number | null }).shop_area_m2 ?? null,
+      // Incoming-supply electrical: a manual node breaker wins; otherwise the
+      // value derived from the cable schedule (persisted incomer_* columns).
+      breakerA:
+        (n as { breaker_rating_a?: number | null }).breaker_rating_a ??
+        (n as { incomer_breaker_a?: number | null }).incomer_breaker_a ?? null,
+      poleConfig:
+        (n as { pole_config?: string | null }).pole_config ??
+        (n as { incomer_pole_config?: string | null }).incomer_pole_config ?? null,
+      loadA: (n as { incomer_load_a?: number | null }).incomer_load_a ?? null,
     })),
     decommissionedCount,
     scopeTypeIdByKey,
