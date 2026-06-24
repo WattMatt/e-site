@@ -767,8 +767,17 @@ async function drawTagPages(
           width: qrSize,
           height: qrSize,
         })
-      } catch {
-        // Skip QR on failure — text tag still visible
+      } catch (err) {
+        // Don't swallow silently — log it and leave a visible marker so a
+        // missing QR is noticed rather than mistaken for an empty label.
+        console.error('[cable-export] tag QR render failed', { tag: qrText, err })
+        page.drawText('QR FAILED', {
+          x: x + cardW - 70 - 12,
+          y: y + cardH - 44,
+          size: 7,
+          font: helv,
+          color: TEXT_MID,
+        })
       }
     }
   }

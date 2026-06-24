@@ -49,6 +49,15 @@ export async function assertExportPolicy(
       { status: 400 },
     )
   }
+  // Reject malformed ids up front (defense-in-depth; PostgREST is parameterized
+  // already). A non-UUID would otherwise fall through to a 404.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!UUID_RE.test(projectId) || !UUID_RE.test(revisionId)) {
+    return NextResponse.json(
+      { error: 'projectId and revisionId must be valid UUIDs' },
+      { status: 400 },
+    )
+  }
 
   const supabase = await createClient()
   const { data: userData } = await supabase.auth.getUser()
