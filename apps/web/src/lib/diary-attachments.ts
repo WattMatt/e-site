@@ -25,13 +25,18 @@ export async function uploadDiaryAttachments(
   onFileUploaded?: (file: File) => void,
 ): Promise<void> {
   const { orgId, projectId, entryId, userId, files } = opts
+  // Continue sort_order after any attachments the entry already has. Without this
+  // a retry (remaining files only) or an "add more" on an existing entry would
+  // restart at 0 and collide with committed rows, scrambling display order.
+  const baseSort = await nextSortOrder(supabase, entryId)
   for (let i = 0; i < files.length; i++) {
     const file = files[i]
     if (file.size > DIARY_ATTACHMENT_MAX_BYTES) {
       throw new Error(`"${file.name}" exceeds the 100 MB limit.`)
     }
+    const seq = baseSort + i
     const ext = file.name.split('.').pop() ?? 'bin'
-    const path = `${orgId}/${projectId}/${entryId}/${Date.now()}-${i}.${ext}`
+    const path = `${orgId}/${projectId}/${entryId}/${Date.now()}-${seq}.${ext}`
     const { error: upErr } = await supabase.storage
       .from('diary-attachments')
       .upload(path, file, { contentType: file.type })
@@ -46,7 +51,7 @@ export async function uploadDiaryAttachments(
         mime_type: file.type,
         file_size_bytes: file.size,
         kind: attachmentKindFromMime(file.type),
-        sort_order: i,
+        sort_order: seq,
         uploaded_by: userId,
       })
     if (rowErr) {
@@ -56,4 +61,16 @@ export async function uploadDiaryAttachments(
     }
     onFileUploaded?.(file)
   }
+}
+
+/** Next free sort_order for an entry (max existing + 1, or 0 when none). */
+async function nextSortOrder(supabase: SupabaseClient, entryId: string): Promise<number> {
+  const { data } = await supabase
+    .schema('projects')
+    .from('site_diary_attachments')
+    .select('sort_order')
+    .eq('diary_entry_id', entryId)
+    .order('sort_order', { ascending: false })
+    .limit(1)
+  return ((data?.[0]?.sort_order as number | undefined) ?? -1) + 1
 }

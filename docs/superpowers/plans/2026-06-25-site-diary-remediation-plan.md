@@ -16,7 +16,11 @@ Progress log:
 - [x] Phase 2 — rich email: renderDiaryCreatedEmail now renders the full entry (type, weather, workers,
       all notes) + inline image thumbnails via 7-day signed URLs + deep link to the specific entry
       (anchor added on the project diary page).
-- [ ] Phases 3–8 — multi-image hardening, pagination, email-batch resilience, validation/authz/KPI,
+- [x] Phase 3 — multi-image hardening. Web + mobile: de-dupe selected files; web continues sort_order
+      from the entry's max (fixes retry + add-more ordering); mobile reuses the created entry id across
+      retries and drops committed items (no duplicate entry on a failed multi-upload); mobile HEIC→JPEG
+      name/mime fix (no more broken web thumbnails); mobile 100 MB client guard.
+- [ ] Phases 4–8 — pagination, email-batch resilience, validation/authz/KPI,
       realtime/observability, weekly PDF report, expanded tests.
 
 ---

@@ -21,6 +21,19 @@ async function compressImage(uri: string): Promise<{ uri: string; size: number }
   return { uri: result.uri, size: info.exists ? info.size : 0 }
 }
 
+/** Append only attachments not already selected (dedupe by name + size). */
+function mergeUnique(existing: PendingAttachment[], additions: PendingAttachment[]): PendingAttachment[] {
+  const seen = new Set(existing.map((a) => `${a.name}|${a.size}`))
+  const fresh: PendingAttachment[] = []
+  for (const a of additions) {
+    const k = `${a.name}|${a.size}`
+    if (seen.has(k)) continue
+    seen.add(k)
+    fresh.push(a)
+  }
+  return [...existing, ...fresh]
+}
+
 export function DiaryAttachmentPicker({ items, onChange }: Props) {
   async function addFromCamera() {
     const perm = await ImagePicker.requestCameraPermissionsAsync()
@@ -50,21 +63,23 @@ export function DiaryAttachmentPicker({ items, onChange }: Props) {
     const next: PendingAttachment[] = []
     for (const asset of res.assets) {
       const isImage = (asset.type ?? '').startsWith('image')
-      let uri = asset.uri
-      let size = asset.fileSize ?? 0
       if (isImage) {
+        // compressImage always re-encodes to JPEG — force name + mime to match so
+        // an iPhone HEIC isn't stored with its .HEIC name / image/heic type (which
+        // renders as a broken thumbnail on the web diary).
         const compressed = await compressImage(asset.uri)
-        uri = compressed.uri
-        size = compressed.size
+        const base = (asset.fileName ?? `photo-${Date.now()}`).replace(/\.[^.]+$/, '')
+        next.push({ uri: compressed.uri, name: `${base}.jpg`, mimeType: 'image/jpeg', size: compressed.size })
+      } else {
+        next.push({
+          uri: asset.uri,
+          name: asset.fileName ?? `video-${Date.now()}.mp4`,
+          mimeType: asset.mimeType ?? 'video/mp4',
+          size: asset.fileSize ?? 0,
+        })
       }
-      next.push({
-        uri,
-        name: asset.fileName ?? `${isImage ? 'photo' : 'video'}-${Date.now()}.${isImage ? 'jpg' : 'mp4'}`,
-        mimeType: asset.mimeType ?? (isImage ? 'image/jpeg' : 'video/mp4'),
-        size,
-      })
     }
-    onChange([...items, ...next])
+    onChange(mergeUnique(items, next))
   }
 
   async function addDocument() {
@@ -78,15 +93,12 @@ export function DiaryAttachmentPicker({ items, onChange }: Props) {
       multiple: true,
     })
     if (res.canceled) return
-    onChange([
-      ...items,
-      ...res.assets.map(a => ({
-        uri: a.uri,
-        name: a.name,
-        mimeType: a.mimeType ?? 'application/octet-stream',
-        size: a.size ?? 0,
-      })),
-    ])
+    onChange(mergeUnique(items, res.assets.map(a => ({
+      uri: a.uri,
+      name: a.name,
+      mimeType: a.mimeType ?? 'application/octet-stream',
+      size: a.size ?? 0,
+    }))))
   }
 
   return (

@@ -34,6 +34,9 @@ export default function SiteDiaryScreen() {
   const [workers, setWorkers] = useState('')
   const [delays, setDelays] = useState('')
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  // Reused across retries: if the entry was created but an attachment upload
+  // failed, a retry reuses this id instead of inserting a duplicate entry.
+  const [createdEntryId, setCreatedEntryId] = useState<string | null>(null)
 
   const { data: entries, isLoading } = useQuery({
     queryKey: ['diary', projectId],
@@ -43,26 +46,31 @@ export default function SiteDiaryScreen() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const entry = await diaryService.create(client, orgId, profile!.id, {
-        projectId,
-        entryDate,
-        entryType,
-        progressNotes: progressNotes.trim(),
-        safetyNotes: safetyNotes.trim() || undefined,
-        weather: weather || undefined,
-        workersOnSite: workers ? parseInt(workers, 10) : undefined,
-        delays: delays.trim() || undefined,
-      })
-      if (attachments.length > 0) {
-        await uploadDiaryAttachments(client, {
-          orgId,
+      // Create the entry once; a retry after a failed upload reuses the id.
+      let entryId = createdEntryId
+      if (!entryId) {
+        const entry = await diaryService.create(client, orgId, profile!.id, {
           projectId,
-          entryId: (entry as { id: string }).id,
-          userId: profile!.id,
-          items: attachments,
+          entryDate,
+          entryType,
+          progressNotes: progressNotes.trim(),
+          safetyNotes: safetyNotes.trim() || undefined,
+          weather: weather || undefined,
+          workersOnSite: workers ? parseInt(workers, 10) : undefined,
+          delays: delays.trim() || undefined,
         })
+        entryId = (entry as { id: string }).id
+        setCreatedEntryId(entryId)
       }
-      return entry
+      if (attachments.length > 0) {
+        await uploadDiaryAttachments(
+          client,
+          { orgId, projectId, entryId, userId: profile!.id, items: attachments },
+          // Drop each committed item so a retry resumes with only what's left.
+          (uploaded) => setAttachments(prev => prev.filter(a => a !== uploaded)),
+        )
+      }
+      return { id: entryId }
     },
     onSuccess: (entry) => {
       void track(ANALYTICS_EVENTS.DIARY_ENTRY_CREATED, {
@@ -76,7 +84,7 @@ export default function SiteDiaryScreen() {
       })
       // Notify the project roster (bell + full-entry email) now that the entry
       // and its attachments are committed. Fire-and-forget — never block the UI.
-      void notifyRoster((entry as { id: string }).id)
+      void notifyRoster(entry.id)
       queryClient.invalidateQueries({ queryKey: ['diary', projectId] })
       setShowForm(false)
       setEntryType('progress')
@@ -86,7 +94,9 @@ export default function SiteDiaryScreen() {
       setWorkers('')
       setDelays('')
       setAttachments([])
+      setCreatedEntryId(null)
     },
+    // Keep createdEntryId on error so a retry reuses the entry (no duplicate).
     onError: (e: any) => Alert.alert('Error', e.message ?? 'Failed to save entry'),
   })
 
