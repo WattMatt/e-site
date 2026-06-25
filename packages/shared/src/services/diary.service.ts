@@ -52,13 +52,15 @@ export function attachmentKindFromMime(mime: string): DiaryAttachmentKind {
 }
 
 export const diaryService = {
-  async list(client: TypedSupabaseClient, projectId: string) {
-    const { data, error } = await client
+  async list(client: TypedSupabaseClient, projectId: string, opts?: { limit?: number }) {
+    let query = client
       .schema('projects')
       .from('site_diary_entries')
       .select('*')
       .eq('project_id', projectId)
       .order('entry_date', { ascending: false })
+    if (opts?.limit) query = (query as any).limit(opts.limit)
+    const { data, error } = await query
     if (error) throw error
     const entries = data ?? []
     const profiles = await fetchProfileMap(client, entries.map((e: any) => e.created_by))
@@ -76,6 +78,7 @@ export const diaryService = {
       dateTo?: string
       entryType?: DiaryEntryType
       projectId?: string
+      limit?: number
     },
   ) {
     let query = client
@@ -92,6 +95,7 @@ export const diaryService = {
     if (filters?.dateTo) query = query.lte('entry_date', filters.dateTo)
     if (filters?.entryType) query = (query as any).eq('entry_type', filters.entryType)
     if (filters?.projectId) query = query.eq('project_id', filters.projectId)
+    if (filters?.limit) query = (query as any).limit(filters.limit)
 
     const { data, error } = await query
     if (error) throw error
