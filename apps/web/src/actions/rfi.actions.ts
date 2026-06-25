@@ -16,7 +16,6 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { resolveProjectRecipients } from '@/lib/recipients'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
 import {
   createRfiSchema,
@@ -28,7 +27,6 @@ import {
 import { z } from 'zod'
 
 import { dispatchNotification } from '@/lib/notifications'
-import { dispatchRfiEmail } from '@/lib/rfi-email'
 
 const uuidSchema = z.string().uuid()
 
@@ -78,32 +76,9 @@ export async function createRfiAction(
     priority: i.priority,
   })
 
-  // In-app bell → the whole project team (every active member + implicit org
-  // owners/admins/PMs), resolved live (00146), minus the raiser. Same audience
-  // as the email.
-  const { userIds: bellUserIds } = await resolveProjectRecipients(i.projectId, { excludeUserId: user.id })
-  if (bellUserIds.length) {
-    await dispatchNotification({
-      userIds: bellUserIds,
-      title: 'New RFI raised',
-      body: `"${rfi.subject}" — ${i.priority} priority${i.dueDate ? ` · due ${i.dueDate}` : ''}`,
-      route: `/rfis/${rfi.id}`,
-      type: 'rfi_created',
-      entityType: 'rfi',
-      entityId: rfi.id,
-    })
-  }
-
-  // Email channel → all active project members, gated on notifyRfiEmail.
-  await dispatchRfiEmail({
-    projectId: i.projectId,
-    rfiId: rfi.id,
-    rfiSubject: rfi.subject,
-    priority: i.priority,
-    dueDate: i.dueDate ?? null,
-    assigneeId: rfi.assigned_to,
-    raiserId: user.id,
-  })
+  // Team-wide notifications (bell + email) are fanned out inside
+  // rfiService.create via the notify-rfi-created Edge Function, so web, mobile,
+  // and the floor-plan caller all notify from one shared path.
 
   revalidatePath('/rfis')
   revalidatePath(`/projects/${i.projectId}`)
