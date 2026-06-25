@@ -146,8 +146,12 @@ describe('renderDiaryCreatedEmail', () => {
     authorName: 'Jane Foreman',
     projectName: 'Centurion Substation',
     entryDate: '2026-06-24',
-    summary: 'Poured slab on level 2. 14 workers on site.',
+    entryTypeLabel: 'Progress',
+    entryId: 'e9',
     projectId: 'proj-123',
+    progressNotes: 'Poured slab on level 2.',
+    weather: 'Sunny',
+    workersOnSite: 14,
     siteUrl: 'https://app.e-site.live',
   }
 
@@ -155,14 +159,42 @@ describe('renderDiaryCreatedEmail', () => {
     expect(renderDiaryCreatedEmail(vars).subject).toBe('Site diary — Centurion Substation (2026-06-24)')
   })
 
-  it('html links to the project diary and contains the summary', () => {
+  it('deep-links to the specific entry and shows full notes + type + meta', () => {
     const { html } = renderDiaryCreatedEmail(vars)
-    expect(html).toContain('https://app.e-site.live/projects/proj-123/diary')
-    expect(html).toContain('Poured slab on level 2')
+    expect(html).toContain('https://app.e-site.live/projects/proj-123/diary#entry-e9')
+    expect(html).toContain('Poured slab on level 2.')
+    expect(html).toContain('Progress')
+    expect(html).toContain('Sunny')
+    expect(html).toContain('Workers:')
   })
 
-  it('escapes HTML in the summary', () => {
-    const { html } = renderDiaryCreatedEmail({ ...vars, summary: '<b>bold</b>' })
+  it('renders an inline thumbnail per supplied photo', () => {
+    const { html } = renderDiaryCreatedEmail({
+      ...vars,
+      photos: [
+        { url: 'https://cdn.example.com/a.jpg?token=x', fileName: 'a.jpg' },
+        { url: 'https://cdn.example.com/b.jpg?token=y', fileName: 'b.jpg' },
+      ],
+    })
+    expect(html).toContain('https://cdn.example.com/a.jpg?token=x')
+    expect(html).toContain('https://cdn.example.com/b.jpg?token=y')
+    expect((html.match(/<img /g) ?? []).length).toBe(2)
+  })
+
+  it('summarises non-image / overflow attachments', () => {
+    const { html } = renderDiaryCreatedEmail({ ...vars, otherAttachmentCount: 3 })
+    expect(html).toContain('3 more attachment')
+  })
+
+  it('omits optional sections cleanly (no "null"/"undefined", no empty Safety)', () => {
+    const { html } = renderDiaryCreatedEmail(vars)
+    expect(html).not.toContain('null')
+    expect(html).not.toContain('undefined')
+    expect(html).not.toContain('Safety notes')
+  })
+
+  it('escapes HTML in user-supplied fields', () => {
+    const { html } = renderDiaryCreatedEmail({ ...vars, progressNotes: '<b>bold</b>' })
     expect(html).not.toContain('<b>bold</b>')
     expect(html).toContain('&lt;b&gt;')
   })

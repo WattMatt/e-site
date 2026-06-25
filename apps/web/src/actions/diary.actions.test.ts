@@ -8,6 +8,7 @@ const {
   getEntryForGateMock,
   hardDeleteMock,
   createMock,
+  notifyCreatedMock,
 } = vi.hoisted(() => ({
   createClientMock: vi.fn(),
   createServiceClientMock: vi.fn(),
@@ -15,6 +16,7 @@ const {
   getEntryForGateMock: vi.fn(),
   hardDeleteMock: vi.fn(),
   createMock: vi.fn(),
+  notifyCreatedMock: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -34,8 +36,11 @@ vi.mock('@esite/shared', async () => {
     },
   }
 })
+vi.mock('@/lib/diary-email', () => ({
+  notifyDiaryEntryCreated: (...a: unknown[]) => notifyCreatedMock(...a),
+}))
 
-import { deleteDiaryEntryAction, createDiaryEntryAction } from './diary.actions'
+import { deleteDiaryEntryAction, createDiaryEntryAction, notifyDiaryEntryAction } from './diary.actions'
 
 const ENTRY_ID   = '11111111-1111-1111-1111-111111111111'
 const PROJECT_ID = '22222222-2222-2222-2222-222222222222'
@@ -58,6 +63,8 @@ beforeEach(() => {
   getEntryForGateMock.mockReset()
   hardDeleteMock.mockReset()
   createMock.mockReset()
+  notifyCreatedMock.mockReset()
+  notifyCreatedMock.mockResolvedValue(undefined)
 
   createClientMock.mockResolvedValue(mockClient())
   createServiceClientMock.mockReturnValue({})
@@ -218,5 +225,64 @@ describe('createDiaryEntryAction — validation + server-forced tenancy', () => 
     createMock.mockRejectedValue(new Error('insert failed'))
     const res = await createDiaryEntryAction(validCreateInput)
     expect(res).toEqual({ error: 'insert failed' })
+  })
+
+  it('does NOT notify the roster (notification is deferred to notifyDiaryEntryAction)', async () => {
+    createClientMock.mockResolvedValue(mockCreateClient())
+    createMock.mockResolvedValue({ id: 'new-entry' })
+    await createDiaryEntryAction(validCreateInput)
+    expect(notifyCreatedMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─── notifyDiaryEntryAction ──────────────────────────────────────────────
+
+/** Cookie/RLS client that resolves the entry via .schema('projects'). */
+function mockNotifyClient(opts: { user?: unknown; entry?: unknown } = {}) {
+  const {
+    user = { id: AUTHOR_ID },
+    entry = {
+      id: ENTRY_ID, project_id: PROJECT_ID, entry_date: '2026-06-24',
+      progress_notes: 'Poured the slab.', created_by: AUTHOR_ID,
+    },
+  } = opts
+  const chain: any = {
+    select: () => chain,
+    eq: () => chain,
+    maybeSingle: () => Promise.resolve({ data: entry, error: null }),
+  }
+  return {
+    auth: { getUser: () => Promise.resolve({ data: { user } }) },
+    schema: () => ({ from: () => chain }),
+  }
+}
+
+describe('notifyDiaryEntryAction', () => {
+  it('rejects a non-uuid entryId before any I/O', async () => {
+    await notifyDiaryEntryAction('not-a-uuid')
+    expect(createClientMock).not.toHaveBeenCalled()
+    expect(notifyCreatedMock).not.toHaveBeenCalled()
+  })
+
+  it('no-ops when unauthenticated', async () => {
+    createClientMock.mockResolvedValue(mockNotifyClient({ user: null }))
+    await notifyDiaryEntryAction(ENTRY_ID)
+    expect(notifyCreatedMock).not.toHaveBeenCalled()
+  })
+
+  it('no-ops when the entry is not visible (other org / missing)', async () => {
+    createClientMock.mockResolvedValue(mockNotifyClient({ entry: null }))
+    await notifyDiaryEntryAction(ENTRY_ID)
+    expect(notifyCreatedMock).not.toHaveBeenCalled()
+  })
+
+  it("notifies with the entry's OWN project + author (loaded under RLS)", async () => {
+    createClientMock.mockResolvedValue(mockNotifyClient())
+    await notifyDiaryEntryAction(ENTRY_ID)
+    expect(notifyCreatedMock).toHaveBeenCalledWith(expect.objectContaining({
+      entryId: ENTRY_ID,
+      projectId: PROJECT_ID,
+      authorId: AUTHOR_ID,
+    }))
   })
 })

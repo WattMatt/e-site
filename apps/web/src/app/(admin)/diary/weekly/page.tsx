@@ -2,7 +2,6 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
-import { ReportButton } from '@/components/ui/ReportButton'
 
 export const metadata: Metadata = { title: 'Weekly Summary' }
 
@@ -72,7 +71,9 @@ export default async function WeeklyDiaryPage({ searchParams }: Props) {
           <p className="page-subtitle">{formatWeekLabel(weekStart, weekEnd)}</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <ReportButton type="diary-weekly" entityId={`${weekStart}:${weekEnd}`} label="↓ Export PDF" />
+          {/* Export PDF removed: generate-report has no 'diary-weekly' handler yet,
+              so the button errored ("Invalid report type"). Re-added in Phase 7
+              once the report handler is implemented. */}
           <Link href={`/diary/weekly?week=${prevWeek(weekStart)}`} className="filter-tab">← Prev week</Link>
           {!isCurrentWeek && (
             <Link href={`/diary/weekly?week=${nextWeek(weekStart)}`} className="filter-tab">Next week →</Link>

@@ -91,7 +91,7 @@ export default async function DiaryPage({ params }: Props) {
             const canDelete = entry.created_by === user!.id || viewerCanWrite
 
             return (
-              <div key={entry.id} className="data-panel">
+              <div key={entry.id} id={`entry-${entry.id}`} className="data-panel" style={{ scrollMarginTop: 80 }}>
                 <div className="data-panel-header">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{

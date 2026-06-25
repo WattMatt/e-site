@@ -28,6 +28,7 @@ describe.skipIf(!runIntegration)('snag + diary email — INTEGRATION (live DB)',
   let admin: SupabaseClient
   let orgId: string
   let projectId: string
+  let diaryEntryId: string
   let authorId: string
   let member2Id: string
   let member3Id: string
@@ -84,6 +85,18 @@ describe.skipIf(!runIntegration)('snag + diary email — INTEGRATION (live DB)',
       { project_id: projectId, organisation_id: orgId, user_id: member3Id, is_active: true },
       { project_id: projectId, organisation_id: orgId, user_id: inactiveId, is_active: false },
     ])
+
+    // A real diary entry — notifyDiaryEntryCreated loads it by id to build the email.
+    const { data: diary, error: diaryErr } = await (admin as any)
+      .schema('projects').from('site_diary_entries')
+      .insert({
+        project_id: projectId, organisation_id: orgId, created_by: authorId,
+        entry_date: '2026-06-24', entry_type: 'progress',
+        progress_notes: 'Poured slab on level 2.',
+      })
+      .select('id').single()
+    if (diaryErr) throw diaryErr
+    diaryEntryId = diary.id
   }, 60_000)
 
   afterAll(async () => {
@@ -166,17 +179,14 @@ describe.skipIf(!runIntegration)('snag + diary email — INTEGRATION (live DB)',
   it('notifyDiaryEntryCreated emails the full active roster when notifyDiaryEmail is ON', async () => {
     await projectSettingsService.update(admin as any, projectId, { notifyDiaryEmail: true })
     const { calls, spy } = mockFetch()
-    await notifyDiaryEntryCreated({
-      entryId: 'diary-xyz', projectId, entryDate: '2026-06-24',
-      progressNotes: 'Poured slab on level 2.', authorId,
-    })
+    await notifyDiaryEntryCreated({ entryId: diaryEntryId, projectId, authorId })
     expect(calls).toHaveLength(1)
     const call = calls[0]
     const recipients = (call.body.payload.to as string[]).map((e) => e.toLowerCase()).sort()
     expect(recipients).toEqual(activeRoster())
     expect(call.body.payload.subject).toContain('Site diary')
     expect(call.body.payload.subject).toContain('2026-06-24')
-    expect(call.body.payload.html).toContain(`/projects/${projectId}/diary`)
+    expect(call.body.payload.html).toContain(`/projects/${projectId}/diary#entry-${diaryEntryId}`)
     expect(call.body.payload.html).toContain('Poured slab on level 2')
     spy.mockRestore()
   }, 30_000)
@@ -184,10 +194,7 @@ describe.skipIf(!runIntegration)('snag + diary email — INTEGRATION (live DB)',
   it('notifyDiaryEntryCreated sends nothing when notifyDiaryEmail is OFF', async () => {
     await projectSettingsService.update(admin as any, projectId, { notifyDiaryEmail: false })
     const { calls, spy } = mockFetch()
-    await notifyDiaryEntryCreated({
-      entryId: 'diary-off', projectId, entryDate: '2026-06-24',
-      progressNotes: 'Poured slab.', authorId,
-    })
+    await notifyDiaryEntryCreated({ entryId: diaryEntryId, projectId, authorId })
     expect(calls).toHaveLength(0)
     spy.mockRestore()
   }, 30_000)
