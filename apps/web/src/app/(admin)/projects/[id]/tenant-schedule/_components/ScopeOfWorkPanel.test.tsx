@@ -4,12 +4,14 @@ import { render, screen } from '@testing-library/react'
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-const { mockSetScopeItemParty } = vi.hoisted(() => ({
+const { mockSetScopeItemParty, mockSetScopeNotRequired } = vi.hoisted(() => ({
   mockSetScopeItemParty: vi.fn(),
+  mockSetScopeNotRequired: vi.fn(),
 }))
 
 vi.mock('@/actions/tenant-scope.actions', () => ({
   setScopeItemPartyAction: (...args: unknown[]) => mockSetScopeItemParty(...args),
+  setScopeNotRequiredAction: (...args: unknown[]) => mockSetScopeNotRequired(...args),
 }))
 
 vi.mock('./TenantDocumentList', () => ({
@@ -42,6 +44,7 @@ describe('ScopeOfWorkPanel', () => {
     tenantDetails: {
       node_id: 'node-1',
       scope_status: 'awaited' as const,
+      scope_not_required: false,
     },
     onClose: vi.fn(),
   }
@@ -62,11 +65,31 @@ describe('ScopeOfWorkPanel', () => {
     render(
       <ScopeOfWorkPanel
         {...baseProps}
-        tenantDetails={{ node_id: 'node-1', scope_status: 'received' }}
+        tenantDetails={{ node_id: 'node-1', scope_status: 'received', scope_not_required: false }}
       />,
     )
     expect(screen.getByText('Received')).toBeDefined()
     expect(screen.queryByRole('button', { name: /^received$/i })).toBeNull()
+  })
+
+  it('shows "N/A — landlord" and a checked override when scope_not_required is set', () => {
+    render(
+      <ScopeOfWorkPanel
+        {...baseProps}
+        tenantDetails={{ node_id: 'node-1', scope_status: 'awaited', scope_not_required: true }}
+      />,
+    )
+    // not_required wins over the document-derived awaited/received state.
+    expect(screen.getByText('N/A — landlord')).toBeDefined()
+    expect(screen.queryByText('Awaited')).toBeNull()
+    const toggle = screen.getByLabelText(/landlord covers full scope/i) as HTMLInputElement
+    expect(toggle.checked).toBe(true)
+  })
+
+  it('renders an unchecked landlord-covers-full-scope toggle by default', () => {
+    render(<ScopeOfWorkPanel {...baseProps} />)
+    const toggle = screen.getByLabelText(/landlord covers full scope/i) as HTMLInputElement
+    expect(toggle.checked).toBe(false)
   })
 
   it('renders TenantDocumentList with kind="scope"', () => {

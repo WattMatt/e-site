@@ -97,15 +97,19 @@ export default async function TenantSchedulePage({ params }: Props) {
       const { data: details } = await supabase
         .schema('structure')
         .from('tenant_details')
-        .select('node_id, scope_status, layout_status, layout_issued_at')
+        .select('node_id, scope_status, scope_not_required, layout_status, layout_issued_at')
         .in('node_id', nodeIds)
 
       if (details) {
-        allTenantDetails = (details as Array<TenantDetails & LayoutDetails>).map((d) => ({
+        // Generated DB types lag migration 00150 (scope_not_required) — cast
+        // through unknown at the query boundary, as the BO query does for 00093.
+        const rows = details as unknown as Array<TenantDetails & LayoutDetails>
+        allTenantDetails = rows.map((d) => ({
           node_id: d.node_id,
           scope_status: d.scope_status,
+          scope_not_required: d.scope_not_required ?? false,
         }))
-        allLayoutDetails = (details as Array<TenantDetails & LayoutDetails>).map((d) => ({
+        allLayoutDetails = rows.map((d) => ({
           node_id: d.node_id,
           layout_status: d.layout_status ?? 'not_issued',
           layout_issued_at: d.layout_issued_at ?? null,

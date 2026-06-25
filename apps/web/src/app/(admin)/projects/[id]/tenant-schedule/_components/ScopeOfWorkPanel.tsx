@@ -17,7 +17,7 @@
  */
 
 import { useState, useTransition } from 'react'
-import { setScopeItemPartyAction } from '@/actions/tenant-scope.actions'
+import { setScopeItemPartyAction, setScopeNotRequiredAction } from '@/actions/tenant-scope.actions'
 import { TenantDocumentList } from './TenantDocumentList'
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,8 @@ export interface TenantScopeItem {
 export interface TenantDetails {
   node_id: string
   scope_status: 'awaited' | 'received'
+  /** Landlord covers the full scope — no scope document will be issued (00150). */
+  scope_not_required: boolean
 }
 
 interface Props {
@@ -69,8 +71,24 @@ export function ScopeOfWorkPanel({
   const [scopeItems, setScopeItems] = useState<TenantScopeItem[]>(initialScopeItems)
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+  const [notRequired, setNotRequired] = useState<boolean>(tenantDetails?.scope_not_required ?? false)
 
   const scopeStatus = tenantDetails?.scope_status ?? 'awaited'
+
+  // ── Scope-not-required (landlord covers full scope) override ───────────────
+
+  function handleNotRequiredChange(next: boolean) {
+    setError(null)
+    const prev = notRequired
+    setNotRequired(next) // optimistic
+    startTransition(async () => {
+      const res = await setScopeNotRequiredAction(projectId, nodeId, next)
+      if ('error' in res) {
+        setError(res.error)
+        setNotRequired(prev) // revert
+      }
+    })
+  }
 
   // ── Scope item party toggle ───────────────────────────────────────────────
 
@@ -185,7 +203,8 @@ export function ScopeOfWorkPanel({
           flexWrap: 'wrap',
         }}
       >
-        {/* Status display (read-only — auto-derived by DB trigger) */}
+        {/* Status display (received/awaited auto-derived by DB trigger; N/A is the
+            manual landlord-covered override which takes precedence). */}
         <div>
           <div
             style={{
@@ -207,16 +226,46 @@ export function ScopeOfWorkPanel({
               border: '1px solid',
               fontSize: 12,
               fontWeight: 600,
-              background:
-                scopeStatus === 'received' ? 'var(--c-green-dim)' : 'var(--c-amber-dim)',
-              borderColor:
-                scopeStatus === 'received' ? 'var(--c-green)' : 'var(--c-amber)',
-              color:
-                scopeStatus === 'received' ? 'var(--c-green)' : 'var(--c-amber)',
+              background: notRequired
+                ? 'var(--c-blue-dim)'
+                : scopeStatus === 'received'
+                  ? 'var(--c-green-dim)'
+                  : 'var(--c-amber-dim)',
+              borderColor: notRequired
+                ? 'var(--c-blue)'
+                : scopeStatus === 'received'
+                  ? 'var(--c-green)'
+                  : 'var(--c-amber)',
+              color: notRequired
+                ? 'var(--c-blue)'
+                : scopeStatus === 'received'
+                  ? 'var(--c-green)'
+                  : 'var(--c-amber)',
             }}
           >
-            {scopeStatus === 'received' ? 'Received' : 'Awaited'}
+            {notRequired ? 'N/A — landlord' : scopeStatus === 'received' ? 'Received' : 'Awaited'}
           </div>
+
+          {/* Landlord-covers-full-scope override (national tenants: no scope doc issued) */}
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              marginTop: 12,
+              cursor: isPending ? 'default' : 'pointer',
+              fontSize: 12,
+              color: 'var(--c-text-mid)',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={notRequired}
+              disabled={isPending}
+              onChange={(e) => handleNotRequiredChange(e.target.checked)}
+            />
+            Landlord covers full scope (no document)
+          </label>
         </div>
 
         {/* Scope documents (managed set) */}
