@@ -135,8 +135,15 @@ create.tsx → rfiService.create(client, …)
   web dispatch helpers.
 - `notify-rfi-created`: each downstream POST is best-effort; a failure of one
   channel must not block the other. Returns a tally for log inspection.
-- Deploy order: ship `notify-rfi-created` **before** the shared/mobile change.
-  In the gap, invokes 404 → swallowed (no notify), creation still succeeds.
+- **Deploy order is critical.** `notify-rfi-created` must be deployed to prod
+  **before** the web/shared bundle ships. Once `createRfiAction` stops
+  dispatching inline, ALL RFI notifications (web *and* mobile) flow through the
+  function — if the web change deploys first, every RFI silently notifies nobody
+  until the function lands (invokes 404 → swallowed best-effort; creation still
+  succeeds, but no bell/email). The edge-function deploy workflow is manual
+  (`workflow_dispatch`) while Vercel auto-deploys `main`, so: run
+  `Deploy Edge Functions` (or `supabase functions deploy notify-rfi-created`)
+  FIRST, confirm it's live, THEN merge to `main`.
 
 ## Testing
 
