@@ -3,8 +3,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { diaryService } from '@esite/shared'
 import type { DiaryAttachment } from '@esite/shared'
+import { deleteDiaryAttachmentAction } from '@/actions/diary.actions'
 import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT_DOC } from '@/lib/diary-attachments'
 
 /** A diary attachment plus a signed URL generated server-side. */
@@ -25,6 +25,7 @@ export function DiaryAttachmentStrip({ entryId, orgId, projectId, userId, attach
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [armed, setArmed] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<DiaryAttachmentView | null>(null)
 
   async function onAdd(e: React.ChangeEvent<HTMLInputElement>) {
@@ -45,12 +46,19 @@ export function DiaryAttachmentStrip({ entryId, orgId, projectId, userId, attach
   }
 
   async function onDelete(att: DiaryAttachmentView) {
-    if (!window.confirm(`Delete "${att.file_name}"?`)) return
+    // Two-step armed delete (Safari suppresses window.confirm), matching
+    // DeleteDiaryEntryButton. First click arms; a second within 3s commits.
+    if (armed !== att.id) {
+      setArmed(att.id)
+      setTimeout(() => setArmed(a => (a === att.id ? null : a)), 3000)
+      return
+    }
+    setArmed(null)
     setBusy(true)
     setError('')
     try {
-      const client = createClient()
-      await diaryService.deleteAttachment(client as never, att)
+      const res = await deleteDiaryAttachmentAction(att.id)
+      if (res.error) { setError(res.error); return }
       router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Delete failed.')
@@ -117,14 +125,19 @@ export function DiaryAttachmentStrip({ entryId, orgId, projectId, userId, attach
                 type="button"
                 onClick={() => onDelete(att)}
                 disabled={busy}
-                aria-label={`Delete ${att.file_name}`}
+                aria-label={armed === att.id ? `Confirm delete ${att.file_name}` : `Delete ${att.file_name}`}
+                title={armed === att.id ? 'Click again to delete' : 'Delete'}
                 style={{
-                  position: 'absolute', top: -6, right: -6, width: 20, height: 20,
-                  borderRadius: '50%', border: '1px solid var(--c-border)',
-                  background: 'var(--c-panel)', color: 'var(--c-red)', cursor: 'pointer',
-                  fontSize: 11, lineHeight: 1,
+                  position: 'absolute', top: -6, right: -6,
+                  width: armed === att.id ? 'auto' : 20, height: 20,
+                  padding: armed === att.id ? '0 6px' : 0,
+                  borderRadius: armed === att.id ? 10 : '50%',
+                  border: `1px solid ${armed === att.id ? 'var(--c-red)' : 'var(--c-border)'}`,
+                  background: armed === att.id ? 'var(--c-red)' : 'var(--c-panel)',
+                  color: armed === att.id ? '#fff' : 'var(--c-red)', cursor: 'pointer',
+                  fontSize: armed === att.id ? 9 : 11, lineHeight: 1, fontWeight: 700,
                 }}
-              >✕</button>
+              >{armed === att.id ? 'Delete?' : '✕'}</button>
             )}
           </div>
         ))}

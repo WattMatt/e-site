@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 
 export const metadata: Metadata = { title: 'Site Diary' }
-import { diaryService, ENTRY_TYPE_LABELS, formatDate } from '@esite/shared'
+import { diaryService, ENTRY_TYPE_LABELS, DIARY_ENTRY_TYPES, formatDate } from '@esite/shared'
 import type { DiaryEntryType } from '@esite/shared'
 import { DiaryAttachmentStrip, type DiaryAttachmentView } from '@/components/diary/DiaryAttachmentStrip'
 
@@ -47,10 +47,15 @@ export default async function DiaryListPage({ searchParams }: Props) {
   const userId = user!.id
 
   const limit = Math.max(PAGE_SIZE, Math.min(2000, Number(params.n) || PAGE_SIZE))
+  // Validate the type filter against the known enum — a bogus ?type= would
+  // otherwise hit the DB and get swallowed by the catch below as an empty list.
+  const entryType = params.type && (DIARY_ENTRY_TYPES as readonly string[]).includes(params.type)
+    ? (params.type as DiaryEntryType)
+    : undefined
   const entries = await diaryService.listByOrg(supabase as any, orgId, {
     dateFrom: params.dateFrom || undefined,
     dateTo: params.dateTo || undefined,
-    entryType: params.type as DiaryEntryType | undefined,
+    entryType,
     projectId: params.project || undefined,
     limit,
   }).catch(() => [])
