@@ -9,7 +9,7 @@ const baseData: TenantScheduleReportData = {
   projectName: 'Princess Mkabayi, Vryheid',
   kpis: {
     totalShops: 4, activeShops: 3, decommissionedShops: 1, totalGlaM2: 2040,
-    scopeCompletePct: 67, layoutsIssuedPct: 67,
+    scopeComplete: 2, scopeCompletePct: 67, layoutsIssued: 2, layoutsIssuedPct: 67,
     boards: { landlord: 2, ordered: 1 }, lights: { landlord: 1, ordered: 1 },
     byTenantCount: 2, bo: { upcoming: 1, overdue: 1, noDate: 1 },
   },

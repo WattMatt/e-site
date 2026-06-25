@@ -72,8 +72,12 @@ export interface ReportKpis {
   activeShops: number
   decommissionedShops: number
   totalGlaM2: number
-  /** % of active shops whose scope is complete — received OR landlord-covered (N/A). */
+  /** Count of active shops whose scope is complete — received OR landlord-covered. */
+  scopeComplete: number
+  /** % of active shops whose scope is complete (scopeComplete / activeShops). */
   scopeCompletePct: number
+  /** Count of active shops whose layout has been issued. */
+  layoutsIssued: number
   layoutsIssuedPct: number
   boards: { landlord: number; ordered: number }
   lights: { landlord: number; ordered: number }
@@ -150,7 +154,9 @@ export function computeReportModel(input: ComputeInput): { kpis: ReportKpis; sho
       activeShops,
       decommissionedShops: decommissionedCount,
       totalGlaM2,
+      scopeComplete,
       scopeCompletePct: pct(scopeComplete, activeShops),
+      layoutsIssued,
       layoutsIssuedPct: pct(layoutsIssued, activeShops),
       boards,
       lights,

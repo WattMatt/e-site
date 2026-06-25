@@ -40,9 +40,9 @@ const shopCell = (r: ShopRow): string[] => [
   r.tenantName,
   r.glaM2 != null ? r.glaM2.toLocaleString('en-ZA') : '—',
   r.breakerA != null ? (r.poleConfig ? `${r.breakerA} A ${r.poleConfig}` : `${r.breakerA} A`) : '—',
+  scopeStateLabel(r.scope),
   orderStateLabel(r.db),
   orderStateLabel(r.lights),
-  scopeStateLabel(r.scope),
   r.layoutIssued ? 'Issued' : 'Not issued',
   r.boDate ? (r.boOverdue ? `${r.boDate} (overdue)` : r.boDate) : '—',
 ]
@@ -75,8 +75,8 @@ export function TenantScheduleReportDocument({ data, branding }: TenantScheduleR
           </StatGroup>
 
           <StatGroup title="Scope & layout completion" accent={accent}>
-            <StatCard label="Scope complete" value={`${kpis.scopeCompletePct}%`} sub="received or landlord-covered" />
-            <StatCard label="Layouts issued" value={`${kpis.layoutsIssuedPct}%`} />
+            <StatCard label="Scope complete" value={`${kpis.scopeComplete} / ${kpis.activeShops}`} sub={`${kpis.scopeCompletePct}%`} />
+            <StatCard label="Layouts issued" value={`${kpis.layoutsIssued} / ${kpis.activeShops}`} sub={`${kpis.layoutsIssuedPct}%`} />
           </StatGroup>
 
           <StatGroup title="Landlord procurement — boards & lights" accent={accent}>
@@ -99,11 +99,12 @@ export function TenantScheduleReportDocument({ data, branding }: TenantScheduleR
 
         <Section title="Shop summary" accent={accent}>
           <Table
-            columns={['Shop', 'Tenant', 'GLA m²', 'Breaker', 'DB', 'Lights', 'Scope', 'Layout', 'BO date']}
+            columns={['Shop', 'Tenant', 'GLA m²', 'Breaker', 'Scope', 'DB', 'Lights', 'Layout', 'BO date']}
             rows={shopRows.length > 0 ? shopRows.map(shopCell) : [['—', 'No active shops', '—', '—', '—', '—', '—', '—', '—']]}
             repeatHeader
             unbreakableRows
             align={['left', 'left', 'right', 'right', 'left', 'left', 'left', 'left', 'left']}
+            dense
           />
         </Section>
       </Page>
