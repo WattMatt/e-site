@@ -55,6 +55,20 @@ async function hasOrg(userId: string): Promise<boolean> {
   return (count ?? 0) > 0
 }
 
+// A client (Phase 2) has NO org membership but at least one per-site review grant.
+// Such a user must land in the client portal, NOT /onboarding. Single cheap
+// existence query (head + count), service-role to bypass RLS — safe because the
+// session is already verified by updateSession().
+async function hasClientGrant(userId: string): Promise<boolean> {
+  const { count } = await serviceClient
+    .from('client_site_grants')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+  return (count ?? 0) > 0
+}
+
+const CLIENT_PORTAL_PATH = '/portal'
+
 async function hasVerifiedMfaFactor(userId: string): Promise<boolean> {
   try {
     const res = await fetch(
@@ -128,10 +142,13 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 4. On /verify-email but already confirmed → forward to onboarding/dashboard.
+  // 4. On /verify-email but already confirmed → forward to dashboard (org member),
+  //    client portal (grant-holding client, no org), or onboarding (new signup).
   if (user && isVerifyEmail && user.email_confirmed_at) {
     const url = request.nextUrl.clone()
-    url.pathname = (await hasOrg(user.id)) ? '/dashboard' : ONBOARDING_PATH
+    if (await hasOrg(user.id)) url.pathname = '/dashboard'
+    else if (await hasClientGrant(user.id)) url.pathname = CLIENT_PORTAL_PATH
+    else url.pathname = ONBOARDING_PATH
     return NextResponse.redirect(url)
   }
 
@@ -149,9 +166,21 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 5. Authenticated but no org → onboarding
+  // 5. Authenticated but no org. Two sub-cases:
+  //    (a) the user has a per-site client grant → they belong in the client
+  //        portal. Let them through if they're already on /portal/*, otherwise
+  //        send them there (NOT onboarding — they have nothing to onboard).
+  //    (b) genuinely new signup (no org, no grant) → onboarding.
   if (user && !isPublicPath && !isVerifyEmail && !isVerifyMfa && !isOnboarding) {
     if (!(await hasOrg(user.id))) {
+      const isClientPortal = pathname.startsWith(CLIENT_PORTAL_PATH)
+      if (await hasClientGrant(user.id)) {
+        if (isClientPortal) return supabaseResponse
+        const url = request.nextUrl.clone()
+        url.pathname = CLIENT_PORTAL_PATH
+        url.searchParams.delete('next')
+        return NextResponse.redirect(url)
+      }
       const url = request.nextUrl.clone()
       url.pathname = ONBOARDING_PATH
       return NextResponse.redirect(url)
@@ -159,11 +188,17 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse
   }
 
-  // 6. Has org + on onboarding → dashboard
+  // 6. On onboarding but already provisioned → forward away. Org member →
+  //    dashboard; grant-holding client (no org) → client portal.
   if (user && isOnboarding) {
     if (await hasOrg(user.id)) {
       const url = request.nextUrl.clone()
       url.pathname = '/dashboard'
+      return NextResponse.redirect(url)
+    }
+    if (await hasClientGrant(user.id)) {
+      const url = request.nextUrl.clone()
+      url.pathname = CLIENT_PORTAL_PATH
       return NextResponse.redirect(url)
     }
   }

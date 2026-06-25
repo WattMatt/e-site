@@ -5,6 +5,11 @@ import { hasFeatureSeat } from '@/lib/features'
 import { Card, CardBody } from '@/components/ui/Card'
 import { loadGcrConfigAction } from './gcr.actions'
 import { listGcrReportRevisionsAction } from './gcr-reports.actions'
+import {
+  listClientSiteAccessAction,
+  listGcrChangeRequestsAction,
+  getLatestClientReviewPublishAction,
+} from './gcr-client-review.actions'
 import { GcrTabs } from './GcrTabs'
 
 interface Props {
@@ -102,6 +107,18 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
   const reportRevisions = Array.isArray(revisionsResult) ? revisionsResult : []
   const revisionsLoadFailed = !Array.isArray(revisionsResult)
 
+  // Client-review tab data (all degrade to empty on a transient load failure;
+  // the actions enforce COST_VIEW server-side).
+  const [grantsResult, requestsResult, publishResult] = await Promise.all([
+    listClientSiteAccessAction(id),
+    listGcrChangeRequestsAction(id),
+    getLatestClientReviewPublishAction(id),
+  ])
+  const clientGrants = Array.isArray(grantsResult) ? grantsResult : []
+  const clientRequests = Array.isArray(requestsResult) ? requestsResult : []
+  const clientLastPublishedAt =
+    'publishedAt' in publishResult ? publishResult.publishedAt : null
+
   return (
     <div className="animate-fadeup">
       <div className="page-header">
@@ -118,6 +135,9 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
         data={result}
         reportRevisions={reportRevisions}
         reportRevisionsLoadFailed={revisionsLoadFailed}
+        clientGrants={clientGrants}
+        clientRequests={clientRequests}
+        clientLastPublishedAt={clientLastPublishedAt}
       />
     </div>
   )

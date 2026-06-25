@@ -1,0 +1,207 @@
+'use server'
+
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { dispatchNotification, dispatchEmail } from '@/lib/notifications'
+import {
+  ORG_WRITE_ROLES,
+  gcrChangeRequestBatchSchema,
+  type ClientGcrReviewPayload,
+  type GcrChangeRequestInput,
+} from '@esite/shared'
+
+export interface ClientSiteRow {
+  project_id: string
+  project_name: string
+  organisation_name: string | null
+}
+
+/** List the projects (sites) this client has been granted review access to. */
+export async function getClientSitesAction(): Promise<ClientSiteRow[] | { error: string }> {
+  const supabase = await createClient()
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData?.user) return { error: 'Not authenticated' }
+
+  const { data, error } = await (supabase as any)
+    .from('client_site_grants')
+    .select('project_id, projects:project_id (name, organisations:organisation_id (name))')
+    .eq('user_id', userData.user.id)
+  if (error) return { error: error.message }
+
+  return ((data ?? []) as any[]).map((r) => ({
+    project_id: r.project_id,
+    project_name: r.projects?.name ?? 'Site',
+    organisation_name: r.projects?.organisations?.name ?? null,
+  }))
+}
+
+/**
+ * The ONLY client GCR read path: the grant-gated, outputs-only RPC. Returns a
+ * null payload when no snapshot has been published yet (caller renders empty).
+ */
+export async function getClientGcrReviewAction(
+  projectId: string,
+): Promise<{ payload: ClientGcrReviewPayload | null } | { error: string }> {
+  const supabase = await createClient()
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData?.user) return { error: 'Not authenticated' }
+
+  const { data, error } = await (supabase as any)
+    .schema('gcr')
+    .rpc('get_client_review', { p_project_id: projectId })
+  if (error) return { error: error.message }
+
+  return { payload: (data as ClientGcrReviewPayload | null) ?? null }
+}
+
+/**
+ * Resolve shopNumber -> live structure.nodes.id for a granted client. The frozen
+ * snapshot carries shopNumber only, but a captured proposal must target a real
+ * live node id (submitGcrChangeRequestsAction scope-checks it). A client has no
+ * org membership and cannot read structure.nodes under RLS, so this goes through
+ * the same grant-gated SECURITY DEFINER RPC family as get_client_review. The RPC
+ * exposes ONLY { shop_number, node_id } — no cost data ever.
+ */
+export async function getClientReviewNodesAction(
+  projectId: string,
+): Promise<{ nodeIdByShop: Record<string, string> } | { error: string }> {
+  const supabase = await createClient()
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData?.user) return { error: 'Not authenticated' }
+
+  const { data, error } = await (supabase as any)
+    .schema('gcr')
+    .rpc('get_client_review_nodes', { p_project_id: projectId })
+  if (error) return { error: error.message }
+
+  const nodeIdByShop: Record<string, string> = {}
+  for (const r of (data ?? []) as { shop_number: string | null; node_id: string }[]) {
+    if (r.shop_number != null) nodeIdByShop[r.shop_number] = r.node_id
+  }
+  return { nodeIdByShop }
+}
+
+/**
+ * Submit a batch of captured proposals + comments, pinned to the latest
+ * published snapshot. RLS gates the insert (granted client only). Then notifies
+ * the project's write-role members (in-app + branded email), best-effort.
+ */
+export async function submitGcrChangeRequestsAction(
+  projectId: string,
+  requests: GcrChangeRequestInput[],
+): Promise<{ ok: true; submitted: number } | { error: string }> {
+  const supabase = await createClient()
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData?.user) return { error: 'Not authenticated' }
+
+  // Validate shape before anything touches the DB: known field enum, uuid node,
+  // bounded value/comment. (Batch min(1) covers the empty-submit case.)
+  const parsed = gcrChangeRequestBatchSchema.safeParse(requests)
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid change request' }
+  }
+  const validRequests = parsed.data
+
+  const userId = userData.user.id
+
+  // Project-scope every node_id. The FK on change_requests.node_id does NOT
+  // enforce that the node belongs to THIS project — a malicious client could
+  // pin a comment to another project's node. Resolve the project's live
+  // tenant_db node ids with the service client (elevated read; the user is
+  // already authenticated and the actual insert is still RLS-gated) and reject
+  // any request whose node is not in the set.
+  const service = createServiceClient() as any
+  const requestedNodeIds = [...new Set(validRequests.map((r) => r.nodeId))]
+  const { data: liveNodes } = await service
+    .schema('structure')
+    .from('nodes')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('kind', 'tenant_db')
+    .is('deleted_at', null)
+    .in('id', requestedNodeIds)
+  const liveNodeIds = new Set(((liveNodes ?? []) as { id: string }[]).map((n) => n.id))
+  if (requestedNodeIds.some((id) => !liveNodeIds.has(id))) {
+    return { error: 'One or more tenants are not part of this site' }
+  }
+
+  // Pin to the latest published snapshot. Deterministic tiebreakers mirror the
+  // gcr.get_client_review RPC so the client comments on the exact snapshot they
+  // were served.
+  const { data: snap } = await (supabase as any)
+    .schema('gcr')
+    .from('review_snapshots')
+    .select('id, organisation_id')
+    .eq('project_id', projectId)
+    .order('published_for_client_at', { ascending: false })
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!snap) return { error: 'No published review to comment on' }
+
+  const rows = validRequests.map((r) => ({
+    project_id: projectId,
+    organisation_id: snap.organisation_id,
+    snapshot_id: snap.id,
+    node_id: r.nodeId,
+    client_id: userId,
+    field: r.field,
+    old_value: r.oldValue,
+    new_value: r.newValue,
+    comment: r.comment,
+  }))
+
+  const { error } = await (supabase as any)
+    .schema('gcr')
+    .from('change_requests')
+    .insert(rows)
+  if (error) return { error: error.message ?? 'Failed to submit requests' }
+
+  // Notify the project's write-role members. The submitting client is NOT an org
+  // member of the project, so the cookie client can't read project_members under
+  // RLS — resolve recipients with the service client (elevated read after the
+  // RLS-gated insert already authorised the submit). Best-effort throughout.
+  try {
+    const { data: members } = await service
+      .schema('projects')
+      .from('project_members')
+      .select('user_id, role')
+      .eq('project_id', projectId)
+      .in('role', ORG_WRITE_ROLES as unknown as string[])
+    const adminIds = Array.from(
+      new Set(((members ?? []) as any[]).map((m) => m.user_id).filter(Boolean)),
+    )
+
+    if (adminIds.length > 0) {
+      await dispatchNotification({
+        userIds: adminIds,
+        title: 'New GCR client requests',
+        body: `A client submitted ${rows.length} change request(s) for review.`,
+        route: `/projects/${projectId}/generator-cost-recovery`,
+        type: 'gcr_change_request_submitted',
+        entityType: 'gcr_change_request',
+        entityId: snap.id,
+      })
+
+      const { data: profs } = await service
+        .from('profiles')
+        .select('email')
+        .in('id', adminIds)
+      const to = ((profs ?? []) as any[])
+        .map((p) => p.email)
+        .filter((e): e is string => Boolean(e))
+
+      if (to.length > 0) {
+        // Service-role dispatch: send-email rejects this non-public type for the
+        // cookie client (403). dispatchEmail uses the service key, never throws.
+        await dispatchEmail('gcr-client-request', {
+          to, projectId, requestCount: rows.length,
+        })
+      }
+    }
+  } catch {
+    /* notifications are best-effort */
+  }
+
+  return { ok: true, submitted: rows.length }
+}

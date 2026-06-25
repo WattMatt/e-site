@@ -1,10 +1,13 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 
+// The client portal shell. A client has NO org membership — this layout must
+// never assume org context (it only verifies the session and renders the chrome).
 export default async function PortalLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login?next=/portal/compliance')
+  if (!user) redirect('/login?next=/portal/sites')
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--c-base)', color: 'var(--c-text)', display: 'flex', flexDirection: 'column' }}>
@@ -20,9 +23,12 @@ export default async function PortalLayout({ children }: { children: React.React
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--c-amber)', letterSpacing: '0.02em' }}>
+          <Link
+            href="/portal/sites"
+            style={{ fontSize: 16, fontWeight: 700, color: 'var(--c-amber)', letterSpacing: '0.02em', textDecoration: 'none' }}
+          >
             E-Site
-          </span>
+          </Link>
           <span
             style={{
               fontFamily: 'var(--font-mono)',
