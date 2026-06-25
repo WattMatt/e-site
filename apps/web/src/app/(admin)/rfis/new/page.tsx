@@ -153,8 +153,9 @@ function NewRfiForm() {
               </FormField>
             </div>
 
-            {/* No assignee field — RFIs are team-wide: every active project
-                member is notified (bell + email). See dispatchRfiEmail. */}
+            {/* No assignee field — RFIs are team-wide: the whole project
+                audience is notified (bell + email) by the notify-rfi-created
+                Edge Function, fanned out from rfiService.create. */}
             <FormField label="Due date" error={errors.dueDate?.message}>
               <TextInput {...register('dueDate')} type="date" invalid={!!errors.dueDate} />
             </FormField>

@@ -102,6 +102,18 @@ export const rfiService = {
       .select()
       .single()
     if (error) throw error
+
+    // Fan out the team-wide "new RFI" notifications (bell + email) via the
+    // notify-rfi-created Edge Function — the single choke point all callers
+    // (web, mobile, future floor-plan markup) inherit, so none can drift out of
+    // sync. Forwards the caller's own JWT; the function holds the service role.
+    // Best-effort: a notification failure must never fail RFI creation.
+    try {
+      await client.functions.invoke('notify-rfi-created', { body: { rfiId: data.id } })
+    } catch {
+      // swallow — notifications are best-effort
+    }
+
     return data
   },
 

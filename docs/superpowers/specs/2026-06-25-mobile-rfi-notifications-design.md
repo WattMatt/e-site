@@ -55,12 +55,18 @@ function holds the service role and does the entire fan-out.
      with arbitrary `rfiId`s.
    - With a service-role client it resolves everything from `rfiId` alone:
      the `rfis` row (`subject, priority, due_date, raised_by, assigned_to,
-     project_id, organisation_id`), active `project_members`, `profiles`
-     (`id, full_name, email`), the project `name`, and the project
-     `notifyRfiEmail` toggle.
+     project_id, organisation_id`), the project `name`, the `notify_rfi_email`
+     toggle, and the **audience via the canonical
+     `project_notification_recipients(p_project_id, p_exclude_user)` SQL
+     function** (migration 00146 — active explicit `project_members` UNION
+     implicit org owners/admins/PMs; `SECURITY DEFINER`, granted to
+     `service_role`). This is the same source web's notify path uses
+     (`apps/web/src/lib/recipients.ts`), so the two cannot drift. The bell calls
+     it with `p_exclude_user = raised_by`; the email with `p_exclude_user = null`
+     (raiser included).
    - **Bell channel:** POST to existing `send-notification` (service-role
      bearer) with:
-     - `userIds` = active member ids − raiser
+     - `userIds` = the RPC audience − raiser
      - `title` = `New RFI raised`
      - `body` = `"{subject}" — {priority} priority[ · due {dueDate}]`
      - `data.route` = `/rfis/{rfiId}`, `type` = `rfi_created`,
@@ -71,8 +77,9 @@ function holds the service role and does the entire fan-out.
      carry a `keep in lockstep` header comment, matching the repo convention
      used by `calculate-health-scores` / `payment-recovery-check`). POST one
      batched `send-email` call: `{ type: 'rfi-created', payload: { to:
-     recipients[], subject, html } }`. Recipients = deduped emails of active
-     members + assignee + raiser (defensive), gated by the toggle.
+     recipients[], subject, html } }`. Recipients = deduped emails from the RPC
+     roster (raiser included), gated by the toggle; raiser/assignee display
+     names come from a small `profiles` lookup, mirroring web's `dispatchRfiEmail`.
    - Best-effort internally: never throws; logs failures; returns a tally.
    - `send-notification` and `send-email` are **unchanged**.
 
