@@ -41,21 +41,34 @@ async function sendEmail(payload: EmailPayload): Promise<void> {
 // call). Avoids the per-request rate limit that drops recipients when many
 // individual sends fire concurrently. Each array entry is its own email
 // (separate `to`), so recipients are not exposed to each other.
-async function sendEmailBatch(messages: EmailPayload[]): Promise<void> {
+async function sendEmailBatch(messages: EmailPayload[]): Promise<{ sent: number; failed: number }> {
   if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not set')
-  if (messages.length === 0) return
+  if (messages.length === 0) return { sent: 0, failed: 0 }
+  let sent = 0
+  let failed = 0
+  // Each 100-message chunk is independent: a failing chunk must NOT drop the
+  // recipients in later chunks. Continue on error and report a tally so a
+  // partial Resend outage can't silently lose most of a large roster.
   for (let i = 0; i < messages.length; i += 100) {
     const chunk = messages.slice(i, i + 100).map((m) => ({ from: FROM, ...m }))
-    const res = await fetch('https://api.resend.com/emails/batch', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(chunk),
-    })
-    if (!res.ok) {
-      const body = await res.text()
-      throw new Error(`Resend batch error ${res.status}: ${body}`)
+    try {
+      const res = await fetch('https://api.resend.com/emails/batch', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(chunk),
+      })
+      if (res.ok) {
+        sent += chunk.length
+      } else {
+        failed += chunk.length
+        console.error(`Resend batch chunk ${i / 100} failed: ${res.status} ${await res.text()}`)
+      }
+    } catch (e) {
+      failed += chunk.length
+      console.error(`Resend batch chunk ${i / 100} threw: ${String(e)}`)
     }
   }
+  return { sent, failed }
 }
 
 function baseTemplate(content: string) {
@@ -132,7 +145,18 @@ Deno.serve(async (req) => {
         })
       }
       const recipients: string[] = Array.isArray(to) ? to : [to]
-      await sendEmailBatch(recipients.map((addr) => ({ to: addr, subject, html })))
+      const result = await sendEmailBatch(recipients.map((addr) => ({ to: addr, subject, html })))
+      // Total failure → 502 so the caller logs it. Partial failures are logged
+      // per chunk above but still return 200, so delivered emails + the bell
+      // aren't discarded.
+      if (result.sent === 0 && result.failed > 0) {
+        return new Response(JSON.stringify({ error: 'All email batches failed', ...result }), {
+          status: 502, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ sent: true, ...result }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     else if (type === 'snag-assigned') {

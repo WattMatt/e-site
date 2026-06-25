@@ -13,8 +13,11 @@ interface Props {
     dateTo?: string
     type?: string
     project?: string
+    n?: string
   }>
 }
+
+const PAGE_SIZE = 50
 
 const ENTRY_TYPE_STYLES: Record<string, { color: string; bg: string }> = {
   progress:  { color: '#60a5fa', bg: 'rgba(37,99,235,0.15)' },
@@ -43,12 +46,24 @@ export default async function DiaryListPage({ searchParams }: Props) {
 
   const userId = user!.id
 
+  const limit = Math.max(PAGE_SIZE, Math.min(2000, Number(params.n) || PAGE_SIZE))
   const entries = await diaryService.listByOrg(supabase as any, orgId, {
     dateFrom: params.dateFrom || undefined,
     dateTo: params.dateTo || undefined,
     entryType: params.type as DiaryEntryType | undefined,
     projectId: params.project || undefined,
+    limit,
   }).catch(() => [])
+  const mayHaveMore = entries.length === limit
+  const loadMoreHref = (() => {
+    const sp = new URLSearchParams()
+    if (params.dateFrom) sp.set('dateFrom', params.dateFrom)
+    if (params.dateTo) sp.set('dateTo', params.dateTo)
+    if (params.type) sp.set('type', params.type)
+    if (params.project) sp.set('project', params.project)
+    sp.set('n', String(limit + PAGE_SIZE))
+    return `/diary?${sp.toString()}`
+  })()
 
   const attachmentRows = await diaryService.listAttachments(
     supabase as never,
@@ -123,6 +138,7 @@ export default async function DiaryListPage({ searchParams }: Props) {
           </div>
         </div>
       ) : (
+        <>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {entries.map((entry: any) => {
             const project = entry.project
@@ -214,6 +230,12 @@ export default async function DiaryListPage({ searchParams }: Props) {
             )
           })}
         </div>
+        {mayHaveMore && (
+          <div style={{ textAlign: 'center', marginTop: 16 }}>
+            <Link href={loadMoreHref} className="filter-tab">Load more</Link>
+          </div>
+        )}
+        </>
       )}
     </div>
   )

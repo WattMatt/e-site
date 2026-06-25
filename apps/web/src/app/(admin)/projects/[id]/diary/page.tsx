@@ -7,7 +7,12 @@ import { AddDiaryEntryForm } from './AddDiaryEntryForm'
 import { DiaryAttachmentStrip, type DiaryAttachmentView } from '@/components/diary/DiaryAttachmentStrip'
 import { DeleteDiaryEntryButton } from './DeleteDiaryEntryButton'
 
-interface Props { params: Promise<{ id: string }> }
+interface Props {
+  params: Promise<{ id: string }>
+  searchParams: Promise<{ n?: string }>
+}
+
+const PAGE_SIZE = 50
 
 const ENTRY_TYPE_STYLES: Record<string, { color: string; bg: string }> = {
   progress:  { color: '#60a5fa', bg: 'rgba(37,99,235,0.15)' },
@@ -19,8 +24,10 @@ const ENTRY_TYPE_STYLES: Record<string, { color: string; bg: string }> = {
   general:   { color: 'var(--c-text-mid)', bg: 'var(--c-elevated)' },
 }
 
-export default async function DiaryPage({ params }: Props) {
+export default async function DiaryPage({ params, searchParams }: Props) {
   const { id } = await params
+  const { n } = await searchParams
+  const limit = Math.max(PAGE_SIZE, Math.min(2000, Number(n) || PAGE_SIZE))
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -39,10 +46,13 @@ export default async function DiaryPage({ params }: Props) {
 
   const [project, entries] = await Promise.all([
     projectService.getById(supabase as any, id).catch(() => null),
-    diaryService.list(supabase as any, id).catch(() => []),
+    diaryService.list(supabase as any, id, { limit }).catch(() => []),
   ])
 
   if (!project) notFound()
+
+  const mayHaveMore = entries.length === limit
+  const loadMoreHref = `/projects/${id}/diary?n=${limit + PAGE_SIZE}`
 
   const attachmentRows = await diaryService.listAttachments(
     supabase as never,
@@ -83,6 +93,7 @@ export default async function DiaryPage({ params }: Props) {
           </div>
         </div>
       ) : (
+        <>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {entries.map((entry: any) => {
             const entryType: string = entry.entry_type ?? 'progress'
@@ -167,6 +178,12 @@ export default async function DiaryPage({ params }: Props) {
             )
           })}
         </div>
+        {mayHaveMore && (
+          <div style={{ textAlign: 'center', marginTop: 16 }}>
+            <Link href={loadMoreHref} className="filter-tab">Load more</Link>
+          </div>
+        )}
+        </>
       )}
     </div>
   )
