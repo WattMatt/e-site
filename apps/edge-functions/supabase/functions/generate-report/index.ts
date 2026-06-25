@@ -5,7 +5,9 @@
  * Returns HTML that can be printed/saved as PDF by the browser via window.print().
  *
  * Request body:
- *   { type: 'snag-list' | 'compliance', entityId: string }
+ *   { type: 'snag-list' | 'compliance' | 'diary-weekly', entityId: string }
+ *   - snag-list / compliance: entityId = project / site id
+ *   - diary-weekly: entityId = "<weekStart>:<weekEnd>" (yyyy-mm-dd:yyyy-mm-dd)
  *   Authorization: Bearer <access_token>
  */
 
@@ -36,7 +38,7 @@ Deno.serve(async (req) => {
   )
 
   try {
-    const { type, entityId } = await req.json() as { type: 'snag-list' | 'compliance'; entityId: string }
+    const { type, entityId } = await req.json() as { type: 'snag-list' | 'compliance' | 'diary-weekly'; entityId: string }
 
     if (type === 'snag-list') {
       const { data: snags, error } = await supabase
@@ -79,6 +81,40 @@ Deno.serve(async (req) => {
       if (error) throw error
 
       const html = generateComplianceReport(site as any)
+      return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+    }
+
+    if (type === 'diary-weekly') {
+      const [weekStart, weekEnd] = String(entityId).split(':')
+      if (!weekStart || !weekEnd) throw new Error('diary-weekly requires "weekStart:weekEnd"')
+
+      // Caller's active org (RLS-scoped read; the JWT is the trust boundary).
+      const { data: mem } = await supabase
+        .from('user_organisations')
+        .select('organisation_id')
+        .eq('is_active', true)
+        .limit(1)
+        .single()
+      const orgId = (mem as any)?.organisation_id
+      if (!orgId) throw new Error('No active organisation')
+
+      const { data: entries, error } = await supabase
+        .schema('projects')
+        .from('site_diary_entries')
+        .select(`
+          id, entry_date, entry_type, progress_notes, safety_notes, delay_notes, delays,
+          weather, workers_on_site,
+          project:projects!project_id(name),
+          author:profiles!created_by(full_name)
+        `)
+        .eq('organisation_id', orgId)
+        .gte('entry_date', weekStart)
+        .lte('entry_date', weekEnd)
+        .order('entry_date', { ascending: false })
+
+      if (error) throw error
+
+      const html = generateDiaryWeeklyReport(weekStart, weekEnd, entries ?? [])
       return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
     }
 
@@ -160,6 +196,58 @@ function generateSnagReport(project: any, snags: any[]): string {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    <div class="footer"><span>E-Site Construction Management</span><span>Confidential</span></div>
+  </body></html>`
+}
+
+function esc(s: any): string {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function generateDiaryWeeklyReport(weekStart: string, weekEnd: string, entries: any[]): string {
+  const totalEntries = entries.length
+  const daysActive = new Set(entries.map((e) => e.entry_date)).size
+  const totalWorkers = entries.reduce((sum, e) => sum + (e.workers_on_site ?? 0), 0)
+  const avgWorkers = daysActive > 0 ? Math.round(totalWorkers / daysActive) : 0
+  const delayCount = entries.filter((e) => e.delays || e.delay_notes || e.entry_type === 'delay').length
+  const safetyCount = entries.filter((e) => e.safety_notes || e.entry_type === 'safety').length
+
+  const byDay = new Map<string, any[]>()
+  for (const e of entries) {
+    const d = e.entry_date as string
+    if (!byDay.has(d)) byDay.set(d, [])
+    byDay.get(d)!.push(e)
+  }
+  const sortedDays = [...byDay.keys()].sort((a, b) => b.localeCompare(a))
+
+  const sections = sortedDays.map((d) => {
+    const rows = byDay.get(d)!.map((e) => `
+      <tr>
+        <td><span class="badge priority-low">${esc(e.entry_type ?? 'progress')}</span></td>
+        <td>${esc((e.project as any)?.name ?? '–')}</td>
+        <td>${e.workers_on_site ?? '–'}</td>
+        <td>${esc(e.weather ?? '–')}</td>
+        <td>${esc(e.progress_notes ?? '')}${e.safety_notes ? `<br><small style="color:#991B1B">Safety: ${esc(e.safety_notes)}</small>` : ''}${(e.delay_notes || e.delays) ? `<br><small style="color:#9A3412">Delays: ${esc(e.delay_notes ?? e.delays)}</small>` : ''}</td>
+        <td>${esc((e.author as any)?.full_name ?? '–')}</td>
+      </tr>
+    `).join('')
+    return `<h2>${fmt(d)}</h2>
+      <table>
+        <thead><tr><th>Type</th><th>Project</th><th>Workers</th><th>Weather</th><th>Notes</th><th>Logged by</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`
+  }).join('')
+
+  const body = totalEntries === 0
+    ? `<p class="meta">No diary entries for this week.</p>`
+    : sections
+
+  return `<!DOCTYPE html><html><head><title>Weekly Site Diary — ${esc(weekStart)} to ${esc(weekEnd)}</title>${BASE_STYLES}</head><body>
+    <button class="no-print" onclick="window.print()" style="float:right;padding:8px 16px;background:#2563EB;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">Print / Save PDF</button>
+    <div style="margin-bottom:4px"><strong>E-Site</strong> <span style="color:#94A3B8;font-size:11px">Weekly Site Diary</span></div>
+    <h1>Weekly Site Diary</h1>
+    <p class="meta">${fmt(weekStart)} – ${fmt(weekEnd)} · Generated ${fmt(new Date().toISOString())} · ${totalEntries} entries · ${daysActive}/7 days active · avg ${avgWorkers} workers/day · ${delayCount} delays · ${safetyCount} safety</p>
+    ${body}
     <div class="footer"><span>E-Site Construction Management</span><span>Confidential</span></div>
   </body></html>`
 }
