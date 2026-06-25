@@ -172,4 +172,19 @@ describe('AddDiaryEntryForm', () => {
     expect(createActionMock).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(notifyActionMock).toHaveBeenCalledTimes(1))
   })
+
+  it('de-duplicates the same file selected twice (uploads it once)', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    uploadMock.mockResolvedValue(undefined)
+    open()
+    typeProgress('Poured the slab.')
+    const f = new File(['x'], 'photo.jpg', { type: 'image/jpeg' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [f] } })
+    fireEvent.change(input, { target: { files: [f] } }) // same file again
+    await submitForm()
+
+    expect(uploadMock).toHaveBeenCalledTimes(1)
+    expect(uploadMock.mock.calls[0][1].files).toHaveLength(1)
+  })
 })
