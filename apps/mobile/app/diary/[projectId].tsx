@@ -64,7 +64,7 @@ export default function SiteDiaryScreen() {
       }
       return entry
     },
-    onSuccess: () => {
+    onSuccess: (entry) => {
       void track(ANALYTICS_EVENTS.DIARY_ENTRY_CREATED, {
         project_id: projectId,
         entry_type: entryType,
@@ -74,6 +74,9 @@ export default function SiteDiaryScreen() {
         has_delays: !!delays.trim(),
         source: 'mobile',
       })
+      // Notify the project roster (bell + full-entry email) now that the entry
+      // and its attachments are committed. Fire-and-forget — never block the UI.
+      void notifyRoster((entry as { id: string }).id)
       queryClient.invalidateQueries({ queryKey: ['diary', projectId] })
       setShowForm(false)
       setEntryType('progress')
@@ -86,6 +89,26 @@ export default function SiteDiaryScreen() {
     },
     onError: (e: any) => Alert.alert('Error', e.message ?? 'Failed to save entry'),
   })
+
+  // Mobile can't hold the service-role key, so it proxies notification fan-out
+  // through the web API (same pattern as snag status). Best-effort.
+  async function notifyRoster(entryId: string) {
+    try {
+      const { data: { session } } = await client.auth.getSession()
+      if (!session) return
+      const webUrl = process.env.EXPO_PUBLIC_WEB_URL ?? 'https://esite-lilac.vercel.app'
+      await fetch(`${webUrl}/api/diary/notify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ entryId }),
+      }).catch(() => { /* non-blocking */ })
+    } catch {
+      // Never block the create on a notification failure.
+    }
+  }
 
   function handleSubmit() {
     if (!progressNotes.trim()) {

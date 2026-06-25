@@ -140,25 +140,79 @@ export function renderSnagStatusEmail(v: SnagStatusEmailVars): { subject: string
   return { subject, html }
 }
 
+/** An inline image thumbnail (a signed, time-limited URL + its file name). */
+export interface DiaryEmailPhoto {
+  url: string
+  fileName: string
+}
+
 export interface DiaryCreatedEmailVars {
   authorName: string
   projectName: string
   entryDate: string
-  /** Short excerpt of the entry's progress notes. */
-  summary: string
+  /** Human-readable entry-type label, e.g. "Progress". */
+  entryTypeLabel: string
+  /** For the per-entry deep link anchor. */
+  entryId: string
   projectId: string
+  /** Full entry fields — rendered in-email so recipients see the whole entry. */
+  progressNotes: string
+  safetyNotes?: string | null
+  qualityNotes?: string | null
+  delayNotes?: string | null
+  delays?: string | null
+  weather?: string | null
+  workersOnSite?: number | null
+  /** Inline image thumbnails (signed URLs). Non-image attachments are summarised. */
+  photos?: DiaryEmailPhoto[]
+  /** Count of attachments not shown inline (videos/documents, or overflow images). */
+  otherAttachmentCount?: number
   siteUrl: string
 }
 
-/** Render the "new site diary entry" email (excerpt + deep link to the diary). */
+/** Render the "new site diary entry" email — full entry + inline photo thumbnails
+ *  + a deep link to the specific entry. */
 export function renderDiaryCreatedEmail(v: DiaryCreatedEmailVars): { subject: string; html: string } {
-  const link = `${v.siteUrl}/projects/${v.projectId}/diary`
+  const link = `${v.siteUrl}/projects/${v.projectId}/diary#entry-${v.entryId}`
   const subject = `Site diary — ${v.projectName} (${v.entryDate})`
+
+  const meta: string[] = []
+  if (v.weather) meta.push(`<strong>Weather:</strong> ${escapeHtml(v.weather)}`)
+  if (v.workersOnSite != null) meta.push(`<strong>Workers:</strong> ${v.workersOnSite}`)
+  const metaLine = meta.length ? `<p>${meta.join(' &nbsp;·&nbsp; ')}</p>` : ''
+
+  const section = (label: string, text?: string | null) =>
+    text && text.trim()
+      ? `<p style="margin-top:14px"><strong>${escapeHtml(label)}</strong><br><span style="white-space:pre-wrap">${escapeHtml(text)}</span></p>`
+      : ''
+
+  const photos = v.photos ?? []
+  const photoHtml = photos.length
+    ? `<div style="margin-top:16px">${photos
+        .map(
+          (p) =>
+            `<img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.fileName)}" width="120" height="120" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #334155;margin:0 6px 6px 0" />`,
+        )
+        .join('')}</div>`
+    : ''
+
+  const other =
+    v.otherAttachmentCount && v.otherAttachmentCount > 0
+      ? `<p style="font-size:12px;color:#94A3B8;margin-top:8px">+ ${v.otherAttachmentCount} more attachment${v.otherAttachmentCount === 1 ? '' : 's'} — open the entry to view.</p>`
+      : ''
+
   const html = baseEmailTemplate(
     `<h2>New site diary entry</h2>
-    <p><strong>${escapeHtml(v.authorName)}</strong> logged a diary entry on <strong>${escapeHtml(v.projectName)}</strong> for <strong>${escapeHtml(v.entryDate)}</strong>.</p>
-    <p style="white-space:pre-wrap">${escapeHtml(v.summary)}</p>
-    <a class="btn" href="${link}">View diary</a>`,
+    <p><strong>${escapeHtml(v.authorName)}</strong> logged a <strong>${escapeHtml(v.entryTypeLabel)}</strong> entry on <strong>${escapeHtml(v.projectName)}</strong> for <strong>${escapeHtml(v.entryDate)}</strong>.</p>
+    ${metaLine}
+    ${section('Progress notes', v.progressNotes)}
+    ${section('Safety notes', v.safetyNotes)}
+    ${section('Quality notes', v.qualityNotes)}
+    ${section('Delay notes', v.delayNotes)}
+    ${section('Delays / issues', v.delays)}
+    ${photoHtml}
+    ${other}
+    <a class="btn" href="${link}">View this entry</a>`,
     v.siteUrl,
   )
   return { subject, html }

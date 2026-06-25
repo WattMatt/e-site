@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ENTRY_TYPE_LABELS } from '@esite/shared'
-import { createDiaryEntryAction } from '@/actions/diary.actions'
+import { createDiaryEntryAction, notifyDiaryEntryAction } from '@/actions/diary.actions'
 import { uploadDiaryAttachments, DIARY_ATTACHMENT_ACCEPT_DOC } from '@/lib/diary-attachments'
 import type { DiaryEntryType } from '@esite/shared'
 
@@ -44,61 +44,79 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
   // Holds the id of an entry created on a prior submit whose attachment upload
   // failed — a retry reuses it instead of creating a duplicate entry.
   const [createdEntryId, setCreatedEntryId] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  // Synchronous re-entry lock. State updates lag a render, so two fast clicks
+  // would both read `submitting === false` and each create an entry (+ fire a
+  // notification). A ref flips immediately and blocks the duplicate submit.
+  const submittingRef = useRef(false)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (submittingRef.current) return
     if (!progressNotes.trim()) { setError('Progress notes are required.'); return }
+    submittingRef.current = true
+    setSubmitting(true)
     setError('')
 
-    // Create the entry once. If a previous submit created it but the attachment
-    // upload failed, reuse that id so the retry doesn't insert a duplicate.
-    let entryId = createdEntryId
-    if (!entryId) {
-      const res = await createDiaryEntryAction({
-        projectId,
-        entryDate,
-        entryType,
-        progressNotes: progressNotes.trim(),
-        safetyNotes: safetyNotes.trim() || undefined,
-        qualityNotes: qualityNotes.trim() || undefined,
-        delayNotes: delayNotes.trim() || undefined,
-        weather: weather || undefined,
-        workersOnSite: workers ? parseInt(workers, 10) : undefined,
-        delays: delays.trim() || undefined,
-      })
-      if (res.error || !res.entryId) {
-        setError(res.error ?? 'Failed to save entry.')
-        return
+    try {
+      // Create the entry once. If a previous submit created it but the attachment
+      // upload failed, reuse that id so the retry doesn't insert a duplicate.
+      let entryId = createdEntryId
+      if (!entryId) {
+        const res = await createDiaryEntryAction({
+          projectId,
+          entryDate,
+          entryType,
+          progressNotes: progressNotes.trim(),
+          safetyNotes: safetyNotes.trim() || undefined,
+          qualityNotes: qualityNotes.trim() || undefined,
+          delayNotes: delayNotes.trim() || undefined,
+          weather: weather || undefined,
+          workersOnSite: workers ? parseInt(workers, 10) : undefined,
+          delays: delays.trim() || undefined,
+        })
+        if (res.error || !res.entryId) {
+          setError(res.error ?? 'Failed to save entry.')
+          return
+        }
+        entryId = res.entryId
+        setCreatedEntryId(entryId)
       }
-      entryId = res.entryId
-      setCreatedEntryId(entryId)
-    }
 
-    if (files.length > 0) {
-      try {
-        await uploadDiaryAttachments(
-          createClient() as any,
-          { orgId, projectId, entryId, userId, files },
-          // Drop each committed file so a retry resumes with only what's left.
-          (uploaded) => setFiles(prev => prev.filter(f => f !== uploaded)),
-        )
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to upload attachments.')
-        return
+      if (files.length > 0) {
+        try {
+          await uploadDiaryAttachments(
+            createClient() as any,
+            { orgId, projectId, entryId, userId, files },
+            // Drop each committed file so a retry resumes with only what's left.
+            (uploaded) => setFiles(prev => prev.filter(f => f !== uploaded)),
+          )
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to upload attachments.')
+          return
+        }
       }
-    }
 
-    setProgressNotes('')
-    setSafetyNotes('')
-    setQualityNotes('')
-    setDelayNotes('')
-    setWeather('')
-    setWorkers('')
-    setDelays('')
-    setFiles([])
-    setCreatedEntryId(null)
-    setOpen(false)
-    startTransition(() => router.refresh())
+      // Entry AND its attachments are now committed — notify the roster (bell +
+      // email) so the email can reflect the complete entry. Best-effort: a
+      // notification hiccup must never block (or surface from) the save.
+      try { await notifyDiaryEntryAction(entryId) } catch { /* never blocks the save */ }
+
+      setProgressNotes('')
+      setSafetyNotes('')
+      setQualityNotes('')
+      setDelayNotes('')
+      setWeather('')
+      setWorkers('')
+      setDelays('')
+      setFiles([])
+      setCreatedEntryId(null)
+      setOpen(false)
+      startTransition(() => router.refresh())
+    } finally {
+      submittingRef.current = false
+      setSubmitting(false)
+    }
   }
 
   if (!open) {
@@ -320,11 +338,11 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
         <div style={{ display: 'flex', gap: 8 }}>
           <button
             type="submit"
-            disabled={isPending}
+            disabled={submitting || isPending}
             className="btn-primary-amber"
-            style={{ flex: 1, opacity: isPending ? 0.6 : 1 }}
+            style={{ flex: 1, opacity: submitting || isPending ? 0.6 : 1 }}
           >
-            {isPending ? 'Saving…' : 'Save Entry'}
+            {submitting || isPending ? 'Saving…' : 'Save Entry'}
           </button>
           <button
             type="button"

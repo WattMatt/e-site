@@ -2,14 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { AddDiaryEntryForm } from './AddDiaryEntryForm'
 
-const { createActionMock, uploadMock, refreshMock } = vi.hoisted(() => ({
+const { createActionMock, notifyActionMock, uploadMock, refreshMock } = vi.hoisted(() => ({
   createActionMock: vi.fn(),
+  notifyActionMock: vi.fn(),
   uploadMock: vi.fn(),
   refreshMock: vi.fn(),
 }))
 
 vi.mock('@/actions/diary.actions', () => ({
   createDiaryEntryAction: (...a: unknown[]) => createActionMock(...a),
+  notifyDiaryEntryAction: (...a: unknown[]) => notifyActionMock(...a),
 }))
 vi.mock('@/lib/diary-attachments', () => ({
   uploadDiaryAttachments: (...a: unknown[]) => uploadMock(...a),
@@ -113,5 +115,61 @@ describe('AddDiaryEntryForm', () => {
 
     // The committed file A is gone from state; only B is retried.
     expect(uploadMock.mock.calls[1][1].files).toEqual([fileB])
+  })
+
+  it('notifies the roster once after the entry + attachments are committed', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    uploadMock.mockResolvedValue(undefined)
+    open()
+    typeProgress('Poured the slab.')
+    attachFile(new File(['x'], 'photo.jpg', { type: 'image/jpeg' }))
+    await submitForm()
+
+    expect(uploadMock).toHaveBeenCalledTimes(1)
+    expect(notifyActionMock).toHaveBeenCalledTimes(1)
+    expect(notifyActionMock).toHaveBeenCalledWith('e1')
+  })
+
+  it('does not notify when entry creation fails', async () => {
+    createActionMock.mockResolvedValue({ error: 'nope' })
+    open()
+    typeProgress('Some notes.')
+    await submitForm()
+    expect(notifyActionMock).not.toHaveBeenCalled()
+  })
+
+  it('does not notify on a failed upload, then notifies exactly once after a successful retry', async () => {
+    createActionMock.mockResolvedValue({ entryId: 'e1' })
+    uploadMock
+      .mockRejectedValueOnce(new Error('upload failed'))
+      .mockResolvedValueOnce(undefined)
+    open()
+    typeProgress('Poured the slab.')
+    attachFile(new File(['a'], 'a.jpg', { type: 'image/jpeg' }))
+
+    await submitForm() // upload fails — entry incomplete, no notify
+    expect(await screen.findByText('upload failed')).toBeDefined()
+    expect(notifyActionMock).not.toHaveBeenCalled()
+
+    await submitForm() // retry succeeds
+    expect(notifyActionMock).toHaveBeenCalledTimes(1)
+    expect(notifyActionMock).toHaveBeenCalledWith('e1')
+  })
+
+  it('ignores a concurrent second submit while the first is in flight (no duplicate entry or notify)', async () => {
+    let resolveCreate: (v: { entryId: string }) => void = () => {}
+    createActionMock.mockReturnValue(new Promise((r) => { resolveCreate = r }))
+    open()
+    typeProgress('Poured the slab.')
+
+    const form = document.querySelector('form')!
+    await act(async () => {
+      fireEvent.submit(form)
+      fireEvent.submit(form) // second submit before the first create resolves
+    })
+    await act(async () => { resolveCreate({ entryId: 'e1' }) })
+
+    expect(createActionMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(notifyActionMock).toHaveBeenCalledTimes(1))
   })
 })
