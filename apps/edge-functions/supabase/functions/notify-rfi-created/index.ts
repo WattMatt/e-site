@@ -22,9 +22,11 @@
  * calculate-health-scores / payment-recovery-check) — keep these in sync.
  *
  * Request body: { rfiId: string }
- * Auth: verify_jwt (default). Only the RFI's raiser (jwt.sub === rfis.raised_by)
- *       or a service_role caller may trigger the fan-out — this stops an authed
- *       user from spamming a roster with arbitrary rfiIds.
+ * Auth (forgery-proof, independent of the gateway verify_jwt setting): the caller
+ *   must present EITHER the service-role key (constant-time compare) OR a user JWT
+ *   that validates via auth.getUser AND belongs to the RFI's raiser. Decoding an
+ *   unverified JWT claim is deliberately avoided (that was a past auth-bypass).
+ *   This stops an authed user from triggering a fan-out for an arbitrary rfiId.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -43,19 +45,12 @@ function json(body: unknown, status = 200) {
   })
 }
 
-// Decode JWT claims without re-verifying — the gateway already verified the
-// signature (same pattern as send-email's getJwtRole).
-function jwtClaims(authHeader: string | null): { role: string | null; sub: string | null } {
-  if (!authHeader?.startsWith('Bearer ')) return { role: null, sub: null }
-  try {
-    const p = JSON.parse(atob(authHeader.slice(7).split('.')[1]))
-    return {
-      role: typeof p.role === 'string' ? p.role : null,
-      sub: typeof p.sub === 'string' ? p.sub : null,
-    }
-  } catch {
-    return { role: null, sub: null }
-  }
+// Constant-time string compare — avoids leaking the service key via timing.
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
 }
 
 function escapeHtml(s: string): string {
@@ -124,7 +119,8 @@ Deno.serve(async (req) => {
 
   const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
   const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  const { role, sub } = jwtClaims(req.headers.get('Authorization'))
+  const authHeader = req.headers.get('Authorization') ?? ''
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
 
   let rfiId: string | undefined
   try {
@@ -146,10 +142,15 @@ Deno.serve(async (req) => {
   if (rfiErr) return json({ error: rfiErr.message }, 500)
   if (!rfi) return json({ error: 'RFI not found' }, 404)
 
-  // Abuse guard: only the raiser or a service_role caller may fan out.
-  if (role !== 'service_role' && sub !== rfi.raised_by) {
-    return json({ error: 'Forbidden' }, 403)
+  // Abuse guard — forgery-proof regardless of the gateway verify_jwt setting:
+  //   • service-role caller: bearer IS the service key (constant-time compare), or
+  //   • the raiser: their user JWT validates via auth.getUser and matches raised_by.
+  let authorized = token !== '' && timingSafeEqual(token, SERVICE_KEY)
+  if (!authorized && token) {
+    const { data: { user } } = await supabase.auth.getUser(token)
+    authorized = !!user && user.id === rfi.raised_by
   }
+  if (!authorized) return json({ error: 'Forbidden' }, 403)
 
   const svcHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_KEY}` }
   const results: Record<string, unknown> = {}

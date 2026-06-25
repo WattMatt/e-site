@@ -47,12 +47,14 @@ function holds the service role and does the entire fan-out.
 
 1. **`notify-rfi-created` edge function** (new) —
    `apps/edge-functions/supabase/functions/notify-rfi-created/index.ts`
-   - **Input:** `{ rfiId: string }`. **Auth:** default `verify_jwt = true`.
-   - **Abuse guard:** decode the caller's JWT (no re-verify — gateway already
-     verified the signature, same `getJwtRole` pattern as `send-email`).
-     Proceed only if `role === 'service_role'` **or** `sub === rfis.raised_by`.
-     Otherwise `403`. Prevents an authed user from spamming a project roster
-     with arbitrary `rfiId`s.
+   - **Input:** `{ rfiId: string }`.
+   - **Abuse guard — forgery-proof, independent of the gateway `verify_jwt`
+     setting** (deliberately NOT trusting a base64-decoded JWT claim — that was a
+     past auth-bypass, see [[rfi-notifications-feature]]). Authorize only if the
+     bearer is the **service-role key** (constant-time compare) **or** a user JWT
+     that **validates via `auth.getUser`** AND whose id `=== rfis.raised_by`.
+     Otherwise `403`. Stops an authed user from triggering a fan-out for an
+     arbitrary `rfiId`.
    - With a service-role client it resolves everything from `rfiId` alone:
      the `rfis` row (`subject, priority, due_date, raised_by, assigned_to,
      project_id, organisation_id`), the project `name`, the `notify_rfi_email`
