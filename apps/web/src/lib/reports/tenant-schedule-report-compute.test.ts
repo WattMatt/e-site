@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeReportModel, orderStateLabel, type ComputeInput } from './tenant-schedule-report-compute'
+import { computeReportModel, orderStateLabel, scopeStateLabel, type ComputeInput } from './tenant-schedule-report-compute'
 
 const base: ComputeInput = {
   activeNodes: [
@@ -10,9 +10,9 @@ const base: ComputeInput = {
   decommissionedCount: 1,
   scopeTypeIdByKey: { db: 'tdb', lighting: 'tlt' },
   detailsByNode: new Map([
-    ['n1', { scopeReceived: true, layoutIssued: true }],
-    ['n2', { scopeReceived: false, layoutIssued: true }],
-    ['n3', { scopeReceived: true, layoutIssued: false }],
+    ['n1', { scopeReceived: true, scopeNotRequired: false, layoutIssued: true }],
+    ['n2', { scopeReceived: false, scopeNotRequired: false, layoutIssued: true }],
+    ['n3', { scopeReceived: true, scopeNotRequired: false, layoutIssued: false }],
   ]),
   orderStatusByNodeScope: new Map([
     ['n1:tdb', 'ordered'], ['n1:tlt', 'received'],
@@ -37,16 +37,24 @@ describe('orderStateLabel', () => {
   })
 })
 
+describe('scopeStateLabel', () => {
+  it('maps scope states to display labels, with landlord-covered → N/A', () => {
+    expect(scopeStateLabel('awaited')).toBe('Awaited')
+    expect(scopeStateLabel('received')).toBe('Received')
+    expect(scopeStateLabel('not_required')).toBe('N/A')
+  })
+})
+
 describe('computeReportModel', () => {
   const { kpis, shopRows } = computeReportModel(base)
 
-  it('builds one row per active shop, sorted by shop number, with DB/Lights states', () => {
+  it('builds one row per active shop, sorted by shop number, with DB/Lights/Scope states', () => {
     expect(shopRows.map((r) => r.shopNumber)).toEqual(['L01', 'L02', 'L03'])
-    expect(shopRows[0]).toMatchObject({ tenantName: 'Woolworths', db: 'ordered', lights: 'received', layoutIssued: true, boOverdue: false })
+    expect(shopRows[0]).toMatchObject({ tenantName: 'Woolworths', db: 'ordered', lights: 'received', scope: 'received', layoutIssued: true, boOverdue: false })
     // electrical fields pass through from the node
     expect(shopRows[0]).toMatchObject({ breakerA: 63, poleConfig: 'TP', loadA: 60 })
-    expect(shopRows[1]).toMatchObject({ breakerA: null, loadA: null })
-    expect(shopRows[2]).toMatchObject({ db: 'required', lights: null, layoutIssued: false })
+    expect(shopRows[1]).toMatchObject({ breakerA: null, loadA: null, scope: 'awaited' })
+    expect(shopRows[2]).toMatchObject({ db: 'required', lights: null, scope: 'received', layoutIssued: false })
   })
 
   it('counts shops & GLA (active + decommissioned)', () => {
@@ -57,7 +65,7 @@ describe('computeReportModel', () => {
   })
 
   it('computes scope & layout completion percentages over active shops', () => {
-    expect(kpis.scopeReceivedPct).toBe(67)
+    expect(kpis.scopeCompletePct).toBe(67)
     expect(kpis.layoutsIssuedPct).toBe(67)
   })
 
@@ -69,5 +77,35 @@ describe('computeReportModel', () => {
 
   it('buckets BO dates into upcoming / overdue / no-date', () => {
     expect(kpis.bo).toEqual({ upcoming: 1, overdue: 1, noDate: 1 })
+  })
+})
+
+describe('computeReportModel — landlord-covered scope override (not_required)', () => {
+  const input: ComputeInput = {
+    activeNodes: [
+      { id: 'a', shopNumber: 'L01', shopName: 'Edgars', glaM2: 500, breakerA: null, poleConfig: null, loadA: null },
+      { id: 'b', shopNumber: 'L02', shopName: 'Truworths', glaM2: 500, breakerA: null, poleConfig: null, loadA: null },
+    ],
+    decommissionedCount: 0,
+    scopeTypeIdByKey: { db: 'tdb', lighting: 'tlt' },
+    detailsByNode: new Map([
+      // 'a' received via document; 'b' has NO document but landlord covers full scope.
+      ['a', { scopeReceived: true, scopeNotRequired: false, layoutIssued: false }],
+      ['b', { scopeReceived: false, scopeNotRequired: true, layoutIssued: false }],
+    ]),
+    orderStatusByNodeScope: new Map(),
+    boByNode: new Map(),
+    today: '2026-06-20',
+  }
+
+  const { kpis, shopRows } = computeReportModel(input)
+
+  it('renders the override row as not_required (N/A), precedence over awaited', () => {
+    expect(shopRows.map((r) => r.scope)).toEqual(['received', 'not_required'])
+  })
+
+  it('counts a landlord-covered tenant as scope-complete', () => {
+    // Both tenants complete: one received, one not_required → 100%.
+    expect(kpis.scopeCompletePct).toBe(100)
   })
 })

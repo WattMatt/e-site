@@ -3,7 +3,7 @@ import React from 'react'
 import { Document, Page, View, Text, StyleSheet } from '@react-pdf/renderer'
 import type { ResolvedBranding } from './branding'
 import type { TenantScheduleReportData } from './tenant-schedule-report-data'
-import { orderStateLabel, type ShopRow } from './tenant-schedule-report-compute'
+import { orderStateLabel, scopeStateLabel, type ShopRow } from './tenant-schedule-report-compute'
 import { Cover, pageStyles as s } from './components'
 import { RunningHeader, RunningFooter, Section, Table } from './interior'
 
@@ -42,6 +42,7 @@ const shopCell = (r: ShopRow): string[] => [
   r.breakerA != null ? (r.poleConfig ? `${r.breakerA} A ${r.poleConfig}` : `${r.breakerA} A`) : '—',
   orderStateLabel(r.db),
   orderStateLabel(r.lights),
+  scopeStateLabel(r.scope),
   r.layoutIssued ? 'Issued' : 'Not issued',
   r.boDate ? (r.boOverdue ? `${r.boDate} (overdue)` : r.boDate) : '—',
 ]
@@ -74,7 +75,7 @@ export function TenantScheduleReportDocument({ data, branding }: TenantScheduleR
           </StatGroup>
 
           <StatGroup title="Scope & layout completion" accent={accent}>
-            <StatCard label="Scope received" value={`${kpis.scopeReceivedPct}%`} />
+            <StatCard label="Scope complete" value={`${kpis.scopeCompletePct}%`} sub="received or landlord-covered" />
             <StatCard label="Layouts issued" value={`${kpis.layoutsIssuedPct}%`} />
           </StatGroup>
 
@@ -98,11 +99,11 @@ export function TenantScheduleReportDocument({ data, branding }: TenantScheduleR
 
         <Section title="Shop summary" accent={accent}>
           <Table
-            columns={['Shop', 'Tenant', 'GLA m²', 'Breaker', 'DB', 'Lights', 'Layout', 'BO date']}
-            rows={shopRows.length > 0 ? shopRows.map(shopCell) : [['—', 'No active shops', '—', '—', '—', '—', '—', '—']]}
+            columns={['Shop', 'Tenant', 'GLA m²', 'Breaker', 'DB', 'Lights', 'Scope', 'Layout', 'BO date']}
+            rows={shopRows.length > 0 ? shopRows.map(shopCell) : [['—', 'No active shops', '—', '—', '—', '—', '—', '—', '—']]}
             repeatHeader
             unbreakableRows
-            align={['left', 'left', 'right', 'right', 'left', 'left', 'left', 'left']}
+            align={['left', 'left', 'right', 'right', 'left', 'left', 'left', 'left', 'left']}
           />
         </Section>
       </Page>

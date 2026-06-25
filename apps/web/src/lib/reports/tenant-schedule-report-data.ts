@@ -67,7 +67,7 @@ export async function gatherTenantScheduleReportData(projectId: string): Promise
       .select('id, key').eq('organisation_id', orgId),
     nodeIds.length
       ? (service as any).schema('structure').from('tenant_details')
-          .select('node_id, scope_status, layout_status, bo_period_days, bo_date_override').in('node_id', nodeIds)
+          .select('node_id, scope_status, scope_not_required, layout_status, bo_period_days, bo_date_override').in('node_id', nodeIds)
       : Promise.resolve({ data: [] }),
     nodeIds.length
       ? (service as any).schema('structure').from('node_orders')
@@ -86,11 +86,12 @@ export async function gatherTenantScheduleReportData(projectId: string): Promise
   const detailsByNode: ComputeInput['detailsByNode'] = new Map()
   const boByNode: ComputeInput['boByNode'] = new Map()
   for (const d of (detailsRes.data ?? []) as Array<{
-    node_id: string; scope_status: string | null; layout_status: string | null
+    node_id: string; scope_status: string | null; scope_not_required: boolean | null; layout_status: string | null
     bo_period_days: number | null; bo_date_override: string | null
   }>) {
     detailsByNode.set(d.node_id, {
       scopeReceived: d.scope_status === 'received',
+      scopeNotRequired: d.scope_not_required === true,
       layoutIssued: d.layout_status === 'issued',
     })
     boByNode.set(d.node_id, {

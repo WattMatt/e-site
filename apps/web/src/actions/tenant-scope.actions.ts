@@ -4,11 +4,14 @@
  * tenant-scope.actions.ts — server actions for scope-of-work tracking.
  *
  * Covers:
- *   - setScopeItemPartyAction   — set Landlord/Tenant for a (node, scope_item_type) pair
- *   - addScopeItemTypeAction    — add a new org-level scope item type to the registry
+ *   - setScopeItemPartyAction    — set Landlord/Tenant for a (node, scope_item_type) pair
+ *   - setScopeNotRequiredAction  — landlord-covers-full-scope override (no doc will issue)
+ *   - addScopeItemTypeAction     — add a new org-level scope item type to the registry
  *
  * Note: setScopeStatusAction and setLayoutStatusAction were removed — status is
  * auto-derived by the 00118 DB trigger from document/revision presence (spec §3.3).
+ * setScopeNotRequiredAction is NOT that toggle: it writes a separate, orthogonal
+ * column (scope_not_required, migration 00150) the trigger never touches.
  *
  * Cross-schema write pattern (CLAUDE.md 2026-05-18 gotcha):
  *   supabase-js `.schema('structure').from(...).insert()` silently strips the
@@ -290,6 +293,62 @@ export async function setScopeItemPartyAction(
     }
     // plan.action === 'skip': order is at ordered/received — leave it fully intact.
   }
+
+  revalidatePath(`/projects/${projectId}/tenant-schedule`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// setScopeNotRequiredAction
+// ---------------------------------------------------------------------------
+
+const setScopeNotRequiredSchema = z.object({
+  projectId: uuidSchema,
+  nodeId: uuidSchema,
+  notRequired: z.boolean(),
+})
+
+export type SetScopeNotRequiredResult = { ok: true } | { error: string }
+
+/**
+ * Mark (or clear) the "landlord covers the full scope of work" override for a
+ * tenant. When set, the tenant schedule report treats scope as complete (N/A)
+ * even though no scope document was issued.
+ *
+ * This writes structure.tenant_details.scope_not_required (migration 00150),
+ * which is ORTHOGONAL to the 00118 document-derived scope_status — the trigger
+ * never touches this column, so there is no awaited/received conflict. Uses an
+ * upsert on the unique node_id: a national tenant may have no tenant_details row
+ * yet (the row is otherwise created lazily by the 00118 trigger on document
+ * events). PostgREST defaults to merge-duplicates when on_conflict is present,
+ * and the payload carries only scope_not_required, so scope_status is preserved.
+ */
+export async function setScopeNotRequiredAction(
+  projectId: string,
+  nodeId: string,
+  notRequired: boolean,
+): Promise<SetScopeNotRequiredResult> {
+  const parsed = setScopeNotRequiredSchema.safeParse({ projectId, nodeId, notRequired })
+  if (!parsed.success) return { error: parsed.error.errors[0]?.message ?? 'Invalid input' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const nodeErr = await guardNodeBelongsToProject(guard.supabase, nodeId, projectId)
+  if (nodeErr) return nodeErr
+
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
+
+  const result = await structurePost(
+    supabaseUrl,
+    serviceKey,
+    'tenant_details',
+    { node_id: nodeId, scope_not_required: notRequired },
+    'on_conflict=node_id',
+  )
+  if (!result.ok) return { error: result.error ?? 'Failed to update scope override' }
 
   revalidatePath(`/projects/${projectId}/tenant-schedule`)
   return { ok: true }

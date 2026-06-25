@@ -17,6 +17,20 @@ export function orderStateLabel(status: OrderStatus | null): string {
   return status ? ORDER_LABEL[status] : '—'
 }
 
+/** Per-tenant scope-of-work state for the report column. */
+export type ScopeState = 'awaited' | 'received' | 'not_required'
+
+const SCOPE_LABEL: Record<ScopeState, string> = {
+  awaited: 'Awaited',
+  received: 'Received',
+  not_required: 'N/A',
+}
+
+/** Cell label for a tenant's scope state. `not_required` (landlord-covered) → N/A. */
+export function scopeStateLabel(state: ScopeState): string {
+  return SCOPE_LABEL[state]
+}
+
 export interface ComputeInput {
   activeNodes: Array<{
     id: string
@@ -31,7 +45,7 @@ export interface ComputeInput {
   }>
   decommissionedCount: number
   scopeTypeIdByKey: { db: string | null; lighting: string | null }
-  detailsByNode: Map<string, { scopeReceived: boolean; layoutIssued: boolean }>
+  detailsByNode: Map<string, { scopeReceived: boolean; scopeNotRequired: boolean; layoutIssued: boolean }>
   /** key `${nodeId}:${scopeTypeId}` → order status */
   orderStatusByNodeScope: Map<string, OrderStatus>
   boByNode: Map<string, { effectiveDate: string | null }>
@@ -47,6 +61,7 @@ export interface ShopRow {
   loadA: number | null
   db: OrderStatus | null
   lights: OrderStatus | null
+  scope: ScopeState
   layoutIssued: boolean
   boDate: string | null
   boOverdue: boolean
@@ -57,7 +72,8 @@ export interface ReportKpis {
   activeShops: number
   decommissionedShops: number
   totalGlaM2: number
-  scopeReceivedPct: number
+  /** % of active shops whose scope is complete — received OR landlord-covered (N/A). */
+  scopeCompletePct: number
   layoutsIssuedPct: number
   boards: { landlord: number; ordered: number }
   lights: { landlord: number; ordered: number }
@@ -82,6 +98,9 @@ export function computeReportModel(input: ComputeInput): { kpis: ReportKpis; sho
     .map((n) => {
       const det = detailsByNode.get(n.id)
       const boDate = boByNode.get(n.id)?.effectiveDate ?? null
+      // not_required (explicit landlord-covered override) wins over the
+      // document-derived received/awaited state.
+      const scope: ScopeState = det?.scopeNotRequired ? 'not_required' : det?.scopeReceived ? 'received' : 'awaited'
       return {
         shopNumber: n.shopNumber,
         tenantName: n.shopName,
@@ -91,6 +110,7 @@ export function computeReportModel(input: ComputeInput): { kpis: ReportKpis; sho
         loadA: n.loadA,
         db: stateFor(n.id, scopeTypeIdByKey.db),
         lights: stateFor(n.id, scopeTypeIdByKey.lighting),
+        scope,
         layoutIssued: det?.layoutIssued ?? false,
         boDate,
         boOverdue: boDate ? boDate < today : false,
@@ -100,7 +120,12 @@ export function computeReportModel(input: ComputeInput): { kpis: ReportKpis; sho
 
   const activeShops = activeNodes.length
   const totalGlaM2 = activeNodes.reduce((sum, n) => sum + (n.glaM2 ?? 0), 0)
-  const scopeReceived = activeNodes.filter((n) => detailsByNode.get(n.id)?.scopeReceived).length
+  // Scope is "complete" when a document was received OR the landlord covers the
+  // full scope (not_required) — both mean no further scope is awaited.
+  const scopeComplete = activeNodes.filter((n) => {
+    const det = detailsByNode.get(n.id)
+    return det?.scopeReceived || det?.scopeNotRequired
+  }).length
   const layoutsIssued = activeNodes.filter((n) => detailsByNode.get(n.id)?.layoutIssued).length
 
   const tally = (states: Array<OrderStatus | null>) => ({
@@ -125,7 +150,7 @@ export function computeReportModel(input: ComputeInput): { kpis: ReportKpis; sho
       activeShops,
       decommissionedShops: decommissionedCount,
       totalGlaM2,
-      scopeReceivedPct: pct(scopeReceived, activeShops),
+      scopeCompletePct: pct(scopeComplete, activeShops),
       layoutsIssuedPct: pct(layoutsIssued, activeShops),
       boards,
       lights,
