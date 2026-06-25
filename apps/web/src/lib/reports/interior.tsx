@@ -494,12 +494,21 @@ interface TableProps {
   unbreakableRows?: boolean
   /** Per-column horizontal alignment (default left). */
   align?: ('left' | 'right')[]
+  /** Tighter font + padding — for wide tables that need to fit more columns. */
+  dense?: boolean
 }
 
-export function Table({ columns, rows, repeatHeader, unbreakableRows, align }: TableProps) {
+export function Table({ columns, rows, repeatHeader, unbreakableRows, align, dense }: TableProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cellStyle = (base: any, i: number): any =>
-    align?.[i] === 'right' ? [base, { textAlign: 'right' as const }] : base
+  const denseOverride: any = dense ? { fontSize: spacing.auditRowFontSize, padding: 3 } : null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cellStyle = (base: any, i: number): any => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out: any[] = [base]
+    if (denseOverride) out.push(denseOverride)
+    if (align?.[i] === 'right') out.push({ textAlign: 'right' as const })
+    return out
+  }
   return (
     <View>
       {/* Header — `fixed` repeats it on every page the table flows across */}

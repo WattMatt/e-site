@@ -64,8 +64,11 @@ describe('computeReportModel', () => {
     expect(kpis.totalGlaM2).toBe(2040)
   })
 
-  it('computes scope & layout completion percentages over active shops', () => {
+  it('computes scope & layout completion counts and percentages over active shops', () => {
+    // n1 + n3 scope-complete, n1 + n2 layouts-issued → 2 of 3 each.
+    expect(kpis.scopeComplete).toBe(2)
     expect(kpis.scopeCompletePct).toBe(67)
+    expect(kpis.layoutsIssued).toBe(2)
     expect(kpis.layoutsIssuedPct).toBe(67)
   })
 
@@ -105,7 +108,8 @@ describe('computeReportModel — landlord-covered scope override (not_required)'
   })
 
   it('counts a landlord-covered tenant as scope-complete', () => {
-    // Both tenants complete: one received, one not_required → 100%.
+    // Both tenants complete: one received, one not_required → 2 of 2, 100%.
+    expect(kpis.scopeComplete).toBe(2)
     expect(kpis.scopeCompletePct).toBe(100)
   })
 })
