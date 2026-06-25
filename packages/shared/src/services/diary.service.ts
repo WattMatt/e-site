@@ -135,7 +135,10 @@ export const diaryService = {
 
     const totalEntries = entries.length
     const totalWorkers = entries.reduce((sum: number, e: any) => sum + (e.workers_on_site ?? 0), 0)
-    const avgWorkers = totalEntries > 0 ? Math.round(totalWorkers / totalEntries) : 0
+    // Average workers per ACTIVE DAY, not per entry — a day can have several
+    // entries, and dividing by entries understated the figure the label promises.
+    const daysWithEntries = new Set(entries.map((e: any) => e.entry_date as string)).size
+    const avgWorkers = daysWithEntries > 0 ? Math.round(totalWorkers / daysWithEntries) : 0
 
     const delayEntries = entries.filter((e: any) => e.delays || e.entry_type === 'delay')
     const safetyEntries = entries.filter((e: any) => e.safety_notes || e.entry_type === 'safety')
@@ -151,9 +154,6 @@ export const diaryService = {
       byProject[project.id].entryCount++
       byProject[project.id].entryIds.push(e.id as string)
     }
-
-    // Days with entries
-    const daysWithEntries = new Set(entries.map((e: any) => e.entry_date as string)).size
 
     return {
       weekStart,

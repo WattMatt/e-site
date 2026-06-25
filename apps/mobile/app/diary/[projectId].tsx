@@ -5,7 +5,7 @@ import {
 } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { diaryService, ENTRY_TYPE_LABELS } from '@esite/shared'
+import { diaryService, ENTRY_TYPE_LABELS, createDiarySchema } from '@esite/shared'
 import type { DiaryEntryType } from '@esite/shared'
 import { useSupabase } from '../../src/providers/SupabaseProvider'
 import { useAuth } from '../../src/providers/AuthProvider'
@@ -121,8 +121,21 @@ export default function SiteDiaryScreen() {
   }
 
   function handleSubmit() {
-    if (!progressNotes.trim()) {
-      Alert.alert('Required', 'Please enter progress notes.')
+    // Validate with the SAME shared schema the web server action uses, so mobile
+    // isn't relying on RLS as the only gate (catches blank notes, bad dates,
+    // negative workers, over-length fields before any write).
+    const parsed = createDiarySchema.safeParse({
+      projectId,
+      entryDate,
+      entryType,
+      progressNotes: progressNotes.trim(),
+      safetyNotes: safetyNotes.trim() || undefined,
+      weather: weather || undefined,
+      workersOnSite: workers ? parseInt(workers, 10) : undefined,
+      delays: delays.trim() || undefined,
+    })
+    if (!parsed.success) {
+      Alert.alert('Check your entry', parsed.error.issues[0]?.message ?? 'Invalid input')
       return
     }
     createMutation.mutate()

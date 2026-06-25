@@ -137,3 +137,56 @@ export async function deleteDiaryEntryAction(
   revalidatePath('/diary/weekly')
   return {}
 }
+
+/**
+ * Delete a single diary attachment.
+ *
+ * Gate matches deleteDiaryEntryAction: the parent entry's AUTHOR, or
+ * owner/admin/PM on the entry's project. Previously the strip deleted via the
+ * cookie client, and the attachments RLS DELETE policy only checks org
+ * membership — so any org member could delete anyone's attachment. The
+ * attachment + parent entry are loaded with the RLS client (tenancy gate); the
+ * delete + storage cleanup run with the service client, so this gate is the real
+ * authorization boundary.
+ */
+export async function deleteDiaryAttachmentAction(
+  attachmentId: string,
+): Promise<{ error?: string }> {
+  const parse = uuidSchema.safeParse(attachmentId)
+  if (!parse.success) return { error: 'Invalid attachment id' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: att } = await (supabase as any)
+    .schema('projects')
+    .from('site_diary_attachments')
+    .select('id, file_path, diary_entry_id')
+    .eq('id', attachmentId)
+    .maybeSingle()
+  if (!att) return { error: 'Attachment not found' }
+
+  const entry = await diaryService.getEntryForGate(supabase as never, att.diary_entry_id as string)
+  if (!entry) return { error: 'Attachment not found' }
+
+  const isAuthor = entry.created_by === user.id
+  if (!isAuthor) {
+    const gate = await requireEffectiveRole(supabase, entry.project_id, ORG_WRITE_ROLES)
+    if (!gate.ok) return { error: 'You do not have permission to delete this attachment.' }
+  }
+
+  const serviceClient = createServiceClient()
+  try {
+    await diaryService.deleteAttachment(serviceClient as never, {
+      id: att.id as string,
+      file_path: att.file_path as string,
+    })
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+
+  revalidatePath(`/projects/${entry.project_id}/diary`)
+  revalidatePath('/diary')
+  return {}
+}

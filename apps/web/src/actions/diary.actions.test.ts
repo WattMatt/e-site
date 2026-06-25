@@ -9,6 +9,8 @@ const {
   hardDeleteMock,
   createMock,
   notifyCreatedMock,
+  deleteAttachmentMock,
+  attachmentRow,
 } = vi.hoisted(() => ({
   createClientMock: vi.fn(),
   createServiceClientMock: vi.fn(),
@@ -17,6 +19,8 @@ const {
   hardDeleteMock: vi.fn(),
   createMock: vi.fn(),
   notifyCreatedMock: vi.fn(),
+  deleteAttachmentMock: vi.fn(),
+  attachmentRow: { value: null as any },
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -33,6 +37,7 @@ vi.mock('@esite/shared', async () => {
       getEntryForGate: getEntryForGateMock,
       hardDelete: hardDeleteMock,
       create: createMock,
+      deleteAttachment: deleteAttachmentMock,
     },
   }
 })
@@ -40,19 +45,31 @@ vi.mock('@/lib/diary-email', () => ({
   notifyDiaryEntryCreated: (...a: unknown[]) => notifyCreatedMock(...a),
 }))
 
-import { deleteDiaryEntryAction, createDiaryEntryAction, notifyDiaryEntryAction } from './diary.actions'
+import {
+  deleteDiaryEntryAction, createDiaryEntryAction, notifyDiaryEntryAction,
+  deleteDiaryAttachmentAction,
+} from './diary.actions'
 
 const ENTRY_ID   = '11111111-1111-1111-1111-111111111111'
 const PROJECT_ID = '22222222-2222-2222-2222-222222222222'
 const AUTHOR_ID  = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 const OTHER_ID   = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+const ATT_ID     = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
 
-/** Cookie client mock: auth.getUser + rpc (rpc feeds the real requireEffectiveRole). */
+/** Cookie client mock: auth.getUser + rpc (rpc feeds the real requireEffectiveRole)
+ *  + .schema('projects') for the attachment-row read in deleteDiaryAttachmentAction. */
 function mockClient(opts: { userId?: string; role?: string | null } = {}) {
   const { userId = AUTHOR_ID, role = 'project_manager' } = opts
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: { id: userId } } }) },
     rpc: () => Promise.resolve({ data: role, error: null }),
+    schema: () => ({
+      from: () => ({
+        select: () => ({
+          eq: () => ({ maybeSingle: () => Promise.resolve({ data: attachmentRow.value, error: null }) }),
+        }),
+      }),
+    }),
   }
 }
 
@@ -65,6 +82,9 @@ beforeEach(() => {
   createMock.mockReset()
   notifyCreatedMock.mockReset()
   notifyCreatedMock.mockResolvedValue(undefined)
+  deleteAttachmentMock.mockReset()
+  deleteAttachmentMock.mockResolvedValue(undefined)
+  attachmentRow.value = { id: ATT_ID, file_path: 'org/proj/entry/x.jpg', diary_entry_id: ENTRY_ID }
 
   createClientMock.mockResolvedValue(mockClient())
   createServiceClientMock.mockReturnValue({})
@@ -284,5 +304,51 @@ describe('notifyDiaryEntryAction', () => {
       projectId: PROJECT_ID,
       authorId: AUTHOR_ID,
     }))
+  })
+})
+
+describe('deleteDiaryAttachmentAction — author-or-PM gate', () => {
+  it('rejects a non-uuid attachment id before any I/O', async () => {
+    const res = await deleteDiaryAttachmentAction('nope')
+    expect(res).toEqual({ error: 'Invalid attachment id' })
+    expect(createClientMock).not.toHaveBeenCalled()
+  })
+
+  it('returns "Attachment not found" when the attachment is not visible', async () => {
+    attachmentRow.value = null
+    const res = await deleteDiaryAttachmentAction(ATT_ID)
+    expect(res).toEqual({ error: 'Attachment not found' })
+    expect(deleteAttachmentMock).not.toHaveBeenCalled()
+  })
+
+  it('returns "Attachment not found" when the parent entry is not visible', async () => {
+    getEntryForGateMock.mockResolvedValue(null)
+    const res = await deleteDiaryAttachmentAction(ATT_ID)
+    expect(res).toEqual({ error: 'Attachment not found' })
+    expect(deleteAttachmentMock).not.toHaveBeenCalled()
+  })
+
+  it('lets the entry AUTHOR delete an attachment without a role check', async () => {
+    createClientMock.mockResolvedValue(mockClient({ userId: AUTHOR_ID, role: 'contractor' }))
+    const res = await deleteDiaryAttachmentAction(ATT_ID)
+    expect(res).toEqual({})
+    expect(deleteAttachmentMock).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: ATT_ID, file_path: 'org/proj/entry/x.jpg' },
+    )
+  })
+
+  it("lets a PM delete another user's attachment", async () => {
+    createClientMock.mockResolvedValue(mockClient({ userId: OTHER_ID, role: 'project_manager' }))
+    const res = await deleteDiaryAttachmentAction(ATT_ID)
+    expect(res).toEqual({})
+    expect(deleteAttachmentMock).toHaveBeenCalled()
+  })
+
+  it('blocks a non-author contractor', async () => {
+    createClientMock.mockResolvedValue(mockClient({ userId: OTHER_ID, role: 'contractor' }))
+    const res = await deleteDiaryAttachmentAction(ATT_ID)
+    expect(res).toEqual({ error: 'You do not have permission to delete this attachment.' })
+    expect(deleteAttachmentMock).not.toHaveBeenCalled()
   })
 })
