@@ -146,6 +146,8 @@ interface SyncResult {
   sent: number          // new files inserted
   updated: number       // documents overwritten in place (rev changed)
   newVersions: number   // drawing revisions versioned (rev changed)
+  renamed: number       // drawings whose name/path moved (same content)
+  removed: number       // drawings soft-removed (gone from the folder)
   skipped: number       // unchanged (rev matched)
   failed: number
   classified: { floor_plans: number; documents: number }
@@ -200,10 +202,11 @@ async function syncProject(
     { folderId: proj.cloud_storage_folder_id, path: '', depth: 0 },
   ]
   const files: Array<{ item: CloudItem; parentPath: string }> = []
+  let hitDepthLimit = false
 
   while (queue.length > 0 && files.length < MAX_FILES) {
     const cur = queue.shift()!
-    if (cur.depth > MAX_DEPTH) continue
+    if (cur.depth > MAX_DEPTH) { hitDepthLimit = true; continue }
     let pageToken: string | undefined
     do {
       const page = await provider.listFolder({
@@ -228,11 +231,18 @@ async function syncProject(
     } while (pageToken && files.length < MAX_FILES)
   }
 
+  // Reconcile (delete/rename) is only safe when the WHOLE folder was walked —
+  // a truncated walk would treat un-walked files as deleted. Hitting the file
+  // cap is a conservative proxy for "there may be more".
+  const walkComplete = files.length < MAX_FILES && !hitDepthLimit
+
   // 4. For each file: compare rev, then insert / update-in-place / version.
   const result: SyncResult = {
     sent: 0,
     updated: 0,
     newVersions: 0,
+    renamed: 0,
+    removed: 0,
     skipped: 0,
     failed: 0,
     classified: { floor_plans: 0, documents: 0 },
@@ -256,11 +266,25 @@ async function syncProject(
       const existing = await findExisting(supabase, proj.id, conn.provider, item.id)
       const target = existing ? existing.table : classifiedTarget
       const liveRev = item.revisionId ?? null
+      const srcPath = parentPath ? `${parentPath}/${item.name}` : item.name
 
-      // Unchanged: a row exists and its stored rev matches the live one.
-      // This is the dedup path — one metadata listing, no download.
+      // Unchanged content (rev matches). Still handle a rename/move: Dropbox
+      // keeps the file id stable, so the same drawing may have a new name/path.
       if (existing && (existing.source_revision_id ?? '') === (liveRev ?? '')) {
-        result.skipped++
+        if (
+          existing.table === 'floor_plans' &&
+          (existing.name !== item.name || (existing.source_path ?? '') !== srcPath)
+        ) {
+          const { error: rnErr } = await supabase
+            .schema('tenants')
+            .from('floor_plans')
+            .update({ name: item.name, source_path: srcPath })
+            .eq('id', existing.id)
+          if (rnErr) throw new Error(`floor_plans rename: ${rnErr.message}`)
+          result.renamed++
+        } else {
+          result.skipped++
+        }
         continue
       }
 
@@ -271,7 +295,6 @@ async function syncProject(
       const blob = new Blob([ab], { type: dl.contentType })
       const size = dl.contentLength ?? blob.size
       const ext = (item.name.match(/\.[a-z0-9]+$/i)?.[0] ?? '').toLowerCase()
-      const srcPath = parentPath ? `${parentPath}/${item.name}` : item.name
 
       if (target === 'documents') {
         // Documents carry no annotations → overwrite bytes + update the row
@@ -401,6 +424,39 @@ async function syncProject(
     }
   }
 
+  // 4b. Reconcile deletions (drawings only). Soft-remove cloud-synced drawings
+  // whose source file is no longer in the folder. GUARDED: only when the walk
+  // enumerated the whole folder, else a truncated walk would falsely delete
+  // un-walked files. Local uploads (source_provider NULL) are never touched.
+  if (walkComplete) {
+    const presentIds = new Set(files.map((f) => f.item.id))
+    const { data: activeRows } = await supabase
+      .schema('tenants')
+      .from('floor_plans')
+      .select('id, source_file_id')
+      .eq('project_id', proj.id)
+      .eq('source_provider', conn.provider)
+      .eq('is_active', true)
+    const toRemove = ((activeRows ?? []) as Array<{ id: string; source_file_id: string }>)
+      .filter((r) => !presentIds.has(r.source_file_id))
+      .map((r) => r.id)
+    if (toRemove.length > 0) {
+      const { error: rmErr } = await supabase
+        .schema('tenants')
+        .from('floor_plans')
+        .update({ is_active: false })
+        .in('id', toRemove)
+      if (rmErr) {
+        ;(result.errors ??= []).push(`reconcile: ${rmErr.message}`.slice(0, 200))
+      } else {
+        result.removed = toRemove.length
+      }
+    }
+    console.log(`reconcile: walk complete — removed ${result.removed}, renamed ${result.renamed}`)
+  } else {
+    console.log('reconcile: SKIPPED (walk truncated — folder exceeds MAX_FILES/MAX_DEPTH)')
+  }
+
   // 5. Update last_sync_at on the project.
   await supabase
     .schema('projects')
@@ -455,20 +511,40 @@ async function findExisting(
   projectId: string,
   provider: ProviderName,
   sourceFileId: string,
-): Promise<{ table: 'floor_plans' | 'documents'; id: string; source_revision_id: string | null } | null> {
+): Promise<
+  | {
+      table: 'floor_plans' | 'documents'
+      id: string
+      source_revision_id: string | null
+      name: string
+      source_path: string | null
+    }
+  | null
+> {
   for (const table of ['floor_plans', 'documents'] as const) {
     const { data } = await supabase
       .schema('tenants')
       .from(table)
-      .select('id, source_revision_id')
+      .select('id, source_revision_id, name, source_path')
       .eq('project_id', projectId)
       .eq('source_provider', provider)
       .eq('source_file_id', sourceFileId)
       .limit(1)
       .maybeSingle()
     if (data) {
-      const row = data as { id: string; source_revision_id: string | null }
-      return { table, id: row.id, source_revision_id: row.source_revision_id }
+      const row = data as {
+        id: string
+        source_revision_id: string | null
+        name: string
+        source_path: string | null
+      }
+      return {
+        table,
+        id: row.id,
+        source_revision_id: row.source_revision_id,
+        name: row.name,
+        source_path: row.source_path,
+      }
     }
   }
   return null
