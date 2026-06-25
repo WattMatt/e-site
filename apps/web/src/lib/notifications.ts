@@ -49,8 +49,9 @@ export async function dispatchNotification({
         entityId,
         data: { route },
       }),
-    }).catch(() => {/* non-blocking */})
-  } catch {
-    // Notification failure must never propagate.
+    }).catch((e) => { console.error('[notify] bell dispatch failed', { type, err: String(e) }) })
+  } catch (e) {
+    // Notification failure must never propagate — but make it observable.
+    console.error('[notify] bell threw', { type, err: String(e) })
   }
 }
