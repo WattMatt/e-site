@@ -128,12 +128,12 @@ export function AddEntityPanel({ projectId, revisionId, sources, boards, fedPair
       </div>
 
       {flash && (
-        <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6, background: 'rgba(34, 197, 94, 0.1)', color: '#16a34a', fontSize: 12 }}>
+        <div style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6, background: 'var(--c-green-dim)', color: 'var(--c-green)', fontSize: 12 }}>
           ✓ {flash}
         </div>
       )}
       {error && (
-        <div role="alert" style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6, background: 'rgba(220, 38, 38, 0.1)', color: '#dc2626', fontSize: 12 }}>
+        <div role="alert" style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6, background: 'var(--c-red-dim)', color: 'var(--c-red)', fontSize: 12 }}>
           ✕ {error}
         </div>
       )}

@@ -88,7 +88,7 @@ export function StructurePanel({ projectId, revisionId, roots, unfed, canEdit, o
 
       {error && (
         <div role="alert" style={{ marginBottom: 10, padding: '6px 10px', borderRadius: 6,
-          background: 'rgba(220,38,38,0.1)', color: '#dc2626', fontSize: 12 }}>✕ {error}</div>
+          background: 'var(--c-red-dim)', color: 'var(--c-red)', fontSize: 12 }}>✕ {error}</div>
       )}
 
       {empty ? (
@@ -159,7 +159,7 @@ export function StructurePanel({ projectId, revisionId, roots, unfed, canEdit, o
                 Cancel
               </button>
               <button type="button" disabled={pending} className="btn-primary-amber"
-                style={{ background: '#dc2626', borderColor: '#dc2626' }}
+                style={{ background: 'var(--c-red)', borderColor: 'var(--c-red)' }}
                 onClick={() => run(() => confirmDelete.category === 'source'
                   ? deleteSourceAction(confirmDelete.id) : deleteBoardAction(confirmDelete.id))}>
                 {pending ? 'Removing…' : 'Remove'}
@@ -279,7 +279,7 @@ function TreeNode({
                   rename
                 </button>
                 <button type="button" onClick={() => onDelete(node)} disabled={pending}
-                  style={{ ...actionBtnBase, color: '#dc2626' }}>
+                  style={{ ...actionBtnBase, color: 'var(--c-red)' }}>
                   remove
                 </button>
               </>

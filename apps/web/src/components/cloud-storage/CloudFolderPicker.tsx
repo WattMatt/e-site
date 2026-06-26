@@ -189,9 +189,8 @@ function providerLabel(p: ProviderName): string {
 }
 
 // ---------------------------------------------------------------------------
-// Inline styles — keeps the picker self-contained without depending on the
-// app's CSS variable system. Replace with shadcn/ui or the design system
-// in the Phase 3 polish pass.
+// Inline styles — mapped onto the app's theme CSS variables so the picker
+// adapts to light/dark. The overlay scrim stays a fixed translucent black.
 // ---------------------------------------------------------------------------
 
 const overlay: React.CSSProperties = {
@@ -199,52 +198,52 @@ const overlay: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
 }
 const modal: React.CSSProperties = {
-  background: '#1A1715', color: '#E8E2D8', border: '1px solid #3A332C',
+  background: 'var(--c-panel)', color: 'var(--c-text)', border: '1px solid var(--c-border)',
   borderRadius: 12, width: 520, maxHeight: '80vh', display: 'flex', flexDirection: 'column',
   overflow: 'hidden',
 }
 const header: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  padding: '16px 20px', borderBottom: '1px solid #2A241F',
+  padding: '16px 20px', borderBottom: '1px solid var(--c-border)',
 }
-const title: React.CSSProperties = { margin: 0, fontSize: 16, fontWeight: 700, color: '#F4E9D6' }
-const subtitle: React.CSSProperties = { margin: '4px 0 0', fontSize: 12, color: '#988877' }
+const title: React.CSSProperties = { margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--c-text)' }
+const subtitle: React.CSSProperties = { margin: '4px 0 0', fontSize: 12, color: 'var(--c-text-mid)' }
 const closeBtn: React.CSSProperties = {
-  background: 'none', border: 'none', color: '#988877', fontSize: 24, cursor: 'pointer',
+  background: 'none', border: 'none', color: 'var(--c-text-mid)', fontSize: 24, cursor: 'pointer',
   width: 28, height: 28, lineHeight: 1,
 }
 const breadcrumbsBar: React.CSSProperties = {
-  padding: '10px 20px', borderBottom: '1px solid #2A241F', fontSize: 12,
+  padding: '10px 20px', borderBottom: '1px solid var(--c-border)', fontSize: 12,
   display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4,
 }
 const crumb: React.CSSProperties = {
-  background: 'none', border: 'none', color: '#D4A876', cursor: 'pointer',
+  background: 'none', border: 'none', color: 'var(--c-amber)', cursor: 'pointer',
   padding: '2px 4px', fontSize: 12,
 }
-const crumbActive: React.CSSProperties = { ...crumb, color: '#F4E9D6', cursor: 'default' }
-const sep: React.CSSProperties = { color: '#5C5048', margin: '0 2px' }
+const crumbActive: React.CSSProperties = { ...crumb, color: 'var(--c-text)', cursor: 'default' }
+const sep: React.CSSProperties = { color: 'var(--c-text-dim)', margin: '0 2px' }
 const listArea: React.CSSProperties = { padding: '12px 20px', overflowY: 'auto', flex: 1 }
 const list: React.CSSProperties = { listStyle: 'none', margin: 0, padding: 0 }
 const folderRow: React.CSSProperties = {
   display: 'block', width: '100%', textAlign: 'left',
   background: 'none', border: '1px solid transparent',
-  color: '#E8E2D8', cursor: 'pointer', padding: '8px 12px', borderRadius: 6, fontSize: 14,
+  color: 'var(--c-text)', cursor: 'pointer', padding: '8px 12px', borderRadius: 6, fontSize: 14,
 }
-const dim: React.CSSProperties = { color: '#988877', fontSize: 13, margin: '8px 0' }
-const errorText: React.CSSProperties = { color: '#F87171', fontSize: 13, margin: '8px 0' }
+const dim: React.CSSProperties = { color: 'var(--c-text-mid)', fontSize: 13, margin: '8px 0' }
+const errorText: React.CSSProperties = { color: 'var(--c-red)', fontSize: 13, margin: '8px 0' }
 const loadMoreBtn: React.CSSProperties = {
-  background: 'none', border: '1px solid #3A332C', color: '#D4A876', cursor: 'pointer',
+  background: 'none', border: '1px solid var(--c-border)', color: 'var(--c-amber)', cursor: 'pointer',
   padding: '6px 12px', borderRadius: 6, fontSize: 12, marginTop: 8,
 }
 const footer: React.CSSProperties = {
   display: 'flex', justifyContent: 'flex-end', gap: 8,
-  padding: '12px 20px', borderTop: '1px solid #2A241F',
+  padding: '12px 20px', borderTop: '1px solid var(--c-border)',
 }
 const btnGhost: React.CSSProperties = {
-  background: 'none', border: '1px solid #3A332C', color: '#988877',
+  background: 'none', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)',
   padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
 }
 const btnPrimary: React.CSSProperties = {
-  background: '#D4A876', border: '1px solid #D4A876', color: '#1A1715',
+  background: 'var(--c-amber-fill)', border: '1px solid var(--c-amber-fill)', color: 'var(--c-on-amber)',
   padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13,
 }

@@ -33,9 +33,9 @@ export function NumberFieldEditor({ field, onChange, onRemove }: Props) {
   return (
     <div className="space-y-3 p-3 border rounded">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Number</span>
+        <span className="text-xs font-medium text-[var(--c-text-mid)] uppercase tracking-wide">Number</span>
         {onRemove && (
-          <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">
+          <button type="button" onClick={onRemove} className="text-xs text-[var(--c-red)] hover:text-[var(--c-red)]">
             Remove
           </button>
         )}
@@ -58,7 +58,7 @@ export function NumberFieldEditor({ field, onChange, onRemove }: Props) {
       />
 
       <div className="space-y-2">
-        <p className="text-xs font-medium text-gray-600">Pass-when condition</p>
+        <p className="text-xs font-medium text-[var(--c-text-mid)]">Pass-when condition</p>
         <div className="flex items-center gap-2 flex-wrap">
           <input
             type="number"
@@ -74,13 +74,13 @@ export function NumberFieldEditor({ field, onChange, onRemove }: Props) {
             onChange={(e) => setQuickB(e.target.value)}
             className="border rounded px-2 py-1.5 w-28 text-sm"
           />
-          <button type="button" onClick={applyGte} className="text-xs border rounded px-2 py-1.5 hover:bg-gray-50">
+          <button type="button" onClick={applyGte} className="text-xs border rounded px-2 py-1.5 hover:bg-[var(--c-elevated)]">
             &gt;= N
           </button>
-          <button type="button" onClick={applyLte} className="text-xs border rounded px-2 py-1.5 hover:bg-gray-50">
+          <button type="button" onClick={applyLte} className="text-xs border rounded px-2 py-1.5 hover:bg-[var(--c-elevated)]">
             &lt;= N
           </button>
-          <button type="button" onClick={applyBetween} className="text-xs border rounded px-2 py-1.5 hover:bg-gray-50">
+          <button type="button" onClick={applyBetween} className="text-xs border rounded px-2 py-1.5 hover:bg-[var(--c-elevated)]">
             between N and M
           </button>
         </div>
@@ -91,7 +91,7 @@ export function NumberFieldEditor({ field, onChange, onRemove }: Props) {
           onChange={(e) => onChange({ pass_when: e.target.value || undefined })}
           className="border rounded px-3 py-2 w-full text-sm font-mono"
         />
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-[var(--c-text-dim)]">
           Examples: {'>='} 1.0 &nbsp;|&nbsp; {'<='} 5.0 &nbsp;|&nbsp; between 207 and 253 &nbsp;|&nbsp; in [1.0, 2.0]
         </p>
       </div>

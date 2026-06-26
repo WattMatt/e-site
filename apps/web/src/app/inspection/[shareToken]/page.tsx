@@ -61,12 +61,12 @@ export default async function PublicCertPage({ params }: Props) {
   if (!cert) notFound()
 
   return (
-    <div style={{ minHeight: '100vh', padding: 16, background: '#f5f5f5' }}>
+    <div style={{ minHeight: '100vh', padding: 16, background: 'var(--c-base)' }}>
       <div
         style={{
           maxWidth: 1180,
           margin: '0 auto',
-          background: '#fff',
+          background: 'var(--c-panel)',
           boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
           borderRadius: 8,
           padding: 16,
@@ -83,10 +83,10 @@ export default async function PublicCertPage({ params }: Props) {
           }}
         >
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 600, color: '#111', margin: 0 }}>
+            <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--c-text)', margin: 0 }}>
               Certificate {cert.cocNumber}
             </h1>
-            <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0' }}>
+            <p style={{ fontSize: 12, color: 'var(--c-text-mid)', margin: '4px 0 0' }}>
               Shared via E-Site · Read-only public view
             </p>
           </div>
@@ -96,7 +96,7 @@ export default async function PublicCertPage({ params }: Props) {
               download={`${cert.cocNumber}.pdf`}
               style={{
                 display: 'inline-block',
-                background: '#0d6efd',
+                background: 'var(--c-blue)',
                 color: '#fff',
                 textDecoration: 'none',
                 padding: '8px 16px',
@@ -117,18 +117,18 @@ export default async function PublicCertPage({ params }: Props) {
             style={{
               width: '100%',
               height: '85vh',
-              border: '1px solid #e0e0e0',
+              border: '1px solid var(--c-border)',
               borderRadius: 6,
-              background: '#fafafa',
+              background: 'var(--c-elevated)',
             }}
           />
         ) : (
           <div
             style={{
               padding: 16,
-              border: '1px solid #e0e0e0',
+              border: '1px solid var(--c-border)',
               borderRadius: 6,
-              color: '#666',
+              color: 'var(--c-text-mid)',
               fontSize: 13,
             }}
           >

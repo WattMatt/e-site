@@ -7,10 +7,10 @@ const BASE =
   'inline-flex items-center justify-center gap-2 font-semibold transition-all focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed'
 
 const variantStyles: Record<Variant, React.CSSProperties> = {
-  primary:   { background: 'var(--c-amber)', color: '#0D0B09', border: 'none', borderRadius: 6 },
+  primary:   { background: 'var(--c-amber-fill)', color: 'var(--c-on-amber)', border: 'none', borderRadius: 6 },
   secondary: { background: 'var(--c-panel)', color: 'var(--c-text-mid)', border: '1px solid var(--c-border)', borderRadius: 6 },
   ghost:     { background: 'transparent', color: 'var(--c-text-mid)', border: 'none', borderRadius: 6 },
-  danger:    { background: 'var(--c-red-dim)', color: 'var(--c-red)', border: '1px solid #6b1e1e', borderRadius: 6 },
+  danger:    { background: 'var(--c-red-dim)', color: 'var(--c-red)', border: '1px solid var(--c-red)', borderRadius: 6 },
 }
 
 const sizeStyles: Record<Size, React.CSSProperties> = {

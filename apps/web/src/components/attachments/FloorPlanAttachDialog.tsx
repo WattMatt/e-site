@@ -167,7 +167,7 @@ export function FloorPlanAttachDialog({ projectId, onClose, onStage, initial }: 
             </p>
           )}
           {error && (
-            <p role="alert" style={{ color: '#fca5a5', fontSize: 12 }}>{error}</p>
+            <p role="alert" style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>
           )}
           {!loading && !error && plans.length === 0 && (
             <div style={{

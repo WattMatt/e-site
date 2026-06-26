@@ -281,7 +281,7 @@ function renderFolderTree(
           color: f.id === activeId ? 'var(--c-amber)' : 'var(--c-text)',
           textDecoration: 'none',
           borderRadius: 3,
-          background: f.id === activeId ? 'rgba(255,170,0,0.1)' : 'transparent',
+          background: f.id === activeId ? 'var(--c-amber-dim)' : 'transparent',
         }}
       >
         {depth === 0 ? '📂' : '📁'} {f.name}

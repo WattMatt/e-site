@@ -212,12 +212,12 @@ const btnGhost: React.CSSProperties = {
 }
 const btnGhostLink: React.CSSProperties = { ...btnGhost, textDecoration: 'none', display: 'inline-block' }
 const flashStyle: React.CSSProperties = {
-  marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: 12, color: '#4ade80',
-  background: 'rgba(74, 222, 128, 0.08)', border: '1px solid rgba(74, 222, 128, 0.3)',
+  marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: 12, color: 'var(--c-green)',
+  background: 'var(--c-green-dim)', border: '1px solid var(--c-green)',
 }
 const errorStyle: React.CSSProperties = {
-  marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: 12, color: '#f87171',
-  background: 'rgba(248, 113, 113, 0.08)', border: '1px solid rgba(248, 113, 113, 0.3)',
+  marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: 12, color: 'var(--c-red)',
+  background: 'var(--c-red-dim)', border: '1px solid var(--c-red)',
 }
 const popover: React.CSSProperties = {
   position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--c-panel)',

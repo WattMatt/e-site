@@ -15,12 +15,12 @@ interface Props {
 const PAGE_SIZE = 50
 
 const ENTRY_TYPE_STYLES: Record<string, { color: string; bg: string }> = {
-  progress:  { color: '#60a5fa', bg: 'rgba(37,99,235,0.15)' },
-  safety:    { color: '#f87171', bg: 'rgba(127,29,29,0.25)' },
-  quality:   { color: '#c084fc', bg: 'rgba(88,28,135,0.2)' },
+  progress:  { color: 'var(--c-blue)', bg: 'var(--c-blue-dim)' },
+  safety:    { color: 'var(--c-red)', bg: 'var(--c-red-dim)' },
+  quality:   { color: 'var(--c-blue)', bg: 'var(--c-blue-dim)' },
   delay:     { color: 'var(--c-amber)', bg: 'var(--c-amber-dim)' },
-  weather:   { color: '#38bdf8', bg: 'rgba(7,89,133,0.2)' },
-  workforce: { color: '#34d399', bg: 'rgba(5,150,105,0.15)' },
+  weather:   { color: 'var(--c-blue)', bg: 'var(--c-blue-dim)' },
+  workforce: { color: 'var(--c-green)', bg: 'var(--c-green-dim)' },
   general:   { color: 'var(--c-text-mid)', bg: 'var(--c-elevated)' },
 }
 
@@ -142,19 +142,19 @@ export default async function DiaryPage({ params, searchParams }: Props) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {entry.progress_notes && (
                       <div>
-                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#60a5fa', marginBottom: 4 }}>Progress</p>
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-blue)', marginBottom: 4 }}>Progress</p>
                         <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{entry.progress_notes}</p>
                       </div>
                     )}
                     {entry.safety_notes && (
                       <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
-                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#f87171', marginBottom: 4 }}>Safety</p>
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-red)', marginBottom: 4 }}>Safety</p>
                         <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{entry.safety_notes}</p>
                       </div>
                     )}
                     {entry.quality_notes && (
                       <div style={{ paddingTop: 10, borderTop: '1px solid var(--c-border)' }}>
-                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#c084fc', marginBottom: 4 }}>Quality</p>
+                        <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-blue)', marginBottom: 4 }}>Quality</p>
                         <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{entry.quality_notes}</p>
                       </div>
                     )}

@@ -65,7 +65,7 @@ export default async function HandoverPage({ params }: Props) {
   const done = items.filter((i: any) => i.is_complete).length
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
 
-  const barColor = pct === 100 ? '#22c55e' : 'var(--c-amber)'
+  const barColor = pct === 100 ? 'var(--c-green)' : 'var(--c-amber)'
 
   return (
     <div className="animate-fadeup">
@@ -133,7 +133,7 @@ export default async function HandoverPage({ params }: Props) {
               <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                   <span style={{ color: 'var(--c-text-dim)' }}>Complete</span>
-                  <span style={{ color: '#4ade80', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{done}</span>
+                  <span style={{ color: 'var(--c-green)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{done}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                   <span style={{ color: 'var(--c-text-dim)' }}>Remaining</span>
@@ -146,11 +146,11 @@ export default async function HandoverPage({ params }: Props) {
           {pct === 100 && (
             <div
               className="data-panel"
-              style={{ background: 'rgba(34,197,94,0.08)', borderColor: 'rgba(34,197,94,0.3)' }}
+              style={{ background: 'var(--c-green-dim)', borderColor: 'var(--c-green)' }}
             >
               <div style={{ padding: '18px', textAlign: 'center' }}>
                 <p style={{ fontSize: 30, marginBottom: 6 }}>🎉</p>
-                <p style={{ fontSize: 13, fontWeight: 600, color: '#4ade80' }}>All items complete!</p>
+                <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-green)' }}>All items complete!</p>
                 <p style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 4 }}>Project is ready for handover.</p>
               </div>
             </div>

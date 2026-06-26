@@ -252,7 +252,7 @@ export function BulkPasteRatesButton({ revisionId, disabled }: Props) {
                   }}>
                     <span>✓ {parsed.rows.length} valid</span>
                     {parsed.errors.length > 0 && (
-                      <span style={{ color: '#dc2626' }}>✗ {parsed.errors.length} error{parsed.errors.length !== 1 ? 's' : ''}</span>
+                      <span style={{ color: 'var(--c-red)' }}>✗ {parsed.errors.length} error{parsed.errors.length !== 1 ? 's' : ''}</span>
                     )}
                     {parsed.headerSkipped && (
                       <span style={{ color: 'var(--c-text-dim)' }}>(header row skipped)</span>
@@ -293,15 +293,15 @@ export function BulkPasteRatesButton({ revisionId, disabled }: Props) {
 
                   {parsed.errors.length > 0 && (
                     <div style={{
-                      background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)',
+                      background: 'var(--c-red-dim)', border: '1px solid var(--c-red)',
                       borderRadius: 4, padding: 10, marginBottom: 10, maxHeight: 160, overflowY: 'auto',
                     }}>
-                      <div style={{ fontSize: 11, color: '#dc2626', fontWeight: 600, marginBottom: 6 }}>
+                      <div style={{ fontSize: 11, color: 'var(--c-red)', fontWeight: 600, marginBottom: 6 }}>
                         Parse errors ({parsed.errors.length}):
                       </div>
                       <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
                         {parsed.errors.map((e, i) => (
-                          <li key={i} style={{ color: '#dc2626', marginBottom: 4 }}>
+                          <li key={i} style={{ color: 'var(--c-red)', marginBottom: 4 }}>
                             Line {e.lineNum}: {e.message}
                             <div style={{ color: 'var(--c-text-dim)', marginLeft: 8 }}>“{e.raw}”</div>
                           </li>
@@ -313,12 +313,12 @@ export function BulkPasteRatesButton({ revisionId, disabled }: Props) {
               )}
 
               {serverError && (
-                <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginTop: 8 }}>
+                <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12, marginTop: 8 }}>
                   {serverError}
                 </div>
               )}
               {successMsg && (
-                <div role="status" style={{ color: '#3DB882', fontSize: 12, marginTop: 8 }}>
+                <div role="status" style={{ color: 'var(--c-green)', fontSize: 12, marginTop: 8 }}>
                   {successMsg}
                 </div>
               )}

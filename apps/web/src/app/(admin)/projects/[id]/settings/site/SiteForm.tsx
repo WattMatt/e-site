@@ -98,7 +98,7 @@ export function SiteForm({ projectId, initial }: SiteFormProps) {
           role="alert"
           style={{
             padding: '10px 14px',
-            background: 'rgba(232,85,85,0.08)',
+            background: 'var(--c-red-dim)',
             border: '1px solid var(--c-red)',
             borderRadius: 6,
             color: 'var(--c-red)',

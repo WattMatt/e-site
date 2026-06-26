@@ -3584,6 +3584,7 @@ export type Database = {
           notification_preferences: Json
           phone: string | null
           popia_consent_at: string | null
+          theme_preference: string
           updated_at: string
         }
         Insert: {
@@ -3596,6 +3597,7 @@ export type Database = {
           notification_preferences?: Json
           phone?: string | null
           popia_consent_at?: string | null
+          theme_preference?: string
           updated_at?: string
         }
         Update: {
@@ -3608,6 +3610,7 @@ export type Database = {
           notification_preferences?: Json
           phone?: string | null
           popia_consent_at?: string | null
+          theme_preference?: string
           updated_at?: string
         }
         Relationships: []

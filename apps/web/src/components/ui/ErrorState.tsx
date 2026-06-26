@@ -46,7 +46,7 @@ export function ErrorState({
           height: 48,
           borderRadius: 999,
           background: 'var(--c-red-dim)',
-          border: '1px solid rgba(232,85,85,0.3)',
+          border: '1px solid var(--c-red)',
           color: 'var(--c-red)',
           marginBottom: 4,
         }}

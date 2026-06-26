@@ -24,10 +24,10 @@ interface HealthRow {
 }
 
 const TIER_META: Record<HealthTier, { label: string; bg: string; fg: string; border: string }> = {
-  green:  { label: 'Green',  bg: 'var(--c-green-dim)',  fg: 'var(--c-green)',  border: 'rgba(61,184,130,0.3)' },
+  green:  { label: 'Green',  bg: 'var(--c-green-dim)',  fg: 'var(--c-green)',  border: 'var(--c-green)' },
   yellow: { label: 'Yellow', bg: 'var(--c-amber-dim)',  fg: 'var(--c-amber)',  border: 'var(--c-amber-mid)' },
-  orange: { label: 'Orange', bg: 'rgba(240,128,48,0.15)', fg: 'var(--c-orange)', border: 'rgba(240,128,48,0.35)' },
-  red:    { label: 'Red',    bg: 'var(--c-red-dim)',    fg: 'var(--c-red)',    border: 'rgba(232,85,85,0.3)' },
+  orange: { label: 'Orange', bg: 'rgba(240,128,48,0.15)', fg: 'var(--c-orange)', border: 'var(--c-orange)' },
+  red:    { label: 'Red',    bg: 'var(--c-red-dim)',    fg: 'var(--c-red)',    border: 'var(--c-red)' },
 }
 
 function formatRelative(iso: string): string {

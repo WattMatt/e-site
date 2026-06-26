@@ -586,10 +586,10 @@ export function CableScheduleGrid({
             fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
             padding: '4px 8px', borderRadius: 4,
             color: lengthMode === 'design' ? 'var(--c-amber)'
-                 : lengthMode === 'worst'  ? '#dc2626'
+                 : lengthMode === 'worst'  ? 'var(--c-red)'
                  : 'var(--c-text-mid)',
             background: lengthMode === 'design' ? 'var(--c-amber-dim)'
-                      : lengthMode === 'worst'  ? 'rgba(220,38,38,0.08)'
+                      : lengthMode === 'worst'  ? 'var(--c-red-dim)'
                       : 'var(--c-base)',
             border: '1px solid var(--c-border)',
           }}
@@ -663,9 +663,9 @@ export function CableScheduleGrid({
             {filtered.map((run, runIdx) => {
               const cloud = cloudForRun(run, rowById)
               const util = utilisationPctForRun(run)
-              const vdTone = run.vd_pct > 5 ? '#dc2626' : run.vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
-              const cumTone = run.cumulative_vd_pct > 5 ? '#dc2626' : run.cumulative_vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
-              const utilTone = util == null ? 'var(--c-text-dim)' : util > 80 ? '#dc2626' : util > 65 ? 'var(--c-amber)' : 'var(--c-text)'
+              const vdTone = run.vd_pct > 5 ? 'var(--c-red)' : run.vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
+              const cumTone = run.cumulative_vd_pct > 5 ? 'var(--c-red)' : run.cumulative_vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
+              const utilTone = util == null ? 'var(--c-text-dim)' : util > 80 ? 'var(--c-red)' : util > 65 ? 'var(--c-amber)' : 'var(--c-text)'
               const len = activeLengthForRun(run, lengthMode)
               const isExpandable = run.parallel_count > 1 || run.mixed_properties.fields.length > 0
               const isExpanded = expanded.has(run.supply_id)
@@ -723,7 +723,7 @@ export function CableScheduleGrid({
                 ...groupHeaderRows,
                 <tr key={`run-${run.supply_id}`} style={{
                   borderTop: '1px solid var(--c-border)',
-                  background: run.parallel_count > 1 ? 'rgba(243, 178, 88, 0.04)' : undefined,
+                  background: run.parallel_count > 1 ? 'var(--c-amber-dim)' : undefined,
                 }}>
                   <Td align="center" style={{ padding: 0 }}>
                     {isExpandable ? (
@@ -802,7 +802,7 @@ export function CableScheduleGrid({
                           onClick={() => setPendingDeleteRun(run)}
                           aria-label={`Delete run ${run.from_label} to ${run.to_label}`}
                           title="Delete this run and all its strands"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 12, padding: '0 2px' }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-red)', fontSize: 12, padding: '0 2px' }}
                         >
                           ✕
                         </button>
@@ -816,9 +816,9 @@ export function CableScheduleGrid({
                         style={{
                           display: 'inline-flex', alignItems: 'center', gap: 2, padding: '1px 4px',
                           borderRadius: 8, fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
-                          color: cloud.kind === 'added' ? '#16a34a' : 'var(--c-amber)',
-                          background: cloud.kind === 'added' ? 'rgba(34,197,94,0.1)' : 'var(--c-amber-dim)',
-                          border: `1px solid ${cloud.kind === 'added' ? '#16a34a' : 'var(--c-amber-mid)'}`,
+                          color: cloud.kind === 'added' ? 'var(--c-green)' : 'var(--c-amber)',
+                          background: cloud.kind === 'added' ? 'var(--c-green-dim)' : 'var(--c-amber-dim)',
+                          border: `1px solid ${cloud.kind === 'added' ? 'var(--c-green)' : 'var(--c-amber-mid)'}`,
                         }}
                       >
                         ☁{cloud.letter}
@@ -924,7 +924,7 @@ export function CableScheduleGrid({
                   <Td align="right" style={{ color: cumTone, fontWeight: run.cumulative_vd_pct > 3 ? 700 : 400 }}>
                     {run.cumulative_vd_pct > 0 ? fmt(run.cumulative_vd_pct, 2) : '—'}
                   </Td>
-                  <Td align="right" style={{ color: run.under_rated ? '#dc2626' : 'var(--c-text)' }}>
+                  <Td align="right" style={{ color: run.under_rated ? 'var(--c-red)' : 'var(--c-text)' }}>
                     {(() => {
                       const breadcrumb = sansBreadcrumb(run)
                       const tipBody = sansBreadcrumbAsTooltip(breadcrumb)
@@ -953,7 +953,7 @@ export function CableScheduleGrid({
                           {run.under_rated && (
                             <span
                               title={`Run under-rated: ${Math.round(run.combined_capacity_a ?? 0)} A combined capacity < ${run.load_a ?? '?'} A design load`}
-                              style={{ marginLeft: 6, color: '#dc2626', fontWeight: 700, cursor: 'help' }}
+                              style={{ marginLeft: 6, color: 'var(--c-red)', fontWeight: 700, cursor: 'help' }}
                             >
                               ⚠
                             </span>
@@ -1011,7 +1011,7 @@ export function CableScheduleGrid({
                 // ── Shared-edit error banner (only on partial failure) ────
                 ...(sharedError?.supplyId === run.supply_id ? [(
                   <tr key={`error-${run.supply_id}`}>
-                    <td colSpan={TOTAL_COLS} role="alert" style={{ background: 'rgba(220,38,38,0.08)', padding: '6px 14px', borderTop: '1px solid #dc2626', color: '#dc2626', fontSize: 11 }}>
+                    <td colSpan={TOTAL_COLS} role="alert" style={{ background: 'var(--c-red-dim)', padding: '6px 14px', borderTop: '1px solid var(--c-red)', color: 'var(--c-red)', fontSize: 11 }}>
                       {sharedError.message}
                     </td>
                   </tr>
@@ -1064,7 +1064,7 @@ export function CableScheduleGrid({
                           </button>
                         )}
                         {delta != null && (
-                          <span style={{ marginLeft: 6, color: deltaFlag ? '#dc2626' : 'var(--c-text-dim)' }}>
+                          <span style={{ marginLeft: 6, color: deltaFlag ? 'var(--c-red)' : 'var(--c-text-dim)' }}>
                             Δ{delta.abs > 0 ? '+' : ''}{fmt(delta.abs, 1)}
                           </span>
                         )}
@@ -1112,7 +1112,7 @@ export function CableScheduleGrid({
                               type="button"
                               title={`Delete strand #${c.cable_no} — last strand deletes the run`}
                               onClick={() => setPendingDelete(c)}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: 11 }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-red)', fontSize: 11 }}
                             >
                               ✕ delete
                             </button>
@@ -1271,7 +1271,7 @@ export function CableScheduleGrid({
             <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>Saving…</span>
           )}
           {bulkError && (
-            <span role="alert" style={{ color: '#dc2626', fontSize: 11 }}>
+            <span role="alert" style={{ color: 'var(--c-red)', fontSize: 11 }}>
               {bulkError}
             </span>
           )}
@@ -1370,7 +1370,7 @@ function ConfirmDialog({
             Cancel
           </button>
           <button type="button" onClick={onConfirm} className="btn-primary-amber"
-            style={{ background: '#dc2626', borderColor: '#dc2626' }}>
+            style={{ background: 'var(--c-red)', borderColor: 'var(--c-red)' }}>
             {confirmLabel}
           </button>
         </div>
@@ -1430,7 +1430,7 @@ function RepointPicker({
           ))}
         </select>
         {error && (
-          <p style={{ fontSize: 11, color: '#dc2626', margin: 0 }}>{error}</p>
+          <p style={{ fontSize: 11, color: 'var(--c-red)', margin: 0 }}>{error}</p>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
           <button type="button" onClick={onCancel} className="btn-primary-amber" autoFocus

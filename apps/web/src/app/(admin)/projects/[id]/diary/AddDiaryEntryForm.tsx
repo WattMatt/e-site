@@ -11,12 +11,12 @@ import type { DiaryEntryType } from '@esite/shared'
 const WEATHER_OPTIONS = ['Sunny', 'Cloudy', 'Overcast', 'Light rain', 'Heavy rain', 'Windy', 'Hot']
 
 const ENTRY_TYPE_STYLES: Record<DiaryEntryType, { color: string; bg: string; border: string }> = {
-  progress:  { color: '#60a5fa', bg: 'rgba(37,99,235,0.15)', border: '#1d4ed8' },
-  safety:    { color: '#f87171', bg: 'rgba(127,29,29,0.25)', border: '#7f1d1d' },
-  quality:   { color: '#c084fc', bg: 'rgba(88,28,135,0.2)', border: '#6b21a8' },
+  progress:  { color: 'var(--c-blue)', bg: 'var(--c-blue-dim)', border: 'var(--c-blue)' },
+  safety:    { color: 'var(--c-red)', bg: 'var(--c-red-dim)', border: 'var(--c-red)' },
+  quality:   { color: 'var(--c-blue)', bg: 'var(--c-blue-dim)', border: 'var(--c-blue)' },
   delay:     { color: 'var(--c-amber)', bg: 'var(--c-amber-dim)', border: 'var(--c-amber-mid)' },
-  weather:   { color: '#38bdf8', bg: 'rgba(7,89,133,0.2)', border: '#0369a1' },
-  workforce: { color: '#34d399', bg: 'rgba(5,150,105,0.15)', border: '#065f46' },
+  weather:   { color: 'var(--c-blue)', bg: 'var(--c-blue-dim)', border: 'var(--c-blue)' },
+  workforce: { color: 'var(--c-green)', bg: 'var(--c-green-dim)', border: 'var(--c-green)' },
   general:   { color: 'var(--c-text-mid)', bg: 'var(--c-elevated)', border: 'var(--c-border)' },
 }
 
@@ -230,14 +230,14 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
         {/* Safety notes */}
         {(entryType === 'safety' || entryType === 'general') && (
           <div>
-            <label className="ob-label" style={{ color: '#f87171' }}>Safety notes</label>
+            <label className="ob-label" style={{ color: 'var(--c-red)' }}>Safety notes</label>
             <textarea
               value={safetyNotes}
               onChange={e => setSafetyNotes(e.target.value)}
               rows={2}
               placeholder="Safety observations, near-misses, incidents…"
               className="ob-input"
-              style={{ marginTop: 4, resize: 'vertical', borderColor: '#7f1d1d' }}
+              style={{ marginTop: 4, resize: 'vertical', borderColor: 'var(--c-red)' }}
             />
           </div>
         )}
@@ -245,14 +245,14 @@ export function AddDiaryEntryForm({ projectId, orgId, userId }: Props) {
         {/* Quality notes */}
         {(entryType === 'quality' || entryType === 'general') && (
           <div>
-            <label className="ob-label" style={{ color: '#c084fc' }}>Quality notes</label>
+            <label className="ob-label" style={{ color: 'var(--c-blue)' }}>Quality notes</label>
             <textarea
               value={qualityNotes}
               onChange={e => setQualityNotes(e.target.value)}
               rows={2}
               placeholder="Inspections, test results, defects, sign-offs…"
               className="ob-input"
-              style={{ marginTop: 4, resize: 'vertical', borderColor: '#6b21a8' }}
+              style={{ marginTop: 4, resize: 'vertical', borderColor: 'var(--c-blue)' }}
             />
           </div>
         )}

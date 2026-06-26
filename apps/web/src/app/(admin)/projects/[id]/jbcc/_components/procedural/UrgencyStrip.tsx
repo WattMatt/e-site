@@ -32,7 +32,7 @@ export function UrgencyStrip({ overdue, dueSoon, items, trackingHref }: UrgencyS
         gridTemplateColumns: '6px 1fr auto',
         gap: '0 28px',
         background: 'linear-gradient(90deg, var(--c-red-dim-rgb, rgba(255,107,107,.10)), transparent 60%)',
-        border: '1px solid rgba(255,107,107,.20)',
+        border: '1px solid var(--c-red)',
         borderLeft: 'none',
         padding: '24px 28px',
         marginBottom: 64,

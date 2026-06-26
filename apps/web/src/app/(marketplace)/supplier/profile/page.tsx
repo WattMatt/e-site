@@ -56,9 +56,9 @@ export default async function SupplierProfilePage({ searchParams }: Props) {
         <div
           role="status"
           style={{
-            background: '#14532d',
-            border: '1px solid #166534',
-            color: '#4ade80',
+            background: 'var(--c-green-dim)',
+            border: '1px solid var(--c-green)',
+            color: 'var(--c-green)',
             borderRadius: 6,
             padding: '12px 16px',
             fontSize: 13,
@@ -82,10 +82,10 @@ export default async function SupplierProfilePage({ searchParams }: Props) {
             Your marketplace profile is incomplete
           </p>
           <div style={{ display: 'flex', gap: 16, fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.04em' }}>
-            <span style={{ color: isProfileComplete ? '#4ade80' : 'var(--c-text-dim)' }}>
+            <span style={{ color: isProfileComplete ? 'var(--c-green)' : 'var(--c-text-dim)' }}>
               {isProfileComplete ? '✓' : '○'} Company profile
             </span>
-            <span style={{ color: isPaystackLinked ? '#4ade80' : 'var(--c-text-dim)' }}>
+            <span style={{ color: isPaystackLinked ? 'var(--c-green)' : 'var(--c-text-dim)' }}>
               {isPaystackLinked ? '✓' : '○'} Paystack bank account
             </span>
           </div>

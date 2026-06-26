@@ -31,8 +31,9 @@ describe('BoqReconciliationReport', () => {
     const banner = screen.getByRole('status')
     expect(banner.textContent).toContain('✓')
     expect(banner.textContent).not.toContain('⚠')
-    // green background marks the matched state
-    expect(banner.getAttribute('style')).toContain('rgba(34, 197, 94')
+    // (matched state is now styled with the var(--c-green-dim) theme token;
+    // jsdom strips var() from serialized inline styles, so the ✓/heading
+    // assertions above cover the state instead.)
   })
 
   it('renders the mismatched (amber) state and flags the failing bill', () => {
@@ -47,8 +48,8 @@ describe('BoqReconciliationReport', () => {
     expect(screen.getByText('Totals do not reconcile')).toBeTruthy()
     const banner = screen.getByRole('status')
     expect(banner.textContent).toContain('⚠')
-    // amber background marks the mismatch state
-    expect(banner.getAttribute('style')).toContain('rgba(245, 158, 11')
+    // (mismatch state is now styled with the var(--c-amber-dim) theme token;
+    // jsdom strips var() from inline styles — the ⚠/heading assertions cover it.)
     // the failing bill row shows the ✗ marker
     expect(screen.getByTitle('Does not match expected').textContent).toContain('✗')
   })

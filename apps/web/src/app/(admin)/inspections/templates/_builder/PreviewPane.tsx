@@ -18,7 +18,7 @@ class PreviewErrorBoundary extends Component<
   render() {
     if (this.state.error) {
       return (
-        <div className="p-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded">
+        <div className="p-4 text-sm text-[var(--c-amber)] bg-[var(--c-amber-dim)] border border-[var(--c-amber)] rounded">
           <p className="font-medium">Preview unavailable</p>
           <p className="text-xs mt-1">
             Fix validation issues in the SavePanel to render the live preview. Detail:{' '}

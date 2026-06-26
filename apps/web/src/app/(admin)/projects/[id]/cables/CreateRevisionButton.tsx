@@ -38,7 +38,7 @@ export function CreateRevisionButton({
         {pending ? 'Creating…' : '+ New revision'}
       </button>
       {error && (
-        <div role="alert" style={{ color: '#dc2626', fontSize: 11 }}>{error}</div>
+        <div role="alert" style={{ color: 'var(--c-red)', fontSize: 11 }}>{error}</div>
       )}
     </div>
   )

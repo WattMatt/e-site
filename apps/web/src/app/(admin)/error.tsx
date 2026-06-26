@@ -58,9 +58,9 @@ export default function AdminError({
         {showDebug && (
           <pre style={{
             marginTop: 24, padding: 14,
-            background: 'rgba(248,113,113,0.08)',
-            border: '1px solid rgba(248,113,113,0.3)',
-            color: '#f87171',
+            background: 'var(--c-red-dim)',
+            border: '1px solid var(--c-red)',
+            color: 'var(--c-red)',
             fontFamily: 'monospace', fontSize: 11, whiteSpace: 'pre-wrap',
             borderRadius: 6, maxHeight: 400, overflow: 'auto',
           }}>

@@ -29,12 +29,12 @@ function nextWeek(weekStart: string) {
 }
 
 const ENTRY_TYPE_STYLES: Record<string, { color: string; bg: string }> = {
-  progress:  { color: '#60a5fa',        bg: 'rgba(37,99,235,0.15)' },
-  safety:    { color: '#f87171',        bg: 'rgba(127,29,29,0.25)' },
+  progress:  { color: 'var(--c-blue)',  bg: 'var(--c-blue-dim)' },
+  safety:    { color: 'var(--c-red)',   bg: 'var(--c-red-dim)' },
   quality:   { color: '#c084fc',        bg: 'rgba(88,28,135,0.2)' },
   delay:     { color: 'var(--c-amber)', bg: 'var(--c-amber-dim)' },
-  weather:   { color: '#38bdf8',        bg: 'rgba(7,89,133,0.2)' },
-  workforce: { color: '#34d399',        bg: 'rgba(5,150,105,0.15)' },
+  weather:   { color: 'var(--c-blue)',  bg: 'var(--c-blue-dim)' },
+  workforce: { color: 'var(--c-green)', bg: 'var(--c-green-dim)' },
   general:   { color: 'var(--c-text-mid)', bg: 'var(--c-elevated)' },
 }
 
@@ -114,7 +114,7 @@ export default async function WeeklyDiaryPage({ searchParams }: Props) {
               role="alert"
               style={{
                 padding: '12px 16px', borderRadius: 8,
-                background: 'rgba(127,29,29,0.22)', border: '1px solid #6b1e1e',
+                background: 'var(--c-red-dim)', border: '1px solid var(--c-red)',
                 color: 'var(--c-red)', fontSize: 13, fontWeight: 500,
               }}
             >
@@ -201,7 +201,7 @@ export default async function WeeklyDiaryPage({ searchParams }: Props) {
                             )}
                             {entry.safety_notes && (
                               <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--c-border)' }}>
-                                <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#f87171', marginBottom: 4 }}>Safety</p>
+                                <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-red)', marginBottom: 4 }}>Safety</p>
                                 <p style={{ fontSize: 13, color: 'var(--c-text)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{entry.safety_notes}</p>
                               </div>
                             )}

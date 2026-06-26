@@ -95,11 +95,11 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
     <div className="space-y-3 p-3 border rounded" style={{ borderColor: 'var(--c-border, #e5e7eb)' }}>
       {/* Header row */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+        <span className="text-xs font-medium text-[var(--c-text-mid)] uppercase tracking-wide">
           🔁 Repeating group
         </span>
         {onRemove && (
-          <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">
+          <button type="button" onClick={onRemove} className="text-xs text-[var(--c-red)] hover:text-[var(--c-red)]">
             Remove
           </button>
         )}
@@ -147,7 +147,7 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
 
       <div className="flex items-center gap-3">
         <div className="flex-1">
-          <label className="text-xs text-gray-500 block mb-1">Min entries (optional)</label>
+          <label className="text-xs text-[var(--c-text-mid)] block mb-1">Min entries (optional)</label>
           <input
             type="number"
             min={1}
@@ -161,7 +161,7 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
           />
         </div>
         <div className="flex-1">
-          <label className="text-xs text-gray-500 block mb-1">Max entries (optional)</label>
+          <label className="text-xs text-[var(--c-text-mid)] block mb-1">Max entries (optional)</label>
           <input
             type="number"
             min={field.min_count ?? 1}
@@ -179,13 +179,13 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
       {/* Sub-fields section */}
       <div className="border-t pt-3" style={{ borderColor: 'var(--c-border, #e5e7eb)' }}>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+          <span className="text-xs font-semibold text-[var(--c-text-mid)] uppercase tracking-wide">
             Sub-fields ({subFields.length})
           </span>
         </div>
 
         {subFields.length === 0 && (
-          <p className="text-xs text-gray-400 mb-2">No sub-fields yet. Add at least one.</p>
+          <p className="text-xs text-[var(--c-text-dim)] mb-2">No sub-fields yet. Add at least one.</p>
         )}
 
         <div className="space-y-1">
@@ -199,11 +199,11 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
               >
                 {/* Compact row */}
                 <div
-                  className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50"
+                  className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-[var(--c-elevated)]"
                   onClick={() => setExpandedSubFieldId(isExpanded ? null : sf.field_id)}
                 >
-                  <span className="text-xs text-gray-400 w-5 shrink-0">{i + 1}.</span>
-                  <span className="flex-1 text-sm truncate">{sf.label || <em className="text-gray-400">Unlabelled</em>}</span>
+                  <span className="text-xs text-[var(--c-text-dim)] w-5 shrink-0">{i + 1}.</span>
+                  <span className="flex-1 text-sm truncate">{sf.label || <em className="text-[var(--c-text-dim)]">Unlabelled</em>}</span>
                   <span
                     className="text-xs px-1.5 py-0.5 rounded"
                     style={{ background: 'var(--c-surface-2, #f3f4f6)', color: 'var(--c-text-dim, #6b7280)' }}
@@ -215,7 +215,7 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
                       type="button"
                       disabled={i === 0}
                       onClick={() => moveSubField(i, 'up')}
-                      className="text-xs px-1 py-0.5 rounded hover:bg-gray-100 disabled:opacity-30"
+                      className="text-xs px-1 py-0.5 rounded hover:bg-[var(--c-elevated)] disabled:opacity-30"
                       title="Move up"
                     >
                       ↑
@@ -224,7 +224,7 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
                       type="button"
                       disabled={i === subFields.length - 1}
                       onClick={() => moveSubField(i, 'down')}
-                      className="text-xs px-1 py-0.5 rounded hover:bg-gray-100 disabled:opacity-30"
+                      className="text-xs px-1 py-0.5 rounded hover:bg-[var(--c-elevated)] disabled:opacity-30"
                       title="Move down"
                     >
                       ↓
@@ -232,13 +232,13 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
                     <button
                       type="button"
                       onClick={() => removeSubField(i)}
-                      className="text-xs px-1 py-0.5 rounded text-red-500 hover:bg-red-50"
+                      className="text-xs px-1 py-0.5 rounded text-[var(--c-red)] hover:bg-[var(--c-red-dim)]"
                       title="Remove sub-field"
                     >
                       ✕
                     </button>
                   </div>
-                  <span className="text-xs text-gray-400">{isExpanded ? '▲' : '▼'}</span>
+                  <span className="text-xs text-[var(--c-text-dim)]">{isExpanded ? '▲' : '▼'}</span>
                 </div>
 
                 {/* Inline edit panel */}
@@ -264,7 +264,7 @@ export function RepeatingGroupEditor({ sectionId, field, onChange, onRemove }: P
         <button
           type="button"
           onClick={() => setShowPicker(true)}
-          className="mt-2 flex items-center gap-1.5 text-sm px-3 py-1.5 rounded border border-dashed hover:border-blue-400 hover:text-blue-600 transition-colors"
+          className="mt-2 flex items-center gap-1.5 text-sm px-3 py-1.5 rounded border border-dashed hover:border-[var(--c-blue)] hover:text-[var(--c-blue)] transition-colors"
           style={{ borderColor: 'var(--c-border, #e5e7eb)', color: 'var(--c-text-dim, #6b7280)' }}
         >
           <span>+</span>

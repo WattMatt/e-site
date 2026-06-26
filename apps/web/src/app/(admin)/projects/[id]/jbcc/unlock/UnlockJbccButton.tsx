@@ -39,7 +39,7 @@ export function UnlockJbccButton({ label, projectId }: { label: string; projectI
         {label}
       </Button>
       {error && (
-        <p style={{ color: '#fca5a5', fontSize: 11, marginTop: 8, fontFamily: 'var(--font-mono)' }}>
+        <p style={{ color: 'var(--c-red)', fontSize: 11, marginTop: 8, fontFamily: 'var(--font-mono)' }}>
           {error}
         </p>
       )}

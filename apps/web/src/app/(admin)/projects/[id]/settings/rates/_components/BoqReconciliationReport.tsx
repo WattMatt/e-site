@@ -47,7 +47,7 @@ export function BoqReconciliationReport({ report }: { report: ReconciliationRepo
           borderRadius: 8,
           padding: '14px 16px',
           border: `1px solid ${matched ? 'var(--c-green)' : 'var(--c-amber)'}`,
-          background: matched ? 'rgba(34,197,94,0.08)' : 'rgba(245,158,11,0.08)',
+          background: matched ? 'var(--c-green-dim)' : 'var(--c-amber-dim)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>

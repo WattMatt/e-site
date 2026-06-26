@@ -65,8 +65,8 @@ export function SupplierProfileForm({ supplier }: { supplier: Supplier }) {
             role="alert"
             style={{
               background: 'var(--c-red-dim)',
-              border: '1px solid rgba(127,29,29,0.6)',
-              color: '#fca5a5',
+              border: '1px solid var(--c-red)',
+              color: 'var(--c-red)',
               borderRadius: 6,
               padding: '10px 14px',
               fontSize: 12,
@@ -79,9 +79,9 @@ export function SupplierProfileForm({ supplier }: { supplier: Supplier }) {
           <div
             role="status"
             style={{
-              background: '#14532d',
-              border: '1px solid #166534',
-              color: '#4ade80',
+              background: 'var(--c-green-dim)',
+              border: '1px solid var(--c-green)',
+              color: 'var(--c-green)',
               borderRadius: 6,
               padding: '10px 14px',
               fontSize: 12,

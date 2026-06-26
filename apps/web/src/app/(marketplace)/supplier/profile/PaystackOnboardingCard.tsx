@@ -62,13 +62,13 @@ export function PaystackOnboardingCard({ supplierId, subaccount }: Props) {
       <div
         className="animate-fadeup animate-fadeup-2"
         style={{
-          background: '#14532d',
-          border: '1px solid #166534',
+          background: 'var(--c-green-dim)',
+          border: '1px solid var(--c-green)',
           borderRadius: 6,
           padding: 20,
         }}
       >
-        <h3 style={{ fontSize: 13, fontWeight: 700, color: '#4ade80', marginBottom: 8, letterSpacing: '0.02em' }}>
+        <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-green)', marginBottom: 8, letterSpacing: '0.02em' }}>
           ✓ Paystack Bank Account Linked
         </h3>
         <p style={{ fontSize: 13, color: 'var(--c-text)' }}>{subaccount.business_name}</p>
@@ -99,9 +99,9 @@ export function PaystackOnboardingCard({ supplierId, subaccount }: Props) {
           <div
             role="status"
             style={{
-              background: '#14532d',
-              border: '1px solid #166534',
-              color: '#4ade80',
+              background: 'var(--c-green-dim)',
+              border: '1px solid var(--c-green)',
+              color: 'var(--c-green)',
               borderRadius: 6,
               padding: '10px 14px',
               fontSize: 12,
@@ -116,8 +116,8 @@ export function PaystackOnboardingCard({ supplierId, subaccount }: Props) {
             role="alert"
             style={{
               background: 'var(--c-red-dim)',
-              border: '1px solid rgba(127,29,29,0.6)',
-              color: '#fca5a5',
+              border: '1px solid var(--c-red)',
+              color: 'var(--c-red)',
               borderRadius: 6,
               padding: '10px 14px',
               fontSize: 12,

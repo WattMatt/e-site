@@ -156,7 +156,7 @@ function StagedTile({ item, onRemove }: { item: StagedAttachment; onRemove: () =
           position: 'absolute', top: 4, left: 4,
           fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
           letterSpacing: '0.08em', padding: '2px 5px', borderRadius: 3,
-          background: 'var(--c-amber)', color: '#0B0B12',
+          background: 'var(--c-amber)', color: 'var(--c-on-amber)',
         }}>{tag}</span>
       )}
       <button

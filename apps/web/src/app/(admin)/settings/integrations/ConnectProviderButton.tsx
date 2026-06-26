@@ -45,7 +45,7 @@ export function ConnectProviderButton({
         {pending ? `Connecting ${label}…` : `Connect ${label}`}
       </button>
       {error && (
-        <p style={{ color: '#f87171', fontSize: 11, fontFamily: 'var(--font-mono)' }}>{error}</p>
+        <p style={{ color: 'var(--c-red)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>{error}</p>
       )}
     </div>
   )

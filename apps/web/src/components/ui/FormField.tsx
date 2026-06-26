@@ -85,8 +85,8 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
       onFocus={(e) => {
         e.currentTarget.style.borderColor = invalid ? 'var(--c-red)' : 'var(--c-amber)'
         e.currentTarget.style.boxShadow = invalid
-          ? '0 0 0 2px rgba(232,85,85,0.15)'
-          : '0 0 0 2px rgba(232,146,58,0.18)'
+          ? '0 0 0 2px var(--c-red-dim)'
+          : '0 0 0 2px var(--c-amber-dim)'
         onFocus?.(e)
       }}
       onBlur={(e) => {
@@ -116,8 +116,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       onFocus={(e) => {
         e.currentTarget.style.borderColor = invalid ? 'var(--c-red)' : 'var(--c-amber)'
         e.currentTarget.style.boxShadow = invalid
-          ? '0 0 0 2px rgba(232,85,85,0.15)'
-          : '0 0 0 2px rgba(232,146,58,0.18)'
+          ? '0 0 0 2px var(--c-red-dim)'
+          : '0 0 0 2px var(--c-amber-dim)'
         onFocus?.(e)
       }}
       onBlur={(e) => {
@@ -149,8 +149,8 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
       onFocus={(e) => {
         e.currentTarget.style.borderColor = invalid ? 'var(--c-red)' : 'var(--c-amber)'
         e.currentTarget.style.boxShadow = invalid
-          ? '0 0 0 2px rgba(232,85,85,0.15)'
-          : '0 0 0 2px rgba(232,146,58,0.18)'
+          ? '0 0 0 2px var(--c-red-dim)'
+          : '0 0 0 2px var(--c-amber-dim)'
         onFocus?.(e)
       }}
       onBlur={(e) => {

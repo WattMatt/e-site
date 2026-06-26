@@ -70,7 +70,7 @@ export function FieldTypePicker({ onSelect, onClose, disableRepeatingGroup }: Pr
           <button
             type="button"
             onClick={onClose}
-            className="text-sm px-2 py-1 rounded hover:bg-gray-100"
+            className="text-sm px-2 py-1 rounded hover:bg-[var(--c-elevated)]"
             style={{ color: 'var(--c-text-dim, #6b7280)' }}
             aria-label="Close"
           >
@@ -95,7 +95,7 @@ export function FieldTypePicker({ onSelect, onClose, disableRepeatingGroup }: Pr
                   'flex items-start gap-3 rounded-lg border px-4 py-3 text-left transition-colors',
                   disabled
                     ? 'opacity-40 cursor-not-allowed'
-                    : 'hover:border-blue-400 hover:bg-blue-50 cursor-pointer',
+                    : 'hover:border-[var(--c-blue)] hover:bg-[var(--c-blue-dim)] cursor-pointer',
                 ].join(' ')}
                 style={{
                   borderColor: 'var(--c-border, #e5e7eb)',
@@ -110,7 +110,7 @@ export function FieldTypePicker({ onSelect, onClose, disableRepeatingGroup }: Pr
                     {card.description}
                   </div>
                   {disabled && (
-                    <div className="text-xs mt-1 text-amber-600">Not allowed inside a repeating group</div>
+                    <div className="text-xs mt-1 text-[var(--c-amber)]">Not allowed inside a repeating group</div>
                   )}
                 </div>
               </button>

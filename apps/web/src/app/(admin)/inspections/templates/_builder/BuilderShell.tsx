@@ -62,14 +62,14 @@ export function BuilderShell({ builder, onSave }: Props) {
             <button
               type="button"
               onClick={() => setRightTab('preview')}
-              className={`px-3 py-1 text-sm rounded ${rightTab === 'preview' ? 'bg-blue-100 text-blue-700' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+              className={`px-3 py-1 text-sm rounded ${rightTab === 'preview' ? 'bg-[var(--c-blue-dim)] text-[var(--c-blue)]' : 'bg-[var(--c-surface)] text-[var(--c-text-dim)] hover:bg-[var(--c-elevated)]'}`}
             >
               Live preview
             </button>
             <button
               type="button"
               onClick={() => setRightTab('json')}
-              className={`px-3 py-1 text-sm rounded ${rightTab === 'json' ? 'bg-blue-100 text-blue-700' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+              className={`px-3 py-1 text-sm rounded ${rightTab === 'json' ? 'bg-[var(--c-blue-dim)] text-[var(--c-blue)]' : 'bg-[var(--c-surface)] text-[var(--c-text-dim)] hover:bg-[var(--c-elevated)]'}`}
             >
               JSON
             </button>

@@ -138,7 +138,7 @@ export function PartiesEditor({ projectId, initialParties }: Props) {
             marginBottom: 24,
             padding: '12px 16px',
             background: 'var(--c-red-dim-rgb, rgba(255,107,107,.10))',
-            border: '1px solid rgba(255,107,107,.25)',
+            border: '1px solid var(--c-red)',
             fontFamily: 'var(--f-mono-display)',
             fontSize: 12,
             color: 'var(--c-red-bright)',

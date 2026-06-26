@@ -130,7 +130,7 @@ export function TenantScheduleReportButton({ projectId }: { projectId: string })
                 </div>
               )}
               {ready && (
-                <iframe title="Tenant Schedule Report preview" src={blobUrl!} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
+                <iframe title="Tenant Schedule Report preview" src={blobUrl!} style={{ width: '100%', height: '100%', border: 'none', background: 'var(--c-elevated)' }} />
               )}
             </div>
           </div>

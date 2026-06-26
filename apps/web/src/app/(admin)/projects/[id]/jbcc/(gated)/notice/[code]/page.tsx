@@ -135,7 +135,7 @@ export default async function NoticeDetailPage({ params }: PageProps) {
           style={{
             gridColumn: '1 / -1',
             background: 'var(--c-red-dim-rgb, rgba(255,107,107,.10))',
-            border: '1px solid rgba(255,107,107,.20)',
+            border: '1px solid var(--c-red)',
             borderLeft: '3px solid var(--c-red-bright)',
             padding: 24,
             marginBottom: 24,

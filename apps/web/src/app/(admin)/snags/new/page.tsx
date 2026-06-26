@@ -64,7 +64,7 @@ export default async function NewSnagPickerPage() {
             href="/projects/new"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '9px 16px', background: 'var(--c-amber)', color: '#0D0B09',
+              padding: '9px 16px', background: 'var(--c-amber)', color: 'var(--c-on-amber)',
               borderRadius: 6, fontSize: 13, fontWeight: 700, textDecoration: 'none',
             }}
           >

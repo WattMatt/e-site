@@ -329,7 +329,7 @@ function LensToggle({ projectId, active }: { projectId: string; active: 'visits'
           ...(active === 'visits'
             ? {
                 background: 'var(--c-amber)',
-                color: '#0D0B09',
+                color: 'var(--c-on-amber)',
               }
             : {
                 background: 'transparent',
@@ -353,7 +353,7 @@ function LensToggle({ projectId, active }: { projectId: string; active: 'visits'
           ...(active === 'all'
             ? {
                 background: 'var(--c-amber)',
-                color: '#0D0B09',
+                color: 'var(--c-on-amber)',
               }
             : {
                 background: 'transparent',

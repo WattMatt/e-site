@@ -78,7 +78,7 @@ export default function VerifyEmailPage() {
       <div className="auth-field" style={{ marginTop: 18 }}>
         {resendError && <div className="auth-alert-error">{resendError}</div>}
         {resent && (
-          <div className="auth-alert-error" style={{ background: 'rgba(52, 211, 153, 0.08)', borderColor: '#34d399', color: '#34d399' }}>
+          <div className="auth-alert-error" style={{ background: 'var(--c-green-dim)', borderColor: 'var(--c-green)', color: 'var(--c-green)' }}>
             Email re-sent. Check your inbox (and spam folder).
           </div>
         )}

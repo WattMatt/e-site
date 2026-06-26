@@ -121,7 +121,7 @@ export function SignoffForm({ revisionId, initial, locked }: Props) {
     <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {serverError && (
         <div role="alert" style={{
-          padding: '10px 14px', background: 'rgba(232,85,85,0.08)',
+          padding: '10px 14px', background: 'var(--c-red-dim)',
           border: '1px solid var(--c-red)', borderRadius: 6, color: 'var(--c-red)', fontSize: 13,
         }}>
           {serverError}

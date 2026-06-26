@@ -136,9 +136,9 @@ export default async function DiscrepancyReportPage({ params }: Props) {
           <h1 className="page-title">Length discrepancy report<RevisionStatusBadge status={rev.status} /></h1>
           <p className="page-subtitle">
             {rev.code} ·{' '}
-            <span style={{ color: '#dc2626' }}><strong>{discrepancies.length}</strong> over threshold</span> ·{' '}
+            <span style={{ color: 'var(--c-red)' }}><strong>{discrepancies.length}</strong> over threshold</span> ·{' '}
             <span style={{ color: 'var(--c-amber)' }}><strong>{pending.length}</strong> pending sign-off</span> ·{' '}
-            <span style={{ color: '#16a34a' }}><strong>{accepted.length}</strong> confirmed</span>
+            <span style={{ color: 'var(--c-green)' }}><strong>{accepted.length}</strong> confirmed</span>
           </p>
         </div>
       </div>

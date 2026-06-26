@@ -224,7 +224,7 @@ function DestructionSummary({ counts }: { counts: import('@/actions/tenant-delet
     return (
       <div style={{
         padding: '10px 12px', borderRadius: 6,
-        background: 'var(--c-red-dim)', border: '1px solid #6b1e1e',
+        background: 'var(--c-red-dim)', border: '1px solid var(--c-red)',
         fontSize: 13, color: 'var(--c-text)', fontFamily: 'var(--font-sans)',
       }}>
         No linked records — just the tenant board itself.
@@ -235,7 +235,7 @@ function DestructionSummary({ counts }: { counts: import('@/actions/tenant-delet
   return (
     <div style={{
       padding: '10px 12px', borderRadius: 6,
-      background: 'var(--c-red-dim)', border: '1px solid #6b1e1e',
+      background: 'var(--c-red-dim)', border: '1px solid var(--c-red)',
     }}>
       <p style={{ margin: '0 0 6px', fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--c-red)' }}>
         Will be permanently deleted

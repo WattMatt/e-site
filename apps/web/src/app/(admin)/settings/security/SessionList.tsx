@@ -75,7 +75,7 @@ export function SessionList({ sessions }: { sessions: ActiveSession[] }) {
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '10px 12px',
               border: '1px solid var(--c-border)', borderRadius: 6,
-              background: s.isCurrent ? 'rgba(245, 158, 11, 0.06)' : 'transparent',
+              background: s.isCurrent ? 'var(--c-amber-dim)' : 'transparent',
             }}
           >
             <div>

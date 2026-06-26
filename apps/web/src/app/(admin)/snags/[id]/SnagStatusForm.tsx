@@ -5,11 +5,11 @@ import { updateSnagStatusAction, signOffSnagAction } from '@/actions/snag.action
 import { Button } from '@/components/ui/Button'
 
 const STATUSES = [
-  { value: 'open',             label: 'Open',           color: 'var(--c-red)',    bg: 'var(--c-red-dim)',    border: '#6b1e1e' },
+  { value: 'open',             label: 'Open',           color: 'var(--c-red)',    bg: 'var(--c-red-dim)',    border: 'var(--c-red)' },
   { value: 'in_progress',      label: 'In Progress',    color: 'var(--c-amber)',  bg: 'var(--c-amber-dim)',  border: 'var(--c-amber-mid)' },
-  { value: 'resolved',         label: 'Resolved',       color: '#60a5fa',         bg: 'rgba(37,99,235,0.15)',border: '#1d4ed8' },
+  { value: 'resolved',         label: 'Resolved',       color: 'var(--c-blue)',   bg: 'var(--c-blue-dim)',   border: 'var(--c-blue)' },
   { value: 'pending_sign_off', label: 'Pending Sign-off',color: '#c084fc',        bg: 'rgba(88,28,135,0.2)', border: '#6b21a8' },
-  { value: 'signed_off',       label: 'Signed Off',     color: '#34d399',         bg: 'rgba(5,150,105,0.15)',border: '#065f46' },
+  { value: 'signed_off',       label: 'Signed Off',     color: 'var(--c-green)',  bg: 'var(--c-green-dim)',  border: 'var(--c-green)' },
   { value: 'closed',           label: 'Closed',         color: 'var(--c-text-dim)',bg: 'var(--c-panel)',    border: 'var(--c-border)' },
 ]
 

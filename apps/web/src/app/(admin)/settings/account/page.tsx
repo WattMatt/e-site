@@ -37,8 +37,8 @@ export default async function AccountSettingsPage() {
         </div>
       </div>
 
-      <div className="data-panel" style={{ borderColor: '#6b1e1e' }}>
-        <div className="data-panel-header" style={{ borderColor: '#6b1e1e' }}>
+      <div className="data-panel" style={{ borderColor: 'var(--c-red)' }}>
+        <div className="data-panel-header" style={{ borderColor: 'var(--c-red)' }}>
           <span className="data-panel-title" style={{ color: 'var(--c-red)' }}>Delete Account</span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>POPIA §24</span>
         </div>

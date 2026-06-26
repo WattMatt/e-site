@@ -476,7 +476,7 @@ export function VariationLineEditor({ projectId, voId, sections, items, onSaved,
       </div>
 
       {error && (
-        <div style={{ fontSize: 12, color: 'var(--c-red)', background: 'var(--c-red-dim)', border: '1px solid #6b1e1e', borderRadius: 6, padding: '8px 12px' }}>
+        <div style={{ fontSize: 12, color: 'var(--c-red)', background: 'var(--c-red-dim)', border: '1px solid var(--c-red)', borderRadius: 6, padding: '8px 12px' }}>
           {error}
         </div>
       )}

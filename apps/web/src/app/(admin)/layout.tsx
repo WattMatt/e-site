@@ -7,6 +7,7 @@ import { listMyOrganisations } from '@/actions/active-organisation.actions'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { OrgSwitcher } from '@/components/layout/OrgSwitcher'
 import { NotificationCentre } from '@/components/ui/NotificationCentre'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import { PaymentStatusBanner } from '@/components/layout/PaymentStatusBanner'
 import { MinimalLegalNav } from '@/components/layout/MinimalLegalNav'
 
@@ -54,6 +55,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <header className="portal-header">
           <OrgSwitcher memberships={orgMemberships} />
+          <ThemeToggle />
           <NotificationCentre />
         </header>
         <main id="main-content" className="portal-main">

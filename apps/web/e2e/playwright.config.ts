@@ -68,11 +68,11 @@ export default defineConfig({
       dependencies: ['setup'],
     },
 
-    // Unauthenticated — redirect tests
+    // Unauthenticated — redirect tests + theme resolution (public /login)
     {
       name: 'chromium-unauth',
       use: { ...devices['Desktop Chrome'] },
-      testMatch: /00-auth-guard\.spec\.ts/,
+      testMatch: /(00-auth-guard|11-theme)\.spec\.ts/,
     },
 
     // Contractor-role RBAC tests — self-contained (each test logs in inline).

@@ -86,7 +86,7 @@ export function PhotoPicker({
         </p>
       </div>
       {error && (
-        <p style={{ color: '#fca5a5', fontSize: 11, marginTop: 6, fontFamily: 'var(--font-mono)' }}>
+        <p style={{ color: 'var(--c-red)', fontSize: 11, marginTop: 6, fontFamily: 'var(--font-mono)' }}>
           {error}
         </p>
       )}

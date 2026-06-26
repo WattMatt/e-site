@@ -86,13 +86,13 @@ export function SeatsPanel({ members, totalSeats, assignedSeats }: Props) {
         </div>
         <div>
           <p style={monoDim}>AVAILABLE IN POOL</p>
-          <p style={{ fontSize: 22, fontWeight: 700, color: freeSeats > 0 ? '#4ade80' : 'var(--c-text-dim)', marginTop: 2 }}>{freeSeats}</p>
+          <p style={{ fontSize: 22, fontWeight: 700, color: freeSeats > 0 ? 'var(--c-green)' : 'var(--c-text-dim)', marginTop: 2 }}>{freeSeats}</p>
         </div>
       </div>
 
       {/* Error feedback */}
       {error && (
-        <p style={{ ...monoDim, color: '#fca5a5', fontSize: 12 }}>{error}</p>
+        <p style={{ ...monoDim, color: 'var(--c-red)', fontSize: 12 }}>{error}</p>
       )}
 
       {/* Member rows */}
@@ -186,7 +186,7 @@ export function SeatsPanel({ members, totalSeats, assignedSeats }: Props) {
                         size="sm"
                         disabled={pending}
                         onClick={() => doReassign(m.seat!.id, null)}
-                        style={{ color: 'var(--c-red)', borderColor: '#6b1e1e' }}
+                        style={{ color: 'var(--c-red)', borderColor: 'var(--c-red)' }}
                       >
                         Free
                       </Button>

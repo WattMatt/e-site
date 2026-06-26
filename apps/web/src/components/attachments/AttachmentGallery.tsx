@@ -129,7 +129,7 @@ export function AttachmentGallery({ attachments, canEdit, projectId }: Props) {
                   position: 'absolute', top: 4, left: 4,
                   fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
                   letterSpacing: '0.08em', padding: '2px 5px', borderRadius: 3,
-                  background: 'var(--c-amber)', color: '#0B0B12',
+                  background: 'var(--c-amber)', color: 'var(--c-on-amber)',
                   display: 'flex', alignItems: 'center', gap: 3,
                 }}>
                   <Map size={9} /> MARKUP
@@ -192,7 +192,7 @@ export function AttachmentGallery({ attachments, canEdit, projectId }: Props) {
                         display: 'flex', alignItems: 'center',
                         width: 22, height: 22, borderRadius: 4,
                         background: 'transparent', border: '1px solid var(--c-border)',
-                        color: '#fca5a5', justifyContent: 'center', cursor: 'pointer',
+                        color: 'var(--c-red)', justifyContent: 'center', cursor: 'pointer',
                       }}
                     >
                       <Trash2 size={11} />

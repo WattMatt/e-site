@@ -61,7 +61,7 @@ export function LengthModeToggle({
             padding: '7px 14px',
             textDecoration: 'none',
             borderRight: '1px solid var(--c-border)',
-            color: active ? '#0D0B09' : 'var(--c-text-mid)',
+            color: active ? 'var(--c-on-amber)' : 'var(--c-text-mid)',
             background: active ? 'var(--c-amber)' : 'var(--c-panel)',
           }
           if (!hasConfirmedLengths) {

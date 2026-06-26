@@ -114,7 +114,7 @@ export function EditableCell({
         background: 'none',
         border: '1px dashed transparent',
         borderRadius: 3,
-        color: state === 'error' ? '#dc2626' : 'inherit',
+        color: state === 'error' ? 'var(--c-red)' : 'inherit',
         font: 'inherit',
         width: '100%',
         textAlign: align,
@@ -126,8 +126,8 @@ export function EditableCell({
       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'transparent' }}
     >
       {display}
-      {state === 'saved' && <span style={{ color: '#16a34a', marginLeft: 4 }}>✓</span>}
-      {state === 'error' && <span style={{ color: '#dc2626', marginLeft: 4 }}>↩</span>}
+      {state === 'saved' && <span style={{ color: 'var(--c-green)', marginLeft: 4 }}>✓</span>}
+      {state === 'error' && <span style={{ color: 'var(--c-red)', marginLeft: 4 }}>↩</span>}
     </button>
   )
 }

@@ -70,7 +70,7 @@ export function RevisionsList({
   return (
     <div>
       {error && (
-        <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{error}</div>
+        <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12, marginBottom: 8 }}>{error}</div>
       )}
       <div className="data-panel" style={{ overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -121,7 +121,7 @@ export function RevisionsList({
                           type="button"
                           onClick={(e) => { e.stopPropagation(); onIssue(r.id) }}
                           disabled={pendingId === r.id}
-                          style={{ ...actionBtn, color: '#16a34a' }}
+                          style={{ ...actionBtn, color: 'var(--c-green)' }}
                         >
                           ✓ Issue
                         </button>
@@ -129,7 +129,7 @@ export function RevisionsList({
                           type="button"
                           onClick={(e) => { e.stopPropagation(); onDelete(r.id) }}
                           disabled={pendingId === r.id}
-                          style={{ ...actionBtn, color: '#dc2626' }}
+                          style={{ ...actionBtn, color: 'var(--c-red)' }}
                         >
                           Discard
                         </button>

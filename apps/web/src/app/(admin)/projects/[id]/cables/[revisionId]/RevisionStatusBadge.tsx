@@ -19,7 +19,7 @@ export function RevisionStatusBadge({ status, hint }: Props) {
     normalised === 'DRAFT'
       ? { bg: 'var(--c-amber-dim)', fg: 'var(--c-amber)', border: 'var(--c-amber-mid)', icon: '✎' }
       : normalised === 'ISSUED'
-        ? { bg: 'rgba(34,197,94,0.1)', fg: '#16a34a', border: '#16a34a', icon: '🔒' }
+        ? { bg: 'var(--c-green-dim)', fg: 'var(--c-green)', border: 'var(--c-green)', icon: '🔒' }
         : normalised === 'SUPERSEDED'
           ? { bg: 'var(--c-base)', fg: 'var(--c-text-dim)', border: 'var(--c-border)', icon: '⊘' }
           : { bg: 'var(--c-base)', fg: 'var(--c-text-mid)', border: 'var(--c-border)', icon: '?' }

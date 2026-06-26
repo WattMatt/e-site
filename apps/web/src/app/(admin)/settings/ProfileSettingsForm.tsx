@@ -43,7 +43,7 @@ export function ProfileSettingsForm({ userId, fullName, phone, email }: {
       {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <Button type="submit" size="sm" isLoading={saving}>Save</Button>
-        {saved && <span style={{ color: '#34d399', fontSize: 12 }}>Saved!</span>}
+        {saved && <span style={{ color: 'var(--c-green)', fontSize: 12 }}>Saved!</span>}
       </div>
     </form>
   )

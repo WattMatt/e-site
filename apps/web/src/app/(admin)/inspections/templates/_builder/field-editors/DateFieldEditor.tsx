@@ -13,9 +13,9 @@ export function DateFieldEditor({ field, onChange, onRemove }: Props) {
   return (
     <div className="space-y-3 p-3 border rounded">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Date</span>
+        <span className="text-xs font-medium text-[var(--c-text-mid)] uppercase tracking-wide">Date</span>
         {onRemove && (
-          <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">
+          <button type="button" onClick={onRemove} className="text-xs text-[var(--c-red)] hover:text-[var(--c-red)]">
             Remove
           </button>
         )}

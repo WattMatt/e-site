@@ -289,7 +289,7 @@ export function ExportMenu({ projectId, revisionId, filterQuery }: Props) {
                 marginTop: 6,
                 padding: '8px 12px',
                 fontSize: 11,
-                color: '#dc2626',
+                color: 'var(--c-red)',
                 borderTop: '1px solid var(--c-border)',
               }}
             >
