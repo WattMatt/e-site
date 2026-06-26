@@ -64,7 +64,7 @@ export function ExportMarkupButton({ annotationId }: { annotationId: string }) {
         {busy ? 'PDF…' : 'PDF ↓'}
       </button>
       {error && (
-        <span role="alert" style={{ color: '#dc2626', fontSize: 10, marginLeft: 6 }}>
+        <span role="alert" style={{ color: 'var(--c-red)', fontSize: 10, marginLeft: 6 }}>
           {error}
         </span>
       )}

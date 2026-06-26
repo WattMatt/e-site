@@ -66,6 +66,11 @@
   --c-blue-dim:   #0C2040;
   --c-orange:     #F08030;
 
+  /* Accent fills (theme-invariant): solid brand-bright background + text on it.
+     Defined once on :root; light blocks inherit (same value in both themes). */
+  --c-amber-fill: #E8923A;
+  --c-on-amber:   #1A1712;
+
   /* Typography */
   --font-sans: var(--font-syne), 'Syne', system-ui, sans-serif;
   --font-mono: var(--font-mono), 'JetBrains Mono', 'Fira Code', monospace;

@@ -161,7 +161,7 @@ export function FileUploadWithProgress({
 
       {uploads.map((u, i) => {
         const statusColor = u.status === 'done'
-          ? '#4ade80'
+          ? 'var(--c-green)'
           : u.status === 'error'
             ? 'var(--c-red)'
             : 'var(--c-text-mid)'
@@ -211,7 +211,7 @@ export function FileUploadWithProgress({
                 <div
                   style={{
                     height: '100%',
-                    background: u.status === 'done' ? '#4ade80' : 'var(--c-amber)',
+                    background: u.status === 'done' ? 'var(--c-green)' : 'var(--c-amber-fill)',
                     width: `${u.progress}%`,
                     transition: 'width 0.2s',
                   }}
