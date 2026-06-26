@@ -116,7 +116,7 @@ export function TagControls({
       </button>
 
       {regenResult && (
-        <div role="status" style={{ color: '#3DB882', fontSize: 11, marginLeft: 6 }}>{regenResult}</div>
+        <div role="status" style={{ color: 'var(--c-green)', fontSize: 11, marginLeft: 6 }}>{regenResult}</div>
       )}
 
       {/* Programmatic fetch + Blob download. <a download> silently discards
@@ -181,7 +181,7 @@ export function TagControls({
       </button>
 
       {error && (
-        <div role="alert" style={{ color: '#dc2626', fontSize: 11, marginLeft: 6 }}>{error}</div>
+        <div role="alert" style={{ color: 'var(--c-red)', fontSize: 11, marginLeft: 6 }}>{error}</div>
       )}
     </div>
   )

@@ -66,7 +66,7 @@ interface Props {
 
 const PRIORITY_DOT: Record<string, string> = {
   critical: 'var(--c-red)',
-  high:     '#f97316',
+  high:     'var(--c-warning)',
   medium:   'var(--c-amber)',
   low:      'var(--c-text-dim)',
 }
@@ -254,9 +254,9 @@ function SnagRow({
               fontSize: 11,
               fontWeight: 600,
               fontFamily: 'var(--font-mono)',
-              color: '#34d399',
+              color: 'var(--c-green)',
               background: 'transparent',
-              border: '1px solid rgba(52,211,153,0.3)',
+              border: '1px solid var(--c-green)',
               borderRadius: 5,
               padding: '3px 10px',
               cursor: isPending ? 'not-allowed' : 'pointer',
@@ -293,9 +293,9 @@ const CATEGORIES = [
 
 const PRIORITY_OPTS = [
   { value: 'low',      label: 'Low',      color: 'var(--c-text-dim)',  bg: 'var(--c-panel)',     border: 'var(--c-border)' },
-  { value: 'medium',   label: 'Medium',   color: '#60a5fa',            bg: 'rgba(37,99,235,0.15)',border: '#1d4ed8' },
+  { value: 'medium',   label: 'Medium',   color: 'var(--c-blue)',      bg: 'var(--c-blue-dim)',border: 'var(--c-blue)' },
   { value: 'high',     label: 'High',     color: 'var(--c-amber)',     bg: 'var(--c-amber-dim)', border: 'var(--c-amber-mid)' },
-  { value: 'critical', label: 'Critical', color: 'var(--c-red)',       bg: 'var(--c-red-dim)',   border: '#6b1e1e' },
+  { value: 'critical', label: 'Critical', color: 'var(--c-red)',       bg: 'var(--c-red-dim)',   border: 'var(--c-red)' },
 ]
 
 const FIELD_LABEL: React.CSSProperties = {
@@ -693,7 +693,7 @@ export function VisitDetail({
               borderRadius: 6,
               border: 'none',
               background: 'var(--c-amber)',
-              color: '#0D0B09',
+              color: 'var(--c-on-amber)',
               cursor: isExporting ? 'not-allowed' : 'pointer',
               opacity: isExporting ? 0.6 : 1,
               transition: 'all 0.12s',
@@ -767,9 +767,9 @@ export function VisitDetail({
         }}
       >
         {[
-          { label: 'new this visit', value: newSnags.length, color: '#60a5fa' },
+          { label: 'new this visit', value: newSnags.length, color: 'var(--c-blue)' },
           { label: 'still open',     value: stillOpen.length, color: 'var(--c-amber)' },
-          { label: 'closed this visit', value: closedThisVisit.length, color: '#34d399' },
+          { label: 'closed this visit', value: closedThisVisit.length, color: 'var(--c-green)' },
           { label: 'tracked total',  value: totalTracked, color: 'var(--c-text)' },
         ].map(({ label, value, color }) => (
           <div
@@ -796,7 +796,7 @@ export function VisitDetail({
             <span
               style={{
                 width: 9, height: 9, borderRadius: '50%', display: 'inline-block',
-                background: '#60a5fa', flexShrink: 0,
+                background: 'var(--c-blue)', flexShrink: 0,
               }}
             />
             <span className="data-panel-title">New this visit</span>
@@ -941,7 +941,7 @@ export function VisitDetail({
             <span
               style={{
                 width: 9, height: 9, borderRadius: '50%', display: 'inline-block',
-                background: '#34d399', flexShrink: 0,
+                background: 'var(--c-green)', flexShrink: 0,
               }}
             />
             <span className="data-panel-title">Closed this visit</span>

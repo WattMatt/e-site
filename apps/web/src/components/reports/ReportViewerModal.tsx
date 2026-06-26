@@ -43,7 +43,7 @@ export function ReportViewerModal({ title, label, url, onDownload, isDownloading
           <Button variant="secondary" size="sm" onClick={onDownload} isLoading={isDownloading} style={{ fontSize: 12 }}>Download</Button>
           <button onClick={onClose} aria-label="Close report viewer" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-text-dim)', fontSize: 20, lineHeight: 1, padding: '2px 8px' }}>×</button>
         </div>
-        <iframe src={url} title={`${title} — ${label}`} style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }} />
+        <iframe src={url} title={`${title} — ${label}`} style={{ flex: 1, width: '100%', border: 'none', background: 'var(--c-surface)' }} />
       </div>
     </div>
   )

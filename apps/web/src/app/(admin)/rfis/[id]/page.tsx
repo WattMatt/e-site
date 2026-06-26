@@ -113,9 +113,9 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{
                 width: 28, height: 28, borderRadius: '50%',
-                background: 'rgba(37,99,235,0.2)', border: '1px solid #1d4ed8',
+                background: 'var(--c-blue-dim)', border: '1px solid var(--c-blue)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: '#60a5fa', flexShrink: 0,
+                fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--c-blue)', flexShrink: 0,
               }}>
                 {raisedBy?.full_name?.[0] ?? '?'}
               </div>
@@ -170,7 +170,7 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
                   <div
                     style={{
                       height: 140,
-                      background: 'white',
+                      background: 'var(--c-elevated)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -221,14 +221,14 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
 
         {/* Responses */}
         {responses.map((r: any, idx: number) => (
-          <div key={r.id} className="data-panel" style={{ marginLeft: 20, borderLeft: '3px solid #1d4ed8' }}>
+          <div key={r.id} className="data-panel" style={{ marginLeft: 20, borderLeft: '3px solid var(--c-blue)' }}>
             <div className="data-panel-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{
                   width: 28, height: 28, borderRadius: '50%',
-                  background: 'rgba(5,150,105,0.2)', border: '1px solid #065f46',
+                  background: 'var(--c-green-dim)', border: '1px solid var(--c-green)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: '#34d399', flexShrink: 0,
+                  fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--c-green)', flexShrink: 0,
                 }}>
                   {r.responder?.full_name?.[0] ?? '?'}
                 </div>

@@ -163,7 +163,7 @@ export function LetterDetail({ projectId, letter, notice, letterUrl, attachments
             marginBottom: 24,
             padding: '12px 16px',
             background: 'var(--c-red-dim-rgb, rgba(255,107,107,.10))',
-            border: '1px solid rgba(255,107,107,.25)',
+            border: '1px solid var(--c-red)',
             fontFamily: 'var(--f-mono-display)',
             fontSize: 12,
             color: 'var(--c-red-bright)',
@@ -186,7 +186,7 @@ export function LetterDetail({ projectId, letter, notice, letterUrl, attachments
               textDecoration: 'none',
               background: 'transparent',
               color: 'var(--c-amber)',
-              borderColor: 'rgba(232,146,58,.40)',
+              borderColor: 'var(--c-amber)',
               fontSize: 10,
               padding: '8px 14px',
             }}

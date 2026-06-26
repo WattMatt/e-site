@@ -76,7 +76,7 @@ export default async function UnlockJbccPage({
           <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {BENEFITS.map((b) => (
               <li key={b} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13, color: 'var(--c-text)', lineHeight: 1.5 }}>
-                <Check size={14} style={{ color: '#4ade80', marginTop: 2, flexShrink: 0 }} />
+                <Check size={14} style={{ color: 'var(--c-green)', marginTop: 2, flexShrink: 0 }} />
                 {b}
               </li>
             ))}

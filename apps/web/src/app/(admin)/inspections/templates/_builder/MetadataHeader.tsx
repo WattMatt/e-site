@@ -71,7 +71,7 @@ export function MetadataHeader({ state, onChange }: Props) {
         aria-label="SANS / IEC reference"
       />
       <label className="flex items-center gap-2 text-sm">
-        <span className="text-gray-600">Accent</span>
+        <span className="text-[var(--c-text-mid)]">Accent</span>
         <input
           type="color"
           value={state.branding?.accent_color ?? '#005EB8'}

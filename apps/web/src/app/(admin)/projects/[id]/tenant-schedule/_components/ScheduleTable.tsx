@@ -462,7 +462,7 @@ export function ScheduleTable({
                       title={`Permanently delete ${node.code}`}
                       style={{
                         background: 'none',
-                        border: '1px solid #6b1e1e',
+                        border: '1px solid var(--c-red)',
                         borderRadius: 5,
                         cursor: 'pointer',
                         padding: '4px 10px',

@@ -80,7 +80,7 @@ export function MfaEnrollClient({ verifiedFactors }: { verifiedFactors: Verified
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                 padding: '10px 12px',
                 border: '1px solid var(--c-border)', borderRadius: 6,
-                background: 'rgba(52, 211, 153, 0.06)',
+                background: 'var(--c-green-dim)',
               }}
             >
               <div>

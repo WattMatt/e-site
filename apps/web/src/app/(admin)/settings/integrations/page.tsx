@@ -155,8 +155,8 @@ function banner(kind: 'success' | 'error'): React.CSSProperties {
     padding: '10px 14px',
     borderRadius: 6,
     fontSize: 13,
-    background: kind === 'success' ? 'rgba(74, 222, 128, 0.08)' : 'rgba(248, 113, 113, 0.08)',
-    border: `1px solid ${kind === 'success' ? 'rgba(74, 222, 128, 0.3)' : 'rgba(248, 113, 113, 0.3)'}`,
-    color: kind === 'success' ? '#4ade80' : '#f87171',
+    background: kind === 'success' ? 'var(--c-green-dim)' : 'var(--c-red-dim)',
+    border: `1px solid ${kind === 'success' ? 'var(--c-green)' : 'var(--c-red)'}`,
+    color: kind === 'success' ? 'var(--c-green)' : 'var(--c-red)',
   }
 }

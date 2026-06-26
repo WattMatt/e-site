@@ -31,7 +31,7 @@ export function DataRequestForm() {
         style={{
           background: 'var(--c-green-dim)',
           color: 'var(--c-green)',
-          border: '1px solid rgba(61,184,130,0.3)',
+          border: '1px solid var(--c-green)',
           borderRadius: 6,
           padding: '16px 18px',
           marginTop: 24,
@@ -99,7 +99,7 @@ export function DataRequestForm() {
           style={{
             background: 'var(--c-red-dim)',
             color: 'var(--c-red)',
-            border: '1px solid rgba(232,85,85,0.3)',
+            border: '1px solid var(--c-red)',
             borderRadius: 6,
             padding: '10px 14px',
             fontSize: 13,

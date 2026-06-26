@@ -23,9 +23,9 @@ export function ConfirmDeliveryButton({ orderId }: { orderId: string }) {
       style={{
         width: '100%',
         padding: '12px 18px',
-        background: '#14532d',
-        border: '1px solid #166534',
-        color: '#4ade80',
+        background: 'var(--c-green-dim)',
+        border: '1px solid var(--c-green)',
+        color: 'var(--c-green)',
         borderRadius: 6,
         fontFamily: 'var(--font-sans)',
         fontSize: 13,

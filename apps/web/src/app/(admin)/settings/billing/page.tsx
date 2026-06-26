@@ -10,7 +10,7 @@ const TIER_ORDER = ['free', 'starter', 'professional', 'enterprise'] as const
 function PlanFeature({ text }: { text: string }) {
   return (
     <li style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--c-text-mid)', lineHeight: 1.5 }}>
-      <span style={{ color: '#4ade80', fontSize: 10, marginTop: 3 }}>✓</span>
+      <span style={{ color: 'var(--c-green)', fontSize: 10, marginTop: 3 }}>✓</span>
       {text}
     </li>
   )
@@ -72,7 +72,7 @@ export default async function BillingPage() {
             </p>
             <p style={{ fontSize: 12, color: 'var(--c-text-dim)', marginTop: 2 }}>
               Status:{' '}
-              <span style={{ color: subscription.status === 'active' ? '#4ade80' : 'var(--c-amber)' }}>
+              <span style={{ color: subscription.status === 'active' ? 'var(--c-green)' : 'var(--c-amber)' }}>
                 {subscription.status}
               </span>
               {subscription.next_billing_date && (
@@ -139,7 +139,7 @@ export default async function BillingPage() {
                       )}
                     </p>
                     {annualMonthly > 0 && (
-                      <p style={{ fontSize: 10, color: '#4ade80', fontFamily: 'var(--font-mono)', letterSpacing: '0.04em', marginTop: 2 }}>
+                      <p style={{ fontSize: 10, color: 'var(--c-green)', fontFamily: 'var(--font-mono)', letterSpacing: '0.04em', marginTop: 2 }}>
                         or R{annualMonthly.toLocaleString()}/mo billed annually
                       </p>
                     )}

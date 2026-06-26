@@ -34,9 +34,9 @@ export function DropdownFieldEditor({ field, onChange, onRemove }: Props) {
   return (
     <div className="space-y-3 p-3 border rounded">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Dropdown</span>
+        <span className="text-xs font-medium text-[var(--c-text-mid)] uppercase tracking-wide">Dropdown</span>
         {onRemove && (
-          <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">
+          <button type="button" onClick={onRemove} className="text-xs text-[var(--c-red)] hover:text-[var(--c-red)]">
             Remove
           </button>
         )}
@@ -77,10 +77,10 @@ export function DropdownFieldEditor({ field, onChange, onRemove }: Props) {
       </label>
 
       <div className="space-y-2">
-        <p className="text-xs font-medium text-gray-600">
+        <p className="text-xs font-medium text-[var(--c-text-mid)]">
           Options{' '}
           {hasNoOptions && (
-            <span className="text-red-500 font-normal">(at least one required)</span>
+            <span className="text-[var(--c-red)] font-normal">(at least one required)</span>
           )}
         </p>
         {options.map((opt: string, i: number) => (
@@ -95,7 +95,7 @@ export function DropdownFieldEditor({ field, onChange, onRemove }: Props) {
             <button
               type="button"
               onClick={() => removeOption(i)}
-              className="text-gray-400 hover:text-red-500 text-lg leading-none px-1"
+              className="text-[var(--c-text-dim)] hover:text-[var(--c-red)] text-lg leading-none px-1"
               aria-label="Remove option"
             >
               ×
@@ -105,7 +105,7 @@ export function DropdownFieldEditor({ field, onChange, onRemove }: Props) {
         <button
           type="button"
           onClick={addOption}
-          className="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-3 py-1.5"
+          className="text-xs text-[var(--c-blue)] hover:text-[var(--c-blue)] border border-[var(--c-blue)] rounded px-3 py-1.5"
         >
           + Add option
         </button>

@@ -56,9 +56,9 @@ export function FileFieldEditor({ field, onChange, onRemove }: Props) {
   return (
     <div className="space-y-3 p-3 border rounded">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">File upload</span>
+        <span className="text-xs font-medium text-[var(--c-text-mid)] uppercase tracking-wide">File upload</span>
         {onRemove && (
-          <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">
+          <button type="button" onClick={onRemove} className="text-xs text-[var(--c-red)] hover:text-[var(--c-red)]">
             Remove
           </button>
         )}
@@ -100,7 +100,7 @@ export function FileFieldEditor({ field, onChange, onRemove }: Props) {
 
       <div className="flex items-center gap-3">
         <div className="flex-1">
-          <label className="text-xs text-gray-500 block mb-1">Minimum files (optional)</label>
+          <label className="text-xs text-[var(--c-text-mid)] block mb-1">Minimum files (optional)</label>
           <input
             type="number"
             min={1}
@@ -111,7 +111,7 @@ export function FileFieldEditor({ field, onChange, onRemove }: Props) {
           />
         </div>
         <div className="flex-1">
-          <label className="text-xs text-gray-500 block mb-1">Maximum files (optional)</label>
+          <label className="text-xs text-[var(--c-text-mid)] block mb-1">Maximum files (optional)</label>
           <input
             type="number"
             min={field.min_count ?? 1}
@@ -124,9 +124,9 @@ export function FileFieldEditor({ field, onChange, onRemove }: Props) {
       </div>
 
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-gray-600 block">
+        <label className="text-xs font-medium text-[var(--c-text-mid)] block">
           Accepted MIME types{' '}
-          <span className="text-gray-400 font-normal">(comma-separated, stored in options[ ])</span>
+          <span className="text-[var(--c-text-dim)] font-normal">(comma-separated, stored in options[ ])</span>
         </label>
         <input
           type="text"
@@ -143,7 +143,7 @@ export function FileFieldEditor({ field, onChange, onRemove }: Props) {
             {previewMimes.map((mime) => (
               <span
                 key={mime}
-                className="inline-flex items-center bg-gray-100 text-gray-700 text-xs rounded px-2 py-0.5 font-mono"
+                className="inline-flex items-center bg-[var(--c-surface)] text-[var(--c-text-mid)] text-xs rounded px-2 py-0.5 font-mono"
               >
                 {mime}
               </span>
@@ -151,7 +151,7 @@ export function FileFieldEditor({ field, onChange, onRemove }: Props) {
           </div>
         )}
         {previewMimes.length === 0 && (
-          <p className="text-xs text-gray-400">Leave blank to accept any file type.</p>
+          <p className="text-xs text-[var(--c-text-dim)]">Leave blank to accept any file type.</p>
         )}
       </div>
     </div>

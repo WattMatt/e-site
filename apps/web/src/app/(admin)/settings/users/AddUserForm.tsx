@@ -78,13 +78,13 @@ export function AddUserForm() {
       </form>
 
       {error && (
-        <div role="alert" style={{ background: 'var(--c-red-dim)', color: 'var(--c-red)', border: '1px solid rgba(232,85,85,0.3)', borderRadius: 6, padding: '10px 14px', fontSize: 13 }}>
+        <div role="alert" style={{ background: 'var(--c-red-dim)', color: 'var(--c-red)', border: '1px solid var(--c-red)', borderRadius: 6, padding: '10px 14px', fontSize: 13 }}>
           {error}
         </div>
       )}
 
       {success && (
-        <div role="status" style={{ background: 'var(--c-green-dim)', color: 'var(--c-green)', border: '1px solid rgba(61,184,130,0.3)', borderRadius: 6, padding: '14px 16px' }}>
+        <div role="status" style={{ background: 'var(--c-green-dim)', color: 'var(--c-green)', border: '1px solid var(--c-green)', borderRadius: 6, padding: '14px 16px' }}>
           <p style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>User created — {success}</p>
           <p style={{ fontSize: 12, color: 'var(--c-text-mid)', marginTop: 4, marginBottom: 0 }}>
             {warning ?? "They've been emailed a link to set their password and sign in."}

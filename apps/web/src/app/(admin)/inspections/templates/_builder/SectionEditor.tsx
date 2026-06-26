@@ -177,8 +177,8 @@ export function SectionEditor({ sections, selectedSectionId, builder }: Props) {
                     className={[
                       'group flex items-center gap-2 rounded border px-3 py-2 text-sm cursor-pointer transition-colors',
                       isSelected
-                        ? 'border-blue-400 bg-blue-50'
-                        : 'hover:border-blue-200 hover:bg-gray-50',
+                        ? 'border-[var(--c-blue)] bg-[var(--c-blue-dim)]'
+                        : 'hover:border-[var(--c-blue)] hover:bg-[var(--c-surface)]',
                     ].join(' ')}
                     style={{
                       borderColor: isSelected ? undefined : 'var(--c-border, #e5e7eb)',
@@ -198,7 +198,7 @@ export function SectionEditor({ sections, selectedSectionId, builder }: Props) {
                     <span className="text-xs truncate max-w-32 shrink-0">{field.label}</span>
                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
                       <button
-                        className="text-xs px-1 py-0.5 rounded hover:bg-gray-200 disabled:opacity-30"
+                        className="text-xs px-1 py-0.5 rounded hover:bg-[var(--c-elevated)] disabled:opacity-30"
                         title="Move up"
                         disabled={idx === 0}
                         onClick={(e) => {
@@ -209,7 +209,7 @@ export function SectionEditor({ sections, selectedSectionId, builder }: Props) {
                         ↑
                       </button>
                       <button
-                        className="text-xs px-1 py-0.5 rounded hover:bg-gray-200 disabled:opacity-30"
+                        className="text-xs px-1 py-0.5 rounded hover:bg-[var(--c-elevated)] disabled:opacity-30"
                         title="Move down"
                         disabled={idx === section.fields.length - 1}
                         onClick={(e) => {
@@ -220,7 +220,7 @@ export function SectionEditor({ sections, selectedSectionId, builder }: Props) {
                         ↓
                       </button>
                       <button
-                        className="text-xs px-1 py-0.5 rounded hover:bg-red-100"
+                        className="text-xs px-1 py-0.5 rounded hover:bg-[var(--c-red-dim)]"
                         title="Remove field"
                         style={{ color: 'var(--c-danger, #ef4444)' }}
                         onClick={(e) => {
@@ -267,7 +267,7 @@ export function SectionEditor({ sections, selectedSectionId, builder }: Props) {
       <div className="pt-2 border-t">
         <button
           type="button"
-          className="w-full text-sm py-2 rounded border border-dashed transition-colors hover:border-blue-400 hover:bg-blue-50"
+          className="w-full text-sm py-2 rounded border border-dashed transition-colors hover:border-[var(--c-blue)] hover:bg-[var(--c-blue-dim)]"
           style={{ borderColor: 'var(--c-border, #e5e7eb)', color: 'var(--c-text-dim, #6b7280)' }}
           onClick={() => setShowPicker(true)}
         >

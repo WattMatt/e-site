@@ -59,8 +59,8 @@ export function CatalogueItemForm({ item }: Props) {
             role="alert"
             style={{
               background: 'var(--c-red-dim)',
-              border: '1px solid rgba(127,29,29,0.6)',
-              color: '#fca5a5',
+              border: '1px solid var(--c-red)',
+              color: 'var(--c-red)',
               borderRadius: 6,
               padding: '10px 14px',
               fontSize: 12,

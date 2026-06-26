@@ -134,7 +134,7 @@ export function DiaryAttachmentStrip({ entryId, orgId, projectId, userId, attach
                   borderRadius: armed === att.id ? 10 : '50%',
                   border: `1px solid ${armed === att.id ? 'var(--c-red)' : 'var(--c-border)'}`,
                   background: armed === att.id ? 'var(--c-red)' : 'var(--c-panel)',
-                  color: armed === att.id ? '#fff' : 'var(--c-red)', cursor: 'pointer',
+                  color: armed === att.id ? 'var(--c-on-amber)' : 'var(--c-red)', cursor: 'pointer',
                   fontSize: armed === att.id ? 9 : 11, lineHeight: 1, fontWeight: 700,
                 }}
               >{armed === att.id ? 'Delete?' : '✕'}</button>

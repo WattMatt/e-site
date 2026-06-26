@@ -50,7 +50,7 @@ export function CancelSubscriptionButton() {
         </Button>
       </div>
       {error && (
-        <p style={{ color: '#fca5a5', fontSize: 11, fontFamily: 'var(--font-mono)' }}>{error}</p>
+        <p style={{ color: 'var(--c-red)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>{error}</p>
       )}
     </div>
   )

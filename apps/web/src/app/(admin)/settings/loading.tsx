@@ -42,9 +42,9 @@ export default function SettingsLoading() {
         {/* Danger zone card */}
         <div
           className="animate-fadeup animate-fadeup-3"
-          style={{ background: 'var(--c-panel)', border: '1px solid rgba(153,27,27,0.4)', borderRadius: 8, overflow: 'hidden' }}
+          style={{ background: 'var(--c-panel)', border: '1px solid var(--c-red)', borderRadius: 8, overflow: 'hidden' }}
         >
-          <div style={{ padding: '16px 24px', borderBottom: '1px solid rgba(153,27,27,0.4)' }}>
+          <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--c-red)' }}>
             <Skeleton width={90} height={14} />
           </div>
           <div style={{ padding: '20px 24px' }}>

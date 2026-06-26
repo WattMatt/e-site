@@ -15,7 +15,7 @@ export function OptBackInButton({ userId }: { userId: string }) {
         style={{
           background: 'var(--c-green-dim)',
           color: 'var(--c-green)',
-          border: '1px solid rgba(61,184,130,0.3)',
+          border: '1px solid var(--c-green)',
           borderRadius: 6,
           padding: '12px 14px',
           fontSize: 13,

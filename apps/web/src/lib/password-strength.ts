@@ -89,5 +89,5 @@ export function strengthLabel(score: number): string {
 }
 
 export function strengthColor(score: number): string {
-  return ['#ef4444', '#f59e0b', '#fbbf24', '#34d399', '#10b981'][score] ?? '#6b7280'
+  return ['var(--c-red)', 'var(--c-amber)', 'var(--c-warning)', 'var(--c-green)', 'var(--c-green)'][score] ?? 'var(--c-text-dim)'
 }

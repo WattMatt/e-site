@@ -64,7 +64,7 @@ export function TenantRecycleButton({
         style={{
           background: armed ? 'var(--c-red)' : 'none',
           color: armed ? '#fff' : 'var(--c-red)',
-          border: '1px solid #6b1e1e',
+          border: '1px solid var(--c-red)',
           borderRadius: 5,
           cursor: busy ? 'wait' : 'pointer',
           padding: '4px 10px',

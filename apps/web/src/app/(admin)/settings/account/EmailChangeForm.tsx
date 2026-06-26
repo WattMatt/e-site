@@ -125,7 +125,7 @@ export function EmailChangeForm({ currentEmail }: { currentEmail: string }) {
         />
       </div>
       {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
-      {success && <p style={{ color: '#34d399', fontSize: 12 }}>{success}</p>}
+      {success && <p style={{ color: 'var(--c-green)', fontSize: 12 }}>{success}</p>}
       <div>
         <Button
           type="submit"

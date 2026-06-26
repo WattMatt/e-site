@@ -64,7 +64,7 @@ export default function NewVersionForm({
           style={{
             padding: '10px 14px',
             background: 'var(--c-red-dim)',
-            border: '1px solid #6b1e1e',
+            border: '1px solid var(--c-red)',
             borderRadius: 6,
             color: 'var(--c-red)',
             fontSize: 12,

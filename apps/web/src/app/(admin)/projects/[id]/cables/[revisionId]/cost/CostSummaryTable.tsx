@@ -115,7 +115,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
         </div>
       )}
       {error && (
-        <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{error}</div>
+        <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12, marginBottom: 8 }}>{error}</div>
       )}
 
       {!locked && (
@@ -146,7 +146,7 @@ export function CostSummaryTable({ rows, header, revisionId, locked }: Props) {
               role={reseedMessage.startsWith('✗') ? 'alert' : 'status'}
               style={{
                 fontSize: 11,
-                color: reseedMessage.startsWith('✗') ? '#dc2626' : '#3DB882',
+                color: reseedMessage.startsWith('✗') ? 'var(--c-red)' : 'var(--c-green)',
               }}
             >
               {reseedMessage}

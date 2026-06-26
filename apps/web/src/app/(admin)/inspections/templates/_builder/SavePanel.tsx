@@ -40,11 +40,11 @@ export function SavePanel({ draft, onSave }: Props) {
   const canSave = validation.success && !!onSave && !isPending;
 
   return (
-    <footer className="sticky bottom-0 border-t bg-white p-3 flex items-center gap-3 flex-wrap">
+    <footer className="sticky bottom-0 border-t bg-[var(--c-panel)] p-3 flex items-center gap-3 flex-wrap">
       {validation.success ? (
-        <span className="text-green-600 text-sm">✓ Valid</span>
+        <span className="text-[var(--c-green)] text-sm">✓ Valid</span>
       ) : (
-        <details className="text-red-600 text-sm">
+        <details className="text-[var(--c-red)] text-sm">
           <summary className="cursor-pointer">
             ✗ {validation.error.issues.length} issue{validation.error.issues.length === 1 ? '' : 's'}
           </summary>
@@ -60,19 +60,19 @@ export function SavePanel({ draft, onSave }: Props) {
       )}
 
       {counts !== null && (
-        <span className="text-xs text-gray-600 ml-2">
+        <span className="text-xs text-[var(--c-text-dim)] ml-2">
           {counts.sections} section{counts.sections === 1 ? '' : 's'} · {counts.total} field{counts.total === 1 ? '' : 's'} · {counts.photos} photo{counts.photos === 1 ? '' : 's'} · {counts.measurements} measurement{counts.measurements === 1 ? '' : 's'} · {counts.signatures} sig{counts.signatures === 1 ? '' : 's'}
         </span>
       )}
 
       {showSignatureReminder && (
-        <span className="text-amber-600 text-xs ml-2">
+        <span className="text-[var(--c-amber)] text-xs ml-2">
           ⚠ Reminder: add at least one signature field for certification.
         </span>
       )}
 
       {!onSave && (
-        <span className="text-gray-400 text-xs ml-2" title="Save handler not wired (Phase E.1 wires this)">
+        <span className="text-[var(--c-text-dim)] text-xs ml-2" title="Save handler not wired (Phase E.1 wires this)">
           Save not wired
         </span>
       )}
@@ -93,7 +93,7 @@ export function SavePanel({ draft, onSave }: Props) {
             // redirect handled by caller on success
           });
         }}
-        className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-40"
+        className="bg-[var(--c-blue)] text-[var(--c-text)] px-4 py-2 rounded disabled:opacity-40"
       >
         {isPending ? 'Saving…' : 'Save template'}
       </button>

@@ -178,7 +178,7 @@ function PartyRow({
               fontSize: 11,
               fontWeight: 600,
               color: 'var(--c-amber)',
-              background: 'rgba(232,146,58,0.12)',
+              background: 'var(--c-amber-dim)',
               padding: '2px 6px',
               borderRadius: 4,
               letterSpacing: '0.04em',
@@ -351,8 +351,8 @@ export function JbccPartiesList({ projectId, initialParties, canEdit }: Props) {
             role="alert"
             style={{
               padding: '8px 12px',
-              background: 'rgba(232,85,85,0.08)',
-              border: '1px solid rgba(232,85,85,0.3)',
+              background: 'var(--c-red-dim)',
+              border: '1px solid var(--c-red)',
               borderRadius: 6,
               color: 'var(--c-red)',
               fontSize: 13,

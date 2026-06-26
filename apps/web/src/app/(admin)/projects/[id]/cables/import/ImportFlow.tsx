@@ -141,7 +141,7 @@ export function ImportFlow({ projectId, projectName }: { projectId: string; proj
           </button>
         </div>
         {error && (
-          <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginTop: 8 }}>{error}</div>
+          <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12, marginTop: 8 }}>{error}</div>
         )}
       </div>
 
@@ -196,9 +196,9 @@ export function ImportFlow({ projectId, projectName }: { projectId: string; proj
                 <tbody>
                   {parsed.preview.cables.map((c) => {
                     const tone =
-                      c.errors.length > 0 ? '#dc2626'
+                      c.errors.length > 0 ? 'var(--c-red)'
                       : c.warnings.length > 0 ? 'var(--c-amber)'
-                      : '#16a34a'
+                      : 'var(--c-green)'
                     return (
                       <tr key={c.source_row} style={{ borderTop: '1px solid var(--c-border)' }}>
                         <Td align="right">{c.source_row}</Td>
@@ -213,7 +213,7 @@ export function ImportFlow({ projectId, projectName }: { projectId: string; proj
                         <Td>{c.conductor}</Td>
                         <Td style={{ whiteSpace: 'normal', maxWidth: 360 }}>
                           {c.errors.map((e) => (
-                            <div key={e} style={{ color: '#dc2626', fontSize: 11 }}>✕ {e}</div>
+                            <div key={e} style={{ color: 'var(--c-red)', fontSize: 11 }}>✕ {e}</div>
                           ))}
                           {c.warnings.map((w) => (
                             <div key={w} style={{ color: 'var(--c-amber)', fontSize: 11 }}>⚠ {w}</div>
@@ -243,8 +243,8 @@ export function ImportFlow({ projectId, projectName }: { projectId: string; proj
             {parsed.counts.red > 0 ? (
               <div role="alert" style={{
                 padding: 10, borderRadius: 6,
-                background: 'rgba(220,38,38,0.08)', border: '1px solid #dc2626',
-                color: '#dc2626', fontSize: 12,
+                background: 'var(--c-red-dim)', border: '1px solid var(--c-red)',
+                color: 'var(--c-red)', fontSize: 12,
               }}>
                 {parsed.counts.red} row(s) are blocked. Resolve the errors above (or
                 upload a fixed workbook) before committing.
@@ -262,7 +262,7 @@ export function ImportFlow({ projectId, projectName }: { projectId: string; proj
               </div>
             )}
             {error && (
-              <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginTop: 8 }}>{error}</div>
+              <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12, marginTop: 8 }}>{error}</div>
             )}
           </div>
         </>
@@ -273,9 +273,9 @@ export function ImportFlow({ projectId, projectName }: { projectId: string; proj
 
 function Stat({ label, value, tone }: { label: string; value: number; tone: 'ok' | 'warn' | 'bad' | 'neutral' }) {
   const color =
-    tone === 'ok'   ? '#16a34a'
+    tone === 'ok'   ? 'var(--c-green)'
     : tone === 'warn' ? 'var(--c-amber)'
-    : tone === 'bad'  ? '#dc2626'
+    : tone === 'bad'  ? 'var(--c-red)'
     : 'var(--c-text-mid)'
   return (
     <div style={{

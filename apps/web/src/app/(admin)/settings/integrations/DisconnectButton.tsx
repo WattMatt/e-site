@@ -41,8 +41,8 @@ export function DisconnectButton({
         disabled={pending}
         style={{
           background: 'none',
-          border: '1px solid ' + (confirming ? '#f87171' : 'var(--c-border)'),
-          color: confirming ? '#f87171' : 'var(--c-text-mid)',
+          border: '1px solid ' + (confirming ? 'var(--c-red)' : 'var(--c-border)'),
+          color: confirming ? 'var(--c-red)' : 'var(--c-text-mid)',
           padding: '6px 10px',
           borderRadius: 6,
           cursor: pending ? 'wait' : 'pointer',
@@ -56,7 +56,7 @@ export function DisconnectButton({
             : 'Disconnect'}
       </button>
       {error && (
-        <p style={{ color: '#f87171', fontSize: 11, fontFamily: 'var(--font-mono)' }}>{error}</p>
+        <p style={{ color: 'var(--c-red)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>{error}</p>
       )}
     </div>
   )

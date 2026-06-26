@@ -48,7 +48,7 @@ export default async function SeatsPage() {
           <h1 className="page-title">Manage seats</h1>
         </div>
         <div className="data-panel">
-          <div className="data-panel-empty" style={{ padding: '24px 18px', color: '#fca5a5' }}>
+          <div className="data-panel-empty" style={{ padding: '24px 18px', color: 'var(--c-red)' }}>
             {result.error}
           </div>
         </div>

@@ -622,7 +622,7 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
           )}
 
           {error && (
-            <div role="alert" style={{ color: '#dc2626', fontSize: 12, padding: '8px 12px', background: 'rgba(220,38,38,0.08)', borderRadius: 6, border: '1px solid #dc2626' }}>
+            <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12, padding: '8px 12px', background: 'var(--c-red-dim)', borderRadius: 6, border: '1px solid var(--c-red)' }}>
               {error}
             </div>
           )}
@@ -659,7 +659,7 @@ function Row({ label, hint, error, children }: { label: string; hint?: string; e
       <span>{label}</span>
       {children}
       {hint && !error && <span style={{ fontSize: 10, color: 'var(--c-text-dim)' }}>{hint}</span>}
-      {error && <span role="alert" style={{ fontSize: 10, color: '#dc2626' }}>{error}</span>}
+      {error && <span role="alert" style={{ fontSize: 10, color: 'var(--c-red)' }}>{error}</span>}
     </label>
   )
 }

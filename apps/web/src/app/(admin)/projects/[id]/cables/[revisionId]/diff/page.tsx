@@ -160,8 +160,8 @@ export default async function RevisionDiffPage({ params, searchParams }: Props) 
             {' '}→ <span style={{ color: 'var(--c-text)' }}>{current.code}</span>
           </h1>
           <p className="page-subtitle">
-            <strong style={{ color: '#16a34a' }}>+{diff.summary.added}</strong> added ·{' '}
-            <strong style={{ color: '#dc2626' }}>−{diff.summary.removed}</strong> removed ·{' '}
+            <strong style={{ color: 'var(--c-green)' }}>+{diff.summary.added}</strong> added ·{' '}
+            <strong style={{ color: 'var(--c-red)' }}>−{diff.summary.removed}</strong> removed ·{' '}
             <strong style={{ color: 'var(--c-amber)' }}>~{diff.summary.changed}</strong> changed ·{' '}
             {diff.summary.same} unchanged
           </p>
@@ -192,17 +192,17 @@ export default async function RevisionDiffPage({ params, searchParams }: Props) 
                 style={{
                   borderTop: '1px solid var(--c-border)',
                   background:
-                    e.kind === 'added'   ? 'rgba(34,197,94,0.06)'
-                    : e.kind === 'removed' ? 'rgba(220,38,38,0.06)'
-                    : 'rgba(243,178,88,0.06)',
+                    e.kind === 'added'   ? 'var(--c-green-dim)'
+                    : e.kind === 'removed' ? 'var(--c-red-dim)'
+                    : 'var(--c-amber-dim)',
                 }}
               >
                 <Td>
                   <span style={{
                     display: 'inline-block', width: 20, textAlign: 'center', fontWeight: 700,
                     color:
-                      e.kind === 'added'   ? '#16a34a'
-                      : e.kind === 'removed' ? '#dc2626'
+                      e.kind === 'added'   ? 'var(--c-green)'
+                      : e.kind === 'removed' ? 'var(--c-red)'
                       : 'var(--c-amber)',
                   }}>
                     {e.kind === 'added' ? '+' : e.kind === 'removed' ? '−' : '~'}
@@ -222,8 +222,8 @@ export default async function RevisionDiffPage({ params, searchParams }: Props) 
                 <Td align="right">{(e.next ?? e.prev)!.size_mm2}</Td>
                 <Td align="right">{(e.next ?? e.prev)!.cable_no}</Td>
                 <Td>
-                  {e.kind === 'added' && <em style={{ color: '#16a34a' }}>new in this revision</em>}
-                  {e.kind === 'removed' && <em style={{ color: '#dc2626' }}>not in this revision</em>}
+                  {e.kind === 'added' && <em style={{ color: 'var(--c-green)' }}>new in this revision</em>}
+                  {e.kind === 'removed' && <em style={{ color: 'var(--c-red)' }}>not in this revision</em>}
                   {e.kind === 'changed' && (
                     <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                       {e.deltas.map((d) => (

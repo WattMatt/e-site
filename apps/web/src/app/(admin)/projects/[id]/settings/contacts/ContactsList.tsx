@@ -314,8 +314,8 @@ export function ContactsList({ projectId, initialContacts, canEdit }: Props) {
             role="alert"
             style={{
               padding: '8px 12px',
-              background: 'rgba(232,85,85,0.08)',
-              border: '1px solid rgba(232,85,85,0.3)',
+              background: 'var(--c-red-dim)',
+              border: '1px solid var(--c-red)',
               borderRadius: 6,
               color: 'var(--c-red)',
               fontSize: 13,

@@ -85,7 +85,7 @@ export function DiscrepancyTable({ rows, locked }: { rows: DiscRow[]; locked: bo
   return (
     <div>
       {error && (
-        <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{error}</div>
+        <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12, marginBottom: 8 }}>{error}</div>
       )}
       <TableScrollX className="data-panel">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
@@ -110,15 +110,15 @@ export function DiscrepancyTable({ rows, locked }: { rows: DiscRow[]; locked: bo
               return (
                 <tr key={r.id} style={{
                   borderTop: '1px solid var(--c-border)',
-                  background: r.status === 'DISCREPANCY' ? 'rgba(220,38,38,0.04)' : undefined,
+                  background: r.status === 'DISCREPANCY' ? 'var(--c-red-dim)' : undefined,
                 }}>
                   <Td>{r.tag}</Td>
                   <Td align="right">{fmt(r.measured, 1)}</Td>
                   <Td align="right">{fmt(r.confirmed, 1)}</Td>
-                  <Td align="right" style={{ color: flagDelta ? '#dc2626' : 'var(--c-text)' }}>
+                  <Td align="right" style={{ color: flagDelta ? 'var(--c-red)' : 'var(--c-text)' }}>
                     {r.delta == null ? '—' : `${r.delta > 0 ? '+' : ''}${r.delta.toFixed(1)}`}
                   </Td>
-                  <Td align="right" style={{ color: flagDelta ? '#dc2626' : 'var(--c-text)' }}>
+                  <Td align="right" style={{ color: flagDelta ? 'var(--c-red)' : 'var(--c-text)' }}>
                     {r.deltaPct == null ? '—' : `${r.deltaPct > 0 ? '+' : ''}${r.deltaPct.toFixed(1)}%`}
                   </Td>
                   <Td>{r.method ?? '—'}</Td>
@@ -139,7 +139,7 @@ export function DiscrepancyTable({ rows, locked }: { rows: DiscRow[]; locked: bo
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {r.status === 'DISCREPANCY' && (
                           <button type="button" onClick={() => onAccept(r.id)} disabled={pendingId === r.id}
-                            style={{ ...actionBtn, color: '#16a34a' }}>✓ Accept</button>
+                            style={{ ...actionBtn, color: 'var(--c-green)' }}>✓ Accept</button>
                         )}
                         <button type="button" onClick={() => onRemeasure(r.id)} disabled={pendingId === r.id}
                           style={actionBtn}>↺ Re-measure</button>

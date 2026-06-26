@@ -80,7 +80,7 @@ export default async function GeneratorCostRecoveryPage({ params }: Props) {
                 display: 'inline-block',
                 padding: '8px 16px',
                 background: 'var(--c-accent)',
-                color: '#fff',
+                color: 'var(--c-on-amber)',
                 borderRadius: 6,
                 fontSize: 13,
                 fontWeight: 600,

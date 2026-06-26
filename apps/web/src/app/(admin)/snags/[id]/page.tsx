@@ -219,7 +219,7 @@ export default async function SnagDetailPage({ params }: Props) {
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 600, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--c-text-dim)', marginBottom: 2 }}>
                     Signed off by
                   </div>
-                  <div style={{ fontSize: 13, color: '#34d399' }}>{signedOffBy?.full_name}</div>
+                  <div style={{ fontSize: 13, color: 'var(--c-green)' }}>{signedOffBy?.full_name}</div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>{formatDate(snag.signed_off_at)}</div>
                 </div>
               )}
@@ -233,7 +233,7 @@ export default async function SnagDetailPage({ params }: Props) {
                   {project?.id && raisedOnVisitId ? (
                     <Link
                       href={`/projects/${project.id}/snags/visits/${raisedOnVisitId}`}
-                      style={{ fontSize: 13, color: '#60a5fa', textDecoration: 'none' }}
+                      style={{ fontSize: 13, color: 'var(--c-blue)', textDecoration: 'none' }}
                     >
                       {raisedOnVisitNo != null ? `Site Visit ${raisedOnVisitNo}` : 'Initial backlog'}
                     </Link>
@@ -253,7 +253,7 @@ export default async function SnagDetailPage({ params }: Props) {
                   {project?.id && closedOnVisitId ? (
                     <Link
                       href={`/projects/${project.id}/snags/visits/${closedOnVisitId}`}
-                      style={{ fontSize: 13, color: '#34d399', textDecoration: 'none' }}
+                      style={{ fontSize: 13, color: 'var(--c-green)', textDecoration: 'none' }}
                     >
                       {closedOnVisitNo != null ? `Site Visit ${closedOnVisitNo}` : 'Initial backlog'}
                     </Link>

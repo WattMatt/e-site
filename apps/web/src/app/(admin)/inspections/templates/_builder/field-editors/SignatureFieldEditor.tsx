@@ -39,9 +39,9 @@ export function SignatureFieldEditor({ field, onChange, onRemove }: Props) {
   return (
     <div className="space-y-3 p-3 border rounded">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Signature</span>
+        <span className="text-xs font-medium text-[var(--c-text-mid)] uppercase tracking-wide">Signature</span>
         {onRemove && (
-          <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">
+          <button type="button" onClick={onRemove} className="text-xs text-[var(--c-red)] hover:text-[var(--c-red)]">
             Remove
           </button>
         )}
@@ -82,9 +82,9 @@ export function SignatureFieldEditor({ field, onChange, onRemove }: Props) {
       </label>
 
       <fieldset className="space-y-1.5">
-        <legend className="text-xs font-medium text-gray-600">
+        <legend className="text-xs font-medium text-[var(--c-text-mid)]">
           Required qualifications{' '}
-          <span className="text-gray-400 font-normal">(optional — leave unchecked to accept any signatory)</span>
+          <span className="text-[var(--c-text-dim)] font-normal">(optional — leave unchecked to accept any signatory)</span>
         </legend>
         {QUALS.map(({ value, label }) => (
           <label key={value} className="flex items-center gap-2 text-sm cursor-pointer">

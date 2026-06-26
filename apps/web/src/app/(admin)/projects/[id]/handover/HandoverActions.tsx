@@ -79,8 +79,8 @@ export function HandoverActions({ projectId, orgId, userId, items }: Props) {
             style={{
               width: 20, height: 20, flexShrink: 0,
               borderRadius: 4,
-              border: `2px solid ${item.is_complete ? '#22c55e' : 'var(--c-border)'}`,
-              background: item.is_complete ? '#22c55e' : 'transparent',
+              border: `2px solid ${item.is_complete ? 'var(--c-green)' : 'var(--c-border)'}`,
+              background: item.is_complete ? 'var(--c-green)' : 'transparent',
               cursor: isPending ? 'wait' : 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               padding: 0,

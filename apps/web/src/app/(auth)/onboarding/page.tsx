@@ -171,7 +171,7 @@ export default function OnboardingPage() {
                 <div style={{
                   width: 52, height: 52,
                   background: 'var(--c-green-dim)',
-                  border: '1px solid #1a5c3a',
+                  border: '1px solid var(--c-green)',
                   borderRadius: '50%',
                   display: 'flex',
                   alignItems: 'center',

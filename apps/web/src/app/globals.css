@@ -71,6 +71,31 @@
   --c-amber-fill: #E8923A;
   --c-on-amber:   #1A1712;
 
+  /* Compatibility aliases — tokens referenced across the app, mapped to the
+     canonical palette via var() so they resolve correctly in BOTH themes
+     (the referenced token is overridden per-theme; the alias follows it). */
+  --c-bg:            var(--c-base);
+  --c-panel-deep:    var(--c-base);
+  --c-surface-1:     var(--c-surface);
+  --c-surface-2:     var(--c-panel);
+  --c-input:         var(--c-surface);
+  --c-input-bg:      var(--c-surface);
+  --c-raised:        var(--c-elevated);
+  --c-hover:         var(--c-elevated);
+  --c-panel-hover:   var(--c-elevated);
+  --c-panel-dim:     var(--c-border-soft);
+  --c-danger:        var(--c-red);
+  --c-danger-dim:    var(--c-red-dim);
+  --c-accent:        var(--c-amber-fill);
+  --c-text-on-amber: var(--c-on-amber);
+  --c-on-red:        #ffffff;
+  --c-on-green:      #ffffff;
+  --c-orange-dim:    var(--c-amber-dim);
+  --c-amber-50:      var(--c-amber-dim);
+  --c-amber-200:     var(--c-amber-mid);
+  --c-amber-800:     var(--c-amber);
+  --c-amber-900:     var(--c-amber);
+
   /* Typography */
   --font-sans: var(--font-syne), 'Syne', system-ui, sans-serif;
   --font-mono: var(--font-mono), 'JetBrains Mono', 'Fira Code', monospace;

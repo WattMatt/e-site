@@ -120,10 +120,10 @@ export function ShortCodesForm({ projectId, revisionId, isDraft, boards }: Props
           {pending ? 'Saving…' : '✓ Save short codes'}
         </button>
         {error && (
-          <div role="alert" style={{ color: '#dc2626', fontSize: 12 }}>{error}</div>
+          <div role="alert" style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</div>
         )}
         {success && (
-          <div role="status" style={{ color: '#3DB882', fontSize: 12 }}>{success}</div>
+          <div role="status" style={{ color: 'var(--c-green)', fontSize: 12 }}>{success}</div>
         )}
       </div>
     </form>

@@ -52,7 +52,7 @@ export function BillingCheckoutButton({ tier, period, label, variant = 'primary'
         {label}
       </Button>
       {error && (
-        <p style={{ color: '#fca5a5', fontSize: 11, marginTop: 4, fontFamily: 'var(--font-mono)' }}>
+        <p style={{ color: 'var(--c-red)', fontSize: 11, marginTop: 4, fontFamily: 'var(--font-mono)' }}>
           {error}
         </p>
       )}

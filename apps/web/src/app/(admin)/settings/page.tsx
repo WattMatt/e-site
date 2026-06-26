@@ -192,8 +192,8 @@ export default async function SettingsPage() {
         )}
 
         {/* Danger zone */}
-        <div className="data-panel" style={{ borderColor: '#6b1e1e' }}>
-          <div className="data-panel-header" style={{ borderColor: '#6b1e1e' }}>
+        <div className="data-panel" style={{ borderColor: 'var(--c-red)' }}>
+          <div className="data-panel-header" style={{ borderColor: 'var(--c-red)' }}>
             <span className="data-panel-title" style={{ color: 'var(--c-red)' }}>Danger Zone</span>
           </div>
           <div style={{ padding: '16px 18px' }}>
@@ -205,7 +205,7 @@ export default async function SettingsPage() {
               style={{
                 display: 'inline-block',
                 fontSize: 12, color: 'var(--c-red)', background: 'var(--c-red-dim)',
-                border: '1px solid #6b1e1e', borderRadius: 6, padding: '7px 14px',
+                border: '1px solid var(--c-red)', borderRadius: 6, padding: '7px 14px',
                 textDecoration: 'none', cursor: 'pointer', transition: 'all 0.12s',
               }}
             >

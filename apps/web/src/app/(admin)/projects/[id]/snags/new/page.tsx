@@ -15,9 +15,9 @@ const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
 const priorityStyle = (p: string, selected: boolean): React.CSSProperties => {
   const palette: Record<string, { fg: string; bg: string; border: string }> = {
     low:      { fg: 'var(--c-text-dim)', bg: 'var(--c-panel)',         border: 'var(--c-border)' },
-    medium:   { fg: '#60a5fa',           bg: 'rgba(37,99,235,0.15)',   border: '#1d4ed8' },
+    medium:   { fg: 'var(--c-blue)',     bg: 'var(--c-blue-dim)',      border: 'var(--c-blue)' },
     high:     { fg: 'var(--c-amber)',    bg: 'var(--c-amber-dim)',     border: 'var(--c-amber-mid)' },
-    critical: { fg: 'var(--c-red)',      bg: 'var(--c-red-dim)',       border: '#6b1e1e' },
+    critical: { fg: 'var(--c-red)',      bg: 'var(--c-red-dim)',       border: 'var(--c-red)' },
   }
   const c = palette[p] ?? palette.low
   return {

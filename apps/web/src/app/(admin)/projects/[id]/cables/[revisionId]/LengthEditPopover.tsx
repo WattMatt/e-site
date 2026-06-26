@@ -58,7 +58,7 @@ export function MeasuredLengthEditor({ cableId, initialValue, initialMethod, onC
           <option value="MANUAL">Manual</option>
         </select>
       </Row>
-      {error && <div role="alert" style={{ color: '#dc2626', fontSize: 11 }}>{error}</div>}
+      {error && <div role="alert" style={{ color: 'var(--c-red)', fontSize: 11 }}>{error}</div>}
       <Actions>
         <CancelButton onClick={onClose} />
         <SaveButton onClick={save} pending={pending} />
@@ -116,7 +116,7 @@ export function ConfirmedLengthEditor({
         <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--c-text-dim)' }}>
           Measured: {measuredM.toFixed(1)} m
           {delta != null && (
-            <span style={{ color: flagDelta ? '#dc2626' : 'var(--c-text-mid)', marginLeft: 8 }}>
+            <span style={{ color: flagDelta ? 'var(--c-red)' : 'var(--c-text-mid)', marginLeft: 8 }}>
               · Δ {delta > 0 ? '+' : ''}{delta.toFixed(1)} m
               {deltaPct != null && <> ({deltaPct > 0 ? '+' : ''}{deltaPct.toFixed(1)}%)</>}
             </span>
@@ -152,7 +152,7 @@ export function ConfirmedLengthEditor({
           ⚠ Δ over threshold — will set status DISCREPANCY
         </div>
       )}
-      {error && <div role="alert" style={{ color: '#dc2626', fontSize: 11 }}>{error}</div>}
+      {error && <div role="alert" style={{ color: 'var(--c-red)', fontSize: 11 }}>{error}</div>}
       <Actions>
         <CancelButton onClick={onClose} />
         <SaveButton onClick={save} pending={pending} />

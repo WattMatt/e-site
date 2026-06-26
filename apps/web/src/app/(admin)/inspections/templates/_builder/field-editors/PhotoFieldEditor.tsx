@@ -55,9 +55,9 @@ export function PhotoFieldEditor({ field, onChange, onRemove }: Props) {
   return (
     <div className="space-y-3 p-3 border rounded">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Photo</span>
+        <span className="text-xs font-medium text-[var(--c-text-mid)] uppercase tracking-wide">Photo</span>
         {onRemove && (
-          <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">
+          <button type="button" onClick={onRemove} className="text-xs text-[var(--c-red)] hover:text-[var(--c-red)]">
             Remove
           </button>
         )}
@@ -99,7 +99,7 @@ export function PhotoFieldEditor({ field, onChange, onRemove }: Props) {
 
       {/* Count mode — 3-state radio. Never sets min_count: 0. */}
       <fieldset className="space-y-1.5">
-        <legend className="text-xs font-medium text-gray-600">Photo count requirement</legend>
+        <legend className="text-xs font-medium text-[var(--c-text-mid)]">Photo count requirement</legend>
 
         <label className="flex items-center gap-2 text-sm cursor-pointer">
           <input
@@ -135,7 +135,7 @@ export function PhotoFieldEditor({ field, onChange, onRemove }: Props) {
       {countMode !== 'optional' && (
         <div className="flex items-center gap-3">
           <div className="flex-1">
-            <label className="text-xs text-gray-500 block mb-1">
+            <label className="text-xs text-[var(--c-text-mid)] block mb-1">
               {countMode === 'exact' ? 'Exact count' : 'Minimum count'}
             </label>
             <input
@@ -148,7 +148,7 @@ export function PhotoFieldEditor({ field, onChange, onRemove }: Props) {
           </div>
           {countMode === 'minimum' && (
             <div className="flex-1">
-              <label className="text-xs text-gray-500 block mb-1">Maximum count (optional)</label>
+              <label className="text-xs text-[var(--c-text-mid)] block mb-1">Maximum count (optional)</label>
               <input
                 type="number"
                 min={field.min_count ?? 1}

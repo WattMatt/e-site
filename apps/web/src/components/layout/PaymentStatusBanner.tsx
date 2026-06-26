@@ -61,7 +61,7 @@ export async function PaymentStatusBanner() {
   if (!message) return null
 
   const tone = message.tone === 'danger'
-    ? { bg: 'var(--c-red-dim)', fg: 'var(--c-red)', border: 'rgba(232,85,85,0.35)' }
+    ? { bg: 'var(--c-red-dim)', fg: 'var(--c-red)', border: 'var(--c-red)' }
     : { bg: 'var(--c-amber-dim)', fg: 'var(--c-amber)', border: 'var(--c-amber-mid)' }
 
   return (

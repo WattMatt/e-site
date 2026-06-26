@@ -352,7 +352,7 @@ export function BrandingFields({
                 fontSize: 13,
                 fontWeight: 600,
                 background: 'var(--c-amber)',
-                color: '#000',
+                color: 'var(--c-on-amber)',
                 border: 'none',
                 borderRadius: 6,
                 cursor: 'pointer',

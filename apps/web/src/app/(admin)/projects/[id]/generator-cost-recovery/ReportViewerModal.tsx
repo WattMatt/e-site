@@ -126,7 +126,7 @@ export function ReportViewerModal({ title, revLabel, url, onDownload, isDownload
         <iframe
           src={url}
           title={`${title} — ${revLabel}`}
-          style={{ flex: 1, width: '100%', border: 'none', background: '#525659' }}
+          style={{ flex: 1, width: '100%', border: 'none', background: 'var(--c-surface)' }}
         />
       </div>
     </div>
