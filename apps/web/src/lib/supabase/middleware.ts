@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { type NextRequest, NextResponse } from 'next/server'
 import type { Database } from '@esite/db'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 interface JwtClaims {
   aal?: 'aal1' | 'aal2'
@@ -38,7 +39,7 @@ export async function updateSession(request: NextRequest) {
         },
       },
     }
-  )
+  ) as unknown as SupabaseClient<Database>
 
   // Refresh the session — MUST be called before any redirect
   const {
