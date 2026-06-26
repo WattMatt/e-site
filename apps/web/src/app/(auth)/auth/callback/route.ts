@@ -3,6 +3,9 @@ import { NextResponse } from 'next/server'
 import type { EmailOtpType } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { logAuthEvent } from '@esite/shared'
+import { THEME_COOKIE, THEME_COOKIE_MAX_AGE } from '@/lib/theme/types'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@esite/db'
 
 const VALID_OTP_TYPES: ReadonlySet<EmailOtpType> = new Set([
   'signup',
@@ -49,7 +52,7 @@ export async function GET(request: Request) {
     const { error, data } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
       await auditLogin(data.user?.id ?? null, from)
-      return NextResponse.redirect(`${origin}${next}`)
+      return await redirectWithTheme(supabase, data.user?.id ?? null, `${origin}${next}`)
     }
     console.error('auth/callback: exchangeCodeForSession failed', error)
   }
@@ -67,7 +70,7 @@ export async function GET(request: Request) {
       if (otpTypeRaw !== 'email_change') {
         await auditLogin(data.user?.id ?? null, from ?? otpTypeRaw)
       }
-      return NextResponse.redirect(`${origin}${next}`)
+      return await redirectWithTheme(supabase, data.user?.id ?? null, `${origin}${next}`)
     }
     console.error('auth/callback: verifyOtp failed', error)
   }
@@ -87,4 +90,25 @@ async function auditLogin(userId: string | null, from: string | null): Promise<v
     userAgent: ua,
     metadata:  { method: from ?? 'callback' },
   })
+}
+
+// Seed the theme cookie from the user's saved preference so a fresh device
+// renders the correct theme on the very next request (cross-device sync).
+async function redirectWithTheme(
+  supabase: SupabaseClient<Database>,
+  userId: string | null,
+  url: string,
+) {
+  const res = NextResponse.redirect(url)
+  if (userId) {
+    const { data } = await supabase.from('profiles')
+      .select('theme_preference').eq('id', userId).single()
+    const mode = data?.theme_preference
+    if (mode === 'light' || mode === 'dark' || mode === 'system') {
+      res.cookies.set(THEME_COOKIE, mode, {
+        path: '/', maxAge: THEME_COOKIE_MAX_AGE, sameSite: 'lax',
+      })
+    }
+  }
+  return res
 }
