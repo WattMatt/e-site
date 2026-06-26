@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { OrgSettingsForm } from './OrgSettingsForm'
 import { ProfileSettingsForm } from './ProfileSettingsForm'
+import { ThemeSegmentedControl } from '@/components/theme/ThemeSegmentedControl'
 
 export const metadata: Metadata = { title: 'Settings' }
 
@@ -41,6 +42,9 @@ export default async function SettingsPage() {
               phone={profile?.phone ?? ''}
               email={user!.email ?? ''}
             />
+            <div style={{ marginTop: 18, paddingTop: 18, borderTop: '1px solid var(--c-border)' }}>
+              <ThemeSegmentedControl />
+            </div>
           </div>
         </div>
 
