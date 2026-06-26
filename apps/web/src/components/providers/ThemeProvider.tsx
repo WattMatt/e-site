@@ -1,8 +1,8 @@
 'use client'
 
-import { createContext, useCallback, useContext, useEffect, useState, useTransition } from 'react'
-import { setThemePreference } from '@/lib/theme/actions'
-import type { ThemeMode } from '@/lib/theme/types'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { THEME_COOKIE, THEME_COOKIE_MAX_AGE, type ThemeMode } from '@/lib/theme/types'
 
 interface ThemeContextValue {
   /** The user's chosen mode. */
@@ -21,6 +21,26 @@ function applyDataTheme(mode: ThemeMode) {
   else el.setAttribute('data-theme', mode)
 }
 
+/**
+ * Persist the choice. The cookie is the SSR source of truth (read by the root
+ * layout); the profile write is best-effort and RLS-scoped to the user's own
+ * row. Done client-side (matching ProfileSettingsForm) to keep server-only
+ * modules out of this client bundle.
+ */
+function persist(mode: ThemeMode) {
+  document.cookie = `${THEME_COOKIE}=${mode}; path=/; max-age=${THEME_COOKIE_MAX_AGE}; samesite=lax`
+  try {
+    const supabase = createClient()
+    void supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) {
+        return supabase.from('profiles').update({ theme_preference: mode }).eq('id', user.id)
+      }
+    })
+  } catch {
+    // Cookie already set above — DB sync is best-effort.
+  }
+}
+
 export function ThemeProvider({
   initialMode,
   children,
@@ -30,7 +50,6 @@ export function ThemeProvider({
 }) {
   const [mode, setMode] = useState<ThemeMode>(initialMode)
   const [systemDark, setSystemDark] = useState(false)
-  const [, startTransition] = useTransition()
 
   // Track the OS preference so resolvedTheme is correct for UI in 'system' mode,
   // and so a live OS flip updates dependent UI (CSS itself reacts via media query).
@@ -44,8 +63,8 @@ export function ThemeProvider({
 
   const setTheme = useCallback((next: ThemeMode) => {
     setMode(next)
-    applyDataTheme(next)              // instant visual switch
-    startTransition(() => { setThemePreference(next) })  // persist: cookie + DB
+    applyDataTheme(next)  // instant visual switch
+    persist(next)         // cookie (SSR) + profile (cross-device)
   }, [])
 
   const resolvedTheme: 'light' | 'dark' =
