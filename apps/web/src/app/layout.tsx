@@ -5,6 +5,10 @@ import './globals.css'
 import { AnalyticsProvider } from '@/components/providers/AnalyticsProvider'
 import { ErrorBoundary } from '@/components/providers/ErrorBoundary'
 import { SentryBoot } from '@/components/providers/SentryBoot'
+import { cookies } from 'next/headers'
+import { ThemeProvider } from '@/components/providers/ThemeProvider'
+import { parseThemeMode, resolveDataTheme } from '@/lib/theme/resolve'
+import { THEME_COOKIE } from '@/lib/theme/types'
 
 const syne = Syne({
   subsets: ['latin'],
@@ -41,15 +45,21 @@ export const metadata: Metadata = {
   description: 'Construction management for SA electrical contractors',
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const cookieStore = await cookies()
+  const mode = parseThemeMode(cookieStore.get(THEME_COOKIE)?.value)
+  const dataTheme = resolveDataTheme(mode)
+
   return (
-    <html lang="en">
+    <html lang="en" data-theme={dataTheme ?? undefined} suppressHydrationWarning>
       <body className={`${syne.variable} ${mono.variable} ${fraunces.variable} ${plexMono.variable}`}>
         <ErrorBoundary>
           <SentryBoot />
-          <AnalyticsProvider>
-            {children}
-          </AnalyticsProvider>
+          <ThemeProvider initialMode={mode}>
+            <AnalyticsProvider>
+              {children}
+            </AnalyticsProvider>
+          </ThemeProvider>
         </ErrorBoundary>
       </body>
     </html>
