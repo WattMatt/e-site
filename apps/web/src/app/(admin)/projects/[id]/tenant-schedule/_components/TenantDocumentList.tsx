@@ -7,7 +7,9 @@
  * - Each row: title · current rev label + issued date · revision-count badge
  * - "Revisions" button opens DocumentRevisionDrawer for that document
  * - When not readOnly: rename, delete-document (with confirm), + add-document form
- * - Add document: title input + file → upload route → createTenantDocumentAction (optimistic)
+ * - Add document: title input + file → direct-to-storage upload →
+ *   createTenantDocumentAction (optimistic). Bytes must not transit a Next.js
+ *   route — Vercel caps request bodies at ~4.5 MB (see tenant-documents-upload).
  *
  * UI copy is parameterised by `kind` (KIND_COPY): the layout panel manages
  * drawings, the scope panel scope-of-work documents — distinct document types
@@ -26,6 +28,10 @@ import {
   type TenantDocument,
   type TenantDocumentKind,
 } from '@/actions/tenant-documents.actions'
+import {
+  uploadTenantDocumentFile,
+  removeTenantDocumentFile,
+} from '@/lib/storage/tenant-documents-upload'
 import { DocumentRevisionDrawer } from './DocumentRevisionDrawer'
 
 // ---------------------------------------------------------------------------
@@ -46,8 +52,9 @@ function formatDate(iso: string): string {
 
 // ---------------------------------------------------------------------------
 // Per-kind UI copy — the layout panel manages drawings, the scope panel
-// scope-of-work documents. `accept` mirrors the upload route's kind-specific
-// validation (scope = PDF/Excel only, 50 MB; layout = any file type, T1).
+// scope-of-work documents. `accept` mirrors uploadTenantDocumentFile's
+// kind-specific validation (scope = PDF/Excel only, 50 MB; layout = any file
+// type, T1).
 // ---------------------------------------------------------------------------
 
 const KIND_COPY: Record<
@@ -172,26 +179,12 @@ export function TenantDocumentList({
     setIsUploading(true)
 
     try {
-      const fd = new FormData()
-      fd.append('projectId', projectId)
-      fd.append('nodeId', nodeId)
-      fd.append('file', newFile)
-      fd.append('kind', kind)
-
-      const uploadRes = await fetch('/api/tenant-schedule/upload-scope-document', {
-        method: 'POST',
-        body: fd,
+      const { storagePath, filename } = await uploadTenantDocumentFile({
+        projectId,
+        nodeId,
+        file: newFile,
+        kind,
       })
-
-      if (!uploadRes.ok) {
-        const body = (await uploadRes.json()) as { error?: string }
-        throw new Error(body.error ?? `Upload failed (HTTP ${uploadRes.status})`)
-      }
-
-      const { storagePath, filename } = (await uploadRes.json()) as {
-        storagePath: string
-        filename: string
-      }
 
       const res = await createTenantDocumentAction(projectId, nodeId, kind, newTitle.trim(), {
         storagePath,
@@ -201,11 +194,7 @@ export function TenantDocumentList({
 
       if ('error' in res) {
         // Best-effort orphan cleanup
-        await fetch('/api/tenant-schedule/upload-scope-document', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storagePath }),
-        }).catch(() => {/* best-effort */})
+        await removeTenantDocumentFile(storagePath)
         throw new Error(res.error)
       }
 
