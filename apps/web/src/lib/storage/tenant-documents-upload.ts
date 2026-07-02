@@ -26,7 +26,10 @@ const BUCKET = 'tenant-documents'
 
 // Scope documents: PDF or Excel only, 50 MB cap. Layout drawings: any MIME
 // type, no imposed size cap (T1) — bounded only by the Supabase project's
-// global upload limit.
+// global upload limit (verified 2026-07-02: the E-SITE project is on the
+// 50 MiB default; raise it in Dashboard → Storage settings if drawings ever
+// need more — storage then returns a readable "exceeded the maximum allowed
+// size" error, it does not crash the UI).
 const SCOPE_MAX_BYTES = 50 * 1024 * 1024
 const SCOPE_ALLOWED_MIME = new Set([
   'application/pdf',
