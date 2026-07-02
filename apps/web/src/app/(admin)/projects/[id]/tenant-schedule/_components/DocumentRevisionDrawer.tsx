@@ -18,6 +18,10 @@ import {
   type TenantDocument,
   type TenantDocumentRevision,
 } from '@/actions/tenant-documents.actions'
+import {
+  uploadTenantDocumentFile,
+  removeTenantDocumentFile,
+} from '@/lib/storage/tenant-documents-upload'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -92,7 +96,7 @@ export function DocumentRevisionDrawer({
   const [isDeletingRevId, setIsDeletingRevId] = useState<string | null>(null)
   const [deleteRevError, setDeleteRevError] = useState<string | null>(null)
 
-  // Mirrors the upload route's kind validation (scope = PDF/Excel only; layout = any).
+  // Mirrors uploadTenantDocumentFile's kind validation (scope = PDF/Excel only; layout = any).
   const fileAccept = document.kind === 'scope' ? '.pdf,.xlsx,.xls' : undefined
 
   // ── Download ──────────────────────────────────────────────────────────────
@@ -117,26 +121,12 @@ export function DocumentRevisionDrawer({
     setIsUploading(true)
 
     try {
-      const fd = new FormData()
-      fd.append('projectId', projectId)
-      fd.append('nodeId', document.node_id)
-      fd.append('file', selectedFile)
-      fd.append('kind', document.kind)
-
-      const uploadRes = await fetch('/api/tenant-schedule/upload-scope-document', {
-        method: 'POST',
-        body: fd,
+      const { storagePath, filename } = await uploadTenantDocumentFile({
+        projectId,
+        nodeId: document.node_id,
+        file: selectedFile,
+        kind: document.kind,
       })
-
-      if (!uploadRes.ok) {
-        const body = (await uploadRes.json()) as { error?: string }
-        throw new Error(body.error ?? `Upload failed (HTTP ${uploadRes.status})`)
-      }
-
-      const { storagePath, filename } = (await uploadRes.json()) as {
-        storagePath: string
-        filename: string
-      }
 
       const attach = await addTenantDocumentRevisionAction(projectId, document.id, {
         storagePath,
@@ -147,11 +137,7 @@ export function DocumentRevisionDrawer({
 
       if ('error' in attach) {
         // Best-effort orphan cleanup
-        await fetch('/api/tenant-schedule/upload-scope-document', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storagePath }),
-        }).catch(() => {/* best-effort */})
+        await removeTenantDocumentFile(storagePath)
         throw new Error(attach.error)
       }
 

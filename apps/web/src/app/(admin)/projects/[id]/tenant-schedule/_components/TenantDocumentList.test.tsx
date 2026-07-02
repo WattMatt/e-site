@@ -14,6 +14,8 @@ const {
   mockDeleteRevision,
   mockDeleteDocument,
   mockGetSignedUrl,
+  mockUploadFile,
+  mockRemoveFile,
 } = vi.hoisted(() => ({
   mockList: vi.fn(),
   mockCreate: vi.fn(),
@@ -22,6 +24,8 @@ const {
   mockDeleteRevision: vi.fn(),
   mockDeleteDocument: vi.fn(),
   mockGetSignedUrl: vi.fn(),
+  mockUploadFile: vi.fn(),
+  mockRemoveFile: vi.fn(),
 }))
 
 vi.mock('@/actions/tenant-documents.actions', () => ({
@@ -32,6 +36,13 @@ vi.mock('@/actions/tenant-documents.actions', () => ({
   deleteTenantDocumentRevisionAction: (...args: unknown[]) => mockDeleteRevision(...args),
   deleteTenantDocumentAction: (...args: unknown[]) => mockDeleteDocument(...args),
   getRevisionSignedUrlAction: (...args: unknown[]) => mockGetSignedUrl(...args),
+}))
+
+// Direct-to-storage upload helper — bytes never transit a Next.js route
+// (Vercel's ~4.5 MB body cap broke large drawings).
+vi.mock('@/lib/storage/tenant-documents-upload', () => ({
+  uploadTenantDocumentFile: (...args: unknown[]) => mockUploadFile(...args),
+  removeTenantDocumentFile: (...args: unknown[]) => mockRemoveFile(...args),
 }))
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -220,12 +231,8 @@ describe('TenantDocumentList', () => {
 
   // ── 4. Add-drawing flow: upload → create action → optimistic row appears ──
 
-  it('add-drawing flow: fills title + file → POSTs to upload route → calls createTenantDocumentAction → new row appears', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ storagePath: 'proj/node/ts-drawing.pdf', filename: 'drawing.pdf' }),
-    })
-    vi.stubGlobal('fetch', fetchMock)
+  it('add-drawing flow: fills title + file → uploads direct to storage → calls createTenantDocumentAction → new row appears', async () => {
+    mockUploadFile.mockResolvedValue({ storagePath: 'proj/node/ts-drawing.pdf', filename: 'drawing.pdf' })
 
     mockCreate.mockResolvedValue({
       ok: true,
@@ -259,12 +266,16 @@ describe('TenantDocumentList', () => {
     await userEvent.click(screen.getByRole('button', { name: /Upload/i }))
 
     await waitFor(() => {
-      // Upload route called with correct FormData fields
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/tenant-schedule/upload-scope-document',
-        expect.objectContaining({ method: 'POST' }),
+      // Direct-to-storage upload called with the file + routing metadata
+      expect(mockUploadFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: 'p-1',
+          nodeId: 'node-1',
+          kind: 'layout',
+          file: expect.any(File),
+        }),
       )
-      // createTenantDocumentAction called with the storage path from the upload response
+      // createTenantDocumentAction called with the storage path from the upload
       expect(mockCreate).toHaveBeenCalledWith(
         'p-1',
         'node-1',
@@ -284,15 +295,41 @@ describe('TenantDocumentList', () => {
     })
   })
 
+  // ── 4b. Failed DB attach rolls back the uploaded storage object ──
+
+  it('removes the uploaded object when createTenantDocumentAction fails', async () => {
+    mockUploadFile.mockResolvedValue({ storagePath: 'proj/node/ts-orphan.pdf', filename: 'orphan.pdf' })
+    mockCreate.mockResolvedValue({ error: 'Node not found' })
+
+    const { TenantDocumentList } = await import('./TenantDocumentList')
+    render(
+      <TenantDocumentList
+        kind="layout"
+        projectId="p-1"
+        nodeId="node-1"
+        readOnly={false}
+        initialDocuments={[]}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /Add drawing/i }))
+    await userEvent.type(screen.getByPlaceholderText(/Drawing title/i), 'New Layout')
+    const file = new File(['pdf-content'], 'orphan.pdf', { type: 'application/pdf' })
+    await userEvent.upload(screen.getByTestId('add-drawing-file-input'), file)
+    await userEvent.click(screen.getByRole('button', { name: /Upload/i }))
+
+    await waitFor(() => {
+      // Orphan cleanup ran against the just-uploaded path
+      expect(mockRemoveFile).toHaveBeenCalledWith('proj/node/ts-orphan.pdf')
+      // The action error is surfaced, not the raw upload internals
+      expect(screen.getByText(/Node not found/)).toBeTruthy()
+    })
+  })
+
   // ── 5. Add-revision flow: opens drawer → Add revision → upload → addTenantDocumentRevisionAction → onChanged ──
 
   it('add-revision flow: opens drawer → uploads file → calls addTenantDocumentRevisionAction → refresh (listTenantDocumentsAction) is called', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({ storagePath: 'proj/node/456-rev-c.pdf', filename: 'rev-c.pdf' }),
-    })
-    vi.stubGlobal('fetch', fetchMock)
+    mockUploadFile.mockResolvedValue({ storagePath: 'proj/node/456-rev-c.pdf', filename: 'rev-c.pdf' })
 
     mockAddRevision.mockResolvedValue({ ok: true, revisionId: 'rev-new' })
     // refresh() calls listTenantDocumentsAction — return the same doc list (simplified)
@@ -333,10 +370,14 @@ describe('TenantDocumentList', () => {
     await userEvent.click(screen.getByRole('button', { name: /Upload revision/i }))
 
     await waitFor(() => {
-      // 1. Upload route POSTed
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/tenant-schedule/upload-scope-document',
-        expect.objectContaining({ method: 'POST' }),
+      // 1. Direct-to-storage upload called for the drawer's document node + kind
+      expect(mockUploadFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: 'p-1',
+          nodeId: 'node-1',
+          kind: 'layout',
+          file: expect.any(File),
+        }),
       )
 
       // 2. addTenantDocumentRevisionAction called with correct args
