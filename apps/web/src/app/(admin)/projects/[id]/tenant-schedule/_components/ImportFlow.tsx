@@ -143,6 +143,7 @@ export function ImportFlow({ projectId }: Props) {
     const hasWriteErrors = commitResult.write_errors.length > 0
     const hasSkipped = commitResult.skipped_parse_errors > 0
     const hasConflicts = commitResult.skipped_conflicts > 0
+    const importNotices = commitResult.warnings ?? []
     const hasWarnings = hasWriteErrors || hasSkipped || hasConflicts
     return (
       <div style={{ border: hasWarnings ? '1px solid var(--c-amber-mid)' : '1px solid var(--c-green)', borderRadius: 8, background: 'var(--c-panel)', padding: '14px 18px' }}>
@@ -188,6 +189,18 @@ export function ImportFlow({ projectId }: Props) {
             <ul style={{ margin: 0, paddingLeft: 16 }}>
               {commitResult.write_errors.map((e, i) => (
                 <li key={i} style={{ fontSize: 12, color: 'var(--c-text-mid)', marginBottom: 2 }}>{e}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {importNotices.length > 0 && (
+          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-blue-dim)', borderRadius: 4 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-blue)', marginBottom: 6 }}>
+              {importNotices.length} row{importNotices.length !== 1 ? 's' : ''} imported with a pending detail
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 16 }}>
+              {importNotices.map((w, i) => (
+                <li key={i} style={{ fontSize: 12, color: 'var(--c-text-mid)', marginBottom: 2 }}>{w}</li>
               ))}
             </ul>
           </div>
