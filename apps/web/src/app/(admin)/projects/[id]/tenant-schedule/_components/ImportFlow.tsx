@@ -143,6 +143,7 @@ export function ImportFlow({ projectId }: Props) {
     const hasWriteErrors = commitResult.write_errors.length > 0
     const hasSkipped = commitResult.skipped_parse_errors > 0
     const hasConflicts = commitResult.skipped_conflicts > 0
+    const importNotices = commitResult.warnings ?? []
     const hasWarnings = hasWriteErrors || hasSkipped || hasConflicts
     return (
       <div style={{ border: hasWarnings ? '1px solid var(--c-amber-mid)' : '1px solid var(--c-green)', borderRadius: 8, background: 'var(--c-panel)', padding: '14px 18px' }}>
@@ -192,6 +193,18 @@ export function ImportFlow({ projectId }: Props) {
             </ul>
           </div>
         )}
+        {importNotices.length > 0 && (
+          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--c-blue-dim)', borderRadius: 4 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-blue)', marginBottom: 6 }}>
+              {importNotices.length} row{importNotices.length !== 1 ? 's' : ''} imported with a pending detail
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 16 }}>
+              {importNotices.map((w, i) => (
+                <li key={i} style={{ fontSize: 12, color: 'var(--c-text-mid)', marginBottom: 2 }}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div style={{ marginTop: 12 }}>
           <Button variant="secondary" onClick={reset}>
             Import again
@@ -217,6 +230,7 @@ export function ImportFlow({ projectId }: Props) {
     const decomCount = preview.decommissioned_entries.length
     const conflictCount = preview.conflict_entries.length
     const errorCount = preview.parse_errors.length
+    const warningCount = preview.warnings?.length ?? 0
 
     return (
       <Card>
@@ -243,6 +257,7 @@ export function ImportFlow({ projectId }: Props) {
             <Badge variant={decomCount > 0 ? 'danger' : 'ghost'}>{decomCount} decommissioned</Badge>
             {conflictCount > 0 && <Badge variant="warning">{conflictCount} conflict{conflictCount !== 1 ? 's' : ''}</Badge>}
             {errorCount > 0 && <Badge variant="warning">{errorCount} parse error{errorCount !== 1 ? 's' : ''}</Badge>}
+            {warningCount > 0 && <Badge variant="info">{warningCount} warning{warningCount !== 1 ? 's' : ''}</Badge>}
           </div>
 
           {/* ── DECOMMISSIONED — prominent warning block ─────────────────── */}
@@ -354,6 +369,31 @@ export function ImportFlow({ projectId }: Props) {
                       Row {err.source_row}:
                     </span>{' '}
                     {err.message}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Warnings — rows imported, but need attention ─────────────── */}
+          {warningCount > 0 && (
+            <div style={{
+              padding: '10px 14px',
+              marginBottom: 16,
+              background: 'var(--c-blue-dim)',
+              border: '1px solid var(--c-blue)',
+              borderRadius: 6,
+            }}>
+              <p style={{ fontWeight: 600, color: 'var(--c-blue)', marginBottom: 6, fontSize: 13 }}>
+                {warningCount} warning{warningCount !== 1 ? 's' : ''} — these rows WILL be imported
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {preview.warnings.map((w, i) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--c-text-mid)' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-blue)' }}>
+                      Row {w.source_row}:
+                    </span>{' '}
+                    {w.message}
                   </div>
                 ))}
               </div>

@@ -34,7 +34,7 @@ export interface ImportUpdated {
   /** Which fields will change — populated so the UI can highlight deltas. */
   changes: {
     shop_name?: { from: string | null; to: string | null };
-    shop_area_m2?: { from: number | null; to: number };
+    shop_area_m2?: { from: number | null; to: number | null };
   };
 }
 
@@ -103,6 +103,11 @@ export interface ImportPreview {
    * The UI should surface these so the user can fix the file before committing.
    */
   parse_errors: TenantImportError[];
+  /**
+   * Non-fatal parser notices (e.g. a blank area imported as pending). The rows
+   * ARE imported; the UI should surface these so nothing changes silently.
+   */
+  warnings: TenantImportError[];
   /** Total valid rows successfully parsed from the workbook. */
   parsed_row_count: number;
 }
@@ -122,11 +127,14 @@ export interface ImportPreview {
  *   subset drives shop_number matching; the full set drives code-collision
  *   detection for new shops (UNIQUE(project_id, code) would otherwise reject
  *   the insert at commit time).
+ * @param warnings - Non-fatal notices from {@link parseTenantSchedule};
+ *   passed through to the preview unchanged.
  */
 export function diffTenantSchedule(
   rows: TenantImportRow[],
   parseErrors: TenantImportError[],
   allNodes: Node[],
+  warnings: TenantImportError[] = [],
 ): ImportPreview {
   // tenant_db nodes — matched against the file by shop_number.
   const tenantDbNodes = allNodes.filter((n) => n.kind === 'tenant_db');
@@ -209,6 +217,7 @@ export function diffTenantSchedule(
     conflict_entries,
     decommissioned_entries,
     parse_errors: parseErrors,
+    warnings,
     parsed_row_count: rows.length,
   };
 }

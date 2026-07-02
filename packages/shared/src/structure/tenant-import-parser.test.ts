@@ -533,6 +533,96 @@ describe('parseTenantSchedule — trailing total / separator rows', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Blank area — pending-area import (PNP FAERIE GLEN shop 23 / PEP HOME case)
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — blank area (pending)', () => {
+  it('imports a row whose area cell is blank with shop_area_m2 null + a warning', async () => {
+    // Real case: 2026.06.26 PNP FAERIE GLEN schedule row 26 — shop 23 PEP HOME
+    // has no AREA yet (GLA not finalised). The tenant exists; dropping the whole
+    // row loses the entry. It must import with a pending (null) area instead.
+    const buf = await buildFixtureWorkbook([
+      ['SHOP 22', 'BEAUTY SERVICES', 141],
+      ['SHOP 23', 'PEP HOME', null], // area not yet known — import, don't drop
+      ['SHOP 24', 'LINE SHOP', 172],
+    ]);
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(3);
+    const pep = result.rows.find((r) => r.shop_number === 'SHOP 23');
+    expect(pep).toBeDefined();
+    expect(pep!.shop_area_m2).toBeNull();
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].source_row).toBe(3);
+    expect(result.warnings[0].message).toMatch(/blank|no area/i);
+  });
+
+  it('treats a whitespace-only area cell as blank (warning, not error)', async () => {
+    const buf = await buildFixtureWorkbook([['SHOP 23', 'PEP HOME', '   ']]);
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].shop_area_m2).toBeNull();
+    expect(result.warnings).toHaveLength(1);
+  });
+
+  it('still rejects a non-blank, non-numeric area (e.g. "TBC")', async () => {
+    const buf = await buildFixtureWorkbook([['SHOP 23', 'PEP HOME', 'TBC']]);
+    const result = await parseTenantSchedule(buf);
+    expect(result.rows).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].message).toMatch(/numeric/i);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('returns an empty warnings array on a fully-clean file', async () => {
+    const result = await parseTenantSchedule(baseBuffer);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('does not warn for skipped footer/summary rows (blank area there is expected)', async () => {
+    const buf = await buildWorkbook(
+      ['SHOP NO.', 'Shop name', 'Area (m²)'],
+      [
+        ['01', 'VACANT', 131.66],
+        [null, 'TOTAL GLA', null], // footer — silent skip, no warning
+      ],
+    );
+    const result = await parseTenantSchedule(buf);
+    expect(result.rows).toHaveLength(1);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Duplicate SHOP NO. across mall sections (PNP FAERIE GLEN restaurant deck)
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — duplicate shop numbers across sections', () => {
+  it('explains the section-prefix remedy in the duplicate error message', async () => {
+    // Real case: the Faerie Glen schedule's restaurant deck restarts numbering
+    // at 1–19 (its own "R1A & R1B" / "R7A" rows show the section is really
+    // R-prefixed), colliding with main-mall shops 1–19. The error must tell the
+    // user how to fix the file, not just that a duplicate exists.
+    const buf = await buildFixtureWorkbook([
+      ['1', 'LINE SHOP', 221], // main mall
+      ['2', 'LINE SHOP', 120],
+      ['1', 'LUPA', 295], // restaurant deck — really R1
+      ['2', 'NIGHT TRADE', 347], // really R2
+    ]);
+    const result = await parseTenantSchedule(buf);
+    expect(result.rows).toHaveLength(2);
+    expect(result.errors).toHaveLength(2);
+    for (const err of result.errors) {
+      expect(err.message).toMatch(/duplicate/i);
+      expect(err.message).toMatch(/section/i);
+      expect(err.message).toMatch(/"R1"/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // shop_category column parsing
 // ---------------------------------------------------------------------------
 

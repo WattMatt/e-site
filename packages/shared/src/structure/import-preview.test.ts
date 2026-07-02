@@ -7,7 +7,7 @@ import type { Node } from './types';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeRow(shop_number: string, shop_name: string | null, shop_area_m2: number): TenantImportRow {
+function makeRow(shop_number: string, shop_name: string | null, shop_area_m2: number | null): TenantImportRow {
   return { source_row: 2, shop_number, shop_name, shop_area_m2 };
 }
 
@@ -236,5 +236,42 @@ describe('diffTenantSchedule — code conflicts', () => {
     expect(preview.updated_entries[0].row.shop_number).toBe('5');
     expect(preview.new_entries).toHaveLength(1);
     expect(preview.new_entries[0].row.shop_number).toBe('99');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Warnings passthrough + pending (null) areas
+// ---------------------------------------------------------------------------
+
+describe('diffTenantSchedule — warnings + pending areas', () => {
+  it('passes parser warnings through to the preview', () => {
+    const warnings: TenantImportError[] = [
+      { source_row: 26, message: 'Row 26: area / TOTAL GLA is blank — imported with no area.' },
+    ];
+    const preview = diffTenantSchedule([], [], [], warnings);
+    expect(preview.warnings).toEqual(warnings);
+  });
+
+  it('defaults warnings to an empty array when not supplied', () => {
+    const preview = diffTenantSchedule([], [], []);
+    expect(preview.warnings).toEqual([]);
+  });
+
+  it('classifies a pending-area (null) row as a normal new entry', () => {
+    const rows: TenantImportRow[] = [makeRow('23', 'PEP HOME', null)];
+    const preview = diffTenantSchedule(rows, [], []);
+    expect(preview.new_entries).toHaveLength(1);
+    expect(preview.new_entries[0].row.shop_area_m2).toBeNull();
+    expect(preview.new_entries[0].derived_code).toBe('DB-23');
+  });
+
+  it('diffs an existing area against a now-blank file area as a change to null', () => {
+    const existing: Node[] = [
+      makeNode({ shop_number: '23', shop_name: 'PEP HOME', shop_area_m2: 180 }),
+    ];
+    const rows: TenantImportRow[] = [makeRow('23', 'PEP HOME', null)];
+    const preview = diffTenantSchedule(rows, [], existing);
+    expect(preview.updated_entries).toHaveLength(1);
+    expect(preview.updated_entries[0].changes.shop_area_m2).toEqual({ from: 180, to: null });
   });
 });

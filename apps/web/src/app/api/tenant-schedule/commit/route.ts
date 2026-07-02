@@ -168,6 +168,12 @@ export interface CommitResult {
   skipped_conflicts: number;
   /** Per-write errors that occurred during the commit (partial failures). */
   write_errors: string[];
+  /**
+   * Non-fatal parser notices for rows that WERE committed (e.g. a blank area
+   * imported as pending) — re-surfaced here so the follow-up action survives
+   * past the preview stage, like skipped_parse_errors does.
+   */
+  warnings: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +263,12 @@ export async function POST(
   }
 
   // 7. Compute diff (pure function — same as parse route, but we apply it here)
-  const preview = diffTenantSchedule(parseResult.rows, parseResult.errors, allNodes);
+  const preview = diffTenantSchedule(
+    parseResult.rows,
+    parseResult.errors,
+    allNodes,
+    parseResult.warnings,
+  );
 
   // 8. Apply the three write categories
   const writeErrors: string[] = [];
@@ -419,6 +430,7 @@ export async function POST(
       skipped_parse_errors: preview.parse_errors.length,
       skipped_conflicts: preview.conflict_entries.length,
       write_errors: writeErrors,
+      warnings: preview.warnings.map((w) => w.message),
     },
     // 207 Multi-Status when at least one write failed (partial success);
     // 200 OK only when every write succeeded.
