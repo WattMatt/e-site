@@ -217,6 +217,7 @@ export function ImportFlow({ projectId }: Props) {
     const decomCount = preview.decommissioned_entries.length
     const conflictCount = preview.conflict_entries.length
     const errorCount = preview.parse_errors.length
+    const warningCount = preview.warnings?.length ?? 0
 
     return (
       <Card>
@@ -243,6 +244,7 @@ export function ImportFlow({ projectId }: Props) {
             <Badge variant={decomCount > 0 ? 'danger' : 'ghost'}>{decomCount} decommissioned</Badge>
             {conflictCount > 0 && <Badge variant="warning">{conflictCount} conflict{conflictCount !== 1 ? 's' : ''}</Badge>}
             {errorCount > 0 && <Badge variant="warning">{errorCount} parse error{errorCount !== 1 ? 's' : ''}</Badge>}
+            {warningCount > 0 && <Badge variant="info">{warningCount} warning{warningCount !== 1 ? 's' : ''}</Badge>}
           </div>
 
           {/* ── DECOMMISSIONED — prominent warning block ─────────────────── */}
@@ -354,6 +356,31 @@ export function ImportFlow({ projectId }: Props) {
                       Row {err.source_row}:
                     </span>{' '}
                     {err.message}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Warnings — rows imported, but need attention ─────────────── */}
+          {warningCount > 0 && (
+            <div style={{
+              padding: '10px 14px',
+              marginBottom: 16,
+              background: 'var(--c-blue-dim)',
+              border: '1px solid var(--c-blue)',
+              borderRadius: 6,
+            }}>
+              <p style={{ fontWeight: 600, color: 'var(--c-blue)', marginBottom: 6, fontSize: 13 }}>
+                {warningCount} warning{warningCount !== 1 ? 's' : ''} — these rows WILL be imported
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {preview.warnings.map((w, i) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--c-text-mid)' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-blue)' }}>
+                      Row {w.source_row}:
+                    </span>{' '}
+                    {w.message}
                   </div>
                 ))}
               </div>

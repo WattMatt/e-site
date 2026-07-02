@@ -109,7 +109,12 @@ export async function POST(req: Request): Promise<NextResponse<ImportPreview | {
   // ------------------------------------------------------------------
   // 5. Diff → ImportPreview (pure, no DB writes)
   // ------------------------------------------------------------------
-  const preview = diffTenantSchedule(parseResult.rows, parseResult.errors, allNodes);
+  const preview = diffTenantSchedule(
+    parseResult.rows,
+    parseResult.errors,
+    allNodes,
+    parseResult.warnings,
+  );
 
   return NextResponse.json(preview, { status: 200 });
 }

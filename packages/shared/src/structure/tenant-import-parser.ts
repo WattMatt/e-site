@@ -20,8 +20,11 @@
  *   3. Parse each data row into a TenantImportRow, collecting errors inline.
  *      A trailing totals / separator row (no shop number AND no area) is
  *      skipped silently — real schedules end with a `TOTAL GLA` footer.
+ *      A data row whose area cell is blank (GLA not yet finalised — live
+ *      projects do this; PNP FAERIE GLEN shop 23) imports with a null area
+ *      and a warning rather than being dropped.
  *   4. Deduplicate check: duplicate SHOP NO. within the file is an error.
- *   5. Return TenantImportResult — valid rows + per-row errors.
+ *   5. Return TenantImportResult — valid rows + per-row errors + warnings.
  *
  * Pure function: no DB, no network, no React.
  */
@@ -40,8 +43,8 @@ export interface TenantImportRow {
   shop_number: string;
   /** Tenant name from the tenant-name column; `null` when blank; `"VACANT"` when explicitly so. */
   shop_name: string | null;
-  /** Gross Lettable Area in m² from the area column. */
-  shop_area_m2: number;
+  /** Gross Lettable Area in m² from the area column; `null` when the cell is blank (area pending). */
+  shop_area_m2: number | null;
   /** Shop category coerced to one of the 5 enum values, or `null` when absent/unrecognised. */
   shop_category: string | null;
 }
@@ -60,6 +63,11 @@ export interface TenantImportResult {
   rows: TenantImportRow[];
   /** One entry per row that failed validation, including duplicates. */
   errors: TenantImportError[];
+  /**
+   * Non-fatal per-row notices — the row IS imported, but something needs the
+   * user's attention (e.g. a blank area cell imported as a pending area).
+   */
+  warnings: TenantImportError[];
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +119,9 @@ function cellToNumber(value: ExcelJS.CellValue): number | null {
     const n = Number(s);
     return Number.isNaN(n) ? null : n;
   }
-  const n = Number(String(value).trim());
+  const s = String(value).trim();
+  if (s === '') return null; // Number('') is 0 — a blank-ish cell is NOT a 0 m² area
+  const n = Number(s);
   return Number.isNaN(n) ? null : n;
 }
 
@@ -293,16 +303,18 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
     return {
       rows: [],
       errors: [{ source_row: 1, message: 'File is not a readable .xlsx workbook.' }],
+      warnings: [],
     };
   }
 
   const rows: TenantImportRow[] = [];
   const errors: TenantImportError[] = [];
+  const warnings: TenantImportError[] = [];
 
   const ws = wb.worksheets[0];
   if (!ws) {
     errors.push({ source_row: 1, message: 'Workbook contains no sheets.' });
-    return { rows, errors };
+    return { rows, errors, warnings };
   }
 
   // -------------------------------------------------------------------------
@@ -321,7 +333,7 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
         `Row 1 contained: ${headerList}. The file needs a header row 1 with a shop-number column, ` +
         `a tenant-name column, and an area/GLA column (column order and exact wording are flexible).`,
     });
-    return { rows, errors };
+    return { rows, errors, warnings };
   }
   const col = resolved.columns;
 
@@ -381,7 +393,9 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
         source_row: rowNumber,
         message:
           `Row ${rowNumber}: duplicate SHOP NO. "${shop_number}" (first seen on row ${existingRow}). ` +
-          `SHOP NO. must be unique within the file.`,
+          `SHOP NO. must be unique within the file. If these are two different shops in two mall ` +
+          `sections that each restart numbering (e.g. main mall vs restaurant deck), give each ` +
+          `section its own prefix in the file — e.g. restaurant unit 1 becomes "R1".`,
       });
       return;
     }
@@ -389,11 +403,28 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
 
     // --- Area / TOTAL GLA ---
     if (gla === null) {
-      errors.push({
+      // A truly-blank cell means the area simply isn't finalised yet (live
+      // schedules do this — PNP FAERIE GLEN shop 23 / PEP HOME). The tenant is
+      // still real: import it with a pending (null) area and warn. Anything
+      // non-blank that fails to parse (text, broken formulas, error cells)
+      // stays a hard error.
+      const areaIsBlank =
+        rawGla === null ||
+        rawGla === undefined ||
+        (typeof rawGla === 'string' && rawGla.trim() === '');
+      if (!areaIsBlank) {
+        errors.push({
+          source_row: rowNumber,
+          message: `Row ${rowNumber}: area / TOTAL GLA must be numeric but got ${JSON.stringify(rawGla)}.`,
+        });
+        return;
+      }
+      warnings.push({
         source_row: rowNumber,
-        message: `Row ${rowNumber}: area / TOTAL GLA must be numeric but got ${JSON.stringify(rawGla)}.`,
+        message:
+          `Row ${rowNumber}: area / TOTAL GLA is blank — "${cellToString(rawTenant) ?? shop_number}" ` +
+          `imported with no area. Fill it in on the tenant page, or re-import once the GLA is known.`,
       });
-      return;
     }
 
     // --- Tenant name (blank → null; "VACANT" → kept as-is) ---
@@ -411,5 +442,5 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
     });
   });
 
-  return { rows, errors };
+  return { rows, errors, warnings };
 }

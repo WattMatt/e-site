@@ -257,7 +257,12 @@ export async function POST(
   }
 
   // 7. Compute diff (pure function — same as parse route, but we apply it here)
-  const preview = diffTenantSchedule(parseResult.rows, parseResult.errors, allNodes);
+  const preview = diffTenantSchedule(
+    parseResult.rows,
+    parseResult.errors,
+    allNodes,
+    parseResult.warnings,
+  );
 
   // 8. Apply the three write categories
   const writeErrors: string[] = [];
