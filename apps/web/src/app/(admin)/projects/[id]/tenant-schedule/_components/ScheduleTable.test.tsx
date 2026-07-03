@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { ScheduleTable } from './ScheduleTable'
 import type { Node } from '@esite/shared'
 
@@ -53,5 +54,29 @@ describe('ScheduleTable electrical columns', () => {
       />,
     )
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('ScheduleTable tenant editing', () => {
+  it('opens the edit form modal prefilled from the row when Edit is clicked', async () => {
+    render(<ScheduleTable nodes={[tenant({})]} {...base} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit' }))
+
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect((screen.getByLabelText(/SHOP NO/i) as HTMLInputElement).value).toBe('67')
+    expect((screen.getByLabelText(/Tenant name/i) as HTMLInputElement).value).toBe('Shop 67')
+    expect((screen.getByLabelText(/GLA/i) as HTMLInputElement).value).toBe('100')
+    // Immutable DB code shown as context
+    expect(screen.getAllByText(/DB-67/).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('does not offer Edit on decommissioned rows', async () => {
+    render(<ScheduleTable nodes={[tenant({ status: 'decommissioned' })]} {...base} />)
+
+    // Decommissioned rows are hidden by default — reveal them first.
+    await userEvent.click(screen.getByLabelText(/Show decommissioned/i))
+
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
   })
 })

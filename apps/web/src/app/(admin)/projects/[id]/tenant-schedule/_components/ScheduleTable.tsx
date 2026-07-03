@@ -15,6 +15,7 @@ import type { NodeOrderData } from '../../equipment-schedule/_components/NodeOrd
 import { BoPeriodSelect, BoDateCell } from './BoCells'
 import type { TenantBoInfo } from './BoCells'
 import { TenantDeleteModal } from './TenantDeleteModal'
+import { TenantEditModal } from './TenantEditModal'
 import { TenantRecycleButton, TenantRestoreButton } from './TenantRecycleButtons'
 
 interface Props {
@@ -55,6 +56,8 @@ export function ScheduleTable({
   const [showAddModal, setShowAddModal] = useState(false)
   // Tenant board pending hard-delete (opens the confirmation modal)
   const [deletingNode, setDeletingNode] = useState<{ id: string; code: string } | null>(null)
+  // Tenant entry being edited (shop number / name / GLA form modal)
+  const [editingNode, setEditingNode] = useState<Node | null>(null)
   // Local copy of scope item types so adding a new one reflects immediately
   const [scopeItemTypes, setScopeItemTypes] = useState<ScopeItemType[]>(initialScopeItemTypes)
 
@@ -301,6 +304,24 @@ export function ScheduleTable({
                       {!decommissioned && (
                         <div style={{ display: 'flex', gap: 6 }}>
                           <button
+                            onClick={() => setEditingNode(node)}
+                            title={`Edit ${node.shop_number ?? node.code}`}
+                            style={{
+                              background: 'none',
+                              border: '1px solid var(--c-border)',
+                              borderRadius: 5,
+                              cursor: 'pointer',
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              color: 'var(--c-text-dim)',
+                              fontWeight: 600,
+                              transition: 'all 0.15s',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
                             onClick={() => toggleScope(node.id)}
                             style={{
                               background: isExpanded ? 'var(--c-amber-dim)' : 'none',
@@ -500,6 +521,15 @@ export function ScheduleTable({
           nodeId={deletingNode.id}
           code={deletingNode.code}
           onClose={() => setDeletingNode(null)}
+        />
+      )}
+
+      {/* Tenant entry edit modal (shop number / name / GLA) */}
+      {editingNode && (
+        <TenantEditModal
+          projectId={projectId}
+          node={editingNode}
+          onClose={() => setEditingNode(null)}
         />
       )}
     </div>
