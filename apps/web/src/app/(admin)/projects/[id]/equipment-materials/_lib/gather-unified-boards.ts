@@ -107,7 +107,9 @@ export function gatherUnifiedBoards(
     }
 
     const board: UnifiedBoard = {
-      nodeId: n.id, code: n.code, name: n.name ?? n.shop_name ?? null, kind: n.kind,
+      // shop_name wins over name, matching every tenant-schedule surface —
+      // manual edits update shop_name only; name keeps its creation-time value.
+      nodeId: n.id, code: n.code, name: n.shop_name ?? n.name ?? null, kind: n.kind,
       customKindLabel: n.custom_kind_label,
       type: isTenant ? 'tenant' : 'equipment', cocRequired: n.coc_required,
       status: n.status === 'decommissioned' ? 'decommissioned' : 'active', lines, summary,

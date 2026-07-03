@@ -15,6 +15,7 @@ import type { NodeOrderData } from '../../equipment-schedule/_components/NodeOrd
 import { BoPeriodSelect, BoDateCell } from './BoCells'
 import type { TenantBoInfo } from './BoCells'
 import { TenantDeleteModal } from './TenantDeleteModal'
+import { TenantEditModal } from './TenantEditModal'
 import { TenantRecycleButton, TenantRestoreButton } from './TenantRecycleButtons'
 
 interface Props {
@@ -55,6 +56,11 @@ export function ScheduleTable({
   const [showAddModal, setShowAddModal] = useState(false)
   // Tenant board pending hard-delete (opens the confirmation modal)
   const [deletingNode, setDeletingNode] = useState<{ id: string; code: string } | null>(null)
+  // Tenant entry being edited (shop number / name / GLA form modal). Only the
+  // id is held — the node itself is looked up from the nodes prop at render so
+  // a reopen after save + router.refresh prefills fresh values, never a stale
+  // pre-save snapshot.
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   // Local copy of scope item types so adding a new one reflects immediately
   const [scopeItemTypes, setScopeItemTypes] = useState<ScopeItemType[]>(initialScopeItemTypes)
 
@@ -301,6 +307,24 @@ export function ScheduleTable({
                       {!decommissioned && (
                         <div style={{ display: 'flex', gap: 6 }}>
                           <button
+                            onClick={() => setEditingNodeId(node.id)}
+                            title={`Edit ${node.shop_number ?? node.code}`}
+                            style={{
+                              background: 'none',
+                              border: '1px solid var(--c-border)',
+                              borderRadius: 5,
+                              cursor: 'pointer',
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              color: 'var(--c-text-dim)',
+                              fontWeight: 600,
+                              transition: 'all 0.15s',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
                             onClick={() => toggleScope(node.id)}
                             style={{
                               background: isExpanded ? 'var(--c-amber-dim)' : 'none',
@@ -502,6 +526,21 @@ export function ScheduleTable({
           onClose={() => setDeletingNode(null)}
         />
       )}
+
+      {/* Tenant entry edit modal (shop number / name / GLA). Keyed by
+          updated_at so a refresh landing mid-open remounts with fresh data. */}
+      {editingNodeId && (() => {
+        const editing = nodes.find((n) => n.id === editingNodeId)
+        if (!editing) return null
+        return (
+          <TenantEditModal
+            key={`${editing.id}:${editing.updated_at}`}
+            projectId={projectId}
+            node={editing}
+            onClose={() => setEditingNodeId(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
