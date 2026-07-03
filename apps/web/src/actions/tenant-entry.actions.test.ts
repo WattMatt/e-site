@@ -19,31 +19,37 @@ const PROJECT = '11111111-1111-1111-1111-111111111111'
 const NODE = '22222222-2222-2222-2222-222222222222'
 
 /** Chainable structure-schema query stub: every filter method returns itself;
- *  maybeSingle resolves the next queued result. */
-function structureChain(queue: Array<{ data: unknown }>) {
+ *  maybeSingle (node check) and limit (clash check) resolve the next queued result. */
+function structureChain(queue: Array<{ data: unknown; error?: unknown }>) {
   const chain: any = {}
   for (const m of ['select', 'eq', 'neq', 'is']) chain[m] = () => chain
   chain.maybeSingle = () => Promise.resolve(queue.shift() ?? { data: null })
+  chain.limit = () => Promise.resolve(queue.shift() ?? { data: [], error: null })
   return chain
 }
 
 /**
  * Supabase mock for updateTenantEntryAction:
  *  - auth.getUser → a user
- *  - from('user_organisations') … maybeSingle → membership role
- *  - schema('structure').from('nodes') … maybeSingle → queued results:
- *      1) the node-belongs-to-project check
- *      2) the shop-number uniqueness check (null = no clash)
+ *  - from('user_organisations') … maybeSingle → membership role (is_active filtered)
+ *  - schema('structure').from('nodes') → queued results:
+ *      1) the node-belongs-to-project check (maybeSingle)
+ *      2) the shop-number uniqueness check (limit → array; [] = no clash)
  */
-function mockClient(opts: { role?: string | null; structureResults?: Array<{ data: unknown }> } = {}) {
-  const { role = 'owner', structureResults = [{ data: { id: NODE, shop_number: '23' } }, { data: null }] } = opts
+function mockClient(opts: { role?: string | null; structureResults?: Array<{ data: unknown; error?: unknown }> } = {}) {
+  const {
+    role = 'owner',
+    structureResults = [{ data: { id: NODE, shop_number: '23' } }, { data: [], error: null }],
+  } = opts
   const queue = [...structureResults]
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: { id: 'u-1' } } }) },
     from: () => ({
       select: () => ({
         eq: () => ({
-          eq: () => ({ maybeSingle: () => Promise.resolve({ data: role ? { role } : null }) }),
+          eq: () => ({
+            eq: () => ({ maybeSingle: () => Promise.resolve({ data: role ? { role } : null }) }),
+          }),
         }),
       }),
     }),
@@ -80,6 +86,12 @@ describe('updateTenantEntryAction — validation (before any I/O)', () => {
     expect('error' in res).toBe(true)
     expect(createClientMock).not.toHaveBeenCalled()
   })
+
+  it('rejects a negative area', async () => {
+    const res = await updateTenantEntryAction(PROJECT, NODE, { shopNumber: '23', shopName: null, shopAreaM2: -50 })
+    expect('error' in res).toBe(true)
+    expect(createClientMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('updateTenantEntryAction — authorization', () => {
@@ -101,12 +113,12 @@ describe('updateTenantEntryAction — authorization', () => {
 })
 
 describe('updateTenantEntryAction — shop-number uniqueness', () => {
-  it('rejects a SHOP NO. already used by another tenant in the project', async () => {
+  it('rejects a SHOP NO. already used by another live tenant in the project', async () => {
     createClientMock.mockResolvedValue(
       mockClient({
         structureResults: [
-          { data: { id: NODE, shop_number: '23' } }, // node check
-          { data: { id: 'other-node' } },            // uniqueness clash
+          { data: { id: NODE, shop_number: '23' } },                     // node check
+          { data: [{ id: 'other-node', deleted_at: null }], error: null }, // uniqueness clash
         ],
       }),
     )
@@ -115,6 +127,40 @@ describe('updateTenantEntryAction — shop-number uniqueness', () => {
 
     const res = await updateTenantEntryAction(PROJECT, NODE, { shopNumber: 'R1', shopName: 'LUPA', shopAreaM2: 295 })
     expect(res).toEqual({ error: expect.stringContaining('already used') })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('a soft-deleted tenant still reserves its SHOP NO. (recycle-bin restore path)', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        structureResults: [
+          { data: { id: NODE, shop_number: '23' } },
+          { data: [{ id: 'binned-node', deleted_at: '2026-07-01T00:00:00Z' }], error: null },
+        ],
+      }),
+    )
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await updateTenantEntryAction(PROJECT, NODE, { shopNumber: '12', shopName: 'X', shopAreaM2: 10 })
+    expect(res).toEqual({ error: expect.stringContaining('recycle bin') })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the uniqueness query errors', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({
+        structureResults: [
+          { data: { id: NODE, shop_number: '23' } },
+          { data: null, error: { message: 'boom' } },
+        ],
+      }),
+    )
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await updateTenantEntryAction(PROJECT, NODE, { shopNumber: 'R1', shopName: 'LUPA', shopAreaM2: 295 })
+    expect(res).toEqual({ error: expect.stringContaining('try again') })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })

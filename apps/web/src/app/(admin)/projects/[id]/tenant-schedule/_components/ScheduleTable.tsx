@@ -56,8 +56,11 @@ export function ScheduleTable({
   const [showAddModal, setShowAddModal] = useState(false)
   // Tenant board pending hard-delete (opens the confirmation modal)
   const [deletingNode, setDeletingNode] = useState<{ id: string; code: string } | null>(null)
-  // Tenant entry being edited (shop number / name / GLA form modal)
-  const [editingNode, setEditingNode] = useState<Node | null>(null)
+  // Tenant entry being edited (shop number / name / GLA form modal). Only the
+  // id is held — the node itself is looked up from the nodes prop at render so
+  // a reopen after save + router.refresh prefills fresh values, never a stale
+  // pre-save snapshot.
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   // Local copy of scope item types so adding a new one reflects immediately
   const [scopeItemTypes, setScopeItemTypes] = useState<ScopeItemType[]>(initialScopeItemTypes)
 
@@ -304,7 +307,7 @@ export function ScheduleTable({
                       {!decommissioned && (
                         <div style={{ display: 'flex', gap: 6 }}>
                           <button
-                            onClick={() => setEditingNode(node)}
+                            onClick={() => setEditingNodeId(node.id)}
                             title={`Edit ${node.shop_number ?? node.code}`}
                             style={{
                               background: 'none',
@@ -524,14 +527,20 @@ export function ScheduleTable({
         />
       )}
 
-      {/* Tenant entry edit modal (shop number / name / GLA) */}
-      {editingNode && (
-        <TenantEditModal
-          projectId={projectId}
-          node={editingNode}
-          onClose={() => setEditingNode(null)}
-        />
-      )}
+      {/* Tenant entry edit modal (shop number / name / GLA). Keyed by
+          updated_at so a refresh landing mid-open remounts with fresh data. */}
+      {editingNodeId && (() => {
+        const editing = nodes.find((n) => n.id === editingNodeId)
+        if (!editing) return null
+        return (
+          <TenantEditModal
+            key={`${editing.id}:${editing.updated_at}`}
+            projectId={projectId}
+            node={editing}
+            onClose={() => setEditingNodeId(null)}
+          />
+        )
+      })()}
     </div>
   )
 }

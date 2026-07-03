@@ -13,7 +13,7 @@
  * Mirrors TenantDeleteModal (createPortal + useTransition; hooks unconditional).
  */
 
-import { useState, useTransition } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
@@ -51,6 +51,15 @@ export function TenantEditModal({
 
   const shopNumberChanged = shopNumber.trim() !== originalShopNumber && shopNumber.trim() !== ''
 
+  // Escape closes (guarded while saving) — matches AddScopeItemModal.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !isSaving) onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isSaving, onClose])
+
   function handleSave() {
     setError(null)
 
@@ -60,12 +69,21 @@ export function TenantEditModal({
       return
     }
 
-    const trimmedArea = area.trim()
+    // Accept SA-style input: strip grouping spaces, allow a comma decimal
+    // ("1 234,5" → "1234.5") — the table itself displays toLocaleString().
+    const normalisedArea = area
+      .trim()
+      .replace(/[\s\u00A0\u202F]/g, '')
+      .replace(/^(\d+),(\d+)$/, '$1.$2')
     let shopAreaM2: number | null = null
-    if (trimmedArea !== '') {
-      const n = Number(trimmedArea)
+    if (normalisedArea !== '') {
+      const n = Number(normalisedArea)
       if (Number.isNaN(n)) {
         setError('GLA must be a number (leave it blank if the area is still pending).')
+        return
+      }
+      if (n < 0) {
+        setError('GLA cannot be negative.')
         return
       }
       shopAreaM2 = n
@@ -125,6 +143,7 @@ export function TenantEditModal({
               value={shopNumber}
               onChange={(e) => setShopNumber(e.target.value)}
               disabled={isSaving}
+              autoFocus
               style={inputStyle}
             />
           </Field>
@@ -134,7 +153,7 @@ export function TenantEditModal({
               id="tenant-edit-shop-name"
               value={shopName}
               onChange={(e) => setShopName(e.target.value)}
-              placeholder="Blank = unnamed / vacant"
+              placeholder="Tenant / shop name"
               disabled={isSaving}
               style={inputStyle}
             />

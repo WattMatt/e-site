@@ -47,7 +47,7 @@ const updateTenantEntrySchema = z.object({
     .transform((s) => s.trim())
     .pipe(z.string().min(1).max(200))
     .nullable(),
-  shopAreaM2: z.number().finite().nullable(),
+  shopAreaM2: z.number().finite().nonnegative('GLA cannot be negative').nullable(),
 })
 
 // ---------------------------------------------------------------------------
@@ -80,6 +80,7 @@ async function guardWriter(projectId: string): Promise<GuardResult> {
     .select('role')
     .eq('user_id', user.id)
     .eq('organisation_id', project.organisation_id)
+    .eq('is_active', true)
     .maybeSingle()
 
   const role = (membership as { role: string } | null)?.role
@@ -120,20 +121,31 @@ export async function updateTenantEntryAction(
     .maybeSingle()
   if (!node) return { error: 'Tenant not found' }
 
-  // shop_number uniqueness among the project's live tenants (self excluded).
-  const { data: clash } = await guard.supabase
+  // shop_number uniqueness among the project's tenants (self excluded).
+  // Soft-deleted tenants COUNT: a binned tenant can be restored with its
+  // shop_number intact (restore re-checks only the code), so its number stays
+  // reserved. Fails closed: a query error blocks the write rather than
+  // waving a possible duplicate through.
+  // (as any: generated DB types lag the 00123 soft-delete columns — same
+  // workaround as the sibling tenant-delete/tenant-documents actions.)
+  const { data: clashes, error: clashErr } = await (guard.supabase as any)
     .schema('structure')
     .from('nodes')
-    .select('id')
+    .select('id, deleted_at')
     .eq('project_id', projectId)
     .eq('kind', 'tenant_db')
     .eq('shop_number', parsed.data.shopNumber)
     .neq('id', nodeId)
-    .is('deleted_at', null)
-    .maybeSingle()
+    .limit(1)
+  if (clashErr) {
+    return { error: 'Could not verify SHOP NO. uniqueness — please try again.' }
+  }
+  const clash = (clashes ?? [])[0] as { id: string; deleted_at: string | null } | undefined
   if (clash) {
     return {
-      error: `SHOP NO. "${parsed.data.shopNumber}" is already used by another tenant in this project.`,
+      error:
+        `SHOP NO. "${parsed.data.shopNumber}" is already used by another tenant in this project` +
+        (clash.deleted_at ? ' (currently in the recycle bin — its number stays reserved until permanently deleted).' : '.'),
     }
   }
 
@@ -164,8 +176,9 @@ export async function updateTenantEntryAction(
   // Every consumer reads structure.nodes live; revalidate the server-rendered
   // pages that show tenant identity fields.
   revalidatePath(`/projects/${projectId}/tenant-schedule`)
-  revalidatePath(`/projects/${projectId}/cable-schedule`)
+  revalidatePath(`/projects/${projectId}/cables`)
   revalidatePath(`/projects/${projectId}/equipment-schedule`)
+  revalidatePath(`/projects/${projectId}/equipment-materials`)
   revalidatePath(`/projects/${projectId}/generator-cost-recovery`)
   return { ok: true }
 }

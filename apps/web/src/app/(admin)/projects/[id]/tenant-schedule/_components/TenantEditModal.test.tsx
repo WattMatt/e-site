@@ -104,6 +104,40 @@ describe('TenantEditModal', () => {
     expect(screen.getByText(/SHOP NO\. is required/i)).toBeTruthy()
   })
 
+  it('accepts a comma-decimal GLA (SA locale input)', async () => {
+    mockUpdate.mockResolvedValue({ ok: true })
+    render(<TenantEditModal projectId="p-1" node={node} onClose={() => {}} />)
+
+    const area = screen.getByLabelText(/GLA/i)
+    await userEvent.clear(area)
+    await userEvent.type(area, '210,5')
+    await userEvent.click(screen.getByRole('button', { name: /^Save$/i }))
+
+    await waitFor(() => {
+      expect(mockUpdate).toHaveBeenCalledWith('p-1', 'node-1', expect.objectContaining({ shopAreaM2: 210.5 }))
+    })
+  })
+
+  it('blocks saving a negative GLA', async () => {
+    render(<TenantEditModal projectId="p-1" node={node} onClose={() => {}} />)
+
+    const area = screen.getByLabelText(/GLA/i)
+    await userEvent.clear(area)
+    await userEvent.type(area, '-50')
+    await userEvent.click(screen.getByRole('button', { name: /^Save$/i }))
+
+    expect(mockUpdate).not.toHaveBeenCalled()
+    expect(screen.getByText(/cannot be negative/i)).toBeTruthy()
+  })
+
+  it('closes on Escape', async () => {
+    const onClose = vi.fn()
+    render(<TenantEditModal projectId="p-1" node={node} onClose={onClose} />)
+
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('blocks saving a non-numeric GLA', async () => {
     render(<TenantEditModal projectId="p-1" node={node} onClose={() => {}} />)
 
