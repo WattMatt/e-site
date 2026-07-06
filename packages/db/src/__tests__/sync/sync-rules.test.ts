@@ -347,3 +347,65 @@ describe('T-052: Sync rules — result set parity with RLS', () => {
     expect(rlsIds.size).toBe(orgIds.size)
   })
 })
+
+describe('T-052b: cross-org project_members visibility (00155 grant + 00156 claim)', () => {
+  it('a shared site is visible only while an active membership exists, and the JWT lists it', async () => {
+    if (skipIfNoEnv()) return
+
+    const { data: { user: userB } } = await clientB.auth.getUser()
+    if (!userB) return
+
+    // Seed an Org A project — owning org = A, but the contractor is in Org B.
+    const { data: proj } = await (serviceClient as any)
+      .schema('projects')
+      .from('projects')
+      .insert({ name: '[sync-test] cross-org shared site', organisation_id: ORG_A_ID, status: 'active' })
+      .select('id')
+      .single()
+    if (!proj?.id) return
+    createdProjectIds.push(proj.id)
+
+    const contractorSeesProject = async (): Promise<boolean> => {
+      const { data } = await (clientB as any).schema('projects').from('projects').select('id')
+      return (data ?? []).some((p: any) => p.id === proj.id)
+    }
+
+    // Baseline: no membership yet → cross-org contractor must NOT see it.
+    expect(await contractorSeesProject()).toBe(false)
+
+    // Assign via the sub-org path shape: project_members.organisation_id = the
+    // contractor's OWN org (B), not the owning org (A).
+    const { data: pm } = await (serviceClient as any)
+      .schema('projects')
+      .from('project_members')
+      .insert({ project_id: proj.id, user_id: userB.id, organisation_id: ORG_B_ID, role: 'contractor', is_active: true })
+      .select('id')
+      .single()
+
+    // 00155: now visible via user_has_project_access — the exact set the JWT
+    // hook must emit for this contractor.
+    expect(await contractorSeesProject()).toBe(true)
+
+    // 00156: a freshly-issued token must carry the project in project_ids.
+    // Skips gracefully if the Auth hook isn't enabled in this environment.
+    const { data: refreshed } = await clientB.auth.refreshSession()
+    const token = refreshed.session?.access_token
+    if (token) {
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString())
+      if (Array.isArray(payload.project_ids)) {
+        expect(payload.project_ids).toContain(proj.id)
+      } else {
+        console.warn('[sync-rules] project_ids claim absent — is the 00156 Auth hook enabled?')
+      }
+    }
+
+    // Revoke by removing the membership → no longer visible.
+    if (pm?.id) {
+      await (serviceClient as any).schema('projects').from('project_members').delete().eq('id', pm.id)
+    }
+    expect(await contractorSeesProject()).toBe(false)
+
+    // Restore clientB's token to a clean state for any later tests.
+    await clientB.auth.refreshSession()
+  }, 30_000)
+})
