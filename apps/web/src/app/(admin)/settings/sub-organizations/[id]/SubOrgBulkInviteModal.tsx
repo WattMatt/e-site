@@ -154,7 +154,9 @@ export function SubOrgBulkInviteModal({ subOrgId, open, onClose }: Props) {
             <>
               <p style={{ fontSize: 12, color: 'var(--c-text-dim)', marginBottom: 12 }}>
                 Paste email addresses (one per line, or comma / semicolon separated). Existing users
-                are added directly. New emails are provisioned and receive a set-password email.
+                are added directly. Each person is emailed a branded invite that names you and this
+                company with a link to set their password — so it doesn’t look like spam. They’re
+                joining this contractor company; add them to specific sites afterwards.
               </p>
 
               <div style={{ marginBottom: 14 }}>

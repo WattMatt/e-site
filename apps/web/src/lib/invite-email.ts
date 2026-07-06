@@ -149,26 +149,36 @@ export async function sendInviteEmail(args: SendInviteEmailArgs): Promise<Invite
   }
 }
 
-/** Plain Supabase recovery email — the pre-existing behaviour, used as a safety net. */
+/**
+ * Plain Supabase recovery email — the pre-existing behaviour, used as a safety
+ * net. Never throws (a thrown fallback must not break the surrounding user
+ * provisioning either).
+ */
 async function sendRecoveryFallback(
   service: ServiceClient,
   email: string,
 ): Promise<InviteEmailResult> {
-  const { error } = await service.auth.resetPasswordForEmail(email, {
-    redirectTo: RECOVERY_REDIRECT,
-  })
-  if (error) {
-    console.error('[invite-email] recovery fallback also failed', { email, err: String(error) })
-    return {
-      ok: false,
-      warning:
-        'User created, but the invite email could not be sent. They can use “Forgot password” on the sign-in page.',
-    }
-  }
-  return {
-    ok: true,
+  const couldNotSend: InviteEmailResult = {
+    ok: false,
     warning:
-      'User created and a basic set-password email was sent (the branded invite could not be generated).',
+      'User created, but the invite email could not be sent. They can use “Forgot password” on the sign-in page.',
+  }
+  try {
+    const { error } = await service.auth.resetPasswordForEmail(email, {
+      redirectTo: RECOVERY_REDIRECT,
+    })
+    if (error) {
+      console.error('[invite-email] recovery fallback also failed', { email, err: String(error) })
+      return couldNotSend
+    }
+    return {
+      ok: true,
+      warning:
+        'User created and a basic set-password email was sent (the branded invite could not be generated).',
+    }
+  } catch (e) {
+    console.error('[invite-email] recovery fallback threw', { email, err: String(e) })
+    return couldNotSend
   }
 }
 
