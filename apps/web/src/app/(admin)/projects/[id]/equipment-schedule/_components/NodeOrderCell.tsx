@@ -32,6 +32,8 @@ const STATUS_BADGE: Record<NodeOrderStatus, { variant: 'ghost' | 'warning' | 'in
 interface Props {
   order: NodeOrderData | null
   projectId: string
+  /** True for viewers without a write role — badge only, no advance buttons. */
+  readOnly?: boolean
 }
 
 /**
@@ -40,7 +42,7 @@ interface Props {
  * for `ordered` adds a "Mark received" button.
  * Shows "—" when no order row exists yet.
  */
-export function NodeOrderCell({ order, projectId }: Props) {
+export function NodeOrderCell({ order, projectId, readOnly = false }: Props) {
   const [isPendingOrdered, startOrdered] = useTransition()
   const [isPendingReceived, startReceived] = useTransition()
   const [error, setError] = useState<string | null>(null)
@@ -50,6 +52,10 @@ export function NodeOrderCell({ order, projectId }: Props) {
   }
 
   const { variant, label } = STATUS_BADGE[order.status] ?? { variant: 'ghost' as const, label: order.status }
+
+  if (readOnly) {
+    return <Badge variant={variant}>{label}</Badge>
+  }
 
   function handleMarkOrdered() {
     setError(null)

@@ -25,15 +25,14 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
+import { projectService, ORG_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
 const uuidSchema = z.string().uuid()
-
-const WRITE_ROLES = ['owner', 'admin', 'project_manager'] as const
 
 const updateTenantEntrySchema = z.object({
   projectId: uuidSchema,
@@ -51,7 +50,9 @@ const updateTenantEntrySchema = z.object({
 })
 
 // ---------------------------------------------------------------------------
-// Guard (mirrors tenant-bo.actions.ts guardWriter)
+// Guard — effective (project-scoped) role, matching the page's canWrite gate
+// and the scope/document actions: org owner/admin/PM, or a per-project
+// promotion via projects.project_members (00107).
 // ---------------------------------------------------------------------------
 
 type GuardResult =
@@ -75,17 +76,9 @@ async function guardWriter(projectId: string): Promise<GuardResult> {
   }
   if (!project) return { error: 'Project not found' }
 
-  const { data: membership } = await supabase
-    .from('user_organisations')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('organisation_id', project.organisation_id)
-    .eq('is_active', true)
-    .maybeSingle()
-
-  const role = (membership as { role: string } | null)?.role
-  if (!role || !WRITE_ROLES.includes(role as (typeof WRITE_ROLES)[number])) {
-    return { error: 'You do not have permission to edit tenant entries.' }
+  const roleGate = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!roleGate.ok) {
+    return { error: `You do not have permission to edit tenant entries. (${roleGate.error})` }
   }
 
   return { supabase }
@@ -170,6 +163,13 @@ export async function updateTenantEntryAction(
   })
   if (!res.ok) {
     const text = await res.text()
+    // 23505 on nodes_project_shop_number_tenant_live (00154): the DB-level
+    // uniqueness backstop caught a race the pre-check above missed.
+    if (text.includes('nodes_project_shop_number_tenant_live') || text.includes('23505')) {
+      return {
+        error: `SHOP NO. "${parsed.data.shopNumber}" is already used by another tenant in this project.`,
+      }
+    }
     return { error: `Update failed (HTTP ${res.status}): ${text.slice(0, 300)}` }
   }
 

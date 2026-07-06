@@ -32,6 +32,8 @@ interface Props {
   nodeId: string
   shopName: string | null
   layoutDetails: LayoutDetails | null
+  /** True for viewers without a write role — drawings become download-only. */
+  readOnly?: boolean
   onClose: () => void
 }
 
@@ -44,6 +46,7 @@ export function LayoutIssuedPanel({
   nodeId,
   shopName,
   layoutDetails,
+  readOnly = false,
   onClose,
 }: Props) {
   const status = layoutDetails?.layout_status ?? 'not_issued'
@@ -177,7 +180,7 @@ export function LayoutIssuedPanel({
             kind="layout"
             projectId={projectId}
             nodeId={nodeId}
-            readOnly={false}
+            readOnly={readOnly}
           />
         </div>
       </div>

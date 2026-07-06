@@ -265,6 +265,11 @@ export async function createConcessionAction(
 
   const result = await structurePost(env.supabaseUrl, env.serviceKey, 'nodes', body)
   if (!result.ok) {
+    // Distinguish the two unique indexes: 00154 (shop_number) vs 00123 (code) —
+    // pointing the user at the wrong field sends them in circles.
+    if (result.error?.includes('nodes_project_shop_number_tenant_live')) {
+      return { error: `SHOP NO. "${shopNumber}" is already used by another tenant on this project.` }
+    }
     if (result.error?.includes('unique') || result.error?.includes('duplicate')) {
       return { error: `Code "${code}" is already in use on this project.` }
     }

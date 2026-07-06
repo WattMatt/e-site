@@ -71,6 +71,36 @@ describe('ScheduleTable tenant editing', () => {
     expect(screen.getAllByText(/DB-67/).length).toBeGreaterThanOrEqual(1)
   })
 
+  it('readOnly hides every mutating control but keeps the data visible', async () => {
+    // Include a scope type + a 'required' order so the order-status cells render.
+    const scopeType = { id: 'st-1', key: 'db', label: 'DB', sort_order: 10 }
+    render(
+      <ScheduleTable
+        nodes={[tenant({})]}
+        {...base}
+        scopeItemTypes={[scopeType]}
+        ordersByNodeAndScope={{ 'n1:st-1': { id: 'o-1', status: 'required' as const } }}
+        readOnly
+      />,
+    )
+
+    // Row data still visible — including the order status badge
+    expect(screen.getByText('Shop 67')).toBeTruthy()
+    expect(screen.getByText('Required')).toBeTruthy()
+    // Mutating controls hidden
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Add scope item/i })).toBeNull()
+    // Order-status advance buttons hidden (NodeOrderCell readOnly)
+    expect(screen.queryByRole('button', { name: /Mark ordered/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Mark received/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /recycle/i })).toBeNull()
+    // BO cells render static text, not a select
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Edit BO date/i })).toBeNull()
+    // Scope/Layout viewers stay available
+    expect(screen.getByRole('button', { name: /Scope/ })).toBeTruthy()
+  })
+
   it('does not offer Edit on decommissioned rows', async () => {
     render(<ScheduleTable nodes={[tenant({ status: 'decommissioned' })]} {...base} />)
 

@@ -44,15 +44,9 @@ function mockClient(opts: { role?: string | null; structureResults?: Array<{ dat
   const queue = [...structureResults]
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: { id: 'u-1' } } }) },
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            eq: () => ({ maybeSingle: () => Promise.resolve({ data: role ? { role } : null }) }),
-          }),
-        }),
-      }),
-    }),
+    // requireEffectiveRole resolves the caller's project-scoped role via the
+    // user_effective_project_role rpc (00107) — null = no access.
+    rpc: () => Promise.resolve({ data: role, error: null }),
     schema: () => ({ from: () => structureChain(queue) }),
   }
 }

@@ -52,6 +52,8 @@ interface Props {
   scopeItemTypes: ScopeItemType[]
   scopeItems: TenantScopeItem[]
   tenantDetails: TenantDetails | null
+  /** True for viewers without a write role — all controls become inert. */
+  readOnly?: boolean
   onClose: () => void
 }
 
@@ -66,6 +68,7 @@ export function ScopeOfWorkPanel({
   scopeItemTypes,
   scopeItems: initialScopeItems,
   tenantDetails,
+  readOnly = false,
   onClose,
 }: Props) {
   const [scopeItems, setScopeItems] = useState<TenantScopeItem[]>(initialScopeItems)
@@ -261,7 +264,7 @@ export function ScopeOfWorkPanel({
             <input
               type="checkbox"
               checked={notRequired}
-              disabled={isPending}
+              disabled={isPending || readOnly}
               onChange={(e) => handleNotRequiredChange(e.target.checked)}
             />
             Landlord covers full scope (no document)
@@ -286,7 +289,7 @@ export function ScopeOfWorkPanel({
             kind="scope"
             projectId={projectId}
             nodeId={nodeId}
-            readOnly={false}
+            readOnly={readOnly}
           />
         </div>
       </div>
@@ -341,13 +344,13 @@ export function ScopeOfWorkPanel({
                       <button
                         key={p}
                         onClick={() => handlePartyChange(type.id, p)}
-                        disabled={isPending}
+                        disabled={isPending || readOnly}
                         style={{
                           flex: 1,
                           padding: '4px 6px',
                           borderRadius: 4,
                           border: '1px solid',
-                          cursor: isPending ? 'default' : 'pointer',
+                          cursor: isPending || readOnly ? 'default' : 'pointer',
                           fontSize: 11,
                           fontWeight: 600,
                           transition: 'all 0.15s',
