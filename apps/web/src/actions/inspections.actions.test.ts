@@ -33,7 +33,11 @@ vi.mock('@/lib/notifications', () => ({ dispatchNotification: dispatchNotificati
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
 vi.mock('next/navigation', () => ({ redirect: redirectMock }))
 
-import { listProjectMembersAction, updateInspectionAssignmentAction } from './inspections.actions'
+import {
+  listProjectMembersAction,
+  updateInspectionAssignmentAction,
+  attachInspectionFileAction,
+} from './inspections.actions'
 
 // ─── Chainable + awaitable query-builder stub ───────────────────────────────
 // Returns a Promise (so `await qb(r)` === r) that also exposes the supabase
@@ -211,5 +215,98 @@ describe('updateInspectionAssignmentAction', () => {
     await expect(
       updateInspectionAssignmentAction({ ...base, assignedToId: 'u-new' }),
     ).rejects.toThrow('boom')
+  })
+})
+
+describe('attachInspectionFileAction', () => {
+  // Client for the two calls the action makes: inspections select (project_id)
+  // and photos insert. Everything goes through the RLS (cookie) client — the
+  // photos_insert policy is the write gate, no service role involved.
+  function makeAttachClient(opts: {
+    inspection?: { project_id: string } | null
+    insertResult?: { data: unknown; error: { message: string } | null }
+  }) {
+    const insertSpy = vi.fn((_row: Record<string, unknown>) => ({
+      select: () => ({
+        single: () =>
+          Promise.resolve(opts.insertResult ?? { data: { id: 'ph-1' }, error: null }),
+      }),
+    }))
+    const client = {
+      auth: { getUser: () => Promise.resolve({ data: { user: { id: 'u-uploader' } } }) },
+      schema: () => ({
+        from: (t: string) =>
+          t === 'inspections'
+            ? {
+                select: () => ({
+                  eq: () => ({
+                    single: () =>
+                      Promise.resolve({
+                        data: 'inspection' in opts ? opts.inspection : { project_id: 'proj-1' },
+                      }),
+                  }),
+                }),
+              }
+            : { insert: insertSpy },
+      }),
+    }
+    return { client, insertSpy }
+  }
+
+  const input = {
+    inspectionId: 'insp-1',
+    sectionId: 'sec-1',
+    fieldId: 'f-file-1',
+    storagePath: 'proj-1/insp-1/sec-1/f-file-1/999-spec.pdf',
+    filename: 'spec.pdf',
+  }
+
+  it('inserts the photos row (filename in caption) and returns the new id', async () => {
+    const { client, insertSpy } = makeAttachClient({})
+    createClientMock.mockResolvedValue(client)
+
+    const res = await attachInspectionFileAction(input)
+
+    expect(res).toEqual({ ok: true, id: 'ph-1' })
+    expect(insertSpy).toHaveBeenCalledWith({
+      inspection_id: 'insp-1',
+      section_id: 'sec-1',
+      field_id: 'f-file-1',
+      storage_path: input.storagePath,
+      caption: 'spec.pdf',
+      uploaded_by: 'u-uploader',
+    })
+  })
+
+  it('rejects a storage path outside the inspection/section/field prefix', async () => {
+    const { client, insertSpy } = makeAttachClient({})
+    createClientMock.mockResolvedValue(client)
+
+    const res = await attachInspectionFileAction({
+      ...input,
+      storagePath: 'proj-1/OTHER-INSPECTION/sec-1/f-file-1/999-spec.pdf',
+    })
+
+    expect(res).toEqual({ ok: false, error: 'Storage path does not match the inspection field' })
+    expect(insertSpy).not.toHaveBeenCalled()
+  })
+
+  it('returns { ok: false } when the inspection is not readable', async () => {
+    const { client, insertSpy } = makeAttachClient({ inspection: null })
+    createClientMock.mockResolvedValue(client)
+
+    const res = await attachInspectionFileAction(input)
+    expect(res).toEqual({ ok: false, error: 'Inspection not found' })
+    expect(insertSpy).not.toHaveBeenCalled()
+  })
+
+  it('surfaces the RLS/DB error instead of throwing (server actions mask thrown errors)', async () => {
+    const { client } = makeAttachClient({
+      insertResult: { data: null, error: { message: 'new row violates row-level security policy' } },
+    })
+    createClientMock.mockResolvedValue(client)
+
+    const res = await attachInspectionFileAction(input)
+    expect(res).toEqual({ ok: false, error: 'new row violates row-level security policy' })
   })
 })

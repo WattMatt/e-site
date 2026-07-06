@@ -510,6 +510,70 @@ export async function deleteRepeatingGroupEntryAction(input: {
   if (error) throw error
 }
 
+// ─── attachInspectionFileAction ─────────────────────────────────────────
+
+export interface AttachInspectionFileInput {
+  inspectionId: string
+  sectionId: string
+  fieldId: string
+  storagePath: string
+  filename: string
+}
+
+/**
+ * DB-attach step for a file uploaded directly to the inspection-attachments
+ * bucket (lib/storage/inspection-attachments-upload.ts — bytes must not
+ * transit a Next.js route because of Vercel's ~4.5 MB body cap).
+ *
+ * Per spec §4.4 file attachments re-use inspections.photos with a different
+ * bucket; the original filename lives in `caption`. The insert goes through
+ * the cookie-authenticated client so the photos_insert RLS policy
+ * (user_can_write_responses) is the gate — no service role.
+ *
+ * Returns { ok: false, error } instead of throwing so the client can surface
+ * the message (thrown server-action errors are masked in production).
+ */
+export async function attachInspectionFileAction(
+  input: AttachInspectionFileInput,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const supabase = (await createClient()) as AnyClient
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Unauthenticated' }
+
+  // The storage path is client-supplied: re-derive the expected prefix from
+  // the inspection row so a photos row can't point at another inspection's
+  // (or another field's) object.
+  const { data: insp } = await supabase
+    .schema('inspections')
+    .from('inspections')
+    .select('project_id')
+    .eq('id', input.inspectionId)
+    .single()
+  if (!insp) return { ok: false, error: 'Inspection not found' }
+  const projectId = (insp as { project_id: string }).project_id
+  const expectedPrefix = `${projectId}/${input.inspectionId}/${input.sectionId}/${input.fieldId}/`
+  if (!input.storagePath.startsWith(expectedPrefix)) {
+    return { ok: false, error: 'Storage path does not match the inspection field' }
+  }
+
+  const { data, error } = await supabase
+    .schema('inspections')
+    .from('photos')
+    .insert({
+      inspection_id: input.inspectionId,
+      section_id: input.sectionId,
+      field_id: input.fieldId,
+      storage_path: input.storagePath,
+      caption: input.filename,
+      uploaded_by: user.id,
+    })
+    .select('id')
+    .single()
+
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, id: (data as { id: string }).id }
+}
+
 // ─── submitInspectionAction ─────────────────────────────────────────────
 
 /**

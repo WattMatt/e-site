@@ -3,6 +3,11 @@
 import type { RendererProps } from '../FieldRenderer'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import {
+  uploadInspectionAttachmentFile,
+  removeInspectionAttachmentFile,
+} from '@/lib/storage/inspection-attachments-upload'
+import { attachInspectionFileAction } from '@/actions/inspections.actions'
 
 interface FileItem {
   id: string
@@ -20,11 +25,12 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      // File attachments re-use inspections.photos (see
+      // attachInspectionFileAction + spec §4.4): the blob lives in the
+      // inspection-attachments bucket and the original filename is stored in
+      // the `caption` column. Mirrors how photo fields read inspections.photos
+      // via useFieldPhotos.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      // File attachments re-use inspections.photos (see the upload-file route +
-      // spec §4.4): the blob lives in the inspection-attachments bucket and the
-      // original filename is stored in the `caption` column. Mirrors how photo
-      // fields read inspections.photos via useFieldPhotos.
       const { data } = await (supabase as any)
         .schema('inspections')
         .from('photos')
@@ -58,25 +64,33 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
     setUploading(true)
     setError(null)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('inspectionId', inspectionId)
-      fd.append('sectionId', sectionId)
-      fd.append('fieldId', field.field_id)
-      const res = await fetch('/api/inspections/upload-file', { method: 'POST', body: fd })
+      // Bytes go browser → storage (Vercel's ~4.5 MB body cap rules out an
+      // API route); the photos row is attached in a follow-up server action.
+      const { storagePath, filename } = await uploadInspectionAttachmentFile({
+        inspectionId,
+        sectionId,
+        fieldId: field.field_id,
+        file,
+      })
+      const res = await attachInspectionFileAction({
+        inspectionId,
+        sectionId,
+        fieldId: field.field_id,
+        storagePath,
+        filename,
+      })
       if (!res.ok) {
-        const t = await res.text()
-        throw new Error(`Upload failed (HTTP ${res.status}): ${t}`)
-      }
-      const { id, storage_path, filename } = (await res.json()) as {
-        id: string
-        storage_path: string
-        filename: string
+        // Don't leave an orphan object behind when the DB attach fails.
+        await removeInspectionAttachmentFile(storagePath)
+        throw new Error(res.error)
       }
       const { data: sig } = await supabase.storage
         .from('inspection-attachments')
-        .createSignedUrl(storage_path, 3600)
-      setFiles((prev) => [...prev, { id, storage_path, filename, signed_url: sig?.signedUrl }])
+        .createSignedUrl(storagePath, 3600)
+      setFiles((prev) => [
+        ...prev,
+        { id: res.id, storage_path: storagePath, filename, signed_url: sig?.signedUrl },
+      ])
     } catch (e) {
       setError((e as Error).message)
     } finally {
