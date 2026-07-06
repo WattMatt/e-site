@@ -32,6 +32,8 @@ interface Props {
   ordersByNodeAndScope: Record<string, NodeOrderData>
   // node_id → beneficial-occupation info (period, override, effective date)
   tenantBoByNode: Record<string, TenantBoInfo>
+  /** True for viewers without a write role — hides every mutating control. */
+  readOnly?: boolean
 }
 
 export function ScheduleTable({
@@ -45,6 +47,7 @@ export function ScheduleTable({
   layoutDetailsByNode,
   ordersByNodeAndScope,
   tenantBoByNode,
+  readOnly = false,
 }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   // Recycle-bin disclosure (closed by default; mirrors showDecommissioned).
@@ -155,14 +158,16 @@ export function ScheduleTable({
           )}
         </div>
 
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setShowAddModal(true)}
-          style={{ fontSize: 12 }}
-        >
-          + Add scope item
-        </Button>
+        {!readOnly && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowAddModal(true)}
+            style={{ fontSize: 12 }}
+          >
+            + Add scope item
+          </Button>
+        )}
       </div>
 
       <TableScrollX>
@@ -237,21 +242,31 @@ export function ScheduleTable({
                       )}
                     </Td>
 
-                    {/* Beneficial occupation */}
-                    <Td>
-                      <BoPeriodSelect
-                        projectId={projectId}
-                        nodeId={node.id}
-                        value={tenantBoByNode[node.id]?.boPeriodDays ?? null}
-                      />
+                    {/* Beneficial occupation (static text for read-only viewers) */}
+                    <Td mono>
+                      {readOnly ? (
+                        tenantBoByNode[node.id]?.boPeriodDays != null
+                          ? `${tenantBoByNode[node.id].boPeriodDays} d`
+                          : '—'
+                      ) : (
+                        <BoPeriodSelect
+                          projectId={projectId}
+                          nodeId={node.id}
+                          value={tenantBoByNode[node.id]?.boPeriodDays ?? null}
+                        />
+                      )}
                     </Td>
-                    <Td>
-                      <BoDateCell
-                        projectId={projectId}
-                        nodeId={node.id}
-                        effectiveDate={tenantBoByNode[node.id]?.effectiveDate ?? null}
-                        isOverride={tenantBoByNode[node.id]?.boDateOverride != null}
-                      />
+                    <Td mono>
+                      {readOnly ? (
+                        tenantBoByNode[node.id]?.effectiveDate ?? '—'
+                      ) : (
+                        <BoDateCell
+                          projectId={projectId}
+                          nodeId={node.id}
+                          effectiveDate={tenantBoByNode[node.id]?.effectiveDate ?? null}
+                          isOverride={tenantBoByNode[node.id]?.boDateOverride != null}
+                        />
+                      )}
                     </Td>
 
                     {/* Per-scope-item party cells */}
@@ -306,6 +321,7 @@ export function ScheduleTable({
                     <Td>
                       {!decommissioned && (
                         <div style={{ display: 'flex', gap: 6 }}>
+                          {!readOnly && (
                           <button
                             onClick={() => setEditingNodeId(node.id)}
                             title={`Edit ${node.shop_number ?? node.code}`}
@@ -324,6 +340,7 @@ export function ScheduleTable({
                           >
                             Edit
                           </button>
+                          )}
                           <button
                             onClick={() => toggleScope(node.id)}
                             style={{
@@ -360,11 +377,13 @@ export function ScheduleTable({
                           >
                             {isLayoutExpanded ? 'Close' : 'Layout ↓'}
                           </button>
-                          <TenantRecycleButton
-                            projectId={projectId}
-                            nodeId={node.id}
-                            code={node.code}
-                          />
+                          {!readOnly && (
+                            <TenantRecycleButton
+                              projectId={projectId}
+                              nodeId={node.id}
+                              code={node.code}
+                            />
+                          )}
                         </div>
                       )}
                     </Td>
@@ -384,6 +403,7 @@ export function ScheduleTable({
                           scopeItemTypes={scopeItemTypes}
                           scopeItems={nodeItems}
                           tenantDetails={details}
+                          readOnly={readOnly}
                           onClose={() => setExpandedNodeId(null)}
                         />
                       </td>
@@ -402,6 +422,7 @@ export function ScheduleTable({
                           nodeId={node.id}
                           shopName={node.shop_name ?? node.name}
                           layoutDetails={layoutDetails}
+                          readOnly={readOnly}
                           onClose={() => setExpandedLayoutNodeId(null)}
                         />
                       </td>
@@ -478,6 +499,7 @@ export function ScheduleTable({
                     </span>
                     <Badge variant="ghost">in bin</Badge>
                   </div>
+                  {!readOnly && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <TenantRestoreButton projectId={projectId} nodeId={node.id} />
                     <button
@@ -500,6 +522,7 @@ export function ScheduleTable({
                       Delete permanently
                     </button>
                   </div>
+                  )}
                 </div>
               ))}
             </div>

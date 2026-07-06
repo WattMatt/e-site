@@ -205,6 +205,9 @@ export default async function TenantSchedulePage({ params }: Props) {
   const savedReports = Array.isArray(reportsRes) ? reportsRes : []
   const manageGuard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
   const canManageReports = manageGuard.ok
+  // Page-wide write gate: viewers (client_viewer / no write role) get a
+  // read-only schedule — no import, no opening-date edit, no row mutations.
+  const canWrite = manageGuard.ok
 
   return (
     <div className="animate-fadeup">
@@ -236,13 +239,20 @@ export default async function TenantSchedulePage({ params }: Props) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <TenantScheduleReportButton projectId={projectId} />
-          <ImportFlow projectId={projectId} />
+          {canWrite && <ImportFlow projectId={projectId} />}
         </div>
       </div>
 
       {/* Opening date — anchors every tenant's beneficial-occupation date */}
       <div style={{ marginBottom: 16 }}>
-        <OpeningDateControl projectId={projectId} openingDate={openingDate} />
+        {canWrite ? (
+          <OpeningDateControl projectId={projectId} openingDate={openingDate} />
+        ) : (
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--c-text-mid)' }}>
+            Centre opening date:{' '}
+            <span style={{ fontFamily: 'var(--font-mono)' }}>{openingDate ?? '—'}</span>
+          </p>
+        )}
       </div>
 
       {/* Fetch error */}
@@ -277,6 +287,7 @@ export default async function TenantSchedulePage({ params }: Props) {
             layoutDetailsByNode={layoutDetailsByNode}
             ordersByNodeAndScope={ordersByNodeAndScope}
             tenantBoByNode={tenantBoByNode}
+            readOnly={!canWrite}
           />
         </CardBody>
       </Card>

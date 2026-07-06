@@ -105,6 +105,7 @@ async function guardWriter(projectId: string): Promise<GuardResult> {
     .select('role')
     .eq('user_id', user.id)
     .eq('organisation_id', orgId)
+    .eq('is_active', true)
     .maybeSingle()
 
   const role = (membership as { role: string } | null)?.role

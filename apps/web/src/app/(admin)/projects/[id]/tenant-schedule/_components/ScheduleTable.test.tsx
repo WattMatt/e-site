@@ -71,6 +71,22 @@ describe('ScheduleTable tenant editing', () => {
     expect(screen.getAllByText(/DB-67/).length).toBeGreaterThanOrEqual(1)
   })
 
+  it('readOnly hides every mutating control but keeps the data visible', async () => {
+    render(<ScheduleTable nodes={[tenant({})]} {...base} readOnly />)
+
+    // Row data still visible
+    expect(screen.getByText('Shop 67')).toBeTruthy()
+    // Mutating controls hidden
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Add scope item/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /recycle/i })).toBeNull()
+    // BO cells render static text, not a select
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Edit BO date/i })).toBeNull()
+    // Scope/Layout viewers stay available
+    expect(screen.getByRole('button', { name: /Scope/ })).toBeTruthy()
+  })
+
   it('does not offer Edit on decommissioned rows', async () => {
     render(<ScheduleTable nodes={[tenant({ status: 'decommissioned' })]} {...base} />)
 

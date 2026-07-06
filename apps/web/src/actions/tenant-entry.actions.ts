@@ -170,6 +170,13 @@ export async function updateTenantEntryAction(
   })
   if (!res.ok) {
     const text = await res.text()
+    // 23505 on nodes_project_shop_number_tenant_live (00154): the DB-level
+    // uniqueness backstop caught a race the pre-check above missed.
+    if (text.includes('nodes_project_shop_number_tenant_live') || text.includes('23505')) {
+      return {
+        error: `SHOP NO. "${parsed.data.shopNumber}" is already used by another tenant in this project.`,
+      }
+    }
     return { error: `Update failed (HTTP ${res.status}): ${text.slice(0, 300)}` }
   }
 
