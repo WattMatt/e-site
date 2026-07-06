@@ -62,7 +62,7 @@
 --   cable_schedule.revisions ......... DIRECT project_id            (00051)
 --   cable_schedule.sans_overrides .... DIRECT project_id            (00053)
 --   cable_schedule.sources ........... via revisions               (00051)
---   cable_schedule.boards ............ via revisions               (00051)
+--   cable_schedule.boards ............ (DROPPED by 00082 — no policy)
 --   cable_schedule.supplies .......... via revisions               (00051)
 --   cable_schedule.cables ............ via revisions               (00051)
 --   cable_schedule.terminations ...... via cables -> revisions      (00051)
@@ -151,15 +151,6 @@ CREATE POLICY "Project members can view cable sources (cross-org)"
     USING (EXISTS (
         SELECT 1 FROM cable_schedule.revisions r
         WHERE r.id = sources.revision_id
-          AND public.user_has_project_access(r.project_id)
-    ));
-
-DROP POLICY IF EXISTS "Project members can view cable boards (cross-org)" ON cable_schedule.boards;
-CREATE POLICY "Project members can view cable boards (cross-org)"
-    ON cable_schedule.boards FOR SELECT
-    USING (EXISTS (
-        SELECT 1 FROM cable_schedule.revisions r
-        WHERE r.id = boards.revision_id
           AND public.user_has_project_access(r.project_id)
     ));
 
