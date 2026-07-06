@@ -4,11 +4,11 @@ import { resolve } from 'node:path'
 
 const MIGRATION = resolve(
   process.cwd(), '..', '..',
-  'apps/edge-functions/supabase/migrations/00156_powersync_jwt_project_access.sql',
+  'apps/edge-functions/supabase/migrations/00157_powersync_jwt_project_access.sql',
 )
 const sql = readFileSync(MIGRATION, 'utf8')
 
-describe('00156: custom_jwt_claims adds a project_ids claim mirroring user_has_project_access clause (a)', () => {
+describe('00157: custom_jwt_claims adds a project_ids claim mirroring user_has_project_access clause (a)', () => {
   it('replaces the hook and preserves the org_id claim', () => {
     expect(sql).toContain('CREATE OR REPLACE FUNCTION public.custom_jwt_claims')
     expect(sql).toMatch(/jsonb_set\(_claims, '\{org_id\}'/)

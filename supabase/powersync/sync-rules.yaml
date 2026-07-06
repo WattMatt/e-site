@@ -123,7 +123,7 @@ bucket_definitions:
           AND i.status NOT IN ('certified','abandoned')
 
   # project_access — cross-org shared sites. The user's `project_ids` JWT claim
-  # (00156 hook) lists every project they reach via an ACTIVE explicit
+  # (00157 hook) lists every project they reach via an ACTIVE explicit
   # project_members assignment whose identity org they're still active in —
   # the exact public.user_has_project_access clause (a) set. This bucket is
   # purely additive; own-org data continues to sync via the org_* buckets, and

@@ -20,7 +20,7 @@ type Project = {
 
 // Returns every project the current user may see. No org filter: the local
 // PowerSync DB (and, on the remote fallback, RLS) already scope the result to
-// own-org projects + cross-org sites shared via project_members (00155/00156).
+// own-org projects + cross-org sites shared via project_members (00155/00157).
 export function useProjects() {
   const { type, db } = useDb('projects')
   const supabase = useSupabase()

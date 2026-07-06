@@ -348,7 +348,7 @@ describe('T-052: Sync rules — result set parity with RLS', () => {
   })
 })
 
-describe('T-052b: cross-org project_members visibility (00155 grant + 00156 claim)', () => {
+describe('T-052b: cross-org project_members visibility (00155 grant + 00157 claim)', () => {
   it('a shared site is visible only while an active membership exists, and the JWT lists it', async () => {
     if (skipIfNoEnv()) return
 
@@ -386,7 +386,7 @@ describe('T-052b: cross-org project_members visibility (00155 grant + 00156 clai
     // hook must emit for this contractor.
     expect(await contractorSeesProject()).toBe(true)
 
-    // 00156: a freshly-issued token must carry the project in project_ids.
+    // 00157: a freshly-issued token must carry the project in project_ids.
     // Skips gracefully if the Auth hook isn't enabled in this environment.
     const { data: refreshed } = await clientB.auth.refreshSession()
     const token = refreshed.session?.access_token
@@ -395,7 +395,7 @@ describe('T-052b: cross-org project_members visibility (00155 grant + 00156 clai
       if (Array.isArray(payload.project_ids)) {
         expect(payload.project_ids).toContain(proj.id)
       } else {
-        console.warn('[sync-rules] project_ids claim absent — is the 00156 Auth hook enabled?')
+        console.warn('[sync-rules] project_ids claim absent — is the 00157 Auth hook enabled?')
       }
     }
 

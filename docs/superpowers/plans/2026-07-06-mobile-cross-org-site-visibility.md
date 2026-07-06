@@ -18,20 +18,22 @@
 
 | File | Responsibility | Change |
 |------|----------------|--------|
-| `apps/edge-functions/supabase/migrations/00156_powersync_jwt_project_access.sql` | JWT hook adds the `project_ids` claim (clause-(a) mirror) | Create |
+| `apps/edge-functions/supabase/migrations/00157_powersync_jwt_project_access.sql` | JWT hook adds the `project_ids` claim (clause-(a) mirror) | Create |
 | `supabase/powersync/sync-rules.yaml` | Additive `project_access` bucket | Modify |
 | `apps/mobile/src/hooks/projects.queries.ts` | RN-free, unit-testable local projects SQL constant | Create |
 | `apps/mobile/src/hooks/useProjects.ts` | Drop the single-org filter; use the shared constant | Modify |
 | `apps/mobile/app/(tabs)/projects.tsx` | Call `useProjects()` (no org arg) | Modify |
 | `apps/mobile/app/(tabs)/snags.tsx` | Project picker calls `useProjects()` | Modify |
 | `packages/db/src/__tests__/sync/sync-rules-structure.test.ts` | Pure structural test of the new bucket | Create |
-| `packages/db/src/__tests__/sync/jwt-project-access-migration.test.ts` | Pure guard test of the 00156 SQL shape | Create |
+| `packages/db/src/__tests__/sync/jwt-project-access-migration.test.ts` | Pure guard test of the 00157 SQL shape | Create |
 | `packages/db/src/__tests__/sync/sync-rules.test.ts` | Cross-org RLS-parity + JWT-claim integration test | Modify |
 | `apps/mobile/src/__tests__/useProjects.test.ts` | Unit test: local query has no org filter | Create |
 
-Test commands used throughout:
-- `@esite/db`: `pnpm --filter @esite/db vitest run <path>`
-- `mobile`: `pnpm --filter mobile vitest run <path>`
+Test commands used throughout (run under Node 22 — the repo engine is `>=22 <25`;
+`export PATH="/opt/homebrew/opt/node@22/bin:$PATH"`. The `--filter <pkg> vitest`
+form does not resolve the bin in this workspace; run per-package with `exec`):
+- `@esite/db`: `cd packages/db && pnpm exec vitest run <path>`
+- `mobile`: `cd apps/mobile && pnpm exec vitest run <path>`
 
 ---
 
@@ -110,7 +112,7 @@ Append this bucket definition at the end of the file (after `org_inspection_phot
 
 ```yaml
   # project_access — cross-org shared sites. The user's `project_ids` JWT claim
-  # (00156 hook) lists every project they reach via an ACTIVE explicit
+  # (00157 hook) lists every project they reach via an ACTIVE explicit
   # project_members assignment whose identity org they're still active in —
   # the exact public.user_has_project_access clause (a) set. This bucket is
   # purely additive; own-org data continues to sync via the org_* buckets, and
@@ -181,10 +183,10 @@ git commit -m "feat(mobile-sync): additive project_access bucket for cross-org s
 
 ---
 
-## Task 2: JWT hook migration 00156 (guard-test TDD)
+## Task 2: JWT hook migration 00157 (guard-test TDD)
 
 **Files:**
-- Create: `apps/edge-functions/supabase/migrations/00156_powersync_jwt_project_access.sql`
+- Create: `apps/edge-functions/supabase/migrations/00157_powersync_jwt_project_access.sql`
 - Create: `packages/db/src/__tests__/sync/jwt-project-access-migration.test.ts`
 
 - [ ] **Step 1: Write the failing guard test**
@@ -198,11 +200,11 @@ import { resolve } from 'node:path'
 
 const MIGRATION = resolve(
   process.cwd(), '..', '..',
-  'apps/edge-functions/supabase/migrations/00156_powersync_jwt_project_access.sql',
+  'apps/edge-functions/supabase/migrations/00157_powersync_jwt_project_access.sql',
 )
 const sql = readFileSync(MIGRATION, 'utf8')
 
-describe('00156: custom_jwt_claims adds a project_ids claim mirroring user_has_project_access clause (a)', () => {
+describe('00157: custom_jwt_claims adds a project_ids claim mirroring user_has_project_access clause (a)', () => {
   it('replaces the hook and preserves the org_id claim', () => {
     expect(sql).toContain('CREATE OR REPLACE FUNCTION public.custom_jwt_claims')
     expect(sql).toMatch(/jsonb_set\(_claims, '\{org_id\}'/)
@@ -232,10 +234,10 @@ Expected: FAIL — `readFileSync` throws `ENOENT` (migration file does not exist
 
 - [ ] **Step 3: Create the migration**
 
-Create `apps/edge-functions/supabase/migrations/00156_powersync_jwt_project_access.sql`:
+Create `apps/edge-functions/supabase/migrations/00157_powersync_jwt_project_access.sql`:
 
 ```sql
--- apps/edge-functions/supabase/migrations/00156_powersync_jwt_project_access.sql
+-- apps/edge-functions/supabase/migrations/00157_powersync_jwt_project_access.sql
 -- Description: Extend the PowerSync JWT hook with a `project_ids` claim so the
 -- mobile app can sync projects a user reaches via an explicit cross-org
 -- project_members assignment (mirrors public.user_has_project_access clause (a)).
@@ -313,7 +315,7 @@ Expected: PASS (3 assertions).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/edge-functions/supabase/migrations/00156_powersync_jwt_project_access.sql \
+git add apps/edge-functions/supabase/migrations/00157_powersync_jwt_project_access.sql \
         packages/db/src/__tests__/sync/jwt-project-access-migration.test.ts
 git commit -m "feat(auth): JWT hook emits project_ids claim for cross-org site sync"
 ```
@@ -325,14 +327,14 @@ git commit -m "feat(auth): JWT hook emits project_ids claim for cross-org site s
 **Files:**
 - Modify: `packages/db/src/__tests__/sync/sync-rules.test.ts`
 
-This is an integration test (env-gated like the rest of the file — it `return`s early when Supabase env vars are absent). It runs against the `feat/invite-and-site-clarity` DB, so migration 00155 (and, once deployed, 00156 + the enabled hook) are present. It reuses the existing `clientB` (an Org B user) as the cross-org contractor.
+This is an integration test (env-gated like the rest of the file — it `return`s early when Supabase env vars are absent). It runs against the `feat/invite-and-site-clarity` DB, so migration 00155 (and, once deployed, 00157 + the enabled hook) are present. It reuses the existing `clientB` (an Org B user) as the cross-org contractor.
 
 - [ ] **Step 1: Add the failing test block**
 
 Append to `packages/db/src/__tests__/sync/sync-rules.test.ts` (after the last `describe`, before EOF):
 
 ```ts
-describe('T-052b: cross-org project_members visibility (00155 grant + 00156 claim)', () => {
+describe('T-052b: cross-org project_members visibility (00155 grant + 00157 claim)', () => {
   it('a shared site is visible only while an active membership exists, and the JWT lists it', async () => {
     if (skipIfNoEnv()) return
 
@@ -370,7 +372,7 @@ describe('T-052b: cross-org project_members visibility (00155 grant + 00156 clai
     // hook must emit for this contractor.
     expect(await contractorSeesProject()).toBe(true)
 
-    // 00156: a freshly-issued token must carry the project in project_ids.
+    // 00157: a freshly-issued token must carry the project in project_ids.
     // Skips gracefully if the Auth hook isn't enabled in this environment.
     const { data: refreshed } = await clientB.auth.refreshSession()
     const token = refreshed.session?.access_token
@@ -379,7 +381,7 @@ describe('T-052b: cross-org project_members visibility (00155 grant + 00156 clai
       if (Array.isArray(payload.project_ids)) {
         expect(payload.project_ids).toContain(proj.id)
       } else {
-        console.warn('[sync-rules] project_ids claim absent — is the 00156 Auth hook enabled?')
+        console.warn('[sync-rules] project_ids claim absent — is the 00157 Auth hook enabled?')
       }
     }
 
@@ -494,7 +496,7 @@ type Project = {
 
 // Returns every project the current user may see. No org filter: the local
 // PowerSync DB (and, on the remote fallback, RLS) already scope the result to
-// own-org projects + cross-org sites shared via project_members (00155/00156).
+// own-org projects + cross-org sites shared via project_members (00155/00157).
 export function useProjects() {
   const { type, db } = useDb('projects')
   const supabase = useSupabase()
@@ -595,11 +597,11 @@ Expected: PASS.
 
 The change ships in three independent pieces; deploy in this order **after PR #119 (00155) is live**:
 
-1. **Migration 00156** — apply via the normal migration workflow. Safe to run any time (the extra claim is inert until a sync rule reads it). The `custom_jwt_claims` Auth hook is already enabled (Dashboard → Auth → Hooks) — no re-enable needed.
+1. **Migration 00157** — apply via the normal migration workflow. Safe to run any time (the extra claim is inert until a sync rule reads it). The `custom_jwt_claims` Auth hook is already enabled (Dashboard → Auth → Hooks) — no re-enable needed.
 2. **`sync-rules.yaml`** — paste the full file into PowerSync Dashboard → Sync Rules → Deploy. Additive `project_access` bucket; existing buckets unchanged.
 3. **Mobile JS** — ships in the app bundle / OTA update.
 
-Backward-compatible throughout: tokens minted before 00156 lack `project_ids`; `json_each(null)` yields no rows, so those sessions get no extra buckets until their next token refresh.
+Backward-compatible throughout: tokens minted before 00157 lack `project_ids`; `json_each(null)` yields no rows, so those sessions get no extra buckets until their next token refresh.
 
 - [ ] **Step 4: Manual on-device verification (gated by the user, project protocol §7)**
 
@@ -612,7 +614,7 @@ Test plan (state upfront; failure returns to spec §1):
 
 - [ ] **Step 5: Update memory**
 
-Add a memory pointer noting: mobile cross-org site visibility shipped via 00156 `project_ids` JWT claim + `project_access` PowerSync bucket + `useProjects` de-org-filtering; documented follow-ups = org-level `inspections.templates` for cross-org inspections, and multi-org **own** membership (JWT `org_id` = first org only). Link `[[esite-invite-and-site-clarity]]`.
+Add a memory pointer noting: mobile cross-org site visibility shipped via 00157 `project_ids` JWT claim + `project_access` PowerSync bucket + `useProjects` de-org-filtering; documented follow-ups = org-level `inspections.templates` for cross-org inspections, and multi-org **own** membership (JWT `org_id` = first org only). Link `[[esite-invite-and-site-clarity]]`.
 
 ---
 

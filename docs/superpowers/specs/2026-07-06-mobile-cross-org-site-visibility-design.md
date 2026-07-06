@@ -117,7 +117,7 @@ live-parameter-query alternative, which could never revoke on an
 
 Three coordinated changes, each additive.
 
-### 4.1 JWT hook — `00156_powersync_jwt_project_access.sql`
+### 4.1 JWT hook — `00157_powersync_jwt_project_access.sql`
 
 `CREATE OR REPLACE FUNCTION public.custom_jwt_claims` — the existing `org_id`
 logic is unchanged; add a `project_ids` claim:
@@ -273,14 +273,14 @@ device.
 
 ## 6. Deploy (nothing auto-deployed)
 
-1. **Migration 00156** — additive `CREATE OR REPLACE`; deployed with the normal
+1. **Migration 00157** — additive `CREATE OR REPLACE`; deployed with the normal
    migration workflow. Safe to run before the app update (extra claim is inert
    until a sync rule reads it).
 2. **`sync-rules.yaml`** — pasted into the PowerSync dashboard (manual, per the
    file header). Additive bucket; existing buckets unchanged.
 3. **Mobile JS** — shipped in the app bundle.
 
-All backward-compatible: tokens issued before 00156 lack `project_ids`;
+All backward-compatible: tokens issued before 00157 lack `project_ids`;
 `request.jwt() -> 'project_ids'` is then `null` and `json_each(null)` yields no
 rows, so those users simply get no extra buckets until their token refreshes.
 
