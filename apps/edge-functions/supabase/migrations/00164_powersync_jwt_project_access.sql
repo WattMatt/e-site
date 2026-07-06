@@ -1,4 +1,4 @@
--- apps/edge-functions/supabase/migrations/00157_powersync_jwt_project_access.sql
+-- apps/edge-functions/supabase/migrations/00164_powersync_jwt_project_access.sql
 -- Description: Extend the PowerSync JWT hook with a `project_ids` claim so the
 -- mobile app can sync projects a user reaches via an explicit cross-org
 -- project_members assignment (mirrors public.user_has_project_access clause (a)).
