@@ -42,7 +42,7 @@ describe('sendInviteEmail', () => {
     )
     // Sent through the send-email edge fn as an 'invite' passthrough with rendered html.
     expect(invoke).toHaveBeenCalledWith('send-email', expect.objectContaining({
-      body: expect.objectContaining({ type: 'invite' }),
+      body: expect.objectContaining({ type: 'account-invite' }),
     }))
     const payload = invoke.mock.calls[0][1].body.payload
     expect(payload.to).toBe(base.email)
@@ -101,7 +101,7 @@ describe('sendSiteAssignmentEmail', () => {
       role: 'contractor',
     })
     expect(invoke).toHaveBeenCalledWith('send-email', expect.objectContaining({
-      body: expect.objectContaining({ type: 'invite' }),
+      body: expect.objectContaining({ type: 'account-invite' }),
     }))
     const payload = invoke.mock.calls[0][1].body.payload
     expect(payload.to).toBe(base.email)

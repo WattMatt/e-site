@@ -117,15 +117,21 @@ Deno.serve(async (req) => {
       })
     }
 
-    if (type === 'invite') {
+    if (type === 'account-invite') {
       // Passthrough: the web `sendInviteEmail` / `sendSiteAssignmentEmail`
       // helpers render the branded HTML (shared renderInviteEmail /
       // renderSiteAssignmentEmail — which name the inviter, company, role and
       // assigned site(s) so the message doesn't read as spam) and forward
       // { to, subject, html } here. Single recipient.
+      //
+      // NOTE: a NEW type name (not the old 'invite') on purpose — if the web
+      // ships before this function is redeployed, the previously-deployed
+      // function returns "unknown type" (400) and the web helper falls back to
+      // the plain recovery email, rather than the old 'invite' handler silently
+      // sending a broken message. Removes any deploy-ordering hazard.
       const { to, subject, html } = payload
       if (!to || !subject || !html) {
-        return new Response(JSON.stringify({ error: 'invite requires to, subject, html' }), {
+        return new Response(JSON.stringify({ error: 'account-invite requires to, subject, html' }), {
           status: 400, headers: { 'Content-Type': 'application/json' },
         })
       }

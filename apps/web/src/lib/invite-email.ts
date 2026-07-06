@@ -6,7 +6,7 @@
  *   1. Generates a recovery ACTION LINK via the admin API (this does NOT send
  *      an email — we control the message).
  *   2. Renders the branded, context-rich invite via `@esite/shared`.
- *   3. Sends it through the `send-email` Edge Function (`invite` passthrough).
+ *   3. Sends it through the `send-email` Edge Function (`account-invite` passthrough).
  *
  * It NEVER throws — a mail failure must not roll back a created user — and on
  * ANY failure it falls back to the plain Supabase recovery email so an invited
@@ -133,9 +133,9 @@ export async function sendInviteEmail(args: SendInviteEmailArgs): Promise<Invite
       managingCompanyName: args.managingCompanyName ?? null,
     })
 
-    // 3. Deliver via the send-email Edge Function (invite passthrough).
+    // 3. Deliver via the send-email Edge Function (account-invite passthrough).
     const { error: sendErr } = await args.service.functions.invoke('send-email', {
-      body: { type: 'invite', payload: { to: args.email, subject, html } },
+      body: { type: 'account-invite', payload: { to: args.email, subject, html } },
     })
     if (sendErr) throw sendErr
 
@@ -205,7 +205,7 @@ export async function sendSiteAssignmentEmail(args: SendSiteAssignmentEmailArgs)
       siteUrl: SITE_URL,
     })
     const { error } = await args.service.functions.invoke('send-email', {
-      body: { type: 'invite', payload: { to: args.email, subject, html } },
+      body: { type: 'account-invite', payload: { to: args.email, subject, html } },
     })
     if (error) throw error
   } catch (e) {
