@@ -121,3 +121,60 @@ bucket_definitions:
         JOIN inspections.inspections i ON i.id = p.inspection_id
         WHERE i.organisation_id = bucket.org_id
           AND i.status NOT IN ('certified','abandoned')
+
+  # project_access — cross-org shared sites. The user's `project_ids` JWT claim
+  # (00156 hook) lists every project they reach via an ACTIVE explicit
+  # project_members assignment whose identity org they're still active in —
+  # the exact public.user_has_project_access clause (a) set. This bucket is
+  # purely additive; own-org data continues to sync via the org_* buckets, and
+  # rows dedupe by primary key across buckets.
+  project_access:
+    parameters: SELECT value AS project_id FROM json_each(request.jwt() -> 'project_ids')
+    data:
+      - SELECT id, name, status, city, province, organisation_id
+        FROM projects
+        WHERE id = bucket.project_id
+
+      - SELECT id, title, description, status, priority,
+               project_id, organisation_id, assigned_to,
+               raised_by, created_at
+        FROM snags
+        WHERE project_id = bucket.project_id
+
+      - SELECT sp.id, sp.snag_id, sp.file_path, sp.caption, sp.photo_type, sp.uploaded_by, sp.created_at
+        FROM field.snag_photos sp
+        JOIN snags s ON s.id = sp.snag_id
+        WHERE s.project_id = bucket.project_id
+
+      - SELECT id, project_id, organisation_id, name, level, file_path,
+               file_size_bytes, width_px, height_px, scale, is_active,
+               source_provider, source_file_id, source_revision_id,
+               source_path, synced_at, uploaded_by, created_at, updated_at
+        FROM tenants.floor_plans
+        WHERE project_id = bucket.project_id
+
+      - SELECT id, project_id, organisation_id, name, category,
+               storage_path, mime_type, size_bytes,
+               source_provider, source_file_id, source_revision_id,
+               source_path, synced_at, uploaded_by, created_at, updated_at
+        FROM tenants.documents
+        WHERE project_id = bucket.project_id
+
+      - SELECT *
+        FROM inspections.inspections
+        WHERE project_id = bucket.project_id
+          AND status NOT IN ('certified','abandoned')
+
+      - SELECT r.*
+        FROM inspections.responses r
+        JOIN inspections.inspections i ON i.id = r.inspection_id
+        WHERE i.project_id = bucket.project_id
+          AND i.status NOT IN ('certified','abandoned')
+
+      - SELECT p.id, p.inspection_id, p.section_id, p.field_id,
+               p.storage_path, p.caption, p.taken_at, p.gps_lat, p.gps_lng,
+               p.uploaded_by, p.created_at
+        FROM inspections.photos p
+        JOIN inspections.inspections i ON i.id = p.inspection_id
+        WHERE i.project_id = bucket.project_id
+          AND i.status NOT IN ('certified','abandoned')
