@@ -1,4 +1,5 @@
 import type { GcrSettingsRow, GcrZoneRow, GcrZoneGeneratorRow, TenantNodeRow } from './db-row-types'
+import { hasFuelRating } from './sizing-table'
 
 export interface ReadinessResult {
   ready: boolean
@@ -28,6 +29,16 @@ export function checkReadiness(d: CheckReadinessArgs): ReadinessResult {
 
   if (d.generators.length === 0) {
     gaps.push('No generators configured')
+  }
+
+  // A size the sizing table can't resolve makes getFuelConsumption return 0,
+  // silently collapsing the operational tariff to R0/kWh — surface it here
+  // instead of letting a zero flow into a billed report.
+  const unratedGenerators = d.generators.filter((g) => !hasFuelRating(g.generator_size)).length
+  if (unratedGenerators > 0) {
+    gaps.push(
+      `${unratedGenerators} generator(s) with a size not in the sizing table — the operational tariff would be R0/kWh`,
+    )
   }
 
   const sharedTenants = d.tenantNodes.filter((t) => t.generator_participation === 'shared')

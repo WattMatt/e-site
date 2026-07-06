@@ -57,6 +57,32 @@ describe('checkReadiness', () => {
     expect(result.gaps).toEqual([])
   })
 
+  it('accepts a bare numeric generator size ("400") — resolvable via the sizing table', () => {
+    const result = checkReadiness({
+      settings: SETTINGS,
+      zones: [ZONE],
+      generators: [{ ...GEN, generator_size: '400' }],
+      tenantNodes: [makeSharedTenant()],
+    })
+    expect(result.gaps).toEqual([])
+  })
+
+  it('reports generators whose size has no sizing-table row (tariff would be R0/kWh)', () => {
+    const result = checkReadiness({
+      settings: SETTINGS,
+      zones: [ZONE],
+      generators: [
+        { ...GEN, generator_size: '415' },
+        { ...GEN, generator_number: 2, generator_size: null },
+      ],
+      tenantNodes: [makeSharedTenant()],
+    })
+    expect(result.ready).toBe(false)
+    expect(result.gaps).toContain(
+      '2 generator(s) with a size not in the sizing table — the operational tariff would be R0/kWh',
+    )
+  })
+
   it('reports "Generator settings not configured" when settings is null', () => {
     const result = checkReadiness({
       settings: null,
