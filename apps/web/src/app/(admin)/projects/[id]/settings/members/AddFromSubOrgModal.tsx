@@ -461,6 +461,18 @@ function Step2({
               ))}
             </select>
           </div>
+
+          {/* Scope + cross-org clarity note */}
+          <div style={{
+            padding: '10px 12px', marginBottom: 14, fontSize: 12, lineHeight: 1.55,
+            color: 'var(--c-text-mid)', background: 'var(--c-elevated)',
+            border: '1px solid var(--c-border)', borderRadius: 4,
+          }}>
+            The people you select from <strong>{subOrg.name}</strong> will get access to
+            {' '}<strong>this site only</strong> — it’s added to their own Projects list. They keep
+            access to {subOrg.name}’s own work and won’t see the rest of your organisation.
+            Each person is emailed to say who added them and to which site.
+          </div>
         </>
       )}
 

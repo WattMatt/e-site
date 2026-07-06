@@ -19,6 +19,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { getOrgContext } from '@/lib/auth-org'
 import { requireRole } from '@/lib/auth/require-role'
+import { sendInviteEmail, resolveInviteContext, getOrgName } from '@/lib/invite-email'
 import { ORG_WRITE_ROLES, logAuthEvent } from '@esite/shared'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -239,12 +240,28 @@ export async function addSubOrgMember(
     return { ok: false, error: `Could not add the member: ${memberErr.message}` }
   }
 
-  // 5. resetPasswordForEmail — non-fatal.
-  await service.auth
-    .resetPasswordForEmail(email, {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
+  // 5. Branded invite email — names the inviter, the sub-org (the company the
+  //    contractor is joining) and the managing company, so a contractor who
+  //    never signed up doesn't read it as spam. Falls back to the plain
+  //    recovery email on failure. Non-fatal.
+  {
+    const { inviterName } = await resolveInviteContext(service, {
+      inviterId: ctx.userId,
+      orgId: subOrg.parent_organisation_id,
     })
-    .catch(() => {})
+    const [subOrgName, managingCompanyName] = await Promise.all([
+      getOrgName(service, subOrgId),
+      getOrgName(service, subOrg.parent_organisation_id),
+    ])
+    await sendInviteEmail({
+      service,
+      email,
+      inviterName,
+      orgName: subOrgName,
+      role,
+      managingCompanyName,
+    })
+  }
 
   // 6. Audit.
   await logAuthEvent(service, {
@@ -430,6 +447,17 @@ export async function bulkInviteSubOrgMembers(
 
   const service = createServiceClient()
 
+  // Resolve invite context once for the whole batch (inviter name + sub-org
+  // name + managing company) so every branded invite carries the same context.
+  const { inviterName } = await resolveInviteContext(service, {
+    inviterId: ctx.userId,
+    orgId: subOrg.parent_organisation_id,
+  })
+  const [subOrgName, managingCompanyName] = await Promise.all([
+    getOrgName(service, parsed.data.subOrgId),
+    getOrgName(service, subOrg.parent_organisation_id),
+  ])
+
   let invited = 0
   let added   = 0
   let skipped = 0
@@ -501,12 +529,16 @@ export async function bulkInviteSubOrgMembers(
         continue
       }
 
-      // Set-password email — non-fatal.
-      await service.auth
-        .resetPasswordForEmail(email, {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-        })
-        .catch(() => {})
+      // Branded invite email — names inviter + sub-org + managing company;
+      // falls back to the plain recovery email on failure. Non-fatal.
+      await sendInviteEmail({
+        service,
+        email,
+        inviterName,
+        orgName: subOrgName,
+        role,
+        managingCompanyName,
+      })
 
       if (!isExisting) {
         await logAuthEvent(service, {

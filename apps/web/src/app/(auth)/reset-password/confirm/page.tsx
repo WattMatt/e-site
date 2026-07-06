@@ -115,8 +115,8 @@ export default function ResetPasswordConfirmPage() {
 
   return (
     <div className="auth-card">
-      <h2 className="auth-card-title">Set new password</h2>
-      <p className="auth-card-sub">Choose a strong password you haven&apos;t used before</p>
+      <h2 className="auth-card-title">Set your password</h2>
+      <p className="auth-card-sub">Choose a strong password to finish setting up your E-Site account</p>
 
       <form onSubmit={handleSubmit(onSubmit)}>
         {serverError && <div className="auth-alert-error">{serverError}</div>}

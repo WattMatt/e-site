@@ -17,6 +17,14 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
 vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: rateLimitMock }))
+// Email plumbing is isolated (invite-email has its own tests); mock it so these
+// tests exercise the provisioning/membership logic, not the email path.
+vi.mock('@/lib/invite-email', () => ({
+  sendInviteEmail: vi.fn().mockResolvedValue({ ok: true }),
+  sendSiteAssignmentEmail: vi.fn().mockResolvedValue(undefined),
+  resolveInviteContext: vi.fn().mockResolvedValue({ inviterName: 'Test Admin', orgName: 'Test Org' }),
+  getOrgName: vi.fn().mockResolvedValue('Test Org'),
+}))
 vi.mock('next/headers', () => ({
   headers: () => ({ get: () => null }),
 }))

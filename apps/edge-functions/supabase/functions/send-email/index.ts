@@ -16,7 +16,7 @@
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 const FROM = 'E-Site <noreply@e-site.live>'
-const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://app.e-site.live'
+const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://www.e-site.live'
 
 interface EmailPayload {
   to: string
@@ -78,7 +78,7 @@ function baseTemplate(content: string) {
   h2{color:#fff;font-size:18px;margin:0 0 12px}p{font-size:14px;line-height:1.6;color:#94A3B8;margin:0 0 12px}
   .btn{display:inline-block;background:#2563EB;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600;font-size:14px;margin-top:8px}
   .footer{margin-top:24px;font-size:11px;color:#475569;text-align:center}</style></head>
-  <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${SITE_URL}" style="color:#3B82F6">app.e-site.live</a></div></div></body></html>`
+  <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${SITE_URL}" style="color:#3B82F6">www.e-site.live</a></div></div></body></html>`
 }
 
 // Decode JWT role claim without re-verifying — Supabase gateway already verified the signature.
@@ -117,20 +117,25 @@ Deno.serve(async (req) => {
       })
     }
 
-    if (type === 'invite') {
-      const { to, orgName, inviterName, role, token } = payload
-      const link = `${SITE_URL}/onboarding/join?token=${token}`
-      await sendEmail({
-        to,
-        subject: `You've been invited to join ${orgName} on E-Site`,
-        html: baseTemplate(`
-          <h2>You're invited!</h2>
-          <p><strong>${inviterName}</strong> has invited you to join <strong>${orgName}</strong> on E-Site as a <strong>${role}</strong>.</p>
-          <p>Click the button below to accept the invitation (expires in 7 days).</p>
-          <a class="btn" href="${link}">Accept Invitation</a>
-          <p style="margin-top:16px;font-size:12px">Or copy this link: ${link}</p>
-        `),
-      })
+    if (type === 'account-invite') {
+      // Passthrough: the web `sendInviteEmail` / `sendSiteAssignmentEmail`
+      // helpers render the branded HTML (shared renderInviteEmail /
+      // renderSiteAssignmentEmail — which name the inviter, company, role and
+      // assigned site(s) so the message doesn't read as spam) and forward
+      // { to, subject, html } here. Single recipient.
+      //
+      // NOTE: a NEW type name (not the old 'invite') on purpose — if the web
+      // ships before this function is redeployed, the previously-deployed
+      // function returns "unknown type" (400) and the web helper falls back to
+      // the plain recovery email, rather than the old 'invite' handler silently
+      // sending a broken message. Removes any deploy-ordering hazard.
+      const { to, subject, html } = payload
+      if (!to || !subject || !html) {
+        return new Response(JSON.stringify({ error: 'account-invite requires to, subject, html' }), {
+          status: 400, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      await sendEmail({ to, subject, html })
     }
 
     else if (type === 'rfi-created') {

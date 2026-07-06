@@ -5,9 +5,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const requireRoleMock = vi.fn()
 const createClientMock = vi.fn()
 const revalidatePathMock = vi.fn()
+// Service client used only for the best-effort site-assignment emails after the
+// loop; return an empty profiles result so no emails are attempted in tests.
+const createServiceClientMock = vi.fn(() => ({
+  from: () => ({ select: () => ({ in: () => Promise.resolve({ data: [], error: null }) }) }),
+}))
+const getOrgContextMock = vi.fn(() =>
+  Promise.resolve({ userId: 'test-user', organisationId: 'test-org', role: 'admin' }),
+)
 
 vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
-vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock }))
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: createClientMock,
+  createServiceClient: createServiceClientMock,
+}))
+vi.mock('@/lib/auth-org', () => ({ getOrgContext: getOrgContextMock }))
+// Email plumbing is isolated (invite-email has its own tests); mock it out.
+vi.mock('@/lib/invite-email', () => ({
+  sendSiteAssignmentEmail: vi.fn().mockResolvedValue(undefined),
+  resolveInviteContext: vi.fn().mockResolvedValue({ inviterName: 'Test Admin', orgName: 'Test Org' }),
+}))
 vi.mock('next/cache', () => ({
   revalidatePath: revalidatePathMock,
   revalidateTag: vi.fn(),
