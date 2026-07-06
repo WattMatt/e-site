@@ -28,6 +28,11 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { requireRole } from '@/lib/auth/require-role'
 import { getOrgContext } from '@/lib/auth-org'
+import {
+  sendInviteEmail,
+  sendSiteAssignmentEmail,
+  resolveInviteContext,
+} from '@/lib/invite-email'
 import { ORG_WRITE_ROLES, logAuthEvent } from '@esite/shared'
 
 const PROJECT_MEMBER_ROLES = [
@@ -82,11 +87,12 @@ export async function bulkAddOrInviteProjectMembers(
   const { data: project } = await (supabase as any)
     .schema('projects')
     .from('projects')
-    .select('organisation_id')
+    .select('organisation_id, name')
     .eq('id', parsed.data.projectId)
     .maybeSingle()
   if (!project) return { ok: false, error: 'Project not found.' }
   const orgId = (project as { organisation_id: string }).organisation_id
+  const projectName = (project as { name?: string | null }).name?.trim() || 'the site'
 
   const guard = await requireRole(supabase, orgId, ORG_WRITE_ROLES)
   if (!guard.ok) return { ok: false, error: guard.error }
@@ -136,6 +142,12 @@ export async function bulkAddOrInviteProjectMembers(
   const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = h.get('user-agent') ?? null
 
+  // Resolve invite context once (inviter name + org name) for the whole batch.
+  const { inviterName, orgName } = await resolveInviteContext(service, {
+    inviterId: ctx.userId,
+    orgId,
+  })
+
   let invited = 0
   let added = 0
   let skipped = 0
@@ -168,6 +180,15 @@ export async function bulkAddOrInviteProjectMembers(
         }
         added++
         details.push({ email, status: 'added' })
+        // Notify the existing user they've been given access to this site.
+        await sendSiteAssignmentEmail({
+          service,
+          email,
+          inviterName,
+          siteName: projectName,
+          projectId: parsed.data.projectId,
+          role: projectRole,
+        })
         continue
       }
 
@@ -205,12 +226,17 @@ export async function bulkAddOrInviteProjectMembers(
         continue
       }
 
-      // Set-password email — non-fatal if it fails.
-      await service.auth
-        .resetPasswordForEmail(email, {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
-        })
-        .catch(() => {})
+      // Branded invite email naming the inviter, company and the specific site
+      // they've been added to. Falls back to the plain recovery email on
+      // failure. Non-fatal.
+      await sendInviteEmail({
+        service,
+        email,
+        inviterName,
+        orgName,
+        role: orgRoleForNewUsers,
+        siteNames: [projectName],
+      })
 
       await logAuthEvent(service, {
         userId: newUserId,

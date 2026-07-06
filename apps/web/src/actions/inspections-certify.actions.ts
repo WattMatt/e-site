@@ -2,8 +2,7 @@
 
 /**
  * Verifier-side state transitions for inspections: certify (with COC# or
- * auto-allocated INS/FAT), send-back-for-reinspection, revoke a
- * certificate, and generate a share link.
+ * auto-allocated INS/FAT) and send-back-for-reinspection.
  *
  * `inspections` schema is not in the generated DB types — supabase client
  * cast to `any` per Phase-4 convention.
@@ -256,21 +255,15 @@ export async function certifyInspectionAction(input: CertifyInspectionInput): Pr
   // Best-effort validation for all deliverable types. The cert is valid even if
   // validation fails (caught + logged) — rules can be re-run later. The
   // validate-inspection function dispatches internally based on template_id and
-  // returns 200 with a no-op message for templates that have no registered rules.
+  // returns 200 with a no-op message for templates that have no registered
+  // rules. Keyed on inspection_id (migration 00159) — the projects.reports
+  // pipeline no longer creates inspections.certificates rows, so the old
+  // certificate lookup here found nothing and validation silently never ran.
   try {
-    const { data: cert } = await supabase
-      .schema('inspections')
-      .from('certificates')
-      .select('id')
-      .eq('inspection_id', input.inspectionId)
-      .is('superseded_at', null)
-      .maybeSingle()
-    if (cert?.id) {
-      const { error: valErr } = await supabase.functions.invoke('validate-inspection', {
-        body: { certificate_id: cert.id },
-      })
-      if (valErr) console.warn('validate-inspection failed (cert still valid):', valErr.message)
-    }
+    const { error: valErr } = await supabase.functions.invoke('validate-inspection', {
+      body: { inspection_id: input.inspectionId },
+    })
+    if (valErr) console.warn('validate-inspection failed (cert still valid):', valErr.message)
   } catch (e) {
     console.warn('validate-inspection invocation failed (cert still valid):', (e as Error).message)
   }
@@ -359,98 +352,9 @@ export async function sendBackForReinspectionAction(input: {
   revalidatePath(`/projects/${input.projectId}/inspections`)
 }
 
-// ─── revokeCertificateAction ────────────────────────────────────────────
-
-export async function revokeCertificateAction(input: {
-  certificateId: string
-  inspectionId: string
-  projectId: string
-  reason: string
-}): Promise<void> {
-  const supabase = (await createClient()) as AnyClient
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) throw new Error('Unauthenticated')
-  if (!input.reason.trim()) throw new Error('Revocation reason required')
-
-  const { data: inspOrg } = await supabase
-    .schema('inspections')
-    .from('inspections')
-    .select('organisation_id')
-    .eq('id', input.inspectionId)
-    .single()
-  if (!inspOrg) throw new Error('Inspection not found')
-  await requireFeature(inspOrg.organisation_id, 'inspections', supabase)
-
-  const { error } = await supabase
-    .schema('inspections')
-    .from('certificates')
-    .update({
-      revoked_at: new Date().toISOString(),
-      revoked_by: user.id,
-      revoke_reason: input.reason.trim(),
-    })
-    .eq('id', input.certificateId)
-  if (error) throw error
-
-  // Notify verifier + PMs + contributors. The revoker is excluded so they
-  // don't get a self-notification for the action they just took.
-  try {
-    const { data: insp } = await supabase
-      .schema('inspections')
-      .from('inspections')
-      .select('verifier_id, coc_number')
-      .eq('id', input.inspectionId)
-      .single()
-    const verifierId = (insp as { verifier_id: string | null } | null)?.verifier_id ?? null
-    const cocNumber = (insp as { coc_number: string | null } | null)?.coc_number ?? null
-
-    const contributors = await getInspectionContributors(supabase, input.inspectionId)
-    const pms = await getProjectManagerIds(supabase, input.projectId)
-    const recipients = [
-      ...new Set(
-        [verifierId, ...contributors, ...pms]
-          .filter((id): id is string => Boolean(id))
-          .filter((id) => id !== user.id),
-      ),
-    ]
-    if (recipients.length > 0) {
-      await dispatchNotification({
-        userIds: recipients,
-        title: 'Certificate revoked',
-        body: cocNumber
-          ? `COC ${cocNumber} revoked: ${input.reason.trim().slice(0, 160)}`
-          : `Certificate revoked: ${input.reason.trim().slice(0, 200)}`,
-        route: `/projects/${input.projectId}/inspections/${input.inspectionId}`,
-        type: 'inspection_revoked',
-        entityType: 'inspection',
-        entityId: input.inspectionId,
-      })
-    }
-  } catch (e) {
-    console.warn('revoke notification dispatch failed:', (e as Error).message)
-  }
-
-  revalidatePath(`/projects/${input.projectId}/inspections/${input.inspectionId}`)
-}
-
-// ─── generateShareLinkAction ───────────────────────────────────────────
-
-export async function generateShareLinkAction(input: {
-  certificateId: string
-  expiresInDays?: number
-}): Promise<string> {
-  const supabase = (await createClient()) as AnyClient
-  const expiresAt = new Date(
-    Date.now() + (input.expiresInDays ?? 90) * 86_400_000,
-  ).toISOString()
-  const shareToken = crypto.randomUUID()
-  const { error } = await supabase
-    .schema('inspections')
-    .from('certificates')
-    .update({ share_token: shareToken, share_expires_at: expiresAt })
-    .eq('id', input.certificateId)
-  if (error) throw error
-  return shareToken
-}
+// revokeCertificateAction + generateShareLinkAction were removed here: both
+// became unreachable when the report page moved to the projects.reports
+// pipeline (no UI referenced them), and both operated on
+// inspections.certificates rows the current certify flow no longer creates.
+// The public /inspection/[shareToken] page remains for certificates whose
+// share links were issued under the legacy flow.

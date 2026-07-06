@@ -52,6 +52,32 @@ export default async function ReportPage({ params }: Props) {
   const isCertified = insp.status === 'certified'
   const coc = (insp.coc_number as string | null) ?? null
 
+  // Standards-validation audit (SANS rule engine, run at certify). SELECT is
+  // RLS-scoped via user_has_inspection_read, so the user client is correct.
+  const { data: validationRows } = await supabase
+    .schema('inspections')
+    .from('coc_validations')
+    .select('id, rule_code, sans_clause, rule_label, result, measured_value, threshold, failure_reason, validated_at')
+    .eq('inspection_id', inspectionId)
+    .order('rule_code')
+  const validations = (validationRows ?? []) as Array<{
+    id: string
+    rule_code: string
+    sans_clause: string | null
+    rule_label: string
+    result: 'pass' | 'fail' | 'not_applicable' | 'insufficient_data'
+    measured_value: string | null
+    threshold: string | null
+    failure_reason: string | null
+    validated_at: string
+  }>
+  const VALIDATION_BADGE: Record<string, 'success' | 'danger' | 'warning' | 'default'> = {
+    pass: 'success',
+    fail: 'danger',
+    insufficient_data: 'warning',
+    not_applicable: 'default',
+  }
+
   // Saved certificate history for this inspection (entity-scoped panel).
   const project = await projectService.getById(supabase as never, projectId).catch(() => null)
   const orgId = (project?.organisation_id as string | undefined) ?? undefined
@@ -126,6 +152,59 @@ export default async function ReportPage({ params }: Props) {
           {isCertified
             ? 'No certificate PDF on file yet — use “Generate certificate” to produce it.'
             : 'This inspection is not certified yet. The certificate appears here once it is certified.'}
+        </div>
+      )}
+
+      {validations.length > 0 && (
+        <div
+          style={{
+            marginTop: 16,
+            background: 'var(--c-panel)',
+            border: '1px solid var(--c-border)',
+            borderRadius: 8,
+            padding: 16,
+          }}
+        >
+          <h2 style={{ margin: '0 0 4px', fontSize: 14, color: 'var(--c-text)' }}>Standards validation</h2>
+          <p style={{ margin: '0 0 12px', fontSize: 11, color: 'var(--c-text-dim)' }}>
+            Automated rule checks run against the captured responses at certification
+            {validations[0] ? ` · ${new Date(validations[0].validated_at).toLocaleString('en-ZA')}` : ''}
+          </p>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: 'var(--c-text-dim)' }}>
+                  <th style={{ padding: '4px 8px', fontWeight: 500 }}>Rule</th>
+                  <th style={{ padding: '4px 8px', fontWeight: 500 }}>Clause</th>
+                  <th style={{ padding: '4px 8px', fontWeight: 500 }}>Result</th>
+                  <th style={{ padding: '4px 8px', fontWeight: 500 }}>Measured</th>
+                  <th style={{ padding: '4px 8px', fontWeight: 500 }}>Threshold</th>
+                  <th style={{ padding: '4px 8px', fontWeight: 500 }}>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {validations.map((v) => (
+                  <tr key={v.id} style={{ borderTop: '1px solid var(--c-border)' }}>
+                    <td style={{ padding: '6px 8px', color: 'var(--c-text)' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{v.rule_code}</span>
+                      <div style={{ color: 'var(--c-text-mid)' }}>{v.rule_label}</div>
+                    </td>
+                    <td style={{ padding: '6px 8px', color: 'var(--c-text-dim)', whiteSpace: 'nowrap' }}>
+                      {v.sans_clause ?? '—'}
+                    </td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <Badge variant={VALIDATION_BADGE[v.result] ?? 'default'}>
+                        {v.result.replace(/_/g, ' ')}
+                      </Badge>
+                    </td>
+                    <td style={{ padding: '6px 8px', color: 'var(--c-text-mid)' }}>{v.measured_value ?? '—'}</td>
+                    <td style={{ padding: '6px 8px', color: 'var(--c-text-mid)' }}>{v.threshold ?? '—'}</td>
+                    <td style={{ padding: '6px 8px', color: 'var(--c-text-dim)' }}>{v.failure_reason ?? ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

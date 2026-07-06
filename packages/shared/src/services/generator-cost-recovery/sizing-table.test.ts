@@ -17,4 +17,41 @@ describe('getFuelConsumption', () => {
   it('returns 0 for an unknown generator size (matches nexus, which does not throw)', () => {
     expect(getFuelConsumption('999 kVA', 75)).toBe(0)
   })
+
+  // The zone editor stores whatever the user typed — prod PNP FAERIE GLEN holds
+  // bare "400" / "350". An exact-label lookup silently zeroed the whole tariff.
+  it('resolves a bare numeric size ("400" @ 75%) to the 400 kVA row', () => {
+    expect(getFuelConsumption('400', 75)).toBeCloseTo(61.6, 3)
+  })
+
+  it('resolves "350" @ 75% to the 350 kVA row', () => {
+    expect(getFuelConsumption('350', 75)).toBeCloseTo(50.14, 3)
+  })
+
+  it('resolves suffix variants ("400kVA", "400 kva") to the 400 kVA row', () => {
+    expect(getFuelConsumption('400kVA', 75)).toBeCloseTo(61.6, 3)
+    expect(getFuelConsumption('400 kva', 75)).toBeCloseTo(61.6, 3)
+  })
+
+  it('still returns 0 for a numeric size with no table row ("415")', () => {
+    expect(getFuelConsumption('415', 75)).toBe(0)
+  })
+
+  it('does NOT truncate fractional or unit-mismatched sizes onto a row ("400.5", "400 kW")', () => {
+    // parseInt would silently bill these at the 400 kVA row; a billing table
+    // must fall through to the readiness gap instead.
+    expect(getFuelConsumption('400.5', 75)).toBe(0)
+    expect(getFuelConsumption('400 kW', 75)).toBe(0)
+  })
+
+  it('hasFuelRating mirrors the lookup (used by readiness)', async () => {
+    const { hasFuelRating } = await import('./sizing-table')
+    expect(hasFuelRating('400')).toBe(true)
+    expect(hasFuelRating('400 kVA')).toBe(true)
+    expect(hasFuelRating('415')).toBe(false)
+    expect(hasFuelRating('400.5')).toBe(false)
+    expect(hasFuelRating('400 kW')).toBe(false)
+    expect(hasFuelRating(null)).toBe(false)
+    expect(hasFuelRating('')).toBe(false)
+  })
 })

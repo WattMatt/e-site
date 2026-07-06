@@ -138,7 +138,9 @@ export function BulkAddMembersModal({ projectId, open, onClose }: Props) {
             <>
               <p style={{ fontSize: 12, color: 'var(--c-text-dim)', marginBottom: 12 }}>
                 Paste email addresses (one per line, or comma/semicolon separated). Existing org users
-                are added directly. New emails get an org invite + are added to this project.
+                are added directly and emailed that they now have access to this site. New emails get
+                a branded invite naming you and this site (with a set-password link) and are added
+                here. Everyone added this way can only see the sites you add them to.
               </p>
 
               <div style={{ marginBottom: 14 }}>

@@ -1,7 +1,6 @@
 import { useCallback } from 'react'
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native'
 import { useRouter } from 'expo-router'
-import { useAuth } from '../../src/providers/AuthProvider'
 import { useProjects } from '../../src/hooks/useProjects'
 import { formatZAR } from '@esite/shared'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
@@ -16,9 +15,7 @@ const PROJECT_STATUS: Record<string, { bg: string; fg: string; border: string }>
 const STATUS_DEFAULT = { bg: colors.elevated, fg: colors.textMid, border: colors.borderMid }
 
 export default function ProjectsTab() {
-  const { profile } = useAuth()
-  const orgId = (profile as any)?.user_organisations?.[0]?.organisation_id ?? ''
-  const { data: projects, isLoading, refetch, isRefetching } = useProjects(orgId)
+  const { data: projects, isLoading, refetch, isRefetching } = useProjects()
   const router = useRouter()
 
   const renderItem = useCallback(({ item }: { item: NonNullable<typeof projects>[number] }) => {

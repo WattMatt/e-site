@@ -15,6 +15,7 @@ import type { NodeOrderData } from '../../equipment-schedule/_components/NodeOrd
 import { BoPeriodSelect, BoDateCell } from './BoCells'
 import type { TenantBoInfo } from './BoCells'
 import { TenantDeleteModal } from './TenantDeleteModal'
+import { TenantEditModal } from './TenantEditModal'
 import { TenantRecycleButton, TenantRestoreButton } from './TenantRecycleButtons'
 
 interface Props {
@@ -31,6 +32,8 @@ interface Props {
   ordersByNodeAndScope: Record<string, NodeOrderData>
   // node_id → beneficial-occupation info (period, override, effective date)
   tenantBoByNode: Record<string, TenantBoInfo>
+  /** True for viewers without a write role — hides every mutating control. */
+  readOnly?: boolean
 }
 
 export function ScheduleTable({
@@ -44,6 +47,7 @@ export function ScheduleTable({
   layoutDetailsByNode,
   ordersByNodeAndScope,
   tenantBoByNode,
+  readOnly = false,
 }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
   // Recycle-bin disclosure (closed by default; mirrors showDecommissioned).
@@ -55,6 +59,11 @@ export function ScheduleTable({
   const [showAddModal, setShowAddModal] = useState(false)
   // Tenant board pending hard-delete (opens the confirmation modal)
   const [deletingNode, setDeletingNode] = useState<{ id: string; code: string } | null>(null)
+  // Tenant entry being edited (shop number / name / GLA form modal). Only the
+  // id is held — the node itself is looked up from the nodes prop at render so
+  // a reopen after save + router.refresh prefills fresh values, never a stale
+  // pre-save snapshot.
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
   // Local copy of scope item types so adding a new one reflects immediately
   const [scopeItemTypes, setScopeItemTypes] = useState<ScopeItemType[]>(initialScopeItemTypes)
 
@@ -108,7 +117,11 @@ export function ScheduleTable({
         }}
       >
         <p style={{ marginBottom: 6, fontWeight: 600 }}>No shops imported yet</p>
-        <p style={{ fontSize: 13 }}>Upload a tenant schedule .xlsx file to get started.</p>
+        <p style={{ fontSize: 13 }}>
+          {readOnly
+            ? 'No tenant schedule has been imported for this project yet.'
+            : 'Upload a tenant schedule .xlsx file to get started.'}
+        </p>
       </div>
     )
   }
@@ -149,14 +162,16 @@ export function ScheduleTable({
           )}
         </div>
 
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setShowAddModal(true)}
-          style={{ fontSize: 12 }}
-        >
-          + Add scope item
-        </Button>
+        {!readOnly && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowAddModal(true)}
+            style={{ fontSize: 12 }}
+          >
+            + Add scope item
+          </Button>
+        )}
       </div>
 
       <TableScrollX>
@@ -231,21 +246,41 @@ export function ScheduleTable({
                       )}
                     </Td>
 
-                    {/* Beneficial occupation */}
-                    <Td>
-                      <BoPeriodSelect
-                        projectId={projectId}
-                        nodeId={node.id}
-                        value={tenantBoByNode[node.id]?.boPeriodDays ?? null}
-                      />
+                    {/* Beneficial occupation (static text for read-only viewers) */}
+                    <Td mono>
+                      {readOnly ? (
+                        tenantBoByNode[node.id]?.boPeriodDays != null
+                          ? `${tenantBoByNode[node.id].boPeriodDays} d`
+                          : '—'
+                      ) : (
+                        <BoPeriodSelect
+                          projectId={projectId}
+                          nodeId={node.id}
+                          value={tenantBoByNode[node.id]?.boPeriodDays ?? null}
+                        />
+                      )}
                     </Td>
-                    <Td>
-                      <BoDateCell
-                        projectId={projectId}
-                        nodeId={node.id}
-                        effectiveDate={tenantBoByNode[node.id]?.effectiveDate ?? null}
-                        isOverride={tenantBoByNode[node.id]?.boDateOverride != null}
-                      />
+                    <Td mono>
+                      {readOnly ? (
+                        <>
+                          {tenantBoByNode[node.id]?.effectiveDate ?? '—'}
+                          {tenantBoByNode[node.id]?.boDateOverride != null && (
+                            <span
+                              title="Manually set — overrides the computed date"
+                              style={{ marginLeft: 6, fontSize: 10, color: 'var(--c-amber)' }}
+                            >
+                              set
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <BoDateCell
+                          projectId={projectId}
+                          nodeId={node.id}
+                          effectiveDate={tenantBoByNode[node.id]?.effectiveDate ?? null}
+                          isOverride={tenantBoByNode[node.id]?.boDateOverride != null}
+                        />
+                      )}
                     </Td>
 
                     {/* Per-scope-item party cells */}
@@ -270,6 +305,7 @@ export function ScheduleTable({
                         <NodeOrderCell
                           order={ordersByNodeAndScope[`${node.id}:${t.id}`] ?? null}
                           projectId={projectId}
+                          readOnly={readOnly}
                         />
                       </Td>
                     ))}
@@ -300,6 +336,26 @@ export function ScheduleTable({
                     <Td>
                       {!decommissioned && (
                         <div style={{ display: 'flex', gap: 6 }}>
+                          {!readOnly && (
+                          <button
+                            onClick={() => setEditingNodeId(node.id)}
+                            title={`Edit ${node.shop_number ?? node.code}`}
+                            style={{
+                              background: 'none',
+                              border: '1px solid var(--c-border)',
+                              borderRadius: 5,
+                              cursor: 'pointer',
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              color: 'var(--c-text-dim)',
+                              fontWeight: 600,
+                              transition: 'all 0.15s',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Edit
+                          </button>
+                          )}
                           <button
                             onClick={() => toggleScope(node.id)}
                             style={{
@@ -336,11 +392,13 @@ export function ScheduleTable({
                           >
                             {isLayoutExpanded ? 'Close' : 'Layout ↓'}
                           </button>
-                          <TenantRecycleButton
-                            projectId={projectId}
-                            nodeId={node.id}
-                            code={node.code}
-                          />
+                          {!readOnly && (
+                            <TenantRecycleButton
+                              projectId={projectId}
+                              nodeId={node.id}
+                              code={node.code}
+                            />
+                          )}
                         </div>
                       )}
                     </Td>
@@ -360,6 +418,7 @@ export function ScheduleTable({
                           scopeItemTypes={scopeItemTypes}
                           scopeItems={nodeItems}
                           tenantDetails={details}
+                          readOnly={readOnly}
                           onClose={() => setExpandedNodeId(null)}
                         />
                       </td>
@@ -378,6 +437,7 @@ export function ScheduleTable({
                           nodeId={node.id}
                           shopName={node.shop_name ?? node.name}
                           layoutDetails={layoutDetails}
+                          readOnly={readOnly}
                           onClose={() => setExpandedLayoutNodeId(null)}
                         />
                       </td>
@@ -454,6 +514,7 @@ export function ScheduleTable({
                     </span>
                     <Badge variant="ghost">in bin</Badge>
                   </div>
+                  {!readOnly && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <TenantRestoreButton projectId={projectId} nodeId={node.id} />
                     <button
@@ -476,6 +537,7 @@ export function ScheduleTable({
                       Delete permanently
                     </button>
                   </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -502,6 +564,21 @@ export function ScheduleTable({
           onClose={() => setDeletingNode(null)}
         />
       )}
+
+      {/* Tenant entry edit modal (shop number / name / GLA). Keyed by
+          updated_at so a refresh landing mid-open remounts with fresh data. */}
+      {editingNodeId && (() => {
+        const editing = nodes.find((n) => n.id === editingNodeId)
+        if (!editing) return null
+        return (
+          <TenantEditModal
+            key={`${editing.id}:${editing.updated_at}`}
+            projectId={projectId}
+            node={editing}
+            onClose={() => setEditingNodeId(null)}
+          />
+        )
+      })()}
     </div>
   )
 }

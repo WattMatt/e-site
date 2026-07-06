@@ -16,6 +16,7 @@ import { z } from 'zod'
 import { createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { getOrgContext, isOrgAdmin } from '@/lib/auth-org'
+import { sendInviteEmail, resolveInviteContext } from '@/lib/invite-email'
 import { logAuthEvent, orgRoleSchema } from '@esite/shared'
 
 type ActionResult = { ok: true; warning?: string } | { ok: false; error: string }
@@ -98,15 +99,16 @@ export async function createUserAction(input: {
     return { ok: false, error: `Could not add the user to your organisation: ${memberErr.message}` }
   }
 
-  // 2. Send the "set your password" email via the standard recovery flow.
-  let warning: string | undefined
-  const { error: mailErr } = await service.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password/confirm`,
+  // 2. Send the branded invite email. It names the inviter, the company and the
+  //    role so the recipient doesn't read it as spam, and carries the
+  //    set-password link. Falls back to the plain recovery email on failure so
+  //    the user always has a way in (see sendInviteEmail).
+  const { inviterName, orgName } = await resolveInviteContext(service, {
+    inviterId: ctx.userId,
+    orgId: ctx.organisationId,
   })
-  if (mailErr) {
-    console.error('createUserAction: set-password email failed', { newUserId, error: mailErr })
-    warning = 'User created, but the set-password email could not be sent. They can use “Forgot password” on the login page.'
-  }
+  const invite = await sendInviteEmail({ service, email, inviterName, orgName, role })
+  const warning = invite.warning
 
   // 3. Audit.
   await logAuthEvent(service, {
