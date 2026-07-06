@@ -98,6 +98,9 @@ export async function enqueueAttachment(a: EnqueueInput): Promise<void> {
   )
 }
 
+/** Automatic retries per item before the worker stops picking it up. */
+export const MAX_AUTO_RETRIES = 5
+
 export async function pendingCount(): Promise<number> {
   const rs = await powerSyncDb.execute(
     `SELECT COUNT(*) AS c FROM attachment_uploads WHERE status IN ('pending','failed')`,
@@ -109,10 +112,41 @@ export async function pendingCount(): Promise<number> {
 export async function nextPending(): Promise<PendingAttachment | null> {
   const rs = await powerSyncDb.execute(
     `SELECT * FROM attachment_uploads
-     WHERE status='pending' OR (status='failed' AND retry_count < 5)
+     WHERE status='pending' OR (status='failed' AND retry_count < ?)
      ORDER BY created_at ASC LIMIT 1`,
+    [MAX_AUTO_RETRIES],
   )
   return firstRow<PendingAttachment>(rs) ?? null
+}
+
+/**
+ * Uploads that exhausted their automatic retries. They never re-enter the
+ * worker loop on their own — surface them with a manual retry affordance.
+ */
+export async function stalledCount(inspectionId?: string): Promise<number> {
+  const rs = await powerSyncDb.execute(
+    `SELECT COUNT(*) AS c FROM attachment_uploads
+     WHERE status='failed' AND retry_count >= ?${inspectionId ? ' AND inspection_id = ?' : ''}`,
+    inspectionId ? [MAX_AUTO_RETRIES, inspectionId] : [MAX_AUTO_RETRIES],
+  )
+  const row = firstRow<{ c: number }>(rs)
+  return row?.c ?? 0
+}
+
+/**
+ * Re-arm failed uploads for another round of automatic retries. The worker
+ * treats a duplicate-object upload error as success, so items whose binary
+ * reached storage before the metadata insert failed complete on retry
+ * instead of dying on the re-upload.
+ */
+export async function retryFailedAttachments(inspectionId?: string): Promise<number> {
+  const rs = await powerSyncDb.execute(
+    `UPDATE attachment_uploads
+     SET status='pending', retry_count=0, last_error=NULL
+     WHERE status='failed'${inspectionId ? ' AND inspection_id = ?' : ''}`,
+    inspectionId ? [inspectionId] : [],
+  )
+  return (rs as { rowsAffected?: number }).rowsAffected ?? 0
 }
 
 export async function markDone(id: string): Promise<void> {
