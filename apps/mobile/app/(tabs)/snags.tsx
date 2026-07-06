@@ -20,7 +20,7 @@ export default function SnagsTab() {
     enabled: !!orgId,
   })
 
-  const { data: projects } = useProjects(orgId)
+  const { data: projects } = useProjects()
   const defaultProjectId = projects?.[0]?.id ?? ''
 
   const renderItem = useCallback(({ item }: { item: NonNullable<typeof snags>[number] }) => {

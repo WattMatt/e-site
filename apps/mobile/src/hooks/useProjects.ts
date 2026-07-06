@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useDb } from './useDb'
 import type { LocalDb } from './useDb'
 import { useSupabase } from '../providers/SupabaseProvider'
-import { useAuth } from '../providers/AuthProvider'
+import { PROJECTS_LOCAL_QUERY } from './projects.queries'
 
 type Project = {
   id: string
@@ -18,31 +18,25 @@ type Project = {
   end_date: string | null
 }
 
-export function useProjects(orgIdOverride?: string) {
+// Returns every project the current user may see. No org filter: the local
+// PowerSync DB (and, on the remote fallback, RLS) already scope the result to
+// own-org projects + cross-org sites shared via project_members (00155/00156).
+export function useProjects() {
   const { type, db } = useDb('projects')
   const supabase = useSupabase()
-  const { profile } = useAuth()
-  const orgId = orgIdOverride ?? ((profile as any)?.user_organisations?.[0]?.organisation_id ?? null)
 
   return useQuery({
-    queryKey: ['projects', orgId, type],
+    queryKey: ['projects', type],
     queryFn: async (): Promise<Project[]> => {
-      if (!orgId) return []
-
       if (type === 'local') {
-        return (db as LocalDb).getAll<Project>(
-          'SELECT * FROM projects WHERE organisation_id = ? ORDER BY name ASC',
-          [orgId]
-        )
+        return (db as LocalDb).getAll<Project>(PROJECTS_LOCAL_QUERY)
       }
       const { data, error } = await (db as typeof supabase)
         .schema('projects')
         .from('projects')
         .select('*')
-        .eq('organisation_id', orgId)
       if (error) throw error
       return data as unknown as Project[]
     },
-    enabled: !!orgId,
   })
 }
