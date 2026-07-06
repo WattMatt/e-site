@@ -20,6 +20,7 @@ import ExcelJS from 'exceljs'
 import type { ExportPayload, EnrichedCable } from './export-payload'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
 import { stampExcelDraft } from './export-watermark'
+import { groupRunsBySectionConductor } from './export-util'
 
 const WM_AMBER = 'FFE69500'
 const HEADER_GREY = 'FF2A2A2A'
@@ -224,40 +225,8 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
   }
 }
 
-interface RunGroup {
-  section: 'NORMAL' | 'EMERGENCY' | null
-  conductor: 'CU' | 'AL'
-  runs: ExportPayload['runs']
-}
-
-function groupRunsBySectionConductor(runs: ExportPayload['runs']): RunGroup[] {
-  // Bucket runs by (section, conductor). Section + conductor live ON the run
-  // already (run.section is the supply's section; run.conductor is the head
-  // strand's metal — and in practice all parallels share conductor).
-  const buckets = new Map<string, RunGroup>()
-  const orderKeys: string[] = []
-  for (const r of runs) {
-    const section = r.section === 'EMERGENCY' ? 'EMERGENCY'
-                  : r.section === 'NORMAL' ? 'NORMAL'
-                  : null
-    const key = `${section ?? '_'}|${r.conductor}`
-    if (!buckets.has(key)) {
-      buckets.set(key, { section, conductor: r.conductor, runs: [] })
-      orderKeys.push(key)
-    }
-    buckets.get(key)!.runs.push(r)
-  }
-  // Stable order: NORMAL first, then EMERGENCY, then null. CU before AL.
-  orderKeys.sort((a, b) => {
-    const [sa, ca] = a.split('|')
-    const [sb, cb] = b.split('|')
-    const sectionRank = (s: string) => (s === 'NORMAL' ? 0 : s === 'EMERGENCY' ? 1 : 2)
-    if (sectionRank(sa) !== sectionRank(sb)) return sectionRank(sa) - sectionRank(sb)
-    const condRank = (c: string) => (c === 'CU' ? 0 : 1)
-    return condRank(ca) - condRank(cb)
-  })
-  return orderKeys.map((k) => buckets.get(k)!)
-}
+// Section/conductor grouping now lives in export-util.ts, shared with the
+// PDF renderer so the ordering semantics can't drift between formats.
 
 function writeSectionHeaderRow(
   ws: ExcelJS.Worksheet,

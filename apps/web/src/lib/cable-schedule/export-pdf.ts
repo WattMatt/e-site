@@ -12,6 +12,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import QRCode from 'qrcode'
 import { formatDecimal } from './export-format'
+import { groupRunsBySectionConductor } from './export-util'
 import type { EnrichedCable, ExportPayload } from './export-payload'
 import { stampPdfDraft } from './export-watermark'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
@@ -294,41 +295,18 @@ function drawSchedulePages(
   const startX = (LAND_W - totalW) / 2
 
   // Group RUNS by (section, conductor) to insert section header rows.
-  const groups: Array<{
-    sectionLabel: string | null
-    conductorLabel: string
-    runs: ExportPayload['runs']
-  }> = []
-  const bucket = new Map<string, ExportPayload['runs']>()
-  const keyOrder: string[] = []
-  for (const r of payload.runs) {
-    const sec = r.section ?? null
-    const key = `${sec ?? '_'}|${r.conductor}`
-    if (!bucket.has(key)) {
-      bucket.set(key, [])
-      keyOrder.push(key)
-    }
-    bucket.get(key)!.push(r)
-  }
-  keyOrder.sort((a, b) => {
-    const [sa, ca] = a.split('|')
-    const [sb, cb] = b.split('|')
-    const rank = (s: string) =>
-      s === 'NORMAL' ? 0 : s === 'EMERGENCY' ? 1 : 2
-    if (rank(sa) !== rank(sb)) return rank(sa) - rank(sb)
-    return ca === 'CU' ? -1 : 1
-  })
+  // Bucketing + ordering shared with the Excel renderer (export-util.ts);
+  // only the label derivation (section header shown once per section) is local.
   let lastSection: string | null | undefined = undefined
-  for (const k of keyOrder) {
-    const [sec, cond] = k.split('|')
-    const sectionLabel = sec !== '_' && sec !== lastSection ? sec : null
-    lastSection = sec
-    groups.push({
+  const groups = groupRunsBySectionConductor(payload.runs).map((g) => {
+    const sectionLabel = g.section !== null && g.section !== lastSection ? g.section : null
+    lastSection = g.section
+    return {
       sectionLabel,
-      conductorLabel: cond === 'CU' ? 'Copper' : 'Aluminium',
-      runs: bucket.get(k)!,
-    })
-  }
+      conductorLabel: g.conductor === 'CU' ? 'Copper' : 'Aluminium',
+      runs: g.runs,
+    }
+  })
 
   // Flatten: alternating section-header rows + run rows. Run number is
   // assigned at flatten time so it's stable across the visible order.
