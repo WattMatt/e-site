@@ -22,6 +22,10 @@ import {
   removeShopDrawingAction,
   getShopDrawingSignedUrlAction,
 } from '@/actions/node-order-shop-drawing.actions'
+import {
+  uploadNodeOrderDocumentFile,
+  removeNodeOrderDocumentFile,
+} from '@/lib/storage/node-order-documents-upload'
 import { triggerDownload } from '@/lib/file-open'
 import { DocumentPreviewModal } from './DocumentPreviewModal'
 import type { ShopDrawing, ShopDrawingStatus } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
@@ -64,22 +68,17 @@ export function UnifiedShopDrawingList({
     setError(null)
     setBusy(true)
     try {
-      const fd = new FormData()
-      fd.append('projectId', projectId)
-      fd.append('nodeOrderId', nodeOrderId)
-      fd.append('docType', 'shop_drawing')
-      fd.append('file', file)
-      const res = await fetch('/api/node-order-documents', { method: 'POST', body: fd })
-      const json = (await res.json()) as { storagePath?: string; fileName?: string; error?: string }
-      if (!res.ok || !json.storagePath) throw new Error(json.error ?? `Upload failed (HTTP ${res.status})`)
+      const { storagePath, fileName } = await uploadNodeOrderDocumentFile({
+        projectId,
+        nodeOrderId,
+        docType: 'shop_drawing',
+        file,
+      })
 
-      const add = await addShopDrawingAction(projectId, nodeOrderId, json.storagePath, json.fileName ?? file.name)
+      const add = await addShopDrawingAction(projectId, nodeOrderId, storagePath, fileName)
       if ('error' in add) {
-        await fetch('/api/node-order-documents', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storagePath: json.storagePath }),
-        }).catch(() => {/* best-effort */})
+        // Best-effort orphan cleanup
+        await removeNodeOrderDocumentFile(storagePath)
         throw new Error(add.error)
       }
       refresh()

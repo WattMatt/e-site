@@ -6,8 +6,9 @@
  *
  * Each slot holds a labelled list of documents (newest first). A document
  * carries a kind (Original / Revision / Variation) and an optional supplier /
- * note label, both editable inline. Upload appends via /api/node-order-documents
- * then addNodeOrderDocumentAction; the filename opens an in-app
+ * note label, both editable inline. Upload goes direct to storage via
+ * uploadNodeOrderDocumentFile (bucket RLS is the gate) then
+ * addNodeOrderDocumentAction; the filename opens an in-app
  * DocumentPreviewModal.
  */
 
@@ -19,6 +20,10 @@ import {
   deleteNodeOrderDocumentAction,
   getNodeOrderDocumentSignedUrlAction,
 } from '@/actions/node-order-document.actions'
+import {
+  uploadNodeOrderDocumentFile,
+  removeNodeOrderDocumentFile,
+} from '@/lib/storage/node-order-documents-upload'
 import { triggerDownload } from '@/lib/file-open'
 import { DocumentPreviewModal } from './DocumentPreviewModal'
 import type { OrderDoc, OrderDocKind } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
@@ -57,31 +62,17 @@ export function UnifiedDocSlot({ projectId, nodeOrderId, docType, label, docs }:
     setError(null)
     setBusy(true)
     try {
-      const fd = new FormData()
-      fd.append('projectId', projectId)
-      fd.append('nodeOrderId', nodeOrderId)
-      fd.append('docType', docType)
-      fd.append('file', file)
-
-      const res = await fetch('/api/node-order-documents', { method: 'POST', body: fd })
-      const json = (await res.json()) as { storagePath?: string; fileName?: string; error?: string }
-      if (!res.ok || !json.storagePath) {
-        throw new Error(json.error ?? `Upload failed (HTTP ${res.status})`)
-      }
-
-      const add = await addNodeOrderDocumentAction(
+      const { storagePath, fileName } = await uploadNodeOrderDocumentFile({
         projectId,
         nodeOrderId,
         docType,
-        json.storagePath,
-        json.fileName ?? file.name,
-      )
+        file,
+      })
+
+      const add = await addNodeOrderDocumentAction(projectId, nodeOrderId, docType, storagePath, fileName)
       if ('error' in add) {
-        await fetch('/api/node-order-documents', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storagePath: json.storagePath }),
-        }).catch(() => {/* best-effort */})
+        // Best-effort orphan cleanup
+        await removeNodeOrderDocumentFile(storagePath)
         throw new Error(add.error)
       }
       refresh()
