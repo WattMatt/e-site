@@ -2,6 +2,7 @@
 
 import type { RendererProps } from '../FieldRenderer'
 import { useState, useEffect } from 'react'
+import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 interface FileItem {
@@ -11,8 +12,23 @@ interface FileItem {
   filename: string
 }
 
+// Mirrors the inspection-attachments bucket definition (migration 00066):
+// 25 MB cap, PDF/DOCX/XLSX. Checked client-side for a fast, readable error —
+// the bucket enforces both regardless. Some browsers/OSes report an empty
+// file.type, so the MIME is inferred from the extension in that case (the
+// bucket rejects an empty contentType outright).
+const MAX_FILE_BYTES = 25 * 1024 * 1024
+const EXT_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+}
+const ALLOWED_MIME = new Set(Object.values(EXT_MIME))
+
 export default function FileField({ field, inspectionId, sectionId, readOnly }: RendererProps) {
   const supabase = createClient()
+  // Capture routes live under /projects/[id]/… — the param is the project id.
+  const params = useParams<{ id?: string }>()
   const [files, setFiles] = useState<FileItem[]>([])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -20,11 +36,11 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      // File attachments re-use inspections.photos (see spec §4.4): the blob
+      // lives in the inspection-attachments bucket and the original filename
+      // is stored in the `caption` column. Mirrors how photo fields read
+      // inspections.photos via useFieldPhotos.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      // File attachments re-use inspections.photos (see the upload-file route +
-      // spec §4.4): the blob lives in the inspection-attachments bucket and the
-      // original filename is stored in the `caption` column. Mirrors how photo
-      // fields read inspections.photos via useFieldPhotos.
       const { data } = await (supabase as any)
         .schema('inspections')
         .from('photos')
@@ -54,29 +70,82 @@ export default function FileField({ field, inspectionId, sectionId, readOnly }: 
     }
   }, [supabase, inspectionId, sectionId, field.field_id])
 
+  // Bytes go browser → Storage under the user's session (bucket RLS gates via
+  // user_can_write_responses, migration 00073), then the metadata row insert
+  // is gated by photos_insert RLS. No Vercel function in the byte path — the
+  // 4.5 MB request-body cap that used to break large PDFs does not apply.
   const onUpload = async (file: File) => {
     setUploading(true)
     setError(null)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('inspectionId', inspectionId)
-      fd.append('sectionId', sectionId)
-      fd.append('fieldId', field.field_id)
-      const res = await fetch('/api/inspections/upload-file', { method: 'POST', body: fd })
-      if (!res.ok) {
-        const t = await res.text()
-        throw new Error(`Upload failed (HTTP ${res.status}): ${t}`)
+      if (file.size > MAX_FILE_BYTES) {
+        throw new Error(`"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB — the limit is 25 MB.`)
       }
-      const { id, storage_path, filename } = (await res.json()) as {
-        id: string
-        storage_path: string
-        filename: string
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+      const mime = file.type || EXT_MIME[ext] || ''
+      if (!ALLOWED_MIME.has(mime)) {
+        throw new Error(`Unsupported file type: ${file.type || `.${ext}`}. Allowed: PDF, DOCX, XLSX.`)
       }
+
+      let projectId = typeof params?.id === 'string' ? params.id : null
+      if (!projectId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: insp } = await (supabase as any)
+          .schema('inspections')
+          .from('inspections')
+          .select('project_id')
+          .eq('id', inspectionId)
+          .maybeSingle()
+        projectId = (insp?.project_id as string | undefined) ?? null
+      }
+      if (!projectId) throw new Error('Could not resolve the inspection project')
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) throw new Error('Not signed in')
+
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const path = `${projectId}/${inspectionId}/${sectionId}/${field.field_id}/${Date.now()}-${safeName}`
+      const { error: upErr } = await supabase.storage
+        .from('inspection-attachments')
+        .upload(path, file, { contentType: mime })
+      if (upErr) {
+        const msg = upErr.message.toLowerCase()
+        throw new Error(
+          msg.includes('row-level security') || msg.includes('violates')
+            ? 'Upload not allowed — this inspection is no longer editable.'
+            : upErr.message,
+        )
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: row, error: insErr } = await (supabase as any)
+        .schema('inspections')
+        .from('photos')
+        .insert({
+          inspection_id: inspectionId,
+          section_id: sectionId,
+          field_id: field.field_id,
+          storage_path: path,
+          file_size_bytes: file.size,
+          caption: file.name,
+          uploaded_by: user.id,
+        })
+        .select('id')
+        .single()
+      if (insErr || !row) {
+        await supabase.storage.from('inspection-attachments').remove([path]).catch(() => undefined)
+        throw new Error(insErr?.message ?? 'Saving the file record failed')
+      }
+
       const { data: sig } = await supabase.storage
         .from('inspection-attachments')
-        .createSignedUrl(storage_path, 3600)
-      setFiles((prev) => [...prev, { id, storage_path, filename, signed_url: sig?.signedUrl }])
+        .createSignedUrl(path, 3600)
+      setFiles((prev) => [
+        ...prev,
+        { id: (row as { id: string }).id, storage_path: path, filename: file.name, signed_url: sig?.signedUrl },
+      ])
     } catch (e) {
       setError((e as Error).message)
     } finally {
