@@ -118,19 +118,18 @@ Deno.serve(async (req) => {
     }
 
     if (type === 'invite') {
-      const { to, orgName, inviterName, role, token } = payload
-      const link = `${SITE_URL}/onboarding/join?token=${token}`
-      await sendEmail({
-        to,
-        subject: `You've been invited to join ${orgName} on E-Site`,
-        html: baseTemplate(`
-          <h2>You're invited!</h2>
-          <p><strong>${inviterName}</strong> has invited you to join <strong>${orgName}</strong> on E-Site as a <strong>${role}</strong>.</p>
-          <p>Click the button below to accept the invitation (expires in 7 days).</p>
-          <a class="btn" href="${link}">Accept Invitation</a>
-          <p style="margin-top:16px;font-size:12px">Or copy this link: ${link}</p>
-        `),
-      })
+      // Passthrough: the web `sendInviteEmail` / `sendSiteAssignmentEmail`
+      // helpers render the branded HTML (shared renderInviteEmail /
+      // renderSiteAssignmentEmail — which name the inviter, company, role and
+      // assigned site(s) so the message doesn't read as spam) and forward
+      // { to, subject, html } here. Single recipient.
+      const { to, subject, html } = payload
+      if (!to || !subject || !html) {
+        return new Response(JSON.stringify({ error: 'invite requires to, subject, html' }), {
+          status: 400, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      await sendEmail({ to, subject, html })
     }
 
     else if (type === 'rfi-created') {

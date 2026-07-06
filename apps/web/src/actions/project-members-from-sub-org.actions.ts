@@ -14,8 +14,10 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
+import { getOrgContext } from '@/lib/auth-org'
+import { sendSiteAssignmentEmail, resolveInviteContext } from '@/lib/invite-email'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 
 const PROJECT_MEMBER_ROLES = [
@@ -56,11 +58,12 @@ export async function addProjectMembersFromSubOrg(
   const { data: project } = await (supabase as any)
     .schema('projects')
     .from('projects')
-    .select('organisation_id')
+    .select('organisation_id, name')
     .eq('id', projectId)
     .maybeSingle()
   if (!project) return { ok: false, error: 'Project not found.' }
   const projectOrgId = (project as { organisation_id: string }).organisation_id
+  const projectName = (project as { name?: string | null }).name?.trim() || 'the site'
 
   const guard = await requireRole(supabase, projectOrgId, ORG_WRITE_ROLES)
   if (!guard.ok) return { ok: false, error: guard.error }
@@ -106,6 +109,7 @@ export async function addProjectMembersFromSubOrg(
 
   let added = 0, skipped = 0, failed = 0
   const details: AddFromSubOrgResult['details'] = []
+  const addedUserIds: string[] = []
 
   for (const userId of userIds) {
     if (!validUserIds.has(userId)) {
@@ -134,6 +138,38 @@ export async function addProjectMembersFromSubOrg(
     }
     added++
     details.push({ user_id: userId, status: 'added' })
+    addedUserIds.push(userId)
+  }
+
+  // Notify each newly-added contractor that they've been given access to this
+  // site (best-effort, service-role — the caller can't read cross-org profiles
+  // under RLS). Their access is scoped to this site; the email says so.
+  if (addedUserIds.length > 0) {
+    try {
+      const service = createServiceClient()
+      const ctx = await getOrgContext()
+      const { inviterName } = await resolveInviteContext(service, {
+        inviterId: ctx?.userId ?? '',
+        orgId: projectOrgId,
+      })
+      const { data: profs } = await (service as any)
+        .from('profiles')
+        .select('id, email')
+        .in('id', addedUserIds)
+      for (const p of ((profs ?? []) as Array<{ id: string; email: string | null }>)) {
+        if (!p.email) continue
+        await sendSiteAssignmentEmail({
+          service,
+          email: p.email,
+          inviterName,
+          siteName: projectName,
+          projectId,
+          role: projectRole,
+        })
+      }
+    } catch (e) {
+      console.error('[from-sub-org] site-assignment emails failed', { projectId, err: String(e) })
+    }
   }
 
   revalidatePath(`/projects/${projectId}/settings/members`)
