@@ -19,7 +19,9 @@ export default async function ProjectsPage() {
 
   // Cross-org list: RLS gates access, no org_id filter needed.
   // Sub-org users (e.g. Mike from Bob's Building) see projects they've been
-  // added to via project_members even though they have no row in the project's org.
+  // added to via project_members even though they have no row in the project's
+  // org — enabled by the additive user_has_project_access SELECT policy in
+  // migration 00155 (before it, the org-scoped 00034 policy hid these rows).
   const projects = user
     ? await projectService.listAccessible(supabase as any)
     : []

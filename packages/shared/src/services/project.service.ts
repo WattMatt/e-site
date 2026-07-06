@@ -24,6 +24,10 @@ export const projectService = {
    * RLS on projects.projects handles access — cross-org members (granted via
    * project_members) will see the right rows without an org_id filter.
    * Used by /projects page so sub-org users see projects they've been added to.
+   *
+   * NOTE: cross-org visibility relies on the additive `user_has_project_access`
+   * SELECT policy from migration 00155. Before that migration the org-scoped
+   * 00034 policy silently filtered these rows out for sub-org members.
    */
   async listAccessible(client: TypedSupabaseClient) {
     const { data, error } = await client

@@ -100,10 +100,23 @@ OR-in the explicit cross-org project-member path).
    bug can never leave a user with no way in. Fix the dead `/onboarding/join` link.
 2. **Site-assignment notification** (Criterion B/b1): when a user is added to a project, email them
    "You've been given access to <site> on E-Site by <name>" with scope explanation.
-3. **RLS migration** (Criterion B/b2): `00153_cross_org_project_visibility.sql` — rewrite the
-   `00034` SELECT policies on `projects.projects`, `projects.project_members`, and the
-   project-scoped entity tables to `… OR public.user_has_project_access(<project_id>)`, preserving
-   org-scope + client_viewer narrowing.
+3. **RLS migration** (Criterion B/b2): `00155_cross_org_project_visibility.sql` — **add-only**
+   permissive SELECT policies `USING public.user_has_project_access(<project_id>)` on the 14
+   verified per-project tables (projects, project_members, site_diary_entries, rfis, drawings,
+   contacts, handover_checklist, rfi_responses, site_diary_attachments, snags, cables,
+   inspection_milestones, inspection_requests, snag_photos). Permissive policies OR-combine, so the
+   existing `00034` policies are untouched (zero risk of mis-reproducing them) and the grant can
+   never exceed a real project membership. Verified: every (schema.table.column) exists; no
+   RESTRICTIVE SELECT blockers; `user_has_project_access` is EXECUTE-granted to `authenticated`.
+
+   **Documented follow-ups (same additive fix, out of this pass):**
+   - Adjacent per-project SELECT surfaces in `structure.*`, `tenants.*`, `cable_schedule.*`,
+     `inspections.*`, `gcr.*` (flagged by the enumeration) — need their exact predicates confirmed,
+     then the identical `OR user_has_project_access` policy.
+   - **Mobile** cross-org visibility: the Expo app filters projects by the user's own org and
+     PowerSync `sync-rules.yaml` only syncs the user's own-org bucket (JWT `org_id` = first active
+     org). A cross-org shared project never reaches the device. Fixing this needs sync-rule + JWT
+     changes and is a separate, PowerSync-verified change.
 4. **Acceptance UX + admin clarity** (Criterion B/b1): show who invited / which site(s); admin sees
    a clear "this user now only has access to <site(s)>" confirmation.
 5. **Tests** (Criterion C): unit tests for the email helper + actions; RLS reasoning/tests for the
