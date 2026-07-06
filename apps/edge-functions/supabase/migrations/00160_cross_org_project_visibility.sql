@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00155: cross-org project visibility
+-- Migration 00160: cross-org project visibility
 -- ---------------------------------------------------------------------------
 -- Fixes a latent, high-severity intent-vs-implementation bug.
 --

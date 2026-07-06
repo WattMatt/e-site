@@ -67,7 +67,7 @@ a{color:#93C5FD}</style></head>
 <div class="footer">E-Site · Construction management for South African electrical contractors.<br>
 You received this because your email address was added to a company account on E-Site.
 If you weren't expecting it, you can safely ignore this message — no account is active until you set a password.<br>
-<a href="${opts.siteUrl}" style="color:#93C5FD">app.e-site.live</a></div>
+<a href="${opts.siteUrl}" style="color:#93C5FD">${escapeHtml(opts.siteUrl.replace(/^https?:\/\//, ""))}</a></div>
 </div></body></html>`
 }
 
@@ -84,7 +84,7 @@ export interface InviteEmailVars {
   siteNames?: string[]
   /** The set-password action link (from admin.generateLink recovery). */
   actionLink: string
-  /** App origin, e.g. https://app.e-site.live (no trailing slash). */
+  /** App origin, e.g. https://www.e-site.live (no trailing slash). */
   siteUrl: string
   /** For contractor sub-orgs: the managing company, shown for extra context. */
   managingCompanyName?: string | null
@@ -145,7 +145,7 @@ export interface SiteAssignmentEmailVars {
   projectId: string
   /** The role they were assigned on this site. */
   role: string
-  /** App origin, e.g. https://app.e-site.live (no trailing slash). */
+  /** App origin, e.g. https://www.e-site.live (no trailing slash). */
   siteUrl: string
 }
 
