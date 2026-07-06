@@ -20,6 +20,7 @@ import ExcelJS from 'exceljs'
 import type { ExportPayload, EnrichedCable } from './export-payload'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
 import { stampExcelDraft } from './export-watermark'
+import { groupRunsBySectionConductor } from './export-util'
 
 const WM_AMBER = 'FFE69500'
 const HEADER_GREY = 'FF2A2A2A'
@@ -90,6 +91,7 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
     payload.revision.fault_level_ka != null
       ? `Fault level: ${payload.revision.fault_level_ka} kA`
       : null,
+    payload.costRedacted ? 'Cost data redacted for your role' : null,
   ].filter(Boolean)
   ws.mergeCells('A3:K3')
   ws.getCell('A3').value = issuedBits.join('  ·  ')
@@ -145,6 +147,11 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
     // When ≥ 2, the importer fans the row out into N cables on one supply.
     // When absent or 1, the row is a single cable (legacy shape).
     ['S', 'Parallel'],
+    // Destination-board breaker (A) + pole config. Appended after the
+    // importer-read columns (A–S) so re-import is unaffected — the importer
+    // ignores trailing columns.
+    ['T', 'Breaker A'],
+    ['U', 'Poles'],
   ]
   for (const [letter, label] of HEADERS) {
     const cell = ws.getCell(`${letter}6`)
@@ -182,6 +189,8 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
   ws.getColumn('Q').width = 14
   ws.getColumn('R').width = 30
   ws.getColumn('S').width = 9
+  ws.getColumn('T').width = 10
+  ws.getColumn('U').width = 8
 
   // ONE ROW PER RUN — collapse parallels under their shared logical feed.
   // Group runs by (section, conductor) so we can stamp section header rows
@@ -205,42 +214,19 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
       runNumber++
     }
   }
-}
 
-interface RunGroup {
-  section: 'NORMAL' | 'EMERGENCY' | null
-  conductor: 'CU' | 'AL'
-  runs: ExportPayload['runs']
-}
-
-function groupRunsBySectionConductor(runs: ExportPayload['runs']): RunGroup[] {
-  // Bucket runs by (section, conductor). Section + conductor live ON the run
-  // already (run.section is the supply's section; run.conductor is the head
-  // strand's metal — and in practice all parallels share conductor).
-  const buckets = new Map<string, RunGroup>()
-  const orderKeys: string[] = []
-  for (const r of runs) {
-    const section = r.section === 'EMERGENCY' ? 'EMERGENCY'
-                  : r.section === 'NORMAL' ? 'NORMAL'
-                  : null
-    const key = `${section ?? '_'}|${r.conductor}`
-    if (!buckets.has(key)) {
-      buckets.set(key, { section, conductor: r.conductor, runs: [] })
-      orderKeys.push(key)
-    }
-    buckets.get(key)!.runs.push(r)
+  if (payload.runs.length === 0) {
+    // Explicit placeholder — header-only sheet reads like a bug.
+    ws.mergeCells(`A${rowIdx}:U${rowIdx}`)
+    const cell = ws.getCell(`A${rowIdx}`)
+    cell.value = 'No cables in this revision yet.'
+    cell.font = { italic: true, size: 11, color: { argb: 'FF808080' } }
+    cell.alignment = { horizontal: 'left', vertical: 'middle' }
   }
-  // Stable order: NORMAL first, then EMERGENCY, then null. CU before AL.
-  orderKeys.sort((a, b) => {
-    const [sa, ca] = a.split('|')
-    const [sb, cb] = b.split('|')
-    const sectionRank = (s: string) => (s === 'NORMAL' ? 0 : s === 'EMERGENCY' ? 1 : 2)
-    if (sectionRank(sa) !== sectionRank(sb)) return sectionRank(sa) - sectionRank(sb)
-    const condRank = (c: string) => (c === 'CU' ? 0 : 1)
-    return condRank(ca) - condRank(cb)
-  })
-  return orderKeys.map((k) => buckets.get(k)!)
 }
+
+// Section/conductor grouping now lives in export-util.ts, shared with the
+// PDF renderer so the ordering semantics can't drift between formats.
 
 function writeSectionHeaderRow(
   ws: ExcelJS.Worksheet,
@@ -258,7 +244,7 @@ function writeSectionHeaderRow(
   cell.alignment = { horizontal: 'left', vertical: 'middle' }
   // Faint amber underline across the whole row to draw the eye
   // (col 1..19 — includes new Parallel column at S)
-  for (let col = 1; col <= 19; col++) {
+  for (let col = 1; col <= 21; col++) {
     const c = ws.getRow(rowIdx).getCell(col)
     if (col !== 1) {
       c.fill = {
@@ -311,9 +297,12 @@ function writeRunRow(
   ws.getCell(`Q${rowIdx}`).value = head.tag_override
   ws.getCell(`R${rowIdx}`).value = head.notes
   ws.getCell(`S${rowIdx}`).value = run.parallel_count
+  ws.getCell(`T${rowIdx}`).value = run.breaker_a
+  ws.getCell(`U${rowIdx}`).value = run.pole_config
 
   // Number formats
   ws.getCell(`G${rowIdx}`).numFmt = '0'
+  ws.getCell(`T${rowIdx}`).numFmt = '0'
   ws.getCell(`K${rowIdx}`).numFmt = '0.000'
   ws.getCell(`L${rowIdx}`).numFmt = '0.00'
   ws.getCell(`M${rowIdx}`).numFmt = '0.00'
@@ -322,7 +311,7 @@ function writeRunRow(
   ws.getCell(`S${rowIdx}`).numFmt = '0'
 
   // Faint dividers (col 1..19 — bumped to include the new Parallel column)
-  for (let col = 1; col <= 19; col++) {
+  for (let col = 1; col <= 21; col++) {
     ws.getRow(rowIdx).getCell(col).border = {
       bottom: { style: 'hair', color: { argb: 'FF333333' } },
     }
@@ -331,7 +320,7 @@ function writeRunRow(
   // Light fill when any strand carries manual_override — surfaces "engineer
   // typed Ω/km manually" at run level. Use the most-pessimistic signal.
   if (run.cables.some((c) => c.manual_override)) {
-    for (let col = 1; col <= 19; col++) {
+    for (let col = 1; col <= 21; col++) {
       ws.getRow(rowIdx).getCell(col).fill = {
         type: 'pattern',
         pattern: 'solid',

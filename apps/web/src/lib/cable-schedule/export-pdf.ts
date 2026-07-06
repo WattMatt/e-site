@@ -11,6 +11,8 @@
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import QRCode from 'qrcode'
+import { formatDecimal } from './export-format'
+import { groupRunsBySectionConductor } from './export-util'
 import type { EnrichedCable, ExportPayload } from './export-payload'
 import { stampPdfDraft } from './export-watermark'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
@@ -278,6 +280,7 @@ function drawSchedulePages(
     { key: 'to_label', label: 'To', width: 60, align: 'left', format: (run) => run.to_label },
     { key: 'voltage_v', label: 'V', width: 30, align: 'right', format: (run) => fmt(run.voltage_v) },
     { key: 'load_a', label: 'Load A', width: 38, align: 'right', format: (run) => fmt(run.load_a) },
+    { key: 'breaker_a', label: 'Brkr', width: 46, align: 'right', format: (run) => run.breaker_a == null ? '' : (run.pole_config ? `${run.breaker_a} ${run.pole_config}` : String(run.breaker_a)) },
     { key: 'size_mm2', label: 'Size', width: 32, align: 'right', format: (run) => fmt(run.size_mm2) },
     { key: 'cores', label: 'Cores', width: 32, align: 'center', format: (run) => String(run.cores) },
     { key: 'conductor', label: 'Mat', width: 26, align: 'center', format: (run) => run.conductor === 'CU' ? 'Cu' : 'Al' },
@@ -292,41 +295,18 @@ function drawSchedulePages(
   const startX = (LAND_W - totalW) / 2
 
   // Group RUNS by (section, conductor) to insert section header rows.
-  const groups: Array<{
-    sectionLabel: string | null
-    conductorLabel: string
-    runs: ExportPayload['runs']
-  }> = []
-  const bucket = new Map<string, ExportPayload['runs']>()
-  const keyOrder: string[] = []
-  for (const r of payload.runs) {
-    const sec = r.section ?? null
-    const key = `${sec ?? '_'}|${r.conductor}`
-    if (!bucket.has(key)) {
-      bucket.set(key, [])
-      keyOrder.push(key)
-    }
-    bucket.get(key)!.push(r)
-  }
-  keyOrder.sort((a, b) => {
-    const [sa, ca] = a.split('|')
-    const [sb, cb] = b.split('|')
-    const rank = (s: string) =>
-      s === 'NORMAL' ? 0 : s === 'EMERGENCY' ? 1 : 2
-    if (rank(sa) !== rank(sb)) return rank(sa) - rank(sb)
-    return ca === 'CU' ? -1 : 1
-  })
+  // Bucketing + ordering shared with the Excel renderer (export-util.ts);
+  // only the label derivation (section header shown once per section) is local.
   let lastSection: string | null | undefined = undefined
-  for (const k of keyOrder) {
-    const [sec, cond] = k.split('|')
-    const sectionLabel = sec !== '_' && sec !== lastSection ? sec : null
-    lastSection = sec
-    groups.push({
+  const groups = groupRunsBySectionConductor(payload.runs).map((g) => {
+    const sectionLabel = g.section !== null && g.section !== lastSection ? g.section : null
+    lastSection = g.section
+    return {
       sectionLabel,
-      conductorLabel: cond === 'CU' ? 'Copper' : 'Aluminium',
-      runs: bucket.get(k)!,
-    })
-  }
+      conductorLabel: g.conductor === 'CU' ? 'Copper' : 'Aluminium',
+      runs: g.runs,
+    }
+  })
 
   // Flatten: alternating section-header rows + run rows. Run number is
   // assigned at flatten time so it's stable across the visible order.
@@ -364,6 +344,16 @@ function drawSchedulePages(
     if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
     drawLandscapeHeader(page, payload, helv, helvB, pageIdx + 1, pages.length)
     drawScheduleColumnHeader(page, cols, startX, LAND_H - HEADER_BAND, helvB)
+    if (items.length === 0) {
+      // Explicit placeholder so a header-only page doesn't read like a bug.
+      page.drawText('No cables in this revision yet.', {
+        x: startX,
+        y: LAND_H - HEADER_BAND - 30,
+        size: 11,
+        font: helv,
+        color: TEXT_MID,
+      })
+    }
     let y = LAND_H - HEADER_BAND - ROW_H
     let rowZebra = false
     for (const item of items) {
@@ -766,8 +756,17 @@ async function drawTagPages(
           width: qrSize,
           height: qrSize,
         })
-      } catch {
-        // Skip QR on failure — text tag still visible
+      } catch (err) {
+        // Don't swallow silently — log it and leave a visible marker so a
+        // missing QR is noticed rather than mistaken for an empty label.
+        console.error('[cable-export] tag QR render failed', { tag: qrText, err })
+        page.drawText('QR FAILED', {
+          x: x + cardW - 70 - 12,
+          y: y + cardH - 44,
+          size: 7,
+          font: helv,
+          color: TEXT_MID,
+        })
       }
     }
   }
@@ -820,8 +819,7 @@ function drawPortraitHeader(
 }
 
 function fmt(n: number | null | undefined, dp = 0): string {
-  if (n == null || !Number.isFinite(n)) return ''
-  return dp > 0 ? n.toFixed(dp) : Math.round(n).toString()
+  return formatDecimal(n, dp)
 }
 
 function clipText(text: string, maxWidth: number, font: PDFFont, size: number): string {

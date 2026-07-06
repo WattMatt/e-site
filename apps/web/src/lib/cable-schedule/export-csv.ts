@@ -14,6 +14,7 @@
 
 import type { ExportPayload } from './export-payload'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
+import { formatDecimal } from './export-format'
 
 const NL = '\r\n' // Windows-style — Excel + LibreOffice both happy
 
@@ -92,6 +93,8 @@ function scheduleCsv(payload: ExportPayload): string {
     'to',
     'voltage_v',
     'load_a',
+    'breaker_a',
+    'pole_config',
     'parallel_count',
     'size_mm2',
     'cores',
@@ -135,6 +138,8 @@ function scheduleCsv(payload: ExportPayload): string {
         run.to_label,
         run.voltage_v ?? '',
         run.load_a ?? '',
+        run.breaker_a ?? '',
+        run.pole_config ?? '',
         run.parallel_count,
         run.size_mm2,
         run.cores,
@@ -156,6 +161,10 @@ function scheduleCsv(payload: ExportPayload): string {
     )
     runNo++
   }
+  if (payload.runs.length === 0) {
+    // Explicit placeholder — an empty body (header only) reads like a bug.
+    lines.push(esc('No cables in this revision yet.'))
+  }
   return lines.join(NL) + NL
 }
 
@@ -164,6 +173,7 @@ function tagsCsv(payload: ExportPayload): string {
     'cable_id',
     'cable_no',
     'cable_tag',
+    'derated_current_rating_a',
     'end_position',
     'tag_text',
     'printed',
@@ -178,6 +188,7 @@ function tagsCsv(payload: ExportPayload): string {
         t.cable_id,
         cable?.cable_no ?? '',
         cable?.cable_tag ?? '',
+        cable?.derated_current_rating_a ?? '',
         t.end_position,
         t.tag_text,
         t.printed ? 'true' : 'false',
@@ -285,8 +296,7 @@ function esc(v: unknown): string {
 }
 
 function round2(n: number): string {
-  if (!Number.isFinite(n)) return ''
-  return (Math.round(n * 100) / 100).toFixed(2)
+  return formatDecimal(n, 2)
 }
 
 function renderJson(v: unknown): string {
