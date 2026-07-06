@@ -33,13 +33,36 @@ export const GENERATOR_SIZING_TABLE: GeneratorSizingData[] = [
   { rating: '1000 kVA', load25: 62.1, load50: 124.2, load75: 152.16, load100: 225.2 },
 ]
 
+/**
+ * Resolve a sizing-table row from whatever the zone editor stored. Exact label
+ * match first ("400 kVA"), then numeric-kVA match — prod data holds bare "400"
+ * / "350", and the old exact-only lookup silently zeroed the whole operational
+ * tariff for them (PNP FAERIE GLEN, 2026-07-06).
+ */
+function findSizingRow(size: string): GeneratorSizingData | undefined {
+  const exact = GENERATOR_SIZING_TABLE.find((r) => r.rating === size)
+  if (exact) return exact
+  // Strict token only: a whole number with an optional kVA suffix. parseInt
+  // truncation would silently bill "400.5" or "400 kW" at the 400 kVA row —
+  // those must fall through to the readiness gap instead.
+  const m = size.match(/^\s*(\d+)\s*(kva)?\s*$/i)
+  if (!m) return undefined
+  const kva = parseInt(m[1], 10)
+  return GENERATOR_SIZING_TABLE.find((r) => parseInt(r.rating, 10) === kva)
+}
+
+/** True when a stored generator size resolves to a sizing-table row (readiness check). */
+export function hasFuelRating(size: string | null | undefined): boolean {
+  return size != null && size !== '' && findSizingRow(size) !== undefined
+}
+
 // Fuel consumption (l/h) for (generator size, running-load %).
 // Transcribed VERBATIM from nexus generatorReportPdfBuilder.ts getFuelConsumption
 // (the billed-report path). Piecewise-linear over the 25/50/75/100 table columns using
 // `<=` boundaries; below 25% returns load25; above 100% extrapolates off the 75→100 slope.
 // Unknown size returns 0 (nexus returns 0 — it does NOT throw).
 export function getFuelConsumption(size: string, runningLoadPercent: number): number {
-  const row = GENERATOR_SIZING_TABLE.find((r) => r.rating === size)
+  const row = findSizingRow(size)
   if (!row) return 0
   if (runningLoadPercent <= 25) return row.load25
   if (runningLoadPercent <= 50) {

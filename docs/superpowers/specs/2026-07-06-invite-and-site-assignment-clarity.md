@@ -100,7 +100,7 @@ OR-in the explicit cross-org project-member path).
    bug can never leave a user with no way in. Fix the dead `/onboarding/join` link.
 2. **Site-assignment notification** (Criterion B/b1): when a user is added to a project, email them
    "You've been given access to <site> on E-Site by <name>" with scope explanation.
-3. **RLS migration** (Criterion B/b2): `00155_cross_org_project_visibility.sql` — **add-only**
+3. **RLS migration** (Criterion B/b2): `00160_cross_org_project_visibility.sql` — **add-only**
    permissive SELECT policies `USING public.user_has_project_access(<project_id>)` on the 14
    verified per-project tables (projects, project_members, site_diary_entries, rfis, drawings,
    contacts, handover_checklist, rfi_responses, site_diary_attachments, snags, cables,

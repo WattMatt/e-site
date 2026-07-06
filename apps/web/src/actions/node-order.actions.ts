@@ -25,7 +25,8 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
+import { projectService, ORG_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 
 // ---------------------------------------------------------------------------
 // PostgREST helpers — same shape as tenant-scope.actions.ts / equipment.actions.ts
@@ -61,12 +62,17 @@ async function structurePatch(
 }
 
 // ---------------------------------------------------------------------------
-// Auth + project-access guard — mirrors tenant-scope.actions.ts exactly
+// Auth + project-access guard — mirrors tenant-scope.actions.ts
 // ---------------------------------------------------------------------------
 
 const uuidSchema = z.string().uuid()
 
-/** Returns { user, orgId, supabase } or { error: string } */
+/**
+ * Returns { user, orgId, supabase } or { error: string }.
+ * Every caller is a WRITE (mark ordered / mark received / note edits) executed
+ * with the service-role key, so the effective-role gate here is the sole
+ * authorisation — without it a client_viewer could advance order status.
+ */
 async function guardProjectAccess(projectId: string): Promise<
   | { error: string; orgId?: undefined; supabase?: undefined }
   | { error?: undefined; user: object; orgId: string; supabase: Awaited<ReturnType<typeof createClient>> }
@@ -79,6 +85,9 @@ async function guardProjectAccess(projectId: string): Promise<
 
   const project = await projectService.getById(supabase as never, projectId)
   if (!project) return { error: 'Project not found' }
+
+  const roleGate = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!roleGate.ok) return { error: roleGate.error }
 
   return { user, orgId: project.organisation_id as string, supabase }
 }

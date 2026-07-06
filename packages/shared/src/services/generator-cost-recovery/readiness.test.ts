@@ -57,6 +57,47 @@ describe('checkReadiness', () => {
     expect(result.gaps).toEqual([])
   })
 
+  it('accepts a bare numeric generator size ("400") — resolvable via the sizing table', () => {
+    const result = checkReadiness({
+      settings: SETTINGS,
+      zones: [ZONE],
+      generators: [{ ...GEN, generator_size: '400' }],
+      tenantNodes: [makeSharedTenant()],
+    })
+    expect(result.gaps).toEqual([])
+  })
+
+  it('reports when the LARGEST generator has no sizing-table row (tariff would be R0/kWh)', () => {
+    const result = checkReadiness({
+      settings: SETTINGS,
+      zones: [ZONE],
+      generators: [
+        { ...GEN, generator_size: '715' }, // largest by kVA, unrated → tariff basis broken
+        { ...GEN, generator_number: 2, generator_size: '400 kVA' },
+      ],
+      tenantNodes: [makeSharedTenant()],
+    })
+    expect(result.ready).toBe(false)
+    expect(result.gaps).toContain(
+      'Largest generator size "715" is not in the sizing table — the operational tariff would be R0/kWh',
+    )
+  })
+
+  it('does NOT block when only a non-largest generator is unrated (tariff basis unaffected)', () => {
+    // The operational tariff derives solely from the largest generator; a
+    // sizeless/placeholder secondary row must not block report generation.
+    const result = checkReadiness({
+      settings: SETTINGS,
+      zones: [ZONE],
+      generators: [
+        { ...GEN, generator_size: '600 kVA' },
+        { ...GEN, generator_number: 2, generator_size: null },
+      ],
+      tenantNodes: [makeSharedTenant()],
+    })
+    expect(result.gaps).toEqual([])
+  })
+
   it('reports "Generator settings not configured" when settings is null', () => {
     const result = checkReadiness({
       settings: null,

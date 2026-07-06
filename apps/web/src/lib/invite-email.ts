@@ -25,7 +25,7 @@ type ServiceClient = ReturnType<typeof createServiceClient>
 const APP_URL = (
   process.env.NEXT_PUBLIC_APP_URL ??
   process.env.NEXT_PUBLIC_SITE_URL ??
-  'https://app.e-site.live'
+  'https://www.e-site.live'
 ).replace(/\/$/, '')
 
 const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? APP_URL).replace(/\/$/, '')

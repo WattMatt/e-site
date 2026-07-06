@@ -16,7 +16,7 @@
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 const FROM = 'E-Site <noreply@e-site.live>'
-const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://app.e-site.live'
+const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://www.e-site.live'
 
 interface EmailPayload {
   to: string
@@ -78,7 +78,7 @@ function baseTemplate(content: string) {
   h2{color:#fff;font-size:18px;margin:0 0 12px}p{font-size:14px;line-height:1.6;color:#94A3B8;margin:0 0 12px}
   .btn{display:inline-block;background:#2563EB;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600;font-size:14px;margin-top:8px}
   .footer{margin-top:24px;font-size:11px;color:#475569;text-align:center}</style></head>
-  <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${SITE_URL}" style="color:#3B82F6">app.e-site.live</a></div></div></body></html>`
+  <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${SITE_URL}" style="color:#3B82F6">www.e-site.live</a></div></div></body></html>`
 }
 
 // Decode JWT role claim without re-verifying — Supabase gateway already verified the signature.
