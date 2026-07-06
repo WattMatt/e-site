@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import type { OrgRole } from '@esite/shared'
 import { createClient } from '@/lib/supabase/server'
+import { getOrgContext } from '@/lib/auth-org'
 import { hasFeature } from '@/lib/features'
 import { hasMvAccess } from '@/lib/mv-access'
 import { listMyOrganisations } from '@/actions/active-organisation.actions'
@@ -18,6 +19,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   } = await supabase.auth.getUser()
 
   if (!user) redirect('/login')
+
+  // Clients never see the admin shell. The gate lives HERE (not per-page) so
+  // every current and future (admin) route is fail-closed for client_viewer —
+  // they are bounced to the dedicated viewing-only portal. Uses getOrgContext
+  // (active-org role), so a user who is client_viewer in one org but staff in
+  // another is routed per their currently-active org.
+  const ctx = await getOrgContext()
+  if (ctx?.role === 'client_viewer') redirect('/portal')
 
   // Resolve the user's primary org to drive the sidebar's lock indicators on
   // gated nav items (Inspection Templates, JBCC), plus role-gating of
