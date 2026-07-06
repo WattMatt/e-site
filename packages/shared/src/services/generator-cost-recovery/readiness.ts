@@ -31,14 +31,24 @@ export function checkReadiness(d: CheckReadinessArgs): ReadinessResult {
     gaps.push('No generators configured')
   }
 
-  // A size the sizing table can't resolve makes getFuelConsumption return 0,
-  // silently collapsing the operational tariff to R0/kWh — surface it here
-  // instead of letting a zero flow into a billed report.
-  const unratedGenerators = d.generators.filter((g) => !hasFuelRating(g.generator_size)).length
-  if (unratedGenerators > 0) {
-    gaps.push(
-      `${unratedGenerators} generator(s) with a size not in the sizing table — the operational tariff would be R0/kWh`,
-    )
+  // The operational tariff derives solely from the LARGEST generator (by
+  // parseInt of its size — mirrors the engine's parseKva reduce). If THAT
+  // generator's size can't be resolved to a sizing-table row,
+  // getFuelConsumption returns 0 and the tariff silently collapses to
+  // R0/kWh — surface it here instead of letting a zero flow into a billed
+  // report. Unrated non-largest generators don't affect the tariff and must
+  // not block report generation.
+  if (d.generators.length > 0) {
+    const kvaOf = (g: GcrZoneGeneratorRow) => {
+      const n = parseInt(g.generator_size ?? '', 10)
+      return Number.isNaN(n) ? 0 : n
+    }
+    const largest = d.generators.reduce((max, g) => (kvaOf(g) > kvaOf(max) ? g : max))
+    if (!hasFuelRating(largest.generator_size)) {
+      gaps.push(
+        `Largest generator size "${largest.generator_size ?? '(blank)'}" is not in the sizing table — the operational tariff would be R0/kWh`,
+      )
+    }
   }
 
   const sharedTenants = d.tenantNodes.filter((t) => t.generator_participation === 'shared')

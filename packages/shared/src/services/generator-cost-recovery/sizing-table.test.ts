@@ -37,11 +37,20 @@ describe('getFuelConsumption', () => {
     expect(getFuelConsumption('415', 75)).toBe(0)
   })
 
+  it('does NOT truncate fractional or unit-mismatched sizes onto a row ("400.5", "400 kW")', () => {
+    // parseInt would silently bill these at the 400 kVA row; a billing table
+    // must fall through to the readiness gap instead.
+    expect(getFuelConsumption('400.5', 75)).toBe(0)
+    expect(getFuelConsumption('400 kW', 75)).toBe(0)
+  })
+
   it('hasFuelRating mirrors the lookup (used by readiness)', async () => {
     const { hasFuelRating } = await import('./sizing-table')
     expect(hasFuelRating('400')).toBe(true)
     expect(hasFuelRating('400 kVA')).toBe(true)
     expect(hasFuelRating('415')).toBe(false)
+    expect(hasFuelRating('400.5')).toBe(false)
+    expect(hasFuelRating('400 kW')).toBe(false)
     expect(hasFuelRating(null)).toBe(false)
     expect(hasFuelRating('')).toBe(false)
   })

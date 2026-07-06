@@ -42,8 +42,12 @@ export const GENERATOR_SIZING_TABLE: GeneratorSizingData[] = [
 function findSizingRow(size: string): GeneratorSizingData | undefined {
   const exact = GENERATOR_SIZING_TABLE.find((r) => r.rating === size)
   if (exact) return exact
-  const kva = parseInt(size, 10)
-  if (Number.isNaN(kva)) return undefined
+  // Strict token only: a whole number with an optional kVA suffix. parseInt
+  // truncation would silently bill "400.5" or "400 kW" at the 400 kVA row —
+  // those must fall through to the readiness gap instead.
+  const m = size.match(/^\s*(\d+)\s*(kva)?\s*$/i)
+  if (!m) return undefined
+  const kva = parseInt(m[1], 10)
   return GENERATOR_SIZING_TABLE.find((r) => parseInt(r.rating, 10) === kva)
 }
 
