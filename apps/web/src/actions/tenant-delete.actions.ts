@@ -200,6 +200,7 @@ interface TenantNodeRow {
   code: string
   name: string | null
   status: string
+  shop_number: string | null
 }
 
 /**
@@ -214,7 +215,7 @@ async function loadTenantNode(
   const { data: node } = await (supabase as any)
     .schema('structure')
     .from('nodes')
-    .select('id, kind, code, name, status')
+    .select('id, kind, code, name, status, shop_number')
     .eq('id', nodeId)
     .eq('project_id', projectId)
     .maybeSingle()
@@ -602,6 +603,27 @@ export async function restoreTenantAction(
     .neq('id', nodeId)
   if (codeClash && codeClash.length > 0) {
     return { error: `A tenant with code ${loaded.node.code} already exists. Rename or remove it before restoring this one.` }
+  }
+
+  // Same for SHOP NO. — the 00154 partial unique index (live tenant_db rows)
+  // would reject the restore if an import or edit re-used this number while
+  // the tenant sat in the bin. Pre-check BEFORE the audit insert below so a
+  // refused restore never leaves a phantom 'restore' audit row.
+  if (loaded.node.shop_number) {
+    const { data: numberClash } = await (guard.supabase as any)
+      .schema('structure')
+      .from('nodes')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('kind', 'tenant_db')
+      .eq('shop_number', loaded.node.shop_number)
+      .is('deleted_at', null)
+      .neq('id', nodeId)
+    if (numberClash && numberClash.length > 0) {
+      return {
+        error: `A live tenant already uses SHOP NO. "${loaded.node.shop_number}". Renumber that tenant first, then restore this one.`,
+      }
+    }
   }
 
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY

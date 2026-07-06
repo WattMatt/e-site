@@ -117,7 +117,11 @@ export function ScheduleTable({
         }}
       >
         <p style={{ marginBottom: 6, fontWeight: 600 }}>No shops imported yet</p>
-        <p style={{ fontSize: 13 }}>Upload a tenant schedule .xlsx file to get started.</p>
+        <p style={{ fontSize: 13 }}>
+          {readOnly
+            ? 'No tenant schedule has been imported for this project yet.'
+            : 'Upload a tenant schedule .xlsx file to get started.'}
+        </p>
       </div>
     )
   }
@@ -258,7 +262,17 @@ export function ScheduleTable({
                     </Td>
                     <Td mono>
                       {readOnly ? (
-                        tenantBoByNode[node.id]?.effectiveDate ?? '—'
+                        <>
+                          {tenantBoByNode[node.id]?.effectiveDate ?? '—'}
+                          {tenantBoByNode[node.id]?.boDateOverride != null && (
+                            <span
+                              title="Manually set — overrides the computed date"
+                              style={{ marginLeft: 6, fontSize: 10, color: 'var(--c-amber)' }}
+                            >
+                              set
+                            </span>
+                          )}
+                        </>
                       ) : (
                         <BoDateCell
                           projectId={projectId}
@@ -291,6 +305,7 @@ export function ScheduleTable({
                         <NodeOrderCell
                           order={ordersByNodeAndScope[`${node.id}:${t.id}`] ?? null}
                           projectId={projectId}
+                          readOnly={readOnly}
                         />
                       </Td>
                     ))}

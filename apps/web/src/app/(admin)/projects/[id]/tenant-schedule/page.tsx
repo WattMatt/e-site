@@ -12,7 +12,7 @@ import type { ScopeItemType, TenantScopeItem, TenantDetails } from './_component
 import type { LayoutDetails } from './_components/LayoutIssuedPanel'
 import type { TenantBoInfo } from './_components/BoCells'
 import type { NodeOrderData } from '../equipment-schedule/_components/NodeOrderCell'
-import { requireRole } from '@/lib/auth/require-role'
+import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
 import { listProjectReportsAction } from '@/actions/project-reports.actions'
 import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 
@@ -207,7 +207,11 @@ export default async function TenantSchedulePage({ params }: Props) {
   const canManageReports = manageGuard.ok
   // Page-wide write gate: viewers (client_viewer / no write role) get a
   // read-only schedule — no import, no opening-date edit, no row mutations.
-  const canWrite = manageGuard.ok
+  // EFFECTIVE role (00107): org owner/admin/PM, or a per-project promotion via
+  // projects.project_members — the same rule the scope/document/BO/entry
+  // actions enforce, so the UI never hides a control the server would accept.
+  const writeGuard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  const canWrite = writeGuard.ok
 
   return (
     <div className="animate-fadeup">

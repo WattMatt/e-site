@@ -26,7 +26,8 @@
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
+import { projectService, ORG_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -34,8 +35,6 @@ import { projectService } from '@esite/shared'
 
 const uuidSchema = z.string().uuid()
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date')
-
-const WRITE_ROLES = ['owner', 'admin', 'project_manager'] as const
 
 // ---------------------------------------------------------------------------
 // PostgREST raw-fetch helpers (cross-schema write gotcha)
@@ -100,17 +99,12 @@ async function guardWriter(projectId: string): Promise<GuardResult> {
 
   const orgId = project.organisation_id
 
-  const { data: membership } = await supabase
-    .from('user_organisations')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('organisation_id', orgId)
-    .eq('is_active', true)
-    .maybeSingle()
-
-  const role = (membership as { role: string } | null)?.role
-  if (!role || !WRITE_ROLES.includes(role as (typeof WRITE_ROLES)[number])) {
-    return { error: 'You do not have permission to change beneficial-occupation dates.' }
+  // Effective (project-scoped) role: org owner/admin/PM, or a per-project
+  // promotion via projects.project_members (00107) — matches the page's
+  // canWrite gate and the scope/document action guards.
+  const roleGate = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!roleGate.ok) {
+    return { error: `You do not have permission to change beneficial-occupation dates. (${roleGate.error})` }
   }
 
   return { supabase, orgId }
