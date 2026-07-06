@@ -195,7 +195,12 @@ export async function gatherGeneratorReportData(
       .from('nodes')
       .select('id, shop_number, shop_name, shop_area_m2, shop_category, generator_participation')
       .eq('project_id', projectId)
-      .eq('kind', 'tenant_db'),
+      .eq('kind', 'tenant_db')
+      // Mirror loadGcrConfigAction: decommissioned / binned tenants must not be
+      // billed — without these filters they surfaced (and were charged) under
+      // "Unzoned" after a re-import decommissioned them.
+      .is('deleted_at', null)
+      .neq('status', 'decommissioned'),
 
     (service as any)
       .schema('gcr')
