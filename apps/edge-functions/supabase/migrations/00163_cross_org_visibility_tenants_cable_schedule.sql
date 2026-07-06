@@ -1,11 +1,11 @@
 -- ---------------------------------------------------------------------------
--- Migration 00156: cross-org project visibility — tenants.* + cable_schedule.*
+-- Migration 00163: cross-org project visibility — tenants.* + cable_schedule.*
 -- ---------------------------------------------------------------------------
--- Follow-up to migration 00155 (cross-org project visibility). 00155 fixed the
+-- Follow-up to migration 00160 (cross-org project visibility). 00160 fixed the
 -- per-project SELECT surfaces in the `projects.*` and `field.*` schemas so a
 -- contractor from a SUB-ORG (e.g. Bob's Building), added to another org's
 -- project via `projects.project_members`, can actually SEE that project's data.
--- 00155's own header named the adjacent per-project surfaces in the
+-- 00160's own header named the adjacent per-project surfaces in the
 -- `structure.*`, `tenants.*`, `cable_schedule.*`, `inspections.*` and `gcr.*`
 -- schemas as a documented follow-up "once their exact predicates are confirmed".
 --
@@ -27,7 +27,7 @@
 -- in the project's OWNING org, so the row is filtered out even though they hold
 -- a legitimate `project_members` row.
 --
--- Fix (identical to 00155): ADD a second PERMISSIVE SELECT policy on each
+-- Fix (identical to 00160): ADD a second PERMISSIVE SELECT policy on each
 -- affected table granting read whenever `public.user_has_project_access(
 -- <project_id>)` is TRUE. PostgreSQL OR-combines permissive policies for the
 -- same command, so this is purely ADDITIVE — the existing policies are
@@ -46,10 +46,10 @@
 -- inspections.inspections are EXCLUDED — they apply a client-viewer rule
 -- STRICTER than project membership; see below.)
 --
--- Sequencing: this migration is the logical successor to 00155 (PR #119) but is
+-- Sequencing: this migration is the logical successor to 00160 (PR #119) but is
 -- INDEPENDENT of it — it only depends on `public.user_has_project_access`
--- (defined 00066, relaxed 00106), not on 00155's policies. It applies correctly
--- whether or not 00155 has been applied. It must merge AFTER 00155 to keep the
+-- (defined 00066, relaxed 00106), not on 00160's policies. It applies correctly
+-- whether or not 00160 has been applied. It must merge AFTER 00160 to keep the
 -- migration sequence gap-free.
 --
 -- ===========================================================================
@@ -172,7 +172,7 @@ CREATE POLICY "Project members can view cable supplies (cross-org)"
           AND public.user_has_project_access(r.project_id)
     ));
 
--- Distinct label: field.cables already owns "…view cables (cross-org)" (00155).
+-- Distinct label: field.cables already owns "…view cables (cross-org)" (00160).
 DROP POLICY IF EXISTS "Project members can view cable-schedule cables (cross-org)" ON cable_schedule.cables;
 CREATE POLICY "Project members can view cable-schedule cables (cross-org)"
     ON cable_schedule.cables FOR SELECT
