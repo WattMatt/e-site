@@ -154,8 +154,8 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | — |
 | `GET /api/projects/[id]/snags/visits/[visitId]/report` | R | R | R | R | R | — | R |
 | `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
-| `POST /api/tenant-schedule/parse` | W | W | W | —⁶ | — | — | — |
-| `POST /api/tenant-schedule/commit` | W | W | W | —⁶ | — | — | — |
+| `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
+| `POST /api/tenant-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `POST /api/cable-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/cable-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `GET /api/cable-schedule/export/excel` | R | R | R | — | — | — | R¹ |
