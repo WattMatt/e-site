@@ -85,6 +85,17 @@ interface Props {
   onSaved: () => void
 }
 
+/**
+ * SANS 10142-1 reference ambient for the derating tables: 25 °C for cables
+ * in the ground or in buried ducts (T6.3.4's reference row), 30 °C for
+ * cables in air (T6.3.5's reference row). Used as the form default; the
+ * engineer can still override for hot plant rooms / shallow sun-exposed
+ * trenches.
+ */
+function sansAmbientDefaultC(installMethod: string | null | undefined): number {
+  return installMethod === 'DIRECT_IN_GROUND' || installMethod === 'DUCT' ? 25 : 30
+}
+
 const SIZE_OPTIONS = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400]
 const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
 const SECTION_OPTIONS: Array<{ value: 'NORMAL' | 'EMERGENCY' | ''; label: string }> = [
@@ -235,8 +246,12 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
   )
   const [tagOverride, setTagOverride] = useState<string>(head?.tag_override ?? '')
   const [notes, setNotes] = useState<string>(head?.notes ?? '')
+  // Ambient defaults to the SANS reference temperature for the chosen
+  // installation method (25 °C ground/duct, 30 °C air) and follows method
+  // changes until the engineer edits it explicitly.
+  const [ambientTouched, setAmbientTouched] = useState<boolean>(mode === 'edit-strand')
   const [ambientTempC, setAmbientTempC] = useState<number>(
-    mode === 'edit-strand' ? strand!.ambient_temp_c : 30,
+    mode === 'edit-strand' ? strand!.ambient_temp_c : sansAmbientDefaultC(installMethod),
   )
 
   // Supply-level fields (used by add-run + edit-run).
@@ -355,7 +370,9 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
           depthMm: depthVal,
           groupedWith,
           ambientTempC,
-          thermalResistivityKmw: 1.0,
+          // 1.2 K·m/W is the SANS / Aberdare F&F reference soil thermal
+          // resistivity (T6.3.2 factor = 1.0 at 1.2).
+          thermalResistivityKmw: 1.2,
           ohmPerKmOverride: ohmVal,
           groupingArrangement,
         })
@@ -373,9 +390,9 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
           depthMm: depthVal,
           groupedWith,
           ambientTempC,
-          // 1.0 K·m/W is the SANS default soil thermal resistivity used by
-          // the existing addParallelCableSetAction + addEntityPanel flow.
-          thermalResistivityKmw: 1.0,
+          // 1.2 K·m/W is the SANS / Aberdare F&F reference soil thermal
+          // resistivity — matches the server-side zod default.
+          thermalResistivityKmw: 1.2,
           ohmPerKmOverride: ohmVal,
           notes: notesVal,
           groupingArrangement,
@@ -552,7 +569,17 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
                 </select>
               </Row>
               <Row label="Installation method" error={validationErrors.installMethod}>
-                <select className="ob-input" value={installMethod} onChange={(e) => setInstallMethod(e.target.value)} disabled={saving}>
+                <select
+                  className="ob-input"
+                  value={installMethod}
+                  onChange={(e) => {
+                    setInstallMethod(e.target.value)
+                    // Follow the SANS reference ambient for the new method
+                    // unless the engineer already set an explicit ambient.
+                    if (!ambientTouched) setAmbientTempC(sansAmbientDefaultC(e.target.value))
+                  }}
+                  disabled={saving}
+                >
                   <option value="">— None —</option>
                   <option value="DIRECT_IN_GROUND">Direct in ground</option>
                   <option value="DUCT">Duct</option>
@@ -610,8 +637,18 @@ export function CableFormBody({ state, onClose, onSaved }: Props) {
                   <input className="ob-input" type="text" maxLength={40} value={tagOverride} onChange={(e) => setTagOverride(e.target.value)} disabled={saving} />
                 </Row>
               )}
-              <Row label="Ambient temp (°C)">
-                <input className="ob-input" type="number" step="1" value={ambientTempC} onChange={(e) => setAmbientTempC(Number(e.target.value) || 30)} disabled={saving} />
+              <Row label="Ambient temp (°C)" hint="SANS reference: 25 °C in ground / buried duct, 30 °C in air.">
+                <input
+                  className="ob-input"
+                  type="number"
+                  step="1"
+                  value={ambientTempC}
+                  onChange={(e) => {
+                    setAmbientTouched(true)
+                    setAmbientTempC(Number(e.target.value) || sansAmbientDefaultC(installMethod))
+                  }}
+                  disabled={saving}
+                />
               </Row>
               {mode !== 'add-run' && (
                 <Row label="Notes">

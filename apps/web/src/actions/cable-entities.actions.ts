@@ -21,6 +21,7 @@ import { recomputeTenantElectrical } from '@/lib/tenant-electrical/recompute'
 import { lookupCableProperties, lookupDeratingFactors, deratedRating, requiredParallelSet } from '@esite/shared'
 import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
 import { requireRole, ROLES_ENGINEER, type OrgRole } from '@/lib/cable-schedule/require-role'
+import { targetGroupedWith, groupSizeForNewStrand } from '@/lib/cable-schedule/parallel-derate'
 
 const uuid = z.string().uuid()
 
@@ -522,7 +523,10 @@ const addParallelCableSetSchema = z.object({
   installationMethod: z.enum(['DIRECT_IN_GROUND', 'DUCT', 'LADDER', 'TRAY', 'CLIPPED']),
   depthMm: z.number().int().positive().nullable().optional(),
   ambientTempC: z.number().default(30),
-  thermalResistivityKmw: z.number().default(1.0),
+  // SANS 10142-1 / Aberdare F&F reference soil thermal resistivity is
+  // 1.2 K·m/W (T6.3.2 factor = 1.0 at 1.2). The pre-2026-07 default of 1.0
+  // silently UP-rated buried cables by 8 % (direct) / 4 % (duct).
+  thermalResistivityKmw: z.number().default(1.2),
   ohmPerKmOverride: z.number().positive().nullable().optional(),
   groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).default('TOUCHING'),
 })
@@ -557,12 +561,24 @@ export async function addParallelCableSetAction(
   // Otherwise fall back to adding a single cable (clamp the count to 1).
   const { data: existingCables, error: existingErr } = await (supabase as any)
     .schema('cable_schedule').from('cables')
-    .select('cable_no').eq('supply_id', supplyId)
-    .order('cable_no', { ascending: false }).limit(1)
+    .select('id, cable_no, grouped_with').eq('supply_id', supplyId)
+    .order('cable_no', { ascending: false })
   if (existingErr) return { error: existingErr.message }
-  const existing = (existingCables ?? []) as Array<{ cable_no: number }>
+  const existing = (existingCables ?? []) as Array<{ id: string; cable_no: number; grouped_with: number | null }>
   const startNo = (existing[0]?.cable_no ?? 0) + 1
   const effectiveCount = existing.length > 0 ? 1 : parsed.data.count
+
+  // Group-size bookkeeping: EVERY strand (existing + new) must be derated at
+  // the FINAL strand count — adding a strand to a 1-strand supply makes both
+  // strands a group of 2 (T6.3.3/6.3.6 factor < 1). The pre-2026-07 code
+  // derated the added strand at grouped_with = 1 and never touched siblings.
+  const prevCount = existing.length
+  const finalCount = prevCount + effectiveCount
+  const newStrandGroupedWith = groupSizeForNewStrand(
+    existing.map((e) => Number(e.grouped_with ?? 1)),
+    prevCount,
+    finalCount,
+  )
 
   // All cables in the set share spec + group size, so resolve electricals once.
   const elec = await resolveCableElectricals(supabase as any, {
@@ -574,7 +590,7 @@ export async function addParallelCableSetAction(
     depthMm: parsed.data.depthMm ?? null,
     thermalResistivityKmw: parsed.data.thermalResistivityKmw,
     ambientTempC: parsed.data.ambientTempC,
-    groupedWith: effectiveCount,
+    groupedWith: newStrandGroupedWith,
     groupingArrangement: parsed.data.groupingArrangement,
     ohmPerKmOverride: parsed.data.ohmPerKmOverride ?? null,
     projectId: guard.projectId,
@@ -595,7 +611,7 @@ export async function addParallelCableSetAction(
     length_status: parsed.data.measuredLengthM != null ? 'MEASURED' : 'UNMEASURED',
     installation_method: parsed.data.installationMethod,
     depth_mm: parsed.data.depthMm ?? null,
-    grouped_with: effectiveCount,
+    grouped_with: newStrandGroupedWith,
     grouping_arrangement: parsed.data.groupingArrangement,
     ambient_temp_c: parsed.data.ambientTempC,
     thermal_resistivity_kmw: parsed.data.thermalResistivityKmw,
@@ -609,9 +625,26 @@ export async function addParallelCableSetAction(
   }))
 
   // One array insert — atomic at the statement level (no partial parallel sets).
-  const { error } = await (supabase as any)
-    .schema('cable_schedule').from('cables').insert(rows)
+  const { data: insertedRows, error } = await (supabase as any)
+    .schema('cable_schedule').from('cables').insert(rows).select('id')
   if (error) return { error: error.message }
+  const insertedIds = ((insertedRows ?? []) as Array<{ id: string }>).map((r) => r.id)
+
+  // Re-derate the pre-existing siblings at the final group size — the new
+  // strand changed the group every strand sits in.
+  if (prevCount > 0) {
+    const rederate = await rederateSupplyStrands(supabase as any, {
+      supplyId,
+      revisionId: parsed.data.revisionId,
+      organisationId: guard.orgId,
+      projectId: guard.projectId,
+      userId: user?.id ?? null,
+      prevCount,
+      finalCount,
+      excludeIds: insertedIds,
+    })
+    if (rederate.error) return { error: rederate.error }
+  }
 
   // Best-effort audit entry.
   try {
@@ -622,7 +655,7 @@ export async function addParallelCableSetAction(
       entity_id: supplyId,
       field_name: 'cables',
       old_value: null,
-      new_value: `auto-parallel: ${effectiveCount} cable(s)`,
+      new_value: `auto-parallel: ${effectiveCount} cable(s), group size ${finalCount}`,
       changed_by: user?.id ?? null,
     })
   } catch {
@@ -663,7 +696,10 @@ const addRunSchema = z.object({
   depthMm: z.number().int().positive().nullable().optional(),
   groupedWith: z.number().int().positive().default(1),
   ambientTempC: z.number().default(30),
-  thermalResistivityKmw: z.number().default(1.0),
+  // SANS 10142-1 / Aberdare F&F reference soil thermal resistivity is
+  // 1.2 K·m/W (T6.3.2 factor = 1.0 at 1.2). The pre-2026-07 default of 1.0
+  // silently UP-rated buried cables by 8 % (direct) / 4 % (duct).
+  thermalResistivityKmw: z.number().default(1.2),
   ohmPerKmOverride: z.number().positive().nullable().optional(),
   groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).default('TOUCHING'),
 })
@@ -722,7 +758,10 @@ const cableSchema = z.object({
   depthMm: z.number().int().positive().optional().nullable(),
   groupedWith: z.number().int().positive().default(1),
   ambientTempC: z.number().default(30),
-  thermalResistivityKmw: z.number().default(1.0),
+  // SANS 10142-1 / Aberdare F&F reference soil thermal resistivity is
+  // 1.2 K·m/W (T6.3.2 factor = 1.0 at 1.2). The pre-2026-07 default of 1.0
+  // silently UP-rated buried cables by 8 % (direct) / 4 % (duct).
+  thermalResistivityKmw: z.number().default(1.2),
   // Manual override of ohm_per_km — leave null to use the SANS lookup.
   ohmPerKmOverride: z.number().positive().optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
@@ -814,6 +853,142 @@ async function resolveCableElectricals(
   }
 }
 
+/** Row shape rederateSupplyStrands reads for each existing strand. */
+interface StrandForRederate {
+  id: string
+  cable_no: number
+  size_mm2: number
+  cores: '3' | '3+E' | '4'
+  conductor: 'CU' | 'AL'
+  insulation: 'PVC' | 'XLPE' | 'PILC'
+  installation_method: string | null
+  depth_mm: number | null
+  grouped_with: number | null
+  grouping_arrangement: 'TOUCHING' | 'SPACING_D' | null
+  ambient_temp_c: number | null
+  thermal_resistivity_kmw: number | null
+  derate_depth: number | null
+  derate_thermal: number | null
+  derate_grouping: number | null
+  derate_temp: number | null
+  derated_current_rating_a: number | null
+}
+
+/**
+ * Re-derate every strand on a supply at the FINAL group size after the
+ * strand count changed (a strand was added or deleted).
+ *
+ * SANS grouping derates worsen as the number of grouped cables rises, so a
+ * supply whose strand count changes invalidates the *stored* derate factors
+ * of every sibling — not just the row being written. Each strand is
+ * re-derated with its OWN stored inputs (spec, method, depth, ambient, soil
+ * resistivity) and a grouped_with of `targetGroupedWith(stored, prevCount,
+ * finalCount)` — which tracks the strand count for auto-managed values while
+ * preserving user-entered trench groups (see lib/cable-schedule/parallel-derate).
+ *
+ * Ω/km and manual_override are deliberately untouched — grouping affects the
+ * current rating, not the conductor impedance. Changes are audited per field
+ * in change_log exactly like updateCableAction's events.
+ */
+async function rederateSupplyStrands(
+  supabase: any,
+  args: {
+    supplyId: string
+    revisionId: string
+    organisationId: string
+    projectId: string
+    userId: string | null
+    /** Strand count before the add/delete. */
+    prevCount: number
+    /** Strand count after the add/delete. */
+    finalCount: number
+    /** Strand ids already written at the final group size (fresh inserts). */
+    excludeIds?: readonly string[]
+  },
+): Promise<{ error?: string }> {
+  const { data, error } = await supabase
+    .schema('cable_schedule').from('cables')
+    .select(
+      'id, cable_no, size_mm2, cores, conductor, insulation, installation_method, depth_mm, ' +
+      'grouped_with, grouping_arrangement, ambient_temp_c, thermal_resistivity_kmw, ' +
+      'derate_depth, derate_thermal, derate_grouping, derate_temp, derated_current_rating_a',
+    )
+    .eq('supply_id', args.supplyId)
+  if (error) return { error: `Could not load strands for re-derate: ${error.message}` }
+
+  const exclude = new Set(args.excludeIds ?? [])
+  const strands = ((data ?? []) as StrandForRederate[]).filter((s) => !exclude.has(s.id))
+  const events: Array<Record<string, unknown>> = []
+
+  for (const s of strands) {
+    const storedGrouped = Number(s.grouped_with ?? 1)
+    const nextGrouped = targetGroupedWith(storedGrouped, args.prevCount, args.finalCount)
+
+    const props = await lookupCableProperties(supabase, {
+      conductor: s.conductor,
+      insulation: s.insulation,
+      cores: s.cores,
+      size_mm2: Number(s.size_mm2),
+      projectId: args.projectId,
+    })
+    const baseRating =
+      s.installation_method === 'DIRECT_IN_GROUND' ? props?.rating_direct_buried
+      : s.installation_method === 'DUCT'           ? props?.rating_in_duct
+      : props?.rating_in_air
+    const derate = await lookupDeratingFactors(supabase, {
+      depth_mm: s.depth_mm == null ? 500 : Number(s.depth_mm),
+      thermal_resistivity_kmw: Number(s.thermal_resistivity_kmw ?? 1.2),
+      grouped_with: nextGrouped,
+      ambient_c: Number(s.ambient_temp_c ?? 30),
+      insulation: s.insulation,
+      installation_method: s.installation_method,
+      grouping_arrangement: s.grouping_arrangement ?? 'TOUCHING',
+    })
+    const deratedA = deratedRating(baseRating ?? null, {
+      depth: derate.depth, thermal: derate.thermal,
+      grouping: derate.grouping, temperature: derate.temperature,
+    })
+
+    const patch: Record<string, unknown> = {}
+    const log = (field: string, oldV: unknown, newV: unknown) => {
+      if (oldV === newV) return
+      patch[field] = newV
+      events.push({
+        revision_id: args.revisionId, organisation_id: args.organisationId,
+        entity_type: 'cable', entity_id: s.id, field_name: field,
+        old_value: oldV, new_value: newV, changed_by: args.userId,
+      })
+    }
+    log('grouped_with', storedGrouped, nextGrouped)
+    log('derate_grouping', s.derate_grouping == null ? null : Number(s.derate_grouping), derate.grouping)
+    log('derate_depth', s.derate_depth == null ? null : Number(s.derate_depth), derate.depth)
+    log('derate_thermal', s.derate_thermal == null ? null : Number(s.derate_thermal), derate.thermal)
+    log('derate_temp', s.derate_temp == null ? null : Number(s.derate_temp), derate.temperature)
+    log(
+      'derated_current_rating_a',
+      s.derated_current_rating_a == null ? null : Number(s.derated_current_rating_a),
+      deratedA == null ? null : Math.round(deratedA * 100) / 100,
+    )
+    if (Object.keys(patch).length === 0) continue
+
+    const { error: upErr } = await supabase
+      .schema('cable_schedule').from('cables')
+      .update(patch).eq('id', s.id)
+    if (upErr) {
+      return { error: `Strand #${s.cable_no} re-derate failed: ${upErr.message}` }
+    }
+  }
+
+  if (events.length > 0) {
+    try {
+      await supabase.schema('cable_schedule').from('change_log').insert(events)
+    } catch {
+      // best-effort audit — a logging failure must never surface to the caller
+    }
+  }
+  return {}
+}
+
 export async function addCableAction(
   input: z.infer<typeof cableSchema>,
 ): Promise<{ id?: string; cableNo?: number; error?: string }> {
@@ -833,16 +1008,25 @@ export async function addCableAction(
   const guard = await assertDraft(supabase, s.revision_id)
   if ('error' in guard) return { error: guard.error }
 
-  // Next cable_no within supply
+  // Next cable_no within supply. Full sibling list — a new strand changes
+  // the group size every sibling is derated at (re-derate below).
   const { data: existing } = await (supabase as any)
     .schema('cable_schedule')
     .from('cables')
-    .select('cable_no')
+    .select('id, cable_no, grouped_with')
     .eq('supply_id', s.id)
     .order('cable_no', { ascending: false })
-    .limit(1)
-  const nextCableNo = parsed.data.cableNo
-    ?? (((existing?.[0] as { cable_no?: number } | undefined)?.cable_no ?? 0) + 1)
+  const siblings = (existing ?? []) as Array<{ id: string; cable_no: number; grouped_with: number | null }>
+  const nextCableNo = parsed.data.cableNo ?? ((siblings[0]?.cable_no ?? 0) + 1)
+
+  // Final group size: siblings + this strand; honours a larger user-entered
+  // trench group (either passed in groupedWith or stored on a sibling).
+  const prevCount = siblings.length
+  const finalCount = prevCount + 1
+  const effectiveGroupedWith = Math.max(
+    parsed.data.groupedWith,
+    groupSizeForNewStrand(siblings.map((e) => Number(e.grouped_with ?? 1)), prevCount, finalCount),
+  )
 
   // SANS lookup for ohm_per_km + base rating + derate factors
   const elec = await resolveCableElectricals(supabase as any, {
@@ -854,7 +1038,7 @@ export async function addCableAction(
     depthMm: parsed.data.depthMm ?? null,
     thermalResistivityKmw: parsed.data.thermalResistivityKmw,
     ambientTempC: parsed.data.ambientTempC,
-    groupedWith: parsed.data.groupedWith,
+    groupedWith: effectiveGroupedWith,
     groupingArrangement: parsed.data.groupingArrangement,
     ohmPerKmOverride: parsed.data.ohmPerKmOverride ?? null,
     projectId: guard.projectId,
@@ -878,7 +1062,7 @@ export async function addCableAction(
       length_status: parsed.data.measuredLengthM != null ? 'MEASURED' : 'UNMEASURED',
       installation_method: parsed.data.installationMethod ?? null,
       depth_mm: parsed.data.depthMm ?? null,
-      grouped_with: parsed.data.groupedWith,
+      grouped_with: effectiveGroupedWith,
       grouping_arrangement: parsed.data.groupingArrangement,
       ambient_temp_c: parsed.data.ambientTempC,
       thermal_resistivity_kmw: parsed.data.thermalResistivityKmw,
@@ -894,6 +1078,24 @@ export async function addCableAction(
     .select('id, cable_no')
     .single()
   if (error) return { error: error.message }
+
+  // Re-derate the pre-existing siblings at the final group size — this
+  // strand changed the group every sibling sits in.
+  if (prevCount > 0) {
+    const { data: { user } } = await supabase.auth.getUser()
+    const rederate = await rederateSupplyStrands(supabase as any, {
+      supplyId: s.id,
+      revisionId: s.revision_id,
+      organisationId: s.organisation_id,
+      projectId: guard.projectId,
+      userId: user?.id ?? null,
+      prevCount,
+      finalCount,
+      excludeIds: [(data as { id: string }).id],
+    })
+    if (rederate.error) return { error: rederate.error }
+  }
+
   revalidatePath(`/projects/${guard.projectId}/cables/${s.revision_id}`)
   await recomputeTenantElectrical(guard.projectId).catch(() => {})
   return {
@@ -931,10 +1133,24 @@ export async function deleteCableAction(id: string): Promise<{ ok?: true; error?
     userId: user?.id ?? null,
   })
   // If that was the last cable on the supply, the run is now empty — remove it.
+  // Otherwise the survivors' group size shrank — re-derate them.
   if (cable.supply_id) {
     const { data: remaining } = await (supabase as any)
       .schema('cable_schedule').from('cables')
-      .select('id').eq('supply_id', cable.supply_id).limit(1)
+      .select('id').eq('supply_id', cable.supply_id)
+    const remainingCount = (remaining ?? []).length
+    if (remainingCount > 0) {
+      const rederate = await rederateSupplyStrands(supabase as any, {
+        supplyId: cable.supply_id,
+        revisionId: cable.revision_id,
+        organisationId: cable.organisation_id!,
+        projectId: guard.projectId,
+        userId: user?.id ?? null,
+        prevCount: remainingCount + 1,
+        finalCount: remainingCount,
+      })
+      if (rederate.error) return { error: rederate.error }
+    }
     if (!remaining || remaining.length === 0) {
       const { data: sup } = await (supabase as any)
         .schema('cable_schedule').from('supplies')
@@ -1048,7 +1264,7 @@ export async function updateCableAction(
     .schema('cable_schedule')
     .from('cables')
     .select(
-      'id, revision_id, organisation_id, size_mm2, cores, conductor, insulation, armour, ' +
+      'id, revision_id, organisation_id, size_mm2, cores, conductor, insulation, armour, standard, ' +
       'installation_method, depth_mm, grouped_with, grouping_arrangement, ambient_temp_c, thermal_resistivity_kmw, ' +
       'measured_length_m, measured_length_method, length_status, ohm_per_km, manual_override, tag_override, notes, ' +
       'revision:revisions!revision_id(status, project_id)',
@@ -1145,7 +1361,7 @@ export async function updateCableAction(
       : props?.rating_in_air
     const derate = await lookupDeratingFactors(supabase as any, {
       depth_mm: next.depthMm ?? 500,
-      thermal_resistivity_kmw: Number(c.thermal_resistivity_kmw ?? 1.0),
+      thermal_resistivity_kmw: Number(c.thermal_resistivity_kmw ?? 1.2),
       grouped_with: next.groupedWith,
       ambient_c: next.ambientTempC,
       insulation: next.insulation,
@@ -1164,6 +1380,16 @@ export async function updateCableAction(
     patch.derated_current_rating_a = deratedA
     patch.manual_override = false
     if (c.manual_override) log('manual_override', true, false)
+    // Keep the product-standard column in sync with the insulation — the
+    // standard names the spec the cable is MADE to (PVC → SANS 1507-3,
+    // XLPE → SANS 1507-4, PILC → SANS 97; same mapping as
+    // resolveCableElectricals). Previously an insulation change left the
+    // stale standard string on the row.
+    const nextStandard =
+      next.insulation === 'XLPE' ? 'SANS 1507-4'
+      : next.insulation === 'PVC' ? 'SANS 1507-3'
+      : 'SANS 97'
+    if (nextStandard !== c.standard) log('standard', c.standard, nextStandard)
     const audit: RecomputeAudit = {
       inputs: {
         conductor: next.conductor,
@@ -1382,7 +1608,10 @@ const previewParallelSchema = z.object({
   installationMethod: z.enum(['DIRECT_IN_GROUND', 'DUCT', 'LADDER', 'TRAY', 'CLIPPED']),
   depthMm: z.number().int().positive().nullable().optional(),
   ambientTempC: z.number().default(30),
-  thermalResistivityKmw: z.number().default(1.0),
+  // SANS 10142-1 / Aberdare F&F reference soil thermal resistivity is
+  // 1.2 K·m/W (T6.3.2 factor = 1.0 at 1.2). The pre-2026-07 default of 1.0
+  // silently UP-rated buried cables by 8 % (direct) / 4 % (duct).
+  thermalResistivityKmw: z.number().default(1.2),
   groupingArrangement: z.enum(['TOUCHING', 'SPACING_D']).default('TOUCHING'),
 })
 

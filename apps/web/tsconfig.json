@@ -37,6 +37,10 @@
     ],
     "allowJs": true,
     "noEmit": true,
+    // scripts/recompute-cable-derates.ts runs via `node --experimental-strip-types`,
+    // which requires explicit .ts extensions on relative imports. Legal because
+    // noEmit is true; affects nothing else.
+    "allowImportingTsExtensions": true,
     "incremental": true
   },
   "include": [

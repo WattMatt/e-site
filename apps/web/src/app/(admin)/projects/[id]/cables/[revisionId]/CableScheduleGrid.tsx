@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   computeCumulativeVdMap,
   voltDropPctForSupply,
+  withstand1sKa,
+  shortCircuitCheck,
+  breakerCoordinationCheck,
   type CableForCalc,
   type SupplyForCalc,
 } from '@esite/shared'
@@ -35,7 +38,7 @@ const VOLTAGE_OPTIONS = [230, 400, 525, 1000, 3300, 6600, 11000, 22000, 33000]
  * error banner, "+ Add strand" tail row, inline edit-strand / edit-run /
  * add-strand form rows). Update in lock-step with the <thead> column list.
  */
-const TOTAL_COLS = 24
+const TOTAL_COLS = 26
 
 const SIZE_OPTIONS = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400]
   .map((s) => ({ value: String(s), label: String(s) }))
@@ -107,6 +110,10 @@ interface Props {
   locked: boolean
   lengthMode: 'design' | 'as-built' | 'worst'
   canEdit: boolean
+  /** revisions.fault_level_ka — the source prospective fault current the
+   *  short-circuit column checks each strand's 1 s withstand against.
+   *  Null → the column renders an unobtrusive "—" (unknown). */
+  faultLevelKa: number | null
 }
 
 const LENGTH_STATUS_TONE: Record<EnrichedRun['length_status'], string> = {
@@ -157,6 +164,30 @@ function utilisationPctForRun(run: EnrichedRun): number | null {
   return (run.load_a / run.combined_capacity_a) * 100
 }
 
+/**
+ * Weakest strand's 1 s adiabatic short-circuit withstand (kA) for a run —
+ * the value the SANS 10142-1 §6.7 check compares against the revision's
+ * fault level. Null when ANY strand has no adiabatic k (PILC — its SC
+ * ratings are tabulated in the SANS 97 reference tables instead), so we
+ * never claim a pass we can't compute.
+ */
+function minStrandWithstandKa(run: EnrichedRun): number | null {
+  let min: number | null = null
+  for (const c of run.cables) {
+    const w = withstand1sKa(c.conductor, c.insulation, c.size_mm2)
+    if (w == null) return null
+    if (min == null || w < min) min = w
+  }
+  return min
+}
+
+const CHECK_TONE_COLOR: Record<'ok' | 'warning' | 'danger' | 'unknown', string> = {
+  ok: 'var(--c-green)',
+  warning: 'var(--c-amber)',
+  danger: 'var(--c-red)',
+  unknown: 'var(--c-text-dim)',
+}
+
 /** Canonical run identifier (FROM–TO). Used for search matching + action aria-labels. */
 function runLabel(run: EnrichedRun): string {
   const suffix = run.parallel_count > 1 ? ` ×${run.parallel_count}` : ''
@@ -201,6 +232,7 @@ export function CableScheduleGrid({
   locked,
   lengthMode,
   canEdit,
+  faultLevelKa,
 }: Props) {
   const [query, setQuery] = useState('')
   const [editConfirmed, setEditConfirmed] = useState<EnrichedCable | null>(null)
@@ -653,6 +685,8 @@ export function CableScheduleGrid({
               <Th w={85} align="right">Σ VD %</Th>
               <Th w={95} align="right">Rating (A)</Th>
               <Th w={75} align="right">Util %</Th>
+              <Th w={85} align="center">SC (kA)</Th>
+              <Th w={85} align="center">Breaker</Th>
               <Th w={100}>Install</Th>
               <Th w={70} align="right">Depth</Th>
               <Th w={55} align="right">Grp</Th>
@@ -663,6 +697,13 @@ export function CableScheduleGrid({
             {filtered.map((run, runIdx) => {
               const cloud = cloudForRun(run, rowById)
               const util = utilisationPctForRun(run)
+              // SANS 10142-1 §6.7 short-circuit check: weakest strand's 1 s
+              // adiabatic withstand vs the revision's fault level.
+              const scWithstand = minStrandWithstandKa(run)
+              const sc = shortCircuitCheck(scWithstand, faultLevelKa)
+              // §6.7.1.1 coordination: Ib ≤ In ≤ Iz against the destination
+              // board's breaker rating and the run's combined derated capacity.
+              const breaker = breakerCoordinationCheck(run.load_a, run.breaker_a, run.combined_capacity_a)
               const vdTone = run.vd_pct > 5 ? 'var(--c-red)' : run.vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
               const cumTone = run.cumulative_vd_pct > 5 ? 'var(--c-red)' : run.cumulative_vd_pct > 3 ? 'var(--c-amber)' : 'var(--c-text)'
               const utilTone = util == null ? 'var(--c-text-dim)' : util > 80 ? 'var(--c-red)' : util > 65 ? 'var(--c-amber)' : 'var(--c-text)'
@@ -965,6 +1006,52 @@ export function CableScheduleGrid({
                   <Td align="right" style={{ color: utilTone, fontWeight: util != null && util > 65 ? 700 : 400 }}>
                     {util == null ? '—' : fmt(util, 1)}
                   </Td>
+                  <Td align="center" style={{ color: CHECK_TONE_COLOR[sc.tone], fontWeight: sc.tone === 'danger' ? 700 : 400 }}>
+                    {sc.tone === 'unknown' ? (
+                      <span
+                        title={
+                          faultLevelKa == null
+                            ? 'Short-circuit check unavailable — set the revision fault level (kA) in the header.'
+                            : 'Short-circuit check unavailable — PILC withstand is tabulated in the SANS 97 reference tables, not the adiabatic estimate.'
+                        }
+                        style={{ cursor: 'help' }}
+                      >
+                        —
+                      </span>
+                    ) : (
+                      <span
+                        title={
+                          `1 s withstand (weakest strand): ${scWithstand!.toFixed(1)} kA vs fault level ${faultLevelKa} kA` +
+                          ` — margin ${sc.marginKa! >= 0 ? '+' : ''}${sc.marginKa!.toFixed(1)} kA` +
+                          (sc.tone === 'danger' ? '. UNDER-RATED for the prospective fault current.'
+                            : sc.tone === 'warning' ? ' (< 10 % margin).' : '.')
+                        }
+                        style={{ cursor: 'help' }}
+                      >
+                        {sc.tone === 'ok' ? '✓' : '⚠'} {scWithstand!.toFixed(1)}
+                      </span>
+                    )}
+                  </Td>
+                  <Td align="center" style={{ color: CHECK_TONE_COLOR[breaker.tone], fontWeight: breaker.tone === 'danger' ? 700 : 400 }}>
+                    {breaker.tone === 'unknown' ? (
+                      <span
+                        title="No breaker rating recorded on the destination board — nothing to coordinate against."
+                        style={{ cursor: 'help' }}
+                      >
+                        —
+                      </span>
+                    ) : (
+                      <span
+                        title={
+                          breaker.reason
+                            ?? `Coordinated: Ib ${run.load_a ?? '?'} A ≤ In ${run.breaker_a} A ≤ Iz ${Math.round(run.combined_capacity_a ?? 0)} A (SANS 10142-1 §6.7.1.1)`
+                        }
+                        style={{ cursor: 'help' }}
+                      >
+                        {breaker.tone === 'ok' ? '✓' : '⚠'} {run.breaker_a} A
+                      </span>
+                    )}
+                  </Td>
                   <Td>
                     {mixedBadge('installation_method',
                       <EditableCell type="select" disabled={locked || !canEdit || isSaving}
@@ -1087,6 +1174,7 @@ export function CableScheduleGrid({
                           ambient_temp_c: c.ambient_temp_c,
                           depth_mm: c.depth_mm,
                           grouped_with: c.grouped_with,
+                          installation_method: c.installation_method,
                           derated_current_rating_a: c.derated_current_rating_a,
                           derate_depth:    (c as EnrichedCable & { derate_depth?: number | null }).derate_depth ?? null,
                           derate_thermal:  (c as EnrichedCable & { derate_thermal?: number | null }).derate_thermal ?? null,
@@ -1096,7 +1184,7 @@ export function CableScheduleGrid({
                           {fmt(c.derated_current_rating_a, 0)}
                         </span>
                       </Td>
-                      <Td colSpan={4} />
+                      <Td colSpan={6} />
                       <Td>
                         {canEdit && !locked && (
                           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>

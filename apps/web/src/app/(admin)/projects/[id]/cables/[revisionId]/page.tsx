@@ -22,6 +22,7 @@ import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-pay
 import { StructureSection } from './StructureSection'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 import { ExportMenu } from './ExportMenu'
+import { FaultLevelEditor } from './FaultLevelEditor'
 
 export const metadata: Metadata = { title: 'Cable schedule revision' }
 
@@ -569,9 +570,10 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       length_status: worstStatus,
       combined_capacity_a: combinedCap,
       under_rated: combinedCap != null && head.load_a != null && combinedCap < head.load_a,
-      // Grid doesn't surface the destination breaker yet; exports populate it
-      // from the to-node in export-payload.ts. Null here keeps the type honest.
-      breaker_a: null,
+      // Destination board's breaker rating (post-00082 it lives on
+      // structure.nodes.breaker_rating_a) — feeds the grid's SANS 6.7.1.1
+      // breaker-coordination chip. Same source export-payload.ts uses.
+      breaker_a: nodeByIdBoard.get(supply.to_node_id)?.breaker_rating_a ?? null,
       pole_config: null,
       vd_pct: head.vd_pct,
       cumulative_vd_pct: head.cumulative_vd_pct,
@@ -645,6 +647,11 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             <Link href={`/projects/${projectId}/medium-voltage/${revisionId}/fault`} style={headerNavLinkStyle}>⚡ Medium Voltage</Link>
           </div>
           <div style={{ display: 'inline-flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <FaultLevelEditor
+              revisionId={revision.id}
+              faultLevelKa={revision.fault_level_ka}
+              canEdit={revision.status === 'DRAFT'}
+            />
             <LengthModeToggle
               basePath={`/projects/${projectId}/cables/${revisionId}`}
               current={lengthMode}
@@ -696,6 +703,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             locked={revision.status !== 'DRAFT'}
             lengthMode={lengthMode}
             canEdit={revision.status === 'DRAFT'}
+            faultLevelKa={revision.fault_level_ka}
           />
         )}
       </StructureSection>

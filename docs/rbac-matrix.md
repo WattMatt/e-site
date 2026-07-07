@@ -42,7 +42,7 @@ membership.
 | `/projects/[id]/snags` (list; `?view=visits\|all`) | W | W | W | W | R | — | R |
 | `/projects/[id]/snags/visits/[visitId]` (visit detail) | W | W | W | W | R | — | R |
 | `/projects/[id]/diary` | W | W | W | W | R | — | R |
-| `/projects/[id]/cables` | W | W | W | W | — | — | R¹ |
+| `/projects/[id]/cables` | W | W | W | R⁷ | — | — | R¹ |
 | `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W | W | W | — | — | — | — |
 | `/projects/[id]/equipment-materials` | W | W | W | W | — | — | R¹ |
 | `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
@@ -77,6 +77,8 @@ membership.
 ⁴ `/jbcc/unlock` is visible to all authenticated org members (read-only paywall page). The `<UnlockJbccButton />` inside only renders for owner/admin; all other roles see "ask your owner/admin" text. No redirect for locked org — this IS the locked-state destination.
 ⁵ All JBCC routes under `/(gated)/` require `public.has_feature(org_id, 'jbcc') = true` — the `jbcc/layout.tsx` gate redirects locked orgs to `/jbcc/unlock` before any role check. WM-Consulting bypasses. For write-gated routes: `inspector`, `supplier`, and `client_viewer` cannot reach `/notice/[code]/new`; status/attachment mutations on tracking and CRUD on parties require `ORG_WRITE_ROLES` (owner/admin/project_manager/contractor) enforced server-side.
 ⁶ `/equipment-schedule` and `/materials` were merged into `/equipment-materials` and now unconditionally `redirect()` there for every role (thin shims, no role gate of their own) — access is governed by the `/equipment-materials` row. Equipment management (add/edit/decommission boards) is inline on the unified tab and is gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) by the existing `equipment.actions` guards. `client_viewer` views the register (view-only) via the portal tab `/portal/[projectId]/equipment-materials` (see Client portal section).
+
+⁷ **Corrected 2026-07 (SANS audit):** this cell previously read `W`, but every cable-schedule write path — server actions (`ROLES_ENGINEER = ORG_WRITE_ROLES`, i.e. owner/admin/project_manager only) and the import API routes — excludes `contractor`. The page renders read-only for contractors (no page-level role gate beyond the `(admin)` layout); their writes are refused server-side. A contractor promoted per-project via `projects.project_members` (role `project_manager`) gains `W` on that project through the effective-role gates.
 
 ## Client portal (`apps/web/src/app/(portal)/portal/*`)
 
@@ -154,8 +156,21 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁶ | — | — | — |
 | `POST /api/tenant-schedule/commit` | W | W | W | —⁶ | — | — | — |
+| `POST /api/cable-schedule/parse` | W | W | W | —⁷ | — | — | — |
+| `POST /api/cable-schedule/commit` | W | W | W | —⁷ | — | — | — |
+| `GET /api/cable-schedule/export/excel` | R | R | R | — | — | — | R¹ |
+| `GET /api/cable-schedule/export/pdf` | R | R | R | — | — | — | R¹ |
+| `GET /api/cable-schedule/export/csv` | R | R | R | — | — | — | R¹ |
+| `GET /api/cable-schedule/export/zip` | R | R | R | — | — | — | R¹ |
+| `GET /api/cable-schedule/export/multi-zip` | R | R | R | — | — | — | R¹ |
+| `GET /api/cable-schedule/export/tag-list/pdf` | R | R | R | — | — | — | R¹ |
+| `GET /api/cable-schedule/export/tag-labels/pdf` | R | R | R | — | — | — | R¹ |
 
 > `POST /api/tenant-schedule/parse` (preview, no writes) and `POST /api/tenant-schedule/commit` (full-sync import; **writes run with the service-role key, bypassing RLS**) are both gated via `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` — the same gate the `/projects/[id]/tenant-schedule` page applies before rendering the ImportFlow control. ⁶ A contractor promoted per-project via `projects.project_members` (role `project_manager`) passes the effective-role gate on that project.
+
+> `POST /api/cable-schedule/parse` (preview, no writes) and `POST /api/cable-schedule/commit` (imports a whole revision: sources / structure.nodes / supplies / cables / change_log; **writes run on the user client so RLS applies, but RLS's cable_schedule write policies are role-agnostic beyond the client_viewer block**) are both gated via `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` — added 2026-07 (SANS audit); previously only project *visibility* was checked, the same gap PR #135 closed for the tenant-schedule routes. ⁷ as above: a per-project `project_manager` promotion passes.
+>
+> All 7 `GET /api/cable-schedule/export/*` routes gate via `getExportPolicy` ([`export-role.ts`](../apps/web/src/lib/cable-schedule/export-role.ts)): owner/admin/project_manager export fully; `client_viewer` may export **only when active in `projects.project_members` for the project**, with all cost data redacted (¹); contractor/inspector/supplier are blocked entirely. Size caps return 413 (`MAX_CABLES_PER_EXPORT` 500, PDF/ZIP 300).
 
 > `POST /api/medium-voltage/study` runs the heavy MV Z-bus + earth-fault solve and caches per-node `fault_results` for a revision. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org; refused on non-DRAFT revisions (an ISSUED snapshot is frozen). Discrimination/coordination compute is deferred to Phase 4b (device-pairing design).
 

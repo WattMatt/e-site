@@ -106,3 +106,41 @@ All existing patterns carry over. The honest-`null` change *reduces* a silent-wr
 - Topic A — structure hierarchy (`parent_board_id` / feed-graph tree view) — is a separate, paused brainstorm.
 - Whether depth-derating should apply to in-air cables at all is a domain question, not addressed here.
 - A future optimisation: replace the 16 concurrent `lookupDeratingFactors` calls in `previewParallelCableSet` with a single batch grouping-table fetch (noted during the auto-parallel work).
+
+---
+
+## 8. Addendum — 2026-07 SANS-audit corrections (supersedes parts of §2)
+
+The 2026-07 SANS audit overturned three positions this spec took; the code
+now differs from the text above as follows:
+
+1. **§2 Non-goals, "nearest-conservative row selection … is correct and
+   stays" — WRONG PREMISE, overturned.** The floor lookup (largest
+   `sort_key ≤ value`) picks the *friendlier* factor on every one of these
+   tables, because the factors *decrease* as the key rises (deeper burial,
+   hotter ambient, more cables ⇒ smaller factor). `lookupFactor` now uses
+   `selectConservativeSortKey` — the next tabulated row **UP** for
+   in-between values (e.g. 34 °C ground ambient reads the 35 °C row, 4
+   grouped cables read the n = 6 row), first row below the range, last row
+   above it.
+2. **Volt drop now applies the SANS phase factor.** `voltDropPctSingle`
+   multiplies by `phaseFactor(voltage_v)` — ×2 below 380 V (single-phase
+   loop), ×√3 otherwise (balanced three-phase) — matching the tables' own
+   1φ/3φ mV/A/m columns. The legacy workbook convention (no phase factor)
+   survives ONLY inside the Excel importer's parse-fidelity gate
+   (`legacyWorkbookVdPct` in `apps/web/src/lib/cable-schedule/excel-importer.ts`),
+   which must reproduce the workbook's own numbers.
+3. **Buried / in-duct grouping reads Table 6.3.3, not 6.3.6.**
+   `lookupDeratingFactors` branches on the installation method: in-air
+   grouping keeps 6.3.6, but direct-in-ground / duct cables read the much
+   harsher 6.3.3 matrix (= SANS 10142-1:2017 Table 6.13 — six touching
+   buried cables derate to ~0.55, not 6.3.6's 0.80).
+
+Related web-side corrections shipped with this addendum: default soil
+thermal resistivity 1.0 → **1.2 K·m/W** (the tables' reference value; 1.0
+silently up-rated buried cables by 8 %), ambient form default 25 °C
+ground / 30 °C air, parallel-strand re-derating at the final group size on
+strand add/delete, and `scripts/recompute-cable-derates.ts` to sweep stored
+`derate_*` / `derated_current_rating_a` values recorded under the old
+lookup. The honest-`null` behaviour (§3) is unchanged and remains
+deliberate.

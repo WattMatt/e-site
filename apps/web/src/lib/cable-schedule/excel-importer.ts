@@ -407,6 +407,29 @@ export async function parseScheduleWorkbook(buffer: Buffer): Promise<ImportPrevi
 }
 
 /**
+ * The LEGACY workbook's volt-drop formula — deliberately NOT the shared
+ * `voltDropPctSingle` from `@esite/shared`.
+ *
+ * The shared formula was corrected in 2026-07 to apply the SANS phase
+ * factor (×2 single-phase, ×√3 three-phase). The legacy CABLE SCHEDULE
+ * workbooks this importer ingests computed their VD% column WITHOUT that
+ * factor: vd% = Ω/km × (L/100) × I × (10/V). `vdFidelityOk`'s job is
+ * parse fidelity — proving we read the workbook's own numbers back
+ * correctly — so it must reproduce the workbook's convention, not the
+ * corrected physics. Keeping the old formula here (and only here) lets
+ * legacy imports keep round-tripping while every display/export path
+ * uses the corrected shared formula.
+ */
+export function legacyWorkbookVdPct(
+  ohmPerKm: number,
+  lengthM: number,
+  loadA: number,
+  voltageV: number,
+): number {
+  return ohmPerKm * (lengthM / 100) * loadA * (10 / voltageV)
+}
+
+/**
  * Recompute VD% with the workbook's exact formula and compare against the
  * source workbook's L column. Returns true when the row passes within
  * tolerance — the round-trip fidelity gate per spec §16.13.
@@ -426,7 +449,7 @@ export function vdFidelityOk(c: ImportedCable, tolerancePct = 0.001): {
   ) {
     return { ok: true, computed: null, source: c.source_vd_pct, delta: null }
   }
-  const computed = c.ohm_per_km * (c.measured_length_m / 100) * c.load_a * (10 / c.voltage_v)
+  const computed = legacyWorkbookVdPct(c.ohm_per_km, c.measured_length_m, c.load_a, c.voltage_v)
   if (c.source_vd_pct == null) return { ok: true, computed, source: null, delta: null }
   const delta = computed - c.source_vd_pct
   return { ok: Math.abs(delta) <= tolerancePct, computed, source: c.source_vd_pct, delta }

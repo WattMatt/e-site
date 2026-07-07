@@ -15,7 +15,7 @@
  * 6.3.1 / 6.3.2 / 6.3.4 / 6.3.6".
  */
 
-import { tableCodeFor } from '@esite/shared'
+import { tableCodeFor, deratingBasis } from '@esite/shared'
 import type { EnrichedRun, EnrichedCable } from './export-payload'
 
 export interface SansBreadcrumb {
@@ -41,15 +41,29 @@ export interface SansBreadcrumb {
   baseRatingA: number | null
 }
 
+/**
+ * Honest provenance labels (2026-07 correction).
+ *
+ * The rating tables are the firm's transcription of the Aberdare Facts &
+ * Figures booklet — F&F table numbering, for cables manufactured to the
+ * SANS 1507 product standards. They are NOT tables inside SANS 10142-1:
+ * the PVC ratings are numerically the same dataset as SANS 10142-1 T6.8 /
+ * T6.4(a), while 10142-1 publishes NO XLPE ampacity tables at all (T6.4/6.5
+ * are manufacturer data). The derating suite is F&F 6.3.x, equivalent to
+ * SANS 10142-1:2017 Tables 6.10–6.16 — SANS 1507 publishes no derating
+ * tables (the old '1507-1' attribution here was wrong on every count).
+ */
 const TABLE_LABEL: Record<string, string> = {
-  TABLE_6_2:   '10142-1 T6.2 (LV PVC, Cu)',
-  TABLE_6_3:   '10142-1 T6.3 (LV PVC, Al)',
-  TABLE_6_4:   '10142-1 T6.4 (LV XLPE, Cu)',
-  TABLE_6_5:   '10142-1 T6.5 (LV XLPE, Al)',
-  TABLE_6_3_1: '1507-1 T6.3.1 (depth)',
-  TABLE_6_3_2: '1507-1 T6.3.2 (thermal resistivity)',
-  TABLE_6_3_4: '1507-1 T6.3.4 (ground / ambient temp)',
-  TABLE_6_3_6: '1507-1 T6.3.6 (grouping, touching)',
+  TABLE_6_2:   'Aberdare F&F T6.2 — LV PVC Cu to SANS 1507-3 (ratings = SANS 10142-1 T6.8/6.4(a))',
+  TABLE_6_3:   'Aberdare F&F T6.3 — LV PVC Al to SANS 1507-3 (ratings = SANS 10142-1 T6.8/6.4(a))',
+  TABLE_6_4:   'Aberdare F&F T6.4 — LV XLPE Cu to SANS 1507-4 (manufacturer data; not in 10142-1)',
+  TABLE_6_5:   'Aberdare F&F T6.5 — LV XLPE Al to SANS 1507-4 (manufacturer data; not in 10142-1)',
+  TABLE_6_3_1: 'F&F T6.3.1 depth of laying (cf. SANS 10142-1:2017 Tables 6.10–6.16)',
+  TABLE_6_3_2: 'F&F T6.3.2 soil thermal resistivity (cf. SANS 10142-1:2017 Tables 6.10–6.16)',
+  TABLE_6_3_3: 'F&F T6.3.3 grouping, buried / in ducts (= SANS 10142-1:2017 Table 6.13)',
+  TABLE_6_3_4: 'F&F T6.3.4 ground ambient (cf. SANS 10142-1:2017 Tables 6.10–6.16)',
+  TABLE_6_3_5: 'F&F T6.3.5 air ambient (cf. SANS 10142-1:2017 Tables 6.10–6.16)',
+  TABLE_6_3_6: 'F&F T6.3.6 grouping in air (cf. SANS 10142-1:2017 Tables 6.10–6.16)',
 }
 
 /** Subset of run / strand fields the breadcrumb needs. */
@@ -68,6 +82,10 @@ type Sansable = Pick<
   derate_thermal?: number | null
   derate_grouping?: number | null
   derate_temp?: number | null
+  /** Selects which grouping (6.3.3 buried/duct vs 6.3.6 air) and ambient
+   *  (6.3.4 ground vs 6.3.5 air) tables the derate factors came from —
+   *  mirrors deratingBasis in the shared lookup. Omitted → in-air. */
+  installation_method?: string | null
 }
 
 /** Coerce a run or a strand into the minimal subset the breadcrumb needs. */
@@ -86,6 +104,7 @@ function toSansable(input: EnrichedRun | EnrichedCable | Sansable): Sansable {
       ambient_temp_c: head?.ambient_temp_c ?? 30,
       depth_mm: (input as EnrichedRun).depth_mm,
       grouped_with: (input as EnrichedRun).grouped_with,
+      installation_method: (input as EnrichedRun).installation_method,
       derated_current_rating_a: head?.derated_current_rating_a ?? null,
       derate_depth:    head?.derate_depth ?? null,
       derate_thermal:  head?.derate_thermal ?? null,
@@ -101,11 +120,19 @@ export function sansBreadcrumb(input: EnrichedRun | EnrichedCable | Sansable): S
   const ratingTableCode = tableCodeFor(c.conductor, c.insulation, c.cores)
   const ratingTableLabel = ratingTableCode ? TABLE_LABEL[ratingTableCode] ?? ratingTableCode : null
 
+  // Which ambient / grouping tables the stored factors came from depends on
+  // the installation method — same branch the shared lookup takes
+  // (deratingBasis): in-air reads 6.3.5 + 6.3.6, ground/duct reads 6.3.4 +
+  // the much harsher buried-grouping matrix 6.3.3.
+  const basis = deratingBasis(c.installation_method ?? null)
+  const temperatureTable = basis.temperatureTable
+  const groupingTable = basis.inAir ? 'TABLE_6_3_6' : 'TABLE_6_3_3'
+
   const derateSources: SansBreadcrumb['derateSources'] = [
     {
       axis: 'temp',
-      tableCode: 'TABLE_6_3_4',
-      tableLabel: TABLE_LABEL.TABLE_6_3_4!,
+      tableCode: temperatureTable,
+      tableLabel: TABLE_LABEL[temperatureTable]!,
       factor: c.derate_temp ?? null,
       inputValue: c.ambient_temp_c ?? null,
       inputUnit: '°C',
@@ -129,8 +156,8 @@ export function sansBreadcrumb(input: EnrichedRun | EnrichedCable | Sansable): S
     },
     {
       axis: 'grouping',
-      tableCode: 'TABLE_6_3_6',
-      tableLabel: TABLE_LABEL.TABLE_6_3_6!,
+      tableCode: groupingTable,
+      tableLabel: TABLE_LABEL[groupingTable]!,
       factor: c.derate_grouping ?? null,
       inputValue: c.grouped_with ?? null,
       inputUnit: 'cables',
@@ -158,7 +185,7 @@ export function sansBreadcrumbAsTooltip(b: SansBreadcrumb): string {
            'Engineer must enter Ω/km and rating manually, or pick a different size.'
   }
   const lines: string[] = []
-  lines.push(`Base rating from SANS ${b.ratingTableLabel}` + (b.baseRatingA != null ? ` ≈ ${b.baseRatingA} A` : ''))
+  lines.push(`Base rating from ${b.ratingTableLabel}` + (b.baseRatingA != null ? ` ≈ ${b.baseRatingA} A` : ''))
   for (const d of b.derateSources) {
     if (d.factor == null) continue
     const lhs = d.inputValue != null ? `${d.inputValue} ${d.inputUnit}` : ''
