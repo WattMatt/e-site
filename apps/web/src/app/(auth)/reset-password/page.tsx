@@ -40,6 +40,13 @@ export default function ResetPasswordPage() {
   const [serverError, setServerError] = useState<string | null>(null)
   const [verifying, setVerifying] = useState(false)
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  // Arrived at ?step=code without a known email (e.g. via the hash-error
+  // redirect) — the code alone can't be verified, so ask for the email too.
+  const [askEmail, setAskEmail] = useState(false)
+
+  // Set by /auth/callback and AuthHashErrorRedirect when a sign-in / invite
+  // link bounced as expired or already used.
+  const linkExpired = searchParams?.get('reason') === 'link-expired'
 
   const {
     register,
@@ -53,7 +60,9 @@ export default function ResetPasswordPage() {
   // by pre-loading the form into "code-entry" mode if ?step=code is set.
   useEffect(() => {
     const errorParam = searchParams?.get('error')
-    if (errorParam) {
+    // The link-expired banner already explains the recovery path; only show
+    // the raw code when the bounce arrived without reason=link-expired.
+    if (errorParam && !linkExpired) {
       setServerError(`Link rejected (${errorParam}). Type the 6-digit code from your email instead.`)
     }
     const paramEmail = searchParams?.get('email')
@@ -61,9 +70,33 @@ export default function ResetPasswordPage() {
       setValue('email', paramEmail)
       setEmail(paramEmail.trim().toLowerCase())
     }
-    if (searchParams?.get('step') === 'code') setStep('code')
+    if (searchParams?.get('step') === 'code') {
+      setStep('code')
+      if (!paramEmail) setAskEmail(true)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Shown on both steps when a sign-in / invite link bounced as expired.
+  const expiredBanner = linkExpired ? (
+    <div
+      role="status"
+      style={{
+        background: 'var(--c-amber-dim)',
+        border: '1px solid var(--c-amber)',
+        borderRadius: 8,
+        padding: '10px 14px',
+        fontSize: 13,
+        color: 'var(--c-text)',
+        lineHeight: 1.6,
+        marginBottom: 16,
+      }}
+    >
+      <strong>That sign-in or invite link has expired or was already used.</strong>{' '}
+      You can still enter the 6-digit code from the same email, or request a
+      fresh one with your email address.
+    </div>
+  ) : null
 
   /** "I already have a code" — skip the resend so the existing code stays valid. */
   function jumpToCodeEntry() {
@@ -73,6 +106,7 @@ export default function ResetPasswordPage() {
       return
     }
     setEmail(e)
+    setAskEmail(false)
     setServerError(null)
     setStep('code')
   }
@@ -102,19 +136,25 @@ export default function ResetPasswordPage() {
       email_domain: trimmed.split('@')[1] ?? null,
     }).catch(() => { /* audit best-effort */ })
     setEmail(trimmed)
+    setAskEmail(false)
     setStep('code')
   }
 
   async function onVerifyCode(e: React.FormEvent) {
     e.preventDefault()
     setServerError(null)
+    const targetEmail = email.trim().toLowerCase()
+    if (!targetEmail || !/^\S+@\S+\.\S+$/.test(targetEmail)) {
+      setServerError('Enter the email address the code was sent to.')
+      return
+    }
     if (code.length !== 6) {
       setServerError('Enter the 6-digit code from your email.')
       return
     }
     setVerifying(true)
     const { error } = await supabase.auth.verifyOtp({
-      email,
+      email: targetEmail,
       token: code,
       type:  'recovery',
     })
@@ -133,11 +173,30 @@ export default function ResetPasswordPage() {
       <div className="auth-card">
         <h2 className="auth-card-title">Enter your code</h2>
         <p className="auth-card-sub">
-          We sent a 6-digit code to <strong>{email}</strong>. The code expires in 1 hour.
+          {askEmail ? (
+            <>Enter the email address the code was sent to, plus the 6-digit code from that email.</>
+          ) : (
+            <>We sent a 6-digit code to <strong>{email}</strong>. The code expires in 24 hours.</>
+          )}
         </p>
+
+        {expiredBanner}
 
         <form onSubmit={onVerifyCode}>
           {serverError && <div className="auth-alert-error">{serverError}</div>}
+          {askEmail && (
+            <div className="auth-field">
+              <label className="auth-label">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@company.co.za"
+                autoComplete="email"
+                className="auth-input"
+              />
+            </div>
+          )}
           <div className="auth-field">
             <label className="auth-label">6-digit code</label>
             <input
@@ -177,6 +236,8 @@ export default function ResetPasswordPage() {
     <div className="auth-card">
       <h2 className="auth-card-title">Reset password</h2>
       <p className="auth-card-sub">Enter your email and we&apos;ll send you a 6-digit code</p>
+
+      {expiredBanner}
 
       <form onSubmit={handleSubmit(onRequestCode)}>
         {serverError && <div className="auth-alert-error">{serverError}</div>}

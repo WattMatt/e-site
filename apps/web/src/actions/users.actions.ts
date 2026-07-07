@@ -35,6 +35,8 @@ const updateUserSchema = z.object({
 
 const removeUserSchema = z.object({ userId: z.string().uuid() })
 
+const resendInviteSchema = z.object({ userId: z.string().uuid() })
+
 /** Create an organisation member directly and email them a set-password link. */
 export async function createUserAction(input: {
   email: string
@@ -121,6 +123,97 @@ export async function createUserAction(input: {
 
   revalidatePath('/settings/users')
   return warning ? { ok: true, warning } : { ok: true }
+}
+
+/**
+ * Re-send the set-password invite to a member who has never signed in.
+ * Recovery links are single-use and expire (mailer_otp_exp = 24 h) — email
+ * scanners can burn them before the invitee ever clicks, so admins need a
+ * self-service resend instead of a support round-trip.
+ */
+export async function resendInviteAction(input: { userId: string }): Promise<ActionResult> {
+  const h = await headers()
+  const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const ua = h.get('user-agent') ?? null
+
+  const ctx = await getOrgContext()
+  if (!ctx) return { ok: false, error: 'Not authenticated.' }
+  if (!isOrgAdmin(ctx.role)) return { ok: false, error: 'Only an admin or owner can resend invites.' }
+
+  if (!rateLimit(`resend-invite:${ctx.userId}`, 20, 60 * 60_000)) {
+    return { ok: false, error: 'Too many invites resent recently. Please wait before trying again.' }
+  }
+
+  const parsed = resendInviteSchema.safeParse(input)
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' }
+  }
+  const { userId } = parsed.data
+
+  const service = createServiceClient()
+
+  const { data: target, error: targetErr } = await service
+    .from('user_organisations')
+    .select('role, is_active')
+    .eq('user_id', userId)
+    .eq('organisation_id', ctx.organisationId)
+    .maybeSingle()
+  if (targetErr) return { ok: false, error: targetErr.message }
+  if (!target || !target.is_active) {
+    return { ok: false, error: 'That user is not an active member of your organisation.' }
+  }
+
+  const { data: authUser, error: authErr } = await service.auth.admin.getUserById(userId)
+  if (authErr || !authUser?.user) {
+    return { ok: false, error: 'Could not look up that user’s account.' }
+  }
+  if (authUser.user.last_sign_in_at) {
+    return {
+      ok: false,
+      error: 'That user is already active — they’ve signed in before. If they’re locked out, they can use “Forgot password” on the sign-in page.',
+    }
+  }
+  const email = authUser.user.email
+  if (!email) return { ok: false, error: 'That user has no email address on record.' }
+
+  // Assigned site names for context in the email — best-effort read.
+  const { data: siteRows } = await (service as any)
+    .schema('projects')
+    .from('project_members')
+    .select('projects!inner(name, organisation_id)')
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .eq('projects.organisation_id', ctx.organisationId)
+  const siteNames = ((siteRows ?? []) as Array<{ projects: { name: string | null } | null }>)
+    .map((r) => r.projects?.name?.trim())
+    .filter((n): n is string => Boolean(n))
+
+  const { inviterName, orgName } = await resolveInviteContext(service, {
+    inviterId: ctx.userId,
+    orgId: ctx.organisationId,
+  })
+  const invite = await sendInviteEmail({
+    service,
+    email,
+    inviterName,
+    orgName,
+    role: target.role,
+    siteNames: siteNames.length ? siteNames : undefined,
+  })
+  if (!invite.ok) {
+    return { ok: false, error: 'The invite email could not be sent. Please try again shortly.' }
+  }
+
+  await logAuthEvent(service, {
+    userId,
+    eventType: 'password_reset_requested',
+    ipAddress: ip === 'unknown' ? null : ip,
+    userAgent: ua,
+    metadata:  { via: 'invite_resend', resent_by: ctx.userId, organisation_id: ctx.organisationId },
+  })
+
+  revalidatePath('/settings/users')
+  return invite.warning ? { ok: true, warning: invite.warning } : { ok: true }
 }
 
 /** Change a member's role and/or active status. */

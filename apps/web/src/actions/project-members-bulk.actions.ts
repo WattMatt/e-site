@@ -55,12 +55,13 @@ const inputSchema = z.object({
 export type BulkAddStatus =
   | 'added'                       // existing org user added to project
   | 'invited-and-added'           // new user provisioned + added to project
+  | 'invited-email-failed'        // user provisioned + added, but NO invite email was delivered
   | 'skipped-already-on-project'  // existing user already a member
   | 'failed'
 
 export interface BulkAddResult {
   ok: true
-  summary: { invited: number; added: number; skipped: number; failed: number }
+  summary: { invited: number; added: number; skipped: number; failed: number; emailFailed: number }
   details: Array<{ email: string; status: BulkAddStatus; reason?: string }>
 }
 
@@ -152,6 +153,7 @@ export async function bulkAddOrInviteProjectMembers(
   let added = 0
   let skipped = 0
   let failed = 0
+  let emailFailed = 0
   const details: BulkAddResult['details'] = []
 
   for (const email of emails) {
@@ -244,8 +246,9 @@ export async function bulkAddOrInviteProjectMembers(
 
       // Branded invite email naming the inviter, company and the specific site
       // they've been added to. Falls back to the plain recovery email on
-      // failure. Non-fatal.
-      await sendInviteEmail({
+      // failure. Non-fatal — but the outcome IS reported so the admin knows
+      // when no email reached the invitee (see status handling below).
+      const invite = await sendInviteEmail({
         service,
         email,
         inviterName,
@@ -293,8 +296,20 @@ export async function bulkAddOrInviteProjectMembers(
         })
         continue
       }
-      invited++
-      details.push({ email, status: 'invited-and-added' })
+      if (!invite.ok) {
+        // Membership succeeded but the invitee got NO email — don't count it
+        // as a clean invite. Not 'failed' either: the account + membership
+        // exist, only the email needs a resend.
+        emailFailed++
+        details.push({
+          email,
+          status: 'invited-email-failed',
+          reason: invite.warning ?? 'The invite email could not be sent.',
+        })
+      } else {
+        invited++
+        details.push({ email, status: 'invited-and-added', reason: invite.warning })
+      }
     } catch (e) {
       failed++
       details.push({
@@ -306,5 +321,5 @@ export async function bulkAddOrInviteProjectMembers(
   }
 
   revalidatePath(`/projects/${parsed.data.projectId}/settings/members`)
-  return { ok: true, summary: { invited, added, skipped, failed }, details }
+  return { ok: true, summary: { invited, added, skipped, failed, emailFailed }, details }
 }

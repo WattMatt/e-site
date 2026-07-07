@@ -60,7 +60,7 @@ export function EmailChangeForm({ currentEmail }: { currentEmail: string }) {
       <form onSubmit={onConfirm} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <p style={{ fontSize: 13, color: 'var(--c-text)', margin: 0 }}>
           We sent a 6-digit code to <strong>{newEmail}</strong>. Enter it below to
-          confirm the change. The code expires in 1 hour.
+          confirm the change. The code expires in 24 hours.
         </p>
         <div>
           <label className="ob-label" htmlFor="emailChangeCode">6-digit code</label>

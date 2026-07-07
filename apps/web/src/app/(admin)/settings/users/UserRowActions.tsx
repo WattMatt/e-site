@@ -2,7 +2,8 @@
 
 /**
  * UserRowActions — per-member inline controls: change role, deactivate /
- * reactivate, remove. Rendered for every member row except those the caller
+ * reactivate, remove, and (for members who have never signed in) resend the
+ * set-password invite. Rendered for every member row except those the caller
  * may not edit (their own row, or an owner row when the caller is not owner).
  */
 
@@ -11,21 +12,24 @@ import { useRouter } from 'next/navigation'
 import { Select } from '@/components/ui/FormField'
 import { Button } from '@/components/ui/Button'
 import { ORG_ROLES, ORG_ROLE_LABELS, type OrgRole } from '@esite/shared'
-import { updateUserAction, removeUserAction } from '@/actions/users.actions'
+import { updateUserAction, removeUserAction, resendInviteAction } from '@/actions/users.actions'
 
 interface Props {
-  userId:     string
-  role:       string
-  isActive:   boolean
-  isSelf:     boolean
-  callerRole: OrgRole
+  userId:      string
+  role:        string
+  isActive:    boolean
+  isSelf:      boolean
+  callerRole:  OrgRole
+  hasSignedIn: boolean
 }
 
-export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: Props) {
+export function UserRowActions({ userId, role, isActive, isSelf, callerRole, hasSignedIn }: Props) {
   const router = useRouter()
   const [roleVal, setRoleVal] = useState(role)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ kind: 'success' | 'warning'; text: string } | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [resendBusy, setResendBusy] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   // Cannot edit your own row (self-lockout guard); a non-owner cannot touch an
@@ -65,6 +69,30 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
     })
   }
 
+  function resendInvite() {
+    setError(null)
+    setNotice(null)
+    setResendBusy(true)
+    startTransition(async () => {
+      try {
+        const result = await resendInviteAction({ userId })
+        if (!result.ok) {
+          setError(result.error)
+          return
+        }
+        setNotice(
+          result.warning
+            ? { kind: 'warning', text: result.warning }
+            : { kind: 'success', text: 'Invite resent — the new link and code are valid for 24 hours.' },
+        )
+      } catch {
+        setError('Something went wrong. Please try again.')
+      } finally {
+        setResendBusy(false)
+      }
+    })
+  }
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
@@ -81,6 +109,18 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
           <option key={r} value={r}>{ORG_ROLE_LABELS[r]}</option>
         ))}
       </Select>
+
+      {!hasSignedIn && isActive && (
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={isPending}
+          isLoading={resendBusy}
+          onClick={resendInvite}
+        >
+          Resend invite
+        </Button>
+      )}
 
       <Button
         variant="secondary"
@@ -114,6 +154,19 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole }: P
       {error && (
         <span role="alert" style={{ fontSize: 11, color: 'var(--c-red)', width: '100%', textAlign: 'right' }}>
           {error}
+        </span>
+      )}
+
+      {notice && (
+        <span
+          role="status"
+          style={{
+            fontSize: 11,
+            color: notice.kind === 'warning' ? 'var(--c-amber)' : 'var(--c-green)',
+            width: '100%', textAlign: 'right',
+          }}
+        >
+          {notice.text}
         </span>
       )}
     </div>

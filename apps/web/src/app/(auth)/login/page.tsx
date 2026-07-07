@@ -1,7 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+
+// useSearchParams() requires either Suspense or force-dynamic. The page is
+// auth-flow / per-request anyway, so static prerender adds no value.
+export const dynamic = 'force-dynamic'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -19,10 +24,57 @@ type MagicLinkInput = z.infer<typeof magicLinkSchema>
 type Mode = 'password' | 'magic-link'
 type MagicLinkStep = 'email' | 'code'
 
+/** /auth/callback bounces here with ?error=<code> when a link couldn't be
+ *  verified (expired, already used, or burnt by an email scanner). */
+function bounceErrorMessage(code: string): React.ReactNode {
+  const resetLink = (label: string) => (
+    <Link
+      href="/reset-password?step=code&reason=link-expired"
+      style={{ color: 'inherit', textDecoration: 'underline' }}
+    >
+      {label}
+    </Link>
+  )
+  switch (code) {
+    case 'otp_expired':
+      return (
+        <>
+          That sign-in link has expired or was already used.{' '}
+          {resetLink('Enter the 6-digit code from the same email, or request a fresh link')}.
+        </>
+      )
+    case 'access_denied':
+      return (
+        <>
+          That sign-in link was rejected — it may have expired, been used
+          already, or been opened by an email security scanner.{' '}
+          {resetLink('Enter your 6-digit code or request a fresh link')}.
+        </>
+      )
+    case 'auth_callback_failed':
+      return (
+        <>
+          We couldn&apos;t sign you in with that link. Sign in below, or{' '}
+          {resetLink('request a fresh link')}.
+        </>
+      )
+    default:
+      // Unknown codes are attacker-controllable text — never echo them.
+      return (
+        <>
+          Something went wrong with that sign-in link. Sign in below, or{' '}
+          {resetLink('request a fresh link')}.
+        </>
+      )
+  }
+}
+
 export default function LoginPage() {
   const supabase = createClient()
+  const searchParams = useSearchParams()
   const [mode, setMode] = useState<Mode>('password')
   const [serverError, setServerError] = useState<string | null>(null)
+  const [urlError, setUrlError] = useState<string | null>(null)
   const [mlStep, setMlStep] = useState<MagicLinkStep>('email')
   const [mlEmail, setMlEmail] = useState('')
   const [mlCode, setMlCode] = useState('')
@@ -34,8 +86,17 @@ export default function LoginPage() {
   // Magic link form
   const ml = useForm<MagicLinkInput>({ resolver: zodResolver(magicLinkSchema) })
 
+  // Surface /auth/callback error bounces (?error=otp_expired etc.) that
+  // previously died silently in the query string.
+  useEffect(() => {
+    const errorParam = searchParams?.get('error')
+    if (errorParam) setUrlError(errorParam)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   async function onPasswordSubmit({ email, password }: SignInInput) {
     setServerError(null)
+    setUrlError(null)
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -49,6 +110,7 @@ export default function LoginPage() {
 
   async function onMagicLinkSubmit({ email }: MagicLinkInput) {
     setServerError(null)
+    setUrlError(null)
     if (CAPTCHA_ENABLED && !captchaToken) {
       setServerError('Please complete the verification challenge.')
       return
@@ -104,7 +166,7 @@ export default function LoginPage() {
       <div className="auth-card">
         <h2 className="auth-card-title">Enter your code</h2>
         <p className="auth-card-sub">
-          We sent a 6-digit code to <strong>{mlEmail}</strong>. The code expires in 1 hour.
+          We sent a 6-digit code to <strong>{mlEmail}</strong>. The code expires in 24 hours.
         </p>
         <form onSubmit={onMagicLinkVerify}>
           {serverError && <div className="auth-alert-error">{serverError}</div>}
@@ -145,6 +207,8 @@ export default function LoginPage() {
     <div className="auth-card">
       <h2 className="auth-card-title">Welcome back</h2>
       <p className="auth-card-sub">Sign in to your E-Site workspace</p>
+
+      {urlError && <div className="auth-alert-error">{bounceErrorMessage(urlError)}</div>}
 
       <GoogleSignInButton />
 

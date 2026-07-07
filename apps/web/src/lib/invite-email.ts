@@ -117,18 +117,36 @@ export async function sendInviteEmail(args: SendInviteEmailArgs): Promise<Invite
       email: args.email,
       options: { redirectTo: RECOVERY_REDIRECT },
     })
-    const actionLink = (linkData as { properties?: { action_link?: string } } | null)?.properties
-      ?.action_link
+    const props = (linkData as {
+      properties?: { action_link?: string; email_otp?: string; hashed_token?: string }
+    } | null)?.properties
+    const actionLink = props?.action_link
     if (linkErr || !actionLink) throw linkErr ?? new Error('generateLink returned no action_link')
 
-    // 2. Render branded email.
+    // Button href: token_hash into our own /auth/callback, so verification
+    // runs server-side (verifyOtp) and sets the session cookie. GoTrue's raw
+    // action_link 303s with implicit #access_token fragments that the app's
+    // PKCE browser client never consumes — that path dead-ends on /login
+    // (browser-verified during the 2026-07-07 invite incident). action_link
+    // is kept only as a fallback if hashed_token is ever absent.
+    const buttonLink = props?.hashed_token
+      ? `${APP_URL}/auth/callback?token_hash=${encodeURIComponent(props.hashed_token)}&type=recovery&next=${encodeURIComponent('/reset-password/confirm')}`
+      : actionLink
+
+    // 2. Render branded email. The email_otp code is the same single-use token
+    //    as the link, typed at /reset-password — it helps when a scanner or
+    //    mail client REWRITES the link into something unclickable, but a
+    //    scanner that actually FETCHES the link burns the code with it.
+    //    Expiry mirrors the project's mailer_otp_exp (86400 s).
     const { subject, html } = renderInviteEmail({
       recipientEmail: args.email,
       inviterName: args.inviterName,
       orgName: args.orgName,
       role: args.role,
       siteNames: args.siteNames,
-      actionLink,
+      actionLink: buttonLink,
+      otpCode: props?.email_otp ?? null,
+      linkExpiry: '24 hours',
       siteUrl: SITE_URL,
       managingCompanyName: args.managingCompanyName ?? null,
     })

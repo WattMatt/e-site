@@ -8,6 +8,7 @@ const createServiceClientMock = vi.fn()
 const requireRoleMock = vi.fn()
 const revalidatePathMock = vi.fn()
 const rateLimitMock = vi.fn()
+const sendInviteEmailMock = vi.fn().mockResolvedValue({ ok: true })
 
 vi.mock('@/lib/auth-org', () => ({ getOrgContext: getOrgContextMock }))
 vi.mock('@/lib/supabase/server', () => ({
@@ -19,8 +20,9 @@ vi.mock('next/cache', () => ({ revalidatePath: revalidatePathMock }))
 vi.mock('@/lib/rate-limit', () => ({ rateLimit: rateLimitMock }))
 // Email plumbing is isolated (invite-email has its own tests); mock it so these
 // tests exercise the provisioning/membership logic, not the email path.
+// sendInviteEmail is closure-captured so tests can simulate failed sends.
 vi.mock('@/lib/invite-email', () => ({
-  sendInviteEmail: vi.fn().mockResolvedValue({ ok: true }),
+  sendInviteEmail: sendInviteEmailMock,
   sendSiteAssignmentEmail: vi.fn().mockResolvedValue(undefined),
   resolveInviteContext: vi.fn().mockResolvedValue({ inviterName: 'Test Admin', orgName: 'Test Org' }),
   getOrgName: vi.fn().mockResolvedValue('Test Org'),
@@ -389,6 +391,78 @@ describe('addSubOrgMember', () => {
       expect(result.member.organisation_id).toBe(SUB_ORG_ID)
     }
   })
+
+  it('surfaces the invite-email warning to the caller when the email does not send', async () => {
+    vi.resetModules()
+    vi.clearAllMocks()
+
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+    rateLimitMock.mockReturnValueOnce(true)
+
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+    const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const subOrgEqId        = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
+    const subOrgSelect      = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
+    createClientMock.mockResolvedValueOnce({ from: vi.fn().mockReturnValueOnce({ select: subOrgSelect }) })
+
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    const newUserId  = '00000000-0000-0000-0000-000000000099'
+    const insertedMember = {
+      id:              MEMBER_ROW_ID,
+      user_id:         newUserId,
+      organisation_id: SUB_ORG_ID,
+      role:            'contractor',
+      is_active:       true,
+      created_at:      '2026-05-29T00:00:00Z',
+      profiles:        { full_name: 'New User', email: 'new@example.com' },
+    }
+
+    const insertSingle = vi.fn().mockResolvedValueOnce({ data: insertedMember, error: null })
+    const insertSelect = vi.fn().mockReturnValueOnce({ single: insertSingle })
+    const insertFn     = vi.fn().mockReturnValueOnce({ select: insertSelect })
+
+    createServiceClientMock.mockReturnValueOnce({
+      auth: {
+        admin: {
+          createUser: vi.fn().mockResolvedValueOnce({
+            data: { user: { id: newUserId } },
+            error: null,
+          }),
+        },
+        resetPasswordForEmail: vi.fn().mockResolvedValue({ error: null }),
+      },
+      from: vi.fn().mockReturnValueOnce({ insert: insertFn }),
+    })
+
+    sendInviteEmailMock.mockResolvedValueOnce({
+      ok: false,
+      warning: 'User created, but the invite email could not be sent.',
+    })
+
+    vi.doMock('@esite/shared', async () => {
+      const actual = await vi.importActual<any>('@esite/shared')
+      return { ...actual, logAuthEvent: vi.fn().mockResolvedValue(undefined) }
+    })
+
+    const { addSubOrgMember } = await import('./sub-org-members.actions')
+    const result = await addSubOrgMember(SUB_ORG_ID, {
+      email: 'new@example.com',
+      fullName: 'New User',
+      role: 'contractor',
+    })
+
+    // Membership creation is untouched; only the reporting carries the warning.
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.member.user_id).toBe(newUserId)
+      expect(result.warning).toMatch(/could not be sent/i)
+    }
+  })
 })
 
 // ─── Task 3: removeSubOrgMember ───────────────────────────────────────────────
@@ -537,10 +611,86 @@ describe('bulkInviteSubOrgMembers', () => {
       expect(result.summary.invited).toBe(2)
       expect(result.summary.skipped).toBe(0)
       expect(result.summary.failed).toBe(0)
+      expect(result.summary.emailFailed).toBe(0)
       expect(result.details).toHaveLength(2)
       expect(result.details[0]?.status).toBe('invited')
       expect(result.details[1]?.status).toBe('invited')
     }
     expect(revalidatePathMock).toHaveBeenCalledWith(`/settings/sub-organizations/${SUB_ORG_ID}`)
+  })
+
+  it('reports invited-email-failed (not invited) when the invite email does not send', async () => {
+    getOrgContextMock.mockResolvedValueOnce({
+      userId: USER_ID,
+      organisationId: PARENT_ORG_ID,
+      role: 'admin',
+    })
+    rateLimitMock.mockReturnValueOnce(true)
+
+    const subOrgRow = { id: SUB_ORG_ID, parent_organisation_id: PARENT_ORG_ID, is_shadow: true }
+
+    const subOrgMaybeSingle = vi.fn().mockResolvedValueOnce({ data: subOrgRow, error: null })
+    const subOrgEqId = vi.fn().mockReturnValueOnce({ maybeSingle: subOrgMaybeSingle })
+    const subOrgSelect = vi.fn().mockReturnValueOnce({ eq: subOrgEqId })
+
+    const existingEqActive = vi.fn().mockResolvedValueOnce({ data: [], error: null })
+    const existingEqOrg = vi.fn().mockReturnValueOnce({ eq: existingEqActive })
+    const existingSelect = vi.fn().mockReturnValueOnce({ eq: existingEqOrg })
+
+    const supabaseFrom = vi.fn()
+      .mockReturnValueOnce({ select: subOrgSelect })
+      .mockReturnValueOnce({ select: existingSelect })
+
+    createClientMock.mockResolvedValueOnce({ from: supabaseFrom })
+    requireRoleMock.mockResolvedValueOnce({ ok: true, role: 'admin' })
+
+    const userId1 = '00000000-0000-0000-0000-000000000091'
+    const userId2 = '00000000-0000-0000-0000-000000000092'
+
+    const insert1 = vi.fn().mockResolvedValueOnce({ error: null })
+    const insert2 = vi.fn().mockResolvedValueOnce({ error: null })
+
+    const serviceFrom = vi.fn()
+      .mockReturnValueOnce({ insert: insert1 })
+      .mockReturnValueOnce({ insert: insert2 })
+
+    createServiceClientMock.mockReturnValue({
+      auth: {
+        admin: {
+          createUser: vi.fn()
+            .mockResolvedValueOnce({ data: { user: { id: userId1 } }, error: null })
+            .mockResolvedValueOnce({ data: { user: { id: userId2 } }, error: null }),
+        },
+        resetPasswordForEmail: vi.fn().mockResolvedValue({ error: null }),
+      },
+      from: serviceFrom,
+    })
+
+    // First invite email fails outright; second sends fine.
+    sendInviteEmailMock
+      .mockResolvedValueOnce({
+        ok: false,
+        warning: 'User created, but the invite email could not be sent.',
+      })
+      .mockResolvedValueOnce({ ok: true })
+
+    const { bulkInviteSubOrgMembers } = await import('./sub-org-members.actions')
+    const result = await bulkInviteSubOrgMembers({
+      subOrgId: SUB_ORG_ID,
+      emails: ['mike@example.com', 'jane@example.com'],
+      role: 'contractor',
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.summary).toEqual({ invited: 1, added: 0, skipped: 0, failed: 0, emailFailed: 1 })
+      expect(result.details[0]?.status).toBe('invited-email-failed')
+      expect(result.details[0]?.reason).toMatch(/could not be sent/i)
+      expect(result.details[1]?.status).toBe('invited')
+      expect(result.details[1]?.reason).toBeUndefined()
+    }
+    // Membership creation is untouched by a mail failure — both rows inserted.
+    expect(insert1).toHaveBeenCalled()
+    expect(insert2).toHaveBeenCalled()
   })
 })
