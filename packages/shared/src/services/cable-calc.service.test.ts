@@ -229,6 +229,12 @@ describe('breakerCoordinationCheck', () => {
     expect(breakerCoordinationCheck(180, 250, 400).tone).toBe('ok')
     expect(breakerCoordinationCheck(180, null, 400).tone).toBe('unknown')
   })
+
+  it('never claims a pass when Iz could not be computed', () => {
+    expect(breakerCoordinationCheck(180, 250, null).tone).toBe('unknown')
+    // Ib > In is still reportable without Iz
+    expect(breakerCoordinationCheck(300, 250, null).tone).toBe('warning')
+  })
 })
 
 describe('deratedRating', () => {

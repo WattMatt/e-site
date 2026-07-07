@@ -968,7 +968,9 @@ export function CableScheduleGrid({
                   <Td align="right" style={{ color: run.under_rated ? 'var(--c-red)' : 'var(--c-text)' }}>
                     {(() => {
                       const breadcrumb = sansBreadcrumb(run)
-                      const tipBody = sansBreadcrumbAsTooltip(breadcrumb)
+                      // locked ⇒ non-DRAFT: stored factors are a snapshot of the
+                      // lookup rules in force at issue time, never recomputed.
+                      const tipBody = sansBreadcrumbAsTooltip(breadcrumb, { frozen: locked })
                       const capacityTip = run.combined_capacity_a == null
                         ? tipBody
                         : `Combined capacity: ${Math.round(run.combined_capacity_a)} A (sum of ${run.parallel_count} strands)\n\n${tipBody}`
@@ -1010,7 +1012,10 @@ export function CableScheduleGrid({
                     {sc.tone === 'unknown' ? (
                       <span
                         title={
-                          faultLevelKa == null
+                          // A stored 0 (legacy rows) disables the check just like
+                          // null — the PILC explanation is reserved for the case
+                          // where the withstand itself is uncomputable.
+                          faultLevelKa == null || faultLevelKa <= 0
                             ? 'Short-circuit check unavailable — set the revision fault level (kA) in the header.'
                             : 'Short-circuit check unavailable — PILC withstand is tabulated in the SANS 97 reference tables, not the adiabatic estimate.'
                         }
@@ -1035,7 +1040,13 @@ export function CableScheduleGrid({
                   <Td align="center" style={{ color: CHECK_TONE_COLOR[breaker.tone], fontWeight: breaker.tone === 'danger' ? 700 : 400 }}>
                     {breaker.tone === 'unknown' ? (
                       <span
-                        title="No breaker rating recorded on the destination board — nothing to coordinate against."
+                        title={
+                          // The shared check reports WHY it couldn't run (e.g.
+                          // 'Iz unavailable — derated capacity not computed');
+                          // fall back to the no-breaker explanation otherwise.
+                          breaker.reason
+                            ?? 'No breaker rating recorded on the destination board — nothing to coordinate against.'
+                        }
                         style={{ cursor: 'help' }}
                       >
                         —
@@ -1044,7 +1055,13 @@ export function CableScheduleGrid({
                       <span
                         title={
                           breaker.reason
-                            ?? `Coordinated: Ib ${run.load_a ?? '?'} A ≤ In ${run.breaker_a} A ≤ Iz ${Math.round(run.combined_capacity_a ?? 0)} A (SANS 10142-1 §6.7.1.1)`
+                            ?? `Coordinated: Ib ${run.load_a ?? '?'} A ≤ In ${run.breaker_a} A${
+                              // Never render a fabricated 'Iz 0 A' — only claim
+                              // the In ≤ Iz leg when a capacity was computed.
+                              run.combined_capacity_a != null && run.combined_capacity_a > 0
+                                ? ` ≤ Iz ${Math.round(run.combined_capacity_a)} A`
+                                : ''
+                            } (SANS 10142-1 §6.7.1.1)`
                         }
                         style={{ cursor: 'help' }}
                       >
@@ -1180,7 +1197,7 @@ export function CableScheduleGrid({
                           derate_thermal:  (c as EnrichedCable & { derate_thermal?: number | null }).derate_thermal ?? null,
                           derate_grouping: (c as EnrichedCable & { derate_grouping?: number | null }).derate_grouping ?? null,
                           derate_temp:     (c as EnrichedCable & { derate_temp?: number | null }).derate_temp ?? null,
-                        }))}>
+                        }), { frozen: locked })}>
                           {fmt(c.derated_current_rating_a, 0)}
                         </span>
                       </Td>

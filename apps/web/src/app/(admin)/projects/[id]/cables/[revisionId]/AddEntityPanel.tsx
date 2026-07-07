@@ -58,12 +58,16 @@ export function AddEntityPanel({ projectId, revisionId, sources, boards, fedPair
     setFlash(null)
   }
 
-  function submit(fn: () => Promise<{ error?: string }>, label: string) {
+  function submit(fn: () => Promise<{ error?: string; warning?: string }>, label: string) {
     setError(null); setFlash(null)
     startTransition(async () => {
       const r = await fn()
       if (r.error) { setError(r.error); return }
-      setFlash(label + ' added.')
+      // Non-fatal action warnings (e.g. the strand was added but the sibling
+      // re-derate failed) — the write succeeded, so keep the success flow and
+      // surface the caveat alongside the flash + console.
+      if (r.warning) console.warn('[cable-schedule]', r.warning)
+      setFlash(label + ' added.' + (r.warning ? ` ⚠ ${r.warning}` : ''))
       router.refresh()
       onFeedConsumed?.()
     })
@@ -162,7 +166,7 @@ function CableForm({
   boards: NodeOption[]
   fedPairs: string[]
   pending: boolean
-  onSubmit: (fn: () => Promise<{ error?: string }>, label: string) => void
+  onSubmit: (fn: () => Promise<{ error?: string; warning?: string }>, label: string) => void
   feedFromKey?: string | null
 }) {
   // From = sources + boards; To = boards only
@@ -248,7 +252,10 @@ function CableForm({
         installationMethod: installMethod,
         depthMm: depthMm ? Number(depthMm) : null,
         ambientTempC: 30,
-        thermalResistivityKmw: 1.0,
+        // 1.2 K·m/W is the SANS / Aberdare F&F reference soil thermal
+        // resistivity (T6.3.2 factor = 1.0 at 1.2) — matches the server-side
+        // zod default.
+        thermalResistivityKmw: 1.2,
         // Legacy quick-add path doesn't surface arrangement — default to
         // the conservative TOUCHING factor. Engineers wanting SPACING_D
         // use the form modal (CableFormModal) which exposes the toggle.
@@ -323,7 +330,9 @@ function CableForm({
             installationMethod: installMethod,
             depthMm: depthMm ? Number(depthMm) : null,
             ambientTempC: 30,
-            thermalResistivityKmw: 1.0,
+            // SANS / Aberdare F&F reference soil thermal resistivity —
+            // matches the server-side zod default.
+            thermalResistivityKmw: 1.2,
             ohmPerKmOverride: ohmOverride ? Number(ohmOverride) : null,
             // Legacy quick-add path — see preview-call comment above.
             groupingArrangement: 'TOUCHING',
@@ -367,7 +376,9 @@ function CableForm({
             depthMm: depthMm ? Number(depthMm) : null,
             groupedWith: Number(groupedWith),
             ambientTempC: 30,
-            thermalResistivityKmw: 1.0,
+            // SANS / Aberdare F&F reference soil thermal resistivity —
+            // matches the server-side zod default.
+            thermalResistivityKmw: 1.2,
             ohmPerKmOverride: ohmOverride ? Number(ohmOverride) : null,
             // Legacy quick-add path — see preview-call comment above.
             groupingArrangement: 'TOUCHING',

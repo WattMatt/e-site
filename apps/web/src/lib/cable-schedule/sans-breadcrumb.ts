@@ -178,8 +178,18 @@ export function sansBreadcrumb(input: EnrichedRun | EnrichedCable | Sansable): S
  * Render the breadcrumb as a plain-text tooltip body. The grid passes this
  * to `title=` on the rating cell; the SansCoverageBadge formats the same
  * data with HTML structure.
+ *
+ * `opts.frozen` — pass true for non-DRAFT (ISSUED / SUPERSEDED) revisions.
+ * Stored derate factors are snapshots of whatever lookup rules were live
+ * when the cable was last saved; on a frozen revision they are never
+ * recomputed, so the tooltip must not imply they reflect the CURRENT
+ * lookup (the 2026-07 audit corrected the lookup after older revisions
+ * were issued).
  */
-export function sansBreadcrumbAsTooltip(b: SansBreadcrumb): string {
+export function sansBreadcrumbAsTooltip(
+  b: SansBreadcrumb,
+  opts?: { frozen?: boolean },
+): string {
   if (!b.ratingTableCode) {
     return 'No SANS rating mapping for this conductor / insulation / cores combination. ' +
            'Engineer must enter Ω/km and rating manually, or pick a different size.'
@@ -193,6 +203,9 @@ export function sansBreadcrumbAsTooltip(b: SansBreadcrumb): string {
   }
   if (b.deratedRatingA != null) {
     lines.push(`= ${b.deratedRatingA} A derated`)
+  }
+  if (opts?.frozen) {
+    lines.push('Factors reflect the lookup rules in force when the revision was issued.')
   }
   return lines.join('\n')
 }

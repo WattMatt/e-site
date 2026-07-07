@@ -37,6 +37,26 @@ describe('targetGroupedWith — existing strand after the supply strand count ch
     expect(targetGroupedWith(0, 2, 3)).toBe(3)
     expect(targetGroupedWith(Number.NaN, 2, 3)).toBe(3)
   })
+
+  it('caller-declared trench group for the new strand raises every sibling re-derate', () => {
+    // 2 existing strands + a 3rd added with groupedWith = 8 — all 3 strands
+    // share the declared trench, so both siblings re-derate at 8 (the new
+    // strand itself is stamped 8 via addCableAction's effectiveGroupedWith).
+    expect(targetGroupedWith(2, 2, 3, 8)).toBe(8)
+    expect(targetGroupedWith(1, 2, 3, 8)).toBe(8)
+  })
+
+  it('minGroupedWith never lowers the target', () => {
+    // Preserved user-entered trench group beats a smaller declared min…
+    expect(targetGroupedWith(6, 2, 3, 2)).toBe(6)
+    // …and the final strand count beats a min of 1 (the default).
+    expect(targetGroupedWith(1, 2, 3, 1)).toBe(3)
+  })
+
+  it('garbage minGroupedWith is treated as 1', () => {
+    expect(targetGroupedWith(1, 2, 3, Number.NaN)).toBe(3)
+    expect(targetGroupedWith(1, 2, 3, 0)).toBe(3)
+  })
 })
 
 describe('groupSizeForNewStrand — new strand joining an existing supply', () => {

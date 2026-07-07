@@ -326,10 +326,20 @@ async function lookupFactor(
   if (list.length === 0) return null
 
   const chosenKey = selectConservativeSortKey(list.map((r) => r.sort_key), value)
-  const chosen = list.find((r) => r.sort_key === chosenKey)
-  if (!chosen) return null
-  const f = chosen.row_data[factorKey]
-  return typeof f === 'number' ? f : null
+  const startIdx = list.findIndex((r) => r.sort_key === chosenKey)
+  if (startIdx === -1) return null
+  // The chosen row may not carry this column — e.g. the PVC-only uprating
+  // rows below the 25 °C ground reference omit factor_xlpe_90c. Rows further
+  // up the axis are always at least as conservative, so scan upward to the
+  // first row that has the value (an 18 °C XLPE lookup falls through 20 °C
+  // to the 25 °C reference row's 1.0). Past the last populated row — e.g.
+  // PVC-only air-temperature rows above 45 °C — the answer stays an honest
+  // null: no published factor exists.
+  for (let i = startIdx; i < list.length; i++) {
+    const f = list[i]!.row_data[factorKey]
+    if (typeof f === 'number') return f
+  }
+  return null
 }
 
 function normalise(r: Record<string, unknown>): CablePropertyLookup {

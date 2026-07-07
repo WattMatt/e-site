@@ -39,8 +39,11 @@ export function FaultLevelEditor({ revisionId, faultLevelKa, canEdit }: Props) {
   async function save() {
     const trimmed = value.trim()
     const parsed = trimmed === '' ? null : Number(trimmed)
-    if (parsed != null && (!Number.isFinite(parsed) || parsed < 0)) {
-      setError('Must be a non-negative number')
+    // 0 kA is not a fault level — the short-circuit check treats ≤ 0 as
+    // "not set", so storing it would silently disable the check while the
+    // chip claims a value. Blank clears; anything else must be positive.
+    if (parsed != null && (!Number.isFinite(parsed) || parsed <= 0)) {
+      setError('Must be a positive number (leave blank to clear)')
       return
     }
     setSaving(true)
@@ -91,7 +94,7 @@ export function FaultLevelEditor({ revisionId, faultLevelKa, canEdit }: Props) {
       <input
         type="number"
         step="0.1"
-        min={0}
+        min={0.1}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {

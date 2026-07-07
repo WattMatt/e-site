@@ -522,6 +522,10 @@ const addParallelCableSetSchema = z.object({
   measuredLengthM: z.number().nonnegative().nullable().optional(),
   installationMethod: z.enum(['DIRECT_IN_GROUND', 'DUCT', 'LADDER', 'TRAY', 'CLIPPED']),
   depthMm: z.number().int().positive().nullable().optional(),
+  // Caller-declared trench/duct group size (e.g. addRunAction's groupedWith).
+  // A floor, not an override: the new strand(s) and the sibling re-derate are
+  // both derated at ≥ this, never below the final strand count.
+  groupedWith: z.number().int().positive().optional(),
   ambientTempC: z.number().default(30),
   // SANS 10142-1 / Aberdare F&F reference soil thermal resistivity is
   // 1.2 K·m/W (T6.3.2 factor = 1.0 at 1.2). The pre-2026-07 default of 1.0
@@ -533,7 +537,7 @@ const addParallelCableSetSchema = z.object({
 
 export async function addParallelCableSetAction(
   input: z.infer<typeof addParallelCableSetSchema>,
-): Promise<{ supplyId?: string; createdCount?: number; error?: string }> {
+): Promise<{ supplyId?: string; createdCount?: number; warning?: string; error?: string }> {
   const parsed = addParallelCableSetSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
   const supabase = await createClient()
@@ -574,10 +578,16 @@ export async function addParallelCableSetAction(
   // derated the added strand at grouped_with = 1 and never touched siblings.
   const prevCount = existing.length
   const finalCount = prevCount + effectiveCount
-  const newStrandGroupedWith = groupSizeForNewStrand(
-    existing.map((e) => Number(e.grouped_with ?? 1)),
-    prevCount,
-    finalCount,
+  // Honour a caller-declared trench group (addRunAction's groupedWith) as a
+  // floor for the new strand(s) — and for the sibling re-derate below.
+  const declaredGroupedWith = parsed.data.groupedWith ?? 1
+  const newStrandGroupedWith = Math.max(
+    groupSizeForNewStrand(
+      existing.map((e) => Number(e.grouped_with ?? 1)),
+      prevCount,
+      finalCount,
+    ),
+    declaredGroupedWith,
   )
 
   // All cables in the set share spec + group size, so resolve electricals once.
@@ -632,6 +642,7 @@ export async function addParallelCableSetAction(
 
   // Re-derate the pre-existing siblings at the final group size — the new
   // strand changed the group every strand sits in.
+  let warning: string | undefined
   if (prevCount > 0) {
     const rederate = await rederateSupplyStrands(supabase as any, {
       supplyId,
@@ -642,8 +653,15 @@ export async function addParallelCableSetAction(
       prevCount,
       finalCount,
       excludeIds: insertedIds,
+      minGroupedWith: declaredGroupedWith,
     })
-    if (rederate.error) return { error: rederate.error }
+    if (rederate.error) {
+      // Non-fatal: the INSERT above already committed, so failing the whole
+      // action here would report strands that exist as "failed". Surface a
+      // warning instead — the stale sibling derates heal on the next strand
+      // save or a recompute-cable-derates sweep.
+      warning = `Cable(s) added, but the sibling re-derate failed (${rederate.error}) — re-save a strand or re-run the derate recompute.`
+    }
   }
 
   // Best-effort audit entry.
@@ -664,7 +682,7 @@ export async function addParallelCableSetAction(
 
   revalidatePath(`/projects/${guard.projectId}/cables/${parsed.data.revisionId}`)
   await recomputeTenantElectrical(guard.projectId).catch(() => {})
-  return { supplyId, createdCount: effectiveCount }
+  return { supplyId, createdCount: effectiveCount, warning }
 }
 
 // ─── add-run drawer (C9) ────────────────────────────────────────────
@@ -706,7 +724,7 @@ const addRunSchema = z.object({
 
 export async function addRunAction(
   input: z.infer<typeof addRunSchema>,
-): Promise<{ supplyId?: string; error?: string }> {
+): Promise<{ supplyId?: string; warning?: string; error?: string }> {
   const parsed = addRunSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
   const d = parsed.data
@@ -736,11 +754,14 @@ export async function addRunAction(
     measuredLengthM: d.measuredLengthM ?? null,
     installationMethod: d.installationMethod,
     depthMm: d.depthMm ?? null,
+    // Declared trench group — floors the first strand's grouped_with (and
+    // any future sibling re-derate) at the trench size the engineer entered.
+    groupedWith: d.groupedWith,
     ambientTempC: d.ambientTempC,
     thermalResistivityKmw: d.thermalResistivityKmw,
     ohmPerKmOverride: d.ohmPerKmOverride ?? null,
     groupingArrangement: d.groupingArrangement,
-  }).then((r) => r.error ? { error: r.error } : { supplyId: r.supplyId })
+  }).then((r) => r.error ? { error: r.error } : { supplyId: r.supplyId, warning: r.warning })
 }
 
 // ─── cables ──────────────────────────────────────────────────────────
@@ -883,8 +904,10 @@ interface StrandForRederate {
  * of every sibling — not just the row being written. Each strand is
  * re-derated with its OWN stored inputs (spec, method, depth, ambient, soil
  * resistivity) and a grouped_with of `targetGroupedWith(stored, prevCount,
- * finalCount)` — which tracks the strand count for auto-managed values while
- * preserving user-entered trench groups (see lib/cable-schedule/parallel-derate).
+ * finalCount, minGroupedWith)` — which tracks the strand count for
+ * auto-managed values while preserving user-entered trench groups and never
+ * dropping below the trench group the caller declared for the strand being
+ * added (see lib/cable-schedule/parallel-derate).
  *
  * Ω/km and manual_override are deliberately untouched — grouping affects the
  * current rating, not the conductor impedance. Changes are audited per field
@@ -904,6 +927,9 @@ async function rederateSupplyStrands(
     finalCount: number
     /** Strand ids already written at the final group size (fresh inserts). */
     excludeIds?: readonly string[]
+    /** Trench group the caller declared for the strand being added — the
+     *  siblings share that trench, so none may re-derate below it. */
+    minGroupedWith?: number
   },
 ): Promise<{ error?: string }> {
   const { data, error } = await supabase
@@ -922,7 +948,7 @@ async function rederateSupplyStrands(
 
   for (const s of strands) {
     const storedGrouped = Number(s.grouped_with ?? 1)
-    const nextGrouped = targetGroupedWith(storedGrouped, args.prevCount, args.finalCount)
+    const nextGrouped = targetGroupedWith(storedGrouped, args.prevCount, args.finalCount, args.minGroupedWith ?? 1)
 
     const props = await lookupCableProperties(supabase, {
       conductor: s.conductor,
@@ -991,7 +1017,7 @@ async function rederateSupplyStrands(
 
 export async function addCableAction(
   input: z.infer<typeof cableSchema>,
-): Promise<{ id?: string; cableNo?: number; error?: string }> {
+): Promise<{ id?: string; cableNo?: number; warning?: string; error?: string }> {
   const parsed = cableSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
 
@@ -1081,6 +1107,7 @@ export async function addCableAction(
 
   // Re-derate the pre-existing siblings at the final group size — this
   // strand changed the group every sibling sits in.
+  let warning: string | undefined
   if (prevCount > 0) {
     const { data: { user } } = await supabase.auth.getUser()
     const rederate = await rederateSupplyStrands(supabase as any, {
@@ -1092,8 +1119,15 @@ export async function addCableAction(
       prevCount,
       finalCount,
       excludeIds: [(data as { id: string }).id],
+      minGroupedWith: parsed.data.groupedWith,
     })
-    if (rederate.error) return { error: rederate.error }
+    if (rederate.error) {
+      // Non-fatal: the INSERT above already committed, so failing the whole
+      // action here would report a strand that exists as "failed". Surface a
+      // warning instead — the stale sibling derates heal on the next strand
+      // save or a recompute-cable-derates sweep.
+      warning = `Strand added, but the sibling re-derate failed (${rederate.error}) — re-save a strand or re-run the derate recompute.`
+    }
   }
 
   revalidatePath(`/projects/${guard.projectId}/cables/${s.revision_id}`)
@@ -1101,6 +1135,7 @@ export async function addCableAction(
   return {
     id: (data as { id: string }).id,
     cableNo: (data as { cable_no: number }).cable_no,
+    warning,
   }
 }
 
@@ -1786,6 +1821,17 @@ export async function updateRunCableFieldsAction(
     return { error: 'Supply has no cables to update' }
   }
 
+  // Parallel-set invariant: a run's grouped_with can never drop below the
+  // supply's actual strand count — the SANS grouping derate must reflect at
+  // least the parallel set itself. The grid's inline Grp cell posts raw user
+  // input, so floor it server-side rather than trusting the client. (Every
+  // groupedWith write path funnels through this fan-out; the strand-level
+  // drawer/grid cells never send groupedWith.)
+  const patch = { ...parsed.data.patch }
+  if (patch.groupedWith !== undefined) {
+    patch.groupedWith = Math.max(patch.groupedWith, strands.length)
+  }
+
   // Fan out — Promise.allSettled so a single strand failure doesn't
   // lose the rest. Each call routes through updateCableAction, which
   // re-validates DRAFT status and the role gate per strand. The
@@ -1794,7 +1840,7 @@ export async function updateRunCableFieldsAction(
   // RLS-backed SELECT will return null and the per-cable call fails.
   const results = await Promise.allSettled(
     (strands as Array<{ id: string }>).map((s) =>
-      updateCableAction({ cableId: s.id, ...parsed.data.patch } as z.infer<typeof updateCableSchema>),
+      updateCableAction({ cableId: s.id, ...patch } as z.infer<typeof updateCableSchema>),
     ),
   )
 

@@ -46,6 +46,10 @@ const FACTOR_TABLES = {
     { sort_key: 6, row_data: { n_cables: 6, ground_touching: 0.55, duct_touching: 0.72 } },
   ],
   TABLE_6_3_4: [
+    // 10–20 °C are SANS PVC-only uprating rows — factor_xlpe_90c deliberately absent
+    { sort_key: 10, row_data: { ambient_c: 10, factor_pvc_70c: 1.15 } },
+    { sort_key: 15, row_data: { ambient_c: 15, factor_pvc_70c: 1.11 } },
+    { sort_key: 20, row_data: { ambient_c: 20, factor_pvc_70c: 1.05 } },
     { sort_key: 25, row_data: { ambient_c: 25, factor_pvc_70c: 1.0, factor_xlpe_90c: 1.0 } },
     { sort_key: 30, row_data: { ambient_c: 30, factor_pvc_70c: 0.94, factor_xlpe_90c: 0.96 } },
     { sort_key: 35, row_data: { ambient_c: 35, factor_pvc_70c: 0.88, factor_xlpe_90c: 0.92 } },
@@ -175,6 +179,42 @@ describe('lookupDeratingFactors', () => {
       installation_method: 'TRAY',
     })
     expect(f.temperature).toBe(0.71)
+  })
+
+  it('cold ground under an XLPE cable falls through PVC-only rows to the 25 °C reference 1.0', async () => {
+    const f = await lookupDeratingFactors(supabase, {
+      depth_mm: 500,
+      thermal_resistivity_kmw: 1.2,
+      grouped_with: 1,
+      ambient_c: 18,
+      insulation: 'XLPE',
+      installation_method: 'DIRECT_IN_GROUND',
+    })
+    expect(f.temperature).toBe(1.0) // 18 → 20 °C row (PVC-only) → falls up to 25 °C
+  })
+
+  it('cold ground under a PVC cable takes the published uprating row', async () => {
+    const f = await lookupDeratingFactors(supabase, {
+      depth_mm: 500,
+      thermal_resistivity_kmw: 1.2,
+      grouped_with: 1,
+      ambient_c: 18,
+      insulation: 'PVC',
+      installation_method: 'DIRECT_IN_GROUND',
+    })
+    expect(f.temperature).toBe(1.05)
+  })
+
+  it('hot air above the last XLPE row stays an honest null (no published factor)', async () => {
+    const f = await lookupDeratingFactors(supabase, {
+      depth_mm: 0,
+      thermal_resistivity_kmw: 1.2,
+      grouped_with: 1,
+      ambient_c: 50,
+      insulation: 'XLPE',
+      installation_method: 'TRAY',
+    })
+    expect(f.temperature).toBeNull() // fixture's 50 °C air row is PVC-only
   })
 
   it('reference conditions resolve to exactly 1.0 (buried, 1.2 K·m/W, 25 °C)', async () => {

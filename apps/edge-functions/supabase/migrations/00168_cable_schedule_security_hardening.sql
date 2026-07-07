@@ -21,7 +21,9 @@
 --      Enforced here with BEFORE triggers on revisions + its data tables.
 --   4. cables.thermal_resistivity_kmw default 1.0 → 1.2 (the SANS 10142-1
 --      reference soil resistivity — the old 1.0 default silently up-rated
---      every default-valued cable ~8 %).
+--      every default-valued cable ~8 %), plus a data fix re-baselining the
+--      legacy stored 1.0 (a UI-hardcoded default, never a measurement) to
+--      1.2 on DRAFT revisions only.
 --   5. Data fix — cables.standard rows desynced from insulation (the commit
 --      importer stamped 'SANS 1507-4' regardless of insulation). Re-aligned
 --      to the same mapping the app uses (cable-entities.actions.ts):
@@ -111,6 +113,10 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA structure      REVOKE SELECT ON TABLES FROM a
 --     deleteDraftRevisionAction deletes DRAFT only. Nothing writes
 --     SUPERSEDED today; the ISSUED→SUPERSEDED (status-only) transition is
 --     allowed for the future lifecycle.
+--   * deleteProjectAction — a whole-project delete cascades into revisions
+--     of ANY status (still role 'authenticated'). Exempted in the DELETE
+--     branch via the parent-gone check (project row is removed before RI
+--     fires this trigger on its revisions).
 --   * Every data-table write path (cable-entities / cable-length /
 --     cable-cost / cable-discrepancy / cable-tag regenerate, and the
 --     /api/cable-schedule/commit importer) is DRAFT-gated app-side.
@@ -168,8 +174,20 @@ BEGIN
 
     IF TG_OP = 'DELETE' THEN
         IF OLD.status <> 'DRAFT' THEN
-            RAISE EXCEPTION 'cable_schedule: % revision "%" cannot be deleted — only DRAFT revisions can be discarded', OLD.status, OLD.code
-                USING ERRCODE = 'raise_exception';
+            -- Authorised-cascade exemption: deleting a project cascades into
+            -- its revisions (revisions.project_id ON DELETE CASCADE) while the
+            -- role GUC still reads 'authenticated'. Parent rows are removed
+            -- before RI fires the child triggers, so "project row already
+            -- gone" identifies the cascade — allow it, or deleteProjectAction
+            -- would wedge on any project with an ISSUED schedule. A direct
+            -- REST delete of a non-DRAFT revision still sees the project row
+            -- and is rejected. (The 3b/3c child guards already have this
+            -- exemption via their v_status IS NULL path.)
+            PERFORM 1 FROM projects.projects WHERE id = OLD.project_id;
+            IF FOUND THEN
+                RAISE EXCEPTION 'cable_schedule: % revision "%" cannot be deleted — only DRAFT revisions can be discarded', OLD.status, OLD.code
+                    USING ERRCODE = 'raise_exception';
+            END IF;
         END IF;
         RETURN OLD;
     END IF;
@@ -341,10 +359,30 @@ CREATE TRIGGER cable_tags_frozen_guard
 -- resistivity (Table 6.12 reference row). The old default of 1.0 made every
 -- cable created without an explicit value pick up an ~8 % soil UP-rating
 -- (T6.12: ρ=1.0 → 1.06 direct / 1.02 duct) instead of factor 1.00.
--- Default-only change: existing rows keep their stored value; the
--- code-driven recompute (separate PR) re-derives the derate columns.
+-- ISSUED / SUPERSEDED rows keep their stored value (frozen designed
+-- records); DRAFT rows storing the old 1.0 default are re-baselined below.
+-- The code-driven recompute (separate PR) re-derives the derate columns.
 ALTER TABLE cable_schedule.cables
     ALTER COLUMN thermal_resistivity_kmw SET DEFAULT 1.2;
+
+-- Data fix — legacy stored 1.0 on DRAFT revisions. A stored 1.0 is provably
+-- the old default, never a user measurement: every pre-audit UI create
+-- payload hardcoded thermalResistivityKmw = 1.0 (AddEntityPanel; the commit
+-- importer likewise), and the edit path never exposed the field at all
+-- (C12 spec §6.1 — updateCableAction reads it from the existing row), so no
+-- write path could ever have stored a user-entered 1.0. Re-baselined to the
+-- SANS reference 1.2. DRAFT only — ISSUED / SUPERSEDED snapshots keep 1.0
+-- as part of the frozen designed record. The stored derate_* columns are
+-- deliberately NOT touched here; the code-driven recompute sweep re-derives
+-- them (and substitutes 1.2 itself for any straggler DRAFT rows). Runs as
+-- the migration role, so the §3 triggers do not apply. Idempotent: matches
+-- nothing on re-run.
+UPDATE cable_schedule.cables c
+SET    thermal_resistivity_kmw = 1.2
+FROM   cable_schedule.revisions r
+WHERE  r.id = c.revision_id
+  AND  r.status = 'DRAFT'
+  AND  c.thermal_resistivity_kmw = 1.0;
 
 -- ---------------------------------------------------------------------------
 -- 5. Data fix — re-align cables.standard with insulation

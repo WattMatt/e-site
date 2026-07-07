@@ -20,17 +20,25 @@
 /**
  * Target `grouped_with` for an EXISTING strand after its supply's strand
  * count changes from `prevCount` to `finalCount`.
+ *
+ * `minGroupedWith` is the trench group the CALLER declared for the strand
+ * being added (addCableAction / addRunAction `groupedWith`). The new strand
+ * shares the trench with its siblings, so no sibling may be re-derated at a
+ * smaller group than the one the caller just declared.
  */
 export function targetGroupedWith(
   stored: number,
   prevCount: number,
   finalCount: number,
+  minGroupedWith = 1,
 ): number {
   const s = Number.isFinite(stored) && stored > 0 ? Math.floor(stored) : 1
+  const min = Number.isFinite(minGroupedWith) && minGroupedWith > 0 ? Math.floor(minGroupedWith) : 1
   // Stored value beyond the old set size = user-entered trench group —
-  // preserve it, but never derate at less than the actual strand count.
-  if (s > prevCount) return Math.max(s, finalCount)
-  return finalCount
+  // preserve it, but never derate at less than the actual strand count
+  // (or the caller-declared trench group).
+  if (s > prevCount) return Math.max(s, finalCount, min)
+  return Math.max(finalCount, min)
 }
 
 /**

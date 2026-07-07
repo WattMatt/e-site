@@ -276,6 +276,11 @@ export function breakerCoordinationCheck(
       reason: `Ib ${designLoadA} A > In ${breakerRatingA} A`,
     }
   }
+  // Without a computable Iz the In ≤ Iz leg was never checked — never claim
+  // a coordination pass that wasn't computed.
+  if (deratedCapacityA == null || deratedCapacityA <= 0) {
+    return { ok: true, tone: 'unknown', reason: 'Iz unavailable — derated capacity not computed' }
+  }
   return { ok: true, tone: 'ok', reason: null }
 }
 
