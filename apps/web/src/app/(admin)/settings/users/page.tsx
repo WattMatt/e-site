@@ -154,6 +154,7 @@ export default async function UsersPage() {
                   isActive={m.is_active}
                   isSelf={m.user_id === ctx.userId}
                   callerRole={ctx.role}
+                  hasSignedIn={lastSeen.has(m.user_id)}
                 />
               </div>
             ))

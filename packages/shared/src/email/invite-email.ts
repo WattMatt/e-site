@@ -57,6 +57,7 @@ h2{margin:0 0 16px;font-size:19px;color:#F1F5F9;line-height:1.35}
 p{margin:0 0 12px;font-size:14px;line-height:1.65;color:#CBD5E1}
 .chip{display:inline-block;background:#0F172A;border:1px solid #334155;border-radius:6px;padding:4px 10px;font-size:13px;color:#E2E8F0;margin:2px 4px 2px 0}
 .btn{display:inline-block;margin:8px 0 4px;background:#3B82F6;color:#fff !important;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:700;font-size:14px}
+.otp{display:inline-block;margin:4px 0 8px;background:#0F172A;border:1px solid #334155;border-radius:8px;padding:12px 20px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:22px;font-weight:700;letter-spacing:0.35em;color:#F1F5F9}
 .note{font-size:12px;color:#94A3B8;line-height:1.6}
 .footer{margin-top:22px;font-size:11px;color:#64748B;line-height:1.5}
 a{color:#93C5FD}</style></head>
@@ -90,6 +91,10 @@ export interface InviteEmailVars {
   managingCompanyName?: string | null
   /** Human expiry window for the link, e.g. "1 hour". */
   linkExpiry?: string
+  /** 6-digit recovery code (generateLink `email_otp`). Rendered as a fallback
+   *  the invitee can type at /reset-password — usable even after an email
+   *  scanner has pre-fetched (burnt) the single-use action link. */
+  otpCode?: string | null
 }
 
 /**
@@ -115,6 +120,12 @@ export function renderInviteEmail(v: InviteEmailVars): { subject: string; html: 
        <p class="note">You'll only see the site(s) you've been added to — not the rest of ${escapeHtml(org)}'s work.</p>`
     : `<p class="note">Your team will add you to specific site(s) — you'll only see the site(s) you're added to.</p>`
 
+  const otpBlock = v.otpCode?.trim()
+    ? `<p style="margin-top:16px">If the button doesn't work (some email scanners break these links), enter this code with your email address at
+        <a href="${v.siteUrl}/reset-password?step=code&amp;email=${encodeURIComponent(v.recipientEmail)}">${escapeHtml(v.siteUrl.replace(/^https?:\/\//, ''))}/reset-password</a>:</p>
+      <div class="otp">${escapeHtml(v.otpCode.trim())}</div>`
+    : ''
+
   const content = `
     <h2>You've been added to E-Site</h2>
     <p><strong>${escapeHtml(inviter)}</strong> added you to <strong>${escapeHtml(org)}</strong> on E-Site as a <strong>${escapeHtml(roleLabel(v.role))}</strong>.</p>
@@ -122,6 +133,7 @@ export function renderInviteEmail(v: InviteEmailVars): { subject: string; html: 
     ${siteBlock}
     <p>To get started, set your password and sign in:</p>
     <a class="btn" href="${v.actionLink}">Set your password &amp; sign in</a>
+    ${otpBlock}
     <p class="note">This secure link expires in about ${escapeHtml(expiry)}. If it expires, open
       <a href="${v.siteUrl}/login">${escapeHtml(v.siteUrl.replace(/^https?:\/\//, ''))}/login</a>
       and choose “Forgot password” to get a fresh one for <strong>${escapeHtml(v.recipientEmail)}</strong>.</p>`

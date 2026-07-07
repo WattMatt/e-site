@@ -66,6 +66,7 @@ export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpe
   const [role, setRole] = useState('contractor')
   const [formError, setFormError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
 
   const activeCount = initialMembers.length
 
@@ -88,6 +89,7 @@ export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpe
 
   function handleSave() {
     setFormError(null)
+    setWarning(null)
     if (!fullName.trim()) { setFormError('Full name is required.'); return }
     if (!email.trim())    { setFormError('Email is required.'); return }
 
@@ -104,6 +106,9 @@ export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpe
       resetForm()
       setShowForm(false)
       showToast('Member added.')
+      // Non-fatal email problem (e.g. invite email did not send) — keep it on
+      // screen until the next add, unlike the transient success toast.
+      if (result.warning) setWarning(result.warning)
       router.refresh()
     })
   }
@@ -168,6 +173,17 @@ export function SubOrgRosterPanel({ subOrgId, parentOrgId, initialMembers, onOpe
           border: '1px solid var(--c-green)', borderRadius: 4,
         }}>
           {toast}
+        </div>
+      )}
+
+      {/* Invite-email warning (member WAS added; only the email had a problem) */}
+      {warning && (
+        <div role="alert" style={{
+          padding: '8px 12px', marginBottom: 12, fontSize: 12,
+          color: 'var(--c-text-mid)', background: 'var(--c-amber-dim)',
+          border: '1px solid var(--c-amber)', borderRadius: 4,
+        }}>
+          {warning} Removing and re-adding the member sends a fresh invite email.
         </div>
       )}
 

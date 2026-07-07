@@ -178,6 +178,19 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 
 Read-only actions require project access (any project member). Write/export actions are gated to `ORG_WRITE_ROLES` (owner / admin / project_manager) via `requireEffectiveRole`, enforced in-app on top of RLS.
 
+### Organisation users (`users.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `createUserAction` | W | W | — | — | — | — | — |
+| `updateUserAction` | W | W | — | — | — | — | — |
+| `removeUserAction` | W | W | — | — | — | — | — |
+| `resendInviteAction` | W | W | — | — | — | — | — |
+
+> All four gate to owner/admin of the **caller's** org (`getOrgContext` + `isOrgAdmin` — this file predates the `requireRole` helpers) and mutate via the service client, so the app gate is load-bearing. Owner-role rules: `createUserAction` refuses to assign `owner`; `updateUserAction`/`removeUserAction` require an owner caller to touch an owner row and never strip the last active owner.
+>
+> `resendInviteAction` (added with the invite-expiry fix) re-sends the branded set-password invite — fresh recovery link + 6-digit code — to an **active member of the caller's org who has never signed in** (`auth.users.last_sign_in_at IS NULL`, checked via `auth.admin.getUserById`). It refuses for users who have already signed in (they use "Forgot password" instead). Sub-org members are **out of scope** (their membership row is on the sub-org, not the caller's org) — for them, removing and re-adding via the sub-org roster re-sends the invite. Rate-limited per caller like `createUserAction`; surfaced as the "Resend invite" button on `/settings/users` rows.
+
 ### Snag site visits (`snag-visit.actions.ts`)
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |

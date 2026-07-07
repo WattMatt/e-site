@@ -75,6 +75,37 @@ describe('renderInviteEmail', () => {
     const { subject } = renderInviteEmail({ ...base, inviterName: '' })
     expect(subject).toContain('A team member')
   })
+
+  it('renders the 6-digit fallback code with a prefilled code-step link when otpCode is given', () => {
+    const { html } = renderInviteEmail({ ...base, otpCode: '482913' })
+    expect(html).toContain('<div class="otp">482913</div>')
+    expect(html).toContain(
+      `href="${SITE}/reset-password?step=code&amp;email=mike%40bobsbuilding.co.za"`,
+    )
+    expect(html.toLowerCase()).toContain('enter this code with your email address')
+  })
+
+  it('styles the code prominently (monospace, spaced) in the dark-card design', () => {
+    const { html } = renderInviteEmail({ ...base, otpCode: '482913' })
+    expect(html).toMatch(/\.otp\{[^}]*ui-monospace/)
+    expect(html).toMatch(/\.otp\{[^}]*letter-spacing/)
+  })
+
+  it('omits the code block entirely when otpCode is absent or blank', () => {
+    expect(renderInviteEmail(base).html).not.toContain('/reset-password')
+    expect(renderInviteEmail({ ...base, otpCode: '  ' }).html).not.toContain('/reset-password')
+  })
+
+  it('uses the provided linkExpiry in the expiry note', () => {
+    const { html } = renderInviteEmail({ ...base, linkExpiry: '24 hours' })
+    expect(html).toContain('expires in about 24 hours')
+    expect(html).not.toContain('1 hour')
+  })
+
+  it('defaults the expiry note to 1 hour when linkExpiry is not given', () => {
+    const { html } = renderInviteEmail(base)
+    expect(html).toContain('expires in about 1 hour')
+  })
 })
 
 describe('renderSiteAssignmentEmail', () => {

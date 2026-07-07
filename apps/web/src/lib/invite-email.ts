@@ -117,11 +117,16 @@ export async function sendInviteEmail(args: SendInviteEmailArgs): Promise<Invite
       email: args.email,
       options: { redirectTo: RECOVERY_REDIRECT },
     })
-    const actionLink = (linkData as { properties?: { action_link?: string } } | null)?.properties
-      ?.action_link
+    const props = (linkData as { properties?: { action_link?: string; email_otp?: string } } | null)
+      ?.properties
+    const actionLink = props?.action_link
     if (linkErr || !actionLink) throw linkErr ?? new Error('generateLink returned no action_link')
 
-    // 2. Render branded email.
+    // 2. Render branded email. The email_otp code is the same single-use token
+    //    as the link, typed at /reset-password — it helps when a scanner or
+    //    mail client REWRITES the link into something unclickable, but a
+    //    scanner that actually FETCHES the link burns the code with it.
+    //    Expiry mirrors the project's mailer_otp_exp (86400 s).
     const { subject, html } = renderInviteEmail({
       recipientEmail: args.email,
       inviterName: args.inviterName,
@@ -129,6 +134,8 @@ export async function sendInviteEmail(args: SendInviteEmailArgs): Promise<Invite
       role: args.role,
       siteNames: args.siteNames,
       actionLink,
+      otpCode: props?.email_otp ?? null,
+      linkExpiry: '24 hours',
       siteUrl: SITE_URL,
       managingCompanyName: args.managingCompanyName ?? null,
     })

@@ -115,7 +115,7 @@ export default function ResetPasswordScreen() {
         <View style={styles.inner}>
           <Text style={styles.title}>Enter your code</Text>
           <Text style={styles.subtitle}>
-            We sent a 6-digit code to {email}. The code expires in 1 hour.
+            We sent a 6-digit code to {email}. The code expires in 24 hours.
           </Text>
           <TextInput
             style={[styles.input, { fontSize: 22, letterSpacing: 6, textAlign: 'center' }]}

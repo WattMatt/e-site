@@ -35,6 +35,7 @@ const ROLE_LABEL: Record<string, string> = {
 const STATUS_LABEL: Record<BulkAddStatus, string> = {
   'added':                      'Added',
   'invited-and-added':          'Invited + added',
+  'invited-email-failed':       'Added — email failed',
   'skipped-already-on-project': 'Skipped (already on project)',
   'failed':                     'Failed',
 }
@@ -42,6 +43,7 @@ const STATUS_LABEL: Record<BulkAddStatus, string> = {
 const STATUS_COLOR: Record<BulkAddStatus, string> = {
   'added':                      'var(--c-green)',
   'invited-and-added':          'var(--c-blue)',
+  'invited-email-failed':       'var(--c-amber)',
   'skipped-already-on-project': 'var(--c-text-dim)',
   'failed':                     'var(--c-danger)',
 }
@@ -238,18 +240,20 @@ export function BulkAddMembersModal({ projectId, open, onClose }: Props) {
 
 function BulkSummary({ result, onDone }: { result: BulkAddResult; onDone: () => void }) {
   const { summary, details } = result
+  const tiles: Array<[string, number]> = [
+    ['Invited', summary.invited],
+    ['Added',   summary.added],
+    ['Skipped', summary.skipped],
+    ['Failed',  summary.failed],
+  ]
+  if (summary.emailFailed > 0) tiles.push(['Email failed', summary.emailFailed])
   return (
     <div>
       <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+        display: 'grid', gridTemplateColumns: `repeat(${tiles.length}, 1fr)`,
         gap: 8, marginBottom: 16,
       }}>
-        {[
-          ['Invited', summary.invited],
-          ['Added',   summary.added],
-          ['Skipped', summary.skipped],
-          ['Failed',  summary.failed],
-        ].map(([label, n]) => (
+        {tiles.map(([label, n]) => (
           <div
             key={String(label)}
             style={{
@@ -297,6 +301,20 @@ function BulkSummary({ result, onDone }: { result: BulkAddResult; onDone: () => 
           </div>
         ))}
       </div>
+
+      {summary.emailFailed > 0 && (
+        <div style={{
+          padding: '8px 12px', fontSize: 11, color: 'var(--c-text-mid)',
+          background: 'var(--c-amber-dim)', border: '1px solid var(--c-amber)',
+          borderRadius: 4, marginBottom: 16,
+        }}>
+          {summary.emailFailed === 1
+            ? '1 invite email failed to send.'
+            : `${summary.emailFailed} invite emails failed to send.`}{' '}
+          The accounts were created and added to this site — an owner or admin
+          can resend the invite from Settings → Users.
+        </div>
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button onClick={onDone}>Done</Button>

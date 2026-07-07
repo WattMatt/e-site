@@ -35,7 +35,9 @@ export async function GET(request: Request) {
     const carriedEmail = searchParams.get('email')
     console.warn('auth/callback: supabase error_code', { errorCode, next, hasEmail: !!carriedEmail })
     if (next.startsWith('/reset-password')) {
-      const params = new URLSearchParams({ step: 'code', error: errorCode })
+      // reason=link-expired drives the friendly "link expired / already used"
+      // banner on the reset-password page.
+      const params = new URLSearchParams({ step: 'code', error: errorCode, reason: 'link-expired' })
       if (carriedEmail) params.set('email', carriedEmail)
       return NextResponse.redirect(`${origin}/reset-password?${params.toString()}`)
     }

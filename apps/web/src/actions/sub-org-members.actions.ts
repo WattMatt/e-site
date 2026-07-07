@@ -149,7 +149,7 @@ export async function listSubOrgMembers(
 export async function addSubOrgMember(
   subOrgId: string,
   input: { email: string; fullName: string; role?: string },
-): Promise<ActionOk<{ member: SubOrgMember }> | ActionErr> {
+): Promise<ActionOk<{ member: SubOrgMember; warning?: string }> | ActionErr> {
   const h = await headers()
   const ip = h.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
   const ua = h.get('user-agent') ?? null
@@ -243,25 +243,25 @@ export async function addSubOrgMember(
   // 5. Branded invite email — names the inviter, the sub-org (the company the
   //    contractor is joining) and the managing company, so a contractor who
   //    never signed up doesn't read it as spam. Falls back to the plain
-  //    recovery email on failure. Non-fatal.
-  {
-    const { inviterName } = await resolveInviteContext(service, {
-      inviterId: ctx.userId,
-      orgId: subOrg.parent_organisation_id,
-    })
-    const [subOrgName, managingCompanyName] = await Promise.all([
-      getOrgName(service, subOrgId),
-      getOrgName(service, subOrg.parent_organisation_id),
-    ])
-    await sendInviteEmail({
-      service,
-      email,
-      inviterName,
-      orgName: subOrgName,
-      role,
-      managingCompanyName,
-    })
-  }
+  //    recovery email on failure. Non-fatal, but any warning is returned to
+  //    the caller so the UI can tell the admin (mirrors createUserAction).
+  const { inviterName } = await resolveInviteContext(service, {
+    inviterId: ctx.userId,
+    orgId: subOrg.parent_organisation_id,
+  })
+  const [subOrgName, managingCompanyName] = await Promise.all([
+    getOrgName(service, subOrgId),
+    getOrgName(service, subOrg.parent_organisation_id),
+  ])
+  const invite = await sendInviteEmail({
+    service,
+    email,
+    inviterName,
+    orgName: subOrgName,
+    role,
+    managingCompanyName,
+  })
+  const warning = invite.warning
 
   // 6. Audit.
   await logAuthEvent(service, {
@@ -301,7 +301,7 @@ export async function addSubOrgMember(
     full_name:       raw.profiles?.full_name ?? null,
     email:           raw.profiles?.email ?? null,
   }
-  return { ok: true, member }
+  return warning ? { ok: true, member, warning } : { ok: true, member }
 }
 
 // ─── Task 3: removeSubOrgMember ───────────────────────────────────────────────
@@ -362,12 +362,13 @@ export async function removeSubOrgMember(
 export type BulkSubOrgStatus =
   | 'invited'                       // new user provisioned + added to sub-org
   | 'added'                         // existing user added to sub-org
+  | 'invited-email-failed'          // membership created, but NO invite email was delivered
   | 'skipped-already-in-sub-org'    // user already an active member
   | 'failed'
 
 export interface BulkSubOrgResult {
   ok: true
-  summary: { invited: number; added: number; skipped: number; failed: number }
+  summary: { invited: number; added: number; skipped: number; failed: number; emailFailed: number }
   details: Array<{ email: string; status: BulkSubOrgStatus; reason?: string }>
 }
 
@@ -458,10 +459,11 @@ export async function bulkInviteSubOrgMembers(
     getOrgName(service, subOrg.parent_organisation_id),
   ])
 
-  let invited = 0
-  let added   = 0
-  let skipped = 0
-  let failed  = 0
+  let invited     = 0
+  let added       = 0
+  let skipped     = 0
+  let failed      = 0
+  let emailFailed = 0
   const details: BulkSubOrgResult['details'] = []
 
   for (const email of emails) {
@@ -530,8 +532,10 @@ export async function bulkInviteSubOrgMembers(
       }
 
       // Branded invite email — names inviter + sub-org + managing company;
-      // falls back to the plain recovery email on failure. Non-fatal.
-      await sendInviteEmail({
+      // falls back to the plain recovery email on failure. Non-fatal — but
+      // the outcome IS reported so the admin knows when no email reached the
+      // invitee (see status handling below).
+      const invite = await sendInviteEmail({
         service,
         email,
         inviterName,
@@ -554,11 +558,24 @@ export async function bulkInviteSubOrgMembers(
             sub_organisation_id: parsed.data.subOrgId,
           },
         })
+      }
+
+      if (!invite.ok) {
+        // Membership succeeded but the invitee got NO email — don't count it
+        // as a clean invite. Not 'failed' either: the account + membership
+        // exist, only the email needs a resend.
+        emailFailed++
+        details.push({
+          email,
+          status: 'invited-email-failed',
+          reason: invite.warning ?? 'The invite email could not be sent.',
+        })
+      } else if (!isExisting) {
         invited++
-        details.push({ email, status: 'invited' })
+        details.push({ email, status: 'invited', reason: invite.warning })
       } else {
         added++
-        details.push({ email, status: 'added' })
+        details.push({ email, status: 'added', reason: invite.warning })
       }
     } catch (e) {
       failed++
@@ -571,7 +588,7 @@ export async function bulkInviteSubOrgMembers(
   }
 
   revalidatePath(`/settings/sub-organizations/${parsed.data.subOrgId}`)
-  return { ok: true, summary: { invited, added, skipped, failed }, details }
+  return { ok: true, summary: { invited, added, skipped, failed, emailFailed }, details }
 }
 
 // ─── PR-D Task 2: getProjectMembershipsForUser ────────────────────────────────

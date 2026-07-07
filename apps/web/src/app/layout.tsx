@@ -5,6 +5,7 @@ import './globals.css'
 import { AnalyticsProvider } from '@/components/providers/AnalyticsProvider'
 import { ErrorBoundary } from '@/components/providers/ErrorBoundary'
 import { SentryBoot } from '@/components/providers/SentryBoot'
+import { AuthHashErrorRedirect } from '@/components/auth/AuthHashErrorRedirect'
 import { cookies } from 'next/headers'
 import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { parseThemeMode, resolveDataTheme } from '@/lib/theme/resolve'
@@ -55,6 +56,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className={`${syne.variable} ${mono.variable} ${fraunces.variable} ${plexMono.variable}`}>
         <ErrorBoundary>
           <SentryBoot />
+          <AuthHashErrorRedirect />
           <ThemeProvider initialMode={mode}>
             <AnalyticsProvider>
               {children}
