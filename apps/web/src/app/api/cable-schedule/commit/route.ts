@@ -24,11 +24,22 @@
  *      lookups" button if the engineer wants to.
  *   5. Write a change_log row tagged entity_type = 'import' with the
  *      file fingerprint summary.
+ *
+ * Auth: cookie session → verify user + project access, then the caller's
+ * EFFECTIVE project role must be in ORG_WRITE_ROLES (org owner/admin/PM, or a
+ * per-project promotion via projects.project_members) before any write. This
+ * is the same gate every cable-schedule server action (ROLES_ENGINEER) applies
+ * — the writes below run on the user client so RLS still backstops, but RLS's
+ * write policies are role-agnostic (any non-client_viewer org member), which
+ * is wider than the schedule's write contract. Mirrors
+ * /api/tenant-schedule/commit (PR #135).
  */
 
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
+import { ORG_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -107,6 +118,15 @@ export async function POST(req: Request) {
   if (!project) return NextResponse.json({ error: 'Project not accessible' }, { status: 403 })
   const projectId = (project as any).id as string
   const orgId = (project as any).organisation_id as string
+
+  // Role gate — the commit writes a whole revision (sources, nodes, supplies,
+  // cables, change_log), so the caller's effective project role must be in
+  // ORG_WRITE_ROLES before any write happens. Same gate as the tenant-schedule
+  // import routes (PR #135) and the cable-schedule server actions.
+  const guard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error }, { status: 403 })
+  }
 
   // Reject any rows that still have errors
   const blocked = body.cables.filter((c) => c.errors.length > 0)

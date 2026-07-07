@@ -1,9 +1,15 @@
 /**
  * Cable calculations — pure functions over raw row data.
  *
- * Mirrors the workbook formulas (§5 of the spec) exactly:
+ * Volt drop follows the SANS 10142-1 mV/A/m convention:
  *
- *   volt_drop_pct = ohm_per_km × (length_m / 100) × load_a × (10 / voltage_v)
+ *   volt_drop_pct = phase_factor × ohm_per_km × (length_m / 100) × load_a × (10 / voltage_v)
+ *
+ * where phase_factor is 2 for single-phase (drop over flow + return
+ * conductor) and √3 for three-phase (line-to-line drop, balanced load) —
+ * the same factors SANS builds into its 1φ / 3φ mV/A/m columns (1φ = 2·z,
+ * 3φ = √3·z). The pre-2026-07 workbook shorthand omitted the phase factor
+ * and understated every drop (×2 at 230 V, ×√3 at 400 V).
  *
  * For supplies with N parallel cables, the effective resistance per
  * conductor is divided by N. Cumulative volt drop is computed by walking
@@ -72,9 +78,26 @@ export function activeLengthM(
 }
 
 /**
- * Single-cable volt drop percentage. Uses the workbook shorthand:
+ * Phase factor for the SANS volt-drop formula. 230 V supplies are
+ * single-phase — the current flows out and back, so the loop drop is
+ * 2 × the per-conductor drop. 400 V and above are three-phase — the
+ * balanced line-to-line drop is √3 × the per-conductor drop. These are
+ * exactly the multipliers SANS 10142-1 bakes into its published 1φ / 3φ
+ * mV/A/m columns.
+ */
+export function phaseFactor(voltageV: number): number {
+  return voltageV < 380 ? 2 : Math.sqrt(3)
+}
+
+/**
+ * Single-cable volt drop percentage per SANS 10142-1:
  *
- *     vd% = Ω/km × (length_m / 100) × load_a × (10 / voltage_v)
+ *     vd% = phase_factor × Ω/km × (length_m / 100) × load_a × (10 / voltage_v)
+ *
+ * ohm_per_km is the cable's AC impedance z per conductor at operating
+ * temperature (the reference tables' impedance column); using scalar z
+ * rather than r·cosφ + x·sinφ matches the tables' own mV/A/m columns and
+ * is marginally conservative at lagging power factors.
  *
  * Caller is responsible for applying parallel-cable divisor when
  * appropriate (use voltDropPctForSupply for the N-cables-in-parallel case).
@@ -86,7 +109,7 @@ export function voltDropPctSingle(
   voltageV: number,
 ): number {
   if (!Number.isFinite(ohmPerKm) || !Number.isFinite(lengthM) || voltageV <= 0) return 0
-  return ohmPerKm * (lengthM / 100) * loadA * (10 / voltageV)
+  return phaseFactor(voltageV) * ohmPerKm * (lengthM / 100) * loadA * (10 / voltageV)
 }
 
 /**
@@ -189,6 +212,78 @@ export function computeCumulativeVdMap(
  * it. Per IEC convention SC duration is < 1 s in typical LV networks but
  * we use the conservative 1 s table value as the comparison basis.
  */
+/**
+ * Adiabatic conductor constant k (IEC 60364-4-43 Table 43A, the basis of
+ * SANS 10142-1 §6.7 fault-withstand): PVC 70→160 °C (140 °C above
+ * 300 mm²), XLPE 90→250 °C. XLPE-Al uses 92 — the value the app's own
+ * reference library (Aberdare Facts & Figures Table 6.9) displays, 2 %
+ * conservative against IEC's 94. PILC returns null: MV paper cables carry
+ * tabulated short-circuit ratings in the SANS 97 reference tables instead
+ * of an adiabatic estimate.
+ */
+export function adiabaticK(
+  conductor: 'CU' | 'AL',
+  insulation: 'PVC' | 'XLPE' | 'PILC',
+  sizeMm2: number,
+): number | null {
+  if (insulation === 'PVC') {
+    if (conductor === 'CU') return sizeMm2 > 300 ? 103 : 115
+    return sizeMm2 > 300 ? 68 : 76
+  }
+  if (insulation === 'XLPE') return conductor === 'CU' ? 143 : 92
+  return null
+}
+
+/**
+ * 1-second short-circuit withstand of one conductor in kA, from the
+ * adiabatic equation I = k·S/√t at t = 1 s. Feed the result to
+ * shortCircuitCheck against the revision's fault_level_ka.
+ */
+export function withstand1sKa(
+  conductor: 'CU' | 'AL',
+  insulation: 'PVC' | 'XLPE' | 'PILC',
+  sizeMm2: number,
+): number | null {
+  const k = adiabaticK(conductor, insulation, sizeMm2)
+  if (k == null || !Number.isFinite(sizeMm2) || sizeMm2 <= 0) return null
+  return (k * sizeMm2) / 1000
+}
+
+/**
+ * SANS 10142-1 §6.7.1.1 coordination: the protective device rating In must
+ * not exceed the cable set's derated capacity Iz, and the design load Ib
+ * must not exceed In. Missing breaker data → 'unknown' (nothing to check).
+ */
+export function breakerCoordinationCheck(
+  designLoadA: number | null,
+  breakerRatingA: number | null,
+  deratedCapacityA: number | null,
+): { ok: boolean; tone: 'ok' | 'warning' | 'danger' | 'unknown'; reason: string | null } {
+  if (breakerRatingA == null || breakerRatingA <= 0) {
+    return { ok: true, tone: 'unknown', reason: null }
+  }
+  if (deratedCapacityA != null && deratedCapacityA > 0 && breakerRatingA > deratedCapacityA) {
+    return {
+      ok: false,
+      tone: 'danger',
+      reason: `In ${breakerRatingA} A > Iz ${Math.round(deratedCapacityA)} A`,
+    }
+  }
+  if (designLoadA != null && designLoadA > breakerRatingA) {
+    return {
+      ok: false,
+      tone: 'warning',
+      reason: `Ib ${designLoadA} A > In ${breakerRatingA} A`,
+    }
+  }
+  // Without a computable Iz the In ≤ Iz leg was never checked — never claim
+  // a coordination pass that wasn't computed.
+  if (deratedCapacityA == null || deratedCapacityA <= 0) {
+    return { ok: true, tone: 'unknown', reason: 'Iz unavailable — derated capacity not computed' }
+  }
+  return { ok: true, tone: 'ok', reason: null }
+}
+
 export function shortCircuitCheck(
   cable1sRatingKa: number | null,
   faultLevelKa: number | null,

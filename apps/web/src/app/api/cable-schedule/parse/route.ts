@@ -7,11 +7,17 @@
  * writes happen here — that's the commit step.
  *
  * Auth: server-side createClient picks up the user session from cookies.
- * Org membership is verified before we even open the file.
+ * Project access is verified via an RLS-gated projects.projects read, then the
+ * caller's EFFECTIVE project role must be in ORG_WRITE_ROLES — the same gate
+ * the cable-schedule server actions (ROLES_ENGINEER) apply to schedule writes,
+ * so the server never accepts an import preview from a role that could not
+ * commit it.
  */
 
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { ORG_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { parseScheduleWorkbook, vdFidelityOk } from '@/lib/cable-schedule/excel-importer'
 
 export const runtime = 'nodejs'
@@ -49,6 +55,16 @@ export async function POST(req: Request) {
     .single()
   if (projErr || !project) {
     return NextResponse.json({ error: 'Project not accessible' }, { status: 403 })
+  }
+
+  // Role gate — importing is a schedule WRITE (the commit leg), so the
+  // preview leg is held to the same bar as the commit route and the
+  // schedule's write actions: effective role (org owner/admin/PM, or a
+  // per-project promotion via projects.project_members) must be in
+  // ORG_WRITE_ROLES. Mirrors /api/tenant-schedule/parse (PR #135).
+  const guard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error }, { status: 403 })
   }
 
   const buffer = Buffer.from(await file.arrayBuffer())

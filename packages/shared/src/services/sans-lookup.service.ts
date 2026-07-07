@@ -204,14 +204,14 @@ export function deratingBasis(method: string | null): {
 }
 
 /**
- * Apply derating factors from the SANS 1507 LV tables, branching on the
+ * Apply derating factors from the LV reference tables, branching on the
  * installation method (see deratingBasis): 6.3.1 (depth) and 6.3.2 (soil
- * thermal) for in-ground / duct cables, 6.3.6 (grouping) always, and the
- * ground (6.3.4) or air (6.3.5) ambient table. In-air cables skip depth and
- * soil — both are returned as 1.0.
+ * thermal) for in-ground / duct cables, grouping from 6.3.3 (buried/duct)
+ * or 6.3.6 (in air), and the ground (6.3.4) or air (6.3.5) ambient table.
+ * In-air cables skip depth and soil — both are returned as 1.0.
  *
- * If a factor table lookup misses a value, the nearest-conservative
- * (lower) factor is used so the calculation errs on the safe side.
+ * Values between tabulated rows resolve to the next row up (see
+ * selectConservativeSortKey) so the calculation errs on the safe side.
  */
 export async function lookupDeratingFactors(
   supabase: TypedSupabaseClient,
@@ -242,18 +242,28 @@ export async function lookupDeratingFactors(
   grouping: number | null
   temperature: number | null
 }> {
-  // SANS 1507 LV derating tables 6.3.1–6.3.6 (migration 00057, source-workbook
-  // shape). The depth (6.3.1) and soil-thermal (6.3.2) tables each tabulate a
+  // LV derating tables (migration 00057, Aberdare F&F §6.3 shape, aligned
+  // to SANS 10142-1 Tables 6.10–6.16 where SANS publishes a value). The
+  // depth (6.3.1) and soil-thermal (6.3.2) tables each tabulate a
   // direct-in-ground and a single-way-duct factor; deratingBasis picks the
   // column for the installation method and, for in-air cables, bypasses both
   // (factor 1.0 — no burial depth, no soil). Temperature reads the ground
   // (6.3.4) or air (6.3.5) table — both carry separate PVC 70 °C / XLPE 90 °C
-  // columns. Grouping reads 6.3.6 (per-count, includes n = 1) rather than the
-  // 6.3.3 axial-spacing matrix, since the caller supplies only a cable count.
+  // columns.
+  //
+  // Grouping depends on where the group is: in air it reads 6.3.6
+  // (touching / one-diameter clearance). Buried or in ducts it reads the
+  // 6.3.3 matrix (= SANS 10142-1 Table 6.13), which is much harsher — six
+  // touching buried cables derate to 0.55, not 6.3.6's in-air 0.80. Both
+  // buried arrangements use the touching column: SANS 6.13's first spaced
+  // column is 150 mm clearance, more than one cable diameter, so touching
+  // is the applicable conservative choice for SPACING_D too.
   const tempFactorKey = args.insulation === 'XLPE' ? 'factor_xlpe_90c' : 'factor_pvc_70c'
-  const groupingFactorKey =
+  const airGroupingKey =
     args.grouping_arrangement === 'SPACING_D' ? 'factor_clearance_d' : 'factor_touching'
   const basis = deratingBasis(args.installation_method)
+  const buriedGroupingKey =
+    args.installation_method === 'DUCT' ? 'duct_touching' : 'ground_touching'
 
   const [d, th, gr, te] = await Promise.all([
     basis.inAir
@@ -262,10 +272,34 @@ export async function lookupDeratingFactors(
     basis.inAir
       ? Promise.resolve(1)
       : lookupFactor(supabase, 'TABLE_6_3_2', 'resistivity_kmw', args.thermal_resistivity_kmw, basis.soilFactorKey),
-    lookupFactor(supabase, 'TABLE_6_3_6', 'n_cables',        args.grouped_with, groupingFactorKey),
+    args.grouped_with <= 1
+      ? Promise.resolve(1)
+      : basis.inAir
+        ? lookupFactor(supabase, 'TABLE_6_3_6', 'n_cables', args.grouped_with, airGroupingKey)
+        : lookupFactor(supabase, 'TABLE_6_3_3', 'n_cables', args.grouped_with, buriedGroupingKey),
     lookupFactor(supabase, basis.temperatureTable, 'ambient_c', args.ambient_c, tempFactorKey),
   ])
   return { depth: d, thermal: th, grouping: gr, temperature: te }
+}
+
+/**
+ * Conservative row selection for a derating axis. Every axis in these
+ * tables worsens as the key rises — deeper burial, hotter ambient, more
+ * resistive soil, more cables in the group — so a value between tabulated
+ * rows takes the factor from the next row UP (never the friendlier row
+ * below, which the pre-2026-07 floor lookup used). Below the first row →
+ * first row; beyond the last row → last row, the strongest derate the
+ * table offers.
+ */
+export function selectConservativeSortKey(
+  ascendingKeys: readonly number[],
+  value: number,
+): number | null {
+  if (ascendingKeys.length === 0) return null
+  for (const k of ascendingKeys) {
+    if (k >= value) return k
+  }
+  return ascendingKeys[ascendingKeys.length - 1]!
 }
 
 async function lookupFactor(
@@ -291,16 +325,21 @@ async function lookupFactor(
   const list = ((rows ?? []) as Array<{ sort_key: number; row_data: Record<string, unknown> }>)
   if (list.length === 0) return null
 
-  // Find the nearest sort_key ≤ value. If value is below the lowest
-  // tabulated key, use the lowest. If value is above the highest, use the
-  // highest (conservative — derating tightens as conditions worsen).
-  let chosen = list[0]!
-  for (const r of list) {
-    if (r.sort_key <= value) chosen = r
-    else break
+  const chosenKey = selectConservativeSortKey(list.map((r) => r.sort_key), value)
+  const startIdx = list.findIndex((r) => r.sort_key === chosenKey)
+  if (startIdx === -1) return null
+  // The chosen row may not carry this column — e.g. the PVC-only uprating
+  // rows below the 25 °C ground reference omit factor_xlpe_90c. Rows further
+  // up the axis are always at least as conservative, so scan upward to the
+  // first row that has the value (an 18 °C XLPE lookup falls through 20 °C
+  // to the 25 °C reference row's 1.0). Past the last populated row — e.g.
+  // PVC-only air-temperature rows above 45 °C — the answer stays an honest
+  // null: no published factor exists.
+  for (let i = startIdx; i < list.length; i++) {
+    const f = list[i]!.row_data[factorKey]
+    if (typeof f === 'number') return f
   }
-  const f = chosen.row_data[factorKey]
-  return typeof f === 'number' ? f : null
+  return null
 }
 
 function normalise(r: Record<string, unknown>): CablePropertyLookup {

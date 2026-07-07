@@ -344,24 +344,52 @@ function TableCard({ table }: { table: SansTable }) {
         </table>
       </TableScrollX>
 
-      {(table.notes || table.source_ref) && (
-        <div
-          style={{
-            padding: '10px 18px',
-            background: 'var(--c-base)',
-            fontSize: 11,
-            color: 'var(--c-text-dim)',
-            borderTop: '1px solid var(--c-border)',
-          }}
-        >
-          {table.notes && (
-            <div style={{ marginBottom: table.source_ref ? 4 : 0 }}>Notes: {table.notes}</div>
-          )}
-          {table.source_ref && (
-            <div style={{ fontFamily: 'var(--font-mono)' }}>Source: {table.source_ref}</div>
-          )}
+      {/* Footnote block — renders like the NOTE lines printed under every
+          SANS / Aberdare table (reference conditions, correction-factor
+          cross-references, misprint flags). notes may carry several
+          newline-separated entries (seeded by migration 00166); each gets
+          its own NOTE line. Standard + source always close the block so an
+          engineer can see the provenance without scrolling to the header. */}
+      <div
+        style={{
+          padding: '10px 18px',
+          background: 'var(--c-base)',
+          fontSize: 11,
+          color: 'var(--c-text-dim)',
+          borderTop: '1px solid var(--c-border)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        {(table.notes ?? '')
+          .split(/\n+/)
+          .map((n) => n.trim())
+          .filter((n) => n.length > 0)
+          .map((note, i, all) => (
+            <div key={i} style={{ display: 'flex', gap: 8, color: 'var(--c-text-mid)' }}>
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 9,
+                  letterSpacing: '0.08em',
+                  color: 'var(--c-text-dim)',
+                  whiteSpace: 'nowrap',
+                  paddingTop: 1,
+                }}
+              >
+                NOTE{all.length > 1 ? ` ${i + 1}` : ''}
+              </span>
+              <span>{note}</span>
+            </div>
+          ))}
+        <div style={{ fontFamily: 'var(--font-mono)' }}>
+          Standard: {table.standard}
         </div>
-      )}
+        {table.source_ref && (
+          <div style={{ fontFamily: 'var(--font-mono)' }}>Source: {table.source_ref}</div>
+        )}
+      </div>
     </div>
   )
 }
