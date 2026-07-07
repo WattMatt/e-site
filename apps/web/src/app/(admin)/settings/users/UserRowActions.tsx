@@ -2,9 +2,15 @@
 
 /**
  * UserRowActions — per-member inline controls: change role, deactivate /
- * reactivate, remove, and (for members who have never signed in) resend the
- * set-password invite. Rendered for every member row except those the caller
- * may not edit (their own row, or an owner row when the caller is not owner).
+ * reactivate, remove, and resend the set-password invite. Rendered for every
+ * member row except those the caller may not edit (their own row, or an owner
+ * row when the caller is not owner).
+ *
+ * Resend is offered for ALL active members, not just those without a recorded
+ * sign-in: GoTrue sets last_sign_in_at when a recovery link is merely verified,
+ * so a scanner-burnt or abandoned invite link makes a stranded invitee look
+ * "signed in". When a sign-in IS recorded, the button arms a confirm step
+ * instead of sending immediately.
  */
 
 import { useState, useTransition } from 'react'
@@ -29,6 +35,7 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole, has
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ kind: 'success' | 'warning'; text: string } | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [confirmResend, setConfirmResend] = useState(false)
   const [resendBusy, setResendBusy] = useState(false)
   const [isPending, startTransition] = useTransition()
 
@@ -72,6 +79,7 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole, has
   function resendInvite() {
     setError(null)
     setNotice(null)
+    setConfirmResend(false)
     setResendBusy(true)
     startTransition(async () => {
       try {
@@ -110,15 +118,21 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole, has
         ))}
       </Select>
 
-      {!hasSignedIn && isActive && (
+      {isActive && (
         <Button
           variant="secondary"
           size="sm"
           disabled={isPending}
           isLoading={resendBusy}
-          onClick={resendInvite}
+          onClick={() => {
+            if (hasSignedIn && !confirmResend) {
+              setConfirmResend(true)
+              return
+            }
+            resendInvite()
+          }}
         >
-          Resend invite
+          {confirmResend ? 'Confirm resend' : 'Resend invite'}
         </Button>
       )}
 
@@ -149,6 +163,13 @@ export function UserRowActions({ userId, role, isActive, isSelf, callerRole, has
         >
           Remove
         </Button>
+      )}
+
+      {confirmResend && (
+        <span role="status" style={{ fontSize: 11, color: 'var(--c-text-dim)', width: '100%', textAlign: 'right' }}>
+          A recorded sign-in can just be a consumed invite link. Resending emails a fresh
+          24-hour set-password link and code — it never changes their current password.
+        </span>
       )}
 
       {error && (

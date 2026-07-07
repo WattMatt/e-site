@@ -139,7 +139,12 @@ export default async function UsersPage() {
                 <span className={ROLE_BADGE[m.role] ?? 'badge badge-muted'}>{m.role.replace(/_/g, ' ')}</span>
                 {!m.is_active && <span className="badge badge-muted">inactive</span>}
                 <div style={{ textAlign: 'right', minWidth: 96 }}>
-                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                  <p
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}
+                    title={lastSeen.has(m.user_id)
+                      ? 'Last authentication recorded by Supabase. Opening an invite or recovery link also counts, so this can show even if they never finished setting a password.'
+                      : undefined}
+                  >
                     {lastSeen.has(m.user_id)
                       ? `seen ${formatDate(lastSeen.get(m.user_id)!)}`
                       : 'never signed in'}

@@ -126,10 +126,16 @@ export async function createUserAction(input: {
 }
 
 /**
- * Re-send the set-password invite to a member who has never signed in.
- * Recovery links are single-use and expire (mailer_otp_exp = 24 h) — email
- * scanners can burn them before the invitee ever clicks, so admins need a
- * self-service resend instead of a support round-trip.
+ * Re-send the set-password invite to an active member. Recovery links are
+ * single-use and expire (mailer_otp_exp = 24 h) — email scanners can burn them
+ * before the invitee ever clicks, so admins need a self-service resend instead
+ * of a support round-trip.
+ *
+ * Deliberately NOT gated on last_sign_in_at: GoTrue sets it when a recovery
+ * link is merely *verified* (server-side verifyOtp in /auth/callback), so a
+ * scanner-prefetched or abandoned link makes a stranded invitee look "signed
+ * in" — exactly the user who needs the resend. Resending is idempotent: it
+ * re-mints the recovery token and never touches an existing password.
  */
 export async function resendInviteAction(input: { userId: string }): Promise<ActionResult> {
   const h = await headers()
@@ -167,12 +173,6 @@ export async function resendInviteAction(input: { userId: string }): Promise<Act
   if (authErr || !authUser?.user) {
     return { ok: false, error: 'Could not look up that user’s account.' }
   }
-  if (authUser.user.last_sign_in_at) {
-    return {
-      ok: false,
-      error: 'That user is already active — they’ve signed in before. If they’re locked out, they can use “Forgot password” on the sign-in page.',
-    }
-  }
   const email = authUser.user.email
   if (!email) return { ok: false, error: 'That user has no email address on record.' }
 
@@ -209,7 +209,14 @@ export async function resendInviteAction(input: { userId: string }): Promise<Act
     eventType: 'password_reset_requested',
     ipAddress: ip === 'unknown' ? null : ip,
     userAgent: ua,
-    metadata:  { via: 'invite_resend', resent_by: ctx.userId, organisation_id: ctx.organisationId },
+    metadata:  {
+      via: 'invite_resend',
+      resent_by: ctx.userId,
+      organisation_id: ctx.organisationId,
+      // Distinguishes "re-invited a stranded invitee whose link was burnt"
+      // from "re-invited someone who genuinely had access" in the audit trail.
+      had_prior_sign_in: Boolean(authUser.user.last_sign_in_at),
+    },
   })
 
   revalidatePath('/settings/users')
