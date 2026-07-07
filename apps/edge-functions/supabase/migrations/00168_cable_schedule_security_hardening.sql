@@ -134,7 +134,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA structure      REVOKE SELECT ON TABLES FROM a
 --
 -- Gated data tables (all revision children in 00051; 00054/00055/00064 add
 -- columns/indexes only, no new tables):
---   direct revision_id ....... sources, boards, supplies, cables, cost_lines
+--   direct revision_id ....... sources, supplies, cables, cost_lines
+--   (boards was dropped by 00082 — no trigger target)
 --   via cable_id ............. terminations, cable_tags
 --
 -- SECURITY DEFINER so the status lookup is deterministic regardless of the
@@ -265,11 +266,6 @@ $$;
 DROP TRIGGER IF EXISTS sources_frozen_guard ON cable_schedule.sources;
 CREATE TRIGGER sources_frozen_guard
     BEFORE INSERT OR UPDATE OR DELETE ON cable_schedule.sources
-    FOR EACH ROW EXECUTE FUNCTION cable_schedule.enforce_revision_data_frozen();
-
-DROP TRIGGER IF EXISTS boards_frozen_guard ON cable_schedule.boards;
-CREATE TRIGGER boards_frozen_guard
-    BEFORE INSERT OR UPDATE OR DELETE ON cable_schedule.boards
     FOR EACH ROW EXECUTE FUNCTION cable_schedule.enforce_revision_data_frozen();
 
 DROP TRIGGER IF EXISTS supplies_frozen_guard ON cable_schedule.supplies;
