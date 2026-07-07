@@ -5,12 +5,13 @@ import { sendInviteEmail, sendSiteAssignmentEmail } from './invite-email'
 function makeService(overrides: {
   actionLink?: string | null
   emailOtp?: string
+  hashedToken?: string
   generateLinkError?: unknown
   invokeError?: unknown
   resetError?: unknown
 } = {}) {
   const generateLink = vi.fn().mockResolvedValue({
-    data: overrides.actionLink === null ? { properties: {} } : { properties: { action_link: overrides.actionLink ?? 'https://app.e-site.live/verify?t=abc', email_otp: overrides.emailOtp ?? '654321' } },
+    data: overrides.actionLink === null ? { properties: {} } : { properties: { action_link: overrides.actionLink ?? 'https://app.e-site.live/verify?t=abc', email_otp: overrides.emailOtp ?? '654321', hashed_token: overrides.hashedToken ?? 'HTOK123' } },
     error: overrides.generateLinkError ?? null,
   })
   const invoke = vi.fn().mockResolvedValue({ data: null, error: overrides.invokeError ?? null })
@@ -48,7 +49,12 @@ describe('sendInviteEmail', () => {
     const payload = invoke.mock.calls[0][1].body.payload
     expect(payload.to).toBe(base.email)
     expect(payload.html).toContain('KINGSWALK')
-    expect(payload.html).toContain('https://app.e-site.live/verify?t=abc')
+    // Button = token_hash into the app's own callback (server-side verifyOtp),
+    // NOT the raw GoTrue action_link (implicit fragment, dead-ends on /login).
+    expect(payload.html).toContain(
+      '/auth/callback?token_hash=HTOK123&type=recovery&next=%2Freset-password%2Fconfirm',
+    )
+    expect(payload.html).not.toContain('https://app.e-site.live/verify?t=abc')
     expect(resetPasswordForEmail).not.toHaveBeenCalled()
   })
 
@@ -63,7 +69,7 @@ describe('sendInviteEmail', () => {
     expect(payload.html).toContain('24 hours')
   })
 
-  it('still sends the branded invite when generateLink returns no email_otp', async () => {
+  it('still sends the branded invite when generateLink returns no email_otp or hashed_token', async () => {
     const generateLink = vi.fn().mockResolvedValue({
       data: { properties: { action_link: 'https://app.e-site.live/verify?t=abc' } },
       error: null,
@@ -78,6 +84,8 @@ describe('sendInviteEmail', () => {
     expect(res.ok).toBe(true)
     const payload = invoke.mock.calls[0][1].body.payload
     expect(payload.html).not.toContain('/reset-password')
+    // Without hashed_token the button falls back to the raw action_link.
+    expect(payload.html).toContain('https://app.e-site.live/verify?t=abc')
     expect(payload.html).toContain('24 hours')
   })
 
