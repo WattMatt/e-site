@@ -17,6 +17,7 @@ describe('PortalProjectNav', () => {
       'Snags',
       'Inspections',
       'Cable Schedule',
+      'Equipment & Materials',
       'Generator Recovery',
       'Floor Plans',
       'Handover',

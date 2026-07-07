@@ -76,7 +76,43 @@ membership.
 ³ Marketplace is Phase 2-gated by `NEXT_PUBLIC_PHASE_2_MARKETPLACE=true`.
 ⁴ `/jbcc/unlock` is visible to all authenticated org members (read-only paywall page). The `<UnlockJbccButton />` inside only renders for owner/admin; all other roles see "ask your owner/admin" text. No redirect for locked org — this IS the locked-state destination.
 ⁵ All JBCC routes under `/(gated)/` require `public.has_feature(org_id, 'jbcc') = true` — the `jbcc/layout.tsx` gate redirects locked orgs to `/jbcc/unlock` before any role check. WM-Consulting bypasses. For write-gated routes: `inspector`, `supplier`, and `client_viewer` cannot reach `/notice/[code]/new`; status/attachment mutations on tracking and CRUD on parties require `ORG_WRITE_ROLES` (owner/admin/project_manager/contractor) enforced server-side.
-⁶ `/equipment-schedule` and `/materials` were merged into `/equipment-materials` and now unconditionally `redirect()` there for every role (thin shims, no role gate of their own) — access is governed by the `/equipment-materials` row. Equipment management (add/edit/decommission boards) is inline on the unified tab and is gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) by the existing `equipment.actions` guards.
+⁶ `/equipment-schedule` and `/materials` were merged into `/equipment-materials` and now unconditionally `redirect()` there for every role (thin shims, no role gate of their own) — access is governed by the `/equipment-materials` row. Equipment management (add/edit/decommission boards) is inline on the unified tab and is gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) by the existing `equipment.actions` guards. `client_viewer` views the register (view-only) via the portal tab `/portal/[projectId]/equipment-materials` (see Client portal section).
+
+## Client portal (`apps/web/src/app/(portal)/portal/*`)
+
+Since the portal shipped (PR #124), `client_viewer` never reaches the `(admin)` shell —
+`(admin)/layout.tsx` bounces clients to `/portal`, and `(portal)/layout.tsx` bounces every staff
+role to `/dashboard` (fail-closed in both directions). The `client_viewer` column in the table
+above therefore documents legacy per-page gates only; the client's actual surface is this portal.
+
+| Route | client_viewer | all other roles |
+|---|---|---|
+| `/portal` (site list) | R | → `/dashboard` |
+| `/portal/[projectId]` (overview) | Rᵃ | → `/dashboard` |
+| `/portal/[projectId]/diary` | R | → `/dashboard` |
+| `/portal/[projectId]/snags` | R | → `/dashboard` |
+| `/portal/[projectId]/inspections` | Rᵇ | → `/dashboard` |
+| `/portal/[projectId]/cables` | Rᵇ | → `/dashboard` |
+| `/portal/[projectId]/equipment-materials` | Rᶜ | → `/dashboard` |
+| `/portal/[projectId]/generator-recovery` | Rᵇ | → `/dashboard` |
+| `/portal/[projectId]/floor-plans` | R | → `/dashboard` |
+| `/portal/[projectId]/handover` | R | → `/dashboard` |
+| `/portal/[projectId]/tenant-schedule` | R | → `/dashboard` |
+
+ᵃ Explicit project columns only — `contract_value` is never selected ([`lib/portal/data.ts`](../apps/web/src/lib/portal/data.ts)).
+ᵇ Curated service-role read with explicit column allow-lists after the `requirePortalAccess` membership check; the client JWT stays RLS-blocked on these schemas.
+ᶜ Added 2026-07-07 (user decision, reversing the 2026-07-06 "not chosen"): board register + procurement status. Served by a **curated service-role read** (like cables/gcr) — order notes, quote/order-instruction documents and shop drawings are never selected, and migration `00166` now blocks the client JWT from reading `structure.node_orders` / `node_order_documents` / `node_order_shop_drawings` and the `node-order-documents` storage bucket directly (a confirmed pre-existing leak: a client could `GET` a quote PDF via PostgREST/storage).
+
+Every `[projectId]` aspect is gated by `requirePortalAccess` in the per-project layout (active
+`client_viewer` + active `project_members` row, else 404). Table writes are independently blocked at
+the DB by the 00161/00162 RESTRICTIVE client_viewer policies; commercial procurement reads by the
+00166 effective-client_viewer SELECT guards.
+
+> **Invite integrity.** Project role `client_viewer` is only coherent when the user's identity-org
+> role is also `client_viewer` (every shell/RLS gate keys off the org role). `bulkAddOrInviteProjectMembers`
+> and `addProjectMembersFromSubOrg` now reject tagging an existing staff-org user as a project
+> `client_viewer` — that would silently grant full staff access + the admin shell. Give client
+> access via a dedicated client invite (new user → org role `client_viewer`).
 
 ## Project settings (`apps/web/src/app/(admin)/projects/[id]/settings/*`)
 

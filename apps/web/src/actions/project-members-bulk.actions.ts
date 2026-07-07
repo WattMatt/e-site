@@ -164,6 +164,22 @@ export async function bulkAddOrInviteProjectMembers(
           details.push({ email, status: 'skipped-already-on-project' })
           continue
         }
+        // Guard: 'client_viewer' project access only makes sense for a user
+        // whose identity-org role is also client_viewer. Every shell/RLS gate
+        // keys off the ORG role, so tagging an existing staff user (contractor,
+        // inspector, …) as a project client_viewer would silently grant them
+        // FULL staff visibility + the admin shell, not the view-only portal.
+        // Reject and tell the admin to invite a separate client account.
+        if (projectRole === 'client_viewer' && existing.org_role !== 'client_viewer') {
+          failed++
+          details.push({
+            email,
+            status: 'failed',
+            reason:
+              'Already a team member with a staff role — client (read-only) access needs a separate client invite.',
+          })
+          continue
+        }
         const { error: insErr } = await (supabase as any)
           .schema('projects')
           .from('project_members')

@@ -34,7 +34,15 @@ group exists as an empty stub (rbac-matrix.md:185 specified a client compliance 
 `/portal/[projectId]` → Overview (no contract value) + fixed tabs, exactly the 8 chosen aspects:
 **Site Diary, Snags, Inspections, Cable Schedule, Generator Recovery, Floor Plans, Handover,
 Tenant Schedule.** Excluded permanently: financials (contract value, BOQ, valuations, variations,
-rates), members/settings, marketplace, MV, JBCC, equipment & materials, RFIs (not chosen).
+rates), members/settings, marketplace, MV, JBCC, RFIs (not chosen).
+
+> **Amendment 2026-07-07 (user decision):** Equipment & Materials is now INCLUDED as a tenth
+> view-only tab (`/portal/[projectId]/equipment-materials`) — board register + procurement
+> status/dates/required-by. Served by a curated **service-role** read behind `requirePortalAccess`
+> (like cables/gcr): order notes, quote/order-instruction documents and shop drawings are never
+> selected, and migration 00166 blocks the client JWT from reading node_orders / node_order_documents
+> / node_order_shop_drawings + the node-order-documents storage bucket directly (a confirmed
+> pre-existing leak). The original equipment-&-materials exclusion above is superseded.
 
 ### Data access rules
 - **Membership check first** on every `[projectId]` page: active `client_viewer` +

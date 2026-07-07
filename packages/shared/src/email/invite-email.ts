@@ -158,12 +158,20 @@ export function renderSiteAssignmentEmail(v: SiteAssignmentEmailVars): { subject
   const inviter = v.inviterName?.trim() || 'A team member'
   const site = v.siteName?.trim() || 'a site'
   const subject = `${inviter} gave you access to ${site} on E-Site`
-  const link = `${v.siteUrl}/projects/${v.projectId}`
+  // Clients live in the viewing-only portal; the admin /projects deep link
+  // would bounce them and drop the project. Everyone else gets the admin app.
+  const isClient = v.role === 'client_viewer'
+  const link = isClient
+    ? `${v.siteUrl}/portal/${v.projectId}`
+    : `${v.siteUrl}/projects/${v.projectId}`
+  const whereItAppears = isClient
+    ? `It now appears under <strong>Your sites</strong> when you sign in to the client portal.`
+    : `It now appears in your <strong>Projects</strong> list when you sign in.`
 
   const content = `
     <h2>You've been added to a site</h2>
     <p><strong>${escapeHtml(inviter)}</strong> gave you access to the site <strong>${escapeHtml(site)}</strong> on E-Site as a <strong>${escapeHtml(roleLabel(v.role))}</strong>.</p>
-    <p>It now appears in your <strong>Projects</strong> list when you sign in.</p>
+    <p>${whereItAppears}</p>
     <p class="note">You only have access to the site(s) you've been added to.</p>
     <a class="btn" href="${link}">Open ${escapeHtml(site)}</a>`
 

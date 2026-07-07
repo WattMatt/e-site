@@ -86,14 +86,21 @@ export async function addProjectMembersFromSubOrg(
   }
 
   // Filter userIds to those actually in the sub-org's active roster (defence in depth).
+  // Also capture each member's sub-org role: a project 'client_viewer' grant only
+  // makes sense for a member whose identity-org role is client_viewer — otherwise
+  // the shell/RLS gates (which key off the ORG role) would give them full staff
+  // access + the admin shell instead of the view-only portal.
   const { data: rosterRows } = await (supabase as any)
     .from('user_organisations')
-    .select('user_id')
+    .select('user_id, role')
     .eq('organisation_id', subOrgId)
     .eq('is_active', true)
     .in('user_id', userIds)
   const validUserIds = new Set(
     ((rosterRows ?? []) as Array<{ user_id: string }>).map((r) => r.user_id),
+  )
+  const subOrgRoleByUser = new Map(
+    ((rosterRows ?? []) as Array<{ user_id: string; role: string }>).map((r) => [r.user_id, r.role]),
   )
 
   // Find user_ids already on the project.
@@ -120,6 +127,16 @@ export async function addProjectMembersFromSubOrg(
     if (onProject.has(userId)) {
       skipped++
       details.push({ user_id: userId, status: 'skipped-already-on-project' })
+      continue
+    }
+    if (projectRole === 'client_viewer' && subOrgRoleByUser.get(userId) !== 'client_viewer') {
+      failed++
+      details.push({
+        user_id: userId,
+        status: 'failed',
+        reason:
+          'Sub-org member has a staff role — client (read-only) access needs a client_viewer identity.',
+      })
       continue
     }
     const { error } = await (supabase as any)

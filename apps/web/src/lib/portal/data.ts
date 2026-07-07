@@ -21,6 +21,12 @@
 
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { getOrgContext } from '@/lib/auth-org'
+import {
+  gatherUnifiedBoards,
+  type RawNode,
+  type RawOrder,
+  type UnifiedGroup,
+} from '@/app/(admin)/projects/[id]/equipment-materials/_lib/gather-unified-boards'
 
 export interface PortalAccess {
   userId: string
@@ -155,6 +161,7 @@ export async function listPortalTenantSchedule(projectId: string) {
     .select('id, code, shop_number, shop_name, status, section, tenant_details(scope_status, layout_status, layout_issued_at)')
     .eq('project_id', projectId)
     .eq('kind', 'tenant_db')
+    .is('deleted_at', null) // recycle-binned shops must not resurface for clients
     .order('shop_number')
   return (data ?? []) as Array<{
     id: string; code: string; shop_number: string | null; shop_name: string | null
@@ -223,4 +230,102 @@ export async function listPortalGcrReports(projectId: string) {
   return (data ?? []) as Array<{
     id: string; revision_number: number; file_name: string; note: string | null; created_at: string
   }>
+}
+
+/**
+ * Equipment & Materials — the board register with procurement status
+ * (user decision 2026-07-07: clients see this tab, strictly view-only).
+ *
+ * Curated SERVICE read after the membership gate, exactly like cables / gcr /
+ * inspections: migration 00166 blocks the client JWT from reading
+ * structure.node_orders (its `notes` column + the linked quote / order /
+ * shop-drawing documents are commercial), so this explicit column allow-list
+ * is the only path that exposes procurement data to a client. Order notes,
+ * documents and drawings are never selected (docs/drawings maps stay empty) —
+ * 00166 also blocks them at the DB for effective-client_viewer JWTs. The
+ * service read also keeps cross-org (sub-org identity) clients working: their
+ * JWT is not a member of the project's owning org, so the org-scoped
+ * scope_item_types RLS would return zero rows and blank every item label.
+ */
+export async function getPortalEquipmentMaterials(projectId: string): Promise<UnifiedGroup[] | null> {
+  const access = await requirePortalAccess(projectId)
+  if (!access) return null
+  const service = createServiceClient()
+
+  // opening_date drives required-by dates; organisation_id scopes scope types.
+  const { data: project } = await (service as any)
+    .schema('projects')
+    .from('projects')
+    .select('id, organisation_id, opening_date')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (!project) return null
+  const { organisation_id: orgId, opening_date: openingDate } = project as {
+    organisation_id: string
+    opening_date: string | null
+  }
+
+  // Recycle-binned nodes (deleted_at set) are hidden from staff surfaces via
+  // listNodes' default filter — mirror that here so they never resurface for
+  // clients.
+  const { data: nodeRows } = await (service as any)
+    .schema('structure')
+    .from('nodes')
+    .select('id, code, name, kind, status, coc_required, custom_kind_label, shop_name, shop_number')
+    .eq('project_id', projectId)
+    .is('deleted_at', null)
+    .order('code')
+  const nodes = (nodeRows ?? []) as RawNode[]
+
+  // `notes` is NOT selected — RawOrder wants the field, so it is blanked.
+  const { data: orderRows } = await (service as any)
+    .schema('structure')
+    .from('node_orders')
+    .select('id, node_id, label, scope_item_type_id, status, ordered_at, received_at')
+    .eq('project_id', projectId)
+    .order('label')
+  const orders: RawOrder[] = ((orderRows ?? []) as Array<Omit<RawOrder, 'notes'>>).map((o) => ({
+    ...o,
+    notes: '',
+  }))
+
+  const boByNode = new Map<string, { boPeriodDays: number | null; boDateOverride: string | null }>()
+  const tenantNodeIds = nodes.filter((n) => n.kind === 'tenant_db').map((n) => n.id)
+  if (tenantNodeIds.length > 0) {
+    const { data } = await (service as any)
+      .schema('structure')
+      .from('tenant_details')
+      .select('node_id, bo_period_days, bo_date_override')
+      .in('node_id', tenantNodeIds)
+    for (const r of (data ?? []) as Array<{
+      node_id: string
+      bo_period_days: number | null
+      bo_date_override: string | null
+    }>) {
+      boByNode.set(r.node_id, { boPeriodDays: r.bo_period_days, boDateOverride: r.bo_date_override })
+    }
+  }
+
+  const { data: scopeTypes } = await (service as any)
+    .schema('structure')
+    .from('scope_item_types')
+    .select('id, key, label')
+    .eq('organisation_id', orgId)
+  const scopeTypeById = new Map(
+    ((scopeTypes ?? []) as Array<{ id: string; key: string; label: string }>).map((t) => [t.id, t]),
+  )
+
+  return gatherUnifiedBoards(
+    {
+      nodes,
+      orders,
+      scopeTypeById,
+      boByNode,
+      openingDate,
+      today: new Date().toISOString().slice(0, 10),
+      docsByOrder: new Map(),
+      drawingsByOrder: new Map(),
+    },
+    { showDecommissioned: false },
+  )
 }

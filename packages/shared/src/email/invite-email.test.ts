@@ -92,10 +92,17 @@ describe('renderSiteAssignmentEmail', () => {
     expect(subject).toContain('Arno Mattheus')
   })
 
-  it('deep-links to the project and states single-site scoping', () => {
+  it('deep-links staff to the admin project route and states single-site scoping', () => {
     const { html } = renderSiteAssignmentEmail(base)
     expect(html).toContain(`href="${SITE}/projects/${base.projectId}"`)
     expect(html.toLowerCase()).toContain('only have access to the site')
+  })
+
+  it('deep-links a client_viewer to the portal, never the admin route', () => {
+    const { html } = renderSiteAssignmentEmail({ ...base, role: 'client_viewer' })
+    expect(html).toContain(`href="${SITE}/portal/${base.projectId}"`)
+    expect(html).not.toContain(`href="${SITE}/projects/${base.projectId}"`)
+    expect(html).toContain('client portal')
   })
 
   it('shows the assigned role', () => {
