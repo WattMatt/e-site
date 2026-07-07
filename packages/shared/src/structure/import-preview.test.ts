@@ -275,3 +275,60 @@ describe('diffTenantSchedule — warnings + pending areas', () => {
     expect(preview.updated_entries[0].changes.shop_area_m2).toEqual({ from: 180, to: null });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Errored rows protect their shop from the decommission sweep
+// ---------------------------------------------------------------------------
+
+describe('diffTenantSchedule — errored rows are not "absent from the file"', () => {
+  it('does NOT decommission a shop whose row errored with a readable shop_number', () => {
+    // SHOP 7 is in the file, but its area cell is unreadable → parse error.
+    // Without protection, SHOP 7 drops out of `rows`, looks missing, and a
+    // single bad cell silently decommissions a live tenant.
+    const existing: Node[] = [
+      makeNode({ shop_number: 'SHOP 7', shop_name: 'CNA', shop_area_m2: 140 }),
+    ];
+    const errors: TenantImportError[] = [
+      {
+        source_row: 8,
+        shop_number: 'SHOP 7',
+        message: 'Row 8: area / TOTAL GLA must be numeric but got "12,5 m²".',
+      },
+    ];
+    const preview = diffTenantSchedule([], errors, existing);
+
+    expect(preview.decommissioned_entries).toHaveLength(0);
+    expect(preview.new_entries).toHaveLength(0);
+    expect(preview.updated_entries).toHaveLength(0);
+    expect(preview.parse_errors).toEqual(errors);
+  });
+
+  it('still decommissions shops genuinely absent from the file', () => {
+    const existing: Node[] = [
+      makeNode({ shop_number: 'SHOP 7', shop_name: 'CNA', shop_area_m2: 140 }),   // errored row
+      makeNode({ shop_number: 'SHOP 8', shop_name: 'Gone', shop_area_m2: 60 }),   // truly absent
+    ];
+    const errors: TenantImportError[] = [
+      { source_row: 8, shop_number: 'SHOP 7', message: 'Row 8: bad area.' },
+    ];
+    const preview = diffTenantSchedule([], errors, existing);
+
+    expect(preview.decommissioned_entries).toHaveLength(1);
+    expect(preview.decommissioned_entries[0].existing.shop_number).toBe('SHOP 8');
+  });
+
+  it('errors without a shop_number do not shield anything', () => {
+    // A blank-shop-number error can't be matched to a node — the sweep is
+    // unaffected and the absent node is still decommissioned.
+    const existing: Node[] = [
+      makeNode({ shop_number: 'SHOP 9', shop_name: 'Totalsports', shop_area_m2: 90 }),
+    ];
+    const errors: TenantImportError[] = [
+      { source_row: 3, message: 'Row 3: SHOP NO. is required and must not be blank.' },
+    ];
+    const preview = diffTenantSchedule([], errors, existing);
+
+    expect(preview.decommissioned_entries).toHaveLength(1);
+    expect(preview.decommissioned_entries[0].existing.shop_number).toBe('SHOP 9');
+  });
+});

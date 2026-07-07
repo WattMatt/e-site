@@ -55,6 +55,13 @@ export interface TenantImportError {
   source_row: number;
   /** Human-readable description of the problem. */
   message: string;
+  /**
+   * The SHOP NO. the errored row was about, when one could be read (bad-area
+   * rows, duplicates). Lets the diff protect the matching DB node from being
+   * treated as "missing from the file" and decommissioned. Absent when the
+   * error is the shop number itself (blank) or file-level (header, not xlsx).
+   */
+  shop_number?: string;
 }
 
 /** The result returned by {@link parseTenantSchedule}. */
@@ -391,6 +398,7 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
     if (existingRow !== undefined) {
       errors.push({
         source_row: rowNumber,
+        shop_number: shop_number,
         message:
           `Row ${rowNumber}: duplicate SHOP NO. "${shop_number}" (first seen on row ${existingRow}). ` +
           `SHOP NO. must be unique within the file. If these are two different shops in two mall ` +
@@ -415,7 +423,10 @@ export async function parseTenantSchedule(buffer: Buffer): Promise<TenantImportR
       if (!areaIsBlank) {
         errors.push({
           source_row: rowNumber,
-          message: `Row ${rowNumber}: area / TOTAL GLA must be numeric but got ${JSON.stringify(rawGla)}.`,
+          shop_number: shop_number,
+          message:
+            `Row ${rowNumber}: area / TOTAL GLA must be numeric but got ${JSON.stringify(rawGla)}. ` +
+            `Shop "${shop_number}" was left unchanged — fix the cell and re-import.`,
         });
         return;
       }

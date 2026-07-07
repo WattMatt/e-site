@@ -96,7 +96,11 @@ export interface ImportPreview {
    * step SKIPS these — they require deliberate manual reconciliation.
    */
   conflict_entries: ImportConflict[];
-  /** Existing nodes whose shop_number is absent from the file; will be decommissioned. */
+  /**
+   * Existing nodes whose shop_number is absent from the file; will be
+   * decommissioned. A shop whose row is present but errored (bad area cell,
+   * duplicate) does NOT count as absent — it is left untouched instead.
+   */
   decommissioned_entries: ImportDecommissioned[];
   /**
    * Parse errors from the workbook (bad rows, duplicates, missing columns).
@@ -158,6 +162,17 @@ export function diffTenantSchedule(
   // Track which shop_numbers appear in the new file
   const incomingShopNumbers = new Set<string>();
 
+  // Shops whose row FAILED parsing (bad area cell, duplicate) are still
+  // *present* in the file — the user meant to keep them. Without this set, an
+  // errored row would drop out of `rows`, its DB node would look "missing from
+  // the file", and the commit would silently decommission a live tenant over
+  // a typo in one cell. Errors that carry a readable shop_number protect the
+  // matching node from the decommission sweep below.
+  const erroredShopNumbers = new Set<string>();
+  for (const err of parseErrors) {
+    if (err.shop_number) erroredShopNumbers.add(err.shop_number);
+  }
+
   const new_entries: ImportNew[] = [];
   const updated_entries: ImportUpdated[] = [];
   const conflict_entries: ImportConflict[] = [];
@@ -203,10 +218,15 @@ export function diffTenantSchedule(
     }
   }
 
-  // Nodes in DB but not in the new file → decommissioned
+  // Nodes in DB but not in the new file → decommissioned. Shops whose row
+  // errored are NOT decommissioned — they were in the file, just unreadable.
   const decommissioned_entries: ImportDecommissioned[] = [];
   for (const node of tenantDbNodes) {
-    if (node.shop_number && !incomingShopNumbers.has(node.shop_number)) {
+    if (
+      node.shop_number &&
+      !incomingShopNumbers.has(node.shop_number) &&
+      !erroredShopNumbers.has(node.shop_number)
+    ) {
       decommissioned_entries.push({ kind: 'decommissioned', existing: node });
     }
   }
