@@ -690,3 +690,38 @@ describe('parseTenantSchedule — shop_category column', () => {
     expect(result.rows[0].shop_category).toBe('national');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Error rows carry their shop_number (decommission protection — see
+// diffTenantSchedule: an errored row must not read as "absent from the file")
+// ---------------------------------------------------------------------------
+
+describe('parseTenantSchedule — errors carry shop_number where readable', () => {
+  it('a non-numeric-area error carries the row shop_number', async () => {
+    const buf = await buildFixtureWorkbook([
+      ['SHOP 1', 'TENANT A', 'not-a-number' as any],
+    ]);
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].shop_number).toBe('SHOP 1');
+  });
+
+  it('a duplicate-shop error carries the duplicated shop_number', async () => {
+    const buf = await buildFixtureWorkbook([
+      ['SHOP 1', 'TENANT A', 100],
+      ['SHOP 1', 'TENANT B', 200], // duplicate
+    ]);
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].shop_number).toBe('SHOP 1');
+  });
+
+  it('a blank-shop-number error carries NO shop_number', async () => {
+    const buf = await buildFixtureWorkbook([
+      ['', 'TENANT A', 100], // area but no shop number — data-entry mistake
+    ]);
+    const result = await parseTenantSchedule(buf);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].shop_number).toBeUndefined();
+  });
+});

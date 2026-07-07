@@ -8,7 +8,10 @@
  * No DB writes — preview only.  The commit step is a separate route.
  *
  * Auth: createClient picks up the user session from cookies.
- * Project access is verified via an RLS-gated projects.projects read.
+ * Project access is verified via an RLS-gated projects.projects read, then the
+ * caller's EFFECTIVE project role must be in ORG_WRITE_ROLES — the same gate
+ * the tenant-schedule page uses to show/hide the ImportFlow control, so the
+ * server never accepts a request from a role the UI hides the control from.
  */
 
 import { NextResponse } from 'next/server';
@@ -17,8 +20,10 @@ import {
   parseTenantSchedule,
   listNodes,
   diffTenantSchedule,
+  ORG_WRITE_ROLES,
 } from '@esite/shared';
 import type { ImportPreview } from '@esite/shared';
+import { requireEffectiveRole } from '@/lib/auth/require-role';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -70,6 +75,17 @@ export async function POST(req: Request): Promise<NextResponse<ImportPreview | {
 
   if (projErr || !project) {
     return NextResponse.json({ error: 'Project not accessible' }, { status: 403 });
+  }
+
+  // ------------------------------------------------------------------
+  // 2b. Role gate — importing is a schedule WRITE (the commit leg), so the
+  //     preview leg is held to the same bar as the page's ImportFlow control:
+  //     effective role (org owner/admin/PM, or a per-project promotion via
+  //     projects.project_members) must be in ORG_WRITE_ROLES.
+  // ------------------------------------------------------------------
+  const guard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES);
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error }, { status: 403 });
   }
 
   // ------------------------------------------------------------------

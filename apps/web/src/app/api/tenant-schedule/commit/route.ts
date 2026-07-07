@@ -28,7 +28,12 @@
  *   Reads (SELECT) go through the cookie-authenticated supabase-js client as
  *   normal (the gotcha is writes-only).
  *
- * Auth: cookie session → verify user + project access before any write.
+ * Auth: cookie session → verify user + project access, then the caller's
+ * EFFECTIVE project role must be in ORG_WRITE_ROLES (org owner/admin/PM, or a
+ * per-project promotion via projects.project_members) before any write. This
+ * is the same gate the tenant-schedule page applies to the ImportFlow control
+ * — critical here because every write below runs with the service-role key
+ * and therefore bypasses RLS entirely.
  * Idempotent: re-running the same file is safe. tenant_details rows are
  * upserted with ON CONFLICT (node_id) DO NOTHING — existing rows are left
  * untouched. Orphaned nodes (node exists, details row missing) are healed on
@@ -42,8 +47,10 @@ import {
   parseTenantSchedule,
   listNodes,
   diffTenantSchedule,
+  ORG_WRITE_ROLES,
 } from '@esite/shared';
 import type { ImportNew, ImportUpdated, ImportDecommissioned } from '@esite/shared';
+import { requireEffectiveRole } from '@/lib/auth/require-role';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -226,6 +233,15 @@ export async function POST(
     return NextResponse.json({ error: 'Project not accessible' }, { status: 403 });
   }
   const orgId: string = project.organisation_id;
+
+  // 3b. Role gate — every write below runs with the service-role key (RLS
+  //     bypassed), so the app-layer gate is the ONLY thing standing between a
+  //     read-only project member and a full schedule rewrite. Same gate as the
+  //     page's ImportFlow control: effective role in ORG_WRITE_ROLES.
+  const guard = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES);
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error }, { status: 403 });
+  }
 
   // 4. Env vars needed for service-role writes
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

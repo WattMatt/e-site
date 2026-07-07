@@ -116,6 +116,10 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | — |
 | `GET /api/projects/[id]/snags/visits/[visitId]/report` | R | R | R | R | R | — | R |
 | `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
+| `POST /api/tenant-schedule/parse` | W | W | W | —⁶ | — | — | — |
+| `POST /api/tenant-schedule/commit` | W | W | W | —⁶ | — | — | — |
+
+> `POST /api/tenant-schedule/parse` (preview, no writes) and `POST /api/tenant-schedule/commit` (full-sync import; **writes run with the service-role key, bypassing RLS**) are both gated via `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` — the same gate the `/projects/[id]/tenant-schedule` page applies before rendering the ImportFlow control. ⁶ A contractor promoted per-project via `projects.project_members` (role `project_manager`) passes the effective-role gate on that project.
 
 > `POST /api/medium-voltage/study` runs the heavy MV Z-bus + earth-fault solve and caches per-node `fault_results` for a revision. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org; refused on non-DRAFT revisions (an ISSUED snapshot is frozen). Discrimination/coordination compute is deferred to Phase 4b (device-pairing design).
 
