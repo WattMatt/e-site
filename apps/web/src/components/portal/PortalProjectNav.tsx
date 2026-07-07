@@ -5,8 +5,9 @@ import { usePathname } from 'next/navigation'
 
 /**
  * Fixed tab nav for a project inside the client portal — exactly the aspects
- * chosen for client visibility (spec 2026-07-06-client-portal.md §2). No
- * financial or admin surfaces exist here by construction.
+ * chosen for client visibility (spec 2026-07-06-client-portal.md §2, plus
+ * Equipment & Materials per the 2026-07-07 decision). No financial or admin
+ * surfaces exist here by construction.
  */
 const TABS = [
   { slug: '',                  label: 'Overview' },
@@ -14,6 +15,7 @@ const TABS = [
   { slug: 'snags',             label: 'Snags' },
   { slug: 'inspections',       label: 'Inspections' },
   { slug: 'cables',            label: 'Cable Schedule' },
+  { slug: 'equipment-materials', label: 'Equipment & Materials' },
   { slug: 'generator-recovery', label: 'Generator Recovery' },
   { slug: 'floor-plans',       label: 'Floor Plans' },
   { slug: 'handover',          label: 'Handover' },
