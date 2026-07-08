@@ -31,13 +31,13 @@ import type { NodeOrderStatus } from '@esite/shared'
 // Shared helpers — mirror the commit route's structureHeaders / structurePatch
 // ---------------------------------------------------------------------------
 
-function structureHeaders(serviceKey: string): HeadersInit {
+function structureHeaders(serviceKey: string, extraPrefer?: string): HeadersInit {
   return {
     apikey: serviceKey,
     Authorization: `Bearer ${serviceKey}`,
     'Content-Type': 'application/json',
     'Content-Profile': 'structure',
-    Prefer: 'return=representation',
+    Prefer: extraPrefer ? `${extraPrefer}, return=representation` : 'return=representation',
   }
 }
 
@@ -47,11 +47,12 @@ async function structurePost(
   table: string,
   body: Record<string, unknown>,
   queryString = '',
+  extraPrefer?: string,
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   const url = `${supabaseUrl}/rest/v1/${table}${queryString ? `?${queryString}` : ''}`
   const res = await fetch(url, {
     method: 'POST',
-    headers: structureHeaders(serviceKey),
+    headers: structureHeaders(serviceKey, extraPrefer),
     body: JSON.stringify(body),
   })
   if (!res.ok) {
@@ -193,13 +194,16 @@ export async function setScopeItemPartyAction(
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   if (!serviceKey || !supabaseUrl) return { error: 'Server misconfigured' }
 
-  // Upsert: insert or update party on conflict (node_id, scope_item_type_id)
+  // Upsert: insert or update party on conflict (node_id, scope_item_type_id).
+  // The resolution directive must travel as a Prefer HTTP header — on_conflict
+  // alone only names the conflict columns and the POST would 409 on existing rows.
   const result = await structurePost(
     supabaseUrl,
     serviceKey,
     'tenant_scope_items',
     { node_id: nodeId, scope_item_type_id: scopeItemTypeId, party },
     'on_conflict=node_id%2Cscope_item_type_id',
+    'resolution=merge-duplicates',
   )
 
   if (!result.ok) {
@@ -320,8 +324,9 @@ export type SetScopeNotRequiredResult = { ok: true } | { error: string }
  * never touches this column, so there is no awaited/received conflict. Uses an
  * upsert on the unique node_id: a national tenant may have no tenant_details row
  * yet (the row is otherwise created lazily by the 00118 trigger on document
- * events). PostgREST defaults to merge-duplicates when on_conflict is present,
- * and the payload carries only scope_not_required, so scope_status is preserved.
+ * events). PostgREST only emits ON CONFLICT when Prefer: resolution=merge-duplicates
+ * is sent as a header (on_conflict alone just names the columns); the payload
+ * carries only scope_not_required, so scope_status is preserved on merge.
  */
 export async function setScopeNotRequiredAction(
   projectId: string,
@@ -347,6 +352,7 @@ export async function setScopeNotRequiredAction(
     'tenant_details',
     { node_id: nodeId, scope_not_required: notRequired },
     'on_conflict=node_id',
+    'resolution=merge-duplicates',
   )
   if (!result.ok) return { error: result.error ?? 'Failed to update scope override' }
 
@@ -419,7 +425,8 @@ export async function addScopeItemTypeAction(
       label: safeLabel,
       sort_order: nextSortOrder,
     },
-    'on_conflict=organisation_id%2Ckey&Prefer=resolution%3Dmerge-duplicates',
+    'on_conflict=organisation_id%2Ckey',
+    'resolution=merge-duplicates',
   )
 
   if (!result.ok) return { error: result.error ?? 'Failed to add scope item type' }
