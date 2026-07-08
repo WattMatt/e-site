@@ -19,7 +19,6 @@ export * from './inspections'
 
 // Structure (Phase 2 — nodes, tenant schedule import)
 export * from './structure'
-export * from './structure/db-legend'
 
 // JBCC — Phase 5 pure modules.
 // NOTE: `placeholder-fill` is intentionally NOT re-exported here. It imports
