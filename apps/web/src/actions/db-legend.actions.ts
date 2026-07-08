@@ -201,6 +201,7 @@ export async function upsertCircuitAction(
       return { error: res.error ?? 'Failed to update circuit' }
     }
     revalidatePath(`/projects/${projectId}/tenant-schedule`)
+    // sort_order: 0 here is a placeholder that does NOT reflect the DB row — callers must not use it to reposition rows (the panel only reads `.id`).
     return { ok: true, circuit: { id, node_id: nodeId, sort_order: 0, ...row } as LegendCircuit }
   }
 
@@ -331,6 +332,7 @@ export async function quickAddWaysAction(
     sort_order: maxSort + 1 + i,
   }))
 
+  // Concurrent quick-adds on the same board can 409 on UNIQUE(node_id, circuit_no); the whole batch aborts with a retryable message — a deliberate, weaker guard than tenant-scope.actions.ts's ignore-duplicates pattern (single-editor UI, no data loss).
   const res = await structurePost(supabaseUrl, serviceKey, 'node_circuits', payload)
   if (!res.ok) {
     if (res.status === 409) return { error: 'Some of the generated circuit numbers already exist — renumber or delete the clashing ways first' }

@@ -111,6 +111,7 @@ describe('upsertCircuitAction', () => {
     expect(res).toMatchObject({ ok: true })
     expect(fetchMock.mock.calls[0][1].method).toBe('PATCH')
     expect(String(fetchMock.mock.calls[0][0])).toContain(`id=eq.${CIRCUIT}`)
+    expect((res as { ok: true; circuit: { sort_order: number } }).circuit.sort_order).toBe(0)
   })
 })
 
