@@ -29,22 +29,18 @@ function mockClient(opts: {
   circuits?: Array<Record<string, unknown>>
 } = {}) {
   const { user = true, node = baseNode(), details = null, circuits = [] } = opts
-  function thenable(data: unknown) {
+  function thenable(t: string) {
     const q: any = {
       select: () => q, eq: () => q, order: () => q,
-      maybeSingle: () => Promise.resolve({ data: table === 'nodes' ? node : details }),
+      maybeSingle: () => Promise.resolve({ data: t === 'nodes' ? node : details }),
       then: (resolve: (v: unknown) => void) => resolve({ data: circuits, error: null }),
     }
     return q
   }
-  let table = ''
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: user ? { id: 'u-1' } : null } }) },
     schema: () => ({
-      from: (t: string) => {
-        table = t
-        return thenable(t)
-      },
+      from: (t: string) => thenable(t),
     }),
   }
 }

@@ -6,7 +6,7 @@
  * (invisible or non-tenant node → 404). `size` overrides the tenant's
  * persisted legend_card_size (default A4).
  *
- * rbac-matrix.md: listed under tenant-schedule endpoints.
+ * rbac-matrix.md row added in the same PR (docs commit).
  */
 
 import { type NextRequest, NextResponse } from 'next/server'
@@ -63,8 +63,9 @@ export async function GET(req: NextRequest) {
       .eq('node_id', nodeId)
       .maybeSingle()
     details = data ?? null
-  } catch {
+  } catch (err) {
     // Non-fatal — header prints with em-dashes.
+    console.error('[legend-card] tenant_details read failed (non-fatal):', err)
   }
 
   let circuits: LegendCardCircuit[] = []
@@ -76,8 +77,9 @@ export async function GET(req: NextRequest) {
       .eq('node_id', nodeId)
       .order('sort_order', { ascending: true })
     circuits = (data ?? []) as LegendCardCircuit[]
-  } catch {
+  } catch (err) {
     // Non-fatal — card prints "No circuits captured yet."
+    console.error('[legend-card] node_circuits read failed (non-fatal):', err)
   }
 
   const sizeParam = req.nextUrl.searchParams.get('size')
@@ -110,7 +112,8 @@ export async function GET(req: NextRequest) {
     size,
   )
 
-  const stem = String(node.shop_number ?? node.code).replace(/[^A-Za-z0-9._-]+/g, '-')
+  const rawStem = String(node.shop_number ?? node.code).replace(/[^A-Za-z0-9._-]+/g, '-')
+  const stem = rawStem.replace(/^-+|-+$/g, '') || String(node.code).replace(/[^A-Za-z0-9._-]+/g, '-')
   return new Response(new Uint8Array(bytes), {
     status: 200,
     headers: {
