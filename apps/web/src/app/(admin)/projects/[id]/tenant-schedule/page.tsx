@@ -3,6 +3,7 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, listNodes, listDeletedNodes, computeBoDate, ORG_WRITE_ROLES } from '@esite/shared'
+import type { LegendCircuit, LegendHeader } from '@esite/shared'
 import { Card, CardBody } from '@/components/ui/Card'
 import { ScheduleTable } from './_components/ScheduleTable'
 import { ImportFlow } from './_components/ImportFlow'
@@ -142,6 +143,55 @@ export default async function TenantSchedulePage({ params }: Props) {
       }
     } catch {
       // Non-fatal: order status cells simply show "—" if unavailable
+    }
+  }
+
+  // ── Legend circuits + header (00169; best-effort — pre-apply the table/columns
+  // don't exist and the panel simply opens empty) ─────────────────────────────
+  const legendCircuitsByNode: Record<string, LegendCircuit[]> = {}
+  const legendHeaderByNode: Record<string, LegendHeader> = {}
+
+  if (nodeIds.length > 0) {
+    try {
+      // node_circuits (migration 00169) isn't in the generated relation union yet —
+      // cast the client through `never` at the .from() boundary, matching the read
+      // pattern already used in db-legend.actions.ts for this same table.
+      const { data } = await (supabase as never as {
+        schema: (s: string) => {
+          from: (t: string) => {
+            select: (c: string) => {
+              in: (k: string, v: string[]) => {
+                order: (k: string, o: { ascending: boolean }) => PromiseLike<{ data: unknown[] | null }>
+              }
+            }
+          }
+        }
+      })
+        .schema('structure')
+        .from('node_circuits')
+        .select('id, node_id, circuit_no, description, phase, breaker_rating_a, poles, curve, cable_size, is_spare, sort_order')
+        .in('node_id', nodeIds)
+        .order('sort_order', { ascending: true })
+      // Generated DB types lag migration 00169 — cast at the query boundary.
+      for (const c of (data ?? []) as unknown as LegendCircuit[]) {
+        if (!legendCircuitsByNode[c.node_id]) legendCircuitsByNode[c.node_id] = []
+        legendCircuitsByNode[c.node_id].push(c)
+      }
+    } catch {
+      // Non-fatal
+    }
+
+    try {
+      const { data } = await supabase
+        .schema('structure')
+        .from('tenant_details')
+        .select('node_id, db_location, db_fed_from, db_earth_leakage_ma, legend_card_size')
+        .in('node_id', nodeIds)
+      for (const h of (data ?? []) as unknown as LegendHeader[]) {
+        legendHeaderByNode[h.node_id] = h
+      }
+    } catch {
+      // Non-fatal: pre-migration-00169 the columns don't exist.
     }
   }
 
@@ -291,6 +341,8 @@ export default async function TenantSchedulePage({ params }: Props) {
             layoutDetailsByNode={layoutDetailsByNode}
             ordersByNodeAndScope={ordersByNodeAndScope}
             tenantBoByNode={tenantBoByNode}
+            legendCircuitsByNode={legendCircuitsByNode}
+            legendHeaderByNode={legendHeaderByNode}
             readOnly={!canWrite}
           />
         </CardBody>
