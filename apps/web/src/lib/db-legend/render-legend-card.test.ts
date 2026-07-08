@@ -53,4 +53,12 @@ describe('renderLegendCardPdf', () => {
     const doc = await PDFDocument.load(bytes)
     expect(doc.getPageCount()).toBe(1)
   })
+
+  it('clips a very long header value without throwing and stays single-page on A5', async () => {
+    const p = payload(5)
+    p.header.location = 'A'.repeat(90)
+    const bytes = await renderLegendCardPdf(p, 'A5')
+    const doc = await PDFDocument.load(bytes)
+    expect(doc.getPageCount()).toBe(1)
+  })
 })

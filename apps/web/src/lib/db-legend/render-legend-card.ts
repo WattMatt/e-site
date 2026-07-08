@@ -87,6 +87,7 @@ export async function renderLegendCardPdf(
   }
 
   let page = pdf.addPage([g.w, g.h])
+  const pages: PDFPage[] = [page]
   let y = drawCardHeader(page, payload, g, helv, helvB)
   y = drawTableHeader(page, g, colX, helvB, y)
 
@@ -102,15 +103,15 @@ export async function renderLegendCardPdf(
 
   for (const circuit of payload.circuits) {
     if (y - g.rowH < g.margin + 18) {
-      drawFooter(page, payload, g, helv)
       page = pdf.addPage([g.w, g.h])
+      pages.push(page)
       y = drawContinuationHeader(page, payload, g, helv, helvB)
       y = drawTableHeader(page, g, colX, helvB, y)
     }
     y = drawCircuitRow(page, circuit, g, colX, helv, helvB, y)
   }
 
-  drawFooter(page, payload, g, helv)
+  pages.forEach((p, i) => drawFooter(p, payload, g, helv, i + 1, pages.length))
 
   pdf.setTitle(`DB Legend Card — ${payload.dbCode} — ${payload.projectName}`)
   pdf.setProducer('E-Site v2')
@@ -146,6 +147,8 @@ function drawCardHeader(
     ['MAIN BREAKER', p.mainBreaker ?? '—'],
     ['EARTH LEAKAGE', p.header.earthLeakageMa != null ? `${p.header.earthLeakageMa} mA` : '—'],
   ]
+  // Label column width (~14% of the full content width) — independent of the
+  // two-column split below; both meta columns reuse the same label offset.
   const labelW = 0.28 * (g.w - g.margin * 2) * 0.5
   const half = Math.ceil(meta.length / 2)
   const colW = (g.w - g.margin * 2) / 2
@@ -153,7 +156,12 @@ function drawCardHeader(
     const cx = g.margin + (i < half ? 0 : colW)
     const cy = y - (i % half) * (g.metaSize + 6) - g.metaSize
     page.drawText(label, { x: cx, y: cy, size: g.metaSize - 1, font: helvB, color: DIM })
-    page.drawText(value, { x: cx + labelW, y: cy, size: g.metaSize, font: helv, color: INK })
+    // Clip free-text values (location, fed-from) so long user input can't
+    // collide with the neighbouring column.
+    const avail = colW - labelW - 4
+    let t = value
+    while (t.length > 1 && helv.widthOfTextAtSize(t, g.metaSize) > avail) t = t.slice(0, -2) + '…'
+    page.drawText(t, { x: cx + labelW, y: cy, size: g.metaSize, font: helv, color: INK })
   })
   y -= half * (g.metaSize + 6) + 8
 
@@ -229,8 +237,15 @@ function drawCircuitRow(
   return rowY
 }
 
-function drawFooter(page: PDFPage, p: LegendCardPayload, g: Geometry, helv: PDFFont) {
-  page.drawText(`${p.projectName} · Generated ${p.generatedAt} · E-Site`, {
+function drawFooter(
+  page: PDFPage,
+  p: LegendCardPayload,
+  g: Geometry,
+  helv: PDFFont,
+  pageNo: number,
+  totalPages: number,
+) {
+  page.drawText(`${p.projectName} · Generated ${p.generatedAt} · E-Site · Page ${pageNo} of ${totalPages}`, {
     x: g.margin, y: g.margin - 12 < 6 ? 6 : g.margin - 12, size: g.metaSize - 1, font: helv, color: DIM,
   })
 }
