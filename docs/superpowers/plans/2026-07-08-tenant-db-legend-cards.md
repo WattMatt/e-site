@@ -208,7 +208,10 @@ CREATE TABLE structure.node_circuits (
     UNIQUE (node_id, circuit_no)
 );
 
-CREATE INDEX idx_node_circuits_node ON structure.node_circuits (node_id);
+-- Composite index serves both real query paths — the per-node print route
+-- and the tenant-schedule page batch load — which filter by node_id and
+-- order by sort_order: an index-order scan, no separate sort step.
+CREATE INDEX idx_node_circuits_node_sort ON structure.node_circuits (node_id, sort_order);
 
 CREATE TRIGGER node_circuits_updated_at
     BEFORE UPDATE ON structure.node_circuits

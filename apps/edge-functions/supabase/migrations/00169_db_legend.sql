@@ -29,6 +29,8 @@ CREATE TABLE structure.node_circuits (
                       REFERENCES structure.nodes(id) ON DELETE CASCADE,
 
     -- Free text ("1", "3+5+7"); unique per board. Blank forbidden.
+    -- Case is NOT normalized: "1"/"A1" are trimmed app-side; case variants
+    -- (e.g. "a1" vs "A1") are allowed as distinct values.
     circuit_no        TEXT        NOT NULL CHECK (btrim(circuit_no) <> ''),
 
     -- "Lights shop 5". NULL/blank allowed (spare ways).
@@ -52,7 +54,10 @@ CREATE TABLE structure.node_circuits (
     UNIQUE (node_id, circuit_no)
 );
 
-CREATE INDEX idx_node_circuits_node ON structure.node_circuits (node_id);
+-- Composite index serves both real query paths — the per-node print route
+-- and the tenant-schedule page batch load — which filter by node_id and
+-- order by sort_order: an index-order scan, no separate sort step.
+CREATE INDEX idx_node_circuits_node_sort ON structure.node_circuits (node_id, sort_order);
 
 CREATE TRIGGER node_circuits_updated_at
     BEFORE UPDATE ON structure.node_circuits
