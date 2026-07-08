@@ -147,9 +147,8 @@ function drawCardHeader(
     ['MAIN BREAKER', p.mainBreaker ?? '—'],
     ['EARTH LEAKAGE', p.header.earthLeakageMa != null ? `${p.header.earthLeakageMa} mA` : '—'],
   ]
-  // Label column width (~14% of the full content width) — independent of the
-  // two-column split below; both meta columns reuse the same label offset.
-  const labelW = 0.28 * (g.w - g.margin * 2) * 0.5
+  // Label column: widest meta label at its drawn size, plus a fixed gap.
+  const labelW = Math.max(...meta.map(([label]) => helvB.widthOfTextAtSize(label, g.metaSize - 1))) + 10
   const half = Math.ceil(meta.length / 2)
   const colW = (g.w - g.margin * 2) / 2
   meta.forEach(([label, value], i) => {
