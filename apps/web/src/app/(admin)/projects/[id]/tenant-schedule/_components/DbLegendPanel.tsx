@@ -165,8 +165,11 @@ export function DbLegendPanel({
 
   function saveHeaderField(patch: Partial<typeof headerDraft>) {
     setError(null)
+    // Snapshot current state BEFORE the optimistic mutation so we can revert
+    // to it (not to the stale mount-time prop) if the action fails.
+    const snapshot = headerDraft
     const next = { ...headerDraft, ...patch }
-    setHeaderDraft(next)
+    setHeaderDraft(next) // optimistic
     startTransition(async () => {
       const res = await updateLegendHeaderAction(projectId, nodeId, {
         db_location: next.db_location.trim() || null,
@@ -174,7 +177,10 @@ export function DbLegendPanel({
         db_earth_leakage_ma: next.db_earth_leakage_ma.trim() === '' ? null : Number(next.db_earth_leakage_ma),
         legend_card_size: next.legend_card_size,
       })
-      if ('error' in res) setError(res.error)
+      if ('error' in res) {
+        setError(res.error)
+        setHeaderDraft(snapshot) // revert
+      }
     })
   }
 

@@ -85,4 +85,15 @@ describe('DbLegendPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /add ways/i }))
     await waitFor(() => expect(screen.getByText(/already exists/i)).toBeTruthy())
   })
+
+  it('reverts the card-size select on a failed header save', async () => {
+    headerMock.mockResolvedValue({ error: 'nope' })
+    renderPanel({ header: null })
+    const select = screen.getByLabelText(/card size/i) as HTMLSelectElement
+    expect(select.value).toBe('A4')
+    fireEvent.change(select, { target: { value: 'A5' } })
+    await waitFor(() => expect(screen.getByText(/nope/i)).toBeTruthy())
+    expect(select.value).toBe('A4')
+    expect(screen.getByRole('link', { name: /print legend card \(a4\)/i })).toBeTruthy()
+  })
 })
