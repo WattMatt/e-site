@@ -27,13 +27,13 @@ import type { LegendCircuit } from '@esite/shared'
 // PostgREST helpers (module-local, mirroring tenant-scope.actions.ts)
 // ---------------------------------------------------------------------------
 
-function structureHeaders(serviceKey: string): HeadersInit {
+function structureHeaders(serviceKey: string, extraPrefer?: string): HeadersInit {
   return {
     apikey: serviceKey,
     Authorization: `Bearer ${serviceKey}`,
     'Content-Type': 'application/json',
     'Content-Profile': 'structure',
-    Prefer: 'return=representation',
+    Prefer: extraPrefer ? `${extraPrefer}, return=representation` : 'return=representation',
   }
 }
 
@@ -43,11 +43,12 @@ async function structurePost(
   table: string,
   body: unknown,
   queryString = '',
+  extraPrefer?: string,
 ): Promise<{ ok: boolean; status?: number; data?: unknown; error?: string }> {
   const url = `${supabaseUrl}/rest/v1/${table}${queryString ? `?${queryString}` : ''}`
   const res = await fetch(url, {
     method: 'POST',
-    headers: structureHeaders(serviceKey),
+    headers: structureHeaders(serviceKey, extraPrefer),
     body: JSON.stringify(body),
   })
   if (!res.ok) {
@@ -360,9 +361,13 @@ export type LegendHeaderPatch = z.input<typeof legendHeaderSchema>
 export type UpdateLegendHeaderResult = { ok: true } | { error: string }
 
 /**
- * Upsert the card-header fields on tenant_details. on_conflict=node_id with a
- * partial payload preserves every other column (scope_status etc.) — same
- * pattern as setScopeNotRequiredAction.
+ * Upsert the card-header fields on tenant_details. PostgREST only turns this
+ * into an ON CONFLICT upsert when `Prefer: resolution=merge-duplicates` is
+ * sent — `on_conflict=node_id` alone just names the conflict target and does
+ * NOT enable upsert, so without the header this 409s on every tenant that
+ * already has a tenant_details row (i.e. nearly all of them). The payload
+ * stays partial so untouched tenant_details columns (scope_status etc.) are
+ * preserved on merge — same pattern as setScopeNotRequiredAction.
  */
 export async function updateLegendHeaderAction(
   projectId: string,
@@ -394,6 +399,7 @@ export async function updateLegendHeaderAction(
     'tenant_details',
     { node_id: nodeId, ...fields },
     'on_conflict=node_id',
+    'resolution=merge-duplicates',
   )
   if (!res.ok) return { error: res.error ?? 'Failed to update legend details' }
 

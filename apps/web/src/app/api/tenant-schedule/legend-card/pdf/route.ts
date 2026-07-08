@@ -56,12 +56,15 @@ export async function GET(req: NextRequest) {
     legend_card_size: 'A4' | 'A5'
   } | null = null
   try {
-    const { data } = await (supabase as any)
+    const { data, error } = await (supabase as any)
       .schema('structure')
       .from('tenant_details')
       .select('db_location, db_fed_from, db_earth_leakage_ma, legend_card_size')
       .eq('node_id', nodeId)
       .maybeSingle()
+    // supabase-js resolves PostgREST errors rather than throwing, so the
+    // realistic failure mode never hits the catch block — check error explicitly.
+    if (error) console.error('[legend-card] tenant_details read failed (non-fatal):', error)
     details = data ?? null
   } catch (err) {
     // Non-fatal — header prints with em-dashes.
@@ -70,12 +73,15 @@ export async function GET(req: NextRequest) {
 
   let circuits: LegendCardCircuit[] = []
   try {
-    const { data } = await (supabase as any)
+    const { data, error } = await (supabase as any)
       .schema('structure')
       .from('node_circuits')
       .select('circuit_no, description, phase, breaker_rating_a, poles, curve, cable_size, is_spare, sort_order')
       .eq('node_id', nodeId)
       .order('sort_order', { ascending: true })
+    // supabase-js resolves PostgREST errors rather than throwing, so the
+    // realistic failure mode never hits the catch block — check error explicitly.
+    if (error) console.error('[legend-card] node_circuits read failed (non-fatal):', error)
     circuits = (data ?? []) as LegendCardCircuit[]
   } catch (err) {
     // Non-fatal — card prints "No circuits captured yet."

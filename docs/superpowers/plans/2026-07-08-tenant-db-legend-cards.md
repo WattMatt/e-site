@@ -2275,7 +2275,7 @@ git push "https://x-access-token:$(gh auth token)@github.com/WattMatt/e-site.git
 1. Apply migration `00169_db_legend.sql` to the live DB via the Supabase Management API (`POST /v1/projects/cbskbnvvgcybmfikxgky/database/query`, PAT from macOS keychain: `security find-generic-password -s "Supabase CLI" -w`, strip `go-keyring-base64:` prefix + base64-decode).
 2. Log it in `schema_migrations` (project convention) and run `NOTIFY pgrst, 'reload schema';` (no PostgREST db_schema PATCH needed — existing schema).
 3. Merge PR after CI green → Vercel deploys.
-4. Live verification: as an admin on a real project — open a tenant's Legend panel, quick-add 12 ways, describe a few, print A4 and A5; sign in as `rbac-test@e-site.live` (contractor fixture) and confirm the panel is read-only but Print works.
+4. Live verification: as an admin on a real project — open a tenant's Legend panel, quick-add 12 ways, describe a few, **set location / fed-from / earth-leakage, toggle card size to A5, reload and confirm persisted** (direct regression check for the `updateLegendHeaderAction` 409-on-upsert bug — PostgREST only upserts on `on_conflict` when `Prefer: resolution=merge-duplicates` is also sent), then print A4 and A5; sign in as `rbac-test@e-site.live` (contractor fixture) and confirm the panel is read-only but Print works.
 
 ---
 

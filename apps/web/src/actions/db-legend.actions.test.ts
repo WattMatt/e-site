@@ -66,13 +66,28 @@ beforeEach(() => {
 })
 
 describe('role gate (service-role writes require ORG_WRITE_ROLES)', () => {
-  it.each([
+  const actions: Array<[string, () => Promise<{ error: string } | { ok: true }>]> = [
     ['upsertCircuitAction', () => upsertCircuitAction(PROJECT, NODE, { circuit_no: '1', is_spare: false })],
     ['deleteCircuitAction', () => deleteCircuitAction(PROJECT, NODE, CIRCUIT)],
     ['quickAddWaysAction', () => quickAddWaysAction(PROJECT, NODE, 3)],
     ['updateLegendHeaderAction', () => updateLegendHeaderAction(PROJECT, NODE, { db_location: 'Back room' })],
-  ])('%s denies when the effective-role RPC returns null', async (_name, call) => {
+  ]
+
+  it.each(actions)('%s denies when the effective-role RPC returns null', async (_name, call) => {
     createClientMock.mockResolvedValue(mockClient({ role: null }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await call()
+    expect('error' in res).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each(
+    actions.flatMap(([name, call]) =>
+      (['client_viewer', 'contractor'] as const).map((role) => [name, call, role] as const),
+    ),
+  )('%s denies when the effective role is %s', async (_name, call, role) => {
+    createClientMock.mockResolvedValue(mockClient({ role }))
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const res = await call()
@@ -141,9 +156,15 @@ describe('updateLegendHeaderAction', () => {
       scope_status: 'received',
     })
     expect(res).toMatchObject({ ok: true })
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    const [url, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(init.body as string)
     expect(body).toEqual({ node_id: NODE, db_location: 'Back of shop', legend_card_size: 'A5' })
-    expect(String(fetchMock.mock.calls[0][0])).toContain('on_conflict=node_id')
+    expect(String(url)).toContain('on_conflict=node_id')
+    // PostgREST only performs the ON CONFLICT upsert when this Prefer directive is present —
+    // on_conflict alone just names the conflict target (regression guard for the 409 bug).
+    const prefer = (init.headers as Record<string, string>)['Prefer']
+    expect(prefer).toContain('resolution=merge-duplicates')
+    expect(prefer).toContain('return=representation')
   })
 })
 
