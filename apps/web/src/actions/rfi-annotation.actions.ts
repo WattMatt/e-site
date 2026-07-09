@@ -12,11 +12,21 @@
  * On failure of step 2 or 3 we best-effort roll back the prior step so we
  * don't leave orphan files or rows. Storage/DB writes can't share a tx,
  * so this is the closest we can get without an Edge Function.
+ *
+ * Authorization (defense-in-depth): both writes gate on the caller's EFFECTIVE
+ * project role via requireEffectiveRole(MARKUP_WRITE_ROLES) — the same write
+ * set as the /rfis and /floor-plans rows in docs/rbac-matrix.md — BEFORE any
+ * storage upload or DB insert. The database RLS backstop (migrations
+ * 00161/00162) independently blocks the read-only client_viewer; this app-layer
+ * gate additionally excludes inspector/supplier and fails fast with a clear
+ * message instead of a raw RLS violation. Never rely on RLS alone here.
  */
 
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
+import { MARKUP_WRITE_ROLES } from '@esite/shared'
 import { createClient } from '@/lib/supabase/server'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 
 const PNG_MAX_BYTES = 20 * 1024 * 1024 // 20MB — bucket cap per migration 00033
 
@@ -50,6 +60,10 @@ export async function createRfiAnnotationAction(
     .eq('id', parsed.data.rfiId)
     .single()
   if (rfiErr || !rfi) return { error: 'RFI not found' }
+
+  // Authorize BEFORE touching storage/DB so a rejected caller leaves no trace.
+  const gate = await requireEffectiveRole(supabase, rfi.project_id, MARKUP_WRITE_ROLES)
+  if (!gate.ok) return { error: gate.error }
 
   const png = Buffer.from(parsed.data.pngBase64, 'base64')
   if (png.length > PNG_MAX_BYTES) return { error: 'Markup PNG exceeds 20 MB' }
@@ -122,6 +136,18 @@ export async function updateRfiAnnotationAction(
     .eq('id', parsed.data.annotationId)
     .single()
   if (annErr || !ann) return { error: 'Annotation not found' }
+
+  // Resolve the owning project, then authorize on the caller's effective
+  // project role BEFORE re-uploading the composited PNG or mutating the row.
+  const { data: rfi, error: rfiErr } = await (supabase as any)
+    .schema('projects')
+    .from('rfis')
+    .select('project_id')
+    .eq('id', ann.rfi_id)
+    .single()
+  if (rfiErr || !rfi) return { error: 'RFI not found' }
+  const gate = await requireEffectiveRole(supabase, rfi.project_id, MARKUP_WRITE_ROLES)
+  if (!gate.ok) return { error: gate.error }
 
   const { data: att, error: attErr } = await (supabase as any)
     .from('attachments')

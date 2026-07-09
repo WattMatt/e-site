@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, floorPlanService, rfiService } from '@esite/shared'
+import { projectService, floorPlanService, rfiService, MARKUP_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { DrawingViewer, type EditingAnnotation } from './DrawingViewer'
 import type { ViewerMode } from './MarkupCanvas'
 
@@ -45,6 +46,14 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
     calibrated_at: string | null
     calibrated_by: string | null
   }
+
+  // Effective project role decides whether the markup/RFI toolset is offered.
+  // Read-only roles are pinned to 'view' regardless of the ?mode= querystring —
+  // the server actions + RLS (00161/00162) enforce the same boundary; this
+  // stops a hand-typed ?mode=markup from presenting tools that can't save.
+  const gate = await requireEffectiveRole(supabase as any, projectId, MARKUP_WRITE_ROLES)
+  const canWrite = gate.ok
+  const effectiveMode: ViewerMode = canWrite ? initialMode : 'view'
 
   // RFIs eligible for attachment: not closed.
   const rfis = (rfisRaw as Array<{ id: string; subject: string; status: string }>)
@@ -163,7 +172,8 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
         snagPins={snagPins as Array<{ id: string; title: string; status: string; priority: string; floor_plan_pin: { x: number; y: number } }>}
         rfis={rfis}
         editing={editing}
-        initialMode={initialMode}
+        initialMode={effectiveMode}
+        canWrite={canWrite}
       />
       )}
     </div>

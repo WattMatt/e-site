@@ -76,6 +76,7 @@ export function DrawingViewer({
   rfis,
   editing,
   initialMode,
+  canWrite,
 }: {
   plan: DrawingPlan
   projectId: string
@@ -84,16 +85,23 @@ export function DrawingViewer({
   rfis: RfiOption[]
   editing: EditingAnnotation | null
   initialMode: ViewerMode
+  /** Effective project role allows creating/editing markup. When false the
+   *  viewer is pinned to read-only 'view' and the mode toggle is hidden. */
+  canWrite: boolean
 }) {
   const router = useRouter()
   const pathname = usePathname()
 
   // Re-edit always lands in markup mode (the toolbar makes no sense in
   // view mode for an existing markup edit), regardless of initialMode.
-  const [mode, setMode] = useState<ViewerMode>(editing ? 'markup' : initialMode)
+  // Read-only roles are pinned to 'view' whatever the URL/props say.
+  const [mode, setMode] = useState<ViewerMode>(
+    !canWrite ? 'view' : editing ? 'markup' : initialMode,
+  )
 
   const onModeChange = useCallback(
     (next: ViewerMode) => {
+      if (!canWrite) return // read-only: mode is fixed at 'view'
       if (next === mode) return
       setMode(next)
       // Sync to URL so the deep-link reflects the current mode, but use
@@ -102,7 +110,7 @@ export function DrawingViewer({
       const qs = next === 'view' ? '' : `?mode=${next}`
       router.replace(`${pathname}${qs}`, { scroll: false })
     },
-    [mode, pathname, router],
+    [canWrite, mode, pathname, router],
   )
 
   return (
@@ -111,8 +119,24 @@ export function DrawingViewer({
         {/* Mode toggle — only shown when there's actually a viewer to render
             (the fallback for unsupported file types is rendered by the
             parent server page; this component is only mounted when a real
-            canvas can run). Hidden in re-edit mode (single-purpose flow). */}
-        {!editing && (
+            canvas can run). Hidden in re-edit mode (single-purpose flow), and
+            hidden entirely for read-only roles (they only get 'view'). */}
+        {!canWrite && (
+          <div
+            className="data-panel"
+            style={{
+              padding: '8px 12px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              color: 'var(--c-text-dim)',
+            }}
+          >
+            Read-only — pan and zoom only. Markup requires write access.
+          </div>
+        )}
+        {canWrite && !editing && (
           <div className="data-panel" style={{ padding: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div
               role="tablist"

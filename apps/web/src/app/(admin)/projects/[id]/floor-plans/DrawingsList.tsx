@@ -37,9 +37,11 @@ function formatBytes(bytes: number | null) {
 export function DrawingsList({
   plans,
   projectId,
+  canWrite,
 }: {
   plans: DrawingListItem[]
   projectId: string
+  canWrite: boolean
 }) {
   const [query, setQuery] = useState('')
   const [view, setView] = useState<'list' | 'levels'>('list')
@@ -127,7 +129,7 @@ export function DrawingsList({
           </div>
         </div>
       ) : view === 'list' ? (
-        <Grid plans={filtered} projectId={projectId} />
+        <Grid plans={filtered} projectId={projectId} canWrite={canWrite} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {grouped.map(([level, items]) => (
@@ -146,7 +148,7 @@ export function DrawingsList({
                 {level}
                 <span style={{ color: 'var(--c-text-dim)', marginLeft: 6 }}>{items.length}</span>
               </h2>
-              <Grid plans={items} projectId={projectId} />
+              <Grid plans={items} projectId={projectId} canWrite={canWrite} />
             </section>
           ))}
         </div>
@@ -155,7 +157,15 @@ export function DrawingsList({
   )
 }
 
-function Grid({ plans, projectId }: { plans: DrawingListItem[]; projectId: string }) {
+function Grid({
+  plans,
+  projectId,
+  canWrite,
+}: {
+  plans: DrawingListItem[]
+  projectId: string
+  canWrite: boolean
+}) {
   return (
     <div
       className="data-panel"
@@ -166,7 +176,13 @@ function Grid({ plans, projectId }: { plans: DrawingListItem[]; projectId: strin
       }}
     >
       {plans.map((plan, i) => (
-        <Row key={plan.id} plan={plan} projectId={projectId} isLast={i === plans.length - 1} />
+        <Row
+          key={plan.id}
+          plan={plan}
+          projectId={projectId}
+          canWrite={canWrite}
+          isLast={i === plans.length - 1}
+        />
       ))}
     </div>
   )
@@ -175,10 +191,12 @@ function Grid({ plans, projectId }: { plans: DrawingListItem[]; projectId: strin
 function Row({
   plan,
   projectId,
+  canWrite,
   isLast,
 }: {
   plan: DrawingListItem
   projectId: string
+  canWrite: boolean
   isLast: boolean
 }) {
   // Three explicit, separate row actions: View (signed URL in new tab),
@@ -260,11 +278,11 @@ function Row({
         {plan.file_size_bytes && <span>{formatBytes(plan.file_size_bytes)}</span>}
       </div>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-        {plan.has_newer_version && (
+        {canWrite && plan.has_newer_version && (
           <UpdateButton projectId={projectId} planId={plan.id} name={plan.name} />
         )}
         <ViewLink projectId={projectId} planId={plan.id} name={plan.name} />
-        <MarkupLink projectId={projectId} planId={plan.id} name={plan.name} />
+        {canWrite && <MarkupLink projectId={projectId} planId={plan.id} name={plan.name} />}
         <DownloadButton filePath={plan.file_path} name={plan.name} />
       </div>
     </div>
