@@ -21,7 +21,15 @@ import {
   updateRfiAnnotationAction,
 } from '@/actions/rfi-annotation.actions'
 import { createRfiAction } from '@/actions/rfi.actions'
-import { type StrokeStyle, STROKE_STYLES, dashFor, snapAngle } from './markup-geometry'
+import {
+  type StrokeStyle,
+  STROKE_STYLES,
+  dashFor,
+  snapAngle,
+  gridSpacingPx,
+  snapToGrid,
+  gridLineOffsets,
+} from './markup-geometry'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -237,6 +245,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const [color, setColor] = useState<string>(COLORS[0].value)
   const [strokeWidth, setStrokeWidth] = useState<number>(STROKE_WIDTHS[1].value)
   const [strokeStyle, setStrokeStyle] = useState<StrokeStyle>('solid')
+  // Metric grid + snap-to-scale. Grid spacing is real-world metres when the
+  // drawing is calibrated, else a plain pixel grid (see gridSpacingPx).
+  const [gridOn, setGridOn] = useState(false)
+  const [snapOn, setSnapOn] = useState(false)
+  const [gridSpacingM, setGridSpacingM] = useState(1)
   const [shapes, setShapes] = useState<AnyShape[]>(editing?.scene.shapes ?? [])
   const [current, setCurrent] = useState<AnyShape | null>(null)
   const [undoStack, setUndoStack] = useState<AnyShape[][]>([])
@@ -675,6 +688,15 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     setShapes([])
   }
 
+  // ── Grid + snap-to-scale ──────────────────────────────────────────────
+  // Grid line spacing in image px (real metres when calibrated, else px).
+  // The grid is a drawing AID: rendered in its own layer and hidden during
+  // the PNG snapshot so it never bakes into the saved markup.
+  const gridLayerRef = useRef<Konva.Layer | null>(null)
+  const gridPx = gridSpacingPx(gridSpacingM, pixelsPerMeter)
+  const snapXY = (x: number, y: number): [number, number] =>
+    snapOn ? [snapToGrid(x, gridPx), snapToGrid(y, gridPx)] : [x, y]
+
   // ── Pointer handlers ──────────────────────────────────────────────────
   // Mouse + touch handlers (Konva 10's onPointerDown isn't reliable across
   // synthesized inputs — observed in Chrome MCP automation tests). The
@@ -710,7 +732,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
 
     if (tool === 'pin') {
       const existing = shapes.filter((s) => s.type === 'pin').length
-      commit({ id: makeId(), type: 'pin', x, y, label: String(existing + 1), color })
+      const [px, py] = snapXY(x, y)
+      commit({ id: makeId(), type: 'pin', x: px, y: py, label: String(existing + 1), color })
       return
     }
 
@@ -728,32 +751,33 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     }
 
     const dash = dashFor(strokeStyle, strokeWidth)
+    const [sx, sy] = snapXY(x, y)
 
     if (tool === 'line') {
-      setCurrent({ id: makeId(), type: 'line', points: [x, y, x, y], color, strokeWidth, dash })
+      setCurrent({ id: makeId(), type: 'line', points: [sx, sy, sx, sy], color, strokeWidth, dash })
       return
     }
 
     if (tool === 'arrow') {
-      setCurrent({ id: makeId(), type: 'arrow', points: [x, y, x, y], color, strokeWidth, dash })
+      setCurrent({ id: makeId(), type: 'arrow', points: [sx, sy, sx, sy], color, strokeWidth, dash })
       return
     }
 
     if (tool === 'rect') {
-      setCurrent({ id: makeId(), type: 'rect', x, y, width: 0, height: 0, color, strokeWidth, dash })
+      setCurrent({ id: makeId(), type: 'rect', x: sx, y: sy, width: 0, height: 0, color, strokeWidth, dash })
       return
     }
 
     if (tool === 'ellipse') {
       // Anchor centre at first click; radii grow with drag.
-      setCurrent({ id: makeId(), type: 'ellipse', cx: x, cy: y, rx: 0, ry: 0, color, strokeWidth, dash })
+      setCurrent({ id: makeId(), type: 'ellipse', cx: sx, cy: sy, rx: 0, ry: 0, color, strokeWidth, dash })
       return
     }
 
     if (tool === 'polygon' || tool === 'polyline') {
       // Click adds a vertex. Double-click (handled separately) finishes:
       // polygon closes, polyline stays open.
-      setPolyPoints((pts) => [...pts, x, y])
+      setPolyPoints((pts) => [...pts, sx, sy])
       return
     }
 
@@ -772,6 +796,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     if (!pos) return
     const { x, y } = pos
     const shift = (e.evt as { shiftKey?: boolean }).shiftKey ?? false
+    // Grid-snapped endpoint for the geometric tools (no-op when snap is off).
+    const [gx, gy] = snapXY(x, y)
 
     setCurrent((c) => {
       if (!c) return c
@@ -781,16 +807,16 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
           return { ...c, points: [...c.points, x, y] }
         case 'line':
         case 'arrow': {
-          // Shift constrains to 0°/45°/90° for clean orthogonals/diagonals.
-          const [ex, ey] = shift ? snapAngle(c.points[0], c.points[1], x, y) : [x, y]
+          // Shift constrains to 0°/45°/90°; otherwise honour grid snap.
+          const [ex, ey] = shift ? snapAngle(c.points[0], c.points[1], x, y) : [gx, gy]
           return { ...c, points: [c.points[0], c.points[1], ex, ey] }
         }
         case 'measure':
           return { ...c, points: [c.points[0], c.points[1], x, y] }
         case 'rect':
-          return { ...c, width: x - c.x, height: y - c.y }
+          return { ...c, width: gx - c.x, height: gy - c.y }
         case 'ellipse':
-          return { ...c, rx: Math.abs(x - c.cx), ry: Math.abs(y - c.cy) }
+          return { ...c, rx: Math.abs(gx - c.cx), ry: Math.abs(gy - c.cy) }
         default:
           return c
       }
@@ -910,6 +936,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     const savedPos = stage.position()
     stage.scale({ x: 1, y: 1 })
     stage.position({ x: 0, y: 0 })
+    // The grid is a drawing aid, not markup content — hide it for the capture
+    // so it never bakes into the saved/exported PNG.
+    const gridVisible = gridLayerRef.current?.visible() ?? false
+    gridLayerRef.current?.visible(false)
     stage.draw()
     // PDF backing canvas is already rasterised at scale=2 in the load
     // effect, so pixelRatio=1 here keeps the saved PNG at source density.
@@ -923,6 +953,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       width: naturalW,
       height: naturalH,
     })
+    gridLayerRef.current?.visible(gridVisible)
     stage.scale({ x: savedScale, y: savedScale })
     stage.position(savedPos)
     stage.draw()
@@ -1280,6 +1311,45 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
               ))}
             </ToolbarGroup>
             <ToolbarSeparator />
+            <ToolbarGroup>
+              <ToolbarButton active={gridOn} onClick={() => setGridOn((v) => !v)} title="Toggle grid overlay">
+                ▦
+              </ToolbarButton>
+              <ToolbarButton active={snapOn} onClick={() => setSnapOn((v) => !v)} title="Snap drawing to grid intersections">
+                ⌖
+              </ToolbarButton>
+              {pixelsPerMeter ? (
+                <select
+                  value={gridSpacingM}
+                  onChange={(e) => setGridSpacingM(Number(e.target.value))}
+                  title="Grid spacing (metres) — uses this drawing's calibration"
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 10,
+                    padding: '4px 6px',
+                    background: 'var(--c-panel)',
+                    color: 'var(--c-text)',
+                    border: '1px solid var(--c-border)',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {[0.25, 0.5, 1, 2, 5, 10].map((m) => (
+                    <option key={m} value={m}>
+                      {m} m
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span
+                  title="Calibrate this drawing for a metric grid; a pixel grid is used until then"
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}
+                >
+                  px grid
+                </span>
+              )}
+            </ToolbarGroup>
+            <ToolbarSeparator />
           </>
         )}
         <ToolbarGroup>
@@ -1549,6 +1619,31 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                   <Circle radius={10} fill="#dc2626" stroke="white" strokeWidth={2} opacity={0.7} />
                 </Group>
               ))}
+            </Layer>
+            {/* Metric grid aid — own layer + ref so snapshotScene() can hide
+                it during the PNG capture. Hairline (1/scale) so it stays ~1px
+                at any zoom; capped line count via gridLineOffsets. */}
+            <Layer ref={gridLayerRef} listening={false} visible={gridOn}>
+              {gridOn &&
+                gridLineOffsets(naturalW, gridPx).map((gx) => (
+                  <Line
+                    key={`grid-v-${gx}`}
+                    points={[gx, 0, gx, naturalH]}
+                    stroke="#2563eb"
+                    strokeWidth={1 / scale}
+                    opacity={0.28}
+                  />
+                ))}
+              {gridOn &&
+                gridLineOffsets(naturalH, gridPx).map((gy) => (
+                  <Line
+                    key={`grid-h-${gy}`}
+                    points={[0, gy, naturalW, gy]}
+                    stroke="#2563eb"
+                    strokeWidth={1 / scale}
+                    opacity={0.28}
+                  />
+                ))}
             </Layer>
             <Layer>
               {/* Filter shapes to the current page; pageIndex defaults to 1

@@ -38,3 +38,36 @@ export function snapAngle(x0: number, y0: number, x: number, y: number): [number
   const ang = Math.round(Math.atan2(dy, dx) / step) * step
   return [x0 + Math.cos(ang) * dist, y0 + Math.sin(ang) * dist]
 }
+
+/** Grid line spacing in *image pixels* for a desired real-world spacing.
+ *  Uses calibration (px per metre) when available; otherwise falls back to a
+ *  plain pixel grid so the aid still works on an uncalibrated drawing. */
+export function gridSpacingPx(
+  gridSpacingM: number,
+  pixelsPerMeter: number | null,
+  fallbackPx = 50,
+): number {
+  if (pixelsPerMeter && pixelsPerMeter > 0 && gridSpacingM > 0) {
+    return gridSpacingM * pixelsPerMeter
+  }
+  return fallbackPx
+}
+
+/** Round a coordinate to the nearest grid line. No-op for a non-positive
+ *  spacing (guards divide-by-zero). */
+export function snapToGrid(value: number, spacingPx: number): number {
+  if (!(spacingPx > 0)) return value
+  return Math.round(value / spacingPx) * spacingPx
+}
+
+/** Grid line offsets across [0, extent] at the given spacing, capped at
+ *  `maxLines` so a fine grid on a huge raster can't spawn thousands of nodes
+ *  (returns [] when it would exceed the cap — caller hides the grid). */
+export function gridLineOffsets(extent: number, spacingPx: number, maxLines = 400): number[] {
+  if (!(spacingPx > 0) || !(extent > 0)) return []
+  const count = Math.floor(extent / spacingPx)
+  if (count > maxLines) return []
+  const out: number[] = []
+  for (let i = 0; i <= count; i++) out.push(i * spacingPx)
+  return out
+}

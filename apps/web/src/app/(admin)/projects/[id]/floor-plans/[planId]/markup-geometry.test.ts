@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dashFor, snapAngle } from './markup-geometry'
+import { dashFor, snapAngle, gridSpacingPx, snapToGrid, gridLineOffsets } from './markup-geometry'
 
 describe('dashFor', () => {
   it('returns undefined for solid (no dash)', () => {
@@ -61,5 +61,49 @@ describe('snapAngle', () => {
     const [x, y] = snapAngle(50, 50, 150, 47)
     near(y, 50)
     near(x, 50 + Math.hypot(100, 3))
+  })
+})
+
+describe('gridSpacingPx', () => {
+  it('uses calibration when available (1 m grid at 200 px/m → 200 px)', () => {
+    expect(gridSpacingPx(1, 200)).toBe(200)
+    expect(gridSpacingPx(0.5, 200)).toBe(100)
+    expect(gridSpacingPx(5, 200)).toBe(1000)
+  })
+
+  it('falls back to a pixel grid when uncalibrated', () => {
+    expect(gridSpacingPx(1, null)).toBe(50)
+    expect(gridSpacingPx(1, null, 25)).toBe(25)
+    expect(gridSpacingPx(1, 0)).toBe(50)
+  })
+})
+
+describe('snapToGrid', () => {
+  it('rounds to the nearest grid line', () => {
+    expect(snapToGrid(0, 50)).toBe(0)
+    expect(snapToGrid(24, 50)).toBe(0)
+    expect(snapToGrid(26, 50)).toBe(50)
+    expect(snapToGrid(240, 50)).toBe(250)
+    expect(snapToGrid(-26, 50)).toBe(-50)
+  })
+
+  it('is a no-op for a non-positive spacing', () => {
+    expect(snapToGrid(37, 0)).toBe(37)
+    expect(snapToGrid(37, -5)).toBe(37)
+  })
+})
+
+describe('gridLineOffsets', () => {
+  it('emits inclusive offsets across the extent', () => {
+    expect(gridLineOffsets(200, 50)).toEqual([0, 50, 100, 150, 200])
+  })
+
+  it('caps runaway line counts (returns [] past the cap)', () => {
+    expect(gridLineOffsets(100000, 1, 400)).toEqual([])
+  })
+
+  it('returns [] for degenerate inputs', () => {
+    expect(gridLineOffsets(0, 50)).toEqual([])
+    expect(gridLineOffsets(200, 0)).toEqual([])
   })
 })
