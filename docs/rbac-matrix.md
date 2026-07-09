@@ -156,6 +156,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/tenant-schedule/commit` | W | W | W | —⁷ | — | — | — |
+| `GET /api/tenant-schedule/legend-card/pdf` | R | R | R | R | R | — | R⁸ |
 | `POST /api/cable-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/cable-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `GET /api/cable-schedule/export/excel` | R | R | R | — | — | — | R¹ |
@@ -167,6 +168,8 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `GET /api/cable-schedule/export/tag-labels/pdf` | R | R | R | — | — | — | R¹ |
 
 > `POST /api/tenant-schedule/parse` (preview, no writes) and `POST /api/tenant-schedule/commit` (full-sync import; **writes run with the service-role key, bypassing RLS**) are both gated via `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` — the same gate the `/projects/[id]/tenant-schedule` page applies before rendering the ImportFlow control. ⁶ A contractor promoted per-project via `projects.project_members` (role `project_manager`) passes the effective-role gate on that project.
+>
+> ⁸ `GET /api/tenant-schedule/legend-card/pdf` (added with the DB legend cards feature) is read-only and has **no explicit role gate** — it runs on the cookie client under RLS, and the `structure.nodes` RLS-gated read (`kind='tenant_db'`) IS the access check: any role that can see the node (any active project member, `client_viewer` included) gets the PDF, an invisible or non-tenant node 404s. No service-role writes occur on this route.
 
 > `POST /api/cable-schedule/parse` (preview, no writes) and `POST /api/cable-schedule/commit` (imports a whole revision: sources / structure.nodes / supplies / cables / change_log; **writes run on the user client so RLS applies, but RLS's cable_schedule write policies are role-agnostic beyond the client_viewer block**) are both gated via `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` — added 2026-07 (SANS audit); previously only project *visibility* was checked, the same gap PR #135 closed for the tenant-schedule routes. ⁷ as above: a per-project `project_manager` promotion passes.
 >
@@ -212,6 +215,17 @@ Read-only actions require project access (any project member). Write/export acti
 | `hardDeleteTenantAction` | W | W | W | — | — | — | — |
 
 > Permanently deletes a tenant board (`structure.nodes` kind=`tenant_db`) + its cascade (scope/units/documents/orders/drawings) + handover copies + storage objects. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireEffectiveRole` — **stricter** than the `/tenant-schedule` page row's general `W` (contractor can edit the schedule but not hard-delete a tenant). Refused when the tenant is wired into an **issued** cable revision or has child boards.
+
+### DB legend cards (`db-legend.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `upsertCircuitAction` | W | W | W | — | — | — | — |
+| `deleteCircuitAction` | W | W | W | — | — | — | — |
+| `quickAddWaysAction` | W | W | W | — | — | — | — |
+| `updateLegendHeaderAction` | W | W | W | — | — | — | — |
+
+> All four manage `structure.node_circuits` rows and the legend-card header columns on `structure.tenant_details` (migration `00169`), writing via the **service-role key** (cross-schema PostgREST `fetch`, bypasses RLS — same pattern as `tenant-scope.actions.ts`). `guardProjectAccess` enforces `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` (owner/admin/project_manager) before any write; a contractor promoted per-project via `projects.project_members` (role `project_manager`) passes on that project. The read-only print path (`GET /api/tenant-schedule/legend-card/pdf`, see API routes) is open to any project-visible role.
 
 ### Site diary (`diary.actions.ts`)
 

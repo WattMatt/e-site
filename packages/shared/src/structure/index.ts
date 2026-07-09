@@ -57,3 +57,5 @@ export {
 export type { PoleConfig, DerivedBreaker } from './breaker-sizing';
 export { computeTenantElectrical } from './tenant-electrical';
 export type { SupplyRow, CableRow, TenantElectrical } from './tenant-electrical';
+export type { LegendCircuit, LegendHeader } from './db-legend';
+export { planQuickAddWays, QUICK_ADD_MAX } from './db-legend';

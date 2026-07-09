@@ -4,9 +4,10 @@ import { useState, Fragment } from 'react'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { TableScrollX } from '@/components/ui/TableScrollX'
-import type { Node } from '@esite/shared'
+import type { Node, LegendCircuit, LegendHeader } from '@esite/shared'
 import { ScopeOfWorkPanel } from './ScopeOfWorkPanel'
 import { LayoutIssuedPanel } from './LayoutIssuedPanel'
+import { DbLegendPanel } from './DbLegendPanel'
 import { AddScopeItemModal } from './AddScopeItemModal'
 import type { ScopeItemType, TenantScopeItem, TenantDetails } from './ScopeOfWorkPanel'
 import type { LayoutDetails } from './LayoutIssuedPanel'
@@ -32,6 +33,10 @@ interface Props {
   ordersByNodeAndScope: Record<string, NodeOrderData>
   // node_id → beneficial-occupation info (period, override, effective date)
   tenantBoByNode: Record<string, TenantBoInfo>
+  /** node_id → legend circuits (structure.node_circuits, 00169). */
+  legendCircuitsByNode?: Record<string, LegendCircuit[]>
+  /** node_id → legend header fields (tenant_details, 00169). */
+  legendHeaderByNode?: Record<string, LegendHeader>
   /** True for viewers without a write role — hides every mutating control. */
   readOnly?: boolean
 }
@@ -47,6 +52,8 @@ export function ScheduleTable({
   layoutDetailsByNode,
   ordersByNodeAndScope,
   tenantBoByNode,
+  legendCircuitsByNode = {},
+  legendHeaderByNode = {},
   readOnly = false,
 }: Props) {
   const [showDecommissioned, setShowDecommissioned] = useState(false)
@@ -56,6 +63,8 @@ export function ScheduleTable({
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
   // node_id of the currently-expanded layout panel (one at a time, independent of scope)
   const [expandedLayoutNodeId, setExpandedLayoutNodeId] = useState<string | null>(null)
+  // node_id of the currently-expanded DB-legend panel (one at a time)
+  const [expandedLegendNodeId, setExpandedLegendNodeId] = useState<string | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
   // Tenant board pending hard-delete (opens the confirmation modal)
   const [deletingNode, setDeletingNode] = useState<{ id: string; code: string } | null>(null)
@@ -82,12 +91,20 @@ export function ScheduleTable({
     setExpandedNodeId((prev) => (prev === nodeId ? null : nodeId))
     // Close layout panel for this node if scope opens (keep one panel open per row)
     if (expandedLayoutNodeId === nodeId) setExpandedLayoutNodeId(null)
+    if (expandedLegendNodeId === nodeId) setExpandedLegendNodeId(null)
   }
 
   function toggleLayout(nodeId: string) {
     setExpandedLayoutNodeId((prev) => (prev === nodeId ? null : nodeId))
     // Close scope panel for this node if layout opens
     if (expandedNodeId === nodeId) setExpandedNodeId(null)
+    if (expandedLegendNodeId === nodeId) setExpandedLegendNodeId(null)
+  }
+
+  function toggleLegend(nodeId: string) {
+    setExpandedLegendNodeId((prev) => (prev === nodeId ? null : nodeId))
+    if (expandedNodeId === nodeId) setExpandedNodeId(null)
+    if (expandedLayoutNodeId === nodeId) setExpandedLayoutNodeId(null)
   }
 
   function handleScopeItemAdded(id: string, key: string, label: string) {
@@ -205,15 +222,16 @@ export function ScheduleTable({
               const nodeItems = scopeItemsByNode[node.id] ?? []
               const isExpanded = expandedNodeId === node.id
               const isLayoutExpanded = expandedLayoutNodeId === node.id
+              const isLegendExpanded = expandedLegendNodeId === node.id
               const layoutDetails = layoutDetailsByNode[node.id] ?? null
 
               return (
                 <Fragment key={node.id}>
                   <tr
                     style={{
-                      borderBottom: (isExpanded || isLayoutExpanded) ? 'none' : '1px solid var(--c-border)',
+                      borderBottom: (isExpanded || isLayoutExpanded || isLegendExpanded) ? 'none' : '1px solid var(--c-border)',
                       opacity: decommissioned ? 0.45 : 1,
-                      background: (isExpanded || isLayoutExpanded) ? 'var(--c-bg)' : undefined,
+                      background: (isExpanded || isLayoutExpanded || isLegendExpanded) ? 'var(--c-bg)' : undefined,
                     }}
                   >
                     <Td mono>{node.shop_number ?? '—'}</Td>
@@ -392,6 +410,24 @@ export function ScheduleTable({
                           >
                             {isLayoutExpanded ? 'Close' : 'Layout ↓'}
                           </button>
+                          <button
+                            onClick={() => toggleLegend(node.id)}
+                            style={{
+                              background: isLegendExpanded ? 'var(--c-green-dim)' : 'none',
+                              border: '1px solid',
+                              borderColor: isLegendExpanded ? 'var(--c-green)' : 'var(--c-border)',
+                              borderRadius: 5,
+                              cursor: 'pointer',
+                              padding: '4px 10px',
+                              fontSize: 11,
+                              color: isLegendExpanded ? 'var(--c-green)' : 'var(--c-text-dim)',
+                              fontWeight: 600,
+                              transition: 'all 0.15s',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {isLegendExpanded ? 'Close' : 'Legend ↓'}
+                          </button>
                           {!readOnly && (
                             <TenantRecycleButton
                               projectId={projectId}
@@ -439,6 +475,24 @@ export function ScheduleTable({
                           layoutDetails={layoutDetails}
                           readOnly={readOnly}
                           onClose={() => setExpandedLayoutNodeId(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+
+                  {/* Expanded DB-legend panel */}
+                  {isLegendExpanded && (
+                    <tr>
+                      <td colSpan={11 + scopeItemTypes.length * 2} style={{ padding: 0 }}>
+                        <DbLegendPanel
+                          projectId={projectId}
+                          nodeId={node.id}
+                          shopName={node.shop_name ?? node.name}
+                          mainBreaker={formatBreaker(node) === '—' ? null : formatBreaker(node)}
+                          header={legendHeaderByNode[node.id] ?? null}
+                          circuits={legendCircuitsByNode[node.id] ?? []}
+                          readOnly={readOnly}
+                          onClose={() => setExpandedLegendNodeId(null)}
                         />
                       </td>
                     </tr>
