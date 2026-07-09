@@ -1,19 +1,20 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { requireFeature } from '@/lib/features'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { JBCC_WRITE_ROLES } from '@esite/shared'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * JBCC-feature gate for the per-project JBCC subtree
- * (`/projects/[id]/jbcc/**`). Resolves the project's organisation
- * and bounces to the paywall when that org has not unlocked the module.
+ * JBCC gate for the per-project JBCC subtree (`/projects/[id]/jbcc/**`).
+ * Resolves the project's organisation, enforces an explicit project-access
+ * gate (the caller must hold a JBCC write role on this project — mirrors the
+ * migration 00170 RLS), then bounces to the paywall when the org has not
+ * unlocked the module.
  *
  * The unlock page (`/projects/[id]/jbcc/unlock`) lives *outside* this route
  * group so it is never caught by this layout — there is no redirect loop.
- *
- * The role gate (project-member access) is enforced at the page level
- * and via RLS — this layout only handles the feature-unlock check.
  */
 export default async function JbccGatedLayout({
   children,
@@ -35,6 +36,12 @@ export default async function JbccGatedLayout({
     .single()
   const orgId = (project as { organisation_id: string } | null)?.organisation_id
   if (!orgId) redirect('/dashboard')
+
+  // Explicit project-access gate: the caller must hold a JBCC write role on
+  // this project (mirrors migration 00170 RLS). Checked before the paywall so
+  // a non-member never lands on the unlock page for a project they can't see.
+  const roleGate = await requireEffectiveRole(supabase, projectId, JBCC_WRITE_ROLES)
+  if (!roleGate.ok) redirect(`/projects/${projectId}`)
 
   await requireFeature(orgId, 'jbcc', supabase, `/projects/${projectId}/jbcc/unlock`)
 

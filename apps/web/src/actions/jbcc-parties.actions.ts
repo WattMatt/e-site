@@ -4,8 +4,9 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
 import { createClient } from '@/lib/supabase/server'
-import { requireRole } from '@/lib/auth/require-role'
-import { ORG_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { hasFeature } from '@/lib/features'
+import { JBCC_WRITE_ROLES } from '@esite/shared'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -103,8 +104,14 @@ export async function createJbccParty(
     .maybeSingle()
   if (!project) return { error: 'Project not found' }
 
-  const guard = await requireRole(supabase, project.organisation_id, ORG_WRITE_ROLES)
+  // Per-project JBCC write role (honours project_members promotions — org-level
+  // ORG_WRITE_ROLES excluded contractor and ignored per-project scope).
+  const guard = await requireEffectiveRole(supabase, projectId, JBCC_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
+
+  // Paid-feature gate — parties must not be CRUD'd without the module unlocked.
+  const unlocked = await hasFeature(project.organisation_id, 'jbcc', supabase as any)
+  if (!unlocked) return { error: 'The JBCC module is not unlocked for this organisation.' }
 
   const { data, error } = await (supabase as any)
     .schema('projects')
@@ -140,8 +147,14 @@ export async function updateJbccParty(
   const resolved = await resolvePartyOrg(supabase, partyId)
   if (!resolved) return { error: 'Party not found' }
 
-  const guard = await requireRole(supabase, resolved.organisationId, ORG_WRITE_ROLES)
+  // IDOR guard: the party's own project_id (resolved from the row) scopes the
+  // effective-role check, so a caller can only mutate parties on a project
+  // where they hold a JBCC write role.
+  const guard = await requireEffectiveRole(supabase, resolved.projectId, JBCC_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
+
+  const unlocked = await hasFeature(resolved.organisationId, 'jbcc', supabase as any)
+  if (!unlocked) return { error: 'The JBCC module is not unlocked for this organisation.' }
 
   const { data, error } = await (supabase as any)
     .schema('projects')
@@ -170,8 +183,14 @@ export async function deleteJbccParty(
   const resolved = await resolvePartyOrg(supabase, partyId)
   if (!resolved) return { error: 'Party not found' }
 
-  const guard = await requireRole(supabase, resolved.organisationId, ORG_WRITE_ROLES)
+  // IDOR guard: the party's own project_id (resolved from the row) scopes the
+  // effective-role check, so a caller can only mutate parties on a project
+  // where they hold a JBCC write role.
+  const guard = await requireEffectiveRole(supabase, resolved.projectId, JBCC_WRITE_ROLES)
   if (!guard.ok) return { error: guard.error }
+
+  const unlocked = await hasFeature(resolved.organisationId, 'jbcc', supabase as any)
+  if (!unlocked) return { error: 'The JBCC module is not unlocked for this organisation.' }
 
   const { error } = await (supabase as any)
     .schema('projects')

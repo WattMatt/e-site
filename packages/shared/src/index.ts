@@ -27,5 +27,9 @@ export * from './structure'
 // modules on every page that imports any runtime symbol from @esite/shared
 // (e.g. Sidebar.tsx imports OWNER_ADMIN), crashing the admin layout.
 // Import fillTemplate via the sub-path entry: '@esite/shared/placeholder-fill'.
+// docx-letterhead (pizzip) and docx-preview (mammoth) are likewise sub-path
+// only: '@esite/shared/docx-letterhead', '@esite/shared/docx-preview'.
 export * from './lib/jbcc/sa-public-holidays'
 export * from './lib/jbcc/working-days'
+// letter-values is pure (no zip/mammoth) — safe to re-export from the barrel.
+export * from './lib/jbcc/letter-values'

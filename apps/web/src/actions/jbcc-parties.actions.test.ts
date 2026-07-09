@@ -2,8 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-const requireRoleMock = vi.fn()
-vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
+// The party actions now gate on the per-project JBCC role (requireEffectiveRole)
+// AND the paid feature unlock (hasFeature) — mirror the security hardening in
+// migration 00170 + jbcc-parties.actions.ts.
+const requireEffectiveRoleMock = vi.fn()
+vi.mock('@/lib/auth/require-role', () => ({ requireEffectiveRole: requireEffectiveRoleMock }))
+
+const hasFeatureMock = vi.fn()
+vi.mock('@/lib/features', () => ({ hasFeature: hasFeatureMock }))
 
 const createClientMock = vi.fn()
 vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock }))
@@ -103,14 +109,21 @@ function makeClient({
   }
 }
 
+function resetAll() {
+  vi.resetModules()
+  createClientMock.mockReset()
+  requireEffectiveRoleMock.mockReset()
+  hasFeatureMock.mockReset()
+  revalidatePathMock.mockReset()
+  // Default: authorised + unlocked. Individual tests override.
+  requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'contractor' })
+  hasFeatureMock.mockResolvedValue(true)
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('listJbccParties', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    createClientMock.mockReset()
-    requireRoleMock.mockReset()
-  })
+  beforeEach(resetAll)
 
   it('returns parties for a project', async () => {
     const parties = [
@@ -136,17 +149,11 @@ describe('listJbccParties', () => {
 })
 
 describe('createJbccParty', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    createClientMock.mockReset()
-    requireRoleMock.mockReset()
-    revalidatePathMock.mockReset()
-  })
+  beforeEach(resetAll)
 
   it('creates a party and returns it', async () => {
     const created = { id: 'p-new', project_id: 'proj-1', organisation_id: 'org-1', party_role: 'Employer', name: 'ACME Corp', company: null, address: null, email: null, phone: null, created_by: null, created_at: '', updated_at: '' }
     createClientMock.mockResolvedValue(makeClient({ projectOrgId: 'org-1', insertData: created }))
-    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
 
     const { createJbccParty } = await import('./jbcc-parties.actions')
     const result = await createJbccParty('proj-1', { party_role: 'Employer', name: 'ACME Corp' })
@@ -155,9 +162,9 @@ describe('createJbccParty', () => {
     expect(revalidatePathMock).toHaveBeenCalledWith('/projects/proj-1/settings/jbcc-parties')
   })
 
-  it('returns error when role gate fails', async () => {
+  it('returns error when the per-project role gate fails', async () => {
     createClientMock.mockResolvedValue(makeClient({ projectOrgId: 'org-1' }))
-    requireRoleMock.mockResolvedValue({ ok: false, error: 'Forbidden' })
+    requireEffectiveRoleMock.mockResolvedValue({ ok: false, error: 'Forbidden' })
 
     const { createJbccParty } = await import('./jbcc-parties.actions')
     const result = await createJbccParty('proj-1', { party_role: 'Employer', name: 'ACME' })
@@ -165,22 +172,27 @@ describe('createJbccParty', () => {
     expect(result).toEqual({ error: 'Forbidden' })
     expect(revalidatePathMock).not.toHaveBeenCalled()
   })
+
+  it('returns error when the JBCC feature is locked', async () => {
+    createClientMock.mockResolvedValue(makeClient({ projectOrgId: 'org-1' }))
+    hasFeatureMock.mockResolvedValue(false)
+
+    const { createJbccParty } = await import('./jbcc-parties.actions')
+    const result = await createJbccParty('proj-1', { party_role: 'Employer', name: 'ACME' })
+
+    expect(result).toEqual({ error: 'The JBCC module is not unlocked for this organisation.' })
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('updateJbccParty', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    createClientMock.mockReset()
-    requireRoleMock.mockReset()
-    revalidatePathMock.mockReset()
-  })
+  beforeEach(resetAll)
 
   it('updates a party and returns it', async () => {
     const updated = { id: 'p-1', project_id: 'proj-1', party_role: 'Contractor', name: 'BuildCo', company: null, address: null, email: null, phone: null, created_by: null, created_at: '', updated_at: '' }
     createClientMock.mockResolvedValue(
       makeClient({ projectOrgId: 'org-1', partyProjectId: 'proj-1', updateData: updated }),
     )
-    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
 
     const { updateJbccParty } = await import('./jbcc-parties.actions')
     const result = await updateJbccParty('p-1', { party_role: 'Contractor', name: 'BuildCo' })
@@ -188,21 +200,26 @@ describe('updateJbccParty', () => {
     expect(result).toEqual({ party: updated })
     expect(revalidatePathMock).toHaveBeenCalledWith('/projects/proj-1/settings/jbcc-parties')
   })
+
+  it('rejects when the party does not resolve (IDOR guard)', async () => {
+    createClientMock.mockResolvedValue(
+      makeClient({ projectOrgId: 'org-1', partyProjectId: null }),
+    )
+
+    const { updateJbccParty } = await import('./jbcc-parties.actions')
+    const result = await updateJbccParty('p-x', { party_role: 'Contractor', name: 'BuildCo' })
+
+    expect(result).toEqual({ error: 'Party not found' })
+  })
 })
 
 describe('deleteJbccParty', () => {
-  beforeEach(() => {
-    vi.resetModules()
-    createClientMock.mockReset()
-    requireRoleMock.mockReset()
-    revalidatePathMock.mockReset()
-  })
+  beforeEach(resetAll)
 
   it('deletes a party and returns ok', async () => {
     createClientMock.mockResolvedValue(
       makeClient({ projectOrgId: 'org-1', partyProjectId: 'proj-1' }),
     )
-    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
 
     const { deleteJbccParty } = await import('./jbcc-parties.actions')
     const result = await deleteJbccParty('p-1')

@@ -202,7 +202,8 @@ export async function deleteParty(client: Client, id: string): Promise<void> {
 
 // --- letters --------------------------------------------------------------
 
-export type LetterStatus = 'draft' | 'issued' | 'served'
+export type LetterStatus =
+  | 'draft' | 'in_review' | 'approved' | 'issued' | 'served' | 'superseded' | 'withdrawn'
 export type ServiceMethod = 'hand' | 'email' | 'registered_post'
 
 export interface JbccLetter {
@@ -220,6 +221,26 @@ export interface JbccLetter {
   served_date: string | null
   document_path: string
   notes: string | null
+  // ISO 9001 controlled-document fields (migration 00170)
+  letter_reference: string | null
+  subject: string | null
+  revision: number
+  supersedes_letter_id: string | null
+  superseded_by_letter_id: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  approved_by: string | null
+  approved_at: string | null
+  issued_by: string | null
+  issued_at: string | null
+  served_by: string | null
+  served_at: string | null
+  service_reference: string | null
+  deemed_service_date: string | null
+  proof_attachment_id: string | null
+  deleted_at: string | null
+  retention_until: string | null
+  legal_hold: boolean
   created_by: string
   created_at: string
   updated_at: string
@@ -236,6 +257,24 @@ export interface CreateLetterInput {
   deadline_date: string | null
   document_path: string
   created_by: string
+  subject?: string | null
+  revision?: number
+  supersedes_letter_id?: string | null
+}
+
+/** Forward-only status transitions — mirrors projects.jbcc_status_can_transition. */
+const LETTER_TRANSITIONS: Record<LetterStatus, LetterStatus[]> = {
+  draft:      ['in_review', 'approved', 'issued', 'withdrawn'],
+  in_review:  ['approved', 'draft', 'withdrawn'],
+  approved:   ['issued', 'in_review', 'draft', 'withdrawn'],
+  issued:     ['served', 'superseded'],
+  served:     ['superseded'],
+  superseded: [],
+  withdrawn:  [],
+}
+
+export function canTransitionLetter(from: LetterStatus, to: LetterStatus): boolean {
+  return LETTER_TRANSITIONS[from]?.includes(to) ?? false
 }
 
 export async function createLetter(client: Client, input: CreateLetterInput): Promise<JbccLetter> {
@@ -371,4 +410,154 @@ export async function getNoticeById(client: Client, id: string): Promise<JbccNot
     .maybeSingle()
   if (error) throw error
   return (data ?? null) as JbccNotice | null
+}
+
+// ---------------------------------------------------------------------------
+// ISO 9001 lifecycle: audit events, controlled transitions, supersede, retention
+// ---------------------------------------------------------------------------
+
+export type LetterEventType =
+  | 'created' | 'submitted_for_review' | 'approved' | 'issued' | 'served'
+  | 'superseded' | 'withdrawn' | 'reverted_to_draft' | 'attachment_added'
+  | 'attachment_removed' | 'legal_hold_set' | 'legal_hold_cleared' | 'soft_deleted' | 'note'
+
+export interface JbccLetterEvent {
+  id: string
+  letter_id: string
+  organisation_id: string
+  event_type: LetterEventType
+  from_status: LetterStatus | null
+  to_status: LetterStatus | null
+  actor_id: string
+  occurred_at: string
+  metadata: Record<string, unknown>
+}
+
+/** Append an immutable audit-trail event (ISO 7.5.3 change control). */
+export async function logLetterEvent(client: Client, input: {
+  letter_id: string
+  organisation_id: string
+  event_type: LetterEventType
+  from_status?: LetterStatus | null
+  to_status?: LetterStatus | null
+  actor_id: string
+  metadata?: Record<string, unknown>
+}): Promise<void> {
+  const { error } = await client
+    .schema('projects')
+    .from('jbcc_letter_events')
+    .insert({
+      letter_id:       input.letter_id,
+      organisation_id: input.organisation_id,
+      event_type:      input.event_type,
+      from_status:     input.from_status ?? null,
+      to_status:       input.to_status ?? null,
+      actor_id:        input.actor_id,
+      metadata:        input.metadata ?? {},
+    })
+  if (error) throw error
+}
+
+export async function listLetterEvents(client: Client, letterId: string): Promise<JbccLetterEvent[]> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letter_events')
+    .select('*')
+    .eq('letter_id', letterId)
+    .order('occurred_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as JbccLetterEvent[]
+}
+
+/** Patch a letter's lifecycle columns (status + actor/date stamps). */
+export async function transitionLetter(client: Client, id: string, patch: {
+  status?: LetterStatus
+  reviewed_by?: string | null
+  reviewed_at?: string | null
+  approved_by?: string | null
+  approved_at?: string | null
+  issued_by?: string | null
+  issued_at?: string | null
+  issued_date?: string | null
+  served_by?: string | null
+  served_at?: string | null
+  served_date?: string | null
+  service_method?: ServiceMethod | null
+  service_reference?: string | null
+  deemed_service_date?: string | null
+  proof_attachment_id?: string | null
+  superseded_by_letter_id?: string | null
+  notes?: string | null
+  deleted_at?: string | null
+  legal_hold?: boolean
+}): Promise<JbccLetter> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letters')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as JbccLetter
+}
+
+// ---------------------------------------------------------------------------
+// Distribution list (to / cc) with a name snapshot for provenance
+// ---------------------------------------------------------------------------
+
+export interface JbccLetterRecipient {
+  id: string
+  letter_id: string
+  organisation_id: string
+  party_id: string | null
+  party_name_snapshot: string
+  disposition: 'to' | 'cc'
+  created_at: string
+}
+
+export async function addLetterRecipient(client: Client, input: {
+  letter_id: string
+  organisation_id: string
+  party_id: string | null
+  party_name_snapshot: string
+  disposition: 'to' | 'cc'
+}): Promise<JbccLetterRecipient> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letter_recipients')
+    .insert(input)
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as JbccLetterRecipient
+}
+
+/** Update draft content (field_values / subject / document_path). The DB
+ * immutability trigger rejects this once the letter has left 'draft'. */
+export async function updateLetterContent(client: Client, id: string, patch: {
+  field_values?: Record<string, string>
+  subject?: string | null
+  document_path?: string
+}): Promise<JbccLetter> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letters')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('*')
+    .single()
+  if (error) throw error
+  return data as JbccLetter
+}
+
+export async function listLetterRecipients(client: Client, letterId: string): Promise<JbccLetterRecipient[]> {
+  const { data, error } = await client
+    .schema('projects')
+    .from('jbcc_letter_recipients')
+    .select('*')
+    .eq('letter_id', letterId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as JbccLetterRecipient[]
 }

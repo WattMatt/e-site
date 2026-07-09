@@ -61,21 +61,22 @@ membership.
 | `/settings` | W | W | — | — | — | — | — |
 | `/settings/billing` | W | W | — | — | — | — | — |
 | `/settings/users` | W | W | — | — | — | — | — |
+| `/settings/branding` | W | W | — | — | — | — | — |
 | `/settings/organisation` | W | W | ? | — | — | — | — |
 | `/settings/integrations` | W | W | ? | — | — | — | — |
 | `/projects/[id]/jbcc/unlock` | R⁴ | R⁴ | R⁴ | R⁴ | R⁴ | — | — |
-| `/projects/[id]/jbcc` (library landing) | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | R⁵ |
-| `/projects/[id]/jbcc/notice/[code]` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | R⁵ |
+| `/projects/[id]/jbcc` (library landing) | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
+| `/projects/[id]/jbcc/notice/[code]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/notice/[code]/new` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
-| `/projects/[id]/jbcc/tracking` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | R⁵ |
-| `/projects/[id]/jbcc/tracking/[letterId]` | W⁵ | W⁵ | W⁵ | W⁵ | R⁵ | — | R⁵ |
-| `/projects/[id]/jbcc/parties` | W⁵ | W⁵ | W⁵ | W⁵ | R⁵ | — | R⁵ |
+| `/projects/[id]/jbcc/tracking` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
+| `/projects/[id]/jbcc/tracking/[letterId]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
+| `/projects/[id]/jbcc/parties` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 
 ¹ `client_viewer` exports redact cost columns ([`export-role.ts:104`](../apps/web/src/lib/cable-schedule/export-role.ts:104)).
 ² All inspections access requires `public.has_feature(org_id, 'inspections') = true` — the paywall layer comes before the role check. WM-Consulting bypasses.
 ³ Marketplace is Phase 2-gated by `NEXT_PUBLIC_PHASE_2_MARKETPLACE=true`.
 ⁴ `/jbcc/unlock` is visible to all authenticated org members (read-only paywall page). The `<UnlockJbccButton />` inside only renders for owner/admin; all other roles see "ask your owner/admin" text. No redirect for locked org — this IS the locked-state destination.
-⁵ All JBCC routes under `/(gated)/` require `public.has_feature(org_id, 'jbcc') = true` — the `jbcc/layout.tsx` gate redirects locked orgs to `/jbcc/unlock` before any role check. WM-Consulting bypasses. For write-gated routes: `inspector`, `supplier`, and `client_viewer` cannot reach `/notice/[code]/new`; status/attachment mutations on tracking and CRUD on parties require `ORG_WRITE_ROLES` (owner/admin/project_manager/contractor) enforced server-side.
+⁵ All JBCC routes under `/(gated)/` require `public.has_feature(org_id, 'jbcc') = true` **and** an effective project JBCC role — `jbcc/layout.tsx` runs `requireEffectiveRole(projectId, JBCC_WRITE_ROLES)` (owner/admin/project_manager/**contractor**) alongside the `requireFeature` paywall redirect. WM-Consulting bypasses the feature check. As of **migration 00170** the `jbcc_*` RLS reads AND writes are project-scoped to `JBCC_WRITE_ROLES` via `public.user_effective_project_role(...)`, so `inspector`, `supplier`, and `client_viewer` no longer see or download any contractual notices (previously they had org-wide read). Server actions in `jbcc.actions.ts` (`previewLetterAction`, `downloadExampleAction`, `generateLetterAction`, `letterLifecycleAction`, party + attachment actions) all enforce the same guard + a target-belongs-to-project IDOR check; `jbcc-parties.actions.ts` was brought onto the same gate (previously missing the feature check). Issued letters are content-frozen by DB trigger and every transition is written to the append-only `projects.jbcc_letter_events` audit trail.
 ⁶ `/equipment-schedule` and `/materials` were merged into `/equipment-materials` and now unconditionally `redirect()` there for every role (thin shims, no role gate of their own) — access is governed by the `/equipment-materials` row. Equipment management (add/edit/decommission boards) is inline on the unified tab and is gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) by the existing `equipment.actions` guards. `client_viewer` views the register (view-only) via the portal tab `/portal/[projectId]/equipment-materials` (see Client portal section).
 
 ⁷ **Corrected 2026-07 (SANS audit):** this cell previously read `W`, but every cable-schedule write path — server actions (`ROLES_ENGINEER = ORG_WRITE_ROLES`, i.e. owner/admin/project_manager only) and the import API routes — excludes `contractor`. The page renders read-only for contractors (no page-level role gate beyond the `(admin)` layout); their writes are refused server-side. A contractor promoted per-project via `projects.project_members` (role `project_manager`) gains `W` on that project through the effective-role gates.
@@ -151,7 +152,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/inspections/delete-photo` | W | W | W | W² | W² | — | — |
 | `POST /api/notifications/dispatch` | bearer-token; not session-gated — **not yet audited** |
 | `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |
-| `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — | — |
+| `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `GET /api/projects/[id]/snags/visits/[visitId]/report` | R | R | R | R | R | — | R |
 | `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
@@ -193,6 +194,16 @@ Read-only actions require project access (any project member). Write/export acti
 > All four gate to owner/admin of the **caller's** org (`getOrgContext` + `isOrgAdmin` — this file predates the `requireRole` helpers) and mutate via the service client, so the app gate is load-bearing. Owner-role rules: `createUserAction` refuses to assign `owner`; `updateUserAction`/`removeUserAction` require an owner caller to touch an owner row and never strip the last active owner.
 >
 > `resendInviteAction` (added with the invite-expiry fix) re-sends the branded set-password invite — fresh recovery link + 6-digit code — to an **active member of the caller's org who has never signed in** (`auth.users.last_sign_in_at IS NULL`, checked via `auth.admin.getUserById`). It refuses for users who have already signed in (they use "Forgot password" instead). Sub-org members are **out of scope** (their membership row is on the sub-org, not the caller's org) — for them, removing and re-adding via the sub-org roster re-sends the invite. Rate-limited per caller like `createUserAction`; surfaced as the "Resend invite" button on `/settings/users` rows.
+
+### Organisation branding / letterhead (`org-branding.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `uploadOrgLogoAction` | W | W | — | — | — | — | — |
+| `updateOrgBrandingAction` | W | W | — | — | — | — | — |
+| `removeOrgLogoAction` | W | W | — | — | — | — | — |
+
+> Org-level letterhead used on generated JBCC notice letters + reports. All three gate to owner/admin of the **caller's primary org** (`getOrgContext` + `requireRole(OWNER_ADMIN)`) and mutate via the service client (RLS-bypassing storage upload + `organisations` write), so the app gate is load-bearing. Logo is a PNG/JPEG ≤ 5 MB stored at `report-logos/{orgId}/org-logo.{ext}` with the path on `organisations.logo_url`; accent must match `#RRGGBB`. Surfaced at `/settings/branding`.
 
 ### Snag site visits (`snag-visit.actions.ts`)
 

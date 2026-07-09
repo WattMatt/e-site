@@ -36,6 +36,15 @@ export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
 export const OWNER_ADMIN: readonly OrgRole[] = ['owner', 'admin']
 export const ORG_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager']
 /**
+ * Roles permitted to author/manage JBCC contractual notices. Broader than
+ * ORG_WRITE_ROLES because a JBCC notice is most often issued BY the contractor
+ * (e.g. non-payment, delay, EOT notices to the principal agent). Matches the
+ * jbcc_* RLS write/read policies (migration 00170). Excludes the passive
+ * roles (inspector/supplier/client_viewer) which must never see or issue
+ * contractual notices.
+ */
+export const JBCC_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager', 'contractor']
+/**
  * Roles permitted to RAISE and CLOSE snags during a site visit — every active
  * site role except the read-only client_viewer. Broader than ORG_WRITE_ROLES
  * (which still gates visit create/edit/delete + report export); matches the

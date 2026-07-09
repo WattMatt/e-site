@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { listNotices, listClauses, listTimeBars, listLetters } from '@esite/shared'
 import { ReferenceTabs } from '../_components/ReferenceTabs'
@@ -53,6 +54,23 @@ export default async function JbccLibraryPage({ params, searchParams }: PageProp
           { label: 'TIME-BARS', value: timebars.length },
         ]}
       />
+
+      {/* Letterhead setup affordance — branding is applied to every generated notice */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', margin: '4px 0 8px' }}>
+        <Link
+          href="/settings/branding"
+          style={{
+            fontFamily: 'var(--f-mono-display)', fontSize: 10, letterSpacing: '0.14em',
+            textTransform: 'uppercase', color: 'var(--c-amber)', textDecoration: 'none',
+            border: '1px solid var(--c-border)', padding: '7px 12px', borderRadius: 1,
+          }}
+        >
+          Set up branded letterhead →
+        </Link>
+        <span style={{ fontFamily: 'var(--f-mono-display)', fontSize: 10.5, color: 'var(--c-text-muted)', letterSpacing: '0.03em' }}>
+          Your logo, address &amp; registration numbers are composited onto every generated notice.
+        </span>
+      </div>
 
       {/* Urgency hero — only shown when deadlines are critical */}
       <DeadlineStrip projectId={projectId} letters={letters} notices={notices} />

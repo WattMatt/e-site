@@ -15,12 +15,14 @@ const config: NextConfig = {
   // resolves them (and their assets) from node_modules at runtime.
   //   • docxtemplater + pizzip — zip-stream internals; loaded by
   //     generateLetterAction (sub-path imported, not in any shared barrel).
+  //   • mammoth — docx→HTML for the JBCC letter preview (sub-path
+  //     '@esite/shared/docx-preview'); bundles a fragile jszip/xml stack.
   //   • @react-pdf/renderer — yoga-layout (WASM) + fontkit AFM font data;
   //     loaded by the branding-preview route + reports engine
   //     (apps/web/src/lib/reports). Without this, renderToBuffer() fails on
   //     Vercel with "PDF render failed" while unit tests (real node_modules)
   //     pass.
-  serverExternalPackages: ['docxtemplater', 'pizzip', '@react-pdf/renderer'],
+  serverExternalPackages: ['docxtemplater', 'pizzip', 'mammoth', '@react-pdf/renderer'],
 
   // TODO: Remove after running `supabase gen types typescript` against the deployed DB.
   // The types.ts in @esite/db was generated against an older postgrest-js version.
