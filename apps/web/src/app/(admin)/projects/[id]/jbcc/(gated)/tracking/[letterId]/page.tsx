@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import {
   getLetter, getNoticeById, listLetterAttachments,
+  listLetterEvents, listLetterRecipients,
 } from '@esite/shared'
 import { LetterDetail } from './LetterDetail'
 
@@ -14,17 +15,31 @@ export default async function LetterDetailPage({ params }: PageProps) {
   const letter = await getLetter(supabase as any, letterId)
   if (!letter || letter.project_id !== projectId) notFound()
 
-  const [notice, attachments] = await Promise.all([
+  const [notice, attachments, events, recipients] = await Promise.all([
     getNoticeById(supabase as any, letter.notice_id),
     listLetterAttachments(supabase as any, letter.id),
+    listLetterEvents(supabase as any, letter.id),
+    listLetterRecipients(supabase as any, letter.id),
   ])
+
+  // Resolve actor display names for the audit trail (best-effort).
+  const actorIds = Array.from(new Set(
+    [letter.created_by, ...events.map(e => e.actor_id)].filter(Boolean),
+  ))
+  const actorNames: Record<string, string> = {}
+  if (actorIds.length) {
+    const { data: profiles } = await supabase
+      .from('profiles').select('id, full_name').in('id', actorIds)
+    for (const p of (profiles ?? []) as Array<{ id: string; full_name: string | null }>) {
+      if (p.full_name) actorNames[p.id] = p.full_name
+    }
+  }
 
   // Signed URL for the generated .docx (5 minute TTL).
   const { data: signed } = await supabase.storage
     .from('jbcc-letters')
     .createSignedUrl(letter.document_path, 60 * 5)
 
-  // Signed URLs for attachments, batched.
   const attachmentsWithUrls = await Promise.all(
     attachments.map(async a => {
       const { data: s } = await supabase.storage
@@ -40,6 +55,9 @@ export default async function LetterDetailPage({ params }: PageProps) {
       notice={notice}
       letterUrl={signed?.signedUrl ?? null}
       attachments={attachmentsWithUrls}
+      events={events}
+      recipients={recipients}
+      actorNames={actorNames}
     />
   )
 }

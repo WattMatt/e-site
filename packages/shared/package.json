@@ -6,7 +6,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./placeholder-fill": "./src/lib/jbcc/placeholder-fill.ts"
+    "./placeholder-fill": "./src/lib/jbcc/placeholder-fill.ts",
+    "./docx-letterhead": "./src/lib/jbcc/docx-letterhead.ts",
+    "./docx-preview": "./src/lib/jbcc/docx-html.ts"
   },
   "scripts": {
     "lint": "eslint . --ext .ts",
@@ -20,6 +22,7 @@
     "date-fns": "^4.1.0",
     "docxtemplater": "^3.68.7",
     "exceljs": "^4.4.0",
+    "mammoth": "^1.8.0",
     "pizzip": "^3.2.0",
     "qrcode": "^1.5.4",
     "zod": "^3.23.0"

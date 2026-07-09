@@ -19,18 +19,27 @@ const DEADLINE_CHIP: Record<DeadlineStatus, { label: string; cls: string }> = {
   no_deadline: { label: 'See rule', cls: 'jbcc-chip jbcc-chip--none' },
 }
 
-// Letter status chip classes
+// Letter status chip classes (7-state ISO lifecycle mapped onto the base
+// chip colours: draft-ish / issued-ish / served-ish / terminal-muted).
 const STATUS_CHIP: Record<JbccLetter['status'], string> = {
-  draft:  'jbcc-chip jbcc-status-draft',
-  issued: 'jbcc-chip jbcc-status-issued',
-  served: 'jbcc-chip jbcc-status-served',
+  draft:      'jbcc-chip jbcc-status-draft',
+  in_review:  'jbcc-chip jbcc-status-draft',
+  approved:   'jbcc-chip jbcc-status-issued',
+  issued:     'jbcc-chip jbcc-status-issued',
+  served:     'jbcc-chip jbcc-status-served',
+  superseded: 'jbcc-chip jbcc-chip--none',
+  withdrawn:  'jbcc-chip jbcc-chip--none',
 }
+const TERMINAL = new Set<JbccLetter['status']>(['served', 'superseded', 'withdrawn'])
 
-export function TrackingList({ projectId, letters, noticeById }: Props) {
+export function TrackingList({ projectId, letters: allLetters, noticeById }: Props) {
   const today = useMemo(() => {
     const d = new Date()
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
   }, [])
+
+  // Archived (soft-deleted) letters are hidden from the working register.
+  const letters = useMemo(() => allLetters.filter(l => !l.deleted_at), [allLetters])
 
   if (letters.length === 0) {
     return (
@@ -95,7 +104,7 @@ export function TrackingList({ projectId, letters, noticeById }: Props) {
           }}
         >
           {letters.length} {letters.length === 1 ? 'letter' : 'letters'} ·{' '}
-          {letters.filter(l => l.status !== 'served').length} open
+          {letters.filter(l => !TERMINAL.has(l.status)).length} open
         </p>
       </div>
 
@@ -104,7 +113,7 @@ export function TrackingList({ projectId, letters, noticeById }: Props) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: 'var(--c-panel)', borderBottom: '1px solid var(--c-border)' }}>
-              {['Notice', 'Status', 'Trigger', 'Deadline', ''].map(h => (
+              {['Reference', 'Notice', 'Status', 'Trigger', 'Deadline', ''].map(h => (
                 <th
                   key={h}
                   style={{
@@ -139,6 +148,18 @@ export function TrackingList({ projectId, letters, noticeById }: Props) {
                     background: 'var(--c-surface)',
                   }}
                 >
+                  {/* Controlled reference + revision */}
+                  <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontFamily: 'var(--f-mono-display)', fontSize: 11, color: 'var(--c-text)' }}>
+                      {l.letter_reference ?? '—'}
+                    </span>
+                    {l.revision > 1 && (
+                      <span style={{ fontFamily: 'var(--f-mono-display)', fontSize: 10, color: 'var(--c-text-muted)', marginLeft: 6 }}>
+                        Rev {l.revision}
+                      </span>
+                    )}
+                  </td>
+
                   {/* Notice code + title */}
                   <td style={{ padding: '14px 16px' }}>
                     <div
@@ -169,7 +190,7 @@ export function TrackingList({ projectId, letters, noticeById }: Props) {
                   {/* Status chip */}
                   <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
                     <span className={STATUS_CHIP[l.status]}>
-                      {l.status}
+                      {l.status.replace(/_/g, ' ')}
                     </span>
                   </td>
 

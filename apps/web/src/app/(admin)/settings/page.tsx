@@ -68,6 +68,32 @@ export default async function SettingsPage() {
           </div>
         )}
 
+        {/* Branding & Letterhead */}
+        {isAdmin && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Branding &amp; Letterhead</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>Org-level</span>
+            </div>
+            <div style={{ padding: '16px 18px' }}>
+              <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+                Set the logo, colours, and company details used on generated JBCC notice letters and exported reports.
+              </p>
+              <Link
+                href="/settings/branding"
+                style={{
+                  display: 'inline-block',
+                  fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                  border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                  textDecoration: 'none',
+                }}
+              >
+                Manage branding →
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Users */}
         {isAdmin && (
           <div className="data-panel">
