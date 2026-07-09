@@ -285,10 +285,11 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 }
 function Btn({ children, onClick, disabled, primary, subtle, danger }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; primary?: boolean; subtle?: boolean; danger?: boolean }) {
   const base: React.CSSProperties = { fontSize: 10, padding: '8px 14px' }
-  let s: React.CSSProperties = { background: 'transparent', color: 'var(--c-text)', borderColor: 'var(--c-border)' }
-  if (primary) s = { background: disabled ? 'transparent' : 'var(--c-amber)', color: disabled ? 'var(--c-text-muted)' : 'var(--c-base)', borderColor: disabled ? 'var(--c-border)' : 'var(--c-amber)' }
-  if (subtle) s = { background: 'transparent', color: 'var(--c-text-muted)', borderColor: 'var(--c-border)' }
-  if (danger) s = { background: 'transparent', color: 'var(--c-red-bright)', borderColor: 'var(--c-red)' }
+  const s: React.CSSProperties = primary
+    ? { background: disabled ? 'transparent' : 'var(--c-amber)', color: disabled ? 'var(--c-text-muted)' : 'var(--c-base)', borderColor: disabled ? 'var(--c-border)' : 'var(--c-amber)' }
+    : danger
+      ? { background: 'transparent', color: 'var(--c-red-bright)', borderColor: 'var(--c-red)' }
+      : { background: 'transparent', color: subtle ? 'var(--c-text-muted)' : 'var(--c-text)', borderColor: 'var(--c-border)' }
   return <button onClick={onClick} disabled={disabled} className="jbcc-btn-cta" style={{ ...base, ...s }}>{children}</button>
 }
 

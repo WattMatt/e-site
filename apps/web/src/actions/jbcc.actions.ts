@@ -299,7 +299,7 @@ export async function generateLetterAction(
   const documentPath = `${orgId}/projects/${projectId}/letters/${letterId}.docx`
 
   // 1. Insert the draft first so the DB trigger allocates the controlled ref.
-  let reference: string | null = null
+  let reference: string | null
   try {
     const draft = await createLetter(supabase as any, {
       id: letterId, project_id: projectId, organisation_id: orgId, notice_id: notice.id,
