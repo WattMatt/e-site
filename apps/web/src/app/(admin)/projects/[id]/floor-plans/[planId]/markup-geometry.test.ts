@@ -13,6 +13,7 @@ import {
   scalePointsAbout,
   rotatePointsAbout,
   translatePoints,
+  bakePointTransform,
   contrastText,
 } from './markup-geometry'
 
@@ -193,6 +194,25 @@ describe('scale/rotate/translate points', () => {
   })
   it('translates', () => {
     expect(translatePoints([1, 2, 3, 4], 10, -5)).toEqual([11, -3, 13, -1])
+  })
+})
+
+describe('bakePointTransform (scale → rotate → translate, matches Konva T∘R∘S)', () => {
+  const near = (a: number, b: number) => expect(a).toBeCloseTo(b, 6)
+  it('is identity for unit scale, no rotation, no translation', () => {
+    expect(bakePointTransform([3, 4], 1, 1, 0, 0, 0)).toEqual([3, 4])
+  })
+  it('applies scale, then rotation, then translation in order', () => {
+    // [10,0] → scale×2 → [20,0] → rotate 90° → [0,20] → translate (5,5) → [5,25]
+    const [x, y] = bakePointTransform([10, 0], 2, 2, 90, 5, 5)
+    near(x, 5)
+    near(y, 25)
+  })
+  it('handles pure translation and pure scale', () => {
+    expect(bakePointTransform([1, 2, 3, 4], 1, 1, 0, 10, 20)).toEqual([11, 22, 13, 24])
+    const [x, y] = bakePointTransform([2, 3], 3, 2, 0, 0, 0)
+    near(x, 6)
+    near(y, 6)
   })
 })
 

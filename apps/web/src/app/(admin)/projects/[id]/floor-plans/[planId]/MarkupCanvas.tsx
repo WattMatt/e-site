@@ -34,9 +34,9 @@ import {
   pointInPolygon,
   rectContains,
   ellipseContains,
-  scalePointsAbout,
   rotatePointsAbout,
   translatePoints,
+  bakePointTransform,
   contrastText,
 } from './markup-geometry'
 import { Tooltip } from './markup-tooltip'
@@ -286,6 +286,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [eraserPos, setEraserPos] = useState<{ x: number; y: number } | null>(null)
   const trRef = useRef<Konva.Transformer | null>(null)
+  const eraserCursorRef = useRef<Konva.Circle | null>(null)
   const eraseTouchedRef = useRef(false)
   const [shapes, setShapes] = useState<AnyShape[]>(editing?.scene.shapes ?? [])
   const [current, setCurrent] = useState<AnyShape | null>(null)
@@ -843,9 +844,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
           default: {
             node.rotation(0)
             node.position({ x: 0, y: 0 })
-            let np = scalePointsAbout((sh as { points: number[] }).points, sx, sy, 0, 0)
-            np = rotatePointsAbout(np, (rot * Math.PI) / 180, 0, 0)
-            np = translatePoints(np, nx, ny)
+            const np = bakePointTransform((sh as { points: number[] }).points, sx, sy, rot, nx, ny)
             return { ...sh, points: np } as AnyShape
           }
         }
@@ -878,6 +877,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
 
   // Eraser: remove any shape on the current page whose ink the cursor touches.
   function shapeErased(s: AnyShape, ex: number, ey: number, r: number): boolean {
+    // Map the eraser point into the shape's local (unrotated) frame so the
+    // axis-aligned tests below also work for a rotated rect/ellipse/text/note.
+    const invRot = (ax: number, ay: number, rot?: number): [number, number] =>
+      rot ? (rotatePointsAbout([ex, ey], (-rot * Math.PI) / 180, ax, ay) as [number, number]) : [ex, ey]
     switch (s.type) {
       case 'pen':
       case 'highlight':
@@ -889,18 +892,25 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       case 'polygon':
         return pointInPolygon(ex, ey, s.points) || distToPolyline(ex, ey, s.points, true) <= r + s.strokeWidth / 2
       case 'rect': {
+        const [px, py] = invRot(s.x, s.y, s.rotation)
         const pts = [s.x, s.y, s.x + s.width, s.y, s.x + s.width, s.y + s.height, s.x, s.y + s.height]
-        return distToPolyline(ex, ey, pts, true) <= r + s.strokeWidth / 2
+        return distToPolyline(px, py, pts, true) <= r + s.strokeWidth / 2
       }
-      case 'ellipse':
+      case 'ellipse': {
+        const [px, py] = invRot(s.cx, s.cy, s.rotation)
         return (
-          ellipseContains(ex, ey, s.cx, s.cy, s.rx, s.ry, r) &&
-          !ellipseContains(ex, ey, s.cx, s.cy, s.rx - r - s.strokeWidth, s.ry - r - s.strokeWidth, 0)
+          ellipseContains(px, py, s.cx, s.cy, s.rx, s.ry, r) &&
+          !ellipseContains(px, py, s.cx, s.cy, s.rx - r - s.strokeWidth, s.ry - r - s.strokeWidth, 0)
         )
-      case 'text':
-        return rectContains(ex, ey, s.x, s.y, Math.max(20, s.text.length * s.fontSize * 0.6), s.fontSize * 1.3, r)
-      case 'note':
-        return rectContains(ex, ey, s.x, s.y, s.width, s.height, r)
+      }
+      case 'text': {
+        const [px, py] = invRot(s.x, s.y, s.rotation)
+        return rectContains(px, py, s.x, s.y, Math.max(20, s.text.length * s.fontSize * 0.6), s.fontSize * 1.3, r)
+      }
+      case 'note': {
+        const [px, py] = invRot(s.x, s.y, s.rotation)
+        return rectContains(px, py, s.x, s.y, s.width, s.height, r)
+      }
       case 'pin':
         return Math.hypot(ex - s.x, ey - s.y) <= 14 + r
       default:
@@ -932,7 +942,6 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     const node = stage.findOne('#' + selectedId)
     tr.nodes(node ? [node] : [])
     tr.getLayer()?.batchDraw()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, tool, shapes, currentPage])
 
   // ── Pointer handlers ──────────────────────────────────────────────────
@@ -1001,8 +1010,9 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     }
 
     if (tool === 'note') {
+      const raw = window.prompt('Note text:')
+      if (raw == null) return // Cancel → don't place a note
       const [nx, ny] = snapXY(x, y)
-      const text = window.prompt('Note text:')?.trim() ?? ''
       commit({
         id: makeId(),
         type: 'note',
@@ -1010,7 +1020,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         y: ny,
         width: NOTE.w,
         height: NOTE.h,
-        text,
+        text: raw.trim(),
         fontSize: NOTE.fontSize,
         color: NOTE.fill,
       })
@@ -1217,9 +1227,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     // so it never bakes into the saved/exported PNG.
     const gridVisible = gridLayerRef.current?.visible() ?? false
     gridLayerRef.current?.visible(false)
-    // Detach the Transformer so selection handles don't bake into the export.
+    // Detach the Transformer + hide the eraser cursor so neither overlay bakes
+    // into the export.
     const trNodes = trRef.current?.nodes() ?? []
     trRef.current?.nodes([])
+    eraserCursorRef.current?.visible(false)
     stage.draw()
     // PDF backing canvas is already rasterised at scale=2 in the load
     // effect, so pixelRatio=1 here keeps the saved PNG at source density.
@@ -1235,6 +1247,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     })
     gridLayerRef.current?.visible(gridVisible)
     if (trNodes.length) trRef.current?.nodes(trNodes as Konva.Node[])
+    eraserCursorRef.current?.visible(true)
     stage.scale({ x: savedScale, y: savedScale })
     stage.position(savedPos)
     stage.draw()
@@ -1359,8 +1372,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
 
   // ── Render shape ─────────────────────────────────────────────────────
   const renderShape = (s: AnyShape, interactive = false) => {
-    // In Select mode, committed shapes carry select/drag/transform handlers.
-    const ip = interactive && mode !== 'view' ? shapeProps(s) : {}
+    // In Select mode (and never in read-only view), committed shapes carry
+    // select/drag/transform handlers and notes become editable.
+    const editable = interactive && mode !== 'view'
+    const ip = editable ? shapeProps(s) : {}
     switch (s.type) {
       case 'pen':
         return (
@@ -1497,7 +1512,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             y={s.y}
             rotation={s.rotation}
             onDblClick={
-              interactive
+              editable
                 ? (e: Konva.KonvaEventObject<MouseEvent>) => {
                     e.cancelBubble = true
                     editNoteText(s.id)
@@ -1505,7 +1520,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                 : undefined
             }
             onDblTap={
-              interactive
+              editable
                 ? (e: Konva.KonvaEventObject<Event>) => {
                     e.cancelBubble = true
                     editNoteText(s.id)
@@ -1762,7 +1777,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             <ToolbarSeparator />
             <ToolbarGroup>
               <ToolbarButton
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                onClick={() => {
+                  setSelectedId(null)
+                  setCurrentPage((p) => Math.max(1, p - 1))
+                }}
                 disabled={currentPage <= 1}
                 title="Previous page"
               >
@@ -1782,7 +1800,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                 Page {currentPage} / {pageCount}
               </span>
               <ToolbarButton
-                onClick={() => setCurrentPage((p) => Math.min(pageCount, p + 1))}
+                onClick={() => {
+                  setSelectedId(null)
+                  setCurrentPage((p) => Math.min(pageCount, p + 1))
+                }}
                 disabled={currentPage >= pageCount}
                 title="Next page"
               >
@@ -2045,6 +2066,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
               )}
               {tool === 'eraser' && eraserPos && (
                 <Circle
+                  ref={eraserCursorRef}
                   x={eraserPos.x}
                   y={eraserPos.y}
                   radius={ERASER_RADIUS}

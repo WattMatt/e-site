@@ -170,6 +170,26 @@ export function translatePoints(pts: number[], dx: number, dy: number): number[]
   return out
 }
 
+/**
+ * Bake a Konva node transform into a flat point list: scale about the origin,
+ * then rotate by `rotDeg`, then translate to (nx,ny). This exactly reconstructs
+ * Konva's node transform T(nx,ny)∘R(rotDeg)∘S(sx,sy) applied to points rendered
+ * at the node origin (0,0) — the invariant the markup Transformer bake relies
+ * on. Kept here so the composition order is unit-tested (see the .test file).
+ */
+export function bakePointTransform(
+  points: number[],
+  sx: number,
+  sy: number,
+  rotDeg: number,
+  nx: number,
+  ny: number,
+): number[] {
+  let p = scalePointsAbout(points, sx, sy, 0, 0)
+  p = rotatePointsAbout(p, (rotDeg * Math.PI) / 180, 0, 0)
+  return translatePoints(p, nx, ny)
+}
+
 /** Readable text colour (near-black or white) for a #rrggbb background, chosen
  *  by relative luminance — used for sticky-note text on any note colour. */
 export function contrastText(hex: string): '#111827' | '#ffffff' {
