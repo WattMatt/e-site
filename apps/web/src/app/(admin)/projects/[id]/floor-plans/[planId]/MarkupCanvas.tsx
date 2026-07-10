@@ -30,6 +30,7 @@ import {
   snapToGrid,
   gridLineOffsets,
 } from './markup-geometry'
+import { Tooltip } from './markup-tooltip'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -1233,39 +1234,40 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             <ToolbarSeparator />
             <ToolbarGroup>
               {COLORS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  onClick={() => setColor(c.value)}
-                  aria-label={c.label}
-                  title={c.label}
+                <Tooltip key={c.value} label={c.label}>
+                  <button
+                    type="button"
+                    onClick={() => setColor(c.value)}
+                    aria-label={c.label}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: '50%',
+                      background: c.value,
+                      border: color === c.value ? '2px solid var(--c-amber)' : '2px solid var(--c-border)',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  />
+                </Tooltip>
+              ))}
+              <Tooltip label="Custom colour (any hex)">
+                <input
+                  type="color"
+                  value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : '#000000'}
+                  onChange={(e) => setColor(e.target.value)}
+                  aria-label="Custom colour"
                   style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: '50%',
-                    background: c.value,
-                    border: color === c.value ? '2px solid var(--c-amber)' : '2px solid var(--c-border)',
-                    cursor: 'pointer',
+                    width: 24,
+                    height: 24,
                     padding: 0,
+                    border: '2px solid var(--c-border)',
+                    borderRadius: 6,
+                    background: 'none',
+                    cursor: 'pointer',
                   }}
                 />
-              ))}
-              <input
-                type="color"
-                value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : '#000000'}
-                onChange={(e) => setColor(e.target.value)}
-                aria-label="Custom colour"
-                title="Custom colour"
-                style={{
-                  width: 24,
-                  height: 24,
-                  padding: 0,
-                  border: '2px solid var(--c-border)',
-                  borderRadius: 6,
-                  background: 'none',
-                  cursor: 'pointer',
-                }}
-              />
+              </Tooltip>
             </ToolbarGroup>
             <ToolbarSeparator />
             <ToolbarGroup>
@@ -1914,27 +1916,31 @@ function ToolbarButton({
   onClick?: () => void
   title?: string
 }) {
+  // aria-label carries the accessible name (native `title` dropped so desktop
+  // doesn't show a double tooltip); the styled Tooltip adds hover/focus/touch.
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        minWidth: 30,
-        height: 30,
-        padding: '0 8px',
-        background: active ? 'var(--c-amber-mid)' : 'var(--c-panel)',
-        color: active ? 'var(--c-amber)' : disabled ? 'var(--c-text-dim)' : 'var(--c-text-mid)',
-        border: '1px solid var(--c-border)',
-        borderRadius: 4,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        fontFamily: 'var(--font-mono)',
-        fontSize: 13,
-        opacity: disabled ? 0.5 : 1,
-      }}
-    >
-      {children}
-    </button>
+    <Tooltip label={title ?? ''}>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={title}
+        style={{
+          minWidth: 30,
+          height: 30,
+          padding: '0 8px',
+          background: active ? 'var(--c-amber-mid)' : 'var(--c-panel)',
+          color: active ? 'var(--c-amber)' : disabled ? 'var(--c-text-dim)' : 'var(--c-text-mid)',
+          border: '1px solid var(--c-border)',
+          borderRadius: 4,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 13,
+          opacity: disabled ? 0.5 : 1,
+        }}
+      >
+        {children}
+      </button>
+    </Tooltip>
   )
 }
