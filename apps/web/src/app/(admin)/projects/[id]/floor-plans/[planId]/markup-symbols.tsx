@@ -113,7 +113,7 @@ export function SymbolSvg({
       height={size}
       fill="none"
       stroke={color}
-      strokeWidth={5}
+      strokeWidth={6}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"

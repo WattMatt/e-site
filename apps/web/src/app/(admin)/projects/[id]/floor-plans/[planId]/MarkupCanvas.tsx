@@ -38,6 +38,7 @@ import {
   rotatePointsAbout,
   translatePoints,
   bakePointTransform,
+  symbolSizeFromScale,
   contrastText,
   tableAddRow,
   tableAddCol,
@@ -888,7 +889,9 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
               rotation: rot,
             }
           case 'symbol':
-            return { ...sh, x: nx, y: ny, size: Math.max(16, sh.size * ((sx + sy) / 2)), rotation: rot }
+            // Node is pre-scaled by size/100, so bake the ABSOLUTE scale
+            // (size = 100×scale), not oldSize×scale (see symbolSizeFromScale).
+            return { ...sh, x: nx, y: ny, size: symbolSizeFromScale(sx, sy), rotation: rot }
           case 'table':
             return {
               ...sh,
@@ -1042,6 +1045,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   // modulation on the pen tool. Fallback 0.5 for plain MouseEvent keeps
   // mouse strokes at their user-chosen width.
   function onPointerDown(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
+    if (mode === 'view') return // read-only: no placement/drawing on the canvas
     const stage = e.target.getStage()
     if (!stage) return
     const pos = stage.getRelativePointerPosition()
@@ -2308,6 +2312,9 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                   ref={trRef}
                   rotateEnabled={selectedType !== 'pin'}
                   resizeEnabled={selectedType !== 'pin'}
+                  {...(selectedType === 'symbol'
+                    ? { keepRatio: true, enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'] }
+                    : {})}
                   ignoreStroke
                   anchorSize={9}
                   anchorCornerRadius={2}
