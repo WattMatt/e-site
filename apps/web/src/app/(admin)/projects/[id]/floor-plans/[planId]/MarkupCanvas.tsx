@@ -13,6 +13,7 @@ import {
   Text as KonvaText,
   Group,
   Circle,
+  Path,
   Transformer,
 } from 'react-konva'
 import type Konva from 'konva'
@@ -37,9 +38,16 @@ import {
   rotatePointsAbout,
   translatePoints,
   bakePointTransform,
+  symbolSizeFromScale,
   contrastText,
+  tableAddRow,
+  tableAddCol,
+  tableRemoveRow,
+  tableRemoveCol,
+  tableSetCell,
 } from './markup-geometry'
 import { Tooltip } from './markup-tooltip'
+import { SYMBOLS, SYMBOL_KINDS, SymbolSvg, type SymbolKind } from './markup-symbols'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -58,6 +66,8 @@ type ToolMode =
   | 'note'
   | 'text'
   | 'pin'
+  | 'symbol'
+  | 'table'
   | 'eraser'
   | 'measure'
   | 'calibrate'
@@ -91,6 +101,19 @@ type NoteShape = ShapeBase & {
   fontSize: number
 }
 type MeasureShape = ShapeBase & { type: 'measure'; points: [number, number, number, number]; strokeWidth: number }
+// Electrical symbol: a library glyph (0..100 box) placed at x,y, drawn `size`
+// wide, uniformly scaled. rotation via the Transformer.
+type SymbolShape = ShapeBase & { type: 'symbol'; kind: SymbolKind; x: number; y: number; size: number }
+// Free legend/table: rows[][] grid (row 0 = header) rendered at x,y with fixed
+// cell size; resize scales the cells; rows/cols edited via the toolbar.
+type TableShape = ShapeBase & {
+  type: 'table'
+  x: number
+  y: number
+  cellW: number
+  cellH: number
+  rows: string[][]
+}
 
 type AnyShape =
   | PenShape
@@ -103,6 +126,8 @@ type AnyShape =
   | PolygonShape
   | TextShape
   | PinShape
+  | SymbolShape
+  | TableShape
   | NoteShape
   | MeasureShape
 
@@ -136,6 +161,20 @@ const STROKE_WIDTHS = [
 // recolour a note; text colour auto-contrasts. Eraser radius is in image px.
 const NOTE = { w: 170, h: 120, fill: '#fde68a', fontSize: 15 } as const
 const ERASER_RADIUS = 14
+// Symbols draw in a 0..100 box scaled to `size`; SYMBOL_STROKE is the line
+// weight in that box (scales with the symbol). Tables start as a 2-col header
+// + one empty row.
+const SYMBOL_SIZE = 46
+const SYMBOL_STROKE = 6
+const TABLE = {
+  cellW: 96,
+  cellH: 26,
+  header: '#eef2ff',
+  initialRows: [
+    ['Item', 'Description'],
+    ['', ''],
+  ] as string[][],
+} as const
 
 // Stroke line-style presets + pure geometry helpers (dashFor / snapAngle) live
 // in ./markup-geometry so they stay unit-testable without Konva/canvas.
@@ -153,6 +192,8 @@ const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean;
   { value: 'note', label: '▤', title: 'Sticky note — click to place, double-click to edit text' },
   { value: 'text', label: 'T', title: 'Text' },
   { value: 'pin', label: '◉', title: 'Pin (numbered)' },
+  { value: 'symbol', label: '⌁', title: 'Electrical symbol — pick one below, click to place' },
+  { value: 'table', label: '⊞', title: 'Legend / table — click to place, double-click a cell to edit' },
   { value: 'eraser', label: '⌦', title: 'Eraser — drag over marks to rub them out' },
   { value: 'measure', label: '⤢', needsCalibration: true, title: 'Measure (requires calibration)' },
 ]
@@ -284,6 +325,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const [gridSpacingM, setGridSpacingM] = useState(1)
   // Direct-manipulation: currently-selected shape (Select tool) + Transformer.
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [symbolKind, setSymbolKind] = useState<SymbolKind>('db')
   const [eraserPos, setEraserPos] = useState<{ x: number; y: number } | null>(null)
   const trRef = useRef<Konva.Transformer | null>(null)
   const eraserCursorRef = useRef<Konva.Circle | null>(null)
@@ -798,7 +840,14 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       cur.map((sh) => {
         if (sh.id !== s.id) return sh
         if (sh.type === 'ellipse') return { ...sh, cx: nx, cy: ny }
-        if (sh.type === 'rect' || sh.type === 'text' || sh.type === 'note' || sh.type === 'pin') {
+        if (
+          sh.type === 'rect' ||
+          sh.type === 'text' ||
+          sh.type === 'note' ||
+          sh.type === 'pin' ||
+          sh.type === 'symbol' ||
+          sh.type === 'table'
+        ) {
           return { ...sh, x: nx, y: ny }
         }
         return { ...sh, points: translatePoints((sh as { points: number[] }).points, nx, ny) } as AnyShape
@@ -839,6 +888,19 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
               fontSize: Math.max(8, sh.fontSize * ((sx + sy) / 2)),
               rotation: rot,
             }
+          case 'symbol':
+            // Node is pre-scaled by size/100, so bake the ABSOLUTE scale
+            // (size = 100×scale), not oldSize×scale (see symbolSizeFromScale).
+            return { ...sh, x: nx, y: ny, size: symbolSizeFromScale(sx, sy), rotation: rot }
+          case 'table':
+            return {
+              ...sh,
+              x: nx,
+              y: ny,
+              cellW: Math.max(30, sh.cellW * sx),
+              cellH: Math.max(16, sh.cellH * sy),
+              rotation: rot,
+            }
           case 'pin':
             return sh
           default: {
@@ -873,6 +935,28 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     if (next == null) return
     pushHistory(shapes)
     setShapes((cur) => cur.map((sh) => (sh.id === id ? { ...sh, text: next } : sh)))
+  }
+
+  function editTableCell(id: string, r: number, c: number) {
+    const tbl = shapes.find((sh) => sh.id === id)
+    if (!tbl || tbl.type !== 'table') return
+    const next = window.prompt('Cell text:', tbl.rows[r]?.[c] ?? '')
+    if (next == null) return
+    pushHistory(shapes)
+    setShapes((cur) =>
+      cur.map((sh) => (sh.id === id && sh.type === 'table' ? { ...sh, rows: tableSetCell(sh.rows, r, c, next) } : sh)),
+    )
+  }
+
+  // Row/column controls for the selected table (toolbar buttons).
+  function mutateSelectedTable(fn: (rows: string[][]) => string[][]) {
+    if (!selectedId) return
+    const tbl = shapes.find((sh) => sh.id === selectedId)
+    if (!tbl || tbl.type !== 'table') return
+    pushHistory(shapes)
+    setShapes((cur) =>
+      cur.map((sh) => (sh.id === selectedId && sh.type === 'table' ? { ...sh, rows: fn(sh.rows) } : sh)),
+    )
   }
 
   // Eraser: remove any shape on the current page whose ink the cursor touches.
@@ -910,6 +994,15 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       case 'note': {
         const [px, py] = invRot(s.x, s.y, s.rotation)
         return rectContains(px, py, s.x, s.y, s.width, s.height, r)
+      }
+      case 'symbol': {
+        const [px, py] = invRot(s.x, s.y, s.rotation)
+        return rectContains(px, py, s.x, s.y, s.size, s.size, r)
+      }
+      case 'table': {
+        const [px, py] = invRot(s.x, s.y, s.rotation)
+        const cols = s.rows[0]?.length ?? 1
+        return rectContains(px, py, s.x, s.y, cols * s.cellW, s.rows.length * s.cellH, r)
       }
       case 'pin':
         return Math.hypot(ex - s.x, ey - s.y) <= 14 + r
@@ -952,6 +1045,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   // modulation on the pen tool. Fallback 0.5 for plain MouseEvent keeps
   // mouse strokes at their user-chosen width.
   function onPointerDown(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
+    if (mode === 'view') return // read-only: no placement/drawing on the canvas
     const stage = e.target.getStage()
     if (!stage) return
     const pos = stage.getRelativePointerPosition()
@@ -993,6 +1087,35 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       const existing = shapes.filter((s) => s.type === 'pin').length
       const [px, py] = snapXY(x, y)
       commit({ id: makeId(), type: 'pin', x: px, y: py, label: String(existing + 1), color })
+      return
+    }
+
+    if (tool === 'symbol') {
+      const [cx, cy] = snapXY(x, y)
+      commit({
+        id: makeId(),
+        type: 'symbol',
+        kind: symbolKind,
+        x: cx - SYMBOL_SIZE / 2, // centre the glyph on the click
+        y: cy - SYMBOL_SIZE / 2,
+        size: SYMBOL_SIZE,
+        color,
+      })
+      return
+    }
+
+    if (tool === 'table') {
+      const [tx, ty] = snapXY(x, y)
+      commit({
+        id: makeId(),
+        type: 'table',
+        x: tx,
+        y: ty,
+        cellW: TABLE.cellW,
+        cellH: TABLE.cellH,
+        rows: TABLE.initialRows.map((row) => [...row]),
+        color: '#111827',
+      })
       return
     }
 
@@ -1554,6 +1677,93 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
           </Group>
         )
       }
+      case 'symbol': {
+        const scale = s.size / 100
+        const els = SYMBOLS[s.kind]?.els ?? []
+        return (
+          <Group key={s.id} {...ip} x={s.x} y={s.y} scaleX={scale} scaleY={scale} rotation={s.rotation}>
+            {/* transparent hit box so the whole glyph area is selectable */}
+            <Rect width={100} height={100} fill="rgba(0,0,0,0.001)" />
+            {els.map((el, i) => {
+              if (el.t === 'line') {
+                return (
+                  <Line key={i} points={el.pts} stroke={s.color} strokeWidth={SYMBOL_STROKE} lineCap="round" lineJoin="round" listening={false} />
+                )
+              }
+              if (el.t === 'circle') {
+                return (
+                  <Circle key={i} x={el.cx} y={el.cy} radius={el.r} stroke={s.color} strokeWidth={SYMBOL_STROKE} fill={el.fill ? s.color : undefined} listening={false} />
+                )
+              }
+              if (el.t === 'path') {
+                return (
+                  <Path key={i} data={el.d} stroke={s.color} strokeWidth={SYMBOL_STROKE} fill={el.fill ? s.color : undefined} lineCap="round" lineJoin="round" listening={false} />
+                )
+              }
+              return (
+                <KonvaText key={i} x={el.x} y={el.y} width={el.w} height={el.h} text={el.s} fontSize={el.size} fill={s.color} align="center" verticalAlign="middle" fontStyle="bold" listening={false} />
+              )
+            })}
+          </Group>
+        )
+      }
+      case 'table': {
+        const cols = s.rows[0]?.length ?? 1
+        const w = cols * s.cellW
+        const h = s.rows.length * s.cellH
+        return (
+          <Group key={s.id} {...ip} x={s.x} y={s.y} rotation={s.rotation}>
+            <Rect width={w} height={h} fill="#ffffff" stroke={s.color} strokeWidth={1.5} />
+            <Rect width={w} height={s.cellH} fill={TABLE.header} listening={false} />
+            {s.rows.map((row, r) =>
+              row.map((cell, c) => (
+                <Group key={`${r}-${c}`}>
+                  <Rect
+                    x={c * s.cellW}
+                    y={r * s.cellH}
+                    width={s.cellW}
+                    height={s.cellH}
+                    stroke={s.color}
+                    strokeWidth={1}
+                    fill="rgba(0,0,0,0.001)"
+                    onDblClick={
+                      editable
+                        ? (e: Konva.KonvaEventObject<MouseEvent>) => {
+                            e.cancelBubble = true
+                            editTableCell(s.id, r, c)
+                          }
+                        : undefined
+                    }
+                    onDblTap={
+                      editable
+                        ? (e: Konva.KonvaEventObject<Event>) => {
+                            e.cancelBubble = true
+                            editTableCell(s.id, r, c)
+                          }
+                        : undefined
+                    }
+                  />
+                  <KonvaText
+                    x={c * s.cellW + 5}
+                    y={r * s.cellH}
+                    width={s.cellW - 10}
+                    height={s.cellH}
+                    text={cell}
+                    fontSize={r === 0 ? 13 : 12}
+                    fontStyle={r === 0 ? 'bold' : 'normal'}
+                    fill={s.color}
+                    align="left"
+                    verticalAlign="middle"
+                    ellipsis
+                    wrap="none"
+                    listening={false}
+                  />
+                </Group>
+              )),
+            )}
+          </Group>
+        )
+      }
       case 'pin':
         return (
           <Group key={s.id} {...ip} x={s.x} y={s.y}>
@@ -1860,6 +2070,55 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         </ToolbarGroup>
         )}
       </div>
+
+      {/* Symbol picker — shown while the Symbol tool is active. */}
+      {mode !== 'view' && tool === 'symbol' && (
+        <div className="data-panel" style={{ padding: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginRight: 4, letterSpacing: '0.08em' }}>
+            SYMBOL
+          </span>
+          {SYMBOL_KINDS.map((k) => (
+            <Tooltip key={k} label={SYMBOLS[k].label}>
+              <button
+                type="button"
+                aria-label={SYMBOLS[k].label}
+                onClick={() => setSymbolKind(k)}
+                style={{
+                  width: 34,
+                  height: 34,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 2,
+                  background: symbolKind === k ? 'var(--c-amber-mid)' : 'var(--c-panel)',
+                  border: symbolKind === k ? '2px solid var(--c-amber)' : '1px solid var(--c-border)',
+                  borderRadius: 6,
+                  color: symbolKind === k ? 'var(--c-amber)' : 'var(--c-text-mid)',
+                  cursor: 'pointer',
+                }}
+              >
+                <SymbolSvg kind={k} size={26} />
+              </button>
+            </Tooltip>
+          ))}
+        </div>
+      )}
+
+      {/* Table row/column controls — shown while a table is selected. */}
+      {mode !== 'view' && selectedType === 'table' && (
+        <div className="data-panel" style={{ padding: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginRight: 4, letterSpacing: '0.08em' }}>
+            TABLE
+          </span>
+          <ToolbarButton onClick={() => mutateSelectedTable(tableAddRow)} title="Add a row">+ Row</ToolbarButton>
+          <ToolbarButton onClick={() => mutateSelectedTable(tableRemoveRow)} title="Remove the last row">− Row</ToolbarButton>
+          <ToolbarButton onClick={() => mutateSelectedTable(tableAddCol)} title="Add a column">+ Col</ToolbarButton>
+          <ToolbarButton onClick={() => mutateSelectedTable(tableRemoveCol)} title="Remove the last column">− Col</ToolbarButton>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+            double-click a cell to edit
+          </span>
+        </div>
+      )}
       {saveError && (
         <div role="alert" style={{ color: '#dc2626', fontSize: 12, padding: '0 4px' }}>
           {saveError}
@@ -2053,6 +2312,9 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                   ref={trRef}
                   rotateEnabled={selectedType !== 'pin'}
                   resizeEnabled={selectedType !== 'pin'}
+                  {...(selectedType === 'symbol'
+                    ? { keepRatio: true, enabledAnchors: ['top-left', 'top-right', 'bottom-left', 'bottom-right'] }
+                    : {})}
                   ignoreStroke
                   anchorSize={9}
                   anchorCornerRadius={2}
