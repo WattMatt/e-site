@@ -13,6 +13,7 @@ import {
   Text as KonvaText,
   Group,
   Circle,
+  Transformer,
 } from 'react-konva'
 import type Konva from 'konva'
 import { createClient } from '@/lib/supabase/client'
@@ -29,6 +30,14 @@ import {
   gridSpacingPx,
   snapToGrid,
   gridLineOffsets,
+  distToPolyline,
+  pointInPolygon,
+  rectContains,
+  ellipseContains,
+  rotatePointsAbout,
+  translatePoints,
+  bakePointTransform,
+  contrastText,
 } from './markup-geometry'
 import { Tooltip } from './markup-tooltip'
 
@@ -46,8 +55,10 @@ type ToolMode =
   | 'ellipse'
   | 'polyline'
   | 'polygon'
+  | 'note'
   | 'text'
   | 'pin'
+  | 'eraser'
   | 'measure'
   | 'calibrate'
 
@@ -56,7 +67,10 @@ type ToolMode =
 // `dash` (optional) is the Konva stroke dash array — absent = solid; carried
 // on every geometric shape so a dashed/dotted style round-trips through the
 // scene graph. Freehand pen/highlight ignore it.
-type ShapeBase = { id: string; color: string; pageIndex?: number; dash?: number[] }
+// `rotation` (degrees, optional) is carried by the position/size shapes
+// (rect/ellipse/text/note); the point-based shapes bake rotation into their
+// points instead. Set by the Transformer on transform-end.
+type ShapeBase = { id: string; color: string; pageIndex?: number; dash?: number[]; rotation?: number }
 type PenShape = ShapeBase & { type: 'pen'; points: number[]; strokeWidth: number }
 type HighlightShape = ShapeBase & { type: 'highlight'; points: number[]; strokeWidth: number }
 type LineShape = ShapeBase & { type: 'line'; points: [number, number, number, number]; strokeWidth: number }
@@ -67,6 +81,15 @@ type PolylineShape = ShapeBase & { type: 'polyline'; points: number[]; strokeWid
 type PolygonShape = ShapeBase & { type: 'polygon'; points: number[]; strokeWidth: number; closed: true }
 type TextShape = ShapeBase & { type: 'text'; x: number; y: number; text: string; fontSize: number }
 type PinShape = ShapeBase & { type: 'pin'; x: number; y: number; label: string }
+type NoteShape = ShapeBase & {
+  type: 'note'
+  x: number
+  y: number
+  width: number
+  height: number
+  text: string
+  fontSize: number
+}
 type MeasureShape = ShapeBase & { type: 'measure'; points: [number, number, number, number]; strokeWidth: number }
 
 type AnyShape =
@@ -80,6 +103,7 @@ type AnyShape =
   | PolygonShape
   | TextShape
   | PinShape
+  | NoteShape
   | MeasureShape
 
 export type SceneGraph = {
@@ -108,11 +132,16 @@ const STROKE_WIDTHS = [
   { value: 8, label: 'Thick' },
 ] as const
 
+// Sticky-note defaults. Fill is stored on the shape's `color` so re-styling can
+// recolour a note; text colour auto-contrasts. Eraser radius is in image px.
+const NOTE = { w: 170, h: 120, fill: '#fde68a', fontSize: 15 } as const
+const ERASER_RADIUS = 14
+
 // Stroke line-style presets + pure geometry helpers (dashFor / snapAngle) live
 // in ./markup-geometry so they stay unit-testable without Konva/canvas.
 
 const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean; title: string }> = [
-  { value: 'select', label: '↖', title: 'Select / pan' },
+  { value: 'select', label: '↖', title: 'Select — click a mark to select, drag to move, handles to resize/rotate, Del to delete' },
   { value: 'pen', label: '✎', title: 'Pen — freehand' },
   { value: 'highlight', label: '▰', title: 'Highlighter (semi-transparent)' },
   { value: 'line', label: '╱', title: 'Line — straight (hold Shift to snap to 0°/45°/90°)' },
@@ -121,8 +150,10 @@ const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean;
   { value: 'ellipse', label: '◯', title: 'Ellipse' },
   { value: 'polyline', label: '⌇', title: 'Segmented line / polyline (click vertices, double-click to finish)' },
   { value: 'polygon', label: '⬠', title: 'Polygon (click vertices, double-click to close)' },
+  { value: 'note', label: '▤', title: 'Sticky note — click to place, double-click to edit text' },
   { value: 'text', label: 'T', title: 'Text' },
   { value: 'pin', label: '◉', title: 'Pin (numbered)' },
+  { value: 'eraser', label: '⌦', title: 'Eraser — drag over marks to rub them out' },
   { value: 'measure', label: '⤢', needsCalibration: true, title: 'Measure (requires calibration)' },
 ]
 
@@ -251,6 +282,12 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const [gridOn, setGridOn] = useState(false)
   const [snapOn, setSnapOn] = useState(false)
   const [gridSpacingM, setGridSpacingM] = useState(1)
+  // Direct-manipulation: currently-selected shape (Select tool) + Transformer.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [eraserPos, setEraserPos] = useState<{ x: number; y: number } | null>(null)
+  const trRef = useRef<Konva.Transformer | null>(null)
+  const eraserCursorRef = useRef<Konva.Circle | null>(null)
+  const eraseTouchedRef = useRef(false)
   const [shapes, setShapes] = useState<AnyShape[]>(editing?.scene.shapes ?? [])
   const [current, setCurrent] = useState<AnyShape | null>(null)
   const [undoStack, setUndoStack] = useState<AnyShape[][]>([])
@@ -322,6 +359,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   // Reset multi-vertex progress when leaving the polygon/polyline tools.
   useEffect(() => {
     if (tool !== 'polygon' && tool !== 'polyline' && polyPoints.length > 0) setPolyPoints([])
+    if (tool !== 'select' && selectedId) setSelectedId(null)
+    if (tool !== 'eraser' && eraserPos) setEraserPos(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool])
 
@@ -652,6 +691,25 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     return () => window.removeEventListener('keydown', onKey)
   }, [fitToView])
 
+  // Delete / Escape for the selected shape. Separate effect so it always sees
+  // the current selection + shapes (re-subscribes on change).
+  useEffect(() => {
+    function onEdit(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (mode === 'view') return
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+        e.preventDefault()
+        deleteSelected()
+      } else if (e.key === 'Escape') {
+        setSelectedId(null)
+      }
+    }
+    window.addEventListener('keydown', onEdit)
+    return () => window.removeEventListener('keydown', onEdit)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, shapes, mode])
+
   // ── History ───────────────────────────────────────────────────────────
   function pushHistory(prev: AnyShape[]) {
     setUndoStack((s) => [...s, prev])
@@ -698,6 +756,194 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const snapXY = (x: number, y: number): [number, number] =>
     snapOn ? [snapToGrid(x, gridPx), snapToGrid(y, gridPx)] : [x, y]
 
+  // ── Selection / move / transform / eraser ─────────────────────────────
+  const POINT_TYPES = ['pen', 'highlight', 'line', 'arrow', 'polyline', 'polygon', 'measure']
+  const selectedType = selectedId ? shapes.find((s) => s.id === selectedId)?.type : undefined
+
+  // Interaction props spread onto every committed shape node in Select mode:
+  // click/tap selects (cancelBubble so the stage doesn't deselect), drag moves,
+  // Transformer handles resize/rotate.
+  function shapeProps(s: AnyShape) {
+    return {
+      id: s.id,
+      draggable: tool === 'select',
+      onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>) => {
+        if (tool === 'select') {
+          e.cancelBubble = true
+          setSelectedId(s.id)
+        }
+      },
+      onTap: (e: Konva.KonvaEventObject<Event>) => {
+        if (tool === 'select') {
+          e.cancelBubble = true
+          setSelectedId(s.id)
+        }
+      },
+      onDragStart: () => {
+        if (tool === 'select') setSelectedId(s.id)
+      },
+      onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => bakeMove(s, e.target as Konva.Node),
+      onTransformEnd: (e: Konva.KonvaEventObject<Event>) => bakeTransform(s, e.target as Konva.Node),
+    }
+  }
+
+  // Bake a drag into geometry. Position/size shapes take the node's x/y;
+  // point-based shapes translate their points and the node resets to origin.
+  function bakeMove(s: AnyShape, node: Konva.Node) {
+    const nx = node.x()
+    const ny = node.y()
+    if (nx === 0 && ny === 0 && POINT_TYPES.includes(s.type)) return
+    pushHistory(shapes)
+    setShapes((cur) =>
+      cur.map((sh) => {
+        if (sh.id !== s.id) return sh
+        if (sh.type === 'ellipse') return { ...sh, cx: nx, cy: ny }
+        if (sh.type === 'rect' || sh.type === 'text' || sh.type === 'note' || sh.type === 'pin') {
+          return { ...sh, x: nx, y: ny }
+        }
+        return { ...sh, points: translatePoints((sh as { points: number[] }).points, nx, ny) } as AnyShape
+      }),
+    )
+    if (POINT_TYPES.includes(s.type)) node.position({ x: 0, y: 0 })
+  }
+
+  // Bake a Transformer resize/rotate. Position/size shapes fold scale into
+  // their dimensions + carry rotation; point-based shapes bake the full
+  // scale→rotate→translate into their point list (see markup-geometry).
+  function bakeTransform(s: AnyShape, node: Konva.Node) {
+    const sx = node.scaleX()
+    const sy = node.scaleY()
+    const rot = node.rotation()
+    const nx = node.x()
+    const ny = node.y()
+    pushHistory(shapes)
+    node.scaleX(1)
+    node.scaleY(1)
+    setShapes((cur) =>
+      cur.map((sh) => {
+        if (sh.id !== s.id) return sh
+        switch (sh.type) {
+          case 'rect':
+            return { ...sh, x: nx, y: ny, width: sh.width * sx, height: sh.height * sy, rotation: rot }
+          case 'ellipse':
+            return { ...sh, cx: nx, cy: ny, rx: sh.rx * sx, ry: sh.ry * sy, rotation: rot }
+          case 'text':
+            return { ...sh, x: nx, y: ny, fontSize: Math.max(6, sh.fontSize * ((sx + sy) / 2)), rotation: rot }
+          case 'note':
+            return {
+              ...sh,
+              x: nx,
+              y: ny,
+              width: Math.max(40, sh.width * sx),
+              height: Math.max(30, sh.height * sy),
+              fontSize: Math.max(8, sh.fontSize * ((sx + sy) / 2)),
+              rotation: rot,
+            }
+          case 'pin':
+            return sh
+          default: {
+            node.rotation(0)
+            node.position({ x: 0, y: 0 })
+            const np = bakePointTransform((sh as { points: number[] }).points, sx, sy, rot, nx, ny)
+            return { ...sh, points: np } as AnyShape
+          }
+        }
+      }),
+    )
+  }
+
+  function deleteSelected() {
+    if (!selectedId) return
+    pushHistory(shapes)
+    setShapes((cur) => cur.filter((sh) => sh.id !== selectedId))
+    setSelectedId(null)
+  }
+
+  // Change the current colour/width/style; if a shape is selected, apply it.
+  function restyleSelected(patch: Partial<{ color: string; strokeWidth: number; dash: number[] | undefined }>) {
+    if (!selectedId) return
+    pushHistory(shapes)
+    setShapes((cur) => cur.map((sh) => (sh.id === selectedId ? { ...sh, ...patch } : sh)))
+  }
+
+  function editNoteText(id: string) {
+    const note = shapes.find((sh) => sh.id === id)
+    if (!note || note.type !== 'note') return
+    const next = window.prompt('Edit note:', note.text)
+    if (next == null) return
+    pushHistory(shapes)
+    setShapes((cur) => cur.map((sh) => (sh.id === id ? { ...sh, text: next } : sh)))
+  }
+
+  // Eraser: remove any shape on the current page whose ink the cursor touches.
+  function shapeErased(s: AnyShape, ex: number, ey: number, r: number): boolean {
+    // Map the eraser point into the shape's local (unrotated) frame so the
+    // axis-aligned tests below also work for a rotated rect/ellipse/text/note.
+    const invRot = (ax: number, ay: number, rot?: number): [number, number] =>
+      rot ? (rotatePointsAbout([ex, ey], (-rot * Math.PI) / 180, ax, ay) as [number, number]) : [ex, ey]
+    switch (s.type) {
+      case 'pen':
+      case 'highlight':
+      case 'line':
+      case 'arrow':
+      case 'measure':
+      case 'polyline':
+        return distToPolyline(ex, ey, s.points, false) <= r + s.strokeWidth / 2
+      case 'polygon':
+        return pointInPolygon(ex, ey, s.points) || distToPolyline(ex, ey, s.points, true) <= r + s.strokeWidth / 2
+      case 'rect': {
+        const [px, py] = invRot(s.x, s.y, s.rotation)
+        const pts = [s.x, s.y, s.x + s.width, s.y, s.x + s.width, s.y + s.height, s.x, s.y + s.height]
+        return distToPolyline(px, py, pts, true) <= r + s.strokeWidth / 2
+      }
+      case 'ellipse': {
+        const [px, py] = invRot(s.cx, s.cy, s.rotation)
+        return (
+          ellipseContains(px, py, s.cx, s.cy, s.rx, s.ry, r) &&
+          !ellipseContains(px, py, s.cx, s.cy, s.rx - r - s.strokeWidth, s.ry - r - s.strokeWidth, 0)
+        )
+      }
+      case 'text': {
+        const [px, py] = invRot(s.x, s.y, s.rotation)
+        return rectContains(px, py, s.x, s.y, Math.max(20, s.text.length * s.fontSize * 0.6), s.fontSize * 1.3, r)
+      }
+      case 'note': {
+        const [px, py] = invRot(s.x, s.y, s.rotation)
+        return rectContains(px, py, s.x, s.y, s.width, s.height, r)
+      }
+      case 'pin':
+        return Math.hypot(ex - s.x, ey - s.y) <= 14 + r
+      default:
+        return false
+    }
+  }
+  function eraseAt(x: number, y: number) {
+    setShapes((cur) => {
+      const keep = cur.filter((s) => (s.pageIndex ?? 1) !== currentPage || !shapeErased(s, x, y, ERASER_RADIUS))
+      if (keep.length !== cur.length && !eraseTouchedRef.current) {
+        eraseTouchedRef.current = true
+        setUndoStack((u) => [...u, cur])
+        setRedoStack([])
+      }
+      return keep
+    })
+  }
+
+  // Keep the Transformer attached to the selected node (Select mode only).
+  useEffect(() => {
+    const tr = trRef.current
+    const stage = stageRef.current
+    if (!tr) return
+    if (!stage || tool !== 'select' || !selectedId) {
+      tr.nodes([])
+      tr.getLayer()?.batchDraw()
+      return
+    }
+    const node = stage.findOne('#' + selectedId)
+    tr.nodes(node ? [node] : [])
+    tr.getLayer()?.batchDraw()
+  }, [selectedId, tool, shapes, currentPage])
+
   // ── Pointer handlers ──────────────────────────────────────────────────
   // Mouse + touch handlers (Konva 10's onPointerDown isn't reliable across
   // synthesized inputs — observed in Chrome MCP automation tests). The
@@ -722,7 +968,19 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       return
     }
 
-    if (tool === 'select') return
+    if (tool === 'select') {
+      // Shapes cancelBubble on their own mousedown, so reaching here means the
+      // click landed on empty canvas → deselect (and the stage pans).
+      setSelectedId(null)
+      return
+    }
+
+    if (tool === 'eraser') {
+      eraseTouchedRef.current = false
+      setEraserPos({ x, y })
+      eraseAt(x, y)
+      return
+    }
 
     if (tool === 'text') {
       const text = window.prompt('Text:')?.trim()
@@ -748,6 +1006,24 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     if (tool === 'highlight') {
       // Thicker than the user-chosen width; renders semi-transparent.
       setCurrent({ id: makeId(), type: 'highlight', points: [x, y], color, strokeWidth: strokeWidth * 4 })
+      return
+    }
+
+    if (tool === 'note') {
+      const raw = window.prompt('Note text:')
+      if (raw == null) return // Cancel → don't place a note
+      const [nx, ny] = snapXY(x, y)
+      commit({
+        id: makeId(),
+        type: 'note',
+        x: nx,
+        y: ny,
+        width: NOTE.w,
+        height: NOTE.h,
+        text: raw.trim(),
+        fontSize: NOTE.fontSize,
+        color: NOTE.fill,
+      })
       return
     }
 
@@ -790,6 +1066,16 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   }
 
   function onPointerMove(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
+    if (tool === 'eraser') {
+      const st = e.target.getStage()
+      const p = st?.getRelativePointerPosition()
+      if (!p) return
+      setEraserPos({ x: p.x, y: p.y })
+      const isTouch = e.evt.type.startsWith('touch')
+      const down = isTouch || (e.evt as MouseEvent).buttons === 1
+      if (down) eraseAt(p.x, p.y)
+      return
+    }
     if (!current) return
     const stage = e.target.getStage()
     if (!stage) return
@@ -941,6 +1227,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     // so it never bakes into the saved/exported PNG.
     const gridVisible = gridLayerRef.current?.visible() ?? false
     gridLayerRef.current?.visible(false)
+    // Detach the Transformer + hide the eraser cursor so neither overlay bakes
+    // into the export.
+    const trNodes = trRef.current?.nodes() ?? []
+    trRef.current?.nodes([])
+    eraserCursorRef.current?.visible(false)
     stage.draw()
     // PDF backing canvas is already rasterised at scale=2 in the load
     // effect, so pixelRatio=1 here keeps the saved PNG at source density.
@@ -955,6 +1246,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       height: naturalH,
     })
     gridLayerRef.current?.visible(gridVisible)
+    if (trNodes.length) trRef.current?.nodes(trNodes as Konva.Node[])
+    eraserCursorRef.current?.visible(true)
     stage.scale({ x: savedScale, y: savedScale })
     stage.position(savedPos)
     stage.draw()
@@ -1078,12 +1371,17 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   }
 
   // ── Render shape ─────────────────────────────────────────────────────
-  const renderShape = (s: AnyShape) => {
+  const renderShape = (s: AnyShape, interactive = false) => {
+    // In Select mode (and never in read-only view), committed shapes carry
+    // select/drag/transform handlers and notes become editable.
+    const editable = interactive && mode !== 'view'
+    const ip = editable ? shapeProps(s) : {}
     switch (s.type) {
       case 'pen':
         return (
           <Line
             key={s.id}
+            {...ip}
             points={s.points}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
@@ -1096,6 +1394,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         return (
           <Line
             key={s.id}
+            {...ip}
             points={s.points}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
@@ -1109,17 +1408,20 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         return (
           <Line
             key={s.id}
+            {...ip}
             points={s.points}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
             dash={s.dash}
             lineCap="round"
+            hitStrokeWidth={Math.max(12, s.strokeWidth)}
           />
         )
       case 'arrow':
         return (
           <Arrow
             key={s.id}
+            {...ip}
             points={s.points}
             stroke={s.color}
             fill={s.color}
@@ -1127,14 +1429,17 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             dash={s.dash}
             pointerLength={8 + s.strokeWidth}
             pointerWidth={8 + s.strokeWidth}
+            hitStrokeWidth={Math.max(12, s.strokeWidth)}
           />
         )
       case 'rect':
         return (
           <Rect
             key={s.id}
+            {...ip}
             x={s.x}
             y={s.y}
+            rotation={s.rotation}
             width={s.width}
             height={s.height}
             stroke={s.color}
@@ -1146,8 +1451,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         return (
           <KonvaEllipse
             key={s.id}
+            {...ip}
             x={s.cx}
             y={s.cy}
+            rotation={s.rotation}
             radiusX={s.rx}
             radiusY={s.ry}
             stroke={s.color}
@@ -1159,18 +1466,21 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         return (
           <Line
             key={s.id}
+            {...ip}
             points={s.points}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
             dash={s.dash}
             lineCap="round"
             lineJoin="round"
+            hitStrokeWidth={Math.max(12, s.strokeWidth)}
           />
         )
       case 'polygon':
         return (
           <Line
             key={s.id}
+            {...ip}
             points={s.points}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
@@ -1180,10 +1490,73 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
           />
         )
       case 'text':
-        return <KonvaText key={s.id} x={s.x} y={s.y} text={s.text} fontSize={s.fontSize} fill={s.color} />
+        return (
+          <KonvaText
+            key={s.id}
+            {...ip}
+            x={s.x}
+            y={s.y}
+            rotation={s.rotation}
+            text={s.text}
+            fontSize={s.fontSize}
+            fill={s.color}
+          />
+        )
+      case 'note': {
+        const txtColor = contrastText(s.color)
+        return (
+          <Group
+            key={s.id}
+            {...ip}
+            x={s.x}
+            y={s.y}
+            rotation={s.rotation}
+            onDblClick={
+              editable
+                ? (e: Konva.KonvaEventObject<MouseEvent>) => {
+                    e.cancelBubble = true
+                    editNoteText(s.id)
+                  }
+                : undefined
+            }
+            onDblTap={
+              editable
+                ? (e: Konva.KonvaEventObject<Event>) => {
+                    e.cancelBubble = true
+                    editNoteText(s.id)
+                  }
+                : undefined
+            }
+          >
+            <Rect
+              width={s.width}
+              height={s.height}
+              fill={s.color}
+              cornerRadius={4}
+              stroke="rgba(0,0,0,0.28)"
+              strokeWidth={1}
+              shadowColor="#000000"
+              shadowBlur={6}
+              shadowOffsetY={2}
+              shadowOpacity={0.3}
+            />
+            <KonvaText
+              x={9}
+              y={9}
+              width={s.width - 18}
+              height={s.height - 18}
+              text={s.text || 'Double-click to edit'}
+              fontSize={s.fontSize}
+              fill={s.text ? txtColor : 'rgba(0,0,0,0.4)'}
+              wrap="word"
+              ellipsis
+            />
+          </Group>
+        )
+      }
       case 'pin':
         return (
-          <Group key={s.id} x={s.x} y={s.y}>
+          <Group key={s.id} {...ip} x={s.x} y={s.y}>
             <Circle radius={14} fill={s.color} stroke="white" strokeWidth={2} />
             <KonvaText x={-14} y={-7} width={28} align="center" text={s.label} fill="white" fontStyle="bold" fontSize={14} />
           </Group>
@@ -1195,8 +1568,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         const midX = (x1 + x2) / 2
         const midY = (y1 + y2) / 2
         return (
-          <Group key={s.id}>
-            <Line points={s.points} stroke={s.color} strokeWidth={s.strokeWidth} dash={[8, 4]} />
+          <Group key={s.id} {...ip}>
+            <Line points={s.points} stroke={s.color} strokeWidth={s.strokeWidth} dash={[8, 4]} hitStrokeWidth={Math.max(12, s.strokeWidth)} />
             {m !== null && (
               <KonvaText x={midX + 6} y={midY - 6} text={`${m.toFixed(2)} m`} fill={s.color} fontStyle="bold" fontSize={14} />
             )}
@@ -1237,7 +1610,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                 <Tooltip key={c.value} label={c.label}>
                   <button
                     type="button"
-                    onClick={() => setColor(c.value)}
+                    onClick={() => {
+                      setColor(c.value)
+                      restyleSelected({ color: c.value })
+                    }}
                     aria-label={c.label}
                     style={{
                       width: 22,
@@ -1272,7 +1648,15 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             <ToolbarSeparator />
             <ToolbarGroup>
               {STROKE_WIDTHS.map((w) => (
-                <ToolbarButton key={w.value} active={strokeWidth === w.value} onClick={() => setStrokeWidth(w.value)} title={w.label}>
+                <ToolbarButton
+                  key={w.value}
+                  active={strokeWidth === w.value}
+                  onClick={() => {
+                    setStrokeWidth(w.value)
+                    restyleSelected({ strokeWidth: w.value })
+                  }}
+                  title={w.label}
+                >
                   <span
                     style={{
                       display: 'inline-block',
@@ -1292,7 +1676,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                 <ToolbarButton
                   key={st.value}
                   active={strokeStyle === st.value}
-                  onClick={() => setStrokeStyle(st.value)}
+                  onClick={() => {
+                    setStrokeStyle(st.value)
+                    restyleSelected({ dash: dashFor(st.value, strokeWidth) })
+                  }}
                   title={`${st.label} line`}
                 >
                   <span
@@ -1380,6 +1767,9 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             <ToolbarButton onClick={undo} disabled={undoStack.length === 0} title="Undo">↶</ToolbarButton>
             <ToolbarButton onClick={redo} disabled={redoStack.length === 0} title="Redo">↷</ToolbarButton>
             <ToolbarButton onClick={clearAll} disabled={shapes.length === 0} title="Clear all">⌫</ToolbarButton>
+            {selectedId && (
+              <ToolbarButton onClick={deleteSelected} title="Delete selected mark (or press Delete)">✕</ToolbarButton>
+            )}
           </ToolbarGroup>
         )}
         {pageCount > 1 && (
@@ -1387,7 +1777,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             <ToolbarSeparator />
             <ToolbarGroup>
               <ToolbarButton
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                onClick={() => {
+                  setSelectedId(null)
+                  setCurrentPage((p) => Math.max(1, p - 1))
+                }}
                 disabled={currentPage <= 1}
                 title="Previous page"
               >
@@ -1407,7 +1800,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                 Page {currentPage} / {pageCount}
               </span>
               <ToolbarButton
-                onClick={() => setCurrentPage((p) => Math.min(pageCount, p + 1))}
+                onClick={() => {
+                  setSelectedId(null)
+                  setCurrentPage((p) => Math.min(pageCount, p + 1))
+                }}
                 disabled={currentPage >= pageCount}
                 title="Next page"
               >
@@ -1650,8 +2046,37 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             <Layer>
               {/* Filter shapes to the current page; pageIndex defaults to 1
                   for shapes from v1 scene graphs that didn't carry it. */}
-              {shapes.filter((s) => (s.pageIndex ?? 1) === currentPage).map(renderShape)}
+              {shapes.filter((s) => (s.pageIndex ?? 1) === currentPage).map((s) => renderShape(s, true))}
               {current && renderShape(current)}
+              {tool === 'select' && (
+                <Transformer
+                  ref={trRef}
+                  rotateEnabled={selectedType !== 'pin'}
+                  resizeEnabled={selectedType !== 'pin'}
+                  ignoreStroke
+                  anchorSize={9}
+                  anchorCornerRadius={2}
+                  borderStroke="#2563eb"
+                  borderStrokeWidth={1.5}
+                  anchorStroke="#2563eb"
+                  anchorFill="#ffffff"
+                  rotateAnchorOffset={22}
+                  boundBoxFunc={(oldBox, newBox) => (newBox.width < 8 || newBox.height < 8 ? oldBox : newBox)}
+                />
+              )}
+              {tool === 'eraser' && eraserPos && (
+                <Circle
+                  ref={eraserCursorRef}
+                  x={eraserPos.x}
+                  y={eraserPos.y}
+                  radius={ERASER_RADIUS}
+                  stroke="#dc2626"
+                  strokeWidth={1.5 / scale}
+                  dash={[4 / scale, 3 / scale]}
+                  fill="rgba(220,38,38,0.08)"
+                  listening={false}
+                />
+              )}
               {tool === 'calibrate' &&
                 calibPoints.map((p, i) => (
                   <Circle key={i} x={p[0]} y={p[1]} radius={6} fill="#f59e0b" stroke="white" strokeWidth={2} />
