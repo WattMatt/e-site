@@ -190,6 +190,26 @@ export function bakePointTransform(
   return translatePoints(p, nx, ny)
 }
 
+// ── Legend / table operations (pure, on a rows[][] grid) ──────────────────
+// Row 0 is the header. Removals keep at least a 1×1 grid.
+
+export function tableAddRow(rows: string[][]): string[][] {
+  const cols = rows[0]?.length ?? 1
+  return [...rows, Array(cols).fill('')]
+}
+export function tableAddCol(rows: string[][]): string[][] {
+  return rows.length ? rows.map((r) => [...r, '']) : [['']]
+}
+export function tableRemoveRow(rows: string[][]): string[][] {
+  return rows.length > 1 ? rows.slice(0, -1) : rows
+}
+export function tableRemoveCol(rows: string[][]): string[][] {
+  return (rows[0]?.length ?? 0) > 1 ? rows.map((r) => r.slice(0, -1)) : rows
+}
+export function tableSetCell(rows: string[][], r: number, c: number, value: string): string[][] {
+  return rows.map((row, ri) => (ri === r ? row.map((cell, ci) => (ci === c ? value : cell)) : row))
+}
+
 /** Readable text colour (near-black or white) for a #rrggbb background, chosen
  *  by relative luminance — used for sticky-note text on any note colour. */
 export function contrastText(hex: string): '#111827' | '#ffffff' {

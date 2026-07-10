@@ -15,6 +15,11 @@ import {
   translatePoints,
   bakePointTransform,
   contrastText,
+  tableAddRow,
+  tableAddCol,
+  tableRemoveRow,
+  tableRemoveCol,
+  tableSetCell,
 } from './markup-geometry'
 
 describe('dashFor', () => {
@@ -213,6 +218,36 @@ describe('bakePointTransform (scale → rotate → translate, matches Konva T∘
     const [x, y] = bakePointTransform([2, 3], 3, 2, 0, 0, 0)
     near(x, 6)
     near(y, 6)
+  })
+})
+
+describe('table operations', () => {
+  const base = [
+    ['Item', 'Description'],
+    ['A', 'first'],
+  ]
+  it('adds a row matching the column count', () => {
+    const r = tableAddRow(base)
+    expect(r).toHaveLength(3)
+    expect(r[2]).toEqual(['', ''])
+  })
+  it('adds a column to every row', () => {
+    const r = tableAddCol(base)
+    expect(r[0]).toEqual(['Item', 'Description', ''])
+    expect(r[1]).toEqual(['A', 'first', ''])
+  })
+  it('removes a row but keeps at least the header', () => {
+    expect(tableRemoveRow(base)).toEqual([['Item', 'Description']])
+    expect(tableRemoveRow([['only']])).toEqual([['only']])
+  })
+  it('removes a column but keeps at least one', () => {
+    expect(tableRemoveCol(base)).toEqual([['Item'], ['A']])
+    expect(tableRemoveCol([['only'], ['x']])).toEqual([['only'], ['x']])
+  })
+  it('sets a single cell immutably', () => {
+    const r = tableSetCell(base, 1, 0, 'changed')
+    expect(r[1][0]).toBe('changed')
+    expect(base[1][0]).toBe('A') // original untouched
   })
 })
 
