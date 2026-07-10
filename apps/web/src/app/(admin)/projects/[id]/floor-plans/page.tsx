@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, floorPlanService } from '@esite/shared'
+import { projectService, floorPlanService, MARKUP_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { FloorPlanUploadButton } from './FloorPlanUploadButton'
 import { DrawingsList, type DrawingListItem } from './DrawingsList'
 import { CloudSyncToolbar } from '@/components/cloud-storage/CloudSyncToolbar'
@@ -28,6 +29,13 @@ export default async function FloorPlansPage({ params }: Props) {
       .order('created_at', { ascending: false }),
   ])
   if (!project) notFound()
+
+  // Effective project role decides whether write affordances (upload, cloud
+  // sync, per-row Markup) render at all. Read-only roles get a view-only page
+  // — the server actions + RLS (00161/00162) enforce the same boundary, this
+  // just stops offering actions the caller can't complete.
+  const gate = await requireEffectiveRole(supabase as any, projectId, MARKUP_WRITE_ROLES)
+  const canWrite = gate.ok
 
   const orgId = (project as any).organisation_id as string
   const connections = (connectionsRes?.data ?? []) as unknown as ConnectionOption[]
@@ -63,21 +71,26 @@ export default async function FloorPlansPage({ params }: Props) {
       <div className="page-header">
         <div>
           <h1 className="page-title">Floor Plans</h1>
-          <p className="page-subtitle">{project.name} · {plansWithUrls.length} plan{plansWithUrls.length !== 1 ? 's' : ''}</p>
+          <p className="page-subtitle">
+            {project.name} · {plansWithUrls.length} plan{plansWithUrls.length !== 1 ? 's' : ''}
+            {!canWrite ? ' · read-only' : ''}
+          </p>
         </div>
-        <FloorPlanUploadButton projectId={projectId} orgId={orgId} />
+        {canWrite && <FloorPlanUploadButton projectId={projectId} orgId={orgId} />}
       </div>
 
-      <CloudSyncToolbar
-        projectId={projectId}
-        connections={connections}
-        mappedConnectionId={mappedConnectionId}
-        cloudFolderPath={cloudFolderPath}
-        lastSyncAt={lastSyncAt}
-        intent="drawings"
-      />
+      {canWrite && (
+        <CloudSyncToolbar
+          projectId={projectId}
+          connections={connections}
+          mappedConnectionId={mappedConnectionId}
+          cloudFolderPath={cloudFolderPath}
+          lastSyncAt={lastSyncAt}
+          intent="drawings"
+        />
+      )}
 
-      <DrawingsList plans={plansWithUrls} projectId={projectId} />
+      <DrawingsList plans={plansWithUrls} projectId={projectId} canWrite={canWrite} />
     </div>
   )
 }

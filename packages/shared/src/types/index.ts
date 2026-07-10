@@ -59,6 +59,20 @@ export const SNAG_FIELD_ROLES: readonly OrgRole[] = ORG_ROLES.filter((r) => r !=
  * the concerns separate so changes to one don't silently reshape the other.
  */
 export const COST_VIEW_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager']
+/**
+ * Roles permitted to CREATE or EDIT floor-plan markup (RFI annotations).
+ * Owner + admin + PM + contractor — the same write set as the `/rfis` and
+ * `/projects/[id]/floor-plans` rows in docs/rbac-matrix.md, because saving a
+ * markup always creates or attaches an RFI (see rfi-annotation.actions.ts).
+ * Broader than ORG_WRITE_ROLES (the contractor is the primary markup author);
+ * excludes the read-only site roles (inspector/supplier/client_viewer). This
+ * is the application-layer gate; the database backstop that blocks the
+ * highest-risk read-only role lives in migrations 00161/00162
+ * (client_viewer_no_insert/update/delete on rfi_annotations, attachments and
+ * the rfi-attachments/drawings storage buckets). Kept distinct from
+ * JBCC_WRITE_ROLES even though the sets coincide today — separate concerns.
+ */
+export const MARKUP_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager', 'contractor']
 export type ProjectRole = 'project_manager' | 'contractor' | 'client_viewer'
 
 /**
