@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest'
-import { dashFor, snapAngle, gridSpacingPx, snapToGrid, gridLineOffsets } from './markup-geometry'
+import {
+  dashFor,
+  snapAngle,
+  gridSpacingPx,
+  snapToGrid,
+  gridLineOffsets,
+  pointSegmentDistance,
+  distToPolyline,
+  pointInPolygon,
+  rectContains,
+  ellipseContains,
+  scalePointsAbout,
+  rotatePointsAbout,
+  translatePoints,
+  contrastText,
+} from './markup-geometry'
 
 describe('dashFor', () => {
   it('returns undefined for solid (no dash)', () => {
@@ -105,5 +120,88 @@ describe('gridLineOffsets', () => {
   it('returns [] for degenerate inputs', () => {
     expect(gridLineOffsets(0, 50)).toEqual([])
     expect(gridLineOffsets(200, 0)).toEqual([])
+  })
+})
+
+describe('pointSegmentDistance', () => {
+  it('is 0 on the segment', () => {
+    expect(pointSegmentDistance(5, 0, 0, 0, 10, 0)).toBe(0)
+  })
+  it('is the perpendicular distance beside the segment', () => {
+    expect(pointSegmentDistance(5, 4, 0, 0, 10, 0)).toBeCloseTo(4, 6)
+  })
+  it('clamps past the endpoints', () => {
+    expect(pointSegmentDistance(-3, 0, 0, 0, 10, 0)).toBeCloseTo(3, 6)
+    expect(pointSegmentDistance(13, 0, 0, 0, 10, 0)).toBeCloseTo(3, 6)
+  })
+  it('handles a degenerate (zero-length) segment', () => {
+    expect(pointSegmentDistance(3, 4, 0, 0, 0, 0)).toBeCloseTo(5, 6)
+  })
+})
+
+describe('distToPolyline', () => {
+  const L = [0, 0, 10, 0, 10, 10] // open L-shape
+  it('finds the nearest segment', () => {
+    expect(distToPolyline(5, 3, L)).toBeCloseTo(3, 6) // near the horizontal leg
+    expect(distToPolyline(13, 5, L)).toBeCloseTo(3, 6) // near the vertical leg
+  })
+  it('includes the closing segment only when closed', () => {
+    // point near the (last→first) closing edge of a triangle
+    const tri = [0, 0, 10, 0, 5, 10]
+    const open = distToPolyline(2.5, 5, tri, false)
+    const closed = distToPolyline(2.5, 5, tri, true)
+    expect(closed).toBeLessThan(open)
+  })
+})
+
+describe('pointInPolygon', () => {
+  const sq = [0, 0, 10, 0, 10, 10, 0, 10]
+  it('detects inside vs outside', () => {
+    expect(pointInPolygon(5, 5, sq)).toBe(true)
+    expect(pointInPolygon(15, 5, sq)).toBe(false)
+    expect(pointInPolygon(-1, 5, sq)).toBe(false)
+  })
+})
+
+describe('rectContains', () => {
+  it('respects bounds and pad, and normalises negative w/h', () => {
+    expect(rectContains(5, 5, 0, 0, 10, 10)).toBe(true)
+    expect(rectContains(11, 5, 0, 0, 10, 10)).toBe(false)
+    expect(rectContains(11, 5, 0, 0, 10, 10, 2)).toBe(true) // within pad
+    expect(rectContains(-5, -5, 0, 0, -10, -10)).toBe(true) // negative w/h
+  })
+})
+
+describe('ellipseContains', () => {
+  it('detects inside/outside with pad', () => {
+    expect(ellipseContains(0, 0, 0, 0, 10, 5)).toBe(true)
+    expect(ellipseContains(10, 0, 0, 0, 10, 5)).toBe(true) // on the x-radius
+    expect(ellipseContains(11, 0, 0, 0, 10, 5)).toBe(false)
+    expect(ellipseContains(11, 0, 0, 0, 10, 5, 2)).toBe(true) // pad
+  })
+})
+
+describe('scale/rotate/translate points', () => {
+  it('scales about an anchor', () => {
+    expect(scalePointsAbout([2, 2, 4, 4], 2, 2, 0, 0)).toEqual([4, 4, 8, 8])
+    expect(scalePointsAbout([2, 2], 2, 2, 2, 2)).toEqual([2, 2]) // anchor fixed
+  })
+  it('rotates 90° about the origin', () => {
+    const [x, y] = rotatePointsAbout([10, 0], Math.PI / 2, 0, 0)
+    expect(x).toBeCloseTo(0, 6)
+    expect(y).toBeCloseTo(10, 6)
+  })
+  it('translates', () => {
+    expect(translatePoints([1, 2, 3, 4], 10, -5)).toEqual([11, -3, 13, -1])
+  })
+})
+
+describe('contrastText', () => {
+  it('picks dark text on light notes, light on dark', () => {
+    expect(contrastText('#fef08a')).toBe('#111827') // sticky yellow → dark
+    expect(contrastText('#ffffff')).toBe('#111827')
+    expect(contrastText('#000000')).toBe('#ffffff')
+    expect(contrastText('#2563eb')).toBe('#ffffff') // blue → light
+    expect(contrastText('nonsense')).toBe('#111827') // safe default
   })
 })

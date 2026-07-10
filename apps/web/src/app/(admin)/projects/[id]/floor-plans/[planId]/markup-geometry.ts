@@ -71,3 +71,115 @@ export function gridLineOffsets(extent: number, spacingPx: number, maxLines = 40
   for (let i = 0; i <= count; i++) out.push(i * spacingPx)
   return out
 }
+
+// ── Hit-testing (click-to-select + eraser) ────────────────────────────────
+
+/** Shortest distance from point (px,py) to the segment (ax,ay)-(bx,by). */
+export function pointSegmentDistance(
+  px: number, py: number, ax: number, ay: number, bx: number, by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const len2 = dx * dx + dy * dy
+  if (len2 === 0) return Math.hypot(px - ax, py - ay)
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2
+  t = Math.max(0, Math.min(1, t))
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+}
+
+/** Min distance from (px,py) to a flat [x0,y0,x1,y1,…] polyline. When
+ *  `closed`, the closing segment (last→first) is included. Infinity for <2 pts. */
+export function distToPolyline(px: number, py: number, pts: number[], closed = false): number {
+  if (pts.length < 4) {
+    return pts.length >= 2 ? Math.hypot(px - pts[0]!, py - pts[1]!) : Infinity
+  }
+  let min = Infinity
+  for (let i = 0; i + 3 < pts.length; i += 2) {
+    min = Math.min(min, pointSegmentDistance(px, py, pts[i]!, pts[i + 1]!, pts[i + 2]!, pts[i + 3]!))
+  }
+  if (closed) {
+    const n = pts.length
+    min = Math.min(min, pointSegmentDistance(px, py, pts[n - 2]!, pts[n - 1]!, pts[0]!, pts[1]!))
+  }
+  return min
+}
+
+/** Ray-casting point-in-polygon for a flat [x0,y0,…] ring. */
+export function pointInPolygon(px: number, py: number, pts: number[]): boolean {
+  let inside = false
+  const n = pts.length / 2
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = pts[i * 2]!, yi = pts[i * 2 + 1]!
+    const xj = pts[j * 2]!, yj = pts[j * 2 + 1]!
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+/** Point within an axis-aligned rect expanded by `pad`. */
+export function rectContains(
+  px: number, py: number, x: number, y: number, w: number, h: number, pad = 0,
+): boolean {
+  const x0 = Math.min(x, x + w) - pad
+  const x1 = Math.max(x, x + w) + pad
+  const y0 = Math.min(y, y + h) - pad
+  const y1 = Math.max(y, y + h) + pad
+  return px >= x0 && px <= x1 && py >= y0 && py <= y1
+}
+
+/** Point within an ellipse (centre cx,cy, radii rx,ry) expanded by `pad`. */
+export function ellipseContains(
+  px: number, py: number, cx: number, cy: number, rx: number, ry: number, pad = 0,
+): boolean {
+  const a = rx + pad
+  const b = ry + pad
+  if (a <= 0 || b <= 0) return false
+  const nx = (px - cx) / a
+  const ny = (py - cy) / b
+  return nx * nx + ny * ny <= 1
+}
+
+// ── Transform baking (move / scale / rotate) ──────────────────────────────
+
+/** Scale a flat point list about anchor (ox,oy). */
+export function scalePointsAbout(pts: number[], sx: number, sy: number, ox: number, oy: number): number[] {
+  const out: number[] = []
+  for (let i = 0; i + 1 < pts.length; i += 2) {
+    out.push(ox + (pts[i]! - ox) * sx, oy + (pts[i + 1]! - oy) * sy)
+  }
+  return out
+}
+
+/** Rotate a flat point list by `angleRad` about anchor (ox,oy). */
+export function rotatePointsAbout(pts: number[], angleRad: number, ox: number, oy: number): number[] {
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+  const out: number[] = []
+  for (let i = 0; i + 1 < pts.length; i += 2) {
+    const dx = pts[i]! - ox
+    const dy = pts[i + 1]! - oy
+    out.push(ox + dx * cos - dy * sin, oy + dx * sin + dy * cos)
+  }
+  return out
+}
+
+/** Translate a flat point list by (dx,dy). */
+export function translatePoints(pts: number[], dx: number, dy: number): number[] {
+  const out: number[] = []
+  for (let i = 0; i + 1 < pts.length; i += 2) out.push(pts[i]! + dx, pts[i + 1]! + dy)
+  return out
+}
+
+/** Readable text colour (near-black or white) for a #rrggbb background, chosen
+ *  by relative luminance — used for sticky-note text on any note colour. */
+export function contrastText(hex: string): '#111827' | '#ffffff' {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex)
+  if (!m) return '#111827'
+  const n = parseInt(m[1]!, 16)
+  const r = (n >> 16) & 0xff
+  const g = (n >> 8) & 0xff
+  const b = n & 0xff
+  // Relative luminance (sRGB, simple coefficients).
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+  return lum > 0.6 ? '#111827' : '#ffffff'
+}
