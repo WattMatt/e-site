@@ -21,6 +21,16 @@ import {
   updateRfiAnnotationAction,
 } from '@/actions/rfi-annotation.actions'
 import { createRfiAction } from '@/actions/rfi.actions'
+import {
+  type StrokeStyle,
+  STROKE_STYLES,
+  dashFor,
+  snapAngle,
+  gridSpacingPx,
+  snapToGrid,
+  gridLineOffsets,
+} from './markup-geometry'
+import { Tooltip } from './markup-tooltip'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -30,9 +40,11 @@ type ToolMode =
   | 'select'
   | 'pen'
   | 'highlight'
+  | 'line'
   | 'arrow'
   | 'rect'
   | 'ellipse'
+  | 'polyline'
   | 'polygon'
   | 'text'
   | 'pin'
@@ -41,12 +53,17 @@ type ToolMode =
 
 // pageIndex is 1-based (matches pdfjs page numbering). Defaults to 1 for
 // backward compat with v1 scene graphs that didn't carry pageIndex.
-type ShapeBase = { id: string; color: string; pageIndex?: number }
+// `dash` (optional) is the Konva stroke dash array — absent = solid; carried
+// on every geometric shape so a dashed/dotted style round-trips through the
+// scene graph. Freehand pen/highlight ignore it.
+type ShapeBase = { id: string; color: string; pageIndex?: number; dash?: number[] }
 type PenShape = ShapeBase & { type: 'pen'; points: number[]; strokeWidth: number }
 type HighlightShape = ShapeBase & { type: 'highlight'; points: number[]; strokeWidth: number }
+type LineShape = ShapeBase & { type: 'line'; points: [number, number, number, number]; strokeWidth: number }
 type ArrowShape = ShapeBase & { type: 'arrow'; points: [number, number, number, number]; strokeWidth: number }
 type RectShape = ShapeBase & { type: 'rect'; x: number; y: number; width: number; height: number; strokeWidth: number }
 type EllipseShape = ShapeBase & { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number; strokeWidth: number }
+type PolylineShape = ShapeBase & { type: 'polyline'; points: number[]; strokeWidth: number }
 type PolygonShape = ShapeBase & { type: 'polygon'; points: number[]; strokeWidth: number; closed: true }
 type TextShape = ShapeBase & { type: 'text'; x: number; y: number; text: string; fontSize: number }
 type PinShape = ShapeBase & { type: 'pin'; x: number; y: number; label: string }
@@ -55,9 +72,11 @@ type MeasureShape = ShapeBase & { type: 'measure'; points: [number, number, numb
 type AnyShape =
   | PenShape
   | HighlightShape
+  | LineShape
   | ArrowShape
   | RectShape
   | EllipseShape
+  | PolylineShape
   | PolygonShape
   | TextShape
   | PinShape
@@ -76,7 +95,11 @@ export type SceneGraph = {
 const COLORS = [
   { value: '#dc2626', label: 'Red' },
   { value: '#f59e0b', label: 'Amber' },
+  { value: '#16a34a', label: 'Green' },
+  { value: '#2563eb', label: 'Blue' },
   { value: '#1f2937', label: 'Charcoal' },
+  { value: '#000000', label: 'Black' },
+  { value: '#ffffff', label: 'White' },
 ] as const
 
 const STROKE_WIDTHS = [
@@ -85,13 +108,18 @@ const STROKE_WIDTHS = [
   { value: 8, label: 'Thick' },
 ] as const
 
+// Stroke line-style presets + pure geometry helpers (dashFor / snapAngle) live
+// in ./markup-geometry so they stay unit-testable without Konva/canvas.
+
 const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean; title: string }> = [
   { value: 'select', label: '↖', title: 'Select / pan' },
   { value: 'pen', label: '✎', title: 'Pen — freehand' },
   { value: 'highlight', label: '▰', title: 'Highlighter (semi-transparent)' },
-  { value: 'arrow', label: '→', title: 'Arrow' },
+  { value: 'line', label: '╱', title: 'Line — straight (hold Shift to snap to 0°/45°/90°)' },
+  { value: 'arrow', label: '→', title: 'Arrow (hold Shift to snap to 0°/45°/90°)' },
   { value: 'rect', label: '▭', title: 'Rectangle' },
   { value: 'ellipse', label: '◯', title: 'Ellipse' },
+  { value: 'polyline', label: '⌇', title: 'Segmented line / polyline (click vertices, double-click to finish)' },
   { value: 'polygon', label: '⬠', title: 'Polygon (click vertices, double-click to close)' },
   { value: 'text', label: 'T', title: 'Text' },
   { value: 'pin', label: '◉', title: 'Pin (numbered)' },
@@ -217,6 +245,12 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const [tool, setTool] = useState<ToolMode>('select')
   const [color, setColor] = useState<string>(COLORS[0].value)
   const [strokeWidth, setStrokeWidth] = useState<number>(STROKE_WIDTHS[1].value)
+  const [strokeStyle, setStrokeStyle] = useState<StrokeStyle>('solid')
+  // Metric grid + snap-to-scale. Grid spacing is real-world metres when the
+  // drawing is calibrated, else a plain pixel grid (see gridSpacingPx).
+  const [gridOn, setGridOn] = useState(false)
+  const [snapOn, setSnapOn] = useState(false)
+  const [gridSpacingM, setGridSpacingM] = useState(1)
   const [shapes, setShapes] = useState<AnyShape[]>(editing?.scene.shapes ?? [])
   const [current, setCurrent] = useState<AnyShape | null>(null)
   const [undoStack, setUndoStack] = useState<AnyShape[][]>([])
@@ -285,26 +319,28 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     setDraftPrompt(null)
   }
 
-  // Reset polygon-in-progress when leaving the polygon tool.
+  // Reset multi-vertex progress when leaving the polygon/polyline tools.
   useEffect(() => {
-    if (tool !== 'polygon' && polyPoints.length > 0) setPolyPoints([])
+    if (tool !== 'polygon' && tool !== 'polyline' && polyPoints.length > 0) setPolyPoints([])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool])
 
-  function closePolygon() {
-    // Need at least 3 vertices (6 array entries) to form a polygon.
-    if (polyPoints.length < 6) {
+  // Finish the in-progress multi-vertex shape: a closed polygon (≥3 vertices)
+  // or an open polyline / segmented line (≥2 vertices). Called on double-click
+  // or Enter. Shared by both tools so the vertex-collection UI stays single-source.
+  function finishPoly() {
+    const wantClosed = tool === 'polygon'
+    const minEntries = wantClosed ? 6 : 4 // 3 vs 2 vertices
+    if (polyPoints.length < minEntries) {
       setPolyPoints([])
       return
     }
-    commit({
-      id: makeId(),
-      type: 'polygon',
-      points: polyPoints,
-      color,
-      strokeWidth,
-      closed: true,
-    })
+    const dash = dashFor(strokeStyle, strokeWidth)
+    commit(
+      wantClosed
+        ? { id: makeId(), type: 'polygon', points: polyPoints, color, strokeWidth, closed: true, dash }
+        : { id: makeId(), type: 'polyline', points: polyPoints, color, strokeWidth, dash },
+    )
     setPolyPoints([])
   }
 
@@ -653,6 +689,15 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     setShapes([])
   }
 
+  // ── Grid + snap-to-scale ──────────────────────────────────────────────
+  // Grid line spacing in image px (real metres when calibrated, else px).
+  // The grid is a drawing AID: rendered in its own layer and hidden during
+  // the PNG snapshot so it never bakes into the saved markup.
+  const gridLayerRef = useRef<Konva.Layer | null>(null)
+  const gridPx = gridSpacingPx(gridSpacingM, pixelsPerMeter)
+  const snapXY = (x: number, y: number): [number, number] =>
+    snapOn ? [snapToGrid(x, gridPx), snapToGrid(y, gridPx)] : [x, y]
+
   // ── Pointer handlers ──────────────────────────────────────────────────
   // Mouse + touch handlers (Konva 10's onPointerDown isn't reliable across
   // synthesized inputs — observed in Chrome MCP automation tests). The
@@ -688,7 +733,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
 
     if (tool === 'pin') {
       const existing = shapes.filter((s) => s.type === 'pin').length
-      commit({ id: makeId(), type: 'pin', x, y, label: String(existing + 1), color })
+      const [px, py] = snapXY(x, y)
+      commit({ id: makeId(), type: 'pin', x: px, y: py, label: String(existing + 1), color })
       return
     }
 
@@ -705,25 +751,34 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       return
     }
 
+    const dash = dashFor(strokeStyle, strokeWidth)
+    const [sx, sy] = snapXY(x, y)
+
+    if (tool === 'line') {
+      setCurrent({ id: makeId(), type: 'line', points: [sx, sy, sx, sy], color, strokeWidth, dash })
+      return
+    }
+
     if (tool === 'arrow') {
-      setCurrent({ id: makeId(), type: 'arrow', points: [x, y, x, y], color, strokeWidth })
+      setCurrent({ id: makeId(), type: 'arrow', points: [sx, sy, sx, sy], color, strokeWidth, dash })
       return
     }
 
     if (tool === 'rect') {
-      setCurrent({ id: makeId(), type: 'rect', x, y, width: 0, height: 0, color, strokeWidth })
+      setCurrent({ id: makeId(), type: 'rect', x: sx, y: sy, width: 0, height: 0, color, strokeWidth, dash })
       return
     }
 
     if (tool === 'ellipse') {
       // Anchor centre at first click; radii grow with drag.
-      setCurrent({ id: makeId(), type: 'ellipse', cx: x, cy: y, rx: 0, ry: 0, color, strokeWidth })
+      setCurrent({ id: makeId(), type: 'ellipse', cx: sx, cy: sy, rx: 0, ry: 0, color, strokeWidth, dash })
       return
     }
 
-    if (tool === 'polygon') {
-      // Click adds a vertex. Double-click (handled separately) closes.
-      setPolyPoints((pts) => [...pts, x, y])
+    if (tool === 'polygon' || tool === 'polyline') {
+      // Click adds a vertex. Double-click (handled separately) finishes:
+      // polygon closes, polyline stays open.
+      setPolyPoints((pts) => [...pts, sx, sy])
       return
     }
 
@@ -741,6 +796,9 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     const pos = stage.getRelativePointerPosition()
     if (!pos) return
     const { x, y } = pos
+    const shift = (e.evt as { shiftKey?: boolean }).shiftKey ?? false
+    // Grid-snapped endpoint for the geometric tools (no-op when snap is off).
+    const [gx, gy] = snapXY(x, y)
 
     setCurrent((c) => {
       if (!c) return c
@@ -748,13 +806,18 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         case 'pen':
         case 'highlight':
           return { ...c, points: [...c.points, x, y] }
-        case 'arrow':
+        case 'line':
+        case 'arrow': {
+          // Shift constrains to 0°/45°/90°; otherwise honour grid snap.
+          const [ex, ey] = shift ? snapAngle(c.points[0], c.points[1], x, y) : [gx, gy]
+          return { ...c, points: [c.points[0], c.points[1], ex, ey] }
+        }
         case 'measure':
           return { ...c, points: [c.points[0], c.points[1], x, y] }
         case 'rect':
-          return { ...c, width: x - c.x, height: y - c.y }
+          return { ...c, width: gx - c.x, height: gy - c.y }
         case 'ellipse':
-          return { ...c, rx: Math.abs(x - c.cx), ry: Math.abs(y - c.cy) }
+          return { ...c, rx: Math.abs(gx - c.cx), ry: Math.abs(gy - c.cy) }
         default:
           return c
       }
@@ -778,7 +841,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       setCurrent(null)
       return
     }
-    if ((c.type === 'arrow' || c.type === 'measure') && Math.abs(c.points[0] - c.points[2]) < 4 && Math.abs(c.points[1] - c.points[3]) < 4) {
+    if (
+      (c.type === 'line' || c.type === 'arrow' || c.type === 'measure') &&
+      Math.abs(c.points[0] - c.points[2]) < 4 &&
+      Math.abs(c.points[1] - c.points[3]) < 4
+    ) {
       setCurrent(null)
       return
     }
@@ -870,6 +937,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     const savedPos = stage.position()
     stage.scale({ x: 1, y: 1 })
     stage.position({ x: 0, y: 0 })
+    // The grid is a drawing aid, not markup content — hide it for the capture
+    // so it never bakes into the saved/exported PNG.
+    const gridVisible = gridLayerRef.current?.visible() ?? false
+    gridLayerRef.current?.visible(false)
     stage.draw()
     // PDF backing canvas is already rasterised at scale=2 in the load
     // effect, so pixelRatio=1 here keeps the saved PNG at source density.
@@ -883,6 +954,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
       width: naturalW,
       height: naturalH,
     })
+    gridLayerRef.current?.visible(gridVisible)
     stage.scale({ x: savedScale, y: savedScale })
     stage.position(savedPos)
     stage.draw()
@@ -1033,6 +1105,17 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             lineJoin="round"
           />
         )
+      case 'line':
+        return (
+          <Line
+            key={s.id}
+            points={s.points}
+            stroke={s.color}
+            strokeWidth={s.strokeWidth}
+            dash={s.dash}
+            lineCap="round"
+          />
+        )
       case 'arrow':
         return (
           <Arrow
@@ -1041,6 +1124,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             stroke={s.color}
             fill={s.color}
             strokeWidth={s.strokeWidth}
+            dash={s.dash}
             pointerLength={8 + s.strokeWidth}
             pointerWidth={8 + s.strokeWidth}
           />
@@ -1055,6 +1139,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             height={s.height}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
+            dash={s.dash}
           />
         )
       case 'ellipse':
@@ -1067,6 +1152,19 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             radiusY={s.ry}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
+            dash={s.dash}
+          />
+        )
+      case 'polyline':
+        return (
+          <Line
+            key={s.id}
+            points={s.points}
+            stroke={s.color}
+            strokeWidth={s.strokeWidth}
+            dash={s.dash}
+            lineCap="round"
+            lineJoin="round"
           />
         )
       case 'polygon':
@@ -1076,6 +1174,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             points={s.points}
             stroke={s.color}
             strokeWidth={s.strokeWidth}
+            dash={s.dash}
             closed
             lineJoin="round"
           />
@@ -1135,23 +1234,40 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             <ToolbarSeparator />
             <ToolbarGroup>
               {COLORS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  onClick={() => setColor(c.value)}
-                  aria-label={c.label}
-                  title={c.label}
+                <Tooltip key={c.value} label={c.label}>
+                  <button
+                    type="button"
+                    onClick={() => setColor(c.value)}
+                    aria-label={c.label}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: '50%',
+                      background: c.value,
+                      border: color === c.value ? '2px solid var(--c-amber)' : '2px solid var(--c-border)',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  />
+                </Tooltip>
+              ))}
+              <Tooltip label="Custom colour (any hex)">
+                <input
+                  type="color"
+                  value={/^#[0-9a-fA-F]{6}$/.test(color) ? color : '#000000'}
+                  onChange={(e) => setColor(e.target.value)}
+                  aria-label="Custom colour"
                   style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: '50%',
-                    background: c.value,
-                    border: color === c.value ? '2px solid var(--c-amber)' : '2px solid var(--c-border)',
-                    cursor: 'pointer',
+                    width: 24,
+                    height: 24,
                     padding: 0,
+                    border: '2px solid var(--c-border)',
+                    borderRadius: 6,
+                    background: 'none',
+                    cursor: 'pointer',
                   }}
                 />
-              ))}
+              </Tooltip>
             </ToolbarGroup>
             <ToolbarSeparator />
             <ToolbarGroup>
@@ -1169,6 +1285,71 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                   />
                 </ToolbarButton>
               ))}
+            </ToolbarGroup>
+            <ToolbarSeparator />
+            <ToolbarGroup>
+              {STROKE_STYLES.map((st) => (
+                <ToolbarButton
+                  key={st.value}
+                  active={strokeStyle === st.value}
+                  onClick={() => setStrokeStyle(st.value)}
+                  title={`${st.label} line`}
+                >
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 20,
+                      height: 0,
+                      borderTop:
+                        st.value === 'solid'
+                          ? '2px solid currentColor'
+                          : st.value === 'dashed'
+                            ? '2px dashed currentColor'
+                            : '2px dotted currentColor',
+                      verticalAlign: 'middle',
+                    }}
+                  />
+                </ToolbarButton>
+              ))}
+            </ToolbarGroup>
+            <ToolbarSeparator />
+            <ToolbarGroup>
+              <ToolbarButton active={gridOn} onClick={() => setGridOn((v) => !v)} title="Toggle grid overlay">
+                ▦
+              </ToolbarButton>
+              <ToolbarButton active={snapOn} onClick={() => setSnapOn((v) => !v)} title="Snap drawing to grid intersections">
+                ⌖
+              </ToolbarButton>
+              {pixelsPerMeter ? (
+                <select
+                  value={gridSpacingM}
+                  onChange={(e) => setGridSpacingM(Number(e.target.value))}
+                  title="Grid spacing (metres) — uses this drawing's calibration"
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 10,
+                    padding: '4px 6px',
+                    background: 'var(--c-panel)',
+                    color: 'var(--c-text)',
+                    border: '1px solid var(--c-border)',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {[0.25, 0.5, 1, 2, 5, 10].map((m) => (
+                    <option key={m} value={m}>
+                      {m} m
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span
+                  title="Calibrate this drawing for a metric grid; a pixel grid is used until then"
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}
+                >
+                  px grid
+                </span>
+              )}
             </ToolbarGroup>
             <ToolbarSeparator />
           </>
@@ -1411,10 +1592,18 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             onTouchMove={onPointerMove}
             onTouchEnd={onPointerUp}
             onDblClick={
-              tool === 'select' ? fitToView : tool === 'polygon' ? closePolygon : undefined
+              tool === 'select'
+                ? fitToView
+                : tool === 'polygon' || tool === 'polyline'
+                  ? finishPoly
+                  : undefined
             }
             onDblTap={
-              tool === 'select' ? fitToView : tool === 'polygon' ? closePolygon : undefined
+              tool === 'select'
+                ? fitToView
+                : tool === 'polygon' || tool === 'polyline'
+                  ? finishPoly
+                  : undefined
             }
             style={{
               cursor: gestureActive
@@ -1433,6 +1622,31 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                 </Group>
               ))}
             </Layer>
+            {/* Metric grid aid — own layer + ref so snapshotScene() can hide
+                it during the PNG capture. Hairline (1/scale) so it stays ~1px
+                at any zoom; capped line count via gridLineOffsets. */}
+            <Layer ref={gridLayerRef} listening={false} visible={gridOn}>
+              {gridOn &&
+                gridLineOffsets(naturalW, gridPx).map((gx) => (
+                  <Line
+                    key={`grid-v-${gx}`}
+                    points={[gx, 0, gx, naturalH]}
+                    stroke="#2563eb"
+                    strokeWidth={1 / scale}
+                    opacity={0.28}
+                  />
+                ))}
+              {gridOn &&
+                gridLineOffsets(naturalH, gridPx).map((gy) => (
+                  <Line
+                    key={`grid-h-${gy}`}
+                    points={[0, gy, naturalW, gy]}
+                    stroke="#2563eb"
+                    strokeWidth={1 / scale}
+                    opacity={0.28}
+                  />
+                ))}
+            </Layer>
             <Layer>
               {/* Filter shapes to the current page; pageIndex defaults to 1
                   for shapes from v1 scene graphs that didn't carry it. */}
@@ -1450,11 +1664,18 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
                   dash={[6, 4]}
                 />
               )}
-              {/* Polygon in-progress: vertices + connecting line. Double-click to close. */}
-              {tool === 'polygon' && polyPoints.length >= 2 && (
-                <Line points={polyPoints} stroke={color} strokeWidth={strokeWidth} dash={[6, 4]} />
+              {/* Polygon/polyline in-progress: vertices + connecting line.
+                  Double-click (or Enter) finishes. */}
+              {(tool === 'polygon' || tool === 'polyline') && polyPoints.length >= 2 && (
+                <Line
+                  points={polyPoints}
+                  stroke={color}
+                  strokeWidth={strokeWidth}
+                  dash={[6, 4]}
+                  closed={tool === 'polygon' && polyPoints.length >= 6}
+                />
               )}
-              {tool === 'polygon' &&
+              {(tool === 'polygon' || tool === 'polyline') &&
                 Array.from({ length: polyPoints.length / 2 }).map((_, i) => (
                   <Circle
                     key={`poly-vtx-${i}`}
@@ -1695,27 +1916,31 @@ function ToolbarButton({
   onClick?: () => void
   title?: string
 }) {
+  // aria-label carries the accessible name (native `title` dropped so desktop
+  // doesn't show a double tooltip); the styled Tooltip adds hover/focus/touch.
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        minWidth: 30,
-        height: 30,
-        padding: '0 8px',
-        background: active ? 'var(--c-amber-mid)' : 'var(--c-panel)',
-        color: active ? 'var(--c-amber)' : disabled ? 'var(--c-text-dim)' : 'var(--c-text-mid)',
-        border: '1px solid var(--c-border)',
-        borderRadius: 4,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        fontFamily: 'var(--font-mono)',
-        fontSize: 13,
-        opacity: disabled ? 0.5 : 1,
-      }}
-    >
-      {children}
-    </button>
+    <Tooltip label={title ?? ''}>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={title}
+        style={{
+          minWidth: 30,
+          height: 30,
+          padding: '0 8px',
+          background: active ? 'var(--c-amber-mid)' : 'var(--c-panel)',
+          color: active ? 'var(--c-amber)' : disabled ? 'var(--c-text-dim)' : 'var(--c-text-mid)',
+          border: '1px solid var(--c-border)',
+          borderRadius: 4,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 13,
+          opacity: disabled ? 0.5 : 1,
+        }}
+      >
+        {children}
+      </button>
+    </Tooltip>
   )
 }
