@@ -327,6 +327,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [symbolKind, setSymbolKind] = useState<SymbolKind>('db')
   const [eraserPos, setEraserPos] = useState<{ x: number; y: number } | null>(null)
+  // Fullscreen: overlay the whole viewport for maximum working space. The
+  // wrapper both CSS-covers (fixed inset:0) and requests OS fullscreen.
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
   const trRef = useRef<Konva.Transformer | null>(null)
   const eraserCursorRef = useRef<Konva.Circle | null>(null)
   const eraseTouchedRef = useRef(false)
@@ -575,6 +579,40 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Fullscreen — max working space. Request OS fullscreen synchronously in the
+  // click (gesture requirement); the CSS overlay (fixed inset:0) applies either
+  // way, so it still works if OS fullscreen is denied.
+  const toggleFullscreen = () => {
+    const next = !isFullscreen
+    const el = wrapperRef.current
+    try {
+      if (next && !document.fullscreenElement) void el?.requestFullscreen?.().catch(() => {})
+      else if (!next && document.fullscreenElement) void document.exitFullscreen?.().catch(() => {})
+    } catch {
+      /* OS fullscreen unavailable — the CSS overlay still applies. */
+    }
+    setIsFullscreen(next)
+  }
+
+  // Sync our state when the user leaves OS fullscreen (Esc / F11).
+  useEffect(() => {
+    const onFsChange = () => {
+      if (!document.fullscreenElement) setIsFullscreen(false)
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  // Esc also exits the CSS overlay (covers OS-fullscreen-denied contexts).
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsFullscreen(false)
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [isFullscreen])
 
   // Reset auto-fit when source OR current page changes.
   useEffect(() => {
@@ -1791,7 +1829,24 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
 
   // ── Render ───────────────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div
+      ref={wrapperRef}
+      style={
+        isFullscreen
+          ? {
+              // Overlay the whole viewport for maximum working space.
+              position: 'fixed',
+              inset: 0,
+              zIndex: 2000,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              padding: 8,
+              background: 'var(--c-base)',
+            }
+          : { display: 'flex', flexDirection: 'column', gap: 10 }
+      }
+    >
       {/* Toolbar — tool palette / colour / stroke / undo groups are hidden
           in view mode; zoom + page-nav stay visible so the viewer can pan,
           zoom and step through multi-page PDFs while read-only. */}
@@ -1957,6 +2012,13 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>FIT</span>
           </ToolbarButton>
           <ToolbarButton onClick={zoomIn} title="Zoom in (+, scroll wheel, or pinch)">+</ToolbarButton>
+          <ToolbarButton
+            onClick={toggleFullscreen}
+            active={isFullscreen}
+            title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen — use the whole screen to work'}
+          >
+            {isFullscreen ? '⤡' : '⛶'}
+          </ToolbarButton>
           <span
             style={{
               minWidth: 44,
@@ -2200,7 +2262,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         style={{
           position: 'relative',
           width: '100%',
-          height: '70vh',
+          // Fill the remaining space in fullscreen (root is a flex column);
+          // otherwise a fixed 70vh box in the normal page layout.
+          height: isFullscreen ? 'auto' : '70vh',
+          flex: isFullscreen ? 1 : undefined,
+          minHeight: isFullscreen ? 0 : undefined,
           background: 'var(--c-base)',
           border: '1px solid var(--c-border)',
           borderRadius: 8,
