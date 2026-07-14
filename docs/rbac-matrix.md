@@ -320,6 +320,18 @@ Read-only actions require project access (any project member). Write/export acti
 >
 > **Report page read** (`/projects/[id]/inspections/[inspectionId]/report`) — the PDF artifact source moved from `inspections.certificates` to the latest **issued** `projects.reports` row (read by project role via the `reports_select` RLS). Share-link + Revoke are deferred in v1 (the legacy `generateShareLinkAction` / `revokeCertificateAction` remain but are no longer surfaced).
 
+### Tenant documents — drawings & scope (`tenant-documents.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `list` / `getRevisionSignedUrl` (read) | R | R | R | R | R | R | R |
+| `create` / `addRevision` / `rename` / `reorder` / `delete*` (metadata) | W | W | W | Wᵍ | — | — | — |
+| direct `.upload()` / `.remove()` on the `tenant-documents` bucket | W | W | W | Wᵍ | — | — | — |
+
+> The document **metadata** actions write `structure.tenant_documents` / `tenant_document_revisions` via the **service-role key** (RLS bypassed) behind `guardProjectAccess → requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)`. The document **bytes**, however, go **directly from the browser session to the `tenant-documents` storage bucket** (`apps/web/src/lib/storage/tenant-documents-upload.ts`, since PR #117 — to escape Vercel's 4.5 MB route-body cap), and the per-revision `.remove()` deletes run on the cookie client too. So the `tenant-documents` **storage RLS is the load-bearing gate on the upload/delete path**, not the service-role metadata write.
+>
+> ᵍ **The storage gate and the app gate must agree — and as of migration `00174` they do.** `requireEffectiveRole` honours per-project promotion (`public.user_effective_project_role`, 00107: a contractor promoted to `project_manager` via `projects.project_members` passes on that project), but the storage policies gated on `public.user_can_manage_project` (00085/00152) previously checked **active org owner/admin/PM only** — no `project_members` path. A project-promoted contractor therefore saw the "+ Add drawing" / Upload button and passed the attach action, yet the direct `.upload()` was denied with a raw RLS violation ("Upload failed…"). `00174` redefines `user_can_manage_project` as a thin wrapper over `user_effective_project_role` (TRUE iff the effective role ∈ `ORG_WRITE_ROLES`), so the two gates are now identical. The same fix flows through to the **`node-order-documents`** bucket (node-order docs + shop drawings, whose upload also runs on the user client — `apps/web/src/app/api/node-order-documents/route.ts`) and every other policy that references the helper (`structure.node_order_documents` / `node_order_shop_drawings` / `tenant_documents` / `tenant_document_revisions`, `gcr.report_revisions`). Regression test: `apps/edge-functions/supabase/tests/tenant_documents_project_member_upload_rls_test.sql`.
+
 ## Public / unauthenticated
 
 | Route | Access |
