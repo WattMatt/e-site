@@ -28,6 +28,9 @@ const sampleRow = {
   notify_rfi_email: true,
   notify_rfi_to: [],
   notify_inspection_email: false,
+  notify_snag_email: true,
+  notify_diary_email: false,
+  notify_qc_email: true,
   created_at: '2026-05-26T10:00:00.000Z',
   updated_at: '2026-05-26T10:00:00.000Z',
   updated_by: null,
@@ -53,7 +56,20 @@ describe('rowToProjectSettings', () => {
       retentionPct: 5.0,                       // string → number
       notifyRfiEmail: true,
       notifyRfiTo: [],
+      // Module email toggles — each column must round-trip to ITS OWN camelCase
+      // key (a crossed wire here silently kills/mistargets a whole channel).
+      notifySnagEmail: true,
+      notifyDiaryEmail: false,
+      notifyQcEmail: true,
     })
+  })
+
+  it('maps notify_qc_email in both states (never crossed with a sibling toggle)', () => {
+    expect(rowToProjectSettings({ ...sampleRow, notify_qc_email: false }).notifyQcEmail).toBe(false)
+    expect(
+      rowToProjectSettings({ ...sampleRow, notify_qc_email: true, notify_snag_email: false, notify_diary_email: false })
+        .notifyQcEmail,
+    ).toBe(true)
   })
 
   it('coerces numeric retention_pct from string to number', () => {
@@ -101,6 +117,11 @@ describe('patchToRow', () => {
 
   it('returns an empty object for an empty patch', () => {
     expect(patchToRow({})).toEqual({})
+  })
+
+  it('maps notifyQcEmail to notify_qc_email (both directions of the toggle)', () => {
+    expect(patchToRow({ notifyQcEmail: false })).toEqual({ notify_qc_email: false })
+    expect(patchToRow({ notifyQcEmail: true })).toEqual({ notify_qc_email: true })
   })
 })
 

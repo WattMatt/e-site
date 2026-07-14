@@ -54,6 +54,7 @@ import {
   updateQcReportAction,
   deleteQcReportAction,
   closeQcReportAction,
+  reopenQcReportAction,
   addQcEntryAction,
   addQcCommentAction,
   deleteQcEntryAction,
@@ -148,18 +149,31 @@ function mockClient(opts: {
 /**
  * Service-role client mock (RLS-bypassing writes).
  *
- * Handles every service call across the delete + issue actions: table reads
- * settle to list rows, deletes/updates settle to { error: null }, the
- * projects.reports prior-version lookup walks eq→eq→eq→order→limit→
- * maybeSingle, and storage records upload/remove calls per bucket.
+ * Handles every service call across the delete + issue + close/reopen
+ * actions: table reads settle to list rows, deletes/updates settle to
+ * { error: null }, the projects.reports prior-version lookup walks
+ * eq→eq→eq→order→limit→maybeSingle, the row-verified status flips walk
+ * update→eq→eq→select→maybeSingle, and storage records upload/remove calls
+ * per bucket. Every insert/update payload is captured in `writes` so tests
+ * can assert the actual DB effects, not just that the action returned {}.
  */
 function mockServiceClient(opts: {
   priorReport?: { id: string; version: number } | null
   uploadError?: string | null
   insertError?: string | null
+  /** Simulate a 0-row status flip: update…select().maybeSingle() → null. */
+  updateRowMissing?: boolean
   listRows?: Record<string, object[]>
 } = {}) {
-  const { priorReport = null, uploadError = null, insertError = null, listRows = {} } = opts
+  const {
+    priorReport = null,
+    uploadError = null,
+    insertError = null,
+    updateRowMissing = false,
+    listRows = {},
+  } = opts
+
+  const writes: Array<{ table: string; op: 'insert' | 'update' | 'delete'; payload?: any }> = []
 
   const upload = vi.fn(() => uploadError
     ? Promise.resolve({ data: null, error: { message: uploadError } })
@@ -187,22 +201,34 @@ function mockServiceClient(opts: {
             }
             return chain
           },
-          insert: () => ({
-            select: () => ({
-              single: () => insertError
-                ? Promise.resolve({ data: null, error: { message: insertError } })
-                : Promise.resolve({ data: { id: 'ffffffff-ffff-ffff-ffff-ffffffffffff' }, error: null }),
-            }),
-          }),
-          update: () => {
+          insert: (payload: any) => {
+            writes.push({ table, op: 'insert', payload })
+            return {
+              select: () => ({
+                single: () => insertError
+                  ? Promise.resolve({ data: null, error: { message: insertError } })
+                  : Promise.resolve({ data: { id: 'ffffffff-ffff-ffff-ffff-ffffffffffff' }, error: null }),
+              }),
+            }
+          },
+          update: (payload: any) => {
+            writes.push({ table, op: 'update', payload })
             const chain: any = {
               eq: () => chain,
               neq: () => Promise.resolve({ data: null, error: null }),
+              // Row-verified flips (close/reopen) select the updated row back.
+              select: () => ({
+                maybeSingle: () => Promise.resolve({
+                  data: updateRowMissing ? null : { id: REPORT_ID },
+                  error: null,
+                }),
+              }),
               then: (onF: any, onR: any) => Promise.resolve({ data: null, error: null }).then(onF, onR),
             }
             return chain
           },
           delete: () => {
+            writes.push({ table, op: 'delete' })
             const chain: any = {
               eq: () => chain,
               then: (onF: any, onR: any) => Promise.resolve({ data: null, error: null }).then(onF, onR),
@@ -216,6 +242,7 @@ function mockServiceClient(opts: {
     upload,
     remove,
     storageFrom,
+    writes,
   }
 }
 
@@ -307,17 +334,13 @@ describe('createQcReportAction — RBAC gate (QC_WRITE_ROLES)', () => {
 })
 
 describe('createQcReportAction — happy path', () => {
-  it('creates the report and bells the roster minus the actor', async () => {
+  it('creates the report WITHOUT notifying anyone — drafts are private working state', async () => {
     const res = await createQcReportAction(VALID_CREATE)
     expect(res).toEqual({ reportId: REPORT_ID })
-    expect(resolveRecipientsMock).toHaveBeenCalledWith(PROJECT_ID, { excludeUserId: USER_ID })
-    expect(dispatchNotificationMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userIds: [OTHER_USER],
-        type: 'qc_created',
-        route: `/projects/${PROJECT_ID}/quality-control/${REPORT_ID}`,
-      }),
-    )
+    // Regression pin: the create-time roster bell leaked draft titles to
+    // client viewers. The notify moment is issue (notifyQcIssued), never create.
+    expect(resolveRecipientsMock).not.toHaveBeenCalled()
+    expect(dispatchNotificationMock).not.toHaveBeenCalled()
     expect(revalidatePathMock).toHaveBeenCalledWith(`/projects/${PROJECT_ID}/quality-control`)
   })
 })
@@ -439,16 +462,86 @@ describe('deleteQcReportAction — RBAC gate (ORG_WRITE_ROLES)', () => {
 })
 
 describe('closeQcReportAction — RBAC gate (ORG_WRITE_ROLES)', () => {
-  it('contractor is rejected', async () => {
-    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+  const ISSUED_ROW = { ...REPORT_ROW, status: 'issued' }
+
+  it('contractor is rejected before any service write', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor', reportRow: ISSUED_ROW }))
     const res = await closeQcReportAction(REPORT_ID)
     expect('error' in res && res.error).toBeTruthy()
+    expect(createServiceClientMock).not.toHaveBeenCalled()
   })
 
-  it('project_manager may close', async () => {
-    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager' }))
+  it('project_manager may close an issued report — service-client flip, payload asserted', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', reportRow: ISSUED_ROW }))
+    const service = mockServiceClient()
+    createServiceClientMock.mockReturnValue(service.client)
+
     const res = await closeQcReportAction(REPORT_ID)
     expect(res).toEqual({})
+    expect(service.writes).toContainEqual(
+      expect.objectContaining({ table: 'qc_reports', op: 'update', payload: { status: 'closed' } }),
+    )
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/projects/${PROJECT_ID}/quality-control/${REPORT_ID}`)
+  })
+
+  it('refuses to close a draft — only issued reports can be closed', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager' })) // status: draft
+    const res = await closeQcReportAction(REPORT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('issued') })
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+
+  it('errors out loud when the flip touches no row (never a silent no-op)', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', reportRow: ISSUED_ROW }))
+    const service = mockServiceClient({ updateRowMissing: true })
+    createServiceClientMock.mockReturnValue(service.client)
+
+    const res = await closeQcReportAction(REPORT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('not updated') })
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('reopenQcReportAction — RBAC gate (ORG_WRITE_ROLES) + closed-to-issued only', () => {
+  const CLOSED_ROW = { ...REPORT_ROW, status: 'closed' }
+
+  it('contractor is rejected before any service write', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor', reportRow: CLOSED_ROW }))
+    const res = await reopenQcReportAction(REPORT_ID)
+    expect('error' in res && res.error).toBeTruthy()
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+
+  it('project_manager may reopen a closed report — service-client flip back to issued', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', reportRow: CLOSED_ROW }))
+    const service = mockServiceClient()
+    createServiceClientMock.mockReturnValue(service.client)
+
+    const res = await reopenQcReportAction(REPORT_ID)
+    expect(res).toEqual({})
+    expect(service.writes).toContainEqual(
+      expect.objectContaining({ table: 'qc_reports', op: 'update', payload: { status: 'issued' } }),
+    )
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/projects/${PROJECT_ID}/quality-control/${REPORT_ID}`)
+  })
+
+  it.each(['draft', 'issued'])('refuses to reopen a %s report', async (status) => {
+    createClientMock.mockResolvedValue(
+      mockClient({ role: 'project_manager', reportRow: { ...REPORT_ROW, status } }),
+    )
+    const res = await reopenQcReportAction(REPORT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('closed') })
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+
+  it('errors out loud when the flip touches no row', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', reportRow: CLOSED_ROW }))
+    const service = mockServiceClient({ updateRowMissing: true })
+    createServiceClientMock.mockReturnValue(service.client)
+
+    const res = await reopenQcReportAction(REPORT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('not updated') })
+    expect(revalidatePathMock).not.toHaveBeenCalled()
   })
 })
 
@@ -519,6 +612,74 @@ describe('deleteQcCommentAction — author-or-manager gate', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Closed-report freeze — every content mutation refuses status='closed'
+// server-side (the UI hides the affordances, but stale tabs / direct POSTs
+// reach the actions; the reopen path is the only way out of closed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('closed-report freeze (server-side)', () => {
+  const CLOSED_ROW = { ...REPORT_ROW, status: 'closed' }
+
+  it('issueQcReportAction refuses — closed is never silently re-issued', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', reportRow: CLOSED_ROW }))
+    const res = await issueQcReportAction(REPORT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('reopen') })
+    expect(gatherMock).not.toHaveBeenCalled()
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+    expect(notifyQcIssuedMock).not.toHaveBeenCalled()
+  })
+
+  it('addQcEntryAction refuses', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', reportRow: CLOSED_ROW }))
+    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring' })
+    expect(res).toEqual({ error: expect.stringContaining('closed') })
+    const { qcService } = await import('@esite/shared')
+    expect(qcService.addEntry).not.toHaveBeenCalled()
+  })
+
+  it('addQcCommentAction refuses', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', reportRow: CLOSED_ROW }))
+    const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'Looks good' })
+    expect(res).toEqual({ error: expect.stringContaining('closed') })
+    const { qcService } = await import('@esite/shared')
+    expect(qcService.addComment).not.toHaveBeenCalled()
+  })
+
+  it('deleteQcEntryAction refuses — even for the author', async () => {
+    createClientMock.mockResolvedValue(mockClient({
+      role: 'contractor',
+      reportRow: CLOSED_ROW,
+      entryRow: { ...ENTRY_ROW, created_by: USER_ID },
+    }))
+    const res = await deleteQcEntryAction(ENTRY_ID)
+    expect(res).toEqual({ error: expect.stringContaining('closed') })
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+
+  it('deleteQcPhotoAction refuses — even for the uploader', async () => {
+    createClientMock.mockResolvedValue(mockClient({
+      role: 'contractor',
+      reportRow: CLOSED_ROW,
+      photoRow: { ...PHOTO_ROW, uploaded_by: USER_ID },
+    }))
+    const res = await deleteQcPhotoAction(PHOTO_ID)
+    expect(res).toEqual({ error: expect.stringContaining('closed') })
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+
+  it('deleteQcCommentAction refuses — even for the author', async () => {
+    createClientMock.mockResolvedValue(mockClient({
+      role: 'contractor',
+      reportRow: CLOSED_ROW,
+      commentRow: { ...COMMENT_ROW, created_by: USER_ID },
+    }))
+    const res = await deleteQcCommentAction(COMMENT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('closed') })
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // issueQcReportAction — ORG_WRITE_ROLES + export shape
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -572,6 +733,39 @@ describe('issueQcReportAction — happy path (no prior report)', () => {
       expect.anything(),
       { contentType: 'application/pdf', upsert: false },
     )
+    // The projects.reports row is what downloads/portal key off — pin the
+    // routing-critical columns (kind drives bucketForKind; source_* drive the
+    // supersede lookup; version drives "latest").
+    expect(service.writes).toContainEqual(
+      expect.objectContaining({
+        table: 'reports',
+        op: 'insert',
+        payload: expect.objectContaining({
+          organisation_id: ORG_ID,
+          project_id: PROJECT_ID,
+          kind: 'qc',
+          source_table: 'qc_reports',
+          source_id: REPORT_ID,
+          status: 'issued',
+          version: 1,
+          storage_path: `${ORG_ID}/${PROJECT_ID}/qc-report-${REPORT_ID}-v1.pdf`,
+          generated_by: USER_ID,
+        }),
+      }),
+    )
+    // The status flip is what makes the report visible to client viewers at
+    // all (00172 issued-only RLS) — assert the actual payload, not just {}.
+    expect(service.writes).toContainEqual(
+      expect.objectContaining({
+        table: 'qc_reports',
+        op: 'update',
+        payload: expect.objectContaining({
+          status: 'issued',
+          issued_by: USER_ID,
+          issued_at: expect.any(String),
+        }),
+      }),
+    )
     expect(notifyQcIssuedMock).toHaveBeenCalledWith({
       reportId: REPORT_ID,
       projectId: PROJECT_ID,
@@ -596,6 +790,24 @@ describe('issueQcReportAction — re-issue (supersede prior)', () => {
       expect.stringContaining(`qc-report-${REPORT_ID}-v4.pdf`),
       expect.anything(),
       expect.anything(),
+    )
+    expect(service.writes).toContainEqual(
+      expect.objectContaining({
+        table: 'reports',
+        op: 'insert',
+        payload: expect.objectContaining({ kind: 'qc', version: 4 }),
+      }),
+    )
+    // Prior issued rows must be superseded and pointed at the new row.
+    expect(service.writes).toContainEqual(
+      expect.objectContaining({
+        table: 'reports',
+        op: 'update',
+        payload: {
+          status: 'superseded',
+          superseded_by: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+        },
+      }),
     )
   })
 })

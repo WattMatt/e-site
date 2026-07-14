@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { qcService } from './qc.service'
+import { compareQcPhotos, qcService } from './qc.service'
 
 /** Captures the row handed to .insert(): schema().from().insert().select().single(). */
 function buildInsertCaptureClient() {
@@ -312,5 +312,63 @@ describe('qcService.listByProject', () => {
     })
     const rows = await qcService.listByProject(client, 'project-1')
     expect(rows[0]).toMatchObject({ entryCount: 0, photoCount: 0 })
+  })
+})
+
+/**
+ * Mock for listEntriesWithPhotos: one nested read —
+ * schema().from('qc_entries').select().eq().order() → entries with embedded
+ * qc_entry_photos/qc_comments arrays — then fetchProfileMap via top-level from().
+ */
+function buildEntriesClient(entries: Array<Record<string, unknown>>) {
+  const order = vi.fn(() => Promise.resolve({ data: entries, error: null }))
+  const eq = vi.fn(() => ({ order }))
+  const select = vi.fn(() => ({ eq }))
+  const from = vi.fn(() => ({ select }))
+  const schema = vi.fn(() => ({ from }))
+  const client = {
+    schema,
+    from: () => ({
+      select: () => ({
+        in: () => Promise.resolve({ data: [{ id: USER, full_name: 'Jane' }], error: null }),
+      }),
+    }),
+  }
+  return { client: client as any }
+}
+
+describe('qcService.listEntriesWithPhotos — deterministic photo ordering', () => {
+  it('breaks duplicate sort_order ties by created_at then id, so "Photo N" is stable', async () => {
+    // Two photos tie on sort_order 3 AND created_at (the nextSortOrder MAX+1
+    // race) — id is the final tiebreaker. Input arrives in a hostile order to
+    // prove the sort does the work, not the DB's nested-row order.
+    const photos = [
+      { id: 'p-z', sort_order: 3, created_at: '2026-07-14T10:00:00Z' },
+      { id: 'p-late', sort_order: 1, created_at: '2026-07-14T09:00:00Z' },
+      { id: 'p-a', sort_order: 3, created_at: '2026-07-14T10:00:00Z' },
+      { id: 'p-early', sort_order: 1, created_at: '2026-07-14T08:00:00Z' },
+      { id: 'p-first', sort_order: 0, created_at: '2026-07-14T11:00:00Z' },
+    ]
+    const { client } = buildEntriesClient([
+      { id: 'e1', created_by: USER, sort_order: 0, qc_entry_photos: photos, qc_comments: [] },
+    ])
+
+    const [entry] = await qcService.listEntriesWithPhotos(client, 'qc-1')
+    expect(entry.qc_entry_photos.map((p: { id: string }) => p.id)).toEqual([
+      'p-first',   // sort_order 0
+      'p-early',   // sort_order 1, earlier created_at
+      'p-late',    // sort_order 1, later created_at
+      'p-a',       // sort_order 3, created_at tie → id 'p-a' < 'p-z'
+      'p-z',
+    ])
+  })
+
+  it('exports compareQcPhotos (shared with the PDF gatherer) with the same rule', () => {
+    const a = { id: 'a', sort_order: 2, created_at: '2026-07-14T10:00:00Z' }
+    const b = { id: 'b', sort_order: 2, created_at: '2026-07-14T10:00:00Z' }
+    expect(compareQcPhotos(a, b)).toBeLessThan(0)
+    expect(compareQcPhotos(b, a)).toBeGreaterThan(0)
+    expect(compareQcPhotos({ ...a, sort_order: 1 }, b)).toBeLessThan(0)
+    expect(compareQcPhotos({ ...b, created_at: '2026-07-14T09:00:00Z' }, a)).toBeLessThan(0)
   })
 })

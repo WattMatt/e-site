@@ -55,6 +55,28 @@ export interface QcComment {
   updated_at: string
 }
 
+/**
+ * Deterministic photo ordering: sort_order, then created_at, then id.
+ *
+ * "Photo N" numbering must agree everywhere a photo list is rendered (web UI
+ * via listEntriesWithPhotos, PDF via qc-report-data.ts) — per-photo comments
+ * reference photos by number. Duplicate sort_order values are possible
+ * (nextSortOrder is a client-side MAX+1 with no unique constraint, so two
+ * concurrent uploaders can tie), which makes the tiebreakers load-bearing:
+ * without them the order falls through to PostgREST's unspecified nested-row
+ * order and "Photo N" can differ between renders.
+ */
+export function compareQcPhotos(
+  a: Pick<QcEntryPhoto, 'sort_order' | 'created_at' | 'id'>,
+  b: Pick<QcEntryPhoto, 'sort_order' | 'created_at' | 'id'>,
+): number {
+  return (
+    ((a.sort_order ?? 0) - (b.sort_order ?? 0)) ||
+    String(a.created_at).localeCompare(String(b.created_at)) ||
+    String(a.id).localeCompare(String(b.id))
+  )
+}
+
 export const qcService = {
   /** All QC reports for a project with entry/photo counts + raiser names. */
   async listByProject(client: TypedSupabaseClient, projectId: string) {
@@ -241,7 +263,7 @@ export const qcService = {
       author: e.created_by ? (profiles[e.created_by] ?? null) : null,
       qc_entry_photos: ((e.qc_entry_photos ?? []) as QcEntryPhoto[])
         .slice()
-        .sort((a, b) => a.sort_order - b.sort_order),
+        .sort(compareQcPhotos),
       qc_comments: ((e.qc_comments ?? []) as QcComment[])
         .slice()
         .sort((a, b) => a.created_at.localeCompare(b.created_at))

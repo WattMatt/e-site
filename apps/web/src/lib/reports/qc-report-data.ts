@@ -12,6 +12,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { compareQcPhotos } from '@esite/shared'
 import { createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { resolveBranding, type ResolvedBranding } from './branding'
@@ -229,9 +230,10 @@ export async function gatherQcReportData(
   // 5. Fetch photos as data: URIs (capped) + map comments per entry.
   const reportEntries: QcReportEntryData[] = await Promise.all(
     entries.map(async (e: any, entryIdx: number): Promise<QcReportEntryData> => {
-      const sortedPhotos: any[] = (e.qc_entry_photos ?? []).slice().sort(
-        (a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
-      )
+      // compareQcPhotos = the ONE ordering rule (sort_order, created_at, id)
+      // shared with qcService.listEntriesWithPhotos, so the PDF's "Photo N"
+      // always matches the web UI's — even across duplicate sort_order values.
+      const sortedPhotos: any[] = (e.qc_entry_photos ?? []).slice().sort(compareQcPhotos)
       // Numbering over the FULL sorted list keeps "Photo N" comment
       // references stable across the cap and failed downloads.
       const photoIndexById = new Map<string, number>(

@@ -23,10 +23,11 @@ import type {
 import { gatherQcReportData } from '@/lib/reports/qc-report-data'
 import { renderQcReport } from '@/lib/reports/qc-report'
 import { notifyQcIssued } from '@/lib/qc-email'
-import { resolveProjectRecipients } from '@/lib/recipients'
-import { dispatchNotification } from '@/lib/notifications'
 
 const uuidSchema = z.string().uuid()
+
+/** Shared refusal for every mutation against a closed report. */
+const CLOSED_REPORT_ERROR = 'This report is closed and can no longer be edited.'
 
 const QC_ENTRIES_BUCKET = 'qc-report-entries'
 const QC_REPORTS_BUCKET = 'qc-reports'
@@ -94,21 +95,9 @@ export async function createQcReportAction(
     return { error: err instanceof Error ? err.message : String(err) }
   }
 
-  // In-app bell → the whole project roster minus the raiser (rfi pattern).
-  const { userIds: bellUserIds } = await resolveProjectRecipients(parsed.data.projectId, {
-    excludeUserId: user.id,
-  })
-  if (bellUserIds.length) {
-    await dispatchNotification({
-      userIds: bellUserIds,
-      title: 'New QC report',
-      body: `"${parsed.data.title}" — QC Report ${report.report_no}`,
-      route: QC_REPORT_PATH(parsed.data.projectId, report.id),
-      type: 'qc_created',
-      entityType: 'qc_report',
-      entityId: report.id,
-    })
-  }
+  // No notification at create time — a draft is private working state (00172
+  // hides it from client viewers, and its title may carry unvetted findings).
+  // The roster is notified once, at issue time, via notifyQcIssued.
 
   revalidatePath(QC_LIST_PATH(parsed.data.projectId))
   return { reportId: report.id }
@@ -132,7 +121,7 @@ export async function updateQcReportAction(
   if (!gate.ok) return { error: gate.error }
 
   if (report.status === 'closed') {
-    return { error: 'This report is closed and can no longer be edited.' }
+    return { error: CLOSED_REPORT_ERROR }
   }
 
   try {
@@ -217,6 +206,16 @@ export async function deleteQcReportAction(
   return {}
 }
 
+/**
+ * Close an issued report (issued → closed).
+ *
+ * Gate: ORG_WRITE_ROLES. The status flip runs on the SERVICE client — the
+ * effective-role gate above is the authorization boundary (per-project
+ * promotions don't satisfy the table's RLS write policies; same reasoning as
+ * issueQcReportAction's flip) — and is row-verified: a 0-row update surfaces
+ * as an error instead of a silent no-op. The `.eq('status', 'issued')` filter
+ * makes the transition atomic against a concurrent status change.
+ */
 export async function closeQcReportAction(
   reportId: string,
 ): Promise<{ error?: string }> {
@@ -233,11 +232,67 @@ export async function closeQcReportAction(
   const gate = await requireEffectiveRole(supabase, report.project_id, ORG_WRITE_ROLES)
   if (!gate.ok) return { error: gate.error }
 
-  const { error: updateErr } = await (supabase as any)
+  if (report.status !== 'issued') {
+    return { error: 'Only an issued report can be closed.' }
+  }
+
+  const service = createServiceClient()
+  const { data: closedRow, error: updateErr } = await (service as any)
     .schema('projects').from('qc_reports')
     .update({ status: 'closed' })
     .eq('id', reportId)
+    .eq('status', 'issued')
+    .select('id')
+    .maybeSingle()
   if (updateErr) return { error: updateErr.message }
+  if (!closedRow) {
+    return { error: 'Close failed — the report was not updated (it may have changed in another tab).' }
+  }
+
+  revalidatePath(QC_LIST_PATH(report.project_id))
+  revalidatePath(QC_REPORT_PATH(report.project_id, reportId))
+  return {}
+}
+
+/**
+ * Reopen a closed report (closed → issued) — closing is never a dead end.
+ *
+ * Gate: ORG_WRITE_ROLES. Same service-client + row-verified shape as
+ * closeQcReportAction. The report returns to 'issued' (its pre-close state):
+ * issued_at/issued_by and the saved PDF versions are untouched.
+ */
+export async function reopenQcReportAction(
+  reportId: string,
+): Promise<{ error?: string }> {
+  const parse = uuidSchema.safeParse(reportId)
+  if (!parse.success) return { error: 'Invalid report id' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const report = await loadQcReportForGate(supabase, reportId)
+  if (!report) return { error: 'Report not found' }
+
+  const gate = await requireEffectiveRole(supabase, report.project_id, ORG_WRITE_ROLES)
+  if (!gate.ok) return { error: gate.error }
+
+  if (report.status !== 'closed') {
+    return { error: 'Only a closed report can be reopened.' }
+  }
+
+  const service = createServiceClient()
+  const { data: reopenedRow, error: updateErr } = await (service as any)
+    .schema('projects').from('qc_reports')
+    .update({ status: 'issued' })
+    .eq('id', reportId)
+    .eq('status', 'closed')
+    .select('id')
+    .maybeSingle()
+  if (updateErr) return { error: updateErr.message }
+  if (!reopenedRow) {
+    return { error: 'Reopen failed — the report was not updated (it may have changed in another tab).' }
+  }
 
   revalidatePath(QC_LIST_PATH(report.project_id))
   revalidatePath(QC_REPORT_PATH(report.project_id, reportId))
@@ -261,6 +316,10 @@ export async function addQcEntryAction(
 
   const gate = await requireEffectiveRole(supabase, report.project_id, QC_WRITE_ROLES)
   if (!gate.ok) return { error: gate.error }
+
+  if (report.status === 'closed') {
+    return { error: CLOSED_REPORT_ERROR }
+  }
 
   let entry: { id: string }
   try {
@@ -302,6 +361,13 @@ export async function addQcCommentAction(
   const gate = await requireEffectiveRole(supabase, entry.project_id as string, QC_WRITE_ROLES)
   if (!gate.ok) return { error: gate.error }
 
+  // Closed-report freeze — resolve the parent report's status via RLS.
+  const report = await loadQcReportForGate(supabase, entry.report_id as string)
+  if (!report) return { error: 'Report not found' }
+  if (report.status === 'closed') {
+    return { error: CLOSED_REPORT_ERROR }
+  }
+
   let comment: { id: string }
   try {
     comment = (await qcService.addComment(supabase as never, parsed.data, user.id)) as { id: string }
@@ -332,6 +398,13 @@ export async function deleteQcEntryAction(
     .eq('id', entryId)
     .maybeSingle()
   if (!entry) return { error: 'Entry not found' }
+
+  // Closed-report freeze — nobody (author or manager) edits a closed record.
+  const report = await loadQcReportForGate(supabase, entry.report_id as string)
+  if (!report) return { error: 'Entry not found' }
+  if (report.status === 'closed') {
+    return { error: CLOSED_REPORT_ERROR }
+  }
 
   const isAuthor = entry.created_by === user.id
   if (!isAuthor) {
@@ -387,6 +460,13 @@ export async function deleteQcPhotoAction(
     .maybeSingle()
   if (!entry) return { error: 'Photo not found' }
 
+  // Closed-report freeze — nobody (author or manager) edits a closed record.
+  const report = await loadQcReportForGate(supabase, entry.report_id as string)
+  if (!report) return { error: 'Photo not found' }
+  if (report.status === 'closed') {
+    return { error: CLOSED_REPORT_ERROR }
+  }
+
   const isAuthor = photo.uploaded_by === user.id
   if (!isAuthor) {
     const gate = await requireEffectiveRole(supabase, photo.project_id as string, ORG_WRITE_ROLES)
@@ -423,6 +503,13 @@ export async function deleteQcCommentAction(
     .maybeSingle()
   if (!comment) return { error: 'Comment not found' }
 
+  // Closed-report freeze — nobody (author or manager) edits a closed record.
+  const report = await loadQcReportForGate(supabase, comment.report_id as string)
+  if (!report) return { error: 'Comment not found' }
+  if (report.status === 'closed') {
+    return { error: CLOSED_REPORT_ERROR }
+  }
+
   // Comments don't denormalise project_id — resolve it via the parent entry.
   const { data: entry } = await (supabase as any)
     .schema('projects').from('qc_entries')
@@ -458,6 +545,8 @@ export type IssueQcReportResult =
  * Issue a QC report.
  *
  * - RBAC: ORG_WRITE_ROLES (owner / admin / project_manager).
+ * - Refuses closed reports (issue would silently reopen them) — see
+ *   reopenQcReportAction for the deliberate closed → issued path.
  * - Renders the PDF via renderQcReport (gather gates internally too).
  * - Uploads to `qc-reports/{org_id}/{project_id}/qc-report-{reportId}-v{n}.pdf`.
  * - Inserts a `projects.reports` row (kind='qc', source_table='qc_reports').
@@ -482,6 +571,13 @@ export async function issueQcReportAction(
 
   const gate = await requireEffectiveRole(supabase, report.project_id, ORG_WRITE_ROLES)
   if (!gate.ok) return { error: gate.error }
+
+  // Closed is terminal for issue: re-issuing would silently flip the report
+  // back to 'issued' (resurrecting it in the client portal + re-emailing the
+  // roster). Reopening is an explicit manager decision (reopenQcReportAction).
+  if (report.status === 'closed') {
+    return { error: 'This report is closed — reopen the report before re-issuing.' }
+  }
 
   // ── Gather data + render ──────────────────────────────────────────────────
   let pdfBuffer: Buffer
