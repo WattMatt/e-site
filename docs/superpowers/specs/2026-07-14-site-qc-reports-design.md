@@ -256,3 +256,30 @@ under RLS, mirroring `replaceAnnotation`).
    object, version, status) → email dispatch confirmed via Resend API (key from Supabase edge
    secrets) → client_viewer probe sees issued-only + cannot write (REST probes) → full cleanup
    (org cascade + auth users + auth_events + storage).
+
+## 8. Post-review amendments (2026-07-14, adversarial review round)
+
+A 6-dimension multi-agent review confirmed 19 findings; all fixed on this branch. Semantics that
+changed from the sections above:
+
+- **Write RLS is effective-role based** (`user_effective_project_role`, 00171 idiom), not an org
+  role join — per-project promotions work and writes are bound to project access.
+- **Status transitions are DB-guarded**: a BEFORE UPDATE trigger restricts `status` changes to
+  ORG_WRITE_ROLES effective role (service-role bypasses); child tables carry a closed-report
+  freeze trigger (cable-schedule 00168 precedent).
+- **Client viewers are storage-blocked from BOTH qc buckets for SELECT too** (drafts were
+  otherwise listable/downloadable directly) — RESTRICTIVE policies; portal PDF delivery is
+  service-signed after RLS row reads, so nothing user-facing changed.
+- **`createQcReportAction` fires no notification** — drafts are private; issue is the notify
+  moment (the spec'd create-time bell leaked draft titles to client viewers with a dead link).
+- **Close requires `issued`** (a closed draft could otherwise reopen to `issued` with no PDF);
+  **`reopenQcReportAction`** (ORG_WRITE_ROLES, closed→issued) added so closed isn't a dead end.
+  Close/reopen flips are service-client + row-verified.
+- **PDF entry cards paginate** (header-only `wrap={false}` + `minPresenceAhead`); the review
+  reproduced silent clipping of photos ≥13 and the comments block under the old whole-card
+  `wrap={false}` at high photo counts. Render test pins `Photo 24` + trailing comment presence.
+- **Markup re-edit, report-metadata edit, close/reopen/delete UI** shipped (were gaps).
+- **Photo ordering is one shared comparator** (`compareQcPhotos`: sort_order, created_at, id) so
+  UI and PDF "Photo N" can never disagree.
+- Issue button opens the preview tab in-gesture (`previewViaSignedUrl` pattern) to survive
+  popup blockers.
