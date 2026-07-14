@@ -10,6 +10,7 @@ import {
 } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { AddQcEntryForm } from './AddQcEntryForm'
+import { EditQcReportForm } from './EditQcReportForm'
 import { QcEntryCard, type QcEntryView } from './QcEntryCard'
 import { QcReportsSection } from './QcReportsSection'
 
@@ -81,6 +82,11 @@ export default async function QcReportDetailPage({ params }: Props) {
       caption: p.caption ?? null,
       kind: p.kind === 'markup' ? 'markup' : 'photo',
       uploadedBy: p.uploaded_by,
+      // Markup re-edit plumbing: the replace target + the stored scene graph
+      // that rebuilds FloorPlanAttachDialog's `initial` (null for plain photos).
+      filePath: p.file_path,
+      sourceFloorPlanId: p.source_floor_plan_id ?? null,
+      annotationData: p.annotation_data ?? null,
     })),
     comments: (e.qc_comments ?? []).map((c: any) => ({
       id: c.id,
@@ -137,6 +143,19 @@ export default async function QcReportDetailPage({ params }: Props) {
         </p>
       )}
 
+      {/* Metadata edit — hidden for read-only roles and on closed reports */}
+      {canWrite && !isClosed && (
+        <EditQcReportForm
+          reportId={reportId}
+          defaultValues={{
+            title: report.title,
+            description: report.description ?? undefined,
+            location: report.location ?? undefined,
+            inspectionDate: report.inspection_date ?? undefined,
+          }}
+        />
+      )}
+
       {/* Issue + saved reports */}
       <div style={{ marginBottom: 20 }}>
         <QcReportsSection
@@ -160,6 +179,7 @@ export default async function QcReportDetailPage({ params }: Props) {
             <QcEntryCard
               key={entry.id}
               entry={entry}
+              projectId={projectId}
               canWrite={canWrite}
               canManage={canManage}
               currentUserId={currentUserId}

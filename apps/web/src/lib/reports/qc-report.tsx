@@ -247,7 +247,11 @@ function PhotoGrid({ photos, omittedCount }: { photos: QcReportPhotoData[]; omit
     <View style={s.photoSection}>
       <View style={s.photoGrid}>
         {photos.map(p => (
-          <View key={p.id} style={s.photoCell}>
+          // Each CELL is unbreakable (image + tag + caption stay together) but
+          // the grid itself wraps across pages — the interior.tsx PhotoGrid
+          // behaviour. Wrapping the whole grid (let alone the whole entry) in
+          // wrap={false} silently clips photos past the page bottom.
+          <View key={p.id} style={s.photoCell} wrap={false}>
             <Image src={p.dataUri} style={s.photoImage} />
             <Text style={s.photoTag}>{photoTagText(p)}</Text>
             {p.caption && <Text style={s.photoCaption}>{p.caption}</Text>}
@@ -267,26 +271,41 @@ function CommentLine({ comment }: { comment: QcReportCommentData }) {
   metaParts.push(comment.authorName ?? 'Unknown')
   if (comment.createdAt) metaParts.push(comment.createdAt.slice(0, 10))
   return (
-    <View style={s.comment}>
+    // Unbreakable per LINE (meta never separates from its body) — the comments
+    // BLOCK still flows across pages with the rest of the entry.
+    <View style={s.comment} wrap={false}>
       <Text style={s.commentMeta}>{metaParts.join(' · ')}</Text>
       <Text style={s.commentBody}>{comment.body}</Text>
     </View>
   )
 }
 
+/**
+ * One entry. The card itself MUST be breakable: an entry carries up to 24
+ * photos (~1,300pt of grid) against ~766pt of usable A4 body, so a
+ * wrap={false} card cannot fit any page and react-pdf silently clips
+ * everything past the page bottom (photos AND the comments block). Only the
+ * small header+description block is unbreakable, with minPresenceAhead
+ * reserving room for at least one photo row so a title is never orphaned at
+ * a page bottom; the photo grid and comments flow across pages (per-cell /
+ * per-line wrap={false} keeps each unit intact) — interior.tsx PhotoGrid
+ * behaviour.
+ */
 function EntryCard({ entry }: { entry: QcReportEntryData }) {
   return (
-    <View style={s.card} wrap={false}>
-      {/* Header: number + title */}
-      <View style={s.cardHeader}>
-        <Text style={s.entryNumber}>{entry.number}</Text>
-        <Text style={s.entryTitle}>{entry.title}</Text>
-      </View>
+    <View style={s.card}>
+      <View wrap={false} minPresenceAhead={120}>
+        {/* Header: number + title */}
+        <View style={s.cardHeader}>
+          <Text style={s.entryNumber}>{entry.number}</Text>
+          <Text style={s.entryTitle}>{entry.title}</Text>
+        </View>
 
-      {/* Description */}
-      {entry.description && (
-        <Text style={s.description}>{entry.description}</Text>
-      )}
+        {/* Description */}
+        {entry.description && (
+          <Text style={s.description}>{entry.description}</Text>
+        )}
+      </View>
 
       {/* Photos */}
       <PhotoGrid photos={entry.photos} omittedCount={entry.omittedCount} />
@@ -294,7 +313,7 @@ function EntryCard({ entry }: { entry: QcReportEntryData }) {
       {/* Comments */}
       {entry.comments.length > 0 && (
         <>
-          <Text style={s.commentsHeader}>Comments</Text>
+          <Text style={s.commentsHeader} minPresenceAhead={40}>Comments</Text>
           {entry.comments.map(c => (
             <CommentLine key={c.id} comment={c} />
           ))}

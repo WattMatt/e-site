@@ -131,6 +131,40 @@ export async function uploadQcMarkup(
   })
 }
 
+/**
+ * Overwrite an existing drawing markup in place — the QC entry card's
+ * "Edit markup" flow (spec §4 re-edit). Mirrors the RFI gallery's
+ * replaceAnnotation (components/attachments/commit.ts): the new flattened PNG
+ * replaces the stored object at the SAME file_path (upsert:true — the storage
+ * UPDATE policy is the gate), then the row's annotation_data +
+ * file_size_bytes are updated under RLS. Same row, same path, so per-photo
+ * comments and "Photo N" numbering keep pointing at the right image; the
+ * caller must router.refresh() so re-signed URLs bust the stale thumbnail.
+ */
+export async function replaceQcMarkup(
+  supabase: SupabaseClient,
+  photo: { id: string; filePath: string },
+  markup: { blob: Blob; annotationData: AnnotationData },
+): Promise<void> {
+  if (markup.blob.size > QC_PHOTO_MAX_BYTES) {
+    throw new Error('The markup exceeds the 20 MB limit.')
+  }
+  const { error: upErr } = await supabase.storage
+    .from(QC_ENTRIES_BUCKET)
+    .upload(photo.filePath, markup.blob, { contentType: 'image/png', upsert: true })
+  if (upErr) throw new Error(`Re-upload failed: ${upErr.message}`)
+
+  const { error: rowErr } = await (supabase as any)
+    .schema('projects')
+    .from('qc_entry_photos')
+    .update({
+      annotation_data: markup.annotationData,
+      file_size_bytes: markup.blob.size,
+    })
+    .eq('id', photo.id)
+  if (rowErr) throw new Error(`Could not update markup: ${rowErr.message}`)
+}
+
 /** Shared upload → row-insert step with orphan-blob cleanup on row failure. */
 async function uploadAndInsert(
   supabase: SupabaseClient,

@@ -41,6 +41,10 @@ const STATUS_COLORS: Record<string, string> = {
   active: 'var(--c-success, #22C55E)',
   ISSUED: 'var(--c-success, #22C55E)',
   DRAFT: 'var(--c-text-dim)',
+  // QC report statuses are lowercase (00172 CHECK constraint) — the uppercase
+  // pair above is the cable-schedule revision casing, so both must map.
+  issued: 'var(--c-success, #22C55E)',
+  draft: 'var(--c-text-dim)',
 }
 
 export function StatusBadge({ value }: { value: string | null | undefined }) {

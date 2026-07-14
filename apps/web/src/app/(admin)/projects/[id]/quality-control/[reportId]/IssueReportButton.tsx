@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { issueQcReportAction } from '@/actions/qc.actions'
+import { previewViaSignedUrl } from '@/lib/file-open'
 
 interface Props {
   projectId: string
@@ -15,8 +16,16 @@ interface Props {
 
 /**
  * Two-step armed issue confirm (Safari window.confirm suppression pattern).
- * On success opens the inline preview route in a new tab — same flow as
- * VisitDetail's Export PDF — and refreshes the page so the status flips.
+ * On success opens the inline preview route in a new tab and refreshes the
+ * page so the status flips.
+ *
+ * The tab is opened through previewViaSignedUrl: a BLANK tab spawns
+ * synchronously inside the confirm-click gesture, then navigates once the
+ * action resolves (and closes on error). A window.open() AFTER awaiting the
+ * issue — which gathers photos, renders and uploads the PDF, and emails the
+ * roster — is silently popup-blocked (Safari always; Chrome once the ~5s user
+ * activation expires), which read as a failed issue and provoked duplicate
+ * re-issues + duplicate roster emails.
  */
 export function IssueReportButton({ projectId, reportId, status, onIssued }: Props) {
   const router = useRouter()
@@ -40,16 +49,23 @@ export function IssueReportButton({ projectId, reportId, status, onIssued }: Pro
     setArmed(false)
     setBusy(true)
     setError('')
-    const result = await issueQcReportAction(reportId)
+    let version = 0
+    // previewViaSignedUrl opens the blank tab NOW (gesture still on the call
+    // stack), awaits the thunk, then points the tab at the live preview route
+    // so the browser's native PDF viewer handles it (the saved artifact is
+    // listed in the panel below). On error the tab closes and we surface it.
+    const res = await previewViaSignedUrl(async () => {
+      const result = await issueQcReportAction(reportId)
+      if ('error' in result) return { error: result.error }
+      version = result.version
+      return { url: `/api/projects/${projectId}/quality-control/${reportId}/report` }
+    })
     setBusy(false)
-    if ('error' in result) {
-      setError(result.error)
+    if (res.error) {
+      setError(res.error)
       return
     }
-    onIssued?.(result.version)
-    // Open the live preview in a new tab so the browser's native PDF viewer
-    // handles it (the saved artifact is listed in the panel below).
-    window.open(`/api/projects/${projectId}/quality-control/${reportId}/report`, '_blank', 'noopener')
+    onIssued?.(version)
     startTransition(() => router.refresh())
   }
 
