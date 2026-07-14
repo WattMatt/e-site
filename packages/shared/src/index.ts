@@ -12,6 +12,7 @@ export * from './utils'
 
 // Email (transactional render + recipient resolution)
 export * from './email/rfi-email'
+export * from './email/qc-email'
 export * from './email/invite-email'
 
 // Inspections (Phase 2 — engine + template schema)
