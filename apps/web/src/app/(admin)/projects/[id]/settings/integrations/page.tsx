@@ -57,6 +57,7 @@ export default async function Page({ params }: Props) {
   const notifyRfiEmail = settings?.notifyRfiEmail ?? false
   const notifyInspectionEmail = settings?.notifyInspectionEmail ?? false
   const notifySnagEmail = settings?.notifySnagEmail ?? true
+  const notifyQcEmail = settings?.notifyQcEmail ?? true
   const notifyDiaryEmail = settings?.notifyDiaryEmail ?? true
 
   return (
@@ -114,6 +115,7 @@ export default async function Page({ params }: Props) {
         initialNotifyRfiEmail={notifyRfiEmail}
         initialNotifyInspectionEmail={notifyInspectionEmail}
         initialNotifySnagEmail={notifySnagEmail}
+        initialNotifyQcEmail={notifyQcEmail}
         initialNotifyDiaryEmail={notifyDiaryEmail}
       />
     </div>

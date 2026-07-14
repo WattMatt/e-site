@@ -35,6 +35,7 @@ type ProjectSettingsRow = {
   notify_inspection_email: boolean
   notify_snag_email: boolean
   notify_diary_email: boolean
+  notify_qc_email: boolean
   created_at: string
   updated_at: string
   updated_by: string | null
@@ -79,6 +80,7 @@ export function rowToProjectSettings(row: ProjectSettingsRow): ProjectSettings {
     notifyInspectionEmail: row.notify_inspection_email,
     notifySnagEmail: row.notify_snag_email,
     notifyDiaryEmail: row.notify_diary_email,
+    notifyQcEmail: row.notify_qc_email,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     updatedBy: row.updated_by,
@@ -111,6 +113,7 @@ export function patchToRow(patch: ProjectSettingsPatch): Record<string, unknown>
   if (patch.notifyInspectionEmail !== undefined) out.notify_inspection_email = patch.notifyInspectionEmail
   if (patch.notifySnagEmail !== undefined) out.notify_snag_email = patch.notifySnagEmail
   if (patch.notifyDiaryEmail !== undefined) out.notify_diary_email = patch.notifyDiaryEmail
+  if (patch.notifyQcEmail !== undefined) out.notify_qc_email = patch.notifyQcEmail
   if (patch.updatedBy !== undefined) out.updated_by = patch.updatedBy
   return out
 }

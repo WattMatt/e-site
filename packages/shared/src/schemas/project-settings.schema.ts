@@ -66,6 +66,7 @@ export const projectSettingsSchema = z.object({
   notifyInspectionEmail: z.boolean(),
   notifySnagEmail: z.boolean(),
   notifyDiaryEmail: z.boolean(),
+  notifyQcEmail: z.boolean(),
 
   // Audit
   createdAt: z.string(),
@@ -107,6 +108,7 @@ export const projectSettingsDefaults: Readonly<ProjectSettingsDefaults> = Object
   notifyInspectionEmail: false,
   notifySnagEmail: true,
   notifyDiaryEmail: true,
+  notifyQcEmail: true,
 })
 
 // ─────────────────────────────────────────────────────────────────────────

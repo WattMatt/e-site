@@ -435,6 +435,8 @@ describe('projectSettingsService.convenience bundles', () => {
     practical_completion_date: '2027-04-01', retention_pct: '7.50',
     notify_rfi_email: true, notify_rfi_to: ['arno@wmeng.co.za'],
     notify_inspection_email: false,
+    notify_snag_email: true, notify_diary_email: false,
+    notify_qc_email: false,
     created_at: '2026-05-26T00:00:00.000Z',
     updated_at: '2026-05-26T00:00:00.000Z', updated_by: null,
   }
@@ -474,12 +476,30 @@ describe('projectSettingsService.convenience bundles', () => {
     })
   })
 
-  it('getNotificationConfig returns email + recipients + inspection toggle', async () => {
+  it('getNotificationConfig returns ALL six channel keys from the row', async () => {
+    // Full-object toEqual: toEqual ignores undefined-valued keys, so a lost
+    // mapper line (e.g. qcEmail reading a missing column → undefined) only
+    // fails if EVERY key is pinned here with a concrete boolean.
     const result = await projectSettingsService.getNotificationConfig(clientForGet(fullRow), 'p1')
     expect(result).toEqual({
       rfiEmail: true,
       rfiTo: ['arno@wmeng.co.za'],
       inspectionEmail: false,
+      snagEmail: true,
+      diaryEmail: false,
+      qcEmail: false,
+    })
+  })
+
+  it('getNotificationConfig falls back to defaults when the row is missing (qcEmail: true)', async () => {
+    const result = await projectSettingsService.getNotificationConfig(clientForGet(null), 'p1')
+    expect(result).toEqual({
+      rfiEmail: true,
+      rfiTo: [],
+      inspectionEmail: false,
+      snagEmail: true,
+      diaryEmail: true,
+      qcEmail: true,
     })
   })
 })

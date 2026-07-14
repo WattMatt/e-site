@@ -13,6 +13,7 @@ const TABS = [
   { slug: '',                  label: 'Overview' },
   { slug: 'diary',             label: 'Site Diary' },
   { slug: 'snags',             label: 'Snags' },
+  { slug: 'quality-control',   label: 'Quality Control' },
   { slug: 'inspections',       label: 'Inspections' },
   { slug: 'cables',            label: 'Cable Schedule' },
   { slug: 'equipment-materials', label: 'Equipment & Materials' },

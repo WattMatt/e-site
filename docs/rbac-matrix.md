@@ -41,6 +41,9 @@ membership.
 | `/projects/[id]` (overview) | W | W | W | W | R | — | R |
 | `/projects/[id]/snags` (list; `?view=visits\|all`) | W | W | W | W | R | — | R |
 | `/projects/[id]/snags/visits/[visitId]` (visit detail) | W | W | W | W | R | — | R |
+| `/projects/[id]/quality-control` (list) | W | W | W | W | R | — | R⁹ |
+| `/projects/[id]/quality-control/new` | W | W | W | W | R | — | R⁹ |
+| `/projects/[id]/quality-control/[reportId]` (report detail) | W | W | W | W | R | — | R⁹ |
 | `/projects/[id]/diary` | W | W | W | W | R | — | R |
 | `/projects/[id]/cables` | W | W | W | R⁷ | — | — | R¹ |
 | `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W | W | W | — | — | — | — |
@@ -81,6 +84,8 @@ membership.
 
 ⁷ **Corrected 2026-07 (SANS audit):** this cell previously read `W`, but every cable-schedule write path — server actions (`ROLES_ENGINEER = ORG_WRITE_ROLES`, i.e. owner/admin/project_manager only) and the import API routes — excludes `contractor`. The page renders read-only for contractors (no page-level role gate beyond the `(admin)` layout); their writes are refused server-side. A contractor promoted per-project via `projects.project_members` (role `project_manager`) gains `W` on that project through the effective-role gates.
 
+⁹ **Quality Control (added 2026-07-14).** `client_viewer` never reaches these `(admin)` routes (`(admin)/layout.tsx` bounces clients to `/portal`); their actual surface is `/portal/[projectId]/quality-control` (see Client portal), and migration `00172`'s `qc_reports` SELECT policy additionally hides every non-`issued` report (drafts AND closed) from client viewers at the DB — a leaked link to a draft 404s. Pages compute `canWrite` via `requireEffectiveRole(..., QC_WRITE_ROLES)` (owner/admin/project_manager/**contractor**) and hide mutating affordances for `inspector`, who renders read-only; every mutation re-gates in its server action (see the Quality control actions section — issue/close/delete-report narrow to `ORG_WRITE_ROLES`).
+
 ## Client portal (`apps/web/src/app/(portal)/portal/*`)
 
 Since the portal shipped (PR #124), `client_viewer` never reaches the `(admin)` shell —
@@ -94,6 +99,7 @@ above therefore documents legacy per-page gates only; the client's actual surfac
 | `/portal/[projectId]` (overview) | Rᵃ | → `/dashboard` |
 | `/portal/[projectId]/diary` | R | → `/dashboard` |
 | `/portal/[projectId]/snags` | R | → `/dashboard` |
+| `/portal/[projectId]/quality-control` | Rᵈ | → `/dashboard` |
 | `/portal/[projectId]/inspections` | Rᵇ | → `/dashboard` |
 | `/portal/[projectId]/cables` | Rᵇ | → `/dashboard` |
 | `/portal/[projectId]/equipment-materials` | Rᶜ | → `/dashboard` |
@@ -105,6 +111,7 @@ above therefore documents legacy per-page gates only; the client's actual surfac
 ᵃ Explicit project columns only — `contract_value` is never selected ([`lib/portal/data.ts`](../apps/web/src/lib/portal/data.ts)).
 ᵇ Curated service-role read with explicit column allow-lists after the `requirePortalAccess` membership check; the client JWT stays RLS-blocked on these schemas.
 ᶜ Added 2026-07-07 (user decision, reversing the 2026-07-06 "not chosen"): board register + procurement status. Served by a **curated service-role read** (like cables/gcr) — order notes, quote/order-instruction documents and shop drawings are never selected, and migration `00166` now blocks the client JWT from reading `structure.node_orders` / `node_order_documents` / `node_order_shop_drawings` and the `node-order-documents` storage bucket directly (a confirmed pre-existing leak: a client could `GET` a quote PDF via PostgREST/storage).
+ᵈ **Issued QC reports only — enforced at the DB**, not by page logic: migration `00172`'s `qc_reports` SELECT policy hides non-`issued` rows (drafts AND closed) from client viewers, and the page just renders what the user client returns. "Download PDF" goes through `getPortalQcReportPdfUrlAction` (`portal-qc.actions.ts`), which RLS-reads the QC report AND the latest issued `projects.reports` `kind='qc'` row on the **user client** (`reports_select`, 00117 — `user_has_project_access`) before service-signing a 300 s download URL.
 
 Every `[projectId]` aspect is gated by `requirePortalAccess` in the per-project layout (active
 `client_viewer` + active `project_members` row, else 404). Table writes are independently blocked at
@@ -154,6 +161,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |
 | `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `GET /api/projects/[id]/snags/visits/[visitId]/report` | R | R | R | R | R | — | R |
+| `GET /api/projects/[id]/quality-control/[reportId]/report` | R | R | R | R | R | — | R⁹ |
 | `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/tenant-schedule/commit` | W | W | W | —⁷ | — | — | — |
@@ -176,6 +184,8 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 >
 > All 7 `GET /api/cable-schedule/export/*` routes gate via `getExportPolicy` ([`export-role.ts`](../apps/web/src/lib/cable-schedule/export-role.ts)): owner/admin/project_manager export fully; `client_viewer` may export **only when active in `projects.project_members` for the project**, with all cost data redacted (¹); contractor/inspector/supplier are blocked entirely. Size caps return 413 (`MAX_CABLES_PER_EXPORT` 500, PDF/ZIP 300).
 
+> `GET /api/projects/[id]/quality-control/[reportId]/report` (inline QC PDF preview, no persistence — snag-visit report pattern) returns 401 unauthenticated, then gates inside `gatherQcReportData`: the cookie-client **RLS read of the `qc_reports` row is the visibility gate** — a report invisible to the caller (wrong org, or ⁹ a non-`issued` report for a `client_viewer`, per 00172) 404s — plus `requireEffectiveRole` over all 7 project roles (403 for non-members). Photo bytes are fetched with the service client only after both gates pass.
+>
 > `POST /api/medium-voltage/study` runs the heavy MV Z-bus + earth-fault solve and caches per-node `fault_results` for a revision. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org; refused on non-DRAFT revisions (an ISSUED snapshot is frozen). Discrimination/coordination compute is deferred to Phase 4b (device-pairing design).
 
 ## Server actions (`apps/web/src/actions/*`)
@@ -258,6 +268,37 @@ Read-only actions require project access (any project member). Write/export acti
 >
 > **Create** has no server action — entries are created client-side via `diaryService.create()` from `AddDiaryEntryForm`, gated only by RLS to any active org member (unchanged).
 
+### Quality control (`qc.actions.ts`, `portal-qc.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `createQcReportAction` | W | W | W | W | — | — | — |
+| `updateQcReportAction` | W | W | W | W | — | — | — |
+| `addQcEntryAction` | W | W | W | W | — | — | — |
+| `addQcCommentAction` | W | W | W | W | — | — | — |
+| `deleteQcEntryAction` | W | W | W | W† | — | — | — |
+| `deleteQcPhotoAction` | W | W | W | W† | — | — | — |
+| `deleteQcCommentAction` | W | W | W | W† | — | — | — |
+| `deleteQcReportAction` | W | W | W | — | — | — | — |
+| `closeQcReportAction` | W | W | W | — | — | — | — |
+| `reopenQcReportAction` | W | W | W | — | — | — | — |
+| `issueQcReportAction` (renders + persists to `projects.reports`, kind=`qc`) | W | W | W | — | — | — | — |
+| `getPortalQcReportPdfUrlAction` (signed download link) | R | R | R | R | R | — | R |
+
+> Lifecycle writes (`createQcReportAction`, `updateQcReportAction`, `addQcEntryAction`, `addQcCommentAction`) gate on `requireEffectiveRole(supabase, projectId, QC_WRITE_ROLES)` — owner/admin/project_manager/**contractor**, same write set as markup — with the project resolved from the target row's own `project_id` via an RLS read (never a client-supplied id), then write via the cookie/RLS client so 00172's per-verb policies stay the backstop. Photo/markup rows have **no server action by design** — they are inserted client-side under RLS by `lib/qc-photos.ts` (diary-attachments pattern), and **markup re-edit** (the entry card's ✎ on `kind='markup'` photos, shown for `QC_WRITE_ROLES` on non-closed reports) replaces the flattened PNG at the SAME storage path (`upsert:true`) + updates `annotation_data`/`file_size_bytes` on the same row via `replaceQcMarkup` — client-side under the 00172 `qc_entry_photos` UPDATE policy and the qc-report-entries storage UPDATE policy (the RFI `replaceAnnotation` pattern).
+>
+> **UI wiring (report detail page).** `updateQcReportAction` is reached through the inline "Edit report" form (`EditQcReportForm` — title/description/location/inspection date), rendered for `QC_WRITE_ROLES` while `status != 'closed'`. `closeQcReportAction` ("Close report", two-step armed, shown when `issued`), `reopenQcReportAction` ("Reopen report", shown when `closed` — the Issue button is hidden on closed reports and Reopen shows instead) and `deleteQcReportAction` ("Delete report", two-step armed, redirects to the QC list) render only for `ORG_WRITE_ROLES` (`canManage`) in `QcReportsSection`; every button's action re-gates server-side, so the visibility is UX, not the boundary.
+>
+> **Create fires no notification.** A draft is private working state (00172 hides non-`issued` reports from client viewers, and a draft title may carry unvetted findings); the single notify moment is issue time (`notifyQcIssued`).
+>
+> **Closed-report freeze (server-side).** Every content mutation — `updateQcReportAction`, `addQcEntryAction`, `addQcCommentAction`, and the three child deletes (author or not) — refuses when the parent report's `status='closed'`, mirroring the 00172 DB-trigger freeze on the child tables. `issueQcReportAction` also refuses closed (a re-issue would silently reopen the report in the client portal + re-email the roster); the only way out of closed is the explicit `reopenQcReportAction`.
+>
+> Deletes (`deleteQcEntryAction` / `deleteQcPhotoAction` / `deleteQcCommentAction`) follow the diary delete pattern: **author** (†) OR `ORG_WRITE_ROLES`, RLS read for the gate, then service client for the row delete + best-effort storage cleanup. Inspector/supplier can never author QC content (`QC_WRITE_ROLES` excludes them), so the † columns are effectively contractor-only.
+>
+> `deleteQcReportAction` / `closeQcReportAction` / `reopenQcReportAction` / `issueQcReportAction` gate to `ORG_WRITE_ROLES` and write via the service client (in-app gate load-bearing, matching `snag-visit.actions.ts`; per-project promotions don't satisfy the table's RLS write policies). Close (`issued → closed`) and reopen (`closed → issued` only) are **row-verified** status flips — a 0-row update returns an error instead of silently succeeding. Issue renders the branded PDF, uploads `qc-reports/{org}/{project}/qc-report-{reportId}-v{n}.pdf` (`upsert:false`, storage rollback on row-insert failure), inserts a versioned `projects.reports` row and supersedes ALL prior issued rows (`exportSnagVisitReportAction` shape), flips the report to `issued` (+`issued_at`/`by`), then notifies the roster — bell `qc_issued` + `notify_qc_email`-gated email with a 7-day signed PDF link.
+>
+> `getPortalQcReportPdfUrlAction` (`portal-qc.actions.ts`) has **no role gate by design**: both the `qc_reports` and `projects.reports` reads run on the user client, so RLS visibility — including the client_viewer issued-only rule — is the gate; only the 300 s signed-URL creation uses the service client. See the Client portal section (ᵈ).
+
 ### MV protection (`mv-protection.actions.ts`)
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
@@ -305,5 +346,6 @@ These are tracked outside this doc:
 - **`/api/notifications/dispatch` bearer auth.** Confirm the bearer secret is required, rate-limited, and the dispatch payload can't leak cross-org notifications.
 - **Cable-schedule RLS.** App-layer gates are present ([`require-role.ts`](../apps/web/src/lib/cable-schedule/require-role.ts)); verify RLS denies cross-org access independently.
 - **Floor-plan *management* writes (upload / calibrate / adopt-latest) are role-agnostic beyond `client_viewer`.** `tenants.floor_plans` write RLS authorises by org membership; `00161` excludes only `client_viewer`. The 2026-07-09 UI hides the upload button, cloud-sync toolbar and the MarkupCanvas *Calibrate* control for read-only roles, but a determined `inspector`/`supplier` could still `INSERT`/`UPDATE` a `floor_plans` row via PostgREST directly. Low severity (trusted internal roles; the external `client_viewer` is DB-blocked; calibration/upload are not commercially sensitive). Deliberately NOT gated at the DB in this pass because a RESTRICTIVE `floor_plans` write policy must not disturb the cloud-sync *adopt-latest* path; tracked as a follow-up. **Markup authoring itself (`rfi_annotations`) IS now uniformly DB-gated to `MARKUP_WRITE_ROLES` across every write path by migration `00171`** — this residual is floor-plan file management only, not markup content. Also: the client-side `commit.ts` annotation INSERT (RFI-create-with-markup) omits the `NOT NULL` `rfi_id` and so silently no-ops even for writers — a pre-existing latent bug, separate from authz, worth a follow-up.
+- **QC storage buckets accept unreferenced blobs from non-write roles.** `qc-report-entries` / `qc-reports` use the platform-wide Pattern-A storage RLS (org-id path prefix, `00172` mirroring `00117`): any org member except `client_viewer` (blocked by the RESTRICTIVE overlay mirroring `00162`) — i.e. `inspector`/`supplier` too — can `PUT` a blob under their org's prefix even though the `qc_entry_photos` **table** write correctly refuses them, leaving an orphaned object no UI ever references. Same posture as every other bucket (`snag-photos`, `diary-attachments`, `reports`); documented with the QC PR, deliberately not fixed there.
 - **Multi-org users.** `getOrgContext()` resolves the *oldest* membership, not a user-selected current org. Role checks for users in multiple orgs may apply against the wrong org. Out of scope until multi-org UX exists.
 - **Cells marked `?`.** `/settings/organisation` and `/settings/integrations` for `project_manager` — behaviour not yet verified end-to-end.

@@ -8,6 +8,7 @@ type ToggleField =
   | 'notifyRfiEmail'
   | 'notifyInspectionEmail'
   | 'notifySnagEmail'
+  | 'notifyQcEmail'
   | 'notifyDiaryEmail'
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
   initialNotifyRfiEmail: boolean
   initialNotifyInspectionEmail: boolean
   initialNotifySnagEmail: boolean
+  initialNotifyQcEmail: boolean
   initialNotifyDiaryEmail: boolean
 }
 
@@ -23,12 +25,14 @@ export function IntegrationsPanel({
   initialNotifyRfiEmail,
   initialNotifyInspectionEmail,
   initialNotifySnagEmail,
+  initialNotifyQcEmail,
   initialNotifyDiaryEmail,
 }: Props) {
   const [values, setValues] = useState<Record<ToggleField, boolean>>({
     notifyRfiEmail: initialNotifyRfiEmail,
     notifyInspectionEmail: initialNotifyInspectionEmail,
     notifySnagEmail: initialNotifySnagEmail,
+    notifyQcEmail: initialNotifyQcEmail,
     notifyDiaryEmail: initialNotifyDiaryEmail,
   })
   const [error, setError] = useState<string | null>(null)
@@ -57,6 +61,11 @@ export function IntegrationsPanel({
       field: 'notifySnagEmail',
       label: 'Snag email notifications',
       description: 'Send an email to the project team when a snag is raised, its status changes, or it is signed off on this project.',
+    },
+    {
+      field: 'notifyQcEmail',
+      label: 'QC report email notifications',
+      description: 'Send an email to the project team when a quality control report is issued on this project.',
     },
     {
       field: 'notifyDiaryEmail',

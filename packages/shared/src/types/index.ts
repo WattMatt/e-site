@@ -73,6 +73,17 @@ export const COST_VIEW_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_m
  * JBCC_WRITE_ROLES even though the sets coincide today — separate concerns.
  */
 export const MARKUP_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager', 'contractor']
+/**
+ * Roles permitted to author QC reports (create/edit reports, add entries,
+ * photos, markups and comments). Owner + admin + PM + contractor — the same
+ * write set as MARKUP_WRITE_ROLES, because QC capture is contractor-led field
+ * work (photos + drawing markups), while the passive roles
+ * (inspector/supplier/client_viewer) stay read-only. Matches the qc_* RLS
+ * write policies (migration 00172); client viewers additionally only see
+ * ISSUED reports (DB-enforced). Kept distinct from MARKUP_WRITE_ROLES even
+ * though the sets coincide today — separate concerns.
+ */
+export const QC_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager', 'contractor']
 export type ProjectRole = 'project_manager' | 'contractor' | 'client_viewer'
 
 /**
@@ -102,5 +113,6 @@ export interface SubOrganisation {
 export type SubscriptionTier = 'free' | 'starter' | 'professional' | 'enterprise'
 export type SnagStatus = 'open' | 'in_progress' | 'resolved' | 'pending_sign_off' | 'signed_off' | 'closed'
 export type RfiStatus = 'draft' | 'open' | 'responded' | 'closed'
+export type QcReportStatus = 'draft' | 'issued' | 'closed'
 export type CocStatus = 'missing' | 'submitted' | 'under_review' | 'approved' | 'rejected'
 export type Priority = 'low' | 'medium' | 'high' | 'critical'
