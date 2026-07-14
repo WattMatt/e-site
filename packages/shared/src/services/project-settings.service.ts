@@ -375,6 +375,7 @@ export const projectSettingsService = {
         inspectionEmail: projectSettingsDefaults.notifyInspectionEmail,
         snagEmail: projectSettingsDefaults.notifySnagEmail,
         diaryEmail: projectSettingsDefaults.notifyDiaryEmail,
+        qcEmail: projectSettingsDefaults.notifyQcEmail,
       }
     }
     return {
@@ -383,6 +384,7 @@ export const projectSettingsService = {
       inspectionEmail: s.notifyInspectionEmail,
       snagEmail: s.notifySnagEmail,
       diaryEmail: s.notifyDiaryEmail,
+      qcEmail: s.notifyQcEmail,
     }
   },
 

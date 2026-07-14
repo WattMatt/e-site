@@ -34,6 +34,11 @@ function downloadFileName(kind: string, version: number): string {
   return `${kind.replace(/_/g, '-')}-report-v${version}.pdf`
 }
 
+/** QC report PDFs live in their own dedicated bucket; every other kind shares `reports`. */
+function bucketForKind(kind: string): string {
+  return kind === 'qc' ? 'qc-reports' : REPORTS_BUCKET
+}
+
 /** Resolve organisation_id from projects.projects. */
 async function resolveOrgId(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -102,7 +107,7 @@ export async function getProjectReportUrlAction(
   const service = createServiceClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: signed, error: signErr } = await (service as any).storage
-    .from(REPORTS_BUCKET)
+    .from(bucketForKind(report.kind))
     .createSignedUrl(
       report.storage_path,
       SIGNED_URL_TTL_SECONDS,
@@ -129,12 +134,12 @@ export async function deleteProjectReportAction(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: row } = await (supabase as any)
     .schema('projects').from('reports')
-    .select('storage_path')
+    .select('storage_path, kind')
     .eq('id', reportId)
     .eq('project_id', projectId)
     .maybeSingle()
 
-  const report = row as { storage_path: string } | null
+  const report = row as { storage_path: string; kind: string } | null
   if (!report) return { error: 'Not found' }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -149,7 +154,7 @@ export async function deleteProjectReportAction(
   // Best-effort object removal — an orphaned private object is harmless.
   const service = createServiceClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (service as any).storage.from(REPORTS_BUCKET).remove([report.storage_path]).catch(() => {})
+  await (service as any).storage.from(bucketForKind(report.kind)).remove([report.storage_path]).catch(() => {})
 
   return { ok: true }
 }

@@ -82,7 +82,7 @@ function makeServiceClient(opts: { signedUrl?: string | null } = {}) {
   )
   const remove = vi.fn().mockResolvedValue({ data: null, error: null })
   const storageFrom = vi.fn().mockReturnValue({ createSignedUrl, remove })
-  return { client: { storage: { from: storageFrom } }, createSignedUrl, remove }
+  return { client: { storage: { from: storageFrom } }, createSignedUrl, remove, storageFrom }
 }
 
 describe('listProjectReportsAction', () => {
@@ -168,6 +168,32 @@ describe('getProjectReportUrlAction', () => {
       { download: 'tenant-schedule-report-v3.pdf' },
     )
   })
+
+  it('signs non-qc kinds from the shared reports bucket', async () => {
+    const { client } = makeSupabase({ reportRow: REPORT_ROW })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+
+    const { getProjectReportUrlAction } = await import('./project-reports.actions')
+    await getProjectReportUrlAction(PROJECT_ID, REPORT_ID)
+
+    expect(service.storageFrom).toHaveBeenCalledWith('reports')
+  })
+
+  it('signs kind=qc from the dedicated qc-reports bucket', async () => {
+    const qcRow = { ...REPORT_ROW, kind: 'qc', storage_path: `${ORG_ID}/${PROJECT_ID}/qc-report-x-v1.pdf` }
+    const { client } = makeSupabase({ reportRow: qcRow })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+
+    const { getProjectReportUrlAction } = await import('./project-reports.actions')
+    await getProjectReportUrlAction(PROJECT_ID, REPORT_ID)
+
+    expect(service.storageFrom).toHaveBeenCalledWith('qc-reports')
+    expect(service.storageFrom).not.toHaveBeenCalledWith('reports')
+  })
 })
 
 describe('deleteProjectReportAction', () => {
@@ -208,5 +234,22 @@ describe('deleteProjectReportAction', () => {
 
     expect(result).toEqual({ ok: true })
     expect(service.remove).toHaveBeenCalledWith([REPORT_ROW.storage_path])
+    expect(service.storageFrom).toHaveBeenCalledWith('reports')
+  })
+
+  it('removes kind=qc objects from the dedicated qc-reports bucket', async () => {
+    const qcRow = { ...REPORT_ROW, kind: 'qc', storage_path: `${ORG_ID}/${PROJECT_ID}/qc-report-x-v1.pdf` }
+    const { client } = makeSupabase({ reportRow: qcRow })
+    const service = makeServiceClient({})
+    createClientMock.mockResolvedValue(client)
+    createServiceClientMock.mockReturnValue(service.client)
+    requireRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+
+    const { deleteProjectReportAction } = await import('./project-reports.actions')
+    const result = await deleteProjectReportAction(PROJECT_ID, REPORT_ID)
+
+    expect(result).toEqual({ ok: true })
+    expect(service.storageFrom).toHaveBeenCalledWith('qc-reports')
+    expect(service.remove).toHaveBeenCalledWith([qcRow.storage_path])
   })
 })
