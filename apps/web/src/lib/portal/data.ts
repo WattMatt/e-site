@@ -7,8 +7,9 @@
  *    client_viewer in their ACTIVE org AND hold an active project_members row
  *    on the requested project. No row → null → page renders notFound().
  *  - Aspects whose RLS already allows client_viewer project-scoped SELECTs
- *    (diary, snags, floor plans, handover, tenant schedule — migrations
- *    00034/00148) read via the USER client, so RLS remains the second gate.
+ *    (diary, snags, QC reports, floor plans, handover, tenant schedule —
+ *    migrations 00034/00148/00172) read via the USER client, so RLS remains
+ *    the second gate.
  *  - Aspects whose RLS deliberately blocks client_viewer (inspections.*,
  *    cable_schedule.*, gcr.* — see 00034's block comment) read via the
  *    SERVICE client with EXPLICIT COLUMN ALLOW-LISTS after the membership
@@ -122,6 +123,27 @@ export async function listPortalSnags(projectId: string) {
     id: string; title: string; description: string | null; location: string | null
     category: string; priority: string; status: string
     resolved_at: string | null; signed_off_at: string | null; created_at: string
+  }>
+}
+
+/**
+ * QC reports — user client; 00172's qc_reports SELECT policy only returns
+ * `status='issued'` rows to a client_viewer, so drafts and closed reports
+ * never reach the portal (DB-enforced, not page logic).
+ */
+export async function listPortalQcReports(projectId: string) {
+  const supabase = await createClient()
+  const { data } = await (supabase as any)
+    .schema('projects')
+    .from('qc_reports')
+    .select('id, report_no, title, description, location, inspection_date, status, issued_at, created_at')
+    .eq('project_id', projectId)
+    .order('report_no', { ascending: false })
+    .limit(100)
+  return (data ?? []) as Array<{
+    id: string; report_no: number; title: string; description: string | null
+    location: string | null; inspection_date: string | null; status: string
+    issued_at: string | null; created_at: string
   }>
 }
 

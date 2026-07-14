@@ -15,6 +15,7 @@ describe('PortalProjectNav', () => {
       'Overview',
       'Site Diary',
       'Snags',
+      'Quality Control',
       'Inspections',
       'Cable Schedule',
       'Equipment & Materials',
