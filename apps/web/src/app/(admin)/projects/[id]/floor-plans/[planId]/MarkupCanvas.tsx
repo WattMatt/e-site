@@ -342,6 +342,14 @@ export function MarkupCanvas({
   initialScene,
 }: Props) {
   const router = useRouter()
+  // QC re-edit hydrates shapes from `initialScene`; a markup made on a
+  // multi-page PDF carries its page on every shape (pageIndex). Open on that
+  // page so the hydrated shapes are actually visible (the render filter and
+  // the flatten-on-save both key off currentPage) instead of a blank page 1
+  // that an innocent "Update markup" would then overwrite the report image
+  // with. RFI re-edit never passes `initialScene`, so this is 1 and the page
+  // behaviour is unchanged.
+  const initialPageIndex = initialScene?.shapes.find((s) => s.pageIndex)?.pageIndex ?? 1
   const [tool, setTool] = useState<ToolMode>('select')
   const [color, setColor] = useState<string>(COLORS[0].value)
   const [strokeWidth, setStrokeWidth] = useState<number>(STROKE_WIDTHS[1].value)
@@ -467,7 +475,8 @@ export function MarkupCanvas({
   // navigating back doesn't re-render.
   const [img, setImg] = useState<Backing | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [currentPage, setCurrentPage] = useState(1)
+  // Starts on the page the hydrated markup lives on (QC re-edit); 1 otherwise.
+  const [currentPage, setCurrentPage] = useState(initialPageIndex)
   const [pageCount, setPageCount] = useState(1)
   // PDFDocumentProxy from pdfjs — kept as ref to avoid re-render on assignment.
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
@@ -513,7 +522,10 @@ export function MarkupCanvas({
     const signal = { cancelled: false }
     setLoadError(null)
     setImg(null)
-    setCurrentPage(1)
+    // Reset to the hydrated markup's page (1 for new markups / RFI). Without
+    // this the async load would clobber the initial page back to 1, hiding a
+    // re-edited page-≥2 markup.
+    setCurrentPage(initialPageIndex)
     pdfDocRef.current = null
     pageImagesRef.current = new Map()
 
@@ -555,7 +567,7 @@ export function MarkupCanvas({
     return () => {
       signal.cancelled = true
     }
-  }, [plan.signedUrl, plan.isPdf, renderPdfPage])
+  }, [plan.signedUrl, plan.isPdf, renderPdfPage, initialPageIndex])
 
   // 2) Re-render when the user navigates to a different PDF page.
   //    Page 1 on initial mount is handled by the load effect above; the
@@ -871,6 +883,11 @@ export function MarkupCanvas({
   // ── Selection / move / transform / eraser ─────────────────────────────
   const POINT_TYPES = ['pen', 'highlight', 'line', 'arrow', 'polyline', 'polygon', 'measure']
   const selectedType = selectedId ? shapes.find((s) => s.id === selectedId)?.type : undefined
+  // Marks on the page currently shown. The PNG snapshot flattens only the
+  // current page, so this — not the total shape count — gates the QC
+  // Save/Update button: saving a page that holds none of the markup's shapes
+  // would overwrite the stored report image with a blank page.
+  const marksOnCurrentPage = shapes.filter((s) => (s.pageIndex ?? 1) === currentPage).length
 
   // Interaction props spread onto every committed shape node in Select mode:
   // click/tap selects (cancelBubble so the stage doesn't deselect), drag moves,
@@ -1455,6 +1472,14 @@ export function MarkupCanvas({
     // NEVER touches the RFI actions, the picker, or router navigation. The RFI
     // branches below run only when `onSaveMarkup` is undefined.
     if (onSaveMarkup) {
+      // The snapshot flattens the current page only — refuse to save a page
+      // that holds none of this markup's shapes (it would replace the report
+      // image with a blank drawing). The button is already disabled in this
+      // state; this is the defensive backstop.
+      if (marksOnCurrentPage === 0) {
+        setSaveError('No marks on this page — switch to the page with your markup before saving.')
+        return
+      }
       const snap = snapshotScene()
       if (!snap) return
       setSaving(true)
@@ -2145,8 +2170,17 @@ export function MarkupCanvas({
               type="button"
               className="btn-primary-amber"
               onClick={handleSaveClick}
-              disabled={saving || shapes.length === 0}
-              title={initialScene ? 'Update this markup' : 'Save this markup'}
+              // Gate on marks *on this page* — the snapshot flattens the
+              // current page, so an empty page must not overwrite the saved
+              // image with a blank drawing.
+              disabled={saving || marksOnCurrentPage === 0}
+              title={
+                marksOnCurrentPage === 0
+                  ? 'Nothing to save on this page'
+                  : initialScene
+                    ? 'Update this markup'
+                    : 'Save this markup'
+              }
             >
               {saving ? 'Saving…' : initialScene ? 'Update markup' : 'Save markup'}
             </button>

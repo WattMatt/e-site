@@ -83,4 +83,30 @@ describe('QcMarkupDialog picker', () => {
     expect(signedPaths).not.toContain('o/p/plan.dwg')
     expect(createSignedUrlMock).toHaveBeenCalledTimes(2)
   })
+
+  it('reports a transient sign failure honestly (disabled + "Couldn\'t load" + Retry), not as an unsupported format', async () => {
+    // The PNG fails to sign (network blip); the PDF signs fine. A supported
+    // drawing that couldn't sign must NOT be selectable (it would otherwise
+    // reach the canvas's "file format isn't supported" placeholder) and must
+    // read as a transient failure, distinct from the DWG "Not markable" case.
+    createSignedUrlMock.mockImplementation((path: string) =>
+      path.endsWith('.png')
+        ? Promise.resolve({ data: null, error: { message: 'network' } })
+        : Promise.resolve({ data: { signedUrl: 'https://signed/x' }, error: null }),
+    )
+    render(<QcMarkupDialog projectId="p1" onClose={vi.fn()} onStaged={vi.fn()} />)
+
+    const imgBtn = (await screen.findByText('Site Photo')).closest('button')
+    expect(imgBtn!.disabled).toBe(true)
+    // Honest transient-failure copy, NOT the DWG "Not markable" badge.
+    expect(screen.getByText("Couldn't load")).toBeTruthy()
+    expect(screen.queryByText('Not markable')).toBeTruthy() // the DWG row is still separately "Not markable"
+
+    // The PDF signed OK and stays selectable.
+    const pdfBtn = screen.getByText('Ground Floor').closest('button')
+    expect(pdfBtn!.disabled).toBe(false)
+
+    // A Retry affordance is offered to re-sign.
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
 })

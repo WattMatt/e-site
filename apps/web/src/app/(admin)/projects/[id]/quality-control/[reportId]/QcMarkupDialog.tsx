@@ -98,6 +98,26 @@ const isPdfPath = (p: string) => /\.pdf$/i.test(p)
 const isImagePath = (p: string) => /\.(png|jpe?g|webp|svg)$/i.test(p)
 const makeId = () => Math.random().toString(36).slice(2, 10)
 
+// Blank-canvas fallback (spec §3): a re-edit whose source plan was deleted (or
+// briefly won't sign) has no drawing to render, but the stored vectors must
+// still open for editing. Synthesise a plain white raster at the scene's stored
+// dimensions and hand it to MarkupCanvas as an ordinary image signedUrl — the
+// Stage then mounts, the shapes hydrate on top, and Save re-flattens white +
+// vectors. Sized to the scene's own coordinate space so the shapes land right.
+// Guarded for SSR (dynamic import is client-only, but the effect stays safe).
+function blankCanvasDataUrl(w: number, h: number): string {
+  if (typeof document === 'undefined') return ''
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(w))
+  canvas.height = Math.max(1, Math.round(h))
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+  }
+  return canvas.toDataURL('image/png')
+}
+
 /**
  * QC drawing-markup dialog — the full MarkupCanvas suite inline in the QC entry
  * flow (spec §Approach.2). Two-step in the add flow: a drawing picker (every
@@ -117,6 +137,9 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
   const [loading, setLoading] = useState(!isReEdit)
   const [error, setError] = useState<string | null>(null)
   const [pickedPlan, setPickedPlan] = useState<CanvasPlan | null>(null)
+  // Bumped by the "Retry" button to re-run the picker load (re-sign the plans)
+  // after a transient signing failure.
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   // ── Canvas plan for the re-edit flow (re-signed source) ────────────────
   const [reEditPlan, setReEditPlan] = useState<CanvasPlan | null>(null)
@@ -174,7 +197,7 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
     return () => {
       cancelled = true
     }
-  }, [projectId, isReEdit])
+  }, [projectId, isReEdit, reloadNonce])
 
   // Re-edit: re-sign the source plan so the canvas can render it. If the plan
   // has been deleted, fall back to a blank canvas at the scene's stored dims
@@ -219,6 +242,22 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
             isPdf,
             sourceFloorPlanId: row.id,
           }
+        }
+      }
+      // No renderable image (plan deleted, row missing, or the sign failed):
+      // fall back to a blank white canvas at the scene's stored dimensions so
+      // the vectors still hydrate and stay editable (spec §3). MarkupCanvas
+      // gates its Stage on a truthy signedUrl, so a raster data-URL — not null —
+      // is what makes the Stage mount; isPdf must be false for that raster.
+      if (!plan.signedUrl) {
+        const sceneW = reEdit.initialScene.canvas?.w || 800
+        const sceneH = reEdit.initialScene.canvas?.h || 600
+        plan = {
+          ...plan,
+          signedUrl: blankCanvasDataUrl(sceneW, sceneH),
+          isPdf: false,
+          width_px: sceneW,
+          height_px: sceneH,
         }
       }
       if (!cancelled) {
@@ -458,29 +497,84 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
               </p>
             </div>
           )}
+          {!loading && plans.some((p) => p.markable && !p.signedUrl) && (
+            <div
+              role="alert"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                marginBottom: 12,
+                padding: '8px 10px',
+                border: '1px solid var(--c-amber)',
+                borderRadius: 8,
+                background: 'var(--c-amber-mid, rgba(245,158,11,0.12))',
+              }}
+            >
+              <span style={{ fontSize: 12, color: 'var(--c-text)', flex: 1 }}>
+                Some drawings couldn&apos;t be loaded (signing failed). They&apos;re a supported format —
+                this is usually a temporary network issue.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null)
+                  setLoading(true)
+                  setReloadNonce((n) => n + 1)
+                }}
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 10,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  cursor: 'pointer',
+                  background: 'transparent',
+                  color: 'var(--c-amber)',
+                  border: '1px solid var(--c-amber)',
+                  borderRadius: 6,
+                  padding: '4px 10px',
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
           {!loading && plans.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
-              {plans.map((p) => (
+              {plans.map((p) => {
+                // Selectable only when the format renders AND the URL signed.
+                // A transient sign failure is NOT an unsupported format — give
+                // it an honest message + Retry, never the canvas's "format not
+                // supported" placeholder (which a null signedUrl would trigger).
+                const selectable = p.markable && !!p.signedUrl
+                const signFailed = p.markable && !p.signedUrl
+                return (
                 <button
                   key={p.id}
                   type="button"
-                  disabled={!p.markable}
-                  onClick={() => p.markable && handlePick(p)}
-                  title={p.markable ? undefined : 'DWG/DXF preview is not supported — convert to PDF or an image to mark it up.'}
+                  disabled={!selectable}
+                  onClick={() => selectable && handlePick(p)}
+                  title={
+                    !p.markable
+                      ? 'DWG/DXF preview is not supported — convert to PDF or an image to mark it up.'
+                      : signFailed
+                        ? "Couldn't load this drawing — check your connection and press Retry."
+                        : undefined
+                  }
                   style={{
                     background: 'var(--c-base)',
                     border: '1px solid var(--c-border)',
                     borderRadius: 8,
                     padding: 0,
                     overflow: 'hidden',
-                    cursor: p.markable ? 'pointer' : 'not-allowed',
+                    cursor: selectable ? 'pointer' : 'not-allowed',
                     textAlign: 'left',
                     display: 'flex',
                     flexDirection: 'column',
-                    opacity: p.markable ? 1 : 0.55,
+                    opacity: selectable ? 1 : 0.55,
                   }}
                   onMouseEnter={(e) => {
-                    if (p.markable) e.currentTarget.style.borderColor = 'var(--c-amber)'
+                    if (selectable) e.currentTarget.style.borderColor = 'var(--c-amber)'
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.borderColor = 'var(--c-border)'
@@ -520,11 +614,16 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
                         letterSpacing: '0.04em',
                       }}
                     >
-                      {p.markable ? p.level ?? (p.isPdf ? 'PDF' : 'Drawing') : 'Not markable'}
+                      {!p.markable
+                        ? 'Not markable'
+                        : signFailed
+                          ? "Couldn't load"
+                          : p.level ?? (p.isPdf ? 'PDF' : 'Drawing')}
                     </div>
                   </div>
                 </button>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
