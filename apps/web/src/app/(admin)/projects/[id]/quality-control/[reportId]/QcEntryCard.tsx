@@ -1,13 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { formatDate } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
-import { FloorPlanAttachDialog } from '@/components/attachments/FloorPlanAttachDialog'
-import { replaceQcMarkup } from '@/lib/qc-photos'
-import type { AnnotationData } from '@/components/attachments/types'
+import { QcMarkupDialog } from './QcMarkupDialog'
+import { toSceneGraph, type QcMarkupData } from '@/lib/qc-photos'
 import { QcDeleteButton } from './QcDeleteButton'
 import { QcCommentList } from './QcCommentList'
 import { QcCommentForm } from './QcCommentForm'
@@ -28,8 +26,10 @@ export interface QcPhotoView {
   filePath: string
   /** Markups only: source plan for re-signing on re-edit (null when deleted/none). */
   sourceFloorPlanId: string | null
-  /** Markups only: stored vector scene graph — rebuilt into the annotator on re-edit. */
-  annotationData: AnnotationData | null
+  /** Markups only: stored vector scene graph — rebuilt into MarkupCanvas on
+   *  re-edit. New markups store a SceneGraph; legacy rows an AnnotationData
+   *  (normalised by toSceneGraph). */
+  annotationData: QcMarkupData | null
 }
 
 export interface QcCommentView {
@@ -65,14 +65,13 @@ interface Props {
 }
 
 export function QcEntryCard({ entry, projectId, canWrite, canManage, currentUserId, isClosed }: Props) {
-  const router = useRouter()
   const canDeleteEntry = !isClosed && (entry.createdBy === currentUserId || canManage)
 
-  // ── Markup re-edit (spec §4): reopen the annotator seeded with the stored
-  //    scene graph, then replace blob + annotation_data on the SAME photo row
-  //    (client-side under RLS) — the AttachmentGallery handleReEdit pattern. ──
+  // ── Markup re-edit (spec §4): reopen the full MarkupCanvas seeded with the
+  //    stored scene graph. QcMarkupDialog re-signs the source plan for the
+  //    canvas and replaces blob + annotation_data on the SAME photo row on save.
+  //    The card only resolves a display name for the source plan here. ──
   const [editingMarkup, setEditingMarkup] = useState<QcPhotoView | null>(null)
-  const [editingSource, setEditingSource] = useState<string | null>(null)
   const [editingPlanName, setEditingPlanName] = useState('')
   const [busyPhotoId, setBusyPhotoId] = useState<string | null>(null)
   const [markupError, setMarkupError] = useState('')
@@ -82,40 +81,23 @@ export function QcEntryCard({ entry, projectId, canWrite, canManage, currentUser
     setMarkupError('')
     setBusyPhotoId(photo.id)
     try {
-      const supabase = createClient()
-
-      // Re-sign the source floor plan URL. If the plan has been deleted, fall
-      // back to the frozen signedUrl stored inside annotation_data (may be stale).
-      let sourceUrl: string | null = null
+      // Resolve a nice plan name (name · level) for the dialog header. If the
+      // source plan was deleted, fall back to the file name — the dialog still
+      // opens (blank canvas at the scene's stored dims) so the vectors are
+      // never stranded.
       let planName = photo.fileName ?? 'Drawing markup'
-
       if (photo.sourceFloorPlanId) {
+        const supabase = createClient()
         const { data: plan } = await supabase
           .schema('tenants')
           .from('floor_plans')
-          .select('name, level, file_path')
+          .select('name, level')
           .eq('id', photo.sourceFloorPlanId)
           .single()
-
         if (plan) {
           planName = `${plan.name}${plan.level ? ` · ${plan.level}` : ''}`
-          const { data: signed } = await supabase.storage
-            .from('drawings')
-            .createSignedUrl(plan.file_path, 60 * 60)
-          sourceUrl = signed?.signedUrl ?? null
         }
       }
-
-      if (!sourceUrl) {
-        sourceUrl = photo.annotationData.baseImage.signedUrl ?? null
-      }
-
-      if (!sourceUrl) {
-        setMarkupError('Source floor plan is no longer accessible — cannot re-edit.')
-        return
-      }
-
-      setEditingSource(sourceUrl)
       setEditingPlanName(planName)
       setEditingMarkup(photo)
     } finally {
@@ -212,36 +194,16 @@ export function QcEntryCard({ entry, projectId, canWrite, canManage, currentUser
         )}
       </CardBody>
 
-      {editingMarkup && editingSource && editingMarkup.annotationData && (
-        <FloorPlanAttachDialog
+      {editingMarkup && editingMarkup.annotationData && (
+        <QcMarkupDialog
           projectId={projectId}
-          onClose={() => { setEditingMarkup(null); setEditingSource(null) }}
-          onStage={async (staged) => {
-            if (staged.kind !== 'annotation') return
-            setBusyPhotoId(editingMarkup.id)
-            try {
-              const supabase = createClient()
-              await replaceQcMarkup(
-                supabase as any,
-                { id: editingMarkup.id, filePath: editingMarkup.filePath },
-                { blob: staged.blob, annotationData: staged.annotationData },
-              )
-              // Re-render the server page: freshly signed URLs bust the stale
-              // thumbnail (same path, new token).
-              router.refresh()
-            } catch (e) {
-              setMarkupError(`Save failed: ${e instanceof Error ? e.message : 'unknown error'}`)
-            } finally {
-              setBusyPhotoId(null)
-              setEditingMarkup(null)
-              setEditingSource(null)
-            }
-          }}
-          initial={{
+          onClose={() => setEditingMarkup(null)}
+          reEdit={{
+            photoId: editingMarkup.id,
+            filePath: editingMarkup.filePath,
             sourceFloorPlanId: editingMarkup.sourceFloorPlanId,
-            sourceImageUrl: editingSource,
-            floorPlanName: editingPlanName || (editingMarkup.fileName ?? 'Drawing markup'),
-            annotationData: editingMarkup.annotationData,
+            initialScene: toSceneGraph(editingMarkup.annotationData),
+            planName: editingPlanName || (editingMarkup.fileName ?? 'Drawing markup'),
           }}
         />
       )}

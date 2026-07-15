@@ -1,7 +1,57 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AnnotationData } from '@/components/attachments/types'
+import type { SceneGraph } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/MarkupCanvas'
 
 export const QC_PHOTO_MAX_BYTES = 20971520 // 20 MiB — the qc-report-entries bucket cap
+
+/**
+ * A markup's stored vector data. QC markups now persist the full MarkupCanvas
+ * `SceneGraph` (14 shape types, symbols, tables, measure); the legacy simple
+ * annotator's `AnnotationData` (7 shapes) is kept in the union so pre-existing
+ * rows still type-check on read. The JSONB column is untyped either way — this
+ * union only guards the callers. Use `toSceneGraph` to normalise on read.
+ */
+export type QcMarkupData = AnnotationData | SceneGraph
+
+/**
+ * Normalise a stored `annotation_data` value into a `SceneGraph` for the full
+ * MarkupCanvas (re-edit hydration). New QC markups are already SceneGraphs and
+ * pass straight through; the rare legacy `AnnotationData` row (feature is days
+ * old) is converted shape-by-shape. Detection keys off the canvas shape:
+ * SceneGraph uses `canvas.w`/`canvas.h`, legacy AnnotationData uses
+ * `canvas.width`/`canvas.height`.
+ */
+export function toSceneGraph(data: QcMarkupData): SceneGraph {
+  const canvas = (data as { canvas?: { w?: unknown; width?: unknown } }).canvas
+  // Already a SceneGraph — pass through untouched.
+  if (canvas && typeof canvas.w === 'number') {
+    return data as SceneGraph
+  }
+  const legacy = data as AnnotationData
+  const shapes: SceneGraph['shapes'] = (legacy.shapes ?? []).map((s): SceneGraph['shapes'][number] => {
+    switch (s.type) {
+      case 'pen':
+        return { id: s.id, type: 'pen', points: s.points, color: s.color, strokeWidth: s.strokeWidth }
+      case 'arrow':
+        return { id: s.id, type: 'arrow', points: s.points, color: s.color, strokeWidth: s.strokeWidth }
+      case 'rect':
+        return { id: s.id, type: 'rect', x: s.x, y: s.y, width: s.width, height: s.height, color: s.color, strokeWidth: s.strokeWidth }
+      case 'circle':
+        // The full canvas has no circle primitive — map to an equal-radii ellipse.
+        return { id: s.id, type: 'ellipse', cx: s.x, cy: s.y, rx: s.radius, ry: s.radius, color: s.color, strokeWidth: s.strokeWidth }
+      case 'text':
+        return { id: s.id, type: 'text', x: s.x, y: s.y, text: s.text, fontSize: s.fontSize, color: s.color }
+      case 'pin':
+        // SceneGraph pins require a label; legacy pins made it optional.
+        return { id: s.id, type: 'pin', x: s.x, y: s.y, label: s.label ?? '', color: s.color }
+    }
+  })
+  return {
+    version: 1,
+    canvas: { w: legacy.canvas?.width ?? 0, h: legacy.canvas?.height ?? 0 },
+    shapes,
+  }
+}
 
 const QC_ENTRIES_BUCKET = 'qc-report-entries'
 
@@ -110,7 +160,7 @@ export async function uploadQcMarkup(
   markup: {
     blob: Blob
     fileName: string
-    annotationData: AnnotationData
+    annotationData: QcMarkupData
     sourceFloorPlanId: string | null
   },
 ): Promise<void> {
@@ -144,7 +194,7 @@ export async function uploadQcMarkup(
 export async function replaceQcMarkup(
   supabase: SupabaseClient,
   photo: { id: string; filePath: string },
-  markup: { blob: Blob; annotationData: AnnotationData },
+  markup: { blob: Blob; annotationData: QcMarkupData },
 ): Promise<void> {
   if (markup.blob.size > QC_PHOTO_MAX_BYTES) {
     throw new Error('The markup exceeds the 20 MB limit.')
@@ -178,7 +228,7 @@ async function uploadAndInsert(
     sizeBytes: number
     kind: 'photo' | 'markup'
     sourceFloorPlanId?: string | null
-    annotationData?: AnnotationData
+    annotationData?: QcMarkupData
   },
 ): Promise<void> {
   const { orgId, projectId, reportId, entryId, userId } = target

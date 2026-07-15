@@ -48,6 +48,7 @@ import {
 } from './markup-geometry'
 import { Tooltip } from './markup-tooltip'
 import { SYMBOLS, SYMBOL_KINDS, SymbolSvg, type SymbolKind } from './markup-symbols'
+import { pngBase64ToBlob } from './markup-export'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -293,8 +294,12 @@ type Props = {
   }
   snagPins: Array<{ id: string; floor_plan_pin: { x: number; y: number } }>
   projectId: string
-  rfis: RfiOption[]
-  editing: EditingAnnotation | null
+  /** RFI options for the attach/create picker. Optional — defaults to `[]`
+   *  (the QC external-save flow has no RFIs and hides the picker entirely). */
+  rfis?: RfiOption[]
+  /** RFI re-edit target. When set (and `onSaveMarkup` absent), Save overwrites
+   *  this existing RFI annotation in place. */
+  editing?: EditingAnnotation | null
   /**
    * Tri-state viewer mode. Defaults to 'markup' for back-compat.
    * - 'view'   — read-only: tool palette + save controls hidden, pan/zoom + overlays only.
@@ -303,6 +308,20 @@ type Props = {
    * Switching modes at runtime preserves canvas state (shapes, zoom, page).
    */
   mode?: ViewerMode
+  /**
+   * External-save mode (QC markup). When provided, MarkupCanvas hands the
+   * flattened PNG + editable scene graph to the caller and does NOT create or
+   * update an RFI annotation, open the RFI picker, or navigate to `/rfis`. The
+   * toolbar collapses to a single Save/Update button. When ABSENT, every RFI
+   * code path runs exactly as before.
+   */
+  onSaveMarkup?: (out: { pngBlob: Blob; scene: SceneGraph }) => Promise<void>
+  /**
+   * Scene to hydrate initial shapes from in external-save mode (QC re-edit).
+   * RFI re-edit continues to hydrate from `editing.scene`. Ignored on the RFI
+   * path (undefined there), so its behaviour is unchanged.
+   */
+  initialScene?: SceneGraph
 }
 
 type Backing = HTMLImageElement | HTMLCanvasElement
@@ -312,8 +331,25 @@ function backingSize(b: Backing | null): [number, number] {
   return b instanceof HTMLImageElement ? [b.naturalWidth, b.naturalHeight] : [b.width, b.height]
 }
 
-export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 'markup' }: Props) {
+export function MarkupCanvas({
+  plan,
+  snagPins,
+  projectId,
+  rfis = [],
+  editing = null,
+  mode = 'markup',
+  onSaveMarkup,
+  initialScene,
+}: Props) {
   const router = useRouter()
+  // QC re-edit hydrates shapes from `initialScene`; a markup made on a
+  // multi-page PDF carries its page on every shape (pageIndex). Open on that
+  // page so the hydrated shapes are actually visible (the render filter and
+  // the flatten-on-save both key off currentPage) instead of a blank page 1
+  // that an innocent "Update markup" would then overwrite the report image
+  // with. RFI re-edit never passes `initialScene`, so this is 1 and the page
+  // behaviour is unchanged.
+  const initialPageIndex = initialScene?.shapes.find((s) => s.pageIndex)?.pageIndex ?? 1
   const [tool, setTool] = useState<ToolMode>('select')
   const [color, setColor] = useState<string>(COLORS[0].value)
   const [strokeWidth, setStrokeWidth] = useState<number>(STROKE_WIDTHS[1].value)
@@ -334,7 +370,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const trRef = useRef<Konva.Transformer | null>(null)
   const eraserCursorRef = useRef<Konva.Circle | null>(null)
   const eraseTouchedRef = useRef(false)
-  const [shapes, setShapes] = useState<AnyShape[]>(editing?.scene.shapes ?? [])
+  // Hydrate from the RFI re-edit scene (`editing`) or, on the QC external-save
+  // path, from `initialScene`. On the RFI path `initialScene` is undefined so
+  // this is identical to `editing?.scene.shapes ?? []`.
+  const [shapes, setShapes] = useState<AnyShape[]>(editing?.scene.shapes ?? initialScene?.shapes ?? [])
   const [current, setCurrent] = useState<AnyShape | null>(null)
   const [undoStack, setUndoStack] = useState<AnyShape[][]>([])
   const [redoStack, setRedoStack] = useState<AnyShape[][]>([])
@@ -362,9 +401,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const [draftPrompt, setDraftPrompt] = useState<DraftRecord | null>(null)
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // On mount: only check drafts for NEW markups; re-edit comes in via prop.
+  // On mount: only check drafts for NEW markups; re-edit comes in via prop
+  // (RFI: `editing`, QC external-save: `initialScene`).
   useEffect(() => {
-    if (editing) return
+    if (editing || initialScene) return
     let cancelled = false
     getDraft(draftKey).then((d) => {
       if (cancelled) return
@@ -435,7 +475,8 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   // navigating back doesn't re-render.
   const [img, setImg] = useState<Backing | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [currentPage, setCurrentPage] = useState(1)
+  // Starts on the page the hydrated markup lives on (QC re-edit); 1 otherwise.
+  const [currentPage, setCurrentPage] = useState(initialPageIndex)
   const [pageCount, setPageCount] = useState(1)
   // PDFDocumentProxy from pdfjs — kept as ref to avoid re-render on assignment.
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
@@ -481,7 +522,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     const signal = { cancelled: false }
     setLoadError(null)
     setImg(null)
-    setCurrentPage(1)
+    // Reset to the hydrated markup's page (1 for new markups / RFI). Without
+    // this the async load would clobber the initial page back to 1, hiding a
+    // re-edited page-≥2 markup.
+    setCurrentPage(initialPageIndex)
     pdfDocRef.current = null
     pageImagesRef.current = new Map()
 
@@ -523,7 +567,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
     return () => {
       signal.cancelled = true
     }
-  }, [plan.signedUrl, plan.isPdf, renderPdfPage])
+  }, [plan.signedUrl, plan.isPdf, renderPdfPage, initialPageIndex])
 
   // 2) Re-render when the user navigates to a different PDF page.
   //    Page 1 on initial mount is handled by the load effect above; the
@@ -839,6 +883,11 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   // ── Selection / move / transform / eraser ─────────────────────────────
   const POINT_TYPES = ['pen', 'highlight', 'line', 'arrow', 'polyline', 'polygon', 'measure']
   const selectedType = selectedId ? shapes.find((s) => s.id === selectedId)?.type : undefined
+  // Marks on the page currently shown. The PNG snapshot flattens only the
+  // current page, so this — not the total shape count — gates the QC
+  // Save/Update button: saving a page that holds none of the markup's shapes
+  // would overwrite the stored report image with a blank page.
+  const marksOnCurrentPage = shapes.filter((s) => (s.pageIndex ?? 1) === currentPage).length
 
   // Interaction props spread onto every committed shape node in Select mode:
   // click/tap selects (cancelBubble so the stage doesn't deselect), drag moves,
@@ -1419,6 +1468,32 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   async function handleSaveClick() {
     if (shapes.length === 0) return
     setSaveError(null)
+    // External-save mode (QC): hand the flattened PNG + scene to the caller.
+    // NEVER touches the RFI actions, the picker, or router navigation. The RFI
+    // branches below run only when `onSaveMarkup` is undefined.
+    if (onSaveMarkup) {
+      // The snapshot flattens the current page only — refuse to save a page
+      // that holds none of this markup's shapes (it would replace the report
+      // image with a blank drawing). The button is already disabled in this
+      // state; this is the defensive backstop.
+      if (marksOnCurrentPage === 0) {
+        setSaveError('No marks on this page — switch to the page with your markup before saving.')
+        return
+      }
+      const snap = snapshotScene()
+      if (!snap) return
+      setSaving(true)
+      try {
+        await onSaveMarkup({ pngBlob: pngBase64ToBlob(snap.pngBase64), scene: snap.scene })
+        // Save committed by the caller — drop the local draft.
+        void clearDraftRecord(draftKey)
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : 'Save failed')
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
     if (editing) {
       // Edit mode — overwrite existing annotation in place.
       const snap = snapshotScene()
@@ -2088,7 +2163,28 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         {mode !== 'view' && (
         <ToolbarGroup>
           <ToolbarButton onClick={startCalibration} title="Calibrate this drawing for the measure tool">Calibrate</ToolbarButton>
-          {editing ? (
+          {onSaveMarkup ? (
+            // External-save mode (QC): a single Save/Update button that hands
+            // the markup to the caller. No RFI picker / create / attach.
+            <button
+              type="button"
+              className="btn-primary-amber"
+              onClick={handleSaveClick}
+              // Gate on marks *on this page* — the snapshot flattens the
+              // current page, so an empty page must not overwrite the saved
+              // image with a blank drawing.
+              disabled={saving || marksOnCurrentPage === 0}
+              title={
+                marksOnCurrentPage === 0
+                  ? 'Nothing to save on this page'
+                  : initialScene
+                    ? 'Update this markup'
+                    : 'Save this markup'
+              }
+            >
+              {saving ? 'Saving…' : initialScene ? 'Update markup' : 'Save markup'}
+            </button>
+          ) : editing ? (
             <button
               type="button"
               className="btn-primary-amber"
@@ -2445,7 +2541,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         )}
       </div>
 
-      {pickerOpen && (
+      {!onSaveMarkup && pickerOpen && (
         <div
           role="dialog"
           aria-modal="true"
