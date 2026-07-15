@@ -6,10 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { addQcEntryAction } from '@/actions/qc.actions'
 import { uploadQcEntryPhotos, uploadQcMarkup } from '@/lib/qc-photos'
 import { PhotoPicker } from '@/components/ui/PhotoPicker'
-import { FloorPlanAttachDialog } from '@/components/attachments/FloorPlanAttachDialog'
-import type { StagedAttachment } from '@/components/attachments/types'
-
-type StagedMarkup = Extract<StagedAttachment, { kind: 'annotation' }>
+import { QcMarkupDialog, type StagedQcMarkup } from './QcMarkupDialog'
 
 interface Props {
   projectId: string
@@ -20,9 +17,9 @@ interface Props {
 
 /**
  * Collapsible "add entry" form: title/description + staged photos (PhotoPicker)
- * and drawing markups (FloorPlanAttachDialog). Mirrors AddDiaryEntryForm's
- * submit shape — entry created once, uploads resumable on retry (committed
- * items pruned from the staging lists via callbacks).
+ * and drawing markups (QcMarkupDialog — the full MarkupCanvas suite). Mirrors
+ * AddDiaryEntryForm's submit shape — entry created once, uploads resumable on
+ * retry (committed items pruned from the staging lists via callbacks).
  */
 export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
   const router = useRouter()
@@ -31,7 +28,7 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [files, setFiles] = useState<File[]>([])
-  const [markups, setMarkups] = useState<StagedMarkup[]>([])
+  const [markups, setMarkups] = useState<StagedQcMarkup[]>([])
   const [markupDialogOpen, setMarkupDialogOpen] = useState(false)
   const [error, setError] = useState('')
   // Holds the id of an entry created on a prior submit whose upload failed —
@@ -91,9 +88,11 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
           await uploadQcMarkup(supabase as any, target, {
             blob: markup.blob,
             fileName: markup.fileName,
-            annotationData: markup.annotationData,
+            // Persist the full editable SceneGraph as annotation_data.
+            annotationData: markup.scene,
             sourceFloorPlanId: markup.sourceFloorPlanId,
           })
+          URL.revokeObjectURL(markup.previewUrl)
           setMarkups((prev) => prev.filter((m) => m !== markup))
         } catch (err) {
           setError(err instanceof Error ? err.message : 'Failed to upload markup.')
@@ -225,7 +224,10 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
                     <button
                       type="button"
                       aria-label={`Remove ${m.fileName}`}
-                      onClick={() => setMarkups((ms) => ms.filter((x) => x.id !== m.id))}
+                      onClick={() => {
+                        URL.revokeObjectURL(m.previewUrl)
+                        setMarkups((ms) => ms.filter((x) => x.id !== m.id))
+                      }}
                       style={{
                         position: 'absolute', top: -4, right: -4, width: 20, height: 20,
                         background: 'var(--c-red)', color: '#fff', border: 'none', borderRadius: '50%',
@@ -266,10 +268,10 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
       </form>
 
       {markupDialogOpen && (
-        <FloorPlanAttachDialog
+        <QcMarkupDialog
           projectId={projectId}
           onClose={() => setMarkupDialogOpen(false)}
-          onStage={(staged) => setMarkups((prev) => [...prev, staged])}
+          onStaged={(staged) => setMarkups((prev) => [...prev, staged])}
         />
       )}
     </>
