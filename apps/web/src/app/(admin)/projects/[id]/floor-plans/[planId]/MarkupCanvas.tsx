@@ -48,6 +48,7 @@ import {
 } from './markup-geometry'
 import { Tooltip } from './markup-tooltip'
 import { SYMBOLS, SYMBOL_KINDS, SymbolSvg, type SymbolKind } from './markup-symbols'
+import { pngBase64ToBlob } from './markup-export'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -293,8 +294,12 @@ type Props = {
   }
   snagPins: Array<{ id: string; floor_plan_pin: { x: number; y: number } }>
   projectId: string
-  rfis: RfiOption[]
-  editing: EditingAnnotation | null
+  /** RFI options for the attach/create picker. Optional — defaults to `[]`
+   *  (the QC external-save flow has no RFIs and hides the picker entirely). */
+  rfis?: RfiOption[]
+  /** RFI re-edit target. When set (and `onSaveMarkup` absent), Save overwrites
+   *  this existing RFI annotation in place. */
+  editing?: EditingAnnotation | null
   /**
    * Tri-state viewer mode. Defaults to 'markup' for back-compat.
    * - 'view'   — read-only: tool palette + save controls hidden, pan/zoom + overlays only.
@@ -303,6 +308,20 @@ type Props = {
    * Switching modes at runtime preserves canvas state (shapes, zoom, page).
    */
   mode?: ViewerMode
+  /**
+   * External-save mode (QC markup). When provided, MarkupCanvas hands the
+   * flattened PNG + editable scene graph to the caller and does NOT create or
+   * update an RFI annotation, open the RFI picker, or navigate to `/rfis`. The
+   * toolbar collapses to a single Save/Update button. When ABSENT, every RFI
+   * code path runs exactly as before.
+   */
+  onSaveMarkup?: (out: { pngBlob: Blob; scene: SceneGraph }) => Promise<void>
+  /**
+   * Scene to hydrate initial shapes from in external-save mode (QC re-edit).
+   * RFI re-edit continues to hydrate from `editing.scene`. Ignored on the RFI
+   * path (undefined there), so its behaviour is unchanged.
+   */
+  initialScene?: SceneGraph
 }
 
 type Backing = HTMLImageElement | HTMLCanvasElement
@@ -312,7 +331,16 @@ function backingSize(b: Backing | null): [number, number] {
   return b instanceof HTMLImageElement ? [b.naturalWidth, b.naturalHeight] : [b.width, b.height]
 }
 
-export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 'markup' }: Props) {
+export function MarkupCanvas({
+  plan,
+  snagPins,
+  projectId,
+  rfis = [],
+  editing = null,
+  mode = 'markup',
+  onSaveMarkup,
+  initialScene,
+}: Props) {
   const router = useRouter()
   const [tool, setTool] = useState<ToolMode>('select')
   const [color, setColor] = useState<string>(COLORS[0].value)
@@ -334,7 +362,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const trRef = useRef<Konva.Transformer | null>(null)
   const eraserCursorRef = useRef<Konva.Circle | null>(null)
   const eraseTouchedRef = useRef(false)
-  const [shapes, setShapes] = useState<AnyShape[]>(editing?.scene.shapes ?? [])
+  // Hydrate from the RFI re-edit scene (`editing`) or, on the QC external-save
+  // path, from `initialScene`. On the RFI path `initialScene` is undefined so
+  // this is identical to `editing?.scene.shapes ?? []`.
+  const [shapes, setShapes] = useState<AnyShape[]>(editing?.scene.shapes ?? initialScene?.shapes ?? [])
   const [current, setCurrent] = useState<AnyShape | null>(null)
   const [undoStack, setUndoStack] = useState<AnyShape[][]>([])
   const [redoStack, setRedoStack] = useState<AnyShape[][]>([])
@@ -362,9 +393,10 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   const [draftPrompt, setDraftPrompt] = useState<DraftRecord | null>(null)
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // On mount: only check drafts for NEW markups; re-edit comes in via prop.
+  // On mount: only check drafts for NEW markups; re-edit comes in via prop
+  // (RFI: `editing`, QC external-save: `initialScene`).
   useEffect(() => {
-    if (editing) return
+    if (editing || initialScene) return
     let cancelled = false
     getDraft(draftKey).then((d) => {
       if (cancelled) return
@@ -1419,6 +1451,24 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
   async function handleSaveClick() {
     if (shapes.length === 0) return
     setSaveError(null)
+    // External-save mode (QC): hand the flattened PNG + scene to the caller.
+    // NEVER touches the RFI actions, the picker, or router navigation. The RFI
+    // branches below run only when `onSaveMarkup` is undefined.
+    if (onSaveMarkup) {
+      const snap = snapshotScene()
+      if (!snap) return
+      setSaving(true)
+      try {
+        await onSaveMarkup({ pngBlob: pngBase64ToBlob(snap.pngBase64), scene: snap.scene })
+        // Save committed by the caller — drop the local draft.
+        void clearDraftRecord(draftKey)
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : 'Save failed')
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
     if (editing) {
       // Edit mode — overwrite existing annotation in place.
       const snap = snapshotScene()
@@ -2088,7 +2138,19 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         {mode !== 'view' && (
         <ToolbarGroup>
           <ToolbarButton onClick={startCalibration} title="Calibrate this drawing for the measure tool">Calibrate</ToolbarButton>
-          {editing ? (
+          {onSaveMarkup ? (
+            // External-save mode (QC): a single Save/Update button that hands
+            // the markup to the caller. No RFI picker / create / attach.
+            <button
+              type="button"
+              className="btn-primary-amber"
+              onClick={handleSaveClick}
+              disabled={saving || shapes.length === 0}
+              title={initialScene ? 'Update this markup' : 'Save this markup'}
+            >
+              {saving ? 'Saving…' : initialScene ? 'Update markup' : 'Save markup'}
+            </button>
+          ) : editing ? (
             <button
               type="button"
               className="btn-primary-amber"
@@ -2445,7 +2507,7 @@ export function MarkupCanvas({ plan, snagPins, projectId, rfis, editing, mode = 
         )}
       </div>
 
-      {pickerOpen && (
+      {!onSaveMarkup && pickerOpen && (
         <div
           role="dialog"
           aria-modal="true"
