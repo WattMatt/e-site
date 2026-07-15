@@ -2,18 +2,11 @@
 
 import { useState, useTransition } from 'react'
 import { registerSupplierAction } from '@/actions/supplier.actions'
+import { MARKETPLACE_CATEGORIES } from '@esite/shared'
 
 const SA_PROVINCES = [
   'Gauteng', 'Western Cape', 'KwaZulu-Natal', 'Eastern Cape',
   'Limpopo', 'Mpumalanga', 'North West', 'Free State', 'Northern Cape',
-]
-
-const CATEGORIES = [
-  { value: 'electrical', label: 'Electrical' },
-  { value: 'mechanical', label: 'Mechanical' },
-  { value: 'civil', label: 'Civil' },
-  { value: 'safety', label: 'Safety' },
-  { value: 'general', label: 'General' },
 ]
 
 export function RegisterSupplierForm() {
@@ -103,7 +96,7 @@ export function RegisterSupplierForm() {
         <div>
           <label className="ob-label">Supply Categories *</label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {CATEGORIES.map(({ value, label }) => {
+            {MARKETPLACE_CATEGORIES.map(({ value, label }) => {
               const selected = selectedCategories.includes(value)
               return (
                 <button

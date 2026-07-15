@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { isMarketplaceCategory } from '@esite/shared'
 import { z } from 'zod'
 
 const SA_PROVINCES = [
@@ -20,7 +21,7 @@ const registerSupplierSchema = z.object({
   vat_number:      z.string().max(20).optional(),
   province:        z.enum(SA_PROVINCES, { message: 'Please select a province.' }),
   address:         z.string().max(500).optional(),
-  categories:      z.array(z.string()).min(1, 'Select at least one category.'),
+  categories:      z.array(z.string().refine(isMarketplaceCategory, 'Unknown category.')).min(1, 'Select at least one category.'),
   popia_consent:   z.literal('on', { errorMap: () => ({ message: 'POPIA consent is required to register.' }) }),
 })
 
@@ -32,14 +33,14 @@ const updateProfileSchema = z.object({
   province:        z.string().max(100).nullish(),
   address:         z.string().max(500).nullish(),
   website:         z.string().url('Valid URL required.').max(500).nullish().or(z.literal('')),
-  categories:      z.array(z.string()),
+  categories:      z.array(z.string().refine(isMarketplaceCategory, 'Unknown category.')),
 })
 
 const catalogueItemSchema = z.object({
   name:                z.string().min(1, 'Name is required.').max(200),
   sku:                 z.string().max(50).nullish(),
   description:         z.string().max(1000).nullish(),
-  category:            z.string().min(1, 'Category is required.').max(100),
+  category:            z.string().min(1, 'Category is required.').refine(isMarketplaceCategory, 'Unknown category.'),
   unit:                z.string().max(50).default('each'),
   unit_price:          z.preprocess(val => parseFloat(val as string), z.number().positive('Unit price must be positive.')),
   min_order_qty:       z.preprocess(val => parseInt(val as string, 10) || 1, z.number().int().min(1)),

@@ -1,19 +1,9 @@
 import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
-import { supplierService } from '@esite/shared'
+import { supplierService, MARKETPLACE_CATEGORIES } from '@esite/shared'
 import Link from 'next/link'
 
 export const metadata: Metadata = { title: 'Marketplace' }
-
-const CATEGORIES = ['electrical', 'mechanical', 'civil', 'safety', 'general']
-
-const CATEGORY_ICONS: Record<string, string> = {
-  electrical: '⚡',
-  mechanical: '⚙',
-  civil: '🏗',
-  safety: '🦺',
-  general: '📦',
-}
 
 interface Props { searchParams: Promise<{ category?: string; search?: string }> }
 
@@ -94,13 +84,13 @@ export default async function MarketplacePage({ searchParams }: Props) {
         <Link href="/marketplace" className={`category-pill${!category ? ' active' : ''}`}>
           All
         </Link>
-        {CATEGORIES.map(c => (
+        {MARKETPLACE_CATEGORIES.map(c => (
           <Link
-            key={c}
-            href={`/marketplace?category=${c}`}
-            className={`category-pill${category === c ? ' active' : ''}`}
+            key={c.value}
+            href={`/marketplace?category=${c.value}`}
+            className={`category-pill${category === c.value ? ' active' : ''}`}
           >
-            {CATEGORY_ICONS[c]} {c}
+            {c.icon} {c.label}
           </Link>
         ))}
       </div>
@@ -178,7 +168,7 @@ export default async function MarketplacePage({ searchParams }: Props) {
                       border: '1px solid var(--c-border-mid)',
                     }}
                   >
-                    {CATEGORY_ICONS[c] ?? ''} {c}
+                    {MARKETPLACE_CATEGORIES.find(mc => mc.value === c)?.icon ?? ''} {c}
                   </span>
                 ))}
               </div>

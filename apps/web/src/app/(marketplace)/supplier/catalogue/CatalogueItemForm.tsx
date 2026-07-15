@@ -3,8 +3,8 @@
 import { useState, useTransition } from 'react'
 import { createCatalogueItemAction, updateCatalogueItemAction } from '@/actions/supplier.actions'
 import { useRouter } from 'next/navigation'
+import { MARKETPLACE_CATEGORIES } from '@esite/shared'
 
-const CATEGORIES = ['electrical', 'mechanical', 'civil', 'safety', 'general', 'tools', 'materials']
 const UNITS = ['each', 'metre', 'kg', 'litre', 'box', 'roll', 'pack', 'set', 'pair']
 
 interface Item {
@@ -98,9 +98,9 @@ export function CatalogueItemForm({ item }: Props) {
               className="ob-select"
             >
               <option value="">Select category</option>
-              {CATEGORIES.map(c => (
-                <option key={c} value={c} style={{ textTransform: 'capitalize' }}>
-                  {c}
+              {MARKETPLACE_CATEGORIES.map(c => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
                 </option>
               ))}
             </select>

@@ -7,6 +7,9 @@ export * from './services'
 // Types
 export * from './types'
 
+// Marketplace (canonical category taxonomy — pure, safe for the barrel)
+export * from './marketplace/categories'
+
 // Utils
 export * from './utils'
 
