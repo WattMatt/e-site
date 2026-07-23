@@ -16,6 +16,8 @@ interface ConnectionRow {
   scope: string | null
   expires_at: string | null
   created_at: string
+  needs_reauth: boolean | null
+  last_sync_error: string | null
 }
 
 const PROVIDER_LABEL: Record<ConnectionRow['provider'], string> = {
@@ -52,7 +54,7 @@ export default async function IntegrationsPage({ searchParams }: Props) {
   // packages/db/src/types.ts (regen pending in a polish commit).
   const { data, error } = await (supabase as any)
     .from('org_storage_connections')
-    .select('id, provider, account_email, scope, expires_at, created_at')
+    .select('id, provider, account_email, scope, expires_at, created_at, needs_reauth, last_sync_error')
     .order('created_at', { ascending: false })
 
   const connections: ConnectionRow[] = (error ? [] : (data as unknown as ConnectionRow[])) ?? []
@@ -101,15 +103,30 @@ export default async function IntegrationsPage({ searchParams }: Props) {
             {connections.map((c) => (
               <li key={c.id} className="data-panel" style={connectionRow}>
                 <div>
-                  <div style={{ fontWeight: 700, color: 'var(--c-text)' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--c-text)', display: 'flex', alignItems: 'center', gap: 8 }}>
                     {PROVIDER_LABEL[c.provider]}
+                    {c.needs_reauth && (
+                      <span style={reauthBadge}>Re-auth needed</span>
+                    )}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--c-text-mid)' }}>{c.account_email}</div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
                     Connected {new Date(c.created_at).toISOString().slice(0, 10)}
                   </div>
+                  {c.needs_reauth && (
+                    <div style={{ fontSize: 11, color: 'var(--c-amber)', marginTop: 4, maxWidth: 420 }}>
+                      Syncing is paused — the provider rejected the stored token
+                      {c.last_sync_error ? ` (${c.last_sync_error.slice(0, 140)})` : ''}. Reconnect
+                      below with the same {PROVIDER_LABEL[c.provider]} account to resume.
+                    </div>
+                  )}
                 </div>
-                <DisconnectButton connectionId={c.id} label={PROVIDER_LABEL[c.provider]} />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                  {c.needs_reauth && (
+                    <ConnectProviderButton provider={c.provider} label={`Reconnect ${PROVIDER_LABEL[c.provider]}`} />
+                  )}
+                  <DisconnectButton connectionId={c.id} label={PROVIDER_LABEL[c.provider]} />
+                </div>
               </li>
             ))}
           </ul>
@@ -139,6 +156,18 @@ const sectionHeading: React.CSSProperties = {
   textTransform: 'uppercase',
   color: 'var(--c-text-mid)',
   marginBottom: 12,
+}
+
+const reauthBadge: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 9,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+  color: 'var(--c-amber)',
+  background: 'var(--c-amber-mid)',
+  border: '1px solid var(--c-amber)',
+  borderRadius: 4,
+  padding: '2px 6px',
 }
 
 const connectionRow: React.CSSProperties = {

@@ -258,7 +258,30 @@ Read-only actions require project access (any project member). Write/export acti
 
 > **Added 2026-07-09 (markup authz hardening).** Both write actions upload a composited PNG to the `rfi-attachments` bucket and insert/update `public.rfi_annotations`, always creating or attaching an RFI. Previously they checked only `auth.getUser()` and relied 100% on RLS — the same class of gap PRs #135/#137/#143 closed on other write surfaces. They now gate on `requireEffectiveRole(supabase, projectId, MARKUP_WRITE_ROLES)` — owner/admin/project_manager/**contractor**, matching the `/rfis` + `/floor-plans` write set — **before** any storage upload or DB write (the project is resolved via the annotation's RFI on the update path). Read-only roles (inspector/supplier/client_viewer) are refused with a clear message instead of a raw RLS violation. **Migration `00171`** is the uniform DB backstop: a RESTRICTIVE policy on `public.rfi_annotations` enforces `MARKUP_WRITE_ROLES` on **every** INSERT/UPDATE/DELETE (resolving the project through `source_floor_plan_id → tenants.floor_plans.project_id` via a SECURITY DEFINER helper), so the same boundary holds for the **client-side** `components/attachments/commit.ts` RFI-create/respond/gallery-re-edit writes and any direct PostgREST call — not just these server actions. `00161`/`00162` continue to block `client_viewer` on the shared `attachments` row + `rfi-attachments`/`drawings` storage buckets. (00171 verified behaviourally against Postgres 17: owner/admin/PM/contractor pass, inspector/supplier/client_viewer + plan-less rows fail closed.) `exportRfiMarkupPdfAction` is a read (download the already-saved PNG → wrap in a single-page PDF) and stays open to any role that can already see the markup. The `/projects/[id]/floor-plans` list page and the per-drawing viewer compute the same `canWrite` (via `requireEffectiveRole` + `MARKUP_WRITE_ROLES`) and hide the upload / cloud-sync / per-row Markup / mode-toggle affordances for read-only roles — who get pan/zoom + overlays only (`MarkupCanvas` mode `'view'`). Constant `MARKUP_WRITE_ROLES` lives in `@esite/shared` alongside `ORG_WRITE_ROLES`.
 
-### Site diary (`diary.actions.ts`)
+### Cloud-storage sync (`cloud-storage.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `syncProjectCloudFolderAction` ("Sync now") | W | W | W | W | W | W | W* |
+| `autoSyncCloudFolderAction` (tab-open freshness check) | W | W | W | W | W | W | W* |
+| `setProjectCloudFolderAction` / `clearProjectCloudFolderAction` | W | W | W | — | — | — | — |
+| `updateFloorPlanToLatestAction` / `updateAllFloorPlansToLatestAction` (adopt revisions) | W | W | W | W | W | W | — |
+
+> **Added 2026-07-23 (sync freshness rework).** Both sync triggers call the
+> `cloud-sync-project` edge function with the **service-role key**, so the
+> app-side gate is the only caller check: `requireVisibleProject` requires a
+> signed-in user for whom RLS returns the project row (any project-visible
+> member — `W*` = a `client_viewer` who can see the project can trigger a
+> pull, which only imports from the admin-mapped folder; no caller content is
+> involved, and fresh data is the point of the feature for read-only roles).
+> Previously `syncProjectCloudFolderAction` checked only `auth.getUser()` —
+> the same class of gap PR #135 closed (any signed-in user could sync an
+> arbitrary project id). Folder mapping stays RLS-gated to
+> owner/admin/project_manager via `projects.projects` UPDATE policies (00009).
+> Adopt actions ride `tenants.floor_plans` RLS (client_viewer excluded by
+> 00161). The engine auto-adopts changed drawings with **zero annotations**
+> (no RFI annotations / QC markup lineage / snag pins / calibration);
+> annotated drawings keep the explicit Update / Update-all step.
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|

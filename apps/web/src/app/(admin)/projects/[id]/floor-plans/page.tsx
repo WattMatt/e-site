@@ -13,6 +13,7 @@ interface ConnectionOption {
   id: string
   provider: 'dropbox' | 'google_drive' | 'onedrive'
   account_email: string
+  needs_reauth: boolean | null
 }
 
 export default async function FloorPlansPage({ params }: Props) {
@@ -25,7 +26,7 @@ export default async function FloorPlansPage({ params }: Props) {
     // Connections (for the picker). Cast through any: tables not in types.ts yet.
     (supabase as any)
       .from('org_storage_connections')
-      .select('id, provider, account_email')
+      .select('id, provider, account_email, needs_reauth')
       .order('created_at', { ascending: false }),
   ])
   if (!project) notFound()
@@ -79,7 +80,11 @@ export default async function FloorPlansPage({ params }: Props) {
         {canWrite && <FloorPlanUploadButton projectId={projectId} orgId={orgId} />}
       </div>
 
-      {canWrite && (
+      {/* Mapped projects show the toolbar to EVERY member — read-only users
+          get the freshness chip (the tab auto-checks Dropbox on open); only
+          the write affordances inside are gated on canWrite. Unmapped
+          projects show it to writers only (set-up affordance). */}
+      {(canWrite || cloudFolderPath) && (
         <CloudSyncToolbar
           projectId={projectId}
           connections={connections}
@@ -87,6 +92,7 @@ export default async function FloorPlansPage({ params }: Props) {
           cloudFolderPath={cloudFolderPath}
           lastSyncAt={lastSyncAt}
           intent="drawings"
+          canWrite={canWrite}
         />
       )}
 

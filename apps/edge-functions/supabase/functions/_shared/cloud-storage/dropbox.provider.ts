@@ -1,6 +1,7 @@
 // COPIED FROM the canonical implementation. DO NOT EDIT in place
 // without also updating the source. Keep these byte-equivalent except
 // for the canonical-path banner and Deno-style import extensions.
+// Re-synced 2026-07-23 (drift: sortCloudItems was missing here).
 //
 // canonical: packages/shared/src/services/cloud-storage/dropbox.provider.ts
 
@@ -23,6 +24,7 @@ import {
   CloudStorageError,
   getProviderCredentials,
   postForm,
+  sortCloudItems,
 } from './provider-utils.ts'
 
 const AUTH_URL = 'https://www.dropbox.com/oauth2/authorize'
@@ -32,6 +34,14 @@ const API_BASE = 'https://api.dropboxapi.com/2'
 const CONTENT_BASE = 'https://content.dropboxapi.com/2'
 // `account_info.read` lets us call /users/get_current_account for the email label.
 // `offline` access type produces a long-lived refresh token.
+//
+// WRITE SCOPES (added 2026-05-15 for the handover cloud-mirror feature):
+// `files.content.write` is required by /files/upload + /files/create_folder_v2.
+// `files.metadata.write` would be required only if we ever rename / move / delete
+// existing files; we don't (handover is one-way mirror E-Site → cloud), so it
+// stays out. Existing tokens issued before this scope-bump are read-only and
+// will 401 on writes — the user must disconnect + reconnect to pick up the
+// new scope set.
 const SCOPES =
   'files.content.read files.content.write files.metadata.read account_info.read'
 
@@ -131,7 +141,7 @@ export class DropboxProvider implements CloudStorageProvider {
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'list folder')
     const j = (await res.json()) as DropboxListFolderResponse
     return {
-      items: j.entries.filter((e) => e['.tag'] !== 'deleted').map(toCloudItem),
+      items: sortCloudItems(j.entries.filter((e) => e['.tag'] !== 'deleted').map(toCloudItem)),
       nextPageToken: j.has_more ? j.cursor : undefined,
     }
   }
@@ -172,9 +182,17 @@ export class DropboxProvider implements CloudStorageProvider {
   }
 
   async createFolder(opts: CreateFolderOptions): Promise<CloudItem> {
+    // Dropbox's /files/create_folder_v2 takes a full path, not parent-id +
+    // name. Resolve the parent's id-or-path to a path_display first, then
+    // concat. parentFolderId === null means root of the resolved namespace.
     const parentPath = opts.parentFolderId
       ? await this.resolvePathFromId(opts.parentFolderId, opts.accessToken)
       : ''
+    // Defensive normalisation:
+    //   - collapse any double slashes ("/foo//bar" → "/foo/bar") so empty
+    //     parent paths don't produce malformed input,
+    //   - ensure leading slash (Dropbox rejects paths without one),
+    //   - strip trailing whitespace which silently fails to match folder names.
     const rawPath = `${parentPath}/${opts.name}`
     const path = ('/' + rawPath.replace(/^\/+/, '').trim()).replace(/\/+/g, '/')
     const res = await fetch(`${API_BASE}/files/create_folder_v2`, {
@@ -185,12 +203,18 @@ export class DropboxProvider implements CloudStorageProvider {
       }),
       body: JSON.stringify({ path, autorename: false }),
     })
+    // 409 path-conflict on create_folder_v2 means the folder already
+    // exists at the same path. That typically happens when a previous
+    // retry-storm landed the create on Dropbox but the response was lost
+    // (network, 503 mid-flight, timeout). Recover idempotently by looking
+    // up the existing folder and returning it as if we'd just made it.
     if (res.status === 409) {
       const bodyText = await res.text()
       if (bodyText.includes('path/conflict')) {
         const existing = await this.lookupByPath(path, opts.accessToken)
         if (existing && existing.type === 'folder') return existing
       }
+      // Not a recoverable 409 — surface the body so we know what's up.
       throw new CloudStorageError(
         `dropbox create folder failed: HTTP 409 — ${bodyText.slice(0, 240)}`,
         'dropbox',
@@ -202,6 +226,11 @@ export class DropboxProvider implements CloudStorageProvider {
     return toCloudItem(j.metadata)
   }
 
+  /**
+   * Look up an existing file/folder by its full path. Used by createFolder
+   * to recover from "already exists" 409s after a lost-response retry.
+   * Returns null on 404 / not-found. Other errors bubble up.
+   */
   private async lookupByPath(
     path: string,
     accessToken: string,
@@ -214,13 +243,15 @@ export class DropboxProvider implements CloudStorageProvider {
       }),
       body: JSON.stringify({ path }),
     })
-    if (res.status === 409) return null
+    if (res.status === 409) return null  // not_found
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'lookup by path')
     const j = (await res.json()) as DropboxFileEntry
     return toCloudItem(j)
   }
 
   async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
+    // /files/upload accepts up to 150 MB in a single shot. Larger files
+    // need /files/upload_session — Phase-2.
     const parentPath = await this.resolvePathFromId(opts.parentFolderId, opts.accessToken)
     const path = `${parentPath}/${opts.name}`
     const res = await fetch(`${CONTENT_BASE}/files/upload`, {
@@ -228,6 +259,9 @@ export class DropboxProvider implements CloudStorageProvider {
       headers: await this.namespaceHeaders(opts.accessToken, {
         Authorization: `Bearer ${opts.accessToken}`,
         'Content-Type': 'application/octet-stream',
+        // Dropbox-API-Arg carries the upload metadata. mode=add fails on
+        // conflict (autorename=false), which is what we want — caller
+        // should pre-dedup.
         'Dropbox-API-Arg': JSON.stringify({
           path,
           mode: 'add',
@@ -236,6 +270,10 @@ export class DropboxProvider implements CloudStorageProvider {
           strict_conflict: false,
         }),
       }),
+      // Cast through BodyInit — Uint8Array IS valid at runtime (it's an
+      // ArrayBufferView, which is a BufferSource, which is a BodyInit),
+      // but TS 5.7's stricter Uint8Array<ArrayBufferLike> shape misses
+      // the BufferSource overlap. Cast is the minimal-disruption fix.
       body: opts.body as unknown as BodyInit,
     })
     if (!res.ok) throw await asProviderError(res, 'dropbox', 'upload')
@@ -243,6 +281,14 @@ export class DropboxProvider implements CloudStorageProvider {
     return toCloudItem(j)
   }
 
+  /**
+   * Dropbox accepts both `path: "id:abc"` AND `path: "/foo/bar"` in most
+   * /files/* endpoints, BUT /files/create_folder_v2 + /files/upload need
+   * a literal path that can be composed with a child segment ("/Name").
+   * If the caller already passed a path-style string (starts with "/" or
+   * empty for root), return as-is. Otherwise round-trip via get_metadata
+   * to resolve the id → path. No cache (paths can change via rename).
+   */
   private async resolvePathFromId(
     idOrPath: string,
     accessToken: string,

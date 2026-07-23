@@ -1,6 +1,7 @@
 // COPIED FROM the canonical implementation. DO NOT EDIT in place
 // without also updating the source. Keep these byte-equivalent except
 // for the canonical-path banner and Deno-style import extensions.
+// Re-synced 2026-07-23 (drift: sortCloudItems was missing here).
 //
 // canonical: packages/shared/src/services/cloud-storage/onedrive.provider.ts
 
@@ -18,7 +19,7 @@ import type {
   TokenBundle,
   UploadFileOptions,
 } from './types.ts'
-import { asProviderError, getProviderCredentials, postForm } from './provider-utils.ts'
+import { asProviderError, getProviderCredentials, postForm, sortCloudItems } from './provider-utils.ts'
 
 // /common/ tenant covers both work/school accounts and personal Microsoft
 // accounts (consumer OneDrive). For a single tenant locked down to e.g. a
@@ -26,8 +27,14 @@ import { asProviderError, getProviderCredentials, postForm } from './provider-ut
 const AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
 const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
-// offline_access produces a refresh token. Files.Read.All covers both
-// personal OneDrive and SharePoint document libraries the user has access to.
+// offline_access produces a refresh token. Files.ReadWrite.All covers both
+// personal OneDrive and SharePoint document libraries the user has access to,
+// for read AND write. Read-only Files.Read.All was sufficient for Phase 1
+// (one-way cloud → E-Site sync); handover mirror is the inverse direction
+// and needs write.
+//
+// Existing tokens issued under the older `Files.Read.All` scope will 403 on
+// writes — user must disconnect + reconnect to pick up ReadWrite.
 const SCOPES = ['Files.ReadWrite.All', 'User.Read', 'offline_access'].join(' ')
 
 export class OneDriveProvider implements CloudStorageProvider {
@@ -109,7 +116,7 @@ export class OneDriveProvider implements CloudStorageProvider {
       })
       if (!res.ok) throw await asProviderError(res, 'onedrive', 'list folder (continue)')
       const j = (await res.json()) as GraphListResponse
-      return { items: j.value.map(toGraphItem), nextPageToken: j['@odata.nextLink'] }
+      return { items: sortCloudItems(j.value.map(toGraphItem)), nextPageToken: j['@odata.nextLink'] }
     }
     const path = opts.folderId
       ? `/me/drive/items/${encodeURIComponent(opts.folderId)}/children`
@@ -119,7 +126,7 @@ export class OneDriveProvider implements CloudStorageProvider {
     })
     if (!res.ok) throw await asProviderError(res, 'onedrive', 'list folder')
     const j = (await res.json()) as GraphListResponse
-    return { items: j.value.map(toGraphItem), nextPageToken: j['@odata.nextLink'] }
+    return { items: sortCloudItems(j.value.map(toGraphItem)), nextPageToken: j['@odata.nextLink'] }
   }
 
   async downloadFile(opts: DownloadOptions): Promise<DownloadResult> {
@@ -149,6 +156,7 @@ export class OneDriveProvider implements CloudStorageProvider {
   }
 
   async createFolder(opts: CreateFolderOptions): Promise<CloudItem> {
+    // POST to the parent's /children with a folder body.
     const path = opts.parentFolderId
       ? `/me/drive/items/${encodeURIComponent(opts.parentFolderId)}/children`
       : `/me/drive/root/children`
@@ -161,6 +169,7 @@ export class OneDriveProvider implements CloudStorageProvider {
       body: JSON.stringify({
         name: opts.name,
         folder: {},
+        // 'fail' surfaces the conflict instead of auto-renaming.
         '@microsoft.graph.conflictBehavior': 'fail',
       }),
     })
@@ -170,6 +179,11 @@ export class OneDriveProvider implements CloudStorageProvider {
   }
 
   async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
+    // Small-file upload — PUT to /items/{parent}:/{name}:/content. Hard
+    // upper bound 4 MB per the Graph docs; for larger handover packs we'd
+    // switch to the createUploadSession resumable flow (Phase-2).
+    // The name segment is URL-encoded so ":" / "/" in user-supplied names
+    // can't break out of the path template.
     const path =
       `/me/drive/items/${encodeURIComponent(opts.parentFolderId)}` +
       `:/${encodeURIComponent(opts.name)}:/content`
@@ -179,6 +193,7 @@ export class OneDriveProvider implements CloudStorageProvider {
         Authorization: `Bearer ${opts.accessToken}`,
         'Content-Type': opts.mimeType ?? 'application/octet-stream',
       },
+      // See dropbox.provider.ts uploadFile() for the cast rationale.
       body: opts.body as unknown as BodyInit,
     })
     if (!res.ok) throw await asProviderError(res, 'onedrive', 'upload')

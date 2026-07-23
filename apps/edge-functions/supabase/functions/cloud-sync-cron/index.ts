@@ -11,8 +11,11 @@
  * Each per-project run is delegated over HTTP to cloud-sync-project (reusing
  * its rev-compare, versioning and diagnostics logic). Runs are sequential to
  * stay friendly to provider rate limits and the 150s edge wall-clock cap;
- * MAX_PROJECTS bounds a single tick. cloud-sync-project is itself bounded to
- * MAX_FILES per call, and dedup-by-rev keeps repeat ticks cheap.
+ * MAX_PROJECTS bounds a single tick. cloud-sync-project walks the whole
+ * folder tree (metadata-only) and budgets downloads per invocation; when it
+ * reports `remaining > 0` we immediately re-invoke for that project (up to
+ * MAX_LEGS) so backlogs converge within a tick where time allows — anything
+ * left after that is picked up by the next 15-min tick.
  *
  * Authorization: Bearer <service_role_key>
  *
@@ -31,6 +34,14 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 // by-rev (unchanged files cost one metadata listing), this comfortably keeps
 // a healthy org's folders current. Raise once a job-queue chunker lands.
 const MAX_PROJECTS = 100
+
+// Re-invocations per project within one tick when the download budget left a
+// backlog (`remaining > 0`). Bounded so one huge folder can't eat the tick.
+const MAX_LEGS = 3
+
+// Stop starting new work once this much of the tick's 150s wall clock is
+// spent — the remainder lands on the next tick instead of getting killed.
+const TICK_TIME_BUDGET_MS = 100_000
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
@@ -75,23 +86,38 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const results: Array<{ projectId: string; ok: boolean; error?: string }> = []
   let ok = 0
   let failed = 0
+  const tickStart = Date.now()
 
   for (const p of batch) {
+    if (Date.now() - tickStart > TICK_TIME_BUDGET_MS) {
+      console.warn('cloud-sync-cron: tick time budget spent; remaining projects roll to next tick')
+      break
+    }
     try {
       // Delegate to cloud-sync-project. No callerUserId → it attributes
       // inserts to the connection's connected_by. trigger:'cron' tags the
-      // diagnostics row.
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/cloud-sync-project`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ projectId: p.id, trigger: 'cron' }),
-      })
-      if (!res.ok) {
-        const body = await res.text()
-        throw new Error(`HTTP ${res.status}: ${body.slice(0, 160)}`)
+      // diagnostics row. Loop legs while the download budget left a backlog.
+      for (let leg = 0; leg < MAX_LEGS; leg++) {
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/cloud-sync-project`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ projectId: p.id, trigger: 'cron' }),
+        })
+        if (!res.ok) {
+          const body = await res.text()
+          throw new Error(`HTTP ${res.status}: ${body.slice(0, 160)}`)
+        }
+        const summary = (await res.json()) as { remaining?: number; alreadyRunning?: boolean }
+        if (
+          !summary.remaining ||
+          summary.alreadyRunning ||
+          Date.now() - tickStart > TICK_TIME_BUDGET_MS
+        ) {
+          break
+        }
       }
       ok++
       results.push({ projectId: p.id, ok: true })
