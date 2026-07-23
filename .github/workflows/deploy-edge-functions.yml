@@ -49,15 +49,3 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: supabase functions deploy validate-inspection
-
-      - name: Deploy cloud-sync-project
-        working-directory: apps/edge-functions
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy cloud-sync-project
-
-      - name: Deploy cloud-sync-cron
-        working-directory: apps/edge-functions
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy cloud-sync-cron
