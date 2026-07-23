@@ -171,27 +171,139 @@ export async function clearProjectCloudFolderAction(
 }
 
 /**
- * Trigger a bulk sync of the project's mapped cloud folder. Calls the
- * cloud-sync-project edge function (service-role) and returns the per-
- * file counts. Idempotent — re-runs skip already-imported files.
+ * One sync invocation's counters, as returned by the cloud-sync-project
+ * edge function (rewritten 2026-07-23 — metadata-first walk + download
+ * budget; see docs/superpowers/specs/2026-07-23-floor-plan-sync-freshness.md).
+ */
+export interface CloudSyncSummary {
+  sent: number
+  updated: number
+  newVersions: number
+  adopted: number
+  renamed: number
+  removed: number
+  skipped: number
+  failed: number
+  filesSeen: number
+  downloads: number
+  remaining: number
+  walkComplete: boolean
+  alreadyRunning: boolean
+  classified: { floor_plans: number; documents: number }
+  intent: 'drawings' | 'documents' | 'auto'
+  errors?: string[]
+}
+
+/** Legs per action call. The engine downloads ≤20 files per leg; 6 legs
+ * (120 files) clears any realistic backlog in one click/tab-open; anything
+ * bigger converges across the 15-min cron ticks. */
+const MAX_SYNC_LEGS = 6
+
+/** A folder checked within this window is "fresh" — opening the tab again
+ * doesn't re-trigger a provider walk. */
+const AUTO_SYNC_MAX_AGE_MS = 5 * 60_000
+
+/**
+ * The caller must at least be able to SEE the project (RLS on
+ * projects.projects returns no row otherwise). Both sync triggers write
+ * with the service key downstream, so this app-side gate is what keeps
+ * random signed-in outsiders from syncing arbitrary project ids — the
+ * same class of gap PR #135 closed on the tenant-schedule routes.
+ */
+async function requireVisibleProject(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+): Promise<{
+  userId: string
+  lastSyncAt: string | null
+  mapped: boolean
+}> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Not signed in')
+  const { data: project } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('id, cloud_storage_connection_id, cloud_storage_folder_id, cloud_storage_last_sync_at')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (!project) throw new Error('Project not found')
+  return {
+    userId: user.id,
+    lastSyncAt: (project as any).cloud_storage_last_sync_at ?? null,
+    mapped:
+      Boolean((project as any).cloud_storage_connection_id) &&
+      Boolean((project as any).cloud_storage_folder_id),
+  }
+}
+
+async function invokeSyncLegs(args: {
+  projectId: string
+  callerUserId: string
+  intent?: 'drawings' | 'documents'
+  trigger: 'manual' | 'auto'
+}): Promise<CloudSyncSummary> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!supabaseUrl || !serviceKey) {
+    throw new Error('Server is missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
+  }
+
+  let total: CloudSyncSummary | null = null
+  for (let leg = 0; leg < MAX_SYNC_LEGS; leg++) {
+    const res = await fetch(`${supabaseUrl}/functions/v1/cloud-sync-project`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        projectId: args.projectId,
+        callerUserId: args.callerUserId,
+        intent: args.intent,
+        trigger: args.trigger,
+      }),
+    })
+    if (!res.ok) {
+      const body = await res.text()
+      throw new Error(`sync failed (HTTP ${res.status}): ${body.slice(0, 300)}`)
+    }
+    const leg_ = (await res.json()) as CloudSyncSummary
+    if (!total) {
+      total = leg_
+    } else {
+      total.sent += leg_.sent
+      total.updated += leg_.updated
+      total.newVersions += leg_.newVersions
+      total.adopted += leg_.adopted
+      total.renamed += leg_.renamed
+      total.removed += leg_.removed
+      total.skipped = leg_.skipped
+      total.failed += leg_.failed
+      total.filesSeen = leg_.filesSeen
+      total.downloads += leg_.downloads
+      total.remaining = leg_.remaining
+      total.walkComplete = leg_.walkComplete
+      total.classified.floor_plans += leg_.classified.floor_plans
+      total.classified.documents += leg_.classified.documents
+      if (leg_.errors?.length) (total.errors ??= []).push(...leg_.errors)
+    }
+    if (leg_.alreadyRunning || leg_.remaining === 0) break
+  }
+  return total!
+}
+
+/**
+ * Trigger a sync of the project's mapped cloud folder. Loops the edge
+ * function while it reports a download backlog (`remaining > 0`), so one
+ * "Sync now" click brings the whole folder current. Idempotent.
  *
- * UI calls this from the "Sync now" button on the project drawings /
- * documents tabs. Counts get displayed as a flash. Phase 2 polish: poll
- * job-status table for long syncs that exceed the edge-function timeout.
+ * Gate: any project-visible member may sync (it pulls from the folder an
+ * admin mapped; no caller content is involved) — see docs/rbac-matrix.md.
  */
 export async function syncProjectCloudFolderAction(
   projectId: string,
   intent?: 'drawings' | 'documents',
-): Promise<{
-  sent: number
-  updated: number
-  newVersions: number
-  skipped: number
-  failed: number
-  classified: { floor_plans: number; documents: number }
-  intent: 'drawings' | 'documents' | 'auto'
-  errors?: string[]
-}> {
+): Promise<CloudSyncSummary> {
   if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
     throw new Error('Invalid project id')
   }
@@ -199,33 +311,83 @@ export async function syncProjectCloudFolderAction(
     throw new Error('Invalid intent')
   }
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not signed in')
+  const { userId, mapped } = await requireVisibleProject(supabase, projectId)
+  if (!mapped) throw new Error('Project has no cloud folder mapped')
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!supabaseUrl || !serviceKey) {
-    throw new Error('Server is missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
-  }
-
-  const res = await fetch(`${supabaseUrl}/functions/v1/cloud-sync-project`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${serviceKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ projectId, callerUserId: user.id, intent, trigger: 'manual' }),
+  const result = await invokeSyncLegs({
+    projectId,
+    callerUserId: userId,
+    intent,
+    trigger: 'manual',
   })
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`sync failed (HTTP ${res.status}): ${body.slice(0, 300)}`)
-  }
-  const result = (await res.json()) as Awaited<
-    ReturnType<typeof syncProjectCloudFolderAction>
-  >
   revalidatePath(`/projects/${projectId}/floor-plans`)
   revalidatePath(`/projects/${projectId}/documents`)
   return result
+}
+
+/**
+ * Freshness status for the toolbar's auto-check chip.
+ */
+export type AutoSyncOutcome =
+  | { status: 'unmapped' }
+  | { status: 'fresh'; lastSyncAt: string | null }
+  | { status: 'already_running' }
+  | { status: 'synced'; summary: CloudSyncSummary }
+  | { status: 'error'; message: string }
+
+/**
+ * Stale-while-revalidate trigger fired when a user opens the floor-plans /
+ * documents tab. The tab renders instantly from the DB; this action then
+ * checks the mapped folder IF the last completed check is older than
+ * AUTO_SYNC_MAX_AGE_MS. In-flight dedupe lives in the edge function (a
+ * 'running' cloud_sync_runs row younger than 3 min short-circuits
+ * non-manual triggers).
+ *
+ * Never throws for expected conditions — the chip needs a status, not an
+ * exception. Gate: project visibility (read-only members deserve fresh
+ * data too).
+ */
+export async function autoSyncCloudFolderAction(
+  projectId: string,
+  intent?: 'drawings' | 'documents',
+): Promise<AutoSyncOutcome> {
+  if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
+    return { status: 'error', message: 'Invalid project id' }
+  }
+  if (intent && intent !== 'drawings' && intent !== 'documents') {
+    return { status: 'error', message: 'Invalid intent' }
+  }
+  try {
+    const supabase = await createClient()
+    const { userId, lastSyncAt, mapped } = await requireVisibleProject(supabase, projectId)
+    if (!mapped) return { status: 'unmapped' }
+
+    if (lastSyncAt && Date.now() - Date.parse(lastSyncAt) < AUTO_SYNC_MAX_AGE_MS) {
+      return { status: 'fresh', lastSyncAt }
+    }
+
+    const summary = await invokeSyncLegs({
+      projectId,
+      callerUserId: userId,
+      intent,
+      trigger: 'auto',
+    })
+    if (summary.alreadyRunning) return { status: 'already_running' }
+
+    const changed =
+      summary.sent + summary.updated + summary.newVersions + summary.adopted +
+      summary.renamed + summary.removed > 0
+    if (changed) {
+      revalidatePath(`/projects/${projectId}/floor-plans`)
+      revalidatePath(`/projects/${projectId}/documents`)
+    }
+    return { status: 'synced', summary }
+  } catch (e) {
+    return {
+      status: 'error',
+      message: e instanceof Error ? e.message : 'Sync check failed',
+    }
+  }
 }
 
 /**
@@ -248,9 +410,65 @@ export async function updateFloorPlanToLatestAction(
     throw new Error('Invalid id')
   }
   const supabase = await createClient()
-  // Columns/tables added in migration 00148 aren't in generated types yet.
+  await adoptLatestRevision(supabase as any, floorPlanId)
+
+  revalidatePath(`/projects/${projectId}/floor-plans`)
+  revalidatePath(`/projects/${projectId}/floor-plans/${floorPlanId}`)
+  return { ok: true }
+}
+
+/**
+ * Bulk form of updateFloorPlanToLatest: adopt the latest synced revision on
+ * EVERY drawing in the project currently flagged has_newer_version. Backs
+ * the "Update all" banner on the floor-plans tab; the same single confirm
+ * dialog covers the batch. Per-drawing failures don't abort the rest —
+ * they're reported back for the flash.
+ *
+ * RLS-gated like the single action: the UPDATE on tenants.floor_plans is
+ * governed by the existing floor_plans policies, so a caller without
+ * manage rights gets no rows / a 403.
+ */
+export async function updateAllFloorPlansToLatestAction(
+  projectId: string,
+): Promise<{ updated: number; failed: number; errors?: string[] }> {
+  if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
+    throw new Error('Invalid project id')
+  }
+  const supabase = await createClient()
   const db = supabase as any
 
+  const { data: flagged, error: listErr } = await db
+    .schema('tenants')
+    .from('floor_plans')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('has_newer_version', true)
+    .eq('is_active', true)
+  if (listErr) throw new Error(`Failed to list flagged drawings: ${listErr.message}`)
+
+  let updated = 0
+  let failed = 0
+  const errors: string[] = []
+  for (const row of (flagged ?? []) as Array<{ id: string }>) {
+    try {
+      await adoptLatestRevision(db, row.id)
+      updated++
+    } catch (e) {
+      failed++
+      errors.push(e instanceof Error ? e.message.slice(0, 160) : 'unknown')
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}/floor-plans`)
+  return { updated, failed, errors: errors.length ? errors : undefined }
+}
+
+/**
+ * Shared adopt step: move a drawing's active file to its latest synced
+ * revision. Columns/tables added in migration 00148 aren't in generated
+ * types yet — callers pass the client casted to `any`.
+ */
+async function adoptLatestRevision(db: any, floorPlanId: string): Promise<void> {
   const { data: fp, error: fpErr } = await db
     .schema('tenants')
     .from('floor_plans')
@@ -281,8 +499,4 @@ export async function updateFloorPlanToLatestAction(
     })
     .eq('id', floorPlanId)
   if (udErr) throw new Error(`Failed to apply version: ${udErr.message}`)
-
-  revalidatePath(`/projects/${projectId}/floor-plans`)
-  revalidatePath(`/projects/${projectId}/floor-plans/${floorPlanId}`)
-  return { ok: true }
 }

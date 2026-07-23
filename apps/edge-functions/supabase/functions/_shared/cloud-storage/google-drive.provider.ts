@@ -1,6 +1,7 @@
 // COPIED FROM the canonical implementation. DO NOT EDIT in place
 // without also updating the source. Keep these byte-equivalent except
 // for the canonical-path banner and Deno-style import extensions.
+// Re-synced 2026-07-23 (drift: sortCloudItems was missing here).
 //
 // canonical: packages/shared/src/services/cloud-storage/google-drive.provider.ts
 
@@ -18,16 +19,23 @@ import type {
   TokenBundle,
   UploadFileOptions,
 } from './types.ts'
-import { asProviderError, getProviderCredentials, postForm } from './provider-utils.ts'
+import { asProviderError, getProviderCredentials, postForm, sortCloudItems } from './provider-utils.ts'
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 const API_BASE = 'https://www.googleapis.com/drive/v3'
 const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
-// drive.readonly lets us point at any folder the user already owns or has
-// access to — covers shared drives via supportsAllDrives. Userinfo email
-// is the display label.
+// Full `drive` scope (read + write across the user's drive). We need write
+// because the handover cloud-mirror writes folders + files INTO a folder the
+// user picked from THEIR pre-existing drive tree (not one our app created).
+// `drive.file` would be more principle-of-least-privilege but only grants
+// access to files explicitly created or opened by the app — picking a folder
+// in our picker doesn't count as "opening" it in the Drive sense.
+//
+// Existing tokens issued under the older `drive.readonly` scope will 403 on
+// writes — user must disconnect + reconnect to pick up the broader scope.
+// Userinfo email is the display label on /settings/integrations.
 const SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/userinfo.email',
@@ -125,7 +133,7 @@ export class GoogleDriveProvider implements CloudStorageProvider {
     if (!res.ok) throw await asProviderError(res, 'google_drive', 'list folder')
     const j = (await res.json()) as DriveListResponse
     return {
-      items: j.files.map(toDriveItem),
+      items: sortCloudItems(j.files.map(toDriveItem)),
       nextPageToken: j.nextPageToken,
     }
   }
@@ -169,6 +177,7 @@ export class GoogleDriveProvider implements CloudStorageProvider {
       body: JSON.stringify({
         name: opts.name,
         mimeType: FOLDER_MIME,
+        // null parent → My Drive root.
         parents: opts.parentFolderId ? [opts.parentFolderId] : undefined,
       }),
     })
@@ -178,6 +187,9 @@ export class GoogleDriveProvider implements CloudStorageProvider {
   }
 
   async uploadFile(opts: UploadFileOptions): Promise<CloudItem> {
+    // Multipart upload — one POST carries metadata + body. Limit ~5 MB
+    // is the practical comfort zone before we should switch to resumable
+    // (Phase-2).
     const boundary = `b${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
     const mime = opts.mimeType ?? 'application/octet-stream'
     const metaJson = JSON.stringify({

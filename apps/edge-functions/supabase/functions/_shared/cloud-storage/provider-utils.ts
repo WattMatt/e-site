@@ -1,6 +1,7 @@
 // COPIED FROM the canonical implementation. DO NOT EDIT in place
 // without also updating the source. Keep these byte-equivalent except
 // for the canonical-path banner and Deno-style import extensions.
+// Re-synced 2026-07-23 (drift: sortCloudItems was missing here).
 //
 // canonical: packages/shared/src/services/cloud-storage/provider-utils.ts
 
@@ -72,6 +73,20 @@ function readEnv(): (k: string) => string | undefined {
 }
 
 /**
+ * Natural-alphanumeric sort for cloud-folder picker items. Folders before
+ * files, then within each group sort by name with `numeric: true` so
+ * "001" < "002" < "010" (rather than the default string sort which gives
+ * "001" < "010" < "002"). Used by every provider's listFolder to deliver
+ * a consistent, intuitive order to the picker UI + bulk-sync edge fn.
+ */
+export function sortCloudItems<T extends { name: string; type: 'file' | 'folder' }>(items: T[]): T[] {
+  return [...items].sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  })
+}
+
+/**
  * POST application/x-www-form-urlencoded — the OAuth token-exchange
  * standard for all 3 providers.
  */
@@ -116,6 +131,11 @@ export async function asProviderError(
     }
     code = code ?? (j.error_summary as string) ?? (j.error_description as string)
   } catch { /* swallow */ }
+  // Fall back to a body excerpt when no recognisable error code is in the
+  // payload — Dropbox 400s for malformed requests often return plain-text
+  // "Error in call to API function …" that doesn't parse as JSON, and
+  // surfacing it is the difference between "HTTP 400" and an actionable
+  // message. Trim to 240 chars to keep the UI flash readable.
   let tail = ''
   if (code) {
     tail = ` (${String(code)})`

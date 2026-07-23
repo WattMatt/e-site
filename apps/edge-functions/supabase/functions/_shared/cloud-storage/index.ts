@@ -1,6 +1,7 @@
 // COPIED FROM the canonical implementation. DO NOT EDIT in place
 // without also updating the source. Keep these byte-equivalent except
 // for the canonical-path banner and Deno-style import extensions.
+// Re-synced 2026-07-23 (drift: sortCloudItems was missing here).
 //
 // canonical: packages/shared/src/services/cloud-storage/index.ts
 

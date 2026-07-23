@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService } from '@esite/shared'
+import { projectService, ORG_WRITE_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { CloudSyncToolbar } from '@/components/cloud-storage/CloudSyncToolbar'
 import { DocumentList, type DocumentListItem } from './DocumentList'
 
@@ -13,6 +14,7 @@ interface ConnectionOption {
   id: string
   provider: 'dropbox' | 'google_drive' | 'onedrive'
   account_email: string
+  needs_reauth: boolean | null
 }
 
 interface DocumentRow {
@@ -53,8 +55,15 @@ export default async function DocumentsPage({ params }: Props) {
   // Connections in this org (for the picker)
   const { data: connections } = await (supabase as any)
     .from('org_storage_connections')
-    .select('id, provider, account_email')
+    .select('id, provider, account_email, needs_reauth')
     .order('created_at', { ascending: false })
+
+  // Write affordances (Sync now / Set folder / Clear) are gated on the
+  // effective project role; read-only members still get the toolbar with
+  // the auto-check freshness chip. Server actions + RLS enforce the same
+  // boundary — this just stops offering actions the caller can't complete.
+  const gate = await requireEffectiveRole(supabase as any, projectId, ORG_WRITE_ROLES)
+  const canWrite = gate.ok
 
   const documents = ((docs ?? []) as unknown as DocumentRow[]).map<DocumentListItem>((d) => ({
     id: d.id,
@@ -109,6 +118,7 @@ export default async function DocumentsPage({ params }: Props) {
         cloudFolderPath={cloudFolderPath}
         lastSyncAt={lastSyncAt}
         intent="documents"
+        canWrite={canWrite}
       />
 
       <DocumentList documents={documents} />

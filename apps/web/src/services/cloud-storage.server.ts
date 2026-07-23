@@ -84,6 +84,10 @@ export async function connectCloudProvider(
         scope: tokens.scope,
         expires_at: tokens.expiresAt?.toISOString() ?? null,
         connected_by: args.connectedBy,
+        // A fresh OAuth round-trip is the definitive re-auth: clear any
+        // needs_reauth flag the sync engine set on the previous tokens.
+        needs_reauth: false,
+        last_sync_error: null,
       },
       { onConflict: 'organisation_id,provider,account_email' },
     )

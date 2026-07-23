@@ -1,45 +1,51 @@
 /**
  * Edge Function: cloud-sync-project
  *
- * Change-detecting sync. Walks a project's mapped cloud folder and, per
- * file, compares the live provider revision (`rev` / etag) against the one
- * stored at last import:
- *   - unchanged (rev matches)  → skip
- *   - new file (no row yet)    → download + insert (drawings also get a v1
- *                                tenants.floor_plan_versions row)
- *   - changed document         → overwrite bytes + update row IN PLACE (docs
- *                                carry no annotations, so this is safe)
- *   - changed drawing          → download the new revision as a NEW
- *                                tenants.floor_plan_versions row and flag the
- *                                drawing `has_newer_version`. The active file
- *                                the markup / snag pins / calibration are
- *                                pinned to is NOT moved until a user migrates
- *                                (see updateFloorPlanToLatest server action),
- *                                so existing annotations are never silently
- *                                invalidated.
- * Every run writes a tenants.cloud_sync_runs diagnostics row (migration
- * 00148) so manual + cron syncs are observable without redeploying.
+ * Change-detecting sync, metadata-first (rewritten 2026-07-23; see
+ * docs/superpowers/specs/2026-07-23-floor-plan-sync-freshness.md).
+ *
+ * The walk enumerates the WHOLE mapped folder tree first — listing is a
+ * handful of cheap API calls — and rev-compares every file. Only new or
+ * changed files cost a download, budgeted at MAX_DOWNLOADS per invocation;
+ * the response reports `remaining` and callers loop until it hits 0. This
+ * replaces the old MAX_FILES=50 collection cap, where unchanged files
+ * consumed the budget and folders >50 files never synced their tail.
+ *
+ * Per changed file:
+ *   - unchanged (rev matches)     → skip (rename/move still reconciled)
+ *   - captured-but-unadopted rev  → skip (no re-download; badge already up)
+ *   - new file (no row yet)       → download + insert (drawings get a v1
+ *                                   tenants.floor_plan_versions row)
+ *   - changed document            → overwrite bytes + update row in place
+ *   - changed drawing, NO annotations (no RFI annotations, no QC markup
+ *     lineage, no snag pins, not calibrated)
+ *                                 → download new revision + ADOPT it as the
+ *                                   active file immediately (version row
+ *                                   recorded for history)
+ *   - changed drawing WITH annotations
+ *                                 → download as a NEW version row + flag
+ *                                   has_newer_version; the active file only
+ *                                   moves when a user clicks Update (pins /
+ *                                   markup / calibration are pinned to the
+ *                                   active file's geometry)
+ *
+ * Run lifecycle: a tenants.cloud_sync_runs row is INSERTed at start with
+ * status='running' and UPDATEd to done/error at completion — in-flight
+ * detection for the auto-sync guard, plus walk telemetry (files_seen,
+ * downloads, walk_complete, remaining).
+ *
+ * Token health: a refresh failure sets org_storage_connections.needs_reauth
+ * + last_sync_error (surfaced in the toolbar and settings/integrations);
+ * the next successful refresh clears both.
  *
  * Request body:
  *   {
  *     projectId: string,
- *     callerUserId: string,    // for the uploaded_by audit column
+ *     callerUserId?: string,        // audit actor; cron/auto omit it
+ *     intent?: 'drawings' | 'documents',
+ *     trigger?: 'manual' | 'cron' | 'auto',
  *   }
  *   Authorization: Bearer <service_role_key>
- *
- * Response:
- *   {
- *     sent: number,             // number of new rows inserted
- *     skipped: number,          // already-imported (dedup hit)
- *     failed: number,           // download or upload errors
- *     classified: { floor_plans: number; documents: number },
- *     errors?: string[],        // per-file failure messages (truncated)
- *   }
- *
- * Walks the folder tree breadth-first up to MAX_DEPTH levels, max
- * MAX_FILES files per run. Hidden folders (name starting with `.`) are
- * skipped. The function is intended to be triggered by a server action
- * ("Sync now" button) or by pg_cron (M6 — scheduled poll).
  */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -60,14 +66,21 @@ const DOCUMENTS_BUCKET = 'project-documents'
 // drawings so the existing markup canvas + RFI annotation flows just work.
 const FLOOR_PLANS_BUCKET = 'drawings'
 
-// Depth + count limits to keep a single sync bounded.
-// Supabase Edge Functions have a 150s wall-clock cap. At ~2-5s per file
-// (download + upload + insert), MAX_FILES=50 leaves comfortable headroom
-// even for the slow tail (large PDFs over a slow link). The user can re-
-// click "Sync now" for the rest until the Phase-2 cron chunker lands —
-// dedup keeps repeat runs idempotent, so re-clicking is safe and cheap.
-const MAX_DEPTH = 5
-const MAX_FILES = 50
+// Walk guards. Listing is metadata-only (cheap), so these are runaway
+// backstops, not per-run work budgets:
+const MAX_DEPTH = 5      // subfolder nesting below the mapped folder
+const MAX_ENTRIES = 2000 // total files enumerated before we call it truncated
+
+// Download budget per invocation. Only new/changed files cost a download
+// (~2-5s each incl. storage re-upload); 20 keeps a worst-case run well
+// inside the 150s edge wall-clock cap. Anything over budget is reported in
+// `remaining` and the caller loops.
+const MAX_DOWNLOADS = 20
+
+// A 'running' cloud_sync_runs row younger than this is treated as a live
+// in-flight sync (dedupe guard for auto/cron triggers). Older running rows
+// are considered crashed and ignored.
+const IN_FLIGHT_WINDOW_MS = 3 * 60_000
 
 // Routing heuristic — see docs/cloud-storage-integration-design.md §6.
 const CAD_EXTENSIONS = new Set(['.dwg', '.dxf', '.dgn', '.rvt'])
@@ -75,15 +88,15 @@ const DRAWING_FOLDER_RE = /(^|\/)(drawings?|plans?|floor[ -]?plans?)(\/|$)/i
 
 interface SyncRequest {
   projectId: string
-  // Audit actor for inserted rows (uploaded_by). Optional: cron has no user,
-  // so when omitted we fall back to the connection's connected_by profile.
+  // Audit actor for inserted rows (uploaded_by). Optional: cron/auto have no
+  // user, so when omitted we fall back to the connection's connected_by.
   callerUserId?: string
-  // When set, overrides the extension+folder-name classifier so every file
-  // in this run is routed to the corresponding table/bucket. Driven by
-  // which tab the user clicked "Sync now" from in the web UI.
+  // When set, overrides the extension+folder-name classifier so every NEW
+  // file in this run is routed to the corresponding table/bucket. Driven by
+  // which tab the sync was triggered from in the web UI.
   intent?: 'drawings' | 'documents'
-  // Provenance for the cloud_sync_runs diagnostics row. Defaults to 'manual'.
-  trigger?: 'manual' | 'cron'
+  // Provenance for the cloud_sync_runs row. Defaults to 'manual'.
+  trigger?: 'manual' | 'cron' | 'auto'
 }
 
 interface ProjectRow {
@@ -101,6 +114,7 @@ interface ConnectionRow {
   refresh_token_enc: string
   expires_at: string | null
   connected_by: string
+  needs_reauth: boolean | null
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -145,23 +159,39 @@ Deno.serve(async (req: Request): Promise<Response> => {
 interface SyncResult {
   sent: number          // new files inserted
   updated: number       // documents overwritten in place (rev changed)
-  newVersions: number   // drawing revisions versioned (rev changed)
+  newVersions: number   // drawing revisions captured for annotated drawings
+  adopted: number       // drawing revisions captured AND made active (clean drawings)
   renamed: number       // drawings whose name/path moved (same content)
   removed: number       // drawings soft-removed (gone from the folder)
-  skipped: number       // unchanged (rev matched)
+  skipped: number       // unchanged, or already-captured awaiting adoption
   failed: number
+  filesSeen: number     // everything the metadata walk enumerated
+  downloads: number     // files that actually cost a download this run
+  remaining: number     // new/changed files left when the budget ran out
+  walkComplete: boolean
+  alreadyRunning: boolean // true = another sync was in flight; nothing done
   classified: { floor_plans: number; documents: number }
-  // Echoes the request's intent (or 'auto' when the classifier ran).
-  // Diagnostic so the caller can verify intent flowed through.
   intent: 'drawings' | 'documents' | 'auto'
   errors?: string[]
+}
+
+function emptyResult(intent: SyncResult['intent']): SyncResult {
+  return {
+    sent: 0, updated: 0, newVersions: 0, adopted: 0, renamed: 0, removed: 0,
+    skipped: 0, failed: 0, filesSeen: 0, downloads: 0, remaining: 0,
+    walkComplete: false, alreadyRunning: false,
+    classified: { floor_plans: 0, documents: 0 },
+    intent, errors: [],
+  }
 }
 
 async function syncProject(
   supabase: SupabaseClient,
   req: SyncRequest,
 ): Promise<SyncResult> {
-  const startedAt = new Date().toISOString()
+  const trigger = req.trigger ?? 'manual'
+  const intent: SyncResult['intent'] = req.intent ?? 'auto'
+
   // 1. Load project + verify it has a mapping.
   const { data: project, error: pe } = await supabase
     .schema('projects')
@@ -175,38 +205,129 @@ async function syncProject(
     throw new Error('project has no cloud-storage folder mapped')
   }
 
-  // 2. Load + decrypt connection. Refresh if expired.
+  // 2. In-flight guard. Manual clicks always proceed (the user forced it and
+  // the engine is idempotent); auto/cron triggers dedupe against a live run.
+  if (trigger !== 'manual') {
+    const cutoff = new Date(Date.now() - IN_FLIGHT_WINDOW_MS).toISOString()
+    const { data: running } = await supabase
+      .schema('tenants')
+      .from('cloud_sync_runs')
+      .select('id')
+      .eq('project_id', proj.id)
+      .eq('status', 'running')
+      .gte('started_at', cutoff)
+      .limit(1)
+      .maybeSingle()
+    if (running) {
+      const r = emptyResult(intent)
+      r.alreadyRunning = true
+      return r
+    }
+  }
+
+  // 3. Load connection; fail fast when it's known-broken.
   const { data: connRow, error: ce } = await supabase
     .from('org_storage_connections')
-    .select('id, provider, organisation_id, access_token_enc, refresh_token_enc, expires_at, connected_by')
+    .select('id, provider, organisation_id, access_token_enc, refresh_token_enc, expires_at, connected_by, needs_reauth')
     .eq('id', proj.cloud_storage_connection_id)
     .single()
   if (ce || !connRow) throw new Error(`connection not found: ${ce?.message ?? 'no row'}`)
   const conn = connRow as unknown as ConnectionRow
+  if (conn.needs_reauth) {
+    throw new Error(
+      'cloud connection needs re-authentication — reconnect it under Settings → Integrations',
+    )
+  }
 
   // Audit actor for inserted rows. Manual sync passes the signed-in user;
-  // cron omits it, so attribute to whoever connected the integration
+  // cron/auto omit it, so attribute to whoever connected the integration
   // (connected_by is NOT NULL, and floor_plans.uploaded_by is NOT NULL).
   const actorUserId = req.callerUserId ?? conn.connected_by
 
+  // 4. Token: decrypt, refresh when missing-expiry/near-expiry. Refresh
+  // failure marks the connection so the UI can offer Reconnect.
   let accessToken = await decryptToken(hexToUint8(conn.access_token_enc))
   const expMs = conn.expires_at ? Date.parse(conn.expires_at) : 0
   if (!expMs || expMs - Date.now() < 60_000) {
-    accessToken = await refreshAndPersist(supabase, conn)
+    try {
+      accessToken = await refreshAndPersist(supabase, conn)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      await supabase
+        .from('org_storage_connections')
+        .update({ needs_reauth: true, last_sync_error: msg.slice(0, 500) })
+        .eq('id', conn.id)
+      throw new Error(`token refresh failed (connection flagged for reconnect): ${msg}`)
+    }
   }
   const provider = getCloudStorageProvider(conn.provider)
 
-  // 3. BFS walk of the folder tree, collecting files up to MAX_FILES.
+  // 5. Open the diagnostics run row (status=running) — the in-flight marker.
+  const startedAt = new Date().toISOString()
+  const { data: runRow } = await supabase
+    .schema('tenants')
+    .from('cloud_sync_runs')
+    .insert({
+      organisation_id: proj.organisation_id,
+      project_id: proj.id,
+      trigger,
+      intent,
+      status: 'running',
+      started_at: startedAt,
+    })
+    .select('id')
+    .maybeSingle()
+  const runId = (runRow as { id: string } | null)?.id ?? null
+
+  const result = emptyResult(intent)
+  try {
+    await runSync(supabase, provider, accessToken, proj, conn, req, actorUserId, result)
+  } catch (e) {
+    // Fatal (listing/auth/db) error: close the run row as error, rethrow.
+    const msg = e instanceof Error ? e.message : String(e)
+    if (runId) {
+      await closeRun(supabase, runId, result, 'error', msg)
+    }
+    throw e
+  }
+
+  // 6. Stamp the project's "folder fully checked at T" timestamp — only when
+  // the walk actually enumerated everything (an honest freshness signal).
+  if (result.walkComplete) {
+    await supabase
+      .schema('projects')
+      .from('projects')
+      .update({ cloud_storage_last_sync_at: new Date().toISOString() })
+      .eq('id', proj.id)
+  }
+
+  if (runId) {
+    await closeRun(supabase, runId, result, 'done', null)
+  }
+  return result
+}
+
+async function runSync(
+  supabase: SupabaseClient,
+  provider: ReturnType<typeof getCloudStorageProvider>,
+  accessToken: string,
+  proj: ProjectRow,
+  conn: ConnectionRow,
+  req: SyncRequest,
+  actorUserId: string,
+  result: SyncResult,
+): Promise<void> {
+  // ── Metadata walk: enumerate the whole tree (BFS). ──────────────────────
   interface QueueEntry { folderId: string; path: string; depth: number }
   const queue: QueueEntry[] = [
-    { folderId: proj.cloud_storage_folder_id, path: '', depth: 0 },
+    { folderId: proj.cloud_storage_folder_id!, path: '', depth: 0 },
   ]
   const files: Array<{ item: CloudItem; parentPath: string }> = []
-  let hitDepthLimit = false
+  let truncated = false
 
-  while (queue.length > 0 && files.length < MAX_FILES) {
+  while (queue.length > 0) {
     const cur = queue.shift()!
-    if (cur.depth > MAX_DEPTH) { hitDepthLimit = true; continue }
+    if (cur.depth > MAX_DEPTH) { truncated = true; continue }
     let pageToken: string | undefined
     do {
       const page = await provider.listFolder({
@@ -215,7 +336,7 @@ async function syncProject(
         pageToken,
       })
       for (const item of page.items) {
-        if (item.name.startsWith('.')) continue  // skip hidden
+        if (item.name.startsWith('.')) continue // skip hidden
         if (item.type === 'folder') {
           queue.push({
             folderId: item.id,
@@ -224,32 +345,17 @@ async function syncProject(
           })
         } else {
           files.push({ item, parentPath: cur.path })
-          if (files.length >= MAX_FILES) break
         }
       }
       pageToken = page.nextPageToken
-    } while (pageToken && files.length < MAX_FILES)
+    } while (pageToken && files.length < MAX_ENTRIES)
+    if (files.length >= MAX_ENTRIES) { truncated = true; break }
   }
 
-  // Reconcile (delete/rename) is only safe when the WHOLE folder was walked —
-  // a truncated walk would treat un-walked files as deleted. Hitting the file
-  // cap is a conservative proxy for "there may be more".
-  const walkComplete = files.length < MAX_FILES && !hitDepthLimit
+  result.filesSeen = files.length
+  result.walkComplete = !truncated
 
-  // 4. For each file: compare rev, then insert / update-in-place / version.
-  const result: SyncResult = {
-    sent: 0,
-    updated: 0,
-    newVersions: 0,
-    renamed: 0,
-    removed: 0,
-    skipped: 0,
-    failed: 0,
-    classified: { floor_plans: 0, documents: 0 },
-    intent: req.intent ?? 'auto',
-    errors: [],
-  }
-
+  // ── Per-file: rev-compare (cheap) → download only new/changed. ──────────
   for (const { item, parentPath } of files) {
     try {
       // Classification only decides where a NEW file lands. If the file was
@@ -268,25 +374,54 @@ async function syncProject(
       const liveRev = item.revisionId ?? null
       const srcPath = parentPath ? `${parentPath}/${item.name}` : item.name
 
-      // Unchanged content (rev matches). Still handle a rename/move: Dropbox
-      // keeps the file id stable, so the same drawing may have a new name/path.
+      // Unchanged content (rev matches the ACTIVE revision). Still handle a
+      // rename/move: Dropbox keeps the file id stable, so the same drawing
+      // may have a new name/path. Also reactivate a drawing that was soft-
+      // removed but has reappeared in the folder.
       if (existing && (existing.source_revision_id ?? '') === (liveRev ?? '')) {
+        const patch: Record<string, unknown> = {}
         if (
           existing.table === 'floor_plans' &&
           (existing.name !== item.name || (existing.source_path ?? '') !== srcPath)
         ) {
+          patch.name = item.name
+          patch.source_path = srcPath
+        }
+        if (existing.table === 'floor_plans' && existing.is_active === false) {
+          patch.is_active = true
+        }
+        if (Object.keys(patch).length > 0) {
           const { error: rnErr } = await supabase
             .schema('tenants')
             .from('floor_plans')
-            .update({ name: item.name, source_path: srcPath })
+            .update(patch)
             .eq('id', existing.id)
-          if (rnErr) throw new Error(`floor_plans rename: ${rnErr.message}`)
+          if (rnErr) throw new Error(`floor_plans rename/reactivate: ${rnErr.message}`)
           result.renamed++
         } else {
           result.skipped++
         }
         continue
       }
+
+      // Changed drawing whose newest revision we ALREADY captured (version
+      // row written, badge up, user hasn't adopted yet): nothing to do. The
+      // old engine re-downloaded these every run.
+      if (
+        existing &&
+        existing.table === 'floor_plans' &&
+        (existing.latest_revision_id ?? '') === (liveRev ?? '')
+      ) {
+        result.skipped++
+        continue
+      }
+
+      // From here the file costs a download. Budget check.
+      if (result.downloads >= MAX_DOWNLOADS) {
+        result.remaining++
+        continue
+      }
+      result.downloads++
 
       const dl = await provider.downloadFile({ fileId: item.id, accessToken })
       const ab = await new Response(dl.body).arrayBuffer()
@@ -392,19 +527,43 @@ async function syncProject(
         })
         result.classified.floor_plans++
         result.sent++
+        continue
+      }
+
+      // Changed drawing: capture the new revision, then either adopt it
+      // immediately (drawing has zero annotations — nothing can misalign) or
+      // flag has_newer_version and wait for the user's explicit Update.
+      await insertVersion(supabase, {
+        orgId: proj.organisation_id,
+        projectId: proj.id,
+        floorPlanId: existing.id,
+        rev: revKey,
+        filePath: storagePath,
+        size,
+        modifiedAt: item.modifiedAt,
+      })
+
+      const annotated = await isAnnotated(supabase, existing.id)
+      if (!annotated) {
+        const { error: adErr } = await supabase
+          .schema('tenants')
+          .from('floor_plans')
+          .update({
+            file_path: storagePath,
+            file_size_bytes: size,
+            name: item.name,
+            source_path: srcPath,
+            source_revision_id: liveRev,
+            synced_at: new Date().toISOString(),
+            latest_revision_id: liveRev,
+            latest_synced_at: new Date().toISOString(),
+            has_newer_version: false,
+            is_active: true,
+          })
+          .eq('id', existing.id)
+        if (adErr) throw new Error(`floor_plans adopt: ${adErr.message}`)
+        result.adopted++
       } else {
-        // Changed drawing: record the new revision WITHOUT moving the active
-        // file. Flag has_newer_version so the UI shows a badge; the user
-        // migrates explicitly (markup stays pinned to the active version).
-        await insertVersion(supabase, {
-          orgId: proj.organisation_id,
-          projectId: proj.id,
-          floorPlanId: existing.id,
-          rev: revKey,
-          filePath: storagePath,
-          size,
-          modifiedAt: item.modifiedAt,
-        })
         const { error: udErr } = await supabase
           .schema('tenants')
           .from('floor_plans')
@@ -424,11 +583,11 @@ async function syncProject(
     }
   }
 
-  // 4b. Reconcile deletions (drawings only). Soft-remove cloud-synced drawings
-  // whose source file is no longer in the folder. GUARDED: only when the walk
-  // enumerated the whole folder, else a truncated walk would falsely delete
+  // ── Reconcile deletions (drawings only). Soft-remove cloud-synced drawings
+  // whose source file is no longer in the folder. Only when the walk
+  // enumerated the whole tree — a truncated walk would falsely delete
   // un-walked files. Local uploads (source_provider NULL) are never touched.
-  if (walkComplete) {
+  if (result.walkComplete) {
     const presentIds = new Set(files.map((f) => f.item.id))
     const { data: activeRows } = await supabase
       .schema('tenants')
@@ -452,43 +611,90 @@ async function syncProject(
         result.removed = toRemove.length
       }
     }
-    console.log(`reconcile: walk complete — removed ${result.removed}, renamed ${result.renamed}`)
   } else {
-    console.log('reconcile: SKIPPED (walk truncated — folder exceeds MAX_FILES/MAX_DEPTH)')
+    console.log('reconcile: SKIPPED (walk truncated — folder exceeds MAX_ENTRIES/MAX_DEPTH)')
+  }
+}
+
+/**
+ * A drawing is "annotated" when anything is pinned to its active file's
+ * geometry: RFI annotations, QC markup lineage, snag pins, or a measure
+ * calibration. Annotated drawings are never auto-adopted — a layout change
+ * in the new revision would silently misalign all of them.
+ */
+async function isAnnotated(
+  supabase: SupabaseClient,
+  floorPlanId: string,
+): Promise<boolean> {
+  const { data: plan } = await supabase
+    .schema('tenants')
+    .from('floor_plans')
+    .select('pixels_per_meter')
+    .eq('id', floorPlanId)
+    .maybeSingle()
+  if ((plan as { pixels_per_meter: number | null } | null)?.pixels_per_meter != null) {
+    return true
   }
 
-  // 5. Update last_sync_at on the project.
-  await supabase
-    .schema('projects')
-    .from('projects')
-    .update({ cloud_storage_last_sync_at: new Date().toISOString() })
-    .eq('id', proj.id)
+  const { data: rfiAnn } = await supabase
+    .from('rfi_annotations')
+    .select('id')
+    .eq('source_floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (rfiAnn) return true
 
-  // 6. Diagnostics row — observable history of every sync (migration 00148).
-  // Best-effort: a logging failure must not fail the sync itself.
-  const { error: runErr } = await supabase
+  const { data: qcPhoto } = await supabase
+    .schema('projects')
+    .from('qc_entry_photos')
+    .select('id')
+    .eq('source_floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (qcPhoto) return true
+
+  const { data: snag } = await supabase
+    .schema('field')
+    .from('snags')
+    .select('id')
+    .contains('floor_plan_pin', { floorPlanId })
+    .limit(1)
+    .maybeSingle()
+  if (snag) return true
+
+  return false
+}
+
+async function closeRun(
+  supabase: SupabaseClient,
+  runId: string,
+  result: SyncResult,
+  status: 'done' | 'error',
+  fatalError: string | null,
+): Promise<void> {
+  const errText = [
+    ...(fatalError ? [fatalError] : []),
+    ...(result.errors ?? []),
+  ].join(' | ').slice(0, 2000)
+  const { error } = await supabase
     .schema('tenants')
     .from('cloud_sync_runs')
-    .insert({
-      organisation_id: proj.organisation_id,
-      project_id: proj.id,
-      trigger: req.trigger ?? 'manual',
-      intent: result.intent,
-      started_at: startedAt,
+    .update({
+      status,
       finished_at: new Date().toISOString(),
       sent: result.sent,
       updated: result.updated,
-      new_versions: result.newVersions,
+      new_versions: result.newVersions + result.adopted,
       skipped: result.skipped,
       failed: result.failed,
-      error_text:
-        result.errors && result.errors.length
-          ? result.errors.join(' | ').slice(0, 2000)
-          : null,
+      files_seen: result.filesSeen,
+      downloads: result.downloads,
+      walk_complete: result.walkComplete,
+      remaining: result.remaining,
+      error_text: errText || null,
     })
-  if (runErr) console.error('cloud_sync_runs insert failed:', runErr.message)
-
-  return result
+    .eq('id', runId)
+  if (error) console.error('cloud_sync_runs close failed:', error.message)
 }
 
 function classify(item: CloudItem, parentPath: string): 'floor_plans' | 'documents' {
@@ -500,7 +706,7 @@ function classify(item: CloudItem, parentPath: string): 'floor_plans' | 'documen
 
 /**
  * Find the already-imported row for a source file across BOTH target tables,
- * returning which table holds it + its id + stored revision. null = not yet
+ * returning which table holds it + its id + stored revisions. null = not yet
  * imported anywhere. Cross-table so a file keeps its original classification:
  * once a PDF is a drawing it stays a drawing, even if a later auto-classified
  * cron run would have called it a document (which would otherwise duplicate
@@ -516,15 +722,39 @@ async function findExisting(
       table: 'floor_plans' | 'documents'
       id: string
       source_revision_id: string | null
+      latest_revision_id: string | null
       name: string
       source_path: string | null
+      is_active: boolean | null
     }
   | null
 > {
-  for (const table of ['floor_plans', 'documents'] as const) {
+  {
     const { data } = await supabase
       .schema('tenants')
-      .from(table)
+      .from('floor_plans')
+      .select('id, source_revision_id, latest_revision_id, name, source_path, is_active')
+      .eq('project_id', projectId)
+      .eq('source_provider', provider)
+      .eq('source_file_id', sourceFileId)
+      .limit(1)
+      .maybeSingle()
+    if (data) {
+      const row = data as {
+        id: string
+        source_revision_id: string | null
+        latest_revision_id: string | null
+        name: string
+        source_path: string | null
+        is_active: boolean | null
+      }
+      return { table: 'floor_plans', ...row }
+    }
+  }
+  {
+    const { data } = await supabase
+      .schema('tenants')
+      .from('documents')
       .select('id, source_revision_id, name, source_path')
       .eq('project_id', projectId)
       .eq('source_provider', provider)
@@ -539,11 +769,13 @@ async function findExisting(
         source_path: string | null
       }
       return {
-        table,
+        table: 'documents',
         id: row.id,
         source_revision_id: row.source_revision_id,
+        latest_revision_id: null,
         name: row.name,
         source_path: row.source_path,
+        is_active: null,
       }
     }
   }
@@ -600,6 +832,9 @@ async function refreshAndPersist(
       refresh_token_enc: uint8ToHex(await encryptToken(fresh.refreshToken)),
       expires_at: fresh.expiresAt?.toISOString() ?? null,
       scope: fresh.scope,
+      // A successful refresh proves the connection is healthy again.
+      needs_reauth: false,
+      last_sync_error: null,
     })
     .eq('id', conn.id)
   return fresh.accessToken

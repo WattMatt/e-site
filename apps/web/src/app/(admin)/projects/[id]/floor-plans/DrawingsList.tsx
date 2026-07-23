@@ -4,7 +4,10 @@ import Link from 'next/link'
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
-import { updateFloorPlanToLatestAction } from '@/actions/cloud-storage.actions'
+import {
+  updateAllFloorPlansToLatestAction,
+  updateFloorPlanToLatestAction,
+} from '@/actions/cloud-storage.actions'
 
 export type DrawingListItem = {
   id: string
@@ -70,8 +73,13 @@ export function DrawingsList({
     return Array.from(map.entries()).sort((a, b) => naturalCmp(a[0], b[0]))
   }, [filtered])
 
+  const flaggedCount = plans.filter((p) => p.has_newer_version).length
+
   return (
     <div>
+      {canWrite && flaggedCount > 0 && (
+        <UpdateAllBanner projectId={projectId} count={flaggedCount} />
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
         <input
           type="search"
@@ -391,6 +399,72 @@ function DownloadButton({ filePath, name }: { filePath: string; name: string }) 
     >
       {busy ? '…' : '↓'}
     </button>
+  )
+}
+
+function UpdateAllBanner({ projectId, count }: { projectId: string; count: number }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  function onClick() {
+    if (pending) return
+    if (
+      !confirm(
+        `Update ${count} drawing${count !== 1 ? 's' : ''} to their latest cloud revisions?\n\n` +
+          'These drawings have markup, snag pins or calibration attached — that is why they ' +
+          "were not updated automatically. Annotations stay attached, but if a new revision's " +
+          'layout differs, pins may no longer line up and should be re-checked.',
+      )
+    ) {
+      return
+    }
+    startTransition(async () => {
+      try {
+        const r = await updateAllFloorPlansToLatestAction(projectId)
+        if (r.failed > 0) {
+          alert(`Updated ${r.updated}; ${r.failed} failed:\n${(r.errors ?? []).join('\n')}`)
+        }
+        router.refresh()
+      } catch (e) {
+        alert(`Update all failed: ${e instanceof Error ? e.message : 'unknown'}`)
+      }
+    })
+  }
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        flexWrap: 'wrap',
+        padding: '10px 14px',
+        marginBottom: 12,
+        borderRadius: 6,
+        border: '1px solid var(--c-amber)',
+        background: 'var(--c-amber-mid)',
+        color: 'var(--c-amber)',
+        fontSize: 13,
+      }}
+    >
+      <span>
+        {count} drawing{count !== 1 ? 's have' : ' has'} a newer revision in the linked cloud
+        folder. They were held back because they carry markup, pins or calibration.
+      </span>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={pending}
+        style={{
+          ...actionButtonStyle,
+          color: 'var(--c-amber)',
+          borderColor: 'var(--c-amber)',
+          cursor: pending ? 'progress' : 'pointer',
+          flexShrink: 0,
+        }}
+      >
+        {pending ? 'Updating…' : `Update all ${count}`}
+      </button>
+    </div>
   )
 }
 
