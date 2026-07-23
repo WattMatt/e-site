@@ -58,6 +58,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const authError = requireServiceRole(req)
   if (authError) return authError
 
+  // Forward the CALLER's (already-verified) Authorization header to the
+  // per-project delegated calls. Rebuilding it from the runtime env does NOT
+  // work: the edge runtime injects SUPABASE_SERVICE_ROLE_KEY in the new
+  // `sb_secret_…` format, which is not a JWT, so cloud-sync-project's
+  // requireServiceRole (JWT role-claim check) 403s it — first observed on
+  // the very first cron tick 2026-07-23 17:15 UTC (4/4 projects Forbidden).
+  const forwardAuth = req.headers.get('Authorization')!
+
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
@@ -101,7 +109,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const res = await fetch(`${SUPABASE_URL}/functions/v1/cloud-sync-project`, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            Authorization: forwardAuth,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ projectId: p.id, trigger: 'cron' }),
