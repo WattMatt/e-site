@@ -74,6 +74,9 @@ interface SetMappingArgs {
   connectionId: string
   folderId: string
   folderPath?: string
+  /** Which tab the mapping was created from — persisted as the project's
+   * default classification target for cron/auto-triggered syncs. */
+  defaultTarget?: 'drawings' | 'documents'
 }
 
 export async function setProjectCloudFolder(
@@ -95,6 +98,7 @@ export async function setProjectCloudFolder(
       cloud_storage_connection_id: args.connectionId,
       cloud_storage_folder_id: args.folderId,
       cloud_storage_folder_path: args.folderPath ?? null,
+      cloud_storage_default_target: args.defaultTarget ?? null,
     })
     .eq('id', args.projectId)
   if (error) throw new Error(`Failed to set project folder mapping: ${error.message}`)
@@ -112,6 +116,7 @@ export async function clearProjectCloudFolder(
       cloud_storage_connection_id: null,
       cloud_storage_folder_id: null,
       cloud_storage_folder_path: null,
+      cloud_storage_default_target: null,
     })
     .eq('id', projectId)
   if (error) throw new Error(`Failed to clear project folder mapping: ${error.message}`)

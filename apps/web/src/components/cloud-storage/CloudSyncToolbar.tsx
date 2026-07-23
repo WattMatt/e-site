@@ -60,6 +60,7 @@ type FreshnessChip =
   | { kind: 'checking' }
   | { kind: 'fresh'; at: string | null }
   | { kind: 'updated'; changes: number; pendingAdopt: number }
+  | { kind: 'paused' }
   | { kind: 'error'; message: string }
 
 function summarizeChanges(s: CloudSyncSummary): { changes: number; pendingAdopt: number } {
@@ -86,20 +87,26 @@ export function CloudSyncToolbar(props: Props) {
   // Stale-while-revalidate: check the provider folder once per tab open.
   // Skipped when unmapped (nothing to check) or the connection is flagged
   // for re-auth (the check would just fail — the warning row explains).
+  //
+  // No cancelled-flag here on purpose: under dev StrictMode the effect runs
+  // → cleans up → runs again, but the ref guard makes the SECOND run bail,
+  // so a cleanup-set cancelled flag would discard the only in-flight
+  // resolution and strand the chip on "Checking…" forever. The component
+  // instance survives the StrictMode cycle, so applying state late is safe.
   useEffect(() => {
     if (autoRanRef.current) return
     if (!props.cloudFolderPath || needsReauth) return
     autoRanRef.current = true
-    let cancelled = false
     setChip({ kind: 'checking' })
-    autoSyncCloudFolderAction(props.projectId, props.intent)
+    autoSyncCloudFolderAction(props.projectId)
       .then((r) => {
-        if (cancelled) return
         if (r.status === 'fresh') {
           setChip({ kind: 'fresh', at: r.lastSyncAt })
         } else if (r.status === 'already_running') {
           // Another tab/user is mid-check; their run will land the changes.
           setChip({ kind: 'fresh', at: props.lastSyncAt })
+        } else if (r.status === 'reauth_required') {
+          setChip({ kind: 'paused' })
         } else if (r.status === 'synced') {
           const { changes, pendingAdopt } = summarizeChanges(r.summary)
           if (changes > 0) {
@@ -115,9 +122,8 @@ export function CloudSyncToolbar(props: Props) {
         }
       })
       .catch(() => {
-        if (!cancelled) setChip({ kind: 'error', message: 'Sync check failed' })
+        setChip({ kind: 'error', message: 'Sync check failed' })
       })
-    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -130,6 +136,9 @@ export function CloudSyncToolbar(props: Props) {
           connectionId: pickerConnId,
           folderId,
           folderPath,
+          // The tab this mapping was created from IS its declared purpose —
+          // persisted so cron/auto syncs classify new files the same way.
+          defaultTarget: props.intent,
         })
         setPickerConnId(null)
         setFlash(`Folder set: ${folderPath}`)
@@ -278,6 +287,13 @@ function FreshnessChipRow({ chip }: { chip: FreshnessChip }) {
         {chip.pendingAdopt > 0
           ? ` — ${chip.pendingAdopt} annotated drawing${chip.pendingAdopt !== 1 ? 's' : ''} awaiting Update`
           : ''}
+      </div>
+    )
+  }
+  if (chip.kind === 'paused') {
+    return (
+      <div style={{ ...chipStyle, color: 'var(--c-amber)' }}>
+        ⚠ Sync paused — the cloud connection needs to be reconnected by an admin
       </div>
     )
   }

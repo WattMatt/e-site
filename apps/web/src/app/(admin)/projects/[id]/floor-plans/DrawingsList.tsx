@@ -405,38 +405,37 @@ function DownloadButton({ filePath, name }: { filePath: string; name: string }) 
 function UpdateAllBanner({ projectId, count }: { projectId: string; count: number }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
+  // Two-step inline confirmation — NOT window.confirm(), which Safari has
+  // silently suppressed in this app before (see CLAUDE.md, photo-delete
+  // incident 2026-05-25). First click arms, second commits, 4s auto-reset.
+  const [armed, setArmed] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+
   function onClick() {
     if (pending) return
-    if (
-      !confirm(
-        `Update ${count} drawing${count !== 1 ? 's' : ''} to their latest cloud revisions?\n\n` +
-          'These drawings have markup, snag pins or calibration attached — that is why they ' +
-          "were not updated automatically. Annotations stay attached, but if a new revision's " +
-          'layout differs, pins may no longer line up and should be re-checked.',
-      )
-    ) {
+    if (!armed) {
+      setArmed(true)
+      setTimeout(() => setArmed(false), 4000)
       return
     }
+    setArmed(false)
     startTransition(async () => {
       try {
         const r = await updateAllFloorPlansToLatestAction(projectId)
-        if (r.failed > 0) {
-          alert(`Updated ${r.updated}; ${r.failed} failed:\n${(r.errors ?? []).join('\n')}`)
-        }
+        setResult(
+          r.failed > 0
+            ? `Updated ${r.updated}; ${r.failed} failed: ${(r.errors ?? []).join('; ')}`
+            : null,
+        )
         router.refresh()
       } catch (e) {
-        alert(`Update all failed: ${e instanceof Error ? e.message : 'unknown'}`)
+        setResult(`Update all failed: ${e instanceof Error ? e.message : 'unknown'}`)
       }
     })
   }
   return (
     <div
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-        flexWrap: 'wrap',
         padding: '10px 14px',
         marginBottom: 12,
         borderRadius: 6,
@@ -446,24 +445,38 @@ function UpdateAllBanner({ projectId, count }: { projectId: string; count: numbe
         fontSize: 13,
       }}
     >
-      <span>
-        {count} drawing{count !== 1 ? 's have' : ' has'} a newer revision in the linked cloud
-        folder. They were held back because they carry markup, pins or calibration.
-      </span>
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={pending}
+      <div
         style={{
-          ...actionButtonStyle,
-          color: 'var(--c-amber)',
-          borderColor: 'var(--c-amber)',
-          cursor: pending ? 'progress' : 'pointer',
-          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
         }}
       >
-        {pending ? 'Updating…' : `Update all ${count}`}
-      </button>
+        <span>
+          {count} drawing{count !== 1 ? 's have' : ' has'} a newer revision in the linked cloud
+          folder. They were held back because they carry markup, pins or calibration — pins may
+          need re-checking after updating.
+        </span>
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={pending}
+          aria-label={armed ? 'Confirm update of all flagged drawings' : 'Update all flagged drawings'}
+          style={{
+            ...actionButtonStyle,
+            color: armed ? 'var(--c-bg)' : 'var(--c-amber)',
+            background: armed ? 'var(--c-amber)' : 'none',
+            borderColor: 'var(--c-amber)',
+            cursor: pending ? 'progress' : 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          {pending ? 'Updating…' : armed ? `Confirm update ${count}` : `Update all ${count}`}
+        </button>
+      </div>
+      {result && <div style={{ marginTop: 8, fontSize: 12 }}>{result}</div>}
     </div>
   )
 }

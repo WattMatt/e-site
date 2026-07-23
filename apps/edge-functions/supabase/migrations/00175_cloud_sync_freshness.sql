@@ -37,6 +37,8 @@ ALTER TABLE tenants.cloud_sync_runs
     ADD COLUMN IF NOT EXISTS remaining     INTEGER;
 
 ALTER TABLE tenants.cloud_sync_runs
+    DROP CONSTRAINT IF EXISTS cloud_sync_runs_status_check;
+ALTER TABLE tenants.cloud_sync_runs
     ADD CONSTRAINT cloud_sync_runs_status_check
     CHECK (status IN ('running', 'done', 'error'));
 
@@ -63,7 +65,42 @@ ALTER TABLE tenants.cloud_sync_runs
     ADD CONSTRAINT cloud_sync_runs_trigger_check
     CHECK (trigger IN ('manual', 'cron', 'auto'));
 
--- 2. Connection health -------------------------------------------------------
+-- 2. Per-project default sync target -----------------------------------------
+--
+-- The folder mapping is created from a specific tab (Floor Plans or
+-- Documents) — that tab IS the mapping's declared purpose. Persisting it
+-- lets un-attended triggers (cron ticks, tab-open auto-sync) classify NEW
+-- files the way the mapper intended, instead of (a) racing on whichever tab
+-- a member happens to open first (the manual intent override) or (b) the
+-- filename/folder heuristic, which misroutes root-level PDFs in folders
+-- like ".../PDF/LATEST PDF" (segment names don't match the drawings regex)
+-- into Documents. NULL = fall back to the per-file heuristic.
+
+ALTER TABLE projects.projects
+    ADD COLUMN IF NOT EXISTS cloud_storage_default_target TEXT
+    CHECK (cloud_storage_default_target IN ('drawings', 'documents'));
+
+COMMENT ON COLUMN projects.projects.cloud_storage_default_target IS
+    'Which table NEW files from the mapped cloud folder default into for cron/auto syncs. Set from the tab the mapping was created on; NULL = per-file heuristic.';
+
+-- Backfill existing mappings from observed reality: every current mapping
+-- whose imports are floor plans was mapped from the drawings tab (verified
+-- in prod 2026-07-23: all 4 mapped projects sync ".../PDF/LATEST PDF"
+-- drawing folders and hold cloud-synced floor_plans rows only).
+UPDATE projects.projects p
+SET    cloud_storage_default_target = 'drawings'
+WHERE  p.cloud_storage_connection_id IS NOT NULL
+  AND  p.cloud_storage_default_target IS NULL
+  AND  EXISTS (
+         SELECT 1 FROM tenants.floor_plans fp
+         WHERE fp.project_id = p.id AND fp.source_provider IS NOT NULL
+       )
+  AND  NOT EXISTS (
+         SELECT 1 FROM tenants.documents d
+         WHERE d.project_id = p.id AND d.source_provider IS NOT NULL
+       );
+
+-- 3. Connection health -------------------------------------------------------
 
 ALTER TABLE public.org_storage_connections
     ADD COLUMN IF NOT EXISTS needs_reauth    BOOLEAN NOT NULL DEFAULT FALSE,

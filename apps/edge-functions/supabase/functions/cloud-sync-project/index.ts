@@ -5,38 +5,45 @@
  * docs/superpowers/specs/2026-07-23-floor-plan-sync-freshness.md).
  *
  * The walk enumerates the WHOLE mapped folder tree first — listing is a
- * handful of cheap API calls — and rev-compares every file. Only new or
- * changed files cost a download, budgeted at MAX_DOWNLOADS per invocation;
- * the response reports `remaining` and callers loop until it hits 0. This
- * replaces the old MAX_FILES=50 collection cap, where unchanged files
- * consumed the budget and folders >50 files never synced their tail.
+ * handful of cheap API calls — and rev-compares every file against a
+ * prefetched index of already-imported rows (two queries per run, not two
+ * per file). Only new or changed files cost a download, budgeted at
+ * MAX_DOWNLOADS successes per invocation; the response reports `remaining`
+ * and callers loop until it hits 0. This replaces the old MAX_FILES=50
+ * collection cap, where unchanged files consumed the budget and folders
+ * >50 files never synced their tail.
  *
- * Per changed file:
- *   - unchanged (rev matches)     → skip (rename/move still reconciled)
+ * Per file:
+ *   - unchanged (rev matches)     → skip (rename/move/reactivate reconciled)
  *   - captured-but-unadopted rev  → skip (no re-download; badge already up)
  *   - new file (no row yet)       → download + insert (drawings get a v1
  *                                   tenants.floor_plan_versions row)
  *   - changed document            → overwrite bytes + update row in place
- *   - changed drawing, NO annotations (no RFI annotations, no QC markup
- *     lineage, no snag pins, not calibrated)
- *                                 → download new revision + ADOPT it as the
- *                                   active file immediately (version row
- *                                   recorded for history)
- *   - changed drawing WITH annotations
+ *   - changed drawing, NO annotations
+ *                                 → download + ADOPT as the active file
+ *                                   (version row recorded for history)
+ *   - changed drawing WITH annotations (RFI annotations / QC markup
+ *     lineage / snag pins / calibration — the check FAILS CLOSED: any
+ *     query error counts as annotated)
  *                                 → download as a NEW version row + flag
  *                                   has_newer_version; the active file only
- *                                   moves when a user clicks Update (pins /
- *                                   markup / calibration are pinned to the
- *                                   active file's geometry)
+ *                                   moves on the user's explicit Update
+ *
+ * New-file classification precedence: CAD extensions (always drawings) →
+ * explicit request intent (the user clicked Sync on a tab) → the project's
+ * persisted cloud_storage_default_target (declared when the folder was
+ * mapped; what cron/auto triggers use) → filename/folder heuristic.
  *
  * Run lifecycle: a tenants.cloud_sync_runs row is INSERTed at start with
- * status='running' and UPDATEd to done/error at completion — in-flight
+ * status='running' and closed in a finally (done/error) — in-flight
  * detection for the auto-sync guard, plus walk telemetry (files_seen,
  * downloads, walk_complete, remaining).
  *
- * Token health: a refresh failure sets org_storage_connections.needs_reauth
- * + last_sync_error (surfaced in the toolbar and settings/integrations);
- * the next successful refresh clears both.
+ * Token health: an auth-class refresh failure (invalid_grant / 400 / 401)
+ * sets org_storage_connections.needs_reauth + last_sync_error — cleared
+ * only by an OAuth reconnect (Settings → Integrations). Transient refresh
+ * errors (5xx / network) fail the run WITHOUT flagging. A 401 thrown by
+ * the walk itself (token revoked while expires_at still future) also flags.
  *
  * Request body:
  *   {
@@ -50,6 +57,7 @@
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import {
+  CloudStorageError,
   getCloudStorageProvider,
   type CloudItem,
   type ProviderName,
@@ -71,11 +79,13 @@ const FLOOR_PLANS_BUCKET = 'drawings'
 const MAX_DEPTH = 5      // subfolder nesting below the mapped folder
 const MAX_ENTRIES = 2000 // total files enumerated before we call it truncated
 
-// Download budget per invocation. Only new/changed files cost a download
-// (~2-5s each incl. storage re-upload); 20 keeps a worst-case run well
-// inside the 150s edge wall-clock cap. Anything over budget is reported in
-// `remaining` and the caller loops.
+// Download budget per invocation, counted in SUCCESSFUL downloads (~2-5s
+// each incl. storage re-upload); 20 keeps a worst-case run well inside the
+// 150s edge wall-clock cap. Failures are capped separately (below) so a
+// permanently-failing file can't starve the files behind it in walk order.
+// Anything over budget is reported in `remaining` and the caller loops.
 const MAX_DOWNLOADS = 20
+const MAX_DOWNLOAD_ATTEMPTS = 40
 
 // A 'running' cloud_sync_runs row younger than this is treated as a live
 // in-flight sync (dedupe guard for auto/cron triggers). Older running rows
@@ -91,9 +101,8 @@ interface SyncRequest {
   // Audit actor for inserted rows (uploaded_by). Optional: cron/auto have no
   // user, so when omitted we fall back to the connection's connected_by.
   callerUserId?: string
-  // When set, overrides the extension+folder-name classifier so every NEW
-  // file in this run is routed to the corresponding table/bucket. Driven by
-  // which tab the sync was triggered from in the web UI.
+  // Explicit user intent (which tab "Sync now" was clicked from). Only NEW
+  // non-CAD files are affected; see classification precedence above.
   intent?: 'drawings' | 'documents'
   // Provenance for the cloud_sync_runs row. Defaults to 'manual'.
   trigger?: 'manual' | 'cron' | 'auto'
@@ -104,6 +113,7 @@ interface ProjectRow {
   organisation_id: string
   cloud_storage_connection_id: string | null
   cloud_storage_folder_id: string | null
+  cloud_storage_default_target: 'drawings' | 'documents' | null
 }
 
 interface ConnectionRow {
@@ -166,7 +176,7 @@ interface SyncResult {
   skipped: number       // unchanged, or already-captured awaiting adoption
   failed: number
   filesSeen: number     // everything the metadata walk enumerated
-  downloads: number     // files that actually cost a download this run
+  downloads: number     // successful downloads this run
   remaining: number     // new/changed files left when the budget ran out
   walkComplete: boolean
   alreadyRunning: boolean // true = another sync was in flight; nothing done
@@ -185,6 +195,12 @@ function emptyResult(intent: SyncResult['intent']): SyncResult {
   }
 }
 
+/** Auth-class provider error: the stored credentials themselves are bad
+ * (revoked / invalid_grant), as opposed to a transient outage. */
+function isAuthError(e: unknown): boolean {
+  return e instanceof CloudStorageError && (e.status === 400 || e.status === 401)
+}
+
 async function syncProject(
   supabase: SupabaseClient,
   req: SyncRequest,
@@ -196,7 +212,7 @@ async function syncProject(
   const { data: project, error: pe } = await supabase
     .schema('projects')
     .from('projects')
-    .select('id, organisation_id, cloud_storage_connection_id, cloud_storage_folder_id')
+    .select('id, organisation_id, cloud_storage_connection_id, cloud_storage_folder_id, cloud_storage_default_target')
     .eq('id', req.projectId)
     .single()
   if (pe || !project) throw new Error(`project not found: ${pe?.message ?? 'no row'}`)
@@ -244,8 +260,9 @@ async function syncProject(
   // (connected_by is NOT NULL, and floor_plans.uploaded_by is NOT NULL).
   const actorUserId = req.callerUserId ?? conn.connected_by
 
-  // 4. Token: decrypt, refresh when missing-expiry/near-expiry. Refresh
-  // failure marks the connection so the UI can offer Reconnect.
+  // 4. Token: decrypt, refresh when missing-expiry/near-expiry. Only an
+  // auth-class refresh failure marks the connection (a Dropbox 503 must not
+  // brick it); the flag is cleared by an OAuth reconnect.
   let accessToken = await decryptToken(hexToUint8(conn.access_token_enc))
   const expMs = conn.expires_at ? Date.parse(conn.expires_at) : 0
   if (!expMs || expMs - Date.now() < 60_000) {
@@ -253,11 +270,11 @@ async function syncProject(
       accessToken = await refreshAndPersist(supabase, conn)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      await supabase
-        .from('org_storage_connections')
-        .update({ needs_reauth: true, last_sync_error: msg.slice(0, 500) })
-        .eq('id', conn.id)
-      throw new Error(`token refresh failed (connection flagged for reconnect): ${msg}`)
+      if (isAuthError(e)) {
+        await flagNeedsReauth(supabase, conn.id, msg)
+        throw new Error(`token refresh rejected (connection flagged for reconnect): ${msg}`)
+      }
+      throw new Error(`token refresh failed (transient — connection NOT flagged): ${msg}`)
     }
   }
   const provider = getCloudStorageProvider(conn.provider)
@@ -280,30 +297,35 @@ async function syncProject(
   const runId = (runRow as { id: string } | null)?.id ?? null
 
   const result = emptyResult(intent)
+  let fatal: string | null = null
   try {
     await runSync(supabase, provider, accessToken, proj, conn, req, actorUserId, result)
-  } catch (e) {
-    // Fatal (listing/auth/db) error: close the run row as error, rethrow.
-    const msg = e instanceof Error ? e.message : String(e)
-    if (runId) {
-      await closeRun(supabase, runId, result, 'error', msg)
-    }
-    throw e
-  }
 
-  // 6. Stamp the project's "folder fully checked at T" timestamp — only when
-  // the walk actually enumerated everything (an honest freshness signal).
-  if (result.walkComplete) {
+    // Stamp the project's "folder checked at T" timestamp on every run that
+    // completed without a fatal error — this is what the auto-sync freshness
+    // gate reads. Gating it on walkComplete would make a >MAX_ENTRIES or
+    // >MAX_DEPTH folder re-walk on EVERY tab open forever; the run row's
+    // walk_complete column records whether enumeration truly covered
+    // everything (reconcile stays gated on that).
     await supabase
       .schema('projects')
       .from('projects')
       .update({ cloud_storage_last_sync_at: new Date().toISOString() })
       .eq('id', proj.id)
+  } catch (e) {
+    fatal = e instanceof Error ? e.message : String(e)
+    // A 401 mid-walk means the token was revoked while expires_at was still
+    // in the future — flag so the UI offers Reconnect instead of eternal 500s.
+    if (isAuthError(e) && (e as CloudStorageError).status === 401) {
+      await flagNeedsReauth(supabase, conn.id, fatal)
+    }
+    throw e
+  } finally {
+    if (runId) {
+      await closeRun(supabase, runId, result, fatal ? 'error' : 'done', fatal)
+    }
   }
 
-  if (runId) {
-    await closeRun(supabase, runId, result, 'done', null)
-  }
   return result
 }
 
@@ -325,6 +347,7 @@ async function runSync(
   const files: Array<{ item: CloudItem; parentPath: string }> = []
   let truncated = false
 
+  walk:
   while (queue.length > 0) {
     const cur = queue.shift()!
     if (cur.depth > MAX_DEPTH) { truncated = true; continue }
@@ -348,29 +371,34 @@ async function runSync(
         }
       }
       pageToken = page.nextPageToken
-    } while (pageToken && files.length < MAX_ENTRIES)
-    if (files.length >= MAX_ENTRIES) { truncated = true; break }
+      if (files.length >= MAX_ENTRIES) {
+        // Truncated only if enumeration genuinely stopped early — a tree of
+        // exactly MAX_ENTRIES files whose last page just completed (no
+        // pageToken, no queued folders) WAS fully walked.
+        if (pageToken || queue.length > 0) truncated = true
+        break walk
+      }
+    } while (pageToken)
   }
 
   result.filesSeen = files.length
   result.walkComplete = !truncated
 
+  // ── Prefetch the already-imported index: two queries per run instead of
+  // up to two PER FILE (a 2000-entry walk would otherwise pay ~4000
+  // sequential round-trips of pure rev-compare and blow the 150s cap). ────
+  const existingIndex = await buildExistingIndex(supabase, proj.id, conn.provider)
+
+  // Classification default for NEW files when the request carries no
+  // explicit intent: the mapping's declared purpose.
+  const fallbackIntent = req.intent ?? proj.cloud_storage_default_target ?? undefined
+
   // ── Per-file: rev-compare (cheap) → download only new/changed. ──────────
+  let downloadAttempts = 0
   for (const { item, parentPath } of files) {
     try {
-      // Classification only decides where a NEW file lands. If the file was
-      // already imported (into EITHER table), it stays there — otherwise an
-      // auto-classified cron run could disagree with an intent-forced manual
-      // run and duplicate the same source file across both tables.
-      const classifiedTarget =
-        req.intent === 'drawings'
-          ? 'floor_plans'
-          : req.intent === 'documents'
-            ? 'documents'
-            : classify(item, parentPath)
-
-      const existing = await findExisting(supabase, proj.id, conn.provider, item.id)
-      const target = existing ? existing.table : classifiedTarget
+      const existing = existingIndex.get(item.id) ?? null
+      const target = existing ? existing.table : decideTarget(item, parentPath, fallbackIntent)
       const liveRev = item.revisionId ?? null
       const srcPath = parentPath ? `${parentPath}/${item.name}` : item.name
 
@@ -405,23 +433,37 @@ async function runSync(
       }
 
       // Changed drawing whose newest revision we ALREADY captured (version
-      // row written, badge up, user hasn't adopted yet): nothing to do. The
-      // old engine re-downloaded these every run.
+      // row written, badge up, user hasn't adopted yet): nothing to download.
+      // The old engine re-downloaded these every run. Reactivate if needed
+      // (removed-then-restored file whose newest rev we'd already seen).
       if (
         existing &&
         existing.table === 'floor_plans' &&
         (existing.latest_revision_id ?? '') === (liveRev ?? '')
       ) {
-        result.skipped++
+        if (existing.is_active === false) {
+          const { error: raErr } = await supabase
+            .schema('tenants')
+            .from('floor_plans')
+            .update({ is_active: true })
+            .eq('id', existing.id)
+          if (raErr) throw new Error(`floor_plans reactivate: ${raErr.message}`)
+          result.renamed++
+        } else {
+          result.skipped++
+        }
         continue
       }
 
-      // From here the file costs a download. Budget check.
-      if (result.downloads >= MAX_DOWNLOADS) {
+      // From here the file costs a download. Budget: MAX_DOWNLOADS successes
+      // (wall-clock budget) AND MAX_DOWNLOAD_ATTEMPTS tries (so a block of
+      // permanently-failing files can't starve the files behind them, while
+      // still bounding wasted attempts per run).
+      if (result.downloads >= MAX_DOWNLOADS || downloadAttempts >= MAX_DOWNLOAD_ATTEMPTS) {
         result.remaining++
         continue
       }
-      result.downloads++
+      downloadAttempts++
 
       const dl = await provider.downloadFile({ fileId: item.id, accessToken })
       const ab = await new Response(dl.body).arrayBuffer()
@@ -477,6 +519,7 @@ async function runSync(
           result.classified.documents++
           result.sent++
         }
+        result.downloads++
         continue
       }
 
@@ -527,6 +570,7 @@ async function runSync(
         })
         result.classified.floor_plans++
         result.sent++
+        result.downloads++
         continue
       }
 
@@ -562,6 +606,17 @@ async function runSync(
           })
           .eq('id', existing.id)
         if (adErr) throw new Error(`floor_plans adopt: ${adErr.message}`)
+        // Close the check-then-act window: the auto-sync fires exactly when
+        // a user opens the tab — i.e. right when they might be annotating.
+        // If an annotation landed between the check and the adopt, flag the
+        // drawing so the change is at least visible for review.
+        if (await isAnnotated(supabase, existing.id)) {
+          await supabase
+            .schema('tenants')
+            .from('floor_plans')
+            .update({ has_newer_version: true })
+            .eq('id', existing.id)
+        }
         result.adopted++
       } else {
         const { error: udErr } = await supabase
@@ -571,12 +626,19 @@ async function runSync(
             has_newer_version: true,
             latest_revision_id: liveRev,
             latest_synced_at: new Date().toISOString(),
+            // A removed-then-restored file must come back visible — the
+            // sibling branches restore is_active too.
+            is_active: true,
           })
           .eq('id', existing.id)
         if (udErr) throw new Error(`floor_plans flag: ${udErr.message}`)
         result.newVersions++
       }
+      result.downloads++
     } catch (e) {
+      // Auth-class failures abort the whole run (every later file would fail
+      // the same way, and syncProject's catch flags needs_reauth on 401).
+      if (isAuthError(e)) throw e
       result.failed++
       const msg = e instanceof Error ? e.message : String(e)
       ;(result.errors ??= []).push(`${item.name}: ${msg}`.slice(0, 200))
@@ -616,53 +678,159 @@ async function runSync(
   }
 }
 
+interface ExistingRow {
+  table: 'floor_plans' | 'documents'
+  id: string
+  source_revision_id: string | null
+  latest_revision_id: string | null
+  name: string
+  source_path: string | null
+  is_active: boolean | null
+}
+
+/**
+ * Prefetch every already-imported row for this (project, provider) into a
+ * Map keyed by source_file_id. Cross-table so a file keeps its original
+ * classification forever (a later differently-intended run must not
+ * duplicate it into the other table). floor_plans wins a (theoretical)
+ * same-id collision, matching the old per-file lookup order.
+ */
+async function buildExistingIndex(
+  supabase: SupabaseClient,
+  projectId: string,
+  provider: ProviderName,
+): Promise<Map<string, ExistingRow>> {
+  const index = new Map<string, ExistingRow>()
+
+  const { data: docs, error: de } = await supabase
+    .schema('tenants')
+    .from('documents')
+    .select('id, source_file_id, source_revision_id, name, source_path')
+    .eq('project_id', projectId)
+    .eq('source_provider', provider)
+  if (de) throw new Error(`documents index: ${de.message}`)
+  for (const d of (docs ?? []) as Array<{
+    id: string; source_file_id: string; source_revision_id: string | null
+    name: string; source_path: string | null
+  }>) {
+    index.set(d.source_file_id, {
+      table: 'documents',
+      id: d.id,
+      source_revision_id: d.source_revision_id,
+      latest_revision_id: null,
+      name: d.name,
+      source_path: d.source_path,
+      is_active: null,
+    })
+  }
+
+  const { data: fps, error: fe } = await supabase
+    .schema('tenants')
+    .from('floor_plans')
+    .select('id, source_file_id, source_revision_id, latest_revision_id, name, source_path, is_active')
+    .eq('project_id', projectId)
+    .eq('source_provider', provider)
+  if (fe) throw new Error(`floor_plans index: ${fe.message}`)
+  for (const f of (fps ?? []) as Array<{
+    id: string; source_file_id: string; source_revision_id: string | null
+    latest_revision_id: string | null; name: string; source_path: string | null
+    is_active: boolean | null
+  }>) {
+    index.set(f.source_file_id, {
+      table: 'floor_plans',
+      id: f.id,
+      source_revision_id: f.source_revision_id,
+      latest_revision_id: f.latest_revision_id,
+      name: f.name,
+      source_path: f.source_path,
+      is_active: f.is_active,
+    })
+  }
+
+  return index
+}
+
+/**
+ * Where a NEW file lands. CAD files are unambiguous drawings regardless of
+ * any intent (a "Sync now" click on the Documents tab must not file a .dwg
+ * as a document); otherwise the explicit/default intent decides; otherwise
+ * the filename/folder heuristic.
+ */
+function decideTarget(
+  item: CloudItem,
+  parentPath: string,
+  intent: 'drawings' | 'documents' | undefined,
+): 'floor_plans' | 'documents' {
+  const ext = (item.name.match(/\.[a-z0-9]+$/i)?.[0] ?? '').toLowerCase()
+  if (CAD_EXTENSIONS.has(ext)) return 'floor_plans'
+  if (intent === 'drawings') return 'floor_plans'
+  if (intent === 'documents') return 'documents'
+  if (ext === '.pdf' && DRAWING_FOLDER_RE.test(parentPath)) return 'floor_plans'
+  return 'documents'
+}
+
 /**
  * A drawing is "annotated" when anything is pinned to its active file's
  * geometry: RFI annotations, QC markup lineage, snag pins, or a measure
  * calibration. Annotated drawings are never auto-adopted — a layout change
  * in the new revision would silently misalign all of them.
+ *
+ * FAILS CLOSED: any query error counts as annotated. A transient PostgREST
+ * hiccup must degrade to "keep the badge flow", never to "swap the file
+ * under existing annotations".
  */
 async function isAnnotated(
   supabase: SupabaseClient,
   floorPlanId: string,
 ): Promise<boolean> {
-  const { data: plan } = await supabase
+  const { data: plan, error: pe } = await supabase
     .schema('tenants')
     .from('floor_plans')
     .select('pixels_per_meter')
     .eq('id', floorPlanId)
     .maybeSingle()
-  if ((plan as { pixels_per_meter: number | null } | null)?.pixels_per_meter != null) {
-    return true
-  }
+  if (pe || !plan) return true
+  if ((plan as { pixels_per_meter: number | null }).pixels_per_meter != null) return true
 
-  const { data: rfiAnn } = await supabase
+  const { data: rfiAnn, error: re } = await supabase
     .from('rfi_annotations')
     .select('id')
     .eq('source_floor_plan_id', floorPlanId)
     .limit(1)
     .maybeSingle()
-  if (rfiAnn) return true
+  if (re || rfiAnn) return true
 
-  const { data: qcPhoto } = await supabase
+  const { data: qcPhoto, error: qe } = await supabase
     .schema('projects')
     .from('qc_entry_photos')
     .select('id')
     .eq('source_floor_plan_id', floorPlanId)
     .limit(1)
     .maybeSingle()
-  if (qcPhoto) return true
+  if (qe || qcPhoto) return true
 
-  const { data: snag } = await supabase
+  const { data: snag, error: se } = await supabase
     .schema('field')
     .from('snags')
     .select('id')
     .contains('floor_plan_pin', { floorPlanId })
     .limit(1)
     .maybeSingle()
-  if (snag) return true
+  if (se || snag) return true
 
   return false
+}
+
+async function flagNeedsReauth(
+  supabase: SupabaseClient,
+  connectionId: string,
+  message: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('org_storage_connections')
+    .update({ needs_reauth: true, last_sync_error: message.slice(0, 500) })
+    .eq('id', connectionId)
+  if (error) console.error('needs_reauth flag failed:', error.message)
 }
 
 async function closeRun(
@@ -695,91 +863,6 @@ async function closeRun(
     })
     .eq('id', runId)
   if (error) console.error('cloud_sync_runs close failed:', error.message)
-}
-
-function classify(item: CloudItem, parentPath: string): 'floor_plans' | 'documents' {
-  const ext = (item.name.match(/\.[a-z0-9]+$/i)?.[0] ?? '').toLowerCase()
-  if (CAD_EXTENSIONS.has(ext)) return 'floor_plans'
-  if (ext === '.pdf' && DRAWING_FOLDER_RE.test(parentPath)) return 'floor_plans'
-  return 'documents'
-}
-
-/**
- * Find the already-imported row for a source file across BOTH target tables,
- * returning which table holds it + its id + stored revisions. null = not yet
- * imported anywhere. Cross-table so a file keeps its original classification:
- * once a PDF is a drawing it stays a drawing, even if a later auto-classified
- * cron run would have called it a document (which would otherwise duplicate
- * it). Checks floor_plans first (the rarer, intent-forced case).
- */
-async function findExisting(
-  supabase: SupabaseClient,
-  projectId: string,
-  provider: ProviderName,
-  sourceFileId: string,
-): Promise<
-  | {
-      table: 'floor_plans' | 'documents'
-      id: string
-      source_revision_id: string | null
-      latest_revision_id: string | null
-      name: string
-      source_path: string | null
-      is_active: boolean | null
-    }
-  | null
-> {
-  {
-    const { data } = await supabase
-      .schema('tenants')
-      .from('floor_plans')
-      .select('id, source_revision_id, latest_revision_id, name, source_path, is_active')
-      .eq('project_id', projectId)
-      .eq('source_provider', provider)
-      .eq('source_file_id', sourceFileId)
-      .limit(1)
-      .maybeSingle()
-    if (data) {
-      const row = data as {
-        id: string
-        source_revision_id: string | null
-        latest_revision_id: string | null
-        name: string
-        source_path: string | null
-        is_active: boolean | null
-      }
-      return { table: 'floor_plans', ...row }
-    }
-  }
-  {
-    const { data } = await supabase
-      .schema('tenants')
-      .from('documents')
-      .select('id, source_revision_id, name, source_path')
-      .eq('project_id', projectId)
-      .eq('source_provider', provider)
-      .eq('source_file_id', sourceFileId)
-      .limit(1)
-      .maybeSingle()
-    if (data) {
-      const row = data as {
-        id: string
-        source_revision_id: string | null
-        name: string
-        source_path: string | null
-      }
-      return {
-        table: 'documents',
-        id: row.id,
-        source_revision_id: row.source_revision_id,
-        latest_revision_id: null,
-        name: row.name,
-        source_path: row.source_path,
-        is_active: null,
-      }
-    }
-  }
-  return null
 }
 
 /**
@@ -832,8 +915,6 @@ async function refreshAndPersist(
       refresh_token_enc: uint8ToHex(await encryptToken(fresh.refreshToken)),
       expires_at: fresh.expiresAt?.toISOString() ?? null,
       scope: fresh.scope,
-      // A successful refresh proves the connection is healthy again.
-      needs_reauth: false,
       last_sync_error: null,
     })
     .eq('id', conn.id)

@@ -30,30 +30,49 @@
 ### Engine (`cloud-sync-project`)
 - **Metadata-first walk:** enumerate the whole tree (BFS, `MAX_DEPTH=5` kept,
   hidden-dot skip kept, `MAX_ENTRIES=2000` runaway guard). Listing is cheap; rev
-  comparison needs no downloads. `walk_complete` is now true unless depth/entries
-  guard trips or listing errors.
+  comparison needs no downloads and runs against a **prefetched index** (two
+  queries per run, not two per file — a 2000-entry walk must not pay ~4000
+  sequential round-trips). `walk_complete` is true unless enumeration genuinely
+  stopped early (exactly-at-cap complete walks are not "truncated").
 - **Download budget:** only new/changed files are downloaded, up to
-  `MAX_DOWNLOADS=25` per invocation. Deterministic order (sortCloudItems). The
-  response reports `remaining`; callers loop until 0 (bounded).
+  `MAX_DOWNLOADS=20` **successes** per invocation, with a separate
+  `MAX_DOWNLOAD_ATTEMPTS=40` cap so permanently-failing files can't starve the
+  files behind them in walk order. The response reports `remaining`; callers
+  loop until 0 (bounded).
 - **Already-captured skip:** a changed drawing whose `latest_revision_id` already
   equals the live rev (version row captured, adoption pending) is `skipped`, not
-  re-downloaded.
+  re-downloaded (reactivated if it was soft-removed and reappeared).
+- **New-file classification precedence:** CAD extensions (always drawings) →
+  explicit request intent (a user clicked Sync on a tab) → the project's
+  persisted `cloud_storage_default_target` (declared when the folder was
+  mapped — what cron/auto triggers use) → filename/folder heuristic. Tab-open
+  auto-syncs pass NO intent: which tab happened to be open must not decide
+  where new files are filed.
 - **Auto-adopt rule (approved recommendation):** on a changed drawing, if the plan has
   **zero annotations** — no `rfi_annotations.source_floor_plan_id` rows, no
   `projects.qc_entry_photos.source_floor_plan_id` rows, no `field.snags` row whose
   `floor_plan_pin` contains the plan id, and `pixels_per_meter IS NULL` — the new
   revision is adopted immediately (active file swapped; version row still recorded;
-  `has_newer_version` stays false; counted as `adopted`). Annotated drawings keep the
-  explicit two-step flow (badge + Update / Update all).
+  `has_newer_version` stays false; counted as `adopted`). The check **fails
+  closed**: any query error counts as annotated, and a post-adopt re-check flags
+  the drawing if an annotation landed inside the check-then-act window.
+  Annotated drawings keep the explicit two-step flow (badge + Update / Update all).
 - **Run row lifecycle:** insert `cloud_sync_runs` row at start (`status='running'`),
-  update at completion (`done`/`error`, counts, `files_seen`, `downloads`,
+  close in a `finally` (`done`/`error`, counts, `files_seen`, `downloads`,
   `walk_complete`, `remaining`, `finished_at`). In-flight detection = a `running` row
   younger than 3 min. Also the concurrency guard for auto-sync.
-- **Honest stamping:** `cloud_storage_last_sync_at` only stamps when the listing
-  completed (`walk_complete`) — it means "the folder was fully checked at T".
-- **Token health:** a refresh failure sets `org_storage_connections.needs_reauth=true`
-  + `last_sync_error`; any successful refresh clears both. Sync requests against a
-  `needs_reauth` connection fail fast with a clear message.
+- **Stamping:** `cloud_storage_last_sync_at` stamps on every run that completes
+  without a fatal error — it means "the folder was checked at T" and is what the
+  auto-sync freshness gate reads (gating it on `walk_complete` would make
+  over-cap folders re-walk on every tab open forever). `walk_complete` on the
+  run row records whether enumeration truly covered everything; the deletion
+  reconcile stays gated on that.
+- **Token health:** an **auth-class** refresh failure (invalid_grant / 400 / 401)
+  sets `org_storage_connections.needs_reauth=true` + `last_sync_error`; transient
+  failures (5xx/network) do NOT flag. A 401 thrown by the walk itself (token
+  revoked while `expires_at` still future) also flags. The flag is cleared by an
+  OAuth reconnect (the callback upsert). Sync requests against a `needs_reauth`
+  connection fail fast; the web maps that to a calm "paused — reconnect" chip.
 
 ### Web
 - **Auto-sync on tab open (stale-while-revalidate):** the floor-plans and documents
@@ -88,9 +107,22 @@ project while `remaining>0` (bounded) so large folders converge.
   CHECK (status IN ('running','done','error'))`, + `files_seen int`, + `downloads int`,
   + `walk_complete boolean`, + `remaining int`; `trigger` CHECK widened to
   `('manual','cron','auto')`.
+- `projects.projects`: + `cloud_storage_default_target text
+  CHECK (IN ('drawings','documents'))`, backfilled to `'drawings'` for existing
+  mappings whose imports are exclusively floor plans (prod-verified reality for
+  all 4 mapped projects).
 - `public.org_storage_connections`: + `needs_reauth boolean NOT NULL DEFAULT false`,
   + `last_sync_error text`.
 - Plain column adds → `NOTIFY pgrst, 'reload schema'` only (no schema create/drop).
+
+### Deploy order (matters)
+1. Merge → migration auto-applies (deploy-migrations.yml) + Vercel builds web.
+2. Deploy `cloud-sync-project` + `cloud-sync-cron` via CLI immediately after
+   the migration lands (the new engine selects `needs_reauth` /
+   `cloud_storage_default_target` — pre-migration it would 500; the new web
+   normalizes old-engine responses so that direction degrades gracefully).
+3. Schedule the `cloud-sync-poll` cron via the Management API (inline-key
+   `net.http_post` pattern, same as prod jobs 1–7).
 
 ## Non-goals
 - Dropbox webhooks (Phase 3 as designed).

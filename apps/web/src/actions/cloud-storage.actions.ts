@@ -13,11 +13,13 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import {
   ALL_PROVIDERS,
+  MARKUP_WRITE_ROLES,
   getCloudStorageProvider,
   signOAuthState,
   type CloudItem,
   type ProviderName,
 } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { disconnectCloudConnection } from '@/services/cloud-storage.server'
 import {
   clearProjectCloudFolder,
@@ -146,7 +148,11 @@ export async function setProjectCloudFolderAction(args: {
   connectionId: string
   folderId: string
   folderPath?: string
+  defaultTarget?: 'drawings' | 'documents'
 }): Promise<{ ok: true }> {
+  if (args.defaultTarget && args.defaultTarget !== 'drawings' && args.defaultTarget !== 'documents') {
+    throw new Error('Invalid default target')
+  }
   const supabase = await createClient()
   await setProjectCloudFolder(args, supabase)
   revalidatePath(`/projects/${args.projectId}`)
@@ -236,9 +242,40 @@ async function requireVisibleProject(
   }
 }
 
+/**
+ * Coerce one edge-function response into a fully-populated summary. Written
+ * defensively against the PREVIOUS engine's response shape (no adopted /
+ * remaining / alreadyRunning fields) so the brief deploy gap between the web
+ * release and the edge-function release degrades to a single well-formed
+ * leg instead of NaN counters and a 6-leg runaway loop.
+ */
+function normalizeLeg(raw: Partial<CloudSyncSummary>): CloudSyncSummary {
+  return {
+    sent: raw.sent ?? 0,
+    updated: raw.updated ?? 0,
+    newVersions: raw.newVersions ?? 0,
+    adopted: raw.adopted ?? 0,
+    renamed: raw.renamed ?? 0,
+    removed: raw.removed ?? 0,
+    skipped: raw.skipped ?? 0,
+    failed: raw.failed ?? 0,
+    filesSeen: raw.filesSeen ?? 0,
+    downloads: raw.downloads ?? 0,
+    remaining: raw.remaining ?? 0,
+    walkComplete: raw.walkComplete ?? false,
+    alreadyRunning: raw.alreadyRunning ?? false,
+    classified: {
+      floor_plans: raw.classified?.floor_plans ?? 0,
+      documents: raw.classified?.documents ?? 0,
+    },
+    intent: raw.intent ?? 'auto',
+    errors: raw.errors,
+  }
+}
+
 async function invokeSyncLegs(args: {
   projectId: string
-  callerUserId: string
+  callerUserId?: string
   intent?: 'drawings' | 'documents'
   trigger: 'manual' | 'auto'
 }): Promise<CloudSyncSummary> {
@@ -267,7 +304,7 @@ async function invokeSyncLegs(args: {
       const body = await res.text()
       throw new Error(`sync failed (HTTP ${res.status}): ${body.slice(0, 300)}`)
     }
-    const leg_ = (await res.json()) as CloudSyncSummary
+    const leg_ = normalizeLeg((await res.json()) as Partial<CloudSyncSummary>)
     if (!total) {
       total = leg_
     } else {
@@ -277,6 +314,8 @@ async function invokeSyncLegs(args: {
       total.adopted += leg_.adopted
       total.renamed += leg_.renamed
       total.removed += leg_.removed
+      // Snapshot, not sum: the last leg's skipped is the folder's unchanged
+      // count (files downloaded by earlier legs re-skip in later legs).
       total.skipped = leg_.skipped
       total.failed += leg_.failed
       total.filesSeen = leg_.filesSeen
@@ -287,7 +326,9 @@ async function invokeSyncLegs(args: {
       total.classified.documents += leg_.classified.documents
       if (leg_.errors?.length) (total.errors ??= []).push(...leg_.errors)
     }
-    if (leg_.alreadyRunning || leg_.remaining === 0) break
+    // A leg-2+ alreadyRunning means someone else took over mid-backlog; the
+    // first leg's counts (kept in `total`) still describe real pulled work.
+    if (leg_.alreadyRunning || !(leg_.remaining > 0)) break
   }
   return total!
 }
@@ -332,6 +373,7 @@ export type AutoSyncOutcome =
   | { status: 'unmapped' }
   | { status: 'fresh'; lastSyncAt: string | null }
   | { status: 'already_running' }
+  | { status: 'reauth_required' }
   | { status: 'synced'; summary: CloudSyncSummary }
   | { status: 'error'; message: string }
 
@@ -349,27 +391,26 @@ export type AutoSyncOutcome =
  */
 export async function autoSyncCloudFolderAction(
   projectId: string,
-  intent?: 'drawings' | 'documents',
 ): Promise<AutoSyncOutcome> {
   if (!/^[0-9a-f-]{36}$/i.test(projectId)) {
     return { status: 'error', message: 'Invalid project id' }
   }
-  if (intent && intent !== 'drawings' && intent !== 'documents') {
-    return { status: 'error', message: 'Invalid intent' }
-  }
   try {
     const supabase = await createClient()
-    const { userId, lastSyncAt, mapped } = await requireVisibleProject(supabase, projectId)
+    const { lastSyncAt, mapped } = await requireVisibleProject(supabase, projectId)
     if (!mapped) return { status: 'unmapped' }
 
     if (lastSyncAt && Date.now() - Date.parse(lastSyncAt) < AUTO_SYNC_MAX_AGE_MS) {
       return { status: 'fresh', lastSyncAt }
     }
 
+    // Deliberately NO intent (which tab happened to be open must not decide
+    // where new files are filed — the engine uses the mapping's persisted
+    // default target / heuristic) and NO callerUserId (imports triggered by
+    // merely opening a tab are attributed to the integration's connector,
+    // not to whoever walked past).
     const summary = await invokeSyncLegs({
       projectId,
-      callerUserId: userId,
-      intent,
       trigger: 'auto',
     })
     if (summary.alreadyRunning) return { status: 'already_running' }
@@ -383,10 +424,15 @@ export async function autoSyncCloudFolderAction(
     }
     return { status: 'synced', summary }
   } catch (e) {
-    return {
-      status: 'error',
-      message: e instanceof Error ? e.message : 'Sync check failed',
+    const message = e instanceof Error ? e.message : 'Sync check failed'
+    // The engine fails fast with this phrase when the connection is flagged
+    // needs_reauth. Distinct status so read-only members (who can't see
+    // org_storage_connections under RLS) get the calm "paused" chip instead
+    // of a red error on every tab open.
+    if (message.includes('needs re-authentication')) {
+      return { status: 'reauth_required' }
     }
+    return { status: 'error', message }
   }
 }
 
@@ -410,6 +456,11 @@ export async function updateFloorPlanToLatestAction(
     throw new Error('Invalid id')
   }
   const supabase = await createClient()
+  // App-layer gate matching the UI's canWrite. RLS alone is NOT a reliable
+  // gate here: a restrictive-policy-blocked UPDATE returns 0 rows with NO
+  // error (PostgREST silent-zero-rows), which would read as success.
+  const gate = await requireEffectiveRole(supabase as any, projectId, MARKUP_WRITE_ROLES)
+  if (!gate.ok) throw new Error(gate.error)
   await adoptLatestRevision(supabase as any, floorPlanId)
 
   revalidatePath(`/projects/${projectId}/floor-plans`)
@@ -420,13 +471,12 @@ export async function updateFloorPlanToLatestAction(
 /**
  * Bulk form of updateFloorPlanToLatest: adopt the latest synced revision on
  * EVERY drawing in the project currently flagged has_newer_version. Backs
- * the "Update all" banner on the floor-plans tab; the same single confirm
- * dialog covers the batch. Per-drawing failures don't abort the rest —
- * they're reported back for the flash.
+ * the "Update all" banner on the floor-plans tab. Per-drawing failures
+ * don't abort the rest — they're reported back for the flash.
  *
- * RLS-gated like the single action: the UPDATE on tenants.floor_plans is
- * governed by the existing floor_plans policies, so a caller without
- * manage rights gets no rows / a 403.
+ * Gated like the single action (MARKUP_WRITE_ROLES, matching the banner's
+ * canWrite); adoptLatestRevision additionally verifies the UPDATE touched a
+ * row, so an RLS-blocked write can't masquerade as success.
  */
 export async function updateAllFloorPlansToLatestAction(
   projectId: string,
@@ -435,6 +485,8 @@ export async function updateAllFloorPlansToLatestAction(
     throw new Error('Invalid project id')
   }
   const supabase = await createClient()
+  const gate = await requireEffectiveRole(supabase as any, projectId, MARKUP_WRITE_ROLES)
+  if (!gate.ok) throw new Error(gate.error)
   const db = supabase as any
 
   const { data: flagged, error: listErr } = await db
@@ -487,7 +539,7 @@ async function adoptLatestRevision(db: any, floorPlanId: string): Promise<void> 
     .single()
   if (verErr || !ver) throw new Error(`Latest version not found: ${verErr?.message ?? 'no row'}`)
 
-  const { error: udErr } = await db
+  const { data: touched, error: udErr } = await db
     .schema('tenants')
     .from('floor_plans')
     .update({
@@ -498,5 +550,11 @@ async function adoptLatestRevision(db: any, floorPlanId: string): Promise<void> 
       has_newer_version: false,
     })
     .eq('id', floorPlanId)
+    .select('id')
   if (udErr) throw new Error(`Failed to apply version: ${udErr.message}`)
+  // RLS-blocked updates return 0 rows with no error — surface that instead
+  // of silently reporting success.
+  if (!touched || touched.length === 0) {
+    throw new Error('Update blocked — you may not have write access to this drawing')
+  }
 }
