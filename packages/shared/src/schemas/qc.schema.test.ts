@@ -3,7 +3,12 @@ import {
   createQcReportSchema,
   updateQcReportSchema,
   addQcEntrySchema,
+  updateQcEntrySchema,
   addQcCommentSchema,
+  QC_CONFORMANCE,
+  QC_SEVERITY,
+  QC_CONFORMANCE_LABELS,
+  QC_SEVERITY_LABELS,
 } from './qc.schema'
 
 const PROJECT = '00000000-0000-0000-0000-000000000001'
@@ -67,14 +72,120 @@ describe('updateQcReportSchema', () => {
 })
 
 describe('addQcEntrySchema', () => {
-  it('accepts a valid entry', () => {
-    const result = addQcEntrySchema.safeParse({ reportId: REPORT, title: 'DB room' })
+  it('accepts a valid non-fail entry (conformance, no severity)', () => {
+    const result = addQcEntrySchema.safeParse({ reportId: REPORT, title: 'DB room', conformance: 'na' })
+    expect(result.success).toBe(true)
+  })
+
+  it('accepts a fail entry with a severity', () => {
+    const result = addQcEntrySchema.safeParse({
+      reportId: REPORT,
+      title: 'Cracked slab',
+      conformance: 'fail',
+      severity: 'major',
+    })
     expect(result.success).toBe(true)
   })
 
   it('rejects an empty title', () => {
-    const result = addQcEntrySchema.safeParse({ reportId: REPORT, title: '' })
+    const result = addQcEntrySchema.safeParse({ reportId: REPORT, title: '', conformance: 'pass' })
     expect(result.success).toBe(false)
+  })
+
+  it('rejects a missing conformance (required, no DB default at the app layer)', () => {
+    const result = addQcEntrySchema.safeParse({ reportId: REPORT, title: 'DB room' })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an out-of-domain conformance value', () => {
+    const result = addQcEntrySchema.safeParse({ reportId: REPORT, title: 'DB room', conformance: 'maybe' })
+    expect(result.success).toBe(false)
+  })
+
+  // superRefine: severity present IFF conformance === 'fail' — both directions.
+  it('rejects a fail without a severity (severity required for fail)', () => {
+    const result = addQcEntrySchema.safeParse({ reportId: REPORT, title: 'Cracked slab', conformance: 'fail' })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.join('.') === 'severity')).toBe(true)
+    }
+  })
+
+  it('rejects a non-fail carrying a severity (severity only applies to fail)', () => {
+    for (const conformance of ['pass', 'na'] as const) {
+      const result = addQcEntrySchema.safeParse({
+        reportId: REPORT,
+        title: 'DB room',
+        conformance,
+        severity: 'minor',
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        expect(result.error.issues.some((i) => i.path.join('.') === 'severity')).toBe(true)
+      }
+    }
+  })
+
+  it('rejects an out-of-domain severity value on a fail', () => {
+    const result = addQcEntrySchema.safeParse({
+      reportId: REPORT,
+      title: 'Cracked slab',
+      conformance: 'fail',
+      severity: 'catastrophic',
+    })
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('updateQcEntrySchema', () => {
+  const base = { entryId: ENTRY, title: 'DB room', conformance: 'pass' as const }
+
+  it('accepts a full non-fail patch', () => {
+    const result = updateQcEntrySchema.safeParse(base)
+    expect(result.success).toBe(true)
+  })
+
+  it('accepts a fail patch with a severity', () => {
+    const result = updateQcEntrySchema.safeParse({
+      entryId: ENTRY,
+      title: 'Cracked slab',
+      conformance: 'fail',
+      severity: 'critical',
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects a missing entryId', () => {
+    const result = updateQcEntrySchema.safeParse({ title: 'DB room', conformance: 'pass' })
+    expect(result.success).toBe(false)
+  })
+
+  it('enforces the severity-iff-fail rule (fail without severity)', () => {
+    const result = updateQcEntrySchema.safeParse({ entryId: ENTRY, title: 'x', conformance: 'fail' })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.join('.') === 'severity')).toBe(true)
+    }
+  })
+
+  it('enforces the severity-iff-fail rule (non-fail with severity)', () => {
+    const result = updateQcEntrySchema.safeParse({ ...base, severity: 'minor' })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.join('.') === 'severity')).toBe(true)
+    }
+  })
+})
+
+describe('QC conformance/severity constants', () => {
+  it('exposes the value domains matching the DB CHECKs', () => {
+    expect(QC_CONFORMANCE).toEqual(['pass', 'fail', 'na'])
+    expect(QC_SEVERITY).toEqual(['minor', 'major', 'critical'])
+  })
+
+  it('has a label for every value', () => {
+    for (const c of QC_CONFORMANCE) expect(QC_CONFORMANCE_LABELS[c]).toBeTruthy()
+    for (const s of QC_SEVERITY) expect(QC_SEVERITY_LABELS[s]).toBeTruthy()
   })
 })
 

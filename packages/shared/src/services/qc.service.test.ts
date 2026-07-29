@@ -135,6 +135,7 @@ describe('qcService.addEntry', () => {
     projectId: 'project-1',
     reportId: 'qc-1',
     title: 'DB room',
+    conformance: 'na' as const,
   }
 
   it('appends after the current max sort_order', async () => {
@@ -156,6 +157,52 @@ describe('qcService.addEntry', () => {
     expect(captured.payload.organisation_id).toBe(ORG)
     expect(captured.payload.project_id).toBe('project-1')
     expect(captured.payload.created_by).toBe(USER)
+  })
+
+  it('writes conformance and nulls severity for a non-fail entry', async () => {
+    const { client, captured } = buildAddEntryClient(null)
+    await qcService.addEntry(client, { ...input, conformance: 'pass' }, USER)
+    expect(captured.payload.conformance).toBe('pass')
+    expect(captured.payload.severity).toBeNull()
+  })
+
+  it('writes conformance + severity for a fail entry', async () => {
+    const { client, captured } = buildAddEntryClient(null)
+    await qcService.addEntry(client, { ...input, conformance: 'fail', severity: 'major' }, USER)
+    expect(captured.payload.conformance).toBe('fail')
+    expect(captured.payload.severity).toBe('major')
+  })
+})
+
+describe('qcService.updateEntry', () => {
+  it('maps the full patch to columns and nulls severity for a non-fail', async () => {
+    const { client, captured } = buildUpdateCaptureClient()
+    await qcService.updateEntry(client, {
+      entryId: 'entry-1',
+      title: 'Renamed',
+      description: 'ok',
+      conformance: 'pass',
+    })
+    expect(captured.payload).toEqual({
+      title: 'Renamed',
+      description: 'ok',
+      conformance: 'pass',
+      severity: null,
+    })
+  })
+
+  it('persists severity for a fail and coerces empty description to null', async () => {
+    const { client, captured } = buildUpdateCaptureClient()
+    await qcService.updateEntry(client, {
+      entryId: 'entry-1',
+      title: 'Cracked slab',
+      description: '',
+      conformance: 'fail',
+      severity: 'critical',
+    })
+    expect(captured.payload.conformance).toBe('fail')
+    expect(captured.payload.severity).toBe('critical')
+    expect(captured.payload.description).toBeNull()
   })
 })
 

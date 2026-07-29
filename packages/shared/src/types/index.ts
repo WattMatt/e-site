@@ -114,5 +114,10 @@ export type SubscriptionTier = 'free' | 'starter' | 'professional' | 'enterprise
 export type SnagStatus = 'open' | 'in_progress' | 'resolved' | 'pending_sign_off' | 'signed_off' | 'closed'
 export type RfiStatus = 'draft' | 'open' | 'responded' | 'closed'
 export type QcReportStatus = 'draft' | 'issued' | 'closed'
+// QC entry conformance model (migration 00176). Value domains mirror the
+// QC_CONFORMANCE / QC_SEVERITY const arrays in schemas/qc.schema.ts and the
+// projects.qc_entries CHECK constraints.
+export type QcConformance = 'pass' | 'fail' | 'na'
+export type QcSeverity = 'minor' | 'major' | 'critical'
 export type CocStatus = 'missing' | 'submitted' | 'under_review' | 'approved' | 'rejected'
 export type Priority = 'low' | 'medium' | 'high' | 'critical'
