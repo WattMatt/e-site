@@ -576,9 +576,11 @@ function RunningFooter({ reportLabel }: { reportLabel: string }) {
 
 export function QcReportDocument({ data }: { data: QcReportData }) {
   const reportLabel = `QC Report ${data.report.reportNo}`
-  // Preview/admin route renders drafts; only an 'issued' (or 'closed') report
-  // is a final record, so anything else carries the DRAFT watermark.
-  const isDraft = data.report.status !== 'issued'
+  // Only a genuine draft carries the DRAFT watermark. The preview/admin route
+  // renders drafts (watermarked); issued reports render un-watermarked (the
+  // issue action overrides the status so the saved v1 is clean even though the
+  // DB flip lands last), and a closed report is a final record — never DRAFT.
+  const isDraft = data.report.status === 'draft'
 
   return (
     <Document title={data.branding.title} producer="e-site.live">

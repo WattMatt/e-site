@@ -476,8 +476,13 @@ describe('addQcCommentAction — RBAC gate', () => {
 })
 
 describe('addQcCommentAction — comment notification', () => {
+  // The bell only fires on an ISSUED report — a comment on a draft must never
+  // fan the (possibly unvetted) draft title to the roster, which includes
+  // client viewers who can't even see the draft (00172 RLS).
+  const ISSUED_ROW = { ...REPORT_ROW, status: 'issued' }
+
   it('dispatches a qc_comment bell to the roster minus the commenter, routed to the report', async () => {
-    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor', reportRow: ISSUED_ROW }))
     const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'Looks good' })
     expect(res).toEqual({ commentId: COMMENT_ID })
 
@@ -495,8 +500,18 @@ describe('addQcCommentAction — comment notification', () => {
     )
   })
 
-  it('does not bell when the roster (minus commenter) is empty', async () => {
+  it('does NOT bell on a draft report — draft privacy (no title leak to client viewers)', async () => {
+    // Default REPORT_ROW is a draft. A committed comment must not resolve the
+    // roster or dispatch — this is the regression pin for the draft-title leak.
     createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'WIP note' })
+    expect(res).toEqual({ commentId: COMMENT_ID })
+    expect(resolveRecipientsMock).not.toHaveBeenCalled()
+    expect(dispatchNotificationMock).not.toHaveBeenCalled()
+  })
+
+  it('does not bell when the roster (minus commenter) is empty', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor', reportRow: ISSUED_ROW }))
     resolveRecipientsMock.mockResolvedValue({ userIds: [], emails: [], recipients: [] })
     const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'Solo note' })
     expect(res).toEqual({ commentId: COMMENT_ID })
@@ -504,7 +519,7 @@ describe('addQcCommentAction — comment notification', () => {
   })
 
   it('a notify failure never fails the committed comment (best-effort)', async () => {
-    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor', reportRow: ISSUED_ROW }))
     resolveRecipientsMock.mockRejectedValue(new Error('recipients rpc down'))
     const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'Looks good' })
     expect(res).toEqual({ commentId: COMMENT_ID })
@@ -1000,8 +1015,8 @@ describe('issueQcReportAction — empty-issue guard', () => {
 })
 
 describe('issueQcReportAction — B2 atomic close-during-issue guard', () => {
-  it('aborts when the flip touches no row (report closed mid-issue) — no dangling report row, no notify', async () => {
-    // Gate sees a draft; the flip finds it already closed → 0 rows.
+  it('rolls back the PDF + reports row when the flip touches no row (report closed mid-issue) — no notify', async () => {
+    // Gate sees a draft; the guarded final flip finds it already closed → 0 rows.
     createClientMock.mockResolvedValue(mockClient({ role: 'project_manager' }))
     const service = mockServiceClient({ updateRowMissing: true })
     createServiceClientMock.mockReturnValue(service.client)
@@ -1010,10 +1025,17 @@ describe('issueQcReportAction — B2 atomic close-during-issue guard', () => {
 
     expect('error' in res && res.error).toMatch(/closed/i)
     expect(notifyQcIssuedMock).not.toHaveBeenCalled()
-    // The guard ran BEFORE the projects.reports insert + the PDF upload — so
-    // there is no dangling report row and no orphan blob.
-    expect(service.writes.some((w) => w.table === 'reports' && w.op === 'insert')).toBe(false)
-    expect(service.upload).not.toHaveBeenCalled()
+    // The flip is the LAST write, so the PDF + reports row WERE written first,
+    // then rolled back when the guard caught the concurrent close: no orphan
+    // blob (remove called with the v1 path), no client-visible reports row (a
+    // reports delete ran), and — crucially — the report was never left stamped
+    // 'issued' with no PDF (the failure it used to produce). No revalidate.
+    expect(service.upload).toHaveBeenCalled()
+    expect(service.writes.some((w) => w.table === 'reports' && w.op === 'insert')).toBe(true)
+    expect(service.remove).toHaveBeenCalledWith([
+      `${ORG_ID}/${PROJECT_ID}/qc-report-${REPORT_ID}-v1.pdf`,
+    ])
+    expect(service.writes.some((w) => w.table === 'reports' && w.op === 'delete')).toBe(true)
     expect(revalidatePathMock).not.toHaveBeenCalled()
   })
 })

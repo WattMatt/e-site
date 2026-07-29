@@ -429,23 +429,32 @@ export async function addQcCommentAction(
   // Bell → the project roster minus the commenter (live resolve, service-role;
   // mirrors rfi_response). Best-effort / never-throw: a notify failure must not
   // turn a committed comment into an error. Email stays issue-only.
-  try {
-    const { userIds } = await resolveProjectRecipients(entry.project_id as string, {
-      excludeUserId: user.id,
-    })
-    if (userIds.length) {
-      await dispatchNotification({
-        userIds,
-        title: 'New QC comment',
-        body: `"${report.title}" — QC Report ${report.report_no}`,
-        route: QC_REPORT_PATH(entry.project_id as string, entry.report_id as string),
-        type: 'qc_comment',
-        entityType: 'qc_comment',
-        entityId: comment.id,
+  //
+  // ONLY once the report is issued. A draft is private working state — client
+  // viewers can't even see it (00172 RLS), and the roster resolver includes
+  // them, so belling a draft comment would fan the (possibly unvetted) report
+  // TITLE to client viewers, disclosing a draft they must not learn about until
+  // issue. createQcReportAction withholds create-time bells for the same
+  // reason. (Comments on closed reports are already refused above.)
+  if (report.status === 'issued') {
+    try {
+      const { userIds } = await resolveProjectRecipients(entry.project_id as string, {
+        excludeUserId: user.id,
       })
+      if (userIds.length) {
+        await dispatchNotification({
+          userIds,
+          title: 'New QC comment',
+          body: `"${report.title}" — QC Report ${report.report_no}`,
+          route: QC_REPORT_PATH(entry.project_id as string, entry.report_id as string),
+          type: 'qc_comment',
+          entityType: 'qc_comment',
+          entityId: comment.id,
+        })
+      }
+    } catch (err) {
+      console.error('[addQcCommentAction] comment notify failed', err)
     }
-  } catch (err) {
-    console.error('[addQcCommentAction] comment notify failed', err)
   }
 
   revalidatePath(QC_REPORT_PATH(entry.project_id as string, entry.report_id as string))
@@ -621,12 +630,17 @@ export type IssueQcReportResult =
  * - Refuses closed reports (issue would silently reopen them) — see
  *   reopenQcReportAction for the deliberate closed → issued path.
  * - Refuses a report with 0 entries (empty-issue guard, before render).
- * - Renders the PDF via renderQcReport (gather gates internally too).
- * - Atomically flips qc_reports.status → 'issued' (+ issued_at/by) FIRST, guarded
- *   `.neq('status','closed')` (Defect B2) — a concurrent close aborts the issue
- *   here, before any storage/reports write, so no orphan blob or dangling row.
+ * - Renders the PDF via renderQcReport against the ISSUED state (the status is
+ *   overridden for the render so the saved artifact is never DRAFT-watermarked,
+ *   even though the DB flip lands last). Gather gates internally too.
  * - Uploads to `qc-reports/{org_id}/{project_id}/qc-report-{reportId}-v{n}.pdf`.
  * - Inserts a `projects.reports` row (kind='qc', source_table='qc_reports').
+ * - Flips qc_reports.status → 'issued' (+ issued_at/by) LAST, guarded
+ *   `.neq('status','closed')` (Defect B2): the flip is the final write, so an
+ *   upload/insert failure leaves a clean, retriable 'draft' — never a
+ *   client-visible report stamped 'issued' with no PDF. A 0-row flip means the
+ *   report was closed mid-issue → the just-written PDF + reports row roll back
+ *   and the issue aborts WITHOUT notifying.
  * - If a prior `status='issued'` report exists, supersedes it (re-issue bumps
  *   the version), then notifies the roster (bell + gated email). Mirrors
  *   exportSnagVisitReportAction.
@@ -677,6 +691,11 @@ export async function issueQcReportAction(
 
   try {
     const reportData = await gatherQcReportData(supabase, report.project_id, reportId)
+    // Render the ISSUED artifact. The DB status flip is the LAST write below
+    // (Defect B2 atomic guard), so at gather time the row may still read
+    // 'draft' — override the rendered status so the saved PDF the client
+    // downloads is never DRAFT-watermarked.
+    reportData.report.status = 'issued'
     pdfBuffer = await renderQcReport(reportData)
     // Serialize branding (strip data: URIs so the snapshot stays small — keep
     // just the plain text / accent fields that describe the identity, not the
@@ -698,33 +717,7 @@ export async function issueQcReportAction(
 
   const serviceClient = createServiceClient()
 
-  // ── Atomic status flip FIRST (Defect B2) ──────────────────────────────────
-  // Flip draft/issued → issued, but ONLY when the report is not currently
-  // closed. Running this guard here — BEFORE the storage upload + the
-  // projects.reports insert — means a report that was closed concurrently
-  // (between the gate read above and now) aborts the issue with NO orphan blob
-  // and NO dangling reports row. A 0-row result IS the race being caught.
-  // Service client: the effective-role gate above is the authorization
-  // boundary (per-project promotions don't satisfy the table's inline org-role
-  // RLS join).
-  const { data: flippedRow, error: flipErr } = await (serviceClient as any)
-    .schema('projects')
-    .from('qc_reports')
-    .update({
-      status: 'issued',
-      issued_at: new Date().toISOString(),
-      issued_by: user.id,
-    })
-    .eq('id', reportId)
-    .neq('status', 'closed')
-    .select('id')
-    .maybeSingle()
-  if (flipErr) return { error: flipErr.message }
-  if (!flippedRow) {
-    return { error: 'Report was closed — reopen the report before issuing.' }
-  }
-
-  // ── Supersede check — find the current issued report ──────────────────────
+  // ── Supersede check — find the current issued report (compute next version) ─
   const { data: priorRow } = await (serviceClient as any)
     .schema('projects')
     .from('reports')
@@ -746,6 +739,9 @@ export async function issueQcReportAction(
       contentType: 'application/pdf',
       upsert: false,
     })
+  // The status flip is the LAST write below, so an upload failure here leaves
+  // the report a clean, retriable 'draft' — never a client-visible half-issued
+  // row with no downloadable PDF.
   if (uploadError) return { error: `Upload failed: ${uploadError.message}` }
 
   // ── Insert projects.reports row ───────────────────────────────────────────
@@ -771,16 +767,56 @@ export async function issueQcReportAction(
     .single()
 
   if (insertError) {
-    // Best-effort rollback of the storage upload to avoid orphans.
+    // Best-effort rollback of the storage upload to avoid orphans. The report
+    // is still 'draft' (the flip is below) — clean and retriable.
     await serviceClient.storage.from(QC_REPORTS_BUCKET).remove([storagePath])
     return { error: `Failed to save report record: ${insertError.message}` }
   }
 
   const newReportRowId = (newReport as { id: string }).id
 
+  // ── Final atomic status flip (Defect B2) ──────────────────────────────────
+  // Flip draft/issued → issued, guarded `.neq('status','closed')`. This is the
+  // LAST write that touches qc_reports.status: every failure path above left the
+  // report a clean 'draft'. A 0-row result means the report was closed
+  // concurrently (between the gate read above and now) — so roll back the PDF +
+  // the reports row just written and abort WITHOUT notifying, rather than
+  // leaving a client-visible report stamped 'issued' with no downloadable PDF.
+  // Service client: the effective-role gate above is the authorization boundary
+  // (per-project promotions don't satisfy the table's inline org-role RLS join).
+  const { data: flippedRow, error: flipErr } = await (serviceClient as any)
+    .schema('projects')
+    .from('qc_reports')
+    .update({
+      status: 'issued',
+      issued_at: new Date().toISOString(),
+      issued_by: user.id,
+    })
+    .eq('id', reportId)
+    .neq('status', 'closed')
+    .select('id')
+    .maybeSingle()
+  if (flipErr || !flippedRow) {
+    // Roll back the freshly-written PDF + reports row so a failed or
+    // race-aborted flip never leaves an orphan blob or a client-visible reports
+    // row pointing at an un-issued qc_report.
+    await (serviceClient as any)
+      .schema('projects')
+      .from('reports')
+      .delete()
+      .eq('id', newReportRowId)
+    await serviceClient.storage.from(QC_REPORTS_BUCKET).remove([storagePath])
+    return {
+      error: flipErr
+        ? flipErr.message
+        : 'Report was closed — reopen the report before issuing.',
+    }
+  }
+
   // ── Supersede ALL prior issued rows for this report (self-healing) ────────
-  // One statement supersedes every issued row, including any duplicates that
-  // might have been created by a previous interrupted issue.
+  // Runs only after the flip commits, so a race-aborted issue never supersedes
+  // the live prior version. One statement supersedes every issued row,
+  // including any duplicates left by a previous interrupted issue.
   const { error: supersededError } = await (serviceClient as any)
     .schema('projects')
     .from('reports')
@@ -793,9 +829,6 @@ export async function issueQcReportAction(
     console.error('[issueQcReportAction] supersede error', supersededError)
     // Non-blocking: the new row is valid; the UI reads the latest version by version number.
   }
-
-  // The report was already flipped to 'issued' at the top of this section
-  // (Defect B2 atomic guard) — nothing more to do to the qc_reports row here.
 
   // ── Notify the roster (bell + gated email) — best-effort, never throws ────
   await notifyQcIssued({

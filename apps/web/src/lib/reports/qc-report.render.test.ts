@@ -215,7 +215,7 @@ describe('renderQcReport conformance model', () => {
 })
 
 describe('renderQcReport draft watermark', () => {
-  it('stamps DRAFT when the report is not issued', async () => {
+  it('stamps DRAFT when the report is a draft', async () => {
     const draft: QcReportData = { ...baseData, report: { ...baseData.report, status: 'draft' } }
     const { text } = await parsePdf(await renderQcReport(draft))
     expect(squash(text)).toContain('DRAFT')
@@ -223,6 +223,12 @@ describe('renderQcReport draft watermark', () => {
 
   it('does not stamp DRAFT on an issued report', async () => {
     const { text } = await parsePdf(await renderQcReport(baseData))
+    expect(squash(text)).not.toContain('DRAFT')
+  })
+
+  it('does not stamp DRAFT on a closed report — a final record is never DRAFT', async () => {
+    const closed: QcReportData = { ...baseData, report: { ...baseData.report, status: 'closed' } }
+    const { text } = await parsePdf(await renderQcReport(closed))
     expect(squash(text)).not.toContain('DRAFT')
   })
 })
