@@ -11,6 +11,8 @@ interface Props {
   status: string
   /** ORG_WRITE_ROLES — controls issue/close/reopen/delete and saved-report Delete. */
   canManage: boolean
+  /** Number of entries — Issue is disabled at 0 (an empty report is meaningless). */
+  entryCount: number
 }
 
 /**
@@ -20,7 +22,7 @@ interface Props {
  * reportsKey idiom. Issue is hidden on closed reports (Reopen shows instead,
  * via QcLifecycleButtons — re-issuing a closed report is refused server-side).
  */
-export function QcReportsSection({ projectId, reportId, status, canManage }: Props) {
+export function QcReportsSection({ projectId, reportId, status, canManage, entryCount }: Props) {
   const [reportsKey, setReportsKey] = useState(0)
 
   return (
@@ -33,6 +35,7 @@ export function QcReportsSection({ projectId, reportId, status, canManage }: Pro
               projectId={projectId}
               reportId={reportId}
               status={status}
+              entryCount={entryCount}
               onIssued={() => setReportsKey((k) => k + 1)}
             />
           )}

@@ -10,6 +10,8 @@ interface Props {
   reportId: string
   /** 'draft' shows "Issue report"; anything else reads "Re-issue" (version bump). */
   status: string
+  /** Entries on the report — 0 disables Issue (the action also refuses it). */
+  entryCount: number
   /** Fired after a successful issue (host bumps the saved-reports reloadKey). */
   onIssued?: (version: number) => void
 }
@@ -27,7 +29,7 @@ interface Props {
  * activation expires), which read as a failed issue and provoked duplicate
  * re-issues + duplicate roster emails.
  */
-export function IssueReportButton({ projectId, reportId, status, onIssued }: Props) {
+export function IssueReportButton({ projectId, reportId, status, entryCount, onIssued }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
   const [armed, setArmed] = useState(false)
@@ -35,6 +37,10 @@ export function IssueReportButton({ projectId, reportId, status, onIssued }: Pro
   const [error, setError] = useState('')
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // An empty report is meaningless to issue (blank PDF, empty portal row, roster
+  // notified about nothing). Disable up front — the action refuses it too.
+  const isEmpty = entryCount === 0
+  const disabled = busy || isEmpty
   const idleLabel = status === 'draft' ? '⬆ Issue report' : '⬆ Re-issue report'
 
   function arm() {
@@ -74,8 +80,10 @@ export function IssueReportButton({ projectId, reportId, status, onIssued }: Pro
       {error && <span style={{ color: 'var(--c-red)', fontSize: 12 }}>Issue failed: {error}</span>}
       <button
         type="button"
-        disabled={busy}
+        disabled={disabled}
         onClick={armed ? commit : arm}
+        title={isEmpty ? 'Add at least one entry' : undefined}
+        aria-disabled={disabled}
         style={{
           fontSize: 12,
           fontWeight: 600,
@@ -84,8 +92,8 @@ export function IssueReportButton({ projectId, reportId, status, onIssued }: Pro
           border: 'none',
           background: armed ? 'var(--c-red)' : 'var(--c-amber)',
           color: armed ? '#fff' : 'var(--c-on-amber)',
-          cursor: busy ? 'not-allowed' : 'pointer',
-          opacity: busy ? 0.6 : 1,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.6 : 1,
           transition: 'all 0.12s',
           whiteSpace: 'nowrap',
         }}

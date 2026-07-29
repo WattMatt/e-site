@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { X, Map } from 'lucide-react'
@@ -131,6 +131,65 @@ function blankCanvasDataUrl(w: number, h: number): string {
 export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) {
   const router = useRouter()
   const isReEdit = !!reEdit
+
+  // ── Dialog accessibility ────────────────────────────────────────────────
+  // One ref for whichever step (picker / canvas) is mounted. On open the dialog
+  // takes focus; on close focus returns to the opener (the "Add markup" / "Edit
+  // markup" trigger). Tab is trapped inside the dialog. Escape closes the PICKER
+  // step; on the CANVAS step Escape is deliberately NOT bound here — MarkupCanvas
+  // already uses Escape to deselect a shape, and closing mid-draw would discard
+  // unsaved work, so the visible Close button is the canvas's dismissal path.
+  const containerRef = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  // Capture the opener once for the dialog's lifetime; restore on unmount. Only
+  // stable refs are read, so the empty dep array is exhaustive as-is.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    containerRef.current?.focus()
+    return () => {
+      opener?.focus?.()
+    }
+  }, [])
+
+  const makeKeyDownHandler = useCallback(
+    (closeOnEscape: boolean) => (e: React.KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (closeOnEscape) {
+          e.preventDefault()
+          onCloseRef.current()
+        }
+        return
+      }
+      if (e.key !== 'Tab') return
+      const node = containerRef.current
+      if (!node) return
+      const items = Array.from(
+        node.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      )
+      if (items.length === 0) {
+        e.preventDefault()
+        node.focus()
+        return
+      }
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey) {
+        if (active === first || !node.contains(active)) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (active === last || !node.contains(active)) {
+        e.preventDefault()
+        first.focus()
+      }
+    },
+    [],
+  )
 
   // ── Picker (add flow) ──────────────────────────────────────────────────
   const [plans, setPlans] = useState<PickerPlan[]>([])
@@ -326,9 +385,12 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
   if (showCanvas) {
     return (
       <div
+        ref={containerRef}
         role="dialog"
         aria-modal="true"
         aria-label="Mark up drawing"
+        tabIndex={-1}
+        onKeyDown={makeKeyDownHandler(false)}
         style={{
           position: 'fixed',
           inset: 0,
@@ -339,6 +401,7 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
           flexDirection: 'column',
           padding: 16,
           gap: 12,
+          outline: 'none',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -411,9 +474,12 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
   // ── Picker step (add flow) ─────────────────────────────────────────────
   return (
     <div
+      ref={containerRef}
       role="dialog"
       aria-modal="true"
       aria-label="Pick a drawing to mark up"
+      tabIndex={-1}
+      onKeyDown={makeKeyDownHandler(true)}
       onClick={onClose}
       style={{
         position: 'fixed',
@@ -425,6 +491,7 @@ export function QcMarkupDialog({ projectId, onClose, onStaged, reEdit }: Props) 
         alignItems: 'center',
         justifyContent: 'center',
         padding: 20,
+        outline: 'none',
       }}
     >
       <div
