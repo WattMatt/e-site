@@ -44,6 +44,7 @@ vi.mock('@esite/shared', async () => {
       create: vi.fn(),
       update: vi.fn(),
       addEntry: vi.fn(),
+      updateEntry: vi.fn(),
       addComment: vi.fn(),
     },
   }
@@ -56,6 +57,7 @@ import {
   closeQcReportAction,
   reopenQcReportAction,
   addQcEntryAction,
+  updateQcEntryAction,
   addQcCommentAction,
   deleteQcEntryAction,
   deleteQcPhotoAction,
@@ -115,8 +117,10 @@ function mockClient(opts: {
   entryRow?: object | null
   photoRow?: object | null
   commentRow?: object | null
+  /** Entry count returned by the issue empty-guard head query (default 1). */
+  entryCount?: number
 } = {}) {
-  const { noUser = false, role = 'owner', rpcError = false } = opts
+  const { noUser = false, role = 'owner', rpcError = false, entryCount } = opts
   const rows: Record<string, unknown> = {
     qc_reports: 'reportRow' in opts ? opts.reportRow : REPORT_ROW,
     qc_entries: 'entryRow' in opts ? opts.entryRow : ENTRY_ROW,
@@ -133,11 +137,17 @@ function mockClient(opts: {
       : Promise.resolve({ data: role, error: null }),
     schema: () => ({
       from: (table: string) => ({
-        select: () => ({
-          eq: () => ({
-            maybeSingle: () => Promise.resolve({ data: rows[table] ?? null, error: null }),
-          }),
-        }),
+        // select(cols, { count:'exact', head:true }) → the empty-issue guard's
+        // head count settles directly on .eq(); the plain select→eq→maybeSingle
+        // read path is unchanged for every gate lookup.
+        select: (_cols?: unknown, selectOpts?: { head?: boolean }) =>
+          selectOpts?.head
+            ? { eq: () => Promise.resolve({ count: entryCount ?? 1, error: null }) }
+            : {
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({ data: rows[table] ?? null, error: null }),
+                }),
+              },
         update: () => ({
           eq: () => Promise.resolve({ data: null, error: null }),
         }),
@@ -214,9 +224,13 @@ function mockServiceClient(opts: {
           update: (payload: any) => {
             writes.push({ table, op: 'update', payload })
             const chain: any = {
+              // .neq() returns the chain so it composes both ways: the supersede
+              // awaits it as a terminal (via then), and the issue B2 flip chains
+              // .neq('status','closed').select('id').maybeSingle() off it.
               eq: () => chain,
-              neq: () => Promise.resolve({ data: null, error: null }),
-              // Row-verified flips (close/reopen) select the updated row back.
+              neq: () => chain,
+              // Row-verified flips (close/reopen + the issue B2 guard) select the
+              // updated row back; updateRowMissing simulates a 0-row flip.
               select: () => ({
                 maybeSingle: () => Promise.resolve({
                   data: updateRowMissing ? null : { id: REPORT_ID },
@@ -264,6 +278,7 @@ beforeEach(async () => {
   ;(qcService.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: REPORT_ID, report_no: 4 })
   ;(qcService.update as ReturnType<typeof vi.fn>).mockResolvedValue(REPORT_ROW)
   ;(qcService.addEntry as ReturnType<typeof vi.fn>).mockResolvedValue({ id: ENTRY_ID })
+  ;(qcService.updateEntry as ReturnType<typeof vi.fn>).mockResolvedValue({ id: ENTRY_ID })
   ;(qcService.addComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: COMMENT_ID, report_id: REPORT_ID })
 
   getByIdMock.mockResolvedValue({ organisation_id: ORG_ID })
@@ -386,27 +401,60 @@ describe('updateQcReportAction', () => {
 describe('addQcEntryAction — RBAC gate', () => {
   it.each(['client_viewer', 'inspector'])('%s is rejected before any write', async (role) => {
     createClientMock.mockResolvedValue(mockClient({ role }))
-    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring' })
+    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring', conformance: 'pass' })
     expect('error' in res && res.error).toBeTruthy()
     const { qcService } = await import('@esite/shared')
     expect(qcService.addEntry).not.toHaveBeenCalled()
   })
 
-  it('contractor is allowed and gets the new entryId', async () => {
+  it('contractor is allowed and gets the new entryId — conformance threads through', async () => {
     createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
-    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring' })
+    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring', conformance: 'pass' })
     expect(res).toEqual({ entryId: ENTRY_ID })
     const { qcService } = await import('@esite/shared')
     expect(qcService.addEntry).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ organisationId: ORG_ID, projectId: PROJECT_ID }),
+      expect.objectContaining({
+        organisationId: ORG_ID,
+        projectId: PROJECT_ID,
+        conformance: 'pass',
+      }),
       USER_ID,
     )
   })
 
+  it('threads a fail + severity through to the service', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    const res = await addQcEntryAction({
+      reportId: REPORT_ID,
+      title: 'Cracked slab',
+      conformance: 'fail',
+      severity: 'critical',
+    })
+    expect(res).toEqual({ entryId: ENTRY_ID })
+    const { qcService } = await import('@esite/shared')
+    expect(qcService.addEntry).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ conformance: 'fail', severity: 'critical' }),
+      USER_ID,
+    )
+  })
+
+  it('rejects a fail with no severity before any write (schema superRefine)', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    const res = await addQcEntryAction({
+      reportId: REPORT_ID,
+      title: 'Cracked slab',
+      conformance: 'fail',
+    } as never)
+    expect('error' in res && res.error).toBeTruthy()
+    const { qcService } = await import('@esite/shared')
+    expect(qcService.addEntry).not.toHaveBeenCalled()
+  })
+
   it('returns not-found for a report invisible under RLS', async () => {
     createClientMock.mockResolvedValue(mockClient({ reportRow: null }))
-    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring' })
+    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring', conformance: 'pass' })
     expect(res).toEqual({ error: 'Report not found' })
   })
 })
@@ -424,6 +472,101 @@ describe('addQcCommentAction — RBAC gate', () => {
     createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
     const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'Looks good' })
     expect(res).toEqual({ commentId: COMMENT_ID })
+  })
+})
+
+describe('addQcCommentAction — comment notification', () => {
+  it('dispatches a qc_comment bell to the roster minus the commenter, routed to the report', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'Looks good' })
+    expect(res).toEqual({ commentId: COMMENT_ID })
+
+    // Roster resolved LIVE, excluding the commenter.
+    expect(resolveRecipientsMock).toHaveBeenCalledWith(PROJECT_ID, { excludeUserId: USER_ID })
+    // Bell fired with the qc_comment type + portal-agnostic deep link.
+    expect(dispatchNotificationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userIds: [OTHER_USER],
+        type: 'qc_comment',
+        entityType: 'qc_comment',
+        entityId: COMMENT_ID,
+        route: `/projects/${PROJECT_ID}/quality-control/${REPORT_ID}`,
+      }),
+    )
+  })
+
+  it('does not bell when the roster (minus commenter) is empty', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    resolveRecipientsMock.mockResolvedValue({ userIds: [], emails: [], recipients: [] })
+    const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'Solo note' })
+    expect(res).toEqual({ commentId: COMMENT_ID })
+    expect(dispatchNotificationMock).not.toHaveBeenCalled()
+  })
+
+  it('a notify failure never fails the committed comment (best-effort)', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    resolveRecipientsMock.mockRejectedValue(new Error('recipients rpc down'))
+    const res = await addQcCommentAction({ entryId: ENTRY_ID, body: 'Looks good' })
+    expect(res).toEqual({ commentId: COMMENT_ID })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// updateQcEntryAction — QC_WRITE_ROLES + closed-freeze + conformance
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('updateQcEntryAction', () => {
+  const VALID_EDIT = { entryId: ENTRY_ID, title: 'Rewired DB', conformance: 'pass' } as const
+
+  it.each(['client_viewer', 'inspector'])('%s is rejected before any write', async (role) => {
+    createClientMock.mockResolvedValue(mockClient({ role }))
+    const res = await updateQcEntryAction({ ...VALID_EDIT })
+    expect('error' in res && res.error).toBeTruthy()
+    const { qcService } = await import('@esite/shared')
+    expect(qcService.updateEntry).not.toHaveBeenCalled()
+  })
+
+  it('contractor may edit an entry on an open report — conformance/severity forwarded', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    const res = await updateQcEntryAction({
+      entryId: ENTRY_ID,
+      title: 'Cracked slab',
+      conformance: 'fail',
+      severity: 'major',
+    })
+    expect(res).toEqual({})
+    const { qcService } = await import('@esite/shared')
+    expect(qcService.updateEntry).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ entryId: ENTRY_ID, conformance: 'fail', severity: 'major' }),
+    )
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/projects/${PROJECT_ID}/quality-control/${REPORT_ID}`)
+  })
+
+  it('blocks edits when the report is closed (freeze)', async () => {
+    createClientMock.mockResolvedValue(mockClient({ reportRow: { ...REPORT_ROW, status: 'closed' } }))
+    const res = await updateQcEntryAction({ ...VALID_EDIT })
+    expect(res).toEqual({ error: expect.stringContaining('closed') })
+    const { qcService } = await import('@esite/shared')
+    expect(qcService.updateEntry).not.toHaveBeenCalled()
+  })
+
+  it('returns not-found when the entry is invisible under RLS', async () => {
+    createClientMock.mockResolvedValue(mockClient({ entryRow: null }))
+    const res = await updateQcEntryAction({ ...VALID_EDIT })
+    expect(res).toEqual({ error: 'Entry not found' })
+  })
+
+  it('rejects a fail with no severity before any write', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'contractor' }))
+    const res = await updateQcEntryAction({
+      entryId: ENTRY_ID,
+      title: 'Cracked slab',
+      conformance: 'fail',
+    } as never)
+    expect('error' in res && res.error).toBeTruthy()
+    const { qcService } = await import('@esite/shared')
+    expect(qcService.updateEntry).not.toHaveBeenCalled()
   })
 })
 
@@ -631,7 +774,7 @@ describe('closed-report freeze (server-side)', () => {
 
   it('addQcEntryAction refuses', async () => {
     createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', reportRow: CLOSED_ROW }))
-    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring' })
+    const res = await addQcEntryAction({ reportId: REPORT_ID, title: 'DB wiring', conformance: 'pass' })
     expect(res).toEqual({ error: expect.stringContaining('closed') })
     const { qcService } = await import('@esite/shared')
     expect(qcService.addEntry).not.toHaveBeenCalled()
@@ -834,5 +977,43 @@ describe('issueQcReportAction — failure paths', () => {
       `${ORG_ID}/${PROJECT_ID}/qc-report-${REPORT_ID}-v1.pdf`,
     ])
     expect(notifyQcIssuedMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('issueQcReportAction — empty-issue guard', () => {
+  it('refuses a report with zero entries, before render or any service write', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', entryCount: 0 }))
+    const res = await issueQcReportAction(REPORT_ID)
+    expect(res).toEqual({ error: expect.stringContaining('entry') })
+    expect(gatherMock).not.toHaveBeenCalled()
+    expect(createServiceClientMock).not.toHaveBeenCalled()
+    expect(notifyQcIssuedMock).not.toHaveBeenCalled()
+  })
+
+  it('proceeds when the report has at least one entry', async () => {
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager', entryCount: 3 }))
+    const service = mockServiceClient({ priorReport: null })
+    createServiceClientMock.mockReturnValue(service.client)
+    const res = await issueQcReportAction(REPORT_ID)
+    expect(res).toEqual({ version: 1 })
+  })
+})
+
+describe('issueQcReportAction — B2 atomic close-during-issue guard', () => {
+  it('aborts when the flip touches no row (report closed mid-issue) — no dangling report row, no notify', async () => {
+    // Gate sees a draft; the flip finds it already closed → 0 rows.
+    createClientMock.mockResolvedValue(mockClient({ role: 'project_manager' }))
+    const service = mockServiceClient({ updateRowMissing: true })
+    createServiceClientMock.mockReturnValue(service.client)
+
+    const res = await issueQcReportAction(REPORT_ID)
+
+    expect('error' in res && res.error).toMatch(/closed/i)
+    expect(notifyQcIssuedMock).not.toHaveBeenCalled()
+    // The guard ran BEFORE the projects.reports insert + the PDF upload — so
+    // there is no dangling report row and no orphan blob.
+    expect(service.writes.some((w) => w.table === 'reports' && w.op === 'insert')).toBe(false)
+    expect(service.upload).not.toHaveBeenCalled()
+    expect(revalidatePathMock).not.toHaveBeenCalled()
   })
 })

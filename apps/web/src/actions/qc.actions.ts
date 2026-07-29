@@ -12,17 +12,21 @@ import {
   createQcReportSchema,
   updateQcReportSchema,
   addQcEntrySchema,
+  updateQcEntrySchema,
   addQcCommentSchema,
 } from '@esite/shared'
 import type {
   CreateQcReportInput,
   UpdateQcReportInput,
   AddQcEntryInput,
+  UpdateQcEntryInput,
   AddQcCommentInput,
 } from '@esite/shared'
 import { gatherQcReportData } from '@/lib/reports/qc-report-data'
 import { renderQcReport } from '@/lib/reports/qc-report'
 import { notifyQcIssued } from '@/lib/qc-email'
+import { resolveProjectRecipients } from '@/lib/recipients'
+import { dispatchNotification } from '@/lib/notifications'
 
 const uuidSchema = z.string().uuid()
 
@@ -340,6 +344,53 @@ export async function addQcEntryAction(
   return { entryId: entry.id }
 }
 
+/**
+ * Edit a QC entry's title/description/conformance/severity in place.
+ *
+ * Gate: QC_WRITE_ROLES (same audience as add) + the closed-report freeze. The
+ * entry's own project_id/report_id (resolved via the RLS read) bind the gate —
+ * never a client-supplied one — mirroring addQcCommentAction. The write runs on
+ * the cookie/RLS client (qcService.updateEntry), so the DB freeze trigger is a
+ * second backstop behind the up-front status check.
+ */
+export async function updateQcEntryAction(
+  input: UpdateQcEntryInput,
+): Promise<{ error?: string }> {
+  const parsed = updateQcEntrySchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // RLS read of the entry = tenancy gate + project/report resolve.
+  const { data: entry } = await (supabase as any)
+    .schema('projects').from('qc_entries')
+    .select('id, report_id, project_id')
+    .eq('id', parsed.data.entryId)
+    .maybeSingle()
+  if (!entry) return { error: 'Entry not found' }
+
+  const gate = await requireEffectiveRole(supabase, entry.project_id as string, QC_WRITE_ROLES)
+  if (!gate.ok) return { error: gate.error }
+
+  // Closed-report freeze — resolve the parent report's status via RLS.
+  const report = await loadQcReportForGate(supabase, entry.report_id as string)
+  if (!report) return { error: 'Report not found' }
+  if (report.status === 'closed') {
+    return { error: CLOSED_REPORT_ERROR }
+  }
+
+  try {
+    await qcService.updateEntry(supabase as never, parsed.data)
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+
+  revalidatePath(QC_REPORT_PATH(entry.project_id as string, entry.report_id as string))
+  return {}
+}
+
 export async function addQcCommentAction(
   input: AddQcCommentInput,
 ): Promise<{ commentId?: string; error?: string }> {
@@ -373,6 +424,28 @@ export async function addQcCommentAction(
     comment = (await qcService.addComment(supabase as never, parsed.data, user.id)) as { id: string }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
+  }
+
+  // Bell → the project roster minus the commenter (live resolve, service-role;
+  // mirrors rfi_response). Best-effort / never-throw: a notify failure must not
+  // turn a committed comment into an error. Email stays issue-only.
+  try {
+    const { userIds } = await resolveProjectRecipients(entry.project_id as string, {
+      excludeUserId: user.id,
+    })
+    if (userIds.length) {
+      await dispatchNotification({
+        userIds,
+        title: 'New QC comment',
+        body: `"${report.title}" — QC Report ${report.report_no}`,
+        route: QC_REPORT_PATH(entry.project_id as string, entry.report_id as string),
+        type: 'qc_comment',
+        entityType: 'qc_comment',
+        entityId: comment.id,
+      })
+    }
+  } catch (err) {
+    console.error('[addQcCommentAction] comment notify failed', err)
   }
 
   revalidatePath(QC_REPORT_PATH(entry.project_id as string, entry.report_id as string))
@@ -547,13 +620,16 @@ export type IssueQcReportResult =
  * - RBAC: ORG_WRITE_ROLES (owner / admin / project_manager).
  * - Refuses closed reports (issue would silently reopen them) — see
  *   reopenQcReportAction for the deliberate closed → issued path.
+ * - Refuses a report with 0 entries (empty-issue guard, before render).
  * - Renders the PDF via renderQcReport (gather gates internally too).
+ * - Atomically flips qc_reports.status → 'issued' (+ issued_at/by) FIRST, guarded
+ *   `.neq('status','closed')` (Defect B2) — a concurrent close aborts the issue
+ *   here, before any storage/reports write, so no orphan blob or dangling row.
  * - Uploads to `qc-reports/{org_id}/{project_id}/qc-report-{reportId}-v{n}.pdf`.
  * - Inserts a `projects.reports` row (kind='qc', source_table='qc_reports').
  * - If a prior `status='issued'` report exists, supersedes it (re-issue bumps
- *   the version).
- * - Flips qc_reports.status to 'issued' (+ issued_at/by), then notifies the
- *   roster (bell + gated email). Mirrors exportSnagVisitReportAction.
+ *   the version), then notifies the roster (bell + gated email). Mirrors
+ *   exportSnagVisitReportAction.
  */
 export async function issueQcReportAction(
   reportId: string,
@@ -577,6 +653,21 @@ export async function issueQcReportAction(
   // roster). Reopening is an explicit manager decision (reopenQcReportAction).
   if (report.status === 'closed') {
     return { error: 'This report is closed — reopen the report before re-issuing.' }
+  }
+
+  // ── Empty-issue guard ─────────────────────────────────────────────────────
+  // An issued report with no entries is a meaningless artifact (blank PDF,
+  // empty portal row, roster notified about nothing). Refuse BEFORE the
+  // (expensive) render. RLS-scoped head count — the issuer can always read
+  // their own project's entries.
+  const { count: entryCount, error: entryCountErr } = await (supabase as any)
+    .schema('projects')
+    .from('qc_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('report_id', reportId)
+  if (entryCountErr) return { error: entryCountErr.message }
+  if (!entryCount) {
+    return { error: 'Add at least one QC entry before issuing this report.' }
   }
 
   // ── Gather data + render ──────────────────────────────────────────────────
@@ -605,9 +696,35 @@ export async function issueQcReportAction(
     return { error: msg }
   }
 
-  // ── Supersede check — find the current issued report ──────────────────────
   const serviceClient = createServiceClient()
 
+  // ── Atomic status flip FIRST (Defect B2) ──────────────────────────────────
+  // Flip draft/issued → issued, but ONLY when the report is not currently
+  // closed. Running this guard here — BEFORE the storage upload + the
+  // projects.reports insert — means a report that was closed concurrently
+  // (between the gate read above and now) aborts the issue with NO orphan blob
+  // and NO dangling reports row. A 0-row result IS the race being caught.
+  // Service client: the effective-role gate above is the authorization
+  // boundary (per-project promotions don't satisfy the table's inline org-role
+  // RLS join).
+  const { data: flippedRow, error: flipErr } = await (serviceClient as any)
+    .schema('projects')
+    .from('qc_reports')
+    .update({
+      status: 'issued',
+      issued_at: new Date().toISOString(),
+      issued_by: user.id,
+    })
+    .eq('id', reportId)
+    .neq('status', 'closed')
+    .select('id')
+    .maybeSingle()
+  if (flipErr) return { error: flipErr.message }
+  if (!flippedRow) {
+    return { error: 'Report was closed — reopen the report before issuing.' }
+  }
+
+  // ── Supersede check — find the current issued report ──────────────────────
   const { data: priorRow } = await (serviceClient as any)
     .schema('projects')
     .from('reports')
@@ -677,20 +794,8 @@ export async function issueQcReportAction(
     // Non-blocking: the new row is valid; the UI reads the latest version by version number.
   }
 
-  // ── Flip the QC report itself to issued ───────────────────────────────────
-  // Service client: the effective-role gate above is the authorization
-  // boundary (per-project promotions don't satisfy the table's inline org-role
-  // RLS join).
-  const { error: statusError } = await (serviceClient as any)
-    .schema('projects')
-    .from('qc_reports')
-    .update({
-      status: 'issued',
-      issued_at: new Date().toISOString(),
-      issued_by: user.id,
-    })
-    .eq('id', reportId)
-  if (statusError) return { error: statusError.message }
+  // The report was already flipped to 'issued' at the top of this section
+  // (Defect B2 atomic guard) — nothing more to do to the qc_reports row here.
 
   // ── Notify the roster (bell + gated email) — best-effort, never throws ────
   await notifyQcIssued({

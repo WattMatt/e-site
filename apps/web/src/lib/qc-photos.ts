@@ -55,6 +55,76 @@ export function toSceneGraph(data: QcMarkupData): SceneGraph {
 
 const QC_ENTRIES_BUCKET = 'qc-report-entries'
 
+/**
+ * A flattened markup PNG above this size is downscaled before upload. It stays
+ * well under the bucket's 20 MB hard cap (QC_PHOTO_MAX_BYTES) — the raster is
+ * display-only (the editable SceneGraph is stored separately in
+ * annotation_data), so a lossy re-encode is safe and keeps thumbnails/PDF
+ * embeds light.
+ */
+export const QC_MARKUP_DOWNSCALE_THRESHOLD = 3 * 1024 * 1024 // ~3 MB
+/** Longest-edge ceiling a downscaled markup is resized to. */
+export const QC_MARKUP_MAX_EDGE = 3000
+
+/**
+ * Downscale + re-encode a raster blob so its longest edge is ≤ maxEdge. Mirrors
+ * compressImage (canvas resize + toBlob), but targets a longest-edge ceiling
+ * (markups can be portrait or landscape) and re-encodes PNG (markups are line
+ * art over a plan — PNG keeps the strokes crisp). Any failure — non-image,
+ * missing createImageBitmap (SSR/tests), decode error, or an encode that didn't
+ * actually shrink the bytes — falls back to the original blob, so a markup is
+ * never silently dropped; the 20 MB cap is the only hard limit on that path.
+ */
+export async function downscaleImageBlob(
+  blob: Blob,
+  opts?: { maxEdge?: number },
+): Promise<Blob> {
+  const maxEdge = opts?.maxEdge ?? QC_MARKUP_MAX_EDGE
+  if (!blob.type.startsWith('image/')) return blob
+  if (typeof createImageBitmap !== 'function') return blob
+
+  let bitmap: ImageBitmap | null = null
+  try {
+    bitmap = await createImageBitmap(blob)
+    const longest = Math.max(bitmap.width, bitmap.height)
+    const scale = Math.min(1, maxEdge / longest)
+    // Already within bounds — nothing to gain from a re-encode.
+    if (scale >= 1) return blob
+
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return blob
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+
+    const out = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/png'),
+    )
+    // Keep the original if encoding failed or didn't actually shrink it.
+    if (!out || out.size >= blob.size) return blob
+    return out
+  } catch {
+    return blob
+  } finally {
+    bitmap?.close()
+  }
+}
+
+/**
+ * Prepare a flattened markup blob for upload: downscale it when it exceeds the
+ * soft threshold (S3), then enforce the 20 MB bucket cap as the final backstop.
+ * `label` is interpolated into the cap error so the caller surfaces which file.
+ */
+async function prepareMarkupBlob(blob: Blob, label: string): Promise<Blob> {
+  const out =
+    blob.size > QC_MARKUP_DOWNSCALE_THRESHOLD ? await downscaleImageBlob(blob) : blob
+  if (out.size > QC_PHOTO_MAX_BYTES) {
+    throw new Error(`${label} exceeds the 20 MB limit even after downscaling.`)
+  }
+  return out
+}
+
 /** Everything needed to place an upload under its entry's storage folder. */
 export interface QcUploadTarget {
   orgId: string
@@ -164,17 +234,16 @@ export async function uploadQcMarkup(
     sourceFloorPlanId: string | null
   },
 ): Promise<void> {
-  if (markup.blob.size > QC_PHOTO_MAX_BYTES) {
-    throw new Error(`"${markup.fileName}" exceeds the 20 MB limit.`)
-  }
+  // Downscale-if-large (S3) then cap-backstop, before touching storage.
+  const body = await prepareMarkupBlob(markup.blob, `"${markup.fileName}"`)
   const seq = await nextSortOrder(supabase, target.entryId)
   await uploadAndInsert(supabase, target, {
-    body: markup.blob,
+    body,
     contentType: 'image/png',
     ext: 'png',
     seq,
     fileName: markup.fileName,
-    sizeBytes: markup.blob.size,
+    sizeBytes: body.size,
     kind: 'markup',
     sourceFloorPlanId: markup.sourceFloorPlanId,
     annotationData: markup.annotationData,
@@ -182,37 +251,56 @@ export async function uploadQcMarkup(
 }
 
 /**
- * Overwrite an existing drawing markup in place — the QC entry card's
- * "Edit markup" flow (spec §4 re-edit). Mirrors the RFI gallery's
- * replaceAnnotation (components/attachments/commit.ts): the new flattened PNG
- * replaces the stored object at the SAME file_path (upsert:true — the storage
- * UPDATE policy is the gate), then the row's annotation_data +
- * file_size_bytes are updated under RLS. Same row, same path, so per-photo
- * comments and "Photo N" numbering keep pointing at the right image; the
- * caller must router.refresh() so re-signed URLs bust the stale thumbnail.
+ * Overwrite an existing drawing markup — the QC entry card's "Edit markup" flow
+ * (spec §4 re-edit). ORDER-SAFE swap (Defect B1): the new flattened PNG is
+ * uploaded to a NEW timestamped file_path in the same entry folder (upsert:false
+ * — the original object is never overwritten), then the row is repointed at it
+ * (file_path + annotation_data + file_size_bytes). The row stays the same id, so
+ * per-photo comments and "Photo N" numbering keep pointing at the right photo;
+ * the caller must router.refresh() so the freshly signed URL busts the stale
+ * thumbnail. Failure never destroys the original: a rejected row update (e.g.
+ * the closed-report freeze) cleans up the new blob and leaves the old object +
+ * row intact; the old object is removed (best-effort) only AFTER the row commits
+ * to the new path.
  */
 export async function replaceQcMarkup(
   supabase: SupabaseClient,
   photo: { id: string; filePath: string },
   markup: { blob: Blob; annotationData: QcMarkupData },
 ): Promise<void> {
-  if (markup.blob.size > QC_PHOTO_MAX_BYTES) {
-    throw new Error('The markup exceeds the 20 MB limit.')
-  }
+  // Downscale-if-large (S3) then cap-backstop.
+  const body = await prepareMarkupBlob(markup.blob, 'The markup')
+
+  // Same entry folder (so the path-prefix RLS still matches), new object name.
+  const slash = photo.filePath.lastIndexOf('/')
+  const dir = slash >= 0 ? photo.filePath.slice(0, slash) : ''
+  const newPath = `${dir ? `${dir}/` : ''}${Date.now()}-${Math.floor(Math.random() * 1e6)}.png`
+
+  // 1. Upload to the NEW path (upsert:false — the original object is untouched).
   const { error: upErr } = await supabase.storage
     .from(QC_ENTRIES_BUCKET)
-    .upload(photo.filePath, markup.blob, { contentType: 'image/png', upsert: true })
+    .upload(newPath, body, { contentType: 'image/png', upsert: false })
   if (upErr) throw new Error(`Re-upload failed: ${upErr.message}`)
 
+  // 2. Repoint the row at the new object.
   const { error: rowErr } = await (supabase as any)
     .schema('projects')
     .from('qc_entry_photos')
     .update({
+      file_path: newPath,
       annotation_data: markup.annotationData,
-      file_size_bytes: markup.blob.size,
+      file_size_bytes: body.size,
     })
     .eq('id', photo.id)
-  if (rowErr) throw new Error(`Could not update markup: ${rowErr.message}`)
+  if (rowErr) {
+    // Row rejected (closed-report freeze / RLS) — bin the new blob, leave the
+    // original object + row exactly as they were.
+    await supabase.storage.from(QC_ENTRIES_BUCKET).remove([newPath]).catch(() => {})
+    throw new Error(`Could not update markup: ${rowErr.message}`)
+  }
+
+  // 3. Row now points at newPath — best-effort remove the old orphan.
+  await supabase.storage.from(QC_ENTRIES_BUCKET).remove([photo.filePath]).catch(() => {})
 }
 
 /** Shared upload → row-insert step with orphan-blob cleanup on row failure. */
