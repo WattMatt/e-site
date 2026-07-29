@@ -33,12 +33,20 @@ import {
   renderToBuffer,
   type DocumentProps,
 } from '@react-pdf/renderer'
-import { Cover, pageStyles } from './components'
+import {
+  QC_CONFORMANCE_LABELS,
+  QC_SEVERITY_LABELS,
+  type QcConformance,
+  type QcSeverity,
+} from '@esite/shared'
+import { Cover, Watermark, pageStyles } from './components'
+import { passPillColors } from './theme'
 import type {
   QcReportData,
   QcReportEntryData,
   QcReportPhotoData,
   QcReportCommentData,
+  QcReportTally,
 } from './qc-report-data'
 
 // ---------------------------------------------------------------------------
@@ -87,6 +95,115 @@ const s = StyleSheet.create({
     fontFamily: 'Helvetica-Bold',
     color: '#222222',
     flex: 1,
+  },
+
+  // ── Conformance badge + severity chip ─────────────────────────────────────
+  badge: {
+    borderRadius: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    marginLeft: 5,
+  },
+  badgeText: {
+    fontSize: 6.5,
+    fontFamily: 'Helvetica-Bold',
+    letterSpacing: 0.5,
+  },
+  chip: {
+    borderRadius: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    marginLeft: 4,
+  },
+  chipText: {
+    fontSize: 6.5,
+    fontFamily: 'Helvetica-Bold',
+    letterSpacing: 0.5,
+  },
+
+  // ── Image-unavailable placeholder cell (Defect S4) ────────────────────────
+  photoPlaceholder: {
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoPlaceholderText: {
+    fontSize: 6.5,
+    color: '#9CA3AF',
+    fontFamily: 'Helvetica',
+  },
+
+  // ── Conformance summary block (after the report-info header) ───────────────
+  summary: {
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  summaryHeading: {
+    fontSize: 8,
+    fontFamily: 'Helvetica-Bold',
+    color: '#888888',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 5,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 3,
+  },
+  summaryTally: {
+    borderRadius: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  summaryTallyText: {
+    fontSize: 8,
+    fontFamily: 'Helvetica-Bold',
+  },
+  summarySeverity: {
+    fontSize: 7.5,
+    color: '#777777',
+  },
+
+  // ── Defect punch-list section ─────────────────────────────────────────────
+  punchList: {
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  punchHeading: {
+    fontSize: 8,
+    fontFamily: 'Helvetica-Bold',
+    color: '#991B1B',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 5,
+  },
+  punchRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    marginBottom: 3,
+  },
+  punchNumber: {
+    fontSize: 8,
+    fontFamily: 'Helvetica-Bold',
+    color: '#991B1B',
+    marginRight: 5,
+  },
+  punchTitle: {
+    fontSize: 8,
+    color: '#333333',
+    flex: 1,
+  },
+  punchLocation: {
+    fontSize: 7.5,
+    color: '#888888',
+    marginRight: 5,
   },
 
   // Description
@@ -232,6 +349,91 @@ function ReportInfoBlock({ report }: { report: QcReportData['report'] }) {
   )
 }
 
+// ── Conformance badge (Pass green / Fail red / N-A grey) ────────────────────
+// Reuses passPillColors — the same pass/fail/na palette as the inspection
+// report's ResultPill, so the two report families read consistently.
+function ConformanceBadge({ conformance }: { conformance: QcConformance }) {
+  const { bg, fg } = passPillColors(conformance)
+  return (
+    <View style={[s.badge, { backgroundColor: bg }]}>
+      <Text style={[s.badgeText, { color: fg }]}>{QC_CONFORMANCE_LABELS[conformance]}</Text>
+    </View>
+  )
+}
+
+const SEVERITY_COLORS: Record<QcSeverity, { bg: string; fg: string }> = {
+  minor: { bg: '#FEF3C7', fg: '#92400E' },
+  major: { bg: '#FFEDD5', fg: '#9A3412' },
+  critical: { bg: '#FEE2E2', fg: '#991B1B' },
+}
+
+function SeverityChip({ severity }: { severity: QcSeverity }) {
+  const { bg, fg } = SEVERITY_COLORS[severity]
+  return (
+    <View style={[s.chip, { backgroundColor: bg }]}>
+      <Text style={[s.chipText, { color: fg }]}>{QC_SEVERITY_LABELS[severity]}</Text>
+    </View>
+  )
+}
+
+// ── Conformance summary block (after the report-info header) ─────────────────
+function ConformanceSummary({ tally }: { tally: QcReportTally }) {
+  const total = tally.pass + tally.fail + tally.na
+  if (total === 0) return null
+  const pass = passPillColors('pass')
+  const fail = passPillColors('fail')
+  const na = passPillColors('na')
+  // Only list the severities that actually occur (keeps a clean line for the
+  // common "all minor" case and renders nothing when there are no fails).
+  const severityParts = (['critical', 'major', 'minor'] as QcSeverity[])
+    .filter((sev) => tally.failBySeverity[sev] > 0)
+    .map((sev) => `${QC_SEVERITY_LABELS[sev]} ${tally.failBySeverity[sev]}`)
+  return (
+    <View style={s.summary}>
+      <Text style={s.summaryHeading}>Conformance summary</Text>
+      <View style={s.summaryRow}>
+        <View style={[s.summaryTally, { backgroundColor: pass.bg }]}>
+          <Text style={[s.summaryTallyText, { color: pass.fg }]}>{`Pass ${tally.pass}`}</Text>
+        </View>
+        <View style={[s.summaryTally, { backgroundColor: fail.bg }]}>
+          <Text style={[s.summaryTallyText, { color: fail.fg }]}>{`Fail ${tally.fail}`}</Text>
+        </View>
+        <View style={[s.summaryTally, { backgroundColor: na.bg }]}>
+          <Text style={[s.summaryTallyText, { color: na.fg }]}>{`N/A ${tally.na}`}</Text>
+        </View>
+      </View>
+      {severityParts.length > 0 && (
+        <Text style={s.summarySeverity}>{`Fails by severity: ${severityParts.join(' · ')}`}</Text>
+      )}
+    </View>
+  )
+}
+
+// ── Defect punch-list (all fail entries) ────────────────────────────────────
+function DefectPunchList({
+  entries,
+  location,
+}: {
+  entries: QcReportEntryData[]
+  location: string | null
+}) {
+  const fails = entries.filter((e) => e.conformance === 'fail')
+  if (fails.length === 0) return null
+  return (
+    <View style={s.punchList}>
+      <Text style={s.punchHeading}>{`Defect punch-list (${fails.length})`}</Text>
+      {fails.map((e) => (
+        <View key={e.id} style={s.punchRow} wrap={false}>
+          <Text style={s.punchNumber}>{e.number}</Text>
+          <Text style={s.punchTitle}>{e.title}</Text>
+          {location && <Text style={s.punchLocation}>{location}</Text>}
+          {e.severity && <SeverityChip severity={e.severity} />}
+        </View>
+      ))}
+    </View>
+  )
+}
+
 function photoTagText(p: QcReportPhotoData): string {
   if (p.kind === 'markup') {
     return p.planName
@@ -241,8 +443,24 @@ function photoTagText(p: QcReportPhotoData): string {
   return `Photo ${p.index}`
 }
 
-function PhotoGrid({ photos, omittedCount }: { photos: QcReportPhotoData[]; omittedCount: number }) {
+function PhotoGrid({
+  photos,
+  omittedCount,
+  unavailableCount,
+}: {
+  photos: QcReportPhotoData[]
+  omittedCount: number
+  unavailableCount: number
+}) {
   if (photos.length === 0 && omittedCount === 0) return null
+  // Fold the >cap omitted count and the within-cap download-failure count
+  // (Defect S4) into one note. Failures still render as placeholder cells, so
+  // this line is informational.
+  const noteParts: string[] = []
+  if (omittedCount > 0) noteParts.push(`+${omittedCount} omitted`)
+  if (unavailableCount > 0) {
+    noteParts.push(`${unavailableCount} image${unavailableCount === 1 ? '' : 's'} unavailable`)
+  }
   return (
     <View style={s.photoSection}>
       <View style={s.photoGrid}>
@@ -252,14 +470,23 @@ function PhotoGrid({ photos, omittedCount }: { photos: QcReportPhotoData[]; omit
           // behaviour. Wrapping the whole grid (let alone the whole entry) in
           // wrap={false} silently clips photos past the page bottom.
           <View key={p.id} style={s.photoCell} wrap={false}>
-            <Image src={p.dataUri} style={s.photoImage} />
+            {p.dataUri ? (
+              <Image src={p.dataUri} style={s.photoImage} />
+            ) : (
+              // Defect S4: a failed within-cap download keeps its slot as an
+              // "image unavailable" placeholder so the "Photo N" tag — and any
+              // per-photo comment referencing it — stays valid.
+              <View style={[s.photoImage, s.photoPlaceholder]}>
+                <Text style={s.photoPlaceholderText}>Image unavailable</Text>
+              </View>
+            )}
             <Text style={s.photoTag}>{photoTagText(p)}</Text>
             {p.caption && <Text style={s.photoCaption}>{p.caption}</Text>}
           </View>
         ))}
       </View>
-      {omittedCount > 0 && (
-        <Text style={s.photoOmittedNote}>{`+${omittedCount} omitted`}</Text>
+      {noteParts.length > 0 && (
+        <Text style={s.photoOmittedNote}>{noteParts.join(' · ')}</Text>
       )}
     </View>
   )
@@ -295,10 +522,14 @@ function EntryCard({ entry }: { entry: QcReportEntryData }) {
   return (
     <View style={s.card}>
       <View wrap={false} minPresenceAhead={120}>
-        {/* Header: number + title */}
+        {/* Header: number + title + conformance badge (+ severity chip on fails) */}
         <View style={s.cardHeader}>
           <Text style={s.entryNumber}>{entry.number}</Text>
           <Text style={s.entryTitle}>{entry.title}</Text>
+          <ConformanceBadge conformance={entry.conformance} />
+          {entry.conformance === 'fail' && entry.severity && (
+            <SeverityChip severity={entry.severity} />
+          )}
         </View>
 
         {/* Description */}
@@ -308,7 +539,11 @@ function EntryCard({ entry }: { entry: QcReportEntryData }) {
       </View>
 
       {/* Photos */}
-      <PhotoGrid photos={entry.photos} omittedCount={entry.omittedCount} />
+      <PhotoGrid
+        photos={entry.photos}
+        omittedCount={entry.omittedCount}
+        unavailableCount={entry.unavailableCount}
+      />
 
       {/* Comments */}
       {entry.comments.length > 0 && (
@@ -341,18 +576,24 @@ function RunningFooter({ reportLabel }: { reportLabel: string }) {
 
 export function QcReportDocument({ data }: { data: QcReportData }) {
   const reportLabel = `QC Report ${data.report.reportNo}`
+  // Preview/admin route renders drafts; only an 'issued' (or 'closed') report
+  // is a final record, so anything else carries the DRAFT watermark.
+  const isDraft = data.report.status !== 'issued'
 
   return (
     <Document title={data.branding.title} producer="e-site.live">
       {/* ── Cover page ── */}
       <Page size="A4" style={pageStyles.page}>
         <Cover resolved={data.branding} />
+        {isDraft && <Watermark text="DRAFT" />}
       </Page>
 
       {/* ── Body pages ── */}
       <Page size="A4" style={pageStyles.page}>
         <View style={s.body}>
           <ReportInfoBlock report={data.report} />
+          <ConformanceSummary tally={data.tally} />
+          <DefectPunchList entries={data.entries} location={data.report.location} />
           {data.entries.length === 0 ? (
             <Text style={s.emptyNote}>No entries</Text>
           ) : (
@@ -362,6 +603,7 @@ export function QcReportDocument({ data }: { data: QcReportData }) {
           )}
         </View>
         <RunningFooter reportLabel={reportLabel} />
+        {isDraft && <Watermark text="DRAFT" />}
       </Page>
     </Document>
   )

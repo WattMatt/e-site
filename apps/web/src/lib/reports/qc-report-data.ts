@@ -12,7 +12,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { compareQcPhotos } from '@esite/shared'
+import { compareQcPhotos, type QcConformance, type QcSeverity } from '@esite/shared'
 import { createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { resolveBranding, type ResolvedBranding } from './branding'
@@ -29,7 +29,12 @@ export interface QcReportPhotoData {
    * photo is omitted by the cap or its download fails.
    */
   index: number
-  dataUri: string
+  /**
+   * data: URI, or null when a within-cap download failed (Defect S4). A null
+   * dataUri keeps the photo in the grid as an "image unavailable" placeholder
+   * cell so its "Photo N" tag — and any comment referencing it — stays valid.
+   */
+  dataUri: string | null
   caption: string | null
   kind: 'photo' | 'markup'
   /** Source floor-plan name for markups (null for plain photos or deleted plans). */
@@ -51,9 +56,28 @@ export interface QcReportEntryData {
   number: number
   title: string
   description: string | null
+  /** Conformance status (migration 00176; legacy rows default to 'na'). */
+  conformance: QcConformance
+  /** Severity — present only on a 'fail' entry (app-enforced iff rule). */
+  severity: QcSeverity | null
   photos: QcReportPhotoData[]
+  /** Photos beyond the per-entry render cap (never downloaded). */
   omittedCount: number
+  /**
+   * Within-cap photos whose download failed (Defect S4). Tracked separately
+   * from omittedCount: these ARE rendered, as "image unavailable" placeholder
+   * cells, so the count is informational for the folded omitted note.
+   */
+  unavailableCount: number
   comments: QcReportCommentData[]
+}
+
+/** Report-level conformance tally for the summary block + defect punch-list. */
+export interface QcReportTally {
+  pass: number
+  fail: number
+  na: number
+  failBySeverity: Record<QcSeverity, number>
 }
 
 export interface QcReportData {
@@ -77,6 +101,9 @@ export interface QcReportData {
   projectName: string
 
   entries: QcReportEntryData[]
+
+  /** Aggregate conformance counts across all entries. */
+  tally: QcReportTally
 }
 
 // ---------------------------------------------------------------------------
@@ -241,14 +268,17 @@ export async function gatherQcReportData(
       )
 
       const rendered = sortedPhotos.slice(0, MAX_PHOTOS_PER_ENTRY)
-      const photos = (await Promise.all(
-        rendered.map(async (p: any): Promise<QcReportPhotoData | null> => {
+      // Defect S4: a within-cap download failure becomes a placeholder cell
+      // (dataUri: null) rather than a dropped row — so the "Photo N" numbering
+      // that per-photo comments reference stays valid. The failure count is
+      // tracked separately from the >cap omittedCount.
+      const photos: QcReportPhotoData[] = await Promise.all(
+        rendered.map(async (p: any): Promise<QcReportPhotoData> => {
           const dataUri = await fileToDataUri(service, QC_PHOTO_BUCKET, p.file_path)
-          if (!dataUri) return null
           return {
             id: p.id,
             index: photoIndexById.get(p.id)!,
-            dataUri,
+            dataUri, // null ⇒ renderer shows an "image unavailable" placeholder
             caption: p.caption ?? null,
             kind: p.kind === 'markup' ? 'markup' : 'photo',
             planName: p.source_floor_plan_id
@@ -256,7 +286,8 @@ export async function gatherQcReportData(
               : null,
           }
         }),
-      )).filter(Boolean) as QcReportPhotoData[]
+      )
+      const unavailableCount = photos.reduce((n, p) => (p.dataUri === null ? n + 1 : n), 0)
 
       const comments: QcReportCommentData[] = (e.qc_comments ?? [])
         .slice()
@@ -274,12 +305,33 @@ export async function gatherQcReportData(
         number: entryIdx + 1,
         title: e.title ?? 'Untitled',
         description: e.description ?? null,
+        conformance: (e.conformance as QcConformance) ?? 'na',
+        severity: (e.severity as QcSeverity | null) ?? null,
         photos,
         omittedCount: Math.max(0, sortedPhotos.length - MAX_PHOTOS_PER_ENTRY),
+        unavailableCount,
         comments,
       }
     }),
   )
+
+  // Report-level conformance tally (drives the summary block + punch-list).
+  const tally: QcReportTally = {
+    pass: 0,
+    fail: 0,
+    na: 0,
+    failBySeverity: { minor: 0, major: 0, critical: 0 },
+  }
+  for (const e of reportEntries) {
+    if (e.conformance === 'fail') {
+      tally.fail += 1
+      if (e.severity) tally.failBySeverity[e.severity] += 1
+    } else if (e.conformance === 'pass') {
+      tally.pass += 1
+    } else {
+      tally.na += 1
+    }
+  }
 
   // 6. Branding — resolve logos to data: URIs.
   const [clientLogoSrc, projectMarkSrc, orgLogoSrc] = await Promise.all([
@@ -327,5 +379,6 @@ export async function gatherQcReportData(
     },
     projectName: project.name ?? 'Project',
     entries: reportEntries,
+    tally,
   }
 }
