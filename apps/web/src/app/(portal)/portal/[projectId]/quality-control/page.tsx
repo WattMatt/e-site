@@ -5,9 +5,9 @@ import { DownloadPdfButton } from './DownloadPdfButton'
 export const dynamic = 'force-dynamic'
 
 /**
- * Read-only QC report list for the client. The 00172 SELECT policy already
- * limits a client_viewer to issued reports — this page just renders what the
- * user client returns.
+ * Read-only QC report list for the client. The 00176 SELECT policy limits a
+ * client_viewer to issued + closed reports (drafts stay hidden) — this page
+ * just renders what the user client returns and badges Issued vs Archived.
  */
 export default async function PortalQualityControlPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params
@@ -16,7 +16,7 @@ export default async function PortalQualityControlPage({ params }: { params: Pro
   return (
     <div>
       <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--c-text-mid)' }}>
-        {reports.length} issued report{reports.length === 1 ? '' : 's'}
+        {reports.length} report{reports.length === 1 ? '' : 's'}
       </p>
       <PortalCard>
         {reports.length === 0 ? (
@@ -51,7 +51,9 @@ export default async function PortalQualityControlPage({ params }: { params: Pro
                     <td style={tdStyle}>{r.location ?? '—'}</td>
                     <td style={tdStyle}>{fmtDate(r.inspection_date)}</td>
                     <td style={tdStyle}>{fmtDate(r.issued_at)}</td>
-                    <td style={tdStyle}><StatusBadge value={r.status} /></td>
+                    <td style={tdStyle}>
+                      <StatusBadge value={r.status} label={r.status === 'closed' ? 'Archived' : undefined} />
+                    </td>
                     <td style={tdStyle}>
                       <DownloadPdfButton projectId={projectId} reportId={r.id} />
                     </td>

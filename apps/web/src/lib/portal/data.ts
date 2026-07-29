@@ -127,9 +127,11 @@ export async function listPortalSnags(projectId: string) {
 }
 
 /**
- * QC reports — user client; 00172's qc_reports SELECT policy only returns
- * `status='issued'` rows to a client_viewer, so drafts and closed reports
- * never reach the portal (DB-enforced, not page logic).
+ * QC reports — user client; the qc_reports SELECT policy scopes what a
+ * client_viewer sees. As of 00176 that is `status IN ('issued','closed')`
+ * (closed reports stay client-visible as read-only "Archived"); drafts stay
+ * hidden. The status is DB-enforced here (no status filter in the query), and
+ * `status` is selected so the page can badge Issued vs Archived.
  */
 export async function listPortalQcReports(projectId: string) {
   const supabase = await createClient()
