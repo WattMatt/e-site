@@ -71,6 +71,10 @@ export default async function QcReportDetailPage({ params }: Props) {
     number: i + 1,
     title: e.title,
     description: e.description ?? null,
+    // Conformance columns (00176); default 'na' matches the DB default for any
+    // pre-migration row that slipped through without an explicit choice.
+    conformance: (e.conformance ?? 'na') as QcEntryView['conformance'],
+    severity: (e.severity ?? null) as QcEntryView['severity'],
     createdBy: e.created_by,
     createdAt: e.created_at,
     authorName: e.author?.full_name ?? e.author?.email ?? null,
@@ -163,6 +167,7 @@ export default async function QcReportDetailPage({ params }: Props) {
           reportId={reportId}
           status={report.status}
           canManage={canManage}
+          entryCount={entries.length}
         />
       </div>
 
@@ -180,6 +185,8 @@ export default async function QcReportDetailPage({ params }: Props) {
               key={entry.id}
               entry={entry}
               projectId={projectId}
+              orgId={report.organisation_id}
+              reportId={reportId}
               canWrite={canWrite}
               canManage={canManage}
               currentUserId={currentUserId}

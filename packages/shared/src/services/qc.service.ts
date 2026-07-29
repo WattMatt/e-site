@@ -1,5 +1,11 @@
 import type { TypedSupabaseClient } from '@esite/db'
-import type { AddQcCommentInput, AddQcEntryInput, CreateQcReportInput, UpdateQcReportInput } from '../schemas/qc.schema'
+import type {
+  AddQcCommentInput,
+  AddQcEntryInput,
+  CreateQcReportInput,
+  UpdateQcEntryInput,
+  UpdateQcReportInput,
+} from '../schemas/qc.schema'
 import type { QcReportStatus } from '../types'
 import { fetchProfileMap } from './_utils'
 
@@ -205,6 +211,8 @@ export const qcService = {
       reportId,
       title,
       description,
+      conformance,
+      severity,
     }: AddQcEntryInput & { organisationId: string; projectId: string },
     userId: string,
   ) {
@@ -228,9 +236,40 @@ export const qcService = {
         project_id: projectId,
         title,
         description: description || null,
+        // Conformance is required by the schema; severity is stored only for a
+        // 'fail' (the superRefine guarantees it is undefined otherwise).
+        conformance,
+        severity: severity ?? null,
         sort_order: sortOrder,
         created_by: userId,
       })
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  /**
+   * Edits an entry's title/description/conformance/severity in place. Full-field
+   * replace (the edit form always submits all four); severity is nulled unless
+   * conformance is 'fail' (the schema superRefine enforces the relationship).
+   * The closed-report freeze (qc_report_children_frozen, 00172) is the DB
+   * backstop; the server action additionally refuses closed reports up front.
+   */
+  async updateEntry(
+    client: TypedSupabaseClient,
+    { entryId, title, description, conformance, severity }: UpdateQcEntryInput,
+  ) {
+    const { data, error } = await (client as any)
+      .schema('projects')
+      .from('qc_entries')
+      .update({
+        title,
+        description: description || null,
+        conformance,
+        severity: severity ?? null,
+      })
+      .eq('id', entryId)
       .select()
       .single()
     if (error) throw error
@@ -245,6 +284,8 @@ export const qcService = {
   async listEntriesWithPhotos(client: TypedSupabaseClient, reportId: string) {
     const { data, error } = await (client as any)
       .schema('projects')
+      // Entry `*` includes the conformance/severity columns (00176) consumed by
+      // the report tally, punch-list and the admin conformance badges.
       .from('qc_entries')
       .select('*, qc_entry_photos(*), qc_comments(*)')
       .eq('report_id', reportId)

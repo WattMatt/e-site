@@ -2,10 +2,12 @@
 
 import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import type { QcConformance, QcSeverity } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import { addQcEntryAction } from '@/actions/qc.actions'
 import { uploadQcEntryPhotos, uploadQcMarkup } from '@/lib/qc-photos'
 import { PhotoPicker } from '@/components/ui/PhotoPicker'
+import { ConformanceRadioGroup, SeveritySelect } from '../ConformanceInputs'
 import { QcMarkupDialog, type StagedQcMarkup } from './QcMarkupDialog'
 
 interface Props {
@@ -27,6 +29,8 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [conformance, setConformance] = useState<QcConformance | null>(null)
+  const [severity, setSeverity] = useState<QcSeverity | ''>('')
   const [files, setFiles] = useState<File[]>([])
   const [markups, setMarkups] = useState<StagedQcMarkup[]>([])
   const [markupDialogOpen, setMarkupDialogOpen] = useState(false)
@@ -44,6 +48,8 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
     e.preventDefault()
     if (submittingRef.current) return
     if (!title.trim()) { setError('Title is required.'); return }
+    if (!conformance) { setError('Select a conformance status (Pass, Fail or N/A).'); return }
+    if (conformance === 'fail' && !severity) { setError('Select a severity for the failing entry.'); return }
     submittingRef.current = true
     setSubmitting(true)
     setError('')
@@ -57,6 +63,8 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
           reportId,
           title: title.trim(),
           description: description.trim() || undefined,
+          conformance,
+          severity: conformance === 'fail' ? (severity as QcSeverity) : undefined,
         })
         if (res.error || !res.entryId) {
           setError(res.error ?? 'Failed to save entry.')
@@ -102,6 +110,8 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
 
       setTitle('')
       setDescription('')
+      setConformance(null)
+      setSeverity('')
       setFiles([])
       setMarkups([])
       setCreatedEntryId(null)
@@ -151,6 +161,20 @@ export function AddQcEntryForm({ projectId, reportId, orgId, userId }: Props) {
               className="ob-input"
               style={{ marginTop: 4, resize: 'vertical' }}
             />
+          </div>
+
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <ConformanceRadioGroup
+              value={conformance}
+              onChange={(v) => {
+                setConformance(v)
+                // Severity only applies to a Fail — drop it otherwise.
+                if (v !== 'fail') setSeverity('')
+              }}
+            />
+            {conformance === 'fail' && (
+              <SeveritySelect id="qc-add-severity" value={severity} onChange={setSeverity} />
+            )}
           </div>
 
           <div>

@@ -19,6 +19,11 @@ interface Props {
   id: string
   /** Idle label; the armed state always reads "Confirm delete?". */
   label?: string
+  /**
+   * Accessible name for the button — needed when `label` is a bare glyph like
+   * "✕" that a screen reader can't announce meaningfully (e.g. "Delete photo 2").
+   */
+  ariaLabel?: string
 }
 
 /**
@@ -27,7 +32,7 @@ interface Props {
  * a second click within 3s commits. Visibility (author-or-manager, not closed)
  * is decided by the parent, which only renders this when the viewer may delete.
  */
-export function QcDeleteButton({ kind, id, label = 'Delete' }: Props) {
+export function QcDeleteButton({ kind, id, label = 'Delete', ariaLabel }: Props) {
   const router = useRouter()
   const [armed, setArmed] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -62,6 +67,7 @@ export function QcDeleteButton({ kind, id, label = 'Delete' }: Props) {
         type="button"
         onClick={armed ? commit : arm}
         disabled={busy}
+        aria-label={armed ? 'Confirm delete?' : ariaLabel}
         style={{
           fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em',
           textTransform: 'uppercase', cursor: busy ? 'wait' : 'pointer',

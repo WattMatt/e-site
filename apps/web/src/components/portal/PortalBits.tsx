@@ -47,7 +47,9 @@ const STATUS_COLORS: Record<string, string> = {
   draft: 'var(--c-text-dim)',
 }
 
-export function StatusBadge({ value }: { value: string | null | undefined }) {
+// `label` overrides the displayed text while the color still keys off the raw
+// `value` (e.g. QC portal shows a `closed` report as neutral-toned "Archived").
+export function StatusBadge({ value, label }: { value: string | null | undefined; label?: string }) {
   if (!value) return <span style={{ color: 'var(--c-text-dim)', fontSize: 12 }}>—</span>
   const color = STATUS_COLORS[value] ?? 'var(--c-text-mid)'
   return (
@@ -56,7 +58,7 @@ export function StatusBadge({ value }: { value: string | null | undefined }) {
       border: `1px solid ${color}`, borderRadius: 4, padding: '1px 7px',
       textTransform: 'capitalize', whiteSpace: 'nowrap',
     }}>
-      {value.replace(/_/g, ' ')}
+      {label ?? value.replace(/_/g, ' ')}
     </span>
   )
 }

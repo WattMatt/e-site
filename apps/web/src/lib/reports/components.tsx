@@ -199,10 +199,10 @@ export function Cover({ resolved }: CoverProps) {
 // Watermark
 // ---------------------------------------------------------------------------
 
-export function Watermark() {
+export function Watermark({ text = 'PREVIEW' }: { text?: string } = {}) {
   return (
     <View style={s.watermarkContainer} fixed>
-      <Text style={s.watermarkText}>PREVIEW</Text>
+      <Text style={s.watermarkText}>{text}</Text>
     </View>
   )
 }

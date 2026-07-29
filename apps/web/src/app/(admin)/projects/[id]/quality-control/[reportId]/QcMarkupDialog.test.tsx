@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { QcMarkupDialog } from './QcMarkupDialog'
 
 // QcMarkupDialog's picker is the "access the full drawing list" fix: it queries
@@ -108,5 +108,32 @@ describe('QcMarkupDialog picker', () => {
 
     // A Retry affordance is offered to re-sign.
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
+})
+
+describe('QcMarkupDialog accessibility', () => {
+  it('closes on Escape from the picker step', async () => {
+    const onClose = vi.fn()
+    render(<QcMarkupDialog projectId="p1" onClose={onClose} onStaged={vi.fn()} />)
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('focuses the dialog on open and returns focus to the opener on close', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    expect(document.activeElement).toBe(opener)
+
+    const { unmount } = render(<QcMarkupDialog projectId="p1" onClose={vi.fn()} onStaged={vi.fn()} />)
+    const dialog = await screen.findByRole('dialog')
+    // The dialog takes focus on mount (focus trap entry point).
+    expect(document.activeElement).toBe(dialog)
+
+    unmount()
+    // Focus is restored to whatever opened the dialog.
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
   })
 })

@@ -15,12 +15,17 @@ type ErrResult = { error: string }
  *
  * Deliberately NO role gate: both reads run on the cookie/RLS client, so the
  * caller's own row visibility is the authorization boundary —
- *  - projects.qc_reports (00172): a client_viewer only sees status='issued'
- *    rows, so a draft/closed report id is a miss for them, and any
+ *  - projects.qc_reports (00176): a client_viewer sees status IN
+ *    ('issued','closed') rows, so a draft report id is a miss for them, and any
  *    non-member's read returns nothing;
  *  - projects.reports (00117 reports_select): user_has_project_access.
- * Only the signing step uses the service client (storage objects aren't
- * user-signable) — mirroring getProjectReportUrlAction.
+ * On top of RLS the action explicitly requires status IN ('issued','closed')
+ * (an app-layer draft block, defense-in-depth: even a staff caller — who CAN
+ * read drafts under RLS — can't sign a draft's PDF through the portal path).
+ * The saved PDF read stays pinned to `status='issued'` (the reports-table
+ * lifecycle status of the published PDF, which closing the QC report never
+ * changes). Only the signing step uses the service client (storage objects
+ * aren't user-signable) — mirroring getProjectReportUrlAction.
  */
 export async function getPortalQcReportPdfUrlAction(
   projectId: string,
@@ -36,12 +41,19 @@ export async function getPortalQcReportPdfUrlAction(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: reportRow } = await (supabase as any)
     .schema('projects').from('qc_reports')
-    .select('id, report_no')
+    .select('id, report_no, status')
     .eq('id', reportId)
     .eq('project_id', projectId)
     .maybeSingle()
-  const report = reportRow as { id: string; report_no: number } | null
+  const report = reportRow as { id: string; report_no: number; status: string } | null
   if (!report) return { error: 'Not found' }
+
+  // Only published reports have a downloadable PDF. Drafts are never portal-
+  // downloadable (RLS already hides them from a client_viewer; this is the
+  // explicit app-layer backstop). Closed reports stay downloadable ("Archived").
+  if (report.status !== 'issued' && report.status !== 'closed') {
+    return { error: 'Not found' }
+  }
 
   // Latest issued saved PDF for this report (issue supersedes prior versions).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
