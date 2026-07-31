@@ -38,6 +38,12 @@ export async function GET(req: NextRequest) {
   if (!projectId) {
     return NextResponse.json({ error: 'projectId required' }, { status: 400 })
   }
+  // Same up-front UUID validation as assertExportPolicy — a malformed id
+  // should 400, not fall through to PostgREST and surface as a 404.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!UUID_RE.test(projectId)) {
+    return NextResponse.json({ error: 'projectId must be a valid UUID' }, { status: 400 })
+  }
 
   const supabase = await createClient()
   const {
@@ -47,26 +53,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  // Look up organisation_id for policy check. Extra round-trip vs.
-  // single-revision routes (which get it free from getRevisionExportPayload)
-  // but the client doesn't know the org and threading it through the URL
-  // would be a trust boundary regression.
+  // Existence check before the policy gate so a bad id 404s instead of 403ing.
   const { data: project } = await (supabase as any)
     .schema('projects')
     .from('projects')
-    .select('id, organisation_id')
+    .select('id')
     .eq('id', projectId)
     .single()
   if (!project) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   }
 
-  const policy = await getExportPolicy(
-    supabase,
-    user.id,
-    (project as { organisation_id: string }).organisation_id,
-    projectId,
-  )
+  const policy = await getExportPolicy(supabase, user.id, projectId)
   if (!policy.canExport) {
     return NextResponse.json(
       { error: policy.reason ?? 'Forbidden' },

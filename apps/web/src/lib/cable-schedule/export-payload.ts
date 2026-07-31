@@ -76,6 +76,9 @@ export interface ExportPayload {
     shop_area_m2: number | null
     breaker_rating_a: number | null
     pole_config: string | null
+    /** Derived incomer rollup (tenant-electrical). Display fallback when the manual breaker fields are unset. */
+    incomer_breaker_a: number | null
+    incomer_pole_config: string | null
     section: string | null
     rating_kva: number | null
     voltage_v: number | null
@@ -330,7 +333,8 @@ export async function getRevisionExportPayload(
       .from('nodes')
       .select(
         'id, kind, code, name, coc_required, status, shop_number, shop_name, ' +
-        'shop_area_m2, breaker_rating_a, pole_config, section, rating_kva, voltage_v, notes',
+        'shop_area_m2, breaker_rating_a, pole_config, incomer_breaker_a, incomer_pole_config, ' +
+        'section, rating_kva, voltage_v, notes',
       )
       .eq('project_id', projectId)
       .order('code'),
@@ -608,8 +612,7 @@ export async function getRevisionExportPayload(
 
       combined_capacity_a: combinedCap,
       under_rated: underRated,
-      breaker_a: toNode?.breaker_rating_a ?? null,
-      pole_config: toNode?.pole_config ?? null,
+      ...effectiveNodeBreaker(toNode),
       vd_pct: supplyVdById.get(supply.id) ?? 0,
       cumulative_vd_pct: cumulativeMap.get(supply.id) ?? 0,
 
@@ -708,6 +711,31 @@ export async function getRevisionExportPayload(
       termination_rate_each: Number(r.termination_rate_each ?? 0),
     })) as ExportPayload['costLines'],
     changeLog,
+  }
+}
+
+/**
+ * Breaker display fallback (2026-06-24 spec §A1): the manually captured
+ * breaker_rating_a / pole_config win, else the persisted tenant-electrical
+ * incomer rollup. Per-field independent — a node can have a manual rating
+ * with only a derived pole config. In prod the manual fields are rarely
+ * set while incomer_* is populated on most boards; without this fallback
+ * the Breaker column rendered blank in every export format.
+ */
+export function effectiveNodeBreaker(
+  node:
+    | {
+        breaker_rating_a: number | null
+        pole_config: string | null
+        incomer_breaker_a?: number | null
+        incomer_pole_config?: string | null
+      }
+    | null
+    | undefined,
+): { breaker_a: number | null; pole_config: string | null } {
+  return {
+    breaker_a: node?.breaker_rating_a ?? node?.incomer_breaker_a ?? null,
+    pole_config: node?.pole_config ?? node?.incomer_pole_config ?? null,
   }
 }
 

@@ -16,6 +16,26 @@ import { groupRunsBySectionConductor } from './export-util'
 import type { EnrichedCable, ExportPayload } from './export-payload'
 import { stampPdfDraft } from './export-watermark'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
+import { winAnsiSafe } from './winansi'
+
+/**
+ * Sanitising wrappers — the ONLY way this module draws or measures text.
+ * pdf-lib's standard Helvetica throws on any non-WinAnsi character (the
+ * `Ω/km` header + tag-card `→` 500'd every PDF export until 2026-07-31),
+ * and user data can carry anything. Draw and measure MUST run on the same
+ * sanitised string or right-aligned/clipped text drifts.
+ */
+function drawTextSafe(
+  page: PDFPage,
+  text: string,
+  opts: Parameters<PDFPage['drawText']>[1],
+): void {
+  page.drawText(winAnsiSafe(text), opts)
+}
+
+function widthOf(font: PDFFont, text: string, size: number): number {
+  return font.widthOfTextAtSize(winAnsiSafe(text), size)
+}
 
 const A4_W = 595.28
 const A4_H = 841.89
@@ -81,29 +101,29 @@ function drawCoverPage(
     color: AMBER,
   })
 
-  page.drawText('WATSON MATTHEUS', {
+  drawTextSafe(page, 'WATSON MATTHEUS', {
     x: MARGIN,
     y: A4_H - 30,
     size: 9,
     font: helvB,
     color: AMBER,
   })
-  page.drawText('Consulting Electrical Engineers', {
+  drawTextSafe(page, 'Consulting Electrical Engineers', {
     x: MARGIN,
     y: A4_H - 45,
     size: 9,
     font: helv,
     color: rgb(0.85, 0.85, 0.85),
   })
-  page.drawText('CABLE SCHEDULE', {
-    x: A4_W - MARGIN - helvB.widthOfTextAtSize('CABLE SCHEDULE', 14),
+  drawTextSafe(page, 'CABLE SCHEDULE', {
+    x: A4_W - MARGIN - widthOf(helvB, 'CABLE SCHEDULE', 14),
     y: A4_H - 30,
     size: 14,
     font: helvB,
     color: rgb(1, 1, 1),
   })
-  page.drawText(payload.revision.status, {
-    x: A4_W - MARGIN - helv.widthOfTextAtSize(payload.revision.status, 9),
+  drawTextSafe(page, payload.revision.status, {
+    x: A4_W - MARGIN - widthOf(helv, payload.revision.status, 9),
     y: A4_H - 50,
     size: 9,
     font: helv,
@@ -113,7 +133,7 @@ function drawCoverPage(
   // Big project name
   let y = A4_H - 140
   const projectName = payload.project.name.toUpperCase()
-  page.drawText(projectName, {
+  drawTextSafe(page, projectName, {
     x: MARGIN,
     y,
     size: 24,
@@ -122,7 +142,7 @@ function drawCoverPage(
   })
 
   y -= 30
-  page.drawText(payload.revision.code, {
+  drawTextSafe(page, payload.revision.code, {
     x: MARGIN,
     y,
     size: 18,
@@ -132,7 +152,7 @@ function drawCoverPage(
 
   if (payload.revision.description) {
     y -= 22
-    page.drawText(payload.revision.description, {
+    drawTextSafe(page, payload.revision.description, {
       x: MARGIN,
       y,
       size: 11,
@@ -172,14 +192,14 @@ function drawCoverPage(
     const rowIdx = Math.floor(i / 2)
     const rx = MARGIN + col * colW
     const ry = y - rowIdx * rowH
-    page.drawText(label.toUpperCase(), {
+    drawTextSafe(page, label.toUpperCase(), {
       x: rx,
       y: ry,
       size: 8,
       font: helvB,
       color: TEXT_DIM,
     })
-    page.drawText(value, {
+    drawTextSafe(page, value, {
       x: rx + labelW,
       y: ry,
       size: 11,
@@ -189,10 +209,23 @@ function drawCoverPage(
   }
   y -= Math.ceil(metaRows.length / 2) * rowH + 20
 
+  // Honest-redaction note (parity with the Excel title block + ZIP README):
+  // a redacted pack must say the cost section was withheld, not just omit it.
+  if (payload.costRedacted) {
+    drawTextSafe(page, 'Cost data excluded for your role', {
+      x: MARGIN,
+      y,
+      size: 10,
+      font: helvI,
+      color: TEXT_MID,
+    })
+    y -= 18
+  }
+
   // Change notes panel
   if (payload.revision.change_notes?.trim()) {
     y -= 10
-    page.drawText('CHANGE NOTES', {
+    drawTextSafe(page, 'CHANGE NOTES', {
       x: MARGIN,
       y,
       size: 9,
@@ -218,7 +251,7 @@ function drawCoverPage(
     let lineY = y - 16
     const maxLines = Math.floor((panelH - 12) / 14)
     for (const line of lines.slice(0, maxLines)) {
-      page.drawText(line, {
+      drawTextSafe(page, line, {
         x: MARGIN + 10,
         y: lineY,
         size: 10,
@@ -230,7 +263,7 @@ function drawCoverPage(
   }
 
   // Footer
-  page.drawText(
+  drawTextSafe(page, 
     `Generated ${new Date().toISOString().replace('T', ' ').slice(0, 16)} · E-Site`,
     {
       x: MARGIN,
@@ -273,11 +306,14 @@ function drawSchedulePages(
     }
     return worst
   }
+  // Text columns sized for real board names ("MAIN BOARD 3.1-DB-78A") —
+  // the original 95/60/60 ellipsized nearly every row while ~180pt of the
+  // landscape width sat unused in the margins (2026-07-31 review).
   const cols: ScheduleCol[] = [
     { key: 'run_no', label: 'No', width: 26, align: 'right', format: () => '' /* set per-row */ },
-    { key: 'tag', label: 'Cable Tag', width: 95, align: 'left', format: (run) => runLabel(run) },
-    { key: 'from_label', label: 'From', width: 60, align: 'left', format: (run) => run.from_label },
-    { key: 'to_label', label: 'To', width: 60, align: 'left', format: (run) => run.to_label },
+    { key: 'tag', label: 'Cable Tag', width: 130, align: 'left', format: (run) => runLabel(run) },
+    { key: 'from_label', label: 'From', width: 95, align: 'left', format: (run) => run.from_label },
+    { key: 'to_label', label: 'To', width: 85, align: 'left', format: (run) => run.to_label },
     { key: 'voltage_v', label: 'V', width: 30, align: 'right', format: (run) => fmt(run.voltage_v) },
     { key: 'load_a', label: 'Load A', width: 38, align: 'right', format: (run) => fmt(run.load_a) },
     { key: 'breaker_a', label: 'Brkr', width: 46, align: 'right', format: (run) => run.breaker_a == null ? '' : (run.pole_config ? `${run.breaker_a} ${run.pole_config}` : String(run.breaker_a)) },
@@ -288,8 +324,10 @@ function drawSchedulePages(
     { key: 'parallel_count', label: 'Par', width: 26, align: 'center', format: (run) => `×${run.parallel_count}` },
     { key: 'ohm_per_km', label: 'Ω/km', width: 38, align: 'right', format: (run) => fmt(run.ohm_per_km, 3) },
     { key: 'effective_length_m', label: 'Len m', width: 42, align: 'right', format: (run) => fmt(runLength(run)) },
-    { key: 'vd_pct', label: 'VD %', width: 38, align: 'right', format: (run) => fmt(run.vd_pct, 2) },
-    { key: 'cumulative_vd_pct', label: 'Cum %', width: 42, align: 'right', format: (run) => fmt(run.cumulative_vd_pct, 2) },
+    // VD is unknowable (not zero) until a length exists — blank beats a
+    // misleading 0.00 on every unmeasured run.
+    { key: 'vd_pct', label: 'VD %', width: 38, align: 'right', format: (run) => (runLength(run) == null ? '' : fmt(run.vd_pct, 2)) },
+    { key: 'cumulative_vd_pct', label: 'Cum %', width: 42, align: 'right', format: (run) => (runLength(run) == null ? '' : fmt(run.cumulative_vd_pct, 2)) },
   ]
   const totalW = cols.reduce((a, b) => a + b.width, 0)
   const startX = (LAND_W - totalW) / 2
@@ -346,7 +384,7 @@ function drawSchedulePages(
     drawScheduleColumnHeader(page, cols, startX, LAND_H - HEADER_BAND, helvB)
     if (items.length === 0) {
       // Explicit placeholder so a header-only page doesn't read like a bug.
-      page.drawText('No cables in this revision yet.', {
+      drawTextSafe(page, 'No cables in this revision yet.', {
         x: startX,
         y: LAND_H - HEADER_BAND - 30,
         size: 11,
@@ -365,7 +403,7 @@ function drawSchedulePages(
           height: ROW_H - 2,
           color: AMBER,
         })
-        page.drawText(item.label, {
+        drawTextSafe(page, item.label, {
           x: startX + 6,
           y: y + 5,
           size: 9,
@@ -380,7 +418,7 @@ function drawSchedulePages(
           height: ROW_H - 2,
           color: rgb(0.85, 0.85, 0.85),
         })
-        page.drawText(item.label, {
+        drawTextSafe(page, item.label, {
           x: startX + 6,
           y: y + 5,
           size: 8,
@@ -404,11 +442,11 @@ function drawSchedulePages(
           // number is stable across visible-sorted rows.
           const raw = col.key === 'run_no' ? String(item.runNumber) : col.format(item.run)
           const text = clipText(raw, col.width - 4, helv, 8)
-          const w = helv.widthOfTextAtSize(text, 8)
+          const w = widthOf(helv, text, 8)
           let tx = cx + 4
           if (col.align === 'right') tx = cx + col.width - w - 4
           else if (col.align === 'center') tx = cx + (col.width - w) / 2
-          page.drawText(text, {
+          drawTextSafe(page, text, {
             x: tx,
             y: y + 5,
             size: 8,
@@ -446,7 +484,7 @@ function drawLandscapeHeader(
     height: 3,
     color: AMBER,
   })
-  page.drawText('WATSON MATTHEUS · CABLE SCHEDULE', {
+  drawTextSafe(page, 'WATSON MATTHEUS · CABLE SCHEDULE', {
     x: MARGIN,
     y: LAND_H - 22,
     size: 9,
@@ -454,8 +492,8 @@ function drawLandscapeHeader(
     color: rgb(1, 1, 1),
   })
   const right = `${payload.project.name} · ${payload.revision.code}`
-  const rightW = helv.widthOfTextAtSize(right, 9)
-  page.drawText(right, {
+  const rightW = widthOf(helv, right, 9)
+  drawTextSafe(page, right, {
     x: LAND_W - MARGIN - rightW,
     y: LAND_H - 22,
     size: 9,
@@ -463,8 +501,8 @@ function drawLandscapeHeader(
     color: rgb(1, 1, 1),
   })
   const pageLabel = `Page ${pageNum} of ${pageTotal}`
-  const plW = helv.widthOfTextAtSize(pageLabel, 8)
-  page.drawText(pageLabel, {
+  const plW = widthOf(helv, pageLabel, 8)
+  drawTextSafe(page, pageLabel, {
     x: LAND_W - MARGIN - plW,
     y: 14,
     size: 8,
@@ -489,11 +527,11 @@ function drawScheduleColumnHeader(
   })
   let cx = startX
   for (const col of cols) {
-    const w = helvB.widthOfTextAtSize(col.label, 8)
+    const w = widthOf(helvB, col.label, 8)
     let tx = cx + 4
     if (col.align === 'right') tx = cx + col.width - w - 4
     else if (col.align === 'center') tx = cx + (col.width - w) / 2
-    page.drawText(col.label, {
+    drawTextSafe(page, col.label, {
       x: tx,
       y: y + 5,
       size: 8,
@@ -516,15 +554,17 @@ function drawCostPage(
 
   // Body — Mat (Cu/Al) column added 2026-05-18: cost_lines split by
   // (size, conductor) since Al rates ~30% Cu at the same size.
+  // Column x/w sized to end inside the right margin — the previous layout
+  // ran "Line ZAR" past the header band and clipped it at the page edge.
   const cols = [
-    { label: 'Size mm²', x: MARGIN, w: 60, align: 'right' as const },
-    { label: 'Mat', x: MARGIN + 65, w: 30, align: 'center' as const },
-    { label: 'Length m', x: MARGIN + 100, w: 65, align: 'right' as const },
-    { label: 'Supply R/m', x: MARGIN + 170, w: 75, align: 'right' as const },
-    { label: 'Install R/m', x: MARGIN + 250, w: 75, align: 'right' as const },
-    { label: 'Terms', x: MARGIN + 330, w: 45, align: 'right' as const },
-    { label: 'Term R', x: MARGIN + 380, w: 65, align: 'right' as const },
-    { label: 'Line ZAR', x: MARGIN + 450, w: 95, align: 'right' as const },
+    { label: 'Size mm²', x: MARGIN, w: 50, align: 'right' as const },
+    { label: 'Mat', x: MARGIN + 55, w: 28, align: 'center' as const },
+    { label: 'Length m', x: MARGIN + 88, w: 60, align: 'right' as const },
+    { label: 'Supply R/m', x: MARGIN + 153, w: 72, align: 'right' as const },
+    { label: 'Install R/m', x: MARGIN + 230, w: 72, align: 'right' as const },
+    { label: 'Terms', x: MARGIN + 307, w: 40, align: 'right' as const },
+    { label: 'Term R', x: MARGIN + 352, w: 62, align: 'right' as const },
+    { label: 'Line ZAR', x: MARGIN + 419, w: 112, align: 'right' as const },
   ]
   let y = A4_H - 110
   // Column header
@@ -536,11 +576,11 @@ function drawCostPage(
     color: rgb(0.2, 0.2, 0.2),
   })
   for (const c of cols) {
-    const w = helvB.widthOfTextAtSize(c.label, 9)
+    const w = widthOf(helvB, c.label, 9)
     let tx: number
     if (c.align === 'center') tx = c.x + (c.w - w) / 2
     else tx = c.x + c.w - w - 2
-    page.drawText(c.label, {
+    drawTextSafe(page, c.label, {
       x: tx,
       y: y + 2,
       size: 9,
@@ -556,14 +596,20 @@ function drawCostPage(
 
   let materialsTotal = 0
   let zebra = false
+  let truncatedGroups = 0
+  const missingRateGroups: string[] = []
   for (const agg of sortedAggregates) {
-    if (y < 200) break // leave room for totals
+    const matLabel = agg.conductor === 'CU' ? 'Cu' : 'Al'
+    // Rate-library entries with zero usage in this revision are noise on a
+    // cost summary — every printed row must carry length or terminations.
+    if (agg.count === 0 && agg.totalLength === 0) continue
     // Prefer exact (size, conductor) match; fall back to size-only for
     // pre-migration-00061 data where every cost_lines row defaulted to CU.
     const line =
       payload.costLines.find(
         (l) => l.size_mm2 === agg.size && l.conductor === agg.conductor,
       ) ?? payload.costLines.find((l) => l.size_mm2 === agg.size)
+    if (!line) missingRateGroups.push(`${agg.size} ${matLabel}`)
     const len = agg.totalLength
     // 2 terminations per cable (one at each end)
     const terms = agg.count * 2
@@ -571,7 +617,13 @@ function drawCostPage(
     const install = line?.install_rate_per_m ?? 0
     const termRate = line?.termination_rate_each ?? 0
     const lineTotal = len * (supply + install) + terms * termRate
+    // Totals accumulate for EVERY group — page overflow may hide a row but
+    // must never make the printed GRAND TOTAL smaller than the real one.
     materialsTotal += lineTotal
+    if (y < 200) {
+      truncatedGroups++
+      continue
+    }
 
     if (zebra) {
       page.drawRectangle({
@@ -584,25 +636,26 @@ function drawCostPage(
     }
     zebra = !zebra
 
-    const matLabel = agg.conductor === 'CU' ? 'Cu' : 'Al'
     const matColor = agg.conductor === 'AL' ? AMBER : TEXT_DARK
+    // Rows with usage but no captured rates show a dash, not fake R0.00.
+    const rate = (v: number): string => (line ? money(v) : '—')
     const cells = [
       { text: String(agg.size), color: TEXT_DARK },
       { text: matLabel, color: matColor },
-      { text: len.toFixed(2), color: TEXT_DARK },
-      { text: supply.toFixed(2), color: TEXT_DARK },
-      { text: install.toFixed(2), color: TEXT_DARK },
+      { text: money(len), color: TEXT_DARK },
+      { text: rate(supply), color: TEXT_DARK },
+      { text: rate(install), color: TEXT_DARK },
       { text: String(terms), color: TEXT_DARK },
-      { text: termRate.toFixed(2), color: TEXT_DARK },
-      { text: lineTotal.toFixed(2), color: TEXT_DARK },
+      { text: rate(termRate), color: TEXT_DARK },
+      { text: line ? money(lineTotal) : '—', color: TEXT_DARK },
     ]
     cells.forEach((cell, i) => {
       const c = cols[i]
-      const w = helv.widthOfTextAtSize(cell.text, 9)
+      const w = widthOf(helv, cell.text, 9)
       let tx: number
       if (c.align === 'center') tx = c.x + (c.w - w) / 2
       else tx = c.x + c.w - w - 2
-      page.drawText(cell.text, {
+      drawTextSafe(page, cell.text, {
         x: tx,
         y: y + 2,
         size: 9,
@@ -611,6 +664,13 @@ function drawCostPage(
       })
     })
     y -= 18
+  }
+  if (truncatedGroups > 0) {
+    drawTextSafe(page,
+      `+${truncatedGroups} more size group${truncatedGroups === 1 ? '' : 's'} not shown (still included in the totals) — see the Excel export.`,
+      { x: MARGIN, y, size: 8, font: helv, color: TEXT_MID },
+    )
+    y -= 16
   }
 
   // Totals — contingency removed 2026-05-17 (net contracts, no contingency).
@@ -622,22 +682,21 @@ function drawCostPage(
 
   y -= 20
   function totalLine(label: string, value: number, big = false): void {
-    const valueText = value.toLocaleString('en-ZA', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })
+    // Same space-grouped dot-decimal format as the line cells — the page
+    // previously mixed `427629.60` cells with `3 406 513,93` totals.
+    const valueText = money(value)
     const font = big ? helvB : helv
     const size = big ? 12 : 10
-    const labelW = font.widthOfTextAtSize(label, size)
-    page.drawText(label, {
+    const labelW = widthOf(font, label, size)
+    drawTextSafe(page, label, {
       x: A4_W - MARGIN - 200 - labelW,
       y,
       size,
       font,
       color: big ? AMBER : TEXT_MID,
     })
-    const valW = font.widthOfTextAtSize(valueText, size)
-    page.drawText(valueText, {
+    const valW = widthOf(font, valueText, size)
+    drawTextSafe(page, valueText, {
       x: A4_W - MARGIN - valW,
       y,
       size,
@@ -649,6 +708,14 @@ function drawCostPage(
   totalLine('Materials + install', materialsTotal)
   totalLine(`+ ${(vatPct * 100).toFixed(0)}% VAT`, vat)
   totalLine('GRAND TOTAL', grand, true)
+
+  if (missingRateGroups.length > 0) {
+    y -= 8
+    drawTextSafe(page, 
+      `No rates captured for: ${missingRateGroups.join(', ')} — these quantities are excluded from the totals.`,
+      { x: MARGIN, y, size: 8, font: helv, color: TEXT_MID },
+    )
+  }
 }
 
 async function drawTagPages(
@@ -689,10 +756,11 @@ async function drawTagPages(
         borderWidth: 0.5,
       })
 
-      // Tag text
-      const tagText = tag.tag_text
+      // Tag text — clipped clear of the QR block; long tag names previously
+      // overprinted the QR and bled into the neighbouring card.
       const tagSize = 14
-      page.drawText(tagText, {
+      const tagText = clipText(tag.tag_text, cardW - 70 - 12 * 3, helvB, tagSize)
+      drawTextSafe(page, tagText, {
         x: x + 12,
         y: y + cardH - 32,
         size: tagSize,
@@ -701,7 +769,7 @@ async function drawTagPages(
       })
 
       // End label
-      page.drawText(`END: ${tag.end_position}`, {
+      drawTextSafe(page, `END: ${tag.end_position}`, {
         x: x + 12,
         y: y + cardH - 52,
         size: 8,
@@ -712,7 +780,7 @@ async function drawTagPages(
       // Cable detail
       if (cable) {
         const detail = `${cable.size_mm2}mm² ${cable.conductor} ${cable.insulation} · ${cable.from_label} → ${cable.to_label}`
-        page.drawText(clipText(detail, cardW - 90, helv, 8), {
+        drawTextSafe(page, clipText(detail, cardW - 90, helv, 8), {
           x: x + 12,
           y: y + 12,
           size: 8,
@@ -760,7 +828,7 @@ async function drawTagPages(
         // Don't swallow silently — log it and leave a visible marker so a
         // missing QR is noticed rather than mistaken for an empty label.
         console.error('[cable-export] tag QR render failed', { tag: qrText, err })
-        page.drawText('QR FAILED', {
+        drawTextSafe(page, 'QR FAILED', {
           x: x + cardW - 70 - 12,
           y: y + cardH - 44,
           size: 7,
@@ -793,14 +861,14 @@ function drawPortraitHeader(
     height: 3,
     color: AMBER,
   })
-  page.drawText('WATSON MATTHEUS', {
+  drawTextSafe(page, 'WATSON MATTHEUS', {
     x: MARGIN,
     y: A4_H - 24,
     size: 9,
     font: helvB,
     color: AMBER,
   })
-  page.drawText(title, {
+  drawTextSafe(page, title, {
     x: MARGIN,
     y: A4_H - 42,
     size: 11,
@@ -808,8 +876,8 @@ function drawPortraitHeader(
     color: rgb(1, 1, 1),
   })
   const right = `${payload.project.name} · ${payload.revision.code}`
-  const rightW = helv.widthOfTextAtSize(right, 9)
-  page.drawText(right, {
+  const rightW = widthOf(helv, right, 9)
+  drawTextSafe(page, right, {
     x: A4_W - MARGIN - rightW,
     y: A4_H - 32,
     size: 9,
@@ -822,10 +890,21 @@ function fmt(n: number | null | undefined, dp = 0): string {
   return formatDecimal(n, dp)
 }
 
+/**
+ * Money / quantity format for the cost page: space-grouped thousands with a
+ * dot decimal (`3 406 513.93`) — one convention for line cells AND totals.
+ */
+function money(n: number): string {
+  if (!Number.isFinite(n)) return ''
+  const [int, dec] = Math.abs(n).toFixed(2).split('.')
+  const grouped = int.replace(/\B(?=(\d{3})+$)/g, ' ')
+  return `${n < 0 ? '-' : ''}${grouped}.${dec}`
+}
+
 function clipText(text: string, maxWidth: number, font: PDFFont, size: number): string {
-  if (font.widthOfTextAtSize(text, size) <= maxWidth) return text
+  if (widthOf(font, text, size) <= maxWidth) return text
   let s = text
-  while (s.length > 1 && font.widthOfTextAtSize(s + '…', size) > maxWidth) {
+  while (s.length > 1 && widthOf(font, s + '…', size) > maxWidth) {
     s = s.slice(0, -1)
   }
   return s + '…'
@@ -844,7 +923,7 @@ function wrapText(
     let line = ''
     for (const word of words) {
       const test = line ? `${line} ${word}` : word
-      if (font.widthOfTextAtSize(test, size) > maxWidth && line) {
+      if (widthOf(font, test, size) > maxWidth && line) {
         out.push(line)
         line = word
       } else {
@@ -916,7 +995,7 @@ export async function drawTagListPages(
     if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
 
     // Header band: title + meta line + horizontal rule
-    page.drawText('CABLE TAG SCHEDULE', {
+    drawTextSafe(page, 'CABLE TAG SCHEDULE', {
       x: MARGIN,
       y: A4_H - MARGIN - 16,
       size: 12,
@@ -924,7 +1003,7 @@ export async function drawTagListPages(
       color: TEXT_DARK,
     })
     const metaLine = `${payload.project.name}  ·  Rev ${payload.revision.code} (${payload.revision.status})  ·  ${sortedTags.length} tag${sortedTags.length === 1 ? '' : 's'}  ·  Page ${pageNo} of ${totalPages}  ·  Generated ${generatedAt}`
-    page.drawText(clipText(metaLine, A4_W - 2 * MARGIN, helv, 8), {
+    drawTextSafe(page, clipText(metaLine, A4_W - 2 * MARGIN, helv, 8), {
       x: MARGIN,
       y: A4_H - MARGIN - 32,
       size: 8,
@@ -948,10 +1027,10 @@ export async function drawTagListPages(
       color: rgb(0.93, 0.93, 0.93),
     })
     for (const col of cols) {
-      const textX = col.align === 'right'  ? col.x + col.w - 4 - helvB.widthOfTextAtSize(col.label, 8)
-                  : col.align === 'center' ? col.x + col.w / 2 - helvB.widthOfTextAtSize(col.label, 8) / 2
+      const textX = col.align === 'right'  ? col.x + col.w - 4 - widthOf(helvB, col.label, 8)
+                  : col.align === 'center' ? col.x + col.w / 2 - widthOf(helvB, col.label, 8) / 2
                   : col.x + 4
-      page.drawText(col.label, {
+      drawTextSafe(page, col.label, {
         x: textX,
         y: headerY + 5,
         size: 8,
@@ -993,10 +1072,10 @@ export async function drawTagListPages(
       ]
       for (const { value, col } of cells) {
         const clipped = clipText(value, col.w - 8, helv, 8)
-        const textX = col.align === 'right'  ? col.x + col.w - 4 - helv.widthOfTextAtSize(clipped, 8)
-                    : col.align === 'center' ? col.x + col.w / 2 - helv.widthOfTextAtSize(clipped, 8) / 2
+        const textX = col.align === 'right'  ? col.x + col.w - 4 - widthOf(helv, clipped, 8)
+                    : col.align === 'center' ? col.x + col.w / 2 - widthOf(helv, clipped, 8) / 2
                     : col.x + 4
-        page.drawText(clipped, {
+        drawTextSafe(page, clipped, {
           x: textX,
           y: rowY + 4,
           size: 8,
@@ -1007,7 +1086,7 @@ export async function drawTagListPages(
     }
 
     // Footer band
-    page.drawText('WM Consulting Electrical Engineer (Pty) Ltd  ·  E-Site v2', {
+    drawTextSafe(page, 'WM Consulting Electrical Engineer (Pty) Ltd  ·  E-Site v2', {
       x: MARGIN,
       y: 20,
       size: 7,
@@ -1015,8 +1094,8 @@ export async function drawTagListPages(
       color: TEXT_DIM,
     })
     const pageLabel = `Page ${pageNo} of ${totalPages}`
-    page.drawText(pageLabel, {
-      x: A4_W - MARGIN - helv.widthOfTextAtSize(pageLabel, 7),
+    drawTextSafe(page, pageLabel, {
+      x: A4_W - MARGIN - widthOf(helv, pageLabel, 7),
       y: 20,
       size: 7,
       font: helv,
@@ -1107,7 +1186,7 @@ async function drawAveryL7173Pages(
 
       // Tag text (top-left, bold)
       const tagText = clipText(tag.tag_text, LABEL_W - QR_SIZE - PAD * 3, helvB, 12)
-      page.drawText(tagText, {
+      drawTextSafe(page, tagText, {
         x: x + PAD,
         y: y + LABEL_H - PAD - 10,
         size: 12,
@@ -1116,7 +1195,7 @@ async function drawAveryL7173Pages(
       })
 
       // END marker (below tag_text)
-      page.drawText(`END: ${tag.end_position}`, {
+      drawTextSafe(page, `END: ${tag.end_position}`, {
         x: x + PAD,
         y: y + LABEL_H - PAD - 26,
         size: 8,
@@ -1130,7 +1209,7 @@ async function drawAveryL7173Pages(
           + (cable.armour ? `/${cable.armour}` : '')
           + ` · ${cable.from_label} → ${cable.to_label}`
         const clipped = clipText(detail, LABEL_W - 2 * PAD, helv, 7)
-        page.drawText(clipped, {
+        drawTextSafe(page, clipped, {
           x: x + PAD,
           y: y + PAD,
           size: 7,

@@ -16,6 +16,13 @@ interface Props {
    * leading `&`.
    */
   filterQuery?: string
+  /**
+   * True when the caller's exports are cost-redacted (contractor /
+   * inspector / supplier / client_viewer — any role outside
+   * COST_VIEW_ROLES). Shows an up-front note so a pack without a cost
+   * section reads as policy, not as a bug.
+   */
+  redactCost?: boolean
 }
 
 interface MenuItem {
@@ -74,7 +81,7 @@ async function downloadFromUrl(
   }
 }
 
-export function ExportMenu({ projectId, revisionId, filterQuery }: Props) {
+export function ExportMenu({ projectId, revisionId, filterQuery, redactCost }: Props) {
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [downloadingHref, setDownloadingHref] = useState<string | null>(null)
@@ -282,6 +289,20 @@ export function ExportMenu({ projectId, revisionId, filterQuery }: Props) {
               </button>
             )
           })}
+          {redactCost && (
+            <div
+              role="note"
+              style={{
+                marginTop: 6,
+                padding: '8px 12px',
+                fontSize: 11,
+                color: 'var(--c-text-dim)',
+                borderTop: '1px solid var(--c-border)',
+              }}
+            >
+              Cost data is excluded from exports for your role.
+            </div>
+          )}
           {filterQuery && (
             <div
               role="note"

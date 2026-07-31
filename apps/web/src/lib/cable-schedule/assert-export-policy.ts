@@ -73,7 +73,6 @@ export async function assertExportPolicy(
   const policy = await getExportPolicy(
     supabase,
     userData.user.id,
-    payload.project.organisation_id,
     payload.project.id,
   )
   if (!policy.canExport) {
