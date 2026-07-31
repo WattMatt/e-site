@@ -657,7 +657,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
               current={lengthMode}
               hasConfirmedLengths={hasConfirmedLengths}
             />
-            <ExportMenu projectId={projectId} revisionId={revisionId} />
+            <ExportMenu projectId={projectId} revisionId={revisionId} redactCost={!canSeeCost} />
           </div>
         </div>
       </div>

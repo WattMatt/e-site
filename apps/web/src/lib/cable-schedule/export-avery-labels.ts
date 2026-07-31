@@ -9,6 +9,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import { drawAveryL7173Pages } from './export-pdf'
 import type { ExportPayload } from './export-payload'
+import { winAnsiSafe } from './winansi'
 
 export async function renderAveryLabelsPdf(payload: ExportPayload): Promise<Uint8Array> {
   const pdf = await PDFDocument.create()
@@ -24,7 +25,7 @@ export async function renderAveryLabelsPdf(payload: ExportPayload): Promise<Uint
       font: helvB,
       color: rgb(0.11, 0.11, 0.11),
     })
-    page.drawText(`${payload.project.name}  ·  Rev ${payload.revision.code} (${payload.revision.status})`, {
+    page.drawText(winAnsiSafe(`${payload.project.name}  ·  Rev ${payload.revision.code} (${payload.revision.status})`), {
       x: 42.5,
       y: 841.89 - 42.5 - 32,
       size: 8,

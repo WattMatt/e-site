@@ -1,93 +1,75 @@
 /**
  * Role-gating + cost-redaction policy for cable-schedule export routes.
  *
- * Today the export routes verify auth (user has a session) but don't enforce
- * project membership or cost-data redaction. Per spec §3 + the Session 16
- * client_viewer RLS work (migration 00034), client_viewers are project-scoped
- * read-only and should never see cost data.
+ * Policy (2026-07-31, user-confirmed — replaces the org-role gate that
+ * blocked contractor/inspector/supplier outright with `Unknown role`):
  *
- * `lookupCableRole` in ./roles.ts maps onwards to a CableScheduleRole
- * (Designer/SiteOperator/Verifier/Admin/Viewer) and defaults to Viewer when
- * the user has no row in user_organisations — which collapses two distinct
- * outcomes (genuinely unassigned vs. genuinely client_viewer) into one
- * "Viewer". For export gating we need to distinguish them, so this module
- * reads the raw org role directly.
+ * Resolution runs through `public.user_effective_project_role` (migration
+ * 00107 — the same RPC `requireEffectiveRole` uses): org owner/admin/PM win
+ * regardless of project_members, else the projects.project_members.role
+ * applies (per-project promotion), else null.
+ *
+ *   - owner / admin / project_manager → full export, cost included.
+ *   - contractor / inspector / supplier / client_viewer → all formats,
+ *     cost redacted (redactCost derives from COST_VIEW_ROLES so the "who
+ *     sees money" decision stays in one shared constant).
+ *   - No effective role (unassigned org member of any role, or outsider)
+ *     → blocked. This preserves the original client_viewer project-scoping
+ *     and extends it to the site roles.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { COST_VIEW_ROLES, ORG_ROLES } from '@esite/shared'
 import type { OrgRole } from './roles'
 import type { ExportPayload } from './export-payload'
 
 export type ExportPolicy = {
   canExport: boolean
   redactCost: boolean
+  /** The caller's resolved effective role on the project (set when canExport). */
+  role?: OrgRole
   reason?: string
 }
 
 /**
  * Decide whether a user may export this revision and whether cost data
- * must be redacted.
- *
- * - owner / admin / project_manager: full export.
- * - client_viewer: project-scoped — must be active in project_members for
- *   the project. Cost data always redacted.
- * - Anyone else (no membership / unknown role): blocked.
+ * must be redacted. `projectId` scopes the effective-role resolution;
+ * RLS has already gated payload visibility by the time this runs.
  */
 export async function getExportPolicy(
   supabase: SupabaseClient,
   userId: string,
-  organisationId: string,
   projectId: string,
 ): Promise<ExportPolicy> {
-  const { data: orgRow } = await supabase
-    .from('user_organisations')
-    .select('role')
-    .eq('user_id', userId)
-    .eq('organisation_id', organisationId)
-    .eq('is_active', true)
-    .maybeSingle()
-
-  const role = (orgRow as { role?: OrgRole } | null)?.role ?? null
+  const { data, error } = await (supabase as any).rpc(
+    'user_effective_project_role',
+    { p_project_id: projectId, p_user_id: userId },
+  )
+  if (error) {
+    // Fail closed with a generic message — the raw PostgREST error would
+    // leak schema/function internals into the 403 body.
+    console.error('[cable-export] effective-role lookup failed', {
+      projectId,
+      error: error.message,
+    })
+    return { canExport: false, redactCost: false, reason: 'Role check failed' }
+  }
+  const role = (data ?? null) as OrgRole | null
   if (!role) {
-    return {
-      canExport: false,
-      redactCost: false,
-      reason: 'Not a member of this organisation',
-    }
+    return { canExport: false, redactCost: false, reason: 'No access to this project' }
   }
-
-  if (role === 'owner' || role === 'admin' || role === 'project_manager') {
-    return { canExport: true, redactCost: false }
+  // Fail closed on any value outside the canonical role vocabulary — a
+  // future role added to project_members must be reviewed here before it
+  // starts exporting, not silently granted (unknown ⇒ deny).
+  if (!ORG_ROLES.includes(role)) {
+    return { canExport: false, redactCost: false, reason: `Unknown role: ${role}` }
   }
-
-  if (role === 'client_viewer') {
-    const { data: pm } = await (supabase as any)
-      .schema('projects')
-      .from('project_members')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('project_id', projectId)
-      .eq('is_active', true)
-      .maybeSingle()
-    if (!pm) {
-      return {
-        canExport: false,
-        redactCost: true,
-        reason: 'Not assigned to this project',
-      }
-    }
-    return { canExport: true, redactCost: true }
-  }
-
-  return {
-    canExport: false,
-    redactCost: false,
-    reason: `Unknown role: ${role}`,
-  }
+  return { canExport: true, redactCost: !COST_VIEW_ROLES.includes(role), role }
 }
 
 /**
- * Strip cost data from an ExportPayload for client_viewer exports.
+ * Strip cost data from an ExportPayload for cost-redacted exports
+ * (contractor / inspector / supplier / client_viewer).
  *
  * Sets `costRedacted: true` so each renderer's cost section can short-
  * circuit entirely (otherwise the renderers derive the BoM — sizes ×
@@ -97,7 +79,7 @@ export async function getExportPolicy(
  * Also empties `costLines` and nulls `revision.vat_pct` as a defence-
  * in-depth measure for any future renderer that forgets the flag check.
  *
- * Schedule / tag / change_log content is unaffected — client_viewers can
+ * Schedule / tag / change_log content is unaffected — redacted roles can
  * still see what cables exist, just not what they cost.
  */
 export function redactPayloadCost<T extends ExportPayload>(payload: T): T {

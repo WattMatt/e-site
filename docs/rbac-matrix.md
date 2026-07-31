@@ -75,7 +75,7 @@ membership.
 | `/projects/[id]/jbcc/tracking/[letterId]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/parties` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 
-¹ `client_viewer` exports redact cost columns ([`export-role.ts:104`](../apps/web/src/lib/cable-schedule/export-role.ts:104)).
+¹ Cost-redacted export (2026-07-31): contractor / inspector / supplier / client_viewer download every format with all cost data stripped ([`export-role.ts`](../apps/web/src/lib/cable-schedule/export-role.ts) `redactPayloadCost`); redaction derives from `COST_VIEW_ROLES`. Requires an **effective role on the project** (`public.user_effective_project_role`) — unassigned org members of any role are blocked.
 ² All inspections access requires `public.has_feature(org_id, 'inspections') = true` — the paywall layer comes before the role check. WM-Consulting bypasses.
 ³ Marketplace is Phase 2-gated by `NEXT_PUBLIC_PHASE_2_MARKETPLACE=true`.
 ⁴ `/jbcc/unlock` is visible to all authenticated org members (read-only paywall page). The `<UnlockJbccButton />` inside only renders for owner/admin; all other roles see "ask your owner/admin" text. No redirect for locked org — this IS the locked-state destination.
@@ -168,13 +168,13 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `GET /api/tenant-schedule/legend-card/pdf` | R | R | R | R | R | — | R⁸ |
 | `POST /api/cable-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/cable-schedule/commit` | W | W | W | —⁷ | — | — | — |
-| `GET /api/cable-schedule/export/excel` | R | R | R | — | — | — | R¹ |
-| `GET /api/cable-schedule/export/pdf` | R | R | R | — | — | — | R¹ |
-| `GET /api/cable-schedule/export/csv` | R | R | R | — | — | — | R¹ |
-| `GET /api/cable-schedule/export/zip` | R | R | R | — | — | — | R¹ |
-| `GET /api/cable-schedule/export/multi-zip` | R | R | R | — | — | — | R¹ |
-| `GET /api/cable-schedule/export/tag-list/pdf` | R | R | R | — | — | — | R¹ |
-| `GET /api/cable-schedule/export/tag-labels/pdf` | R | R | R | — | — | — | R¹ |
+| `GET /api/cable-schedule/export/excel` | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/pdf` | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/csv` | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/zip` | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/multi-zip` | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/tag-list/pdf` | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/tag-labels/pdf` | R | R | R | R¹ | R¹ | R¹ | R¹ |
 
 > `POST /api/tenant-schedule/parse` (preview, no writes) and `POST /api/tenant-schedule/commit` (full-sync import; **writes run with the service-role key, bypassing RLS**) are both gated via `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` — the same gate the `/projects/[id]/tenant-schedule` page applies before rendering the ImportFlow control. ⁶ A contractor promoted per-project via `projects.project_members` (role `project_manager`) passes the effective-role gate on that project.
 >
@@ -182,7 +182,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 
 > `POST /api/cable-schedule/parse` (preview, no writes) and `POST /api/cable-schedule/commit` (imports a whole revision: sources / structure.nodes / supplies / cables / change_log; **writes run on the user client so RLS applies, but RLS's cable_schedule write policies are role-agnostic beyond the client_viewer block**) are both gated via `requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)` — added 2026-07 (SANS audit); previously only project *visibility* was checked, the same gap PR #135 closed for the tenant-schedule routes. ⁷ as above: a per-project `project_manager` promotion passes.
 >
-> All 7 `GET /api/cable-schedule/export/*` routes gate via `getExportPolicy` ([`export-role.ts`](../apps/web/src/lib/cable-schedule/export-role.ts)): owner/admin/project_manager export fully; `client_viewer` may export **only when active in `projects.project_members` for the project**, with all cost data redacted (¹); contractor/inspector/supplier are blocked entirely. Size caps return 413 (`MAX_CABLES_PER_EXPORT` 500, PDF/ZIP 300).
+> All 7 `GET /api/cable-schedule/export/*` routes gate via `getExportPolicy` ([`export-role.ts`](../apps/web/src/lib/cable-schedule/export-role.ts)), which resolves the caller's **effective project role** via `public.user_effective_project_role` (the same RPC as `requireEffectiveRole`): owner/admin/project_manager export fully; contractor/inspector/supplier/client_viewer export **all formats with cost data redacted** (¹) — each requires an active effective role on the project (org membership alone is not enough); no effective role → 403. Per-project promotion to `project_manager` grants full export. Policy widened 2026-07-31 (previously contractor/inspector/supplier were blocked outright). Size caps return 413 (`MAX_CABLES_PER_EXPORT` 500, PDF/ZIP 300).
 
 > `GET /api/projects/[id]/quality-control/[reportId]/report` (inline QC PDF preview, no persistence — snag-visit report pattern) returns 401 unauthenticated, then gates inside `gatherQcReportData`: the cookie-client **RLS read of the `qc_reports` row is the visibility gate** — a report invisible to the caller (wrong org, or ⁹ a non-`issued` report for a `client_viewer`, per 00172) 404s — plus `requireEffectiveRole` over all 7 project roles (403 for non-members). Photo bytes are fetched with the service client only after both gates pass.
 >
