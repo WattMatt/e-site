@@ -170,6 +170,14 @@ function avgActiveLength(cables: CableForCalc[], mode: LengthMode = 'as-built'):
  * each board's outgoing supplies. Detects cycles (shouldn't happen but
  * worth guarding against malformed data) and stops there to avoid an
  * infinite loop.
+ *
+ * Supplies that originate at a node nothing feeds — a standby generator,
+ * or a subtree whose upstream feed isn't modelled — form islands the
+ * source walk can never reach. Those are seeded as roots of their own,
+ * so their cumulative VD starts at the island's origin node. Island walks
+ * only fill supplies the source walk left blank: a dual-fed board (utility
+ * + standby generator) keeps the normal-supply figure for everything
+ * downstream of it.
  */
 export function computeCumulativeVdMap(
   supplies: SupplyForCalc[],
@@ -178,7 +186,9 @@ export function computeCumulativeVdMap(
 ): Map<string, number> {
   const out = new Map<string, number>()
   const supplyByFromNode = new Map<string, SupplyForCalc[]>()
+  const fedNodeIds = new Set<string>()
   for (const s of supplies) {
+    fedNodeIds.add(s.to_node_id)
     if (s.from_node_id) {
       const list = supplyByFromNode.get(s.from_node_id) ?? []
       list.push(s)
@@ -186,20 +196,27 @@ export function computeCumulativeVdMap(
     }
   }
 
-  const roots = supplies.filter((s) => s.from_source_id != null)
+  const sourceRoots = supplies.filter((s) => s.from_source_id != null)
+  const islandRoots = supplies.filter(
+    (s) => s.from_source_id == null && s.from_node_id != null && !fedNodeIds.has(s.from_node_id),
+  )
   const visiting = new Set<string>()
 
-  function walk(supply: SupplyForCalc, accumulatedVd: number) {
+  function walk(supply: SupplyForCalc, accumulatedVd: number, fillOnly: boolean) {
     if (visiting.has(supply.id)) return        // cycle guard
+    // Every entry's downstream is set in the same walk that set it, so an
+    // already-set supply means an already-covered subtree — safe to prune.
+    if (fillOnly && out.has(supply.id)) return
     visiting.add(supply.id)
     const here = accumulatedVd + voltDropPctForSupply(supply, cables, mode)
     out.set(supply.id, here)
     const downstream = supplyByFromNode.get(supply.to_node_id) ?? []
-    for (const down of downstream) walk(down, here)
+    for (const down of downstream) walk(down, here, fillOnly)
     visiting.delete(supply.id)
   }
 
-  for (const r of roots) walk(r, 0)
+  for (const r of sourceRoots) walk(r, 0, false)
+  for (const r of islandRoots) walk(r, 0, true)
   return out
 }
 

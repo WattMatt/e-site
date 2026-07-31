@@ -3,6 +3,7 @@ import {
   activeLengthM,
   adiabaticK,
   breakerCoordinationCheck,
+  computeCumulativeVdMap,
   deratedRating,
   phaseFactor,
   requiredParallelSet,
@@ -245,5 +246,101 @@ describe('deratedRating', () => {
 
   it('still multiplies through when all four factors are real numbers', () => {
     expect(deratedRating(400, { depth: 0.9, thermal: 1, grouping: 0.8, temperature: 1 })).toBeCloseTo(288, 5)
+  })
+})
+
+describe('computeCumulativeVdMap', () => {
+  // All fixtures: 400 V, 100 A, one 100 m strand per supply, so each
+  // supply's own VD is set purely by its strand's ohm_per_km.
+  function sup(id: string, from: { source?: string; node?: string }, to: string): SupplyForCalc {
+    return {
+      id,
+      from_source_id: from.source ?? null,
+      from_node_id: from.node ?? null,
+      to_node_id: to,
+      voltage_v: 400,
+      design_load_a: 100,
+    }
+  }
+  const strand = (supplyId: string, over: Partial<CableForCalc> = {}) =>
+    cable({ id: `c-${supplyId}`, supply_id: supplyId, ...over })
+  const vd = (s: SupplyForCalc, cables: CableForCalc[]) => voltDropPctForSupply(s, cables)
+
+  it('accumulates down a source-rooted chain', () => {
+    const sA = sup('sA', { source: 'src1' }, 'A')
+    const sB = sup('sB', { node: 'A' }, 'B')
+    const cables = [strand('sA', { ohm_per_km: 1 }), strand('sB', { ohm_per_km: 0.5 })]
+    const map = computeCumulativeVdMap([sA, sB], cables)
+    expect(map.get('sA')).toBeCloseTo(vd(sA, cables), 10)
+    expect(map.get('sB')).toBeCloseTo(vd(sA, cables) + vd(sB, cables), 10)
+  })
+
+  it('an unmeasured link contributes 0 but passes the upstream figure downstream', () => {
+    const sA = sup('sA', { source: 'src1' }, 'A')
+    const sB = sup('sB', { node: 'A' }, 'B')
+    const sC = sup('sC', { node: 'B' }, 'C')
+    const cables = [
+      strand('sA', { ohm_per_km: 1 }),
+      strand('sB', { measured_length_m: null, length_status: 'UNMEASURED' }),
+      strand('sC', { ohm_per_km: 0.5 }),
+    ]
+    const map = computeCumulativeVdMap([sA, sB, sC], cables)
+    expect(map.get('sB')).toBeCloseTo(vd(sA, cables), 10)
+    expect(map.get('sC')).toBeCloseTo(vd(sA, cables) + vd(sC, cables), 10)
+  })
+
+  it('seeds a generator-fed island at its unfed origin node: cum = own VD', () => {
+    // GEN is nobody's to_node and the supply has no from_source_id — the
+    // island must still get a cumulative figure, starting at the generator.
+    const sG = sup('sG', { node: 'GEN' }, 'A')
+    const cables = [strand('sG', { ohm_per_km: 1 })]
+    const map = computeCumulativeVdMap([sG], cables)
+    expect(map.get('sG')).toBeCloseTo(vd(sG, cables), 10)
+  })
+
+  it('accumulates through the subtree below a generator island root', () => {
+    const sG = sup('sG', { node: 'GEN' }, 'A')
+    const sB = sup('sB', { node: 'A' }, 'B')
+    const cables = [strand('sG', { ohm_per_km: 1 }), strand('sB', { ohm_per_km: 0.5 })]
+    const map = computeCumulativeVdMap([sG, sB], cables)
+    expect(map.get('sB')).toBeCloseTo(vd(sG, cables) + vd(sB, cables), 10)
+  })
+
+  it('island walk fills gaps only — never overwrites the source-fed path on a dual-fed board', () => {
+    // Standby generator into board A, which is also on the utility tree.
+    // Downstream of A must keep the utility-path figure whatever the array
+    // order; the generator run itself gets its own-VD figure.
+    const sA = sup('sA', { source: 'src1' }, 'A')
+    const sAB = sup('sAB', { node: 'A' }, 'B')
+    const sG = sup('sG', { node: 'GEN' }, 'A')
+    const cables = [
+      strand('sA', { ohm_per_km: 0.5 }),
+      strand('sAB', { ohm_per_km: 0.5 }),
+      strand('sG', { ohm_per_km: 2 }),
+    ]
+    for (const order of [[sG, sA, sAB], [sA, sAB, sG]]) {
+      const map = computeCumulativeVdMap(order, cables)
+      expect(map.get('sG')).toBeCloseTo(vd(sG, cables), 10)
+      expect(map.get('sA')).toBeCloseTo(vd(sA, cables), 10)
+      expect(map.get('sAB')).toBeCloseTo(vd(sA, cables) + vd(sAB, cables), 10)
+    }
+  })
+
+  it('a fed generator node is not an island root — standby interconnects keep upstream accumulation', () => {
+    // KINGSWALK GEN-1 pattern: board feeds the generator node, generator
+    // feeds another board. The chain accumulates all the way through.
+    const sA = sup('sA', { source: 'src1' }, 'A')
+    const sAG = sup('sAG', { node: 'A' }, 'GEN')
+    const sGB = sup('sGB', { node: 'GEN' }, 'B')
+    const cables = [
+      strand('sA', { ohm_per_km: 0.5 }),
+      strand('sAG', { ohm_per_km: 0.5 }),
+      strand('sGB', { ohm_per_km: 0.5 }),
+    ]
+    const map = computeCumulativeVdMap([sA, sAG, sGB], cables)
+    expect(map.get('sGB')).toBeCloseTo(
+      vd(sA, cables) + vd(sAG, cables) + vd(sGB, cables),
+      10,
+    )
   })
 })
