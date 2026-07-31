@@ -69,7 +69,7 @@ export async function renderRevisionPdf(payload: ExportPayload): Promise<Uint8Ar
   // Cost page omitted entirely for redacted (client_viewer) exports —
   // see redactPayloadCost in export-role.ts.
   if (!payload.costRedacted) drawCostPage(pdf, payload, helv, helvB)
-  await drawTagPages(pdf, payload, helv, helvB)
+  drawTagPages(pdf, payload, helv, helvB)
 
   return pdf.save()
 }
@@ -130,13 +130,17 @@ function drawCoverPage(
     color: AMBER,
   })
 
-  // Big project name
+  // Big project name — shrink-to-fit so long names never run off the page
   let y = A4_H - 140
   const projectName = payload.project.name.toUpperCase()
+  let nameSize = 24
+  while (nameSize > 12 && widthOf(helvB, projectName, nameSize) > A4_W - 2 * MARGIN) {
+    nameSize -= 1
+  }
   drawTextSafe(page, projectName, {
     x: MARGIN,
     y,
-    size: 24,
+    size: nameSize,
     font: helvB,
     color: TEXT_DARK,
   })
@@ -363,18 +367,53 @@ function drawSchedulePages(
     }
   }
 
-  // Pagination — fit ~30 rows of body per landscape page (after header band).
+  // Pagination — variable row heights. Text columns (tag/from/to) WRAP to
+  // up to 3 lines instead of ellipsizing (2026-07-31 user report: cut-off
+  // text must be fully visible); the row grows and pagination accumulates
+  // real heights instead of assuming a fixed count per page.
   const ROW_H = 16
+  const LINE_H = 11
+  const MAX_CELL_LINES = 3
   const HEADER_BAND = 56
   const FOOTER_BAND = 36
   const usableH = LAND_H - HEADER_BAND - FOOTER_BAND
-  const rowsPerPage = Math.floor(usableH / ROW_H)
+  const WRAP_COLS = new Set(['tag', 'from_label', 'to_label'])
 
-  // Total pages
-  const pages: QueueItem[][] = []
-  for (let i = 0; i < queue.length; i += rowsPerPage) {
-    pages.push(queue.slice(i, i + rowsPerPage))
+  type SizedItem = {
+    item: QueueItem
+    height: number
+    /** Per-column wrapped lines, run rows only. Keyed by col.key. */
+    cellLines?: Map<string, string[]>
   }
+  const sized: SizedItem[] = queue.map((item) => {
+    if (item.kind !== 'run') return { item, height: ROW_H }
+    const cellLines = new Map<string, string[]>()
+    let maxLines = 1
+    for (const col of cols) {
+      const raw = col.key === 'run_no' ? String(item.runNumber) : col.format(item.run)
+      const lines = WRAP_COLS.has(col.key)
+        ? wrapCell(raw, helv, 8, col.width - 8, MAX_CELL_LINES)
+        : [clipText(raw, col.width - 4, helv, 8)]
+      cellLines.set(col.key, lines)
+      if (lines.length > maxLines) maxLines = lines.length
+    }
+    return { item, height: ROW_H + (maxLines - 1) * LINE_H, cellLines }
+  })
+
+  // Greedy pagination on accumulated height.
+  const pages: SizedItem[][] = []
+  let current: SizedItem[] = []
+  let remaining = usableH
+  for (const s of sized) {
+    if (s.height > remaining && current.length > 0) {
+      pages.push(current)
+      current = []
+      remaining = usableH
+    }
+    current.push(s)
+    remaining -= s.height
+  }
+  if (current.length > 0) pages.push(current)
   if (pages.length === 0) pages.push([])
 
   pages.forEach((items, pageIdx) => {
@@ -392,15 +431,16 @@ function drawSchedulePages(
         color: TEXT_MID,
       })
     }
-    let y = LAND_H - HEADER_BAND - ROW_H
+    let y = LAND_H - HEADER_BAND
     let rowZebra = false
-    for (const item of items) {
+    for (const { item, height, cellLines } of items) {
+      y -= height // y is now the row's bottom edge
       if (item.kind === 'section') {
         page.drawRectangle({
           x: startX,
           y: y + 2,
           width: totalW,
-          height: ROW_H - 2,
+          height: height - 2,
           color: AMBER,
         })
         drawTextSafe(page, item.label, {
@@ -415,7 +455,7 @@ function drawSchedulePages(
           x: startX,
           y: y + 2,
           width: totalW,
-          height: ROW_H - 2,
+          height: height - 2,
           color: rgb(0.85, 0.85, 0.85),
         })
         drawTextSafe(page, item.label, {
@@ -432,32 +472,33 @@ function drawSchedulePages(
             x: startX,
             y: y + 2,
             width: totalW,
-            height: ROW_H - 2,
+            height: height - 2,
             color: rgb(0.97, 0.97, 0.97),
           })
         }
         let cx = startX
         for (const col of cols) {
-          // Run-number column is computed at queue-assembly time so the
-          // number is stable across visible-sorted rows.
-          const raw = col.key === 'run_no' ? String(item.runNumber) : col.format(item.run)
-          const text = clipText(raw, col.width - 4, helv, 8)
-          const w = widthOf(helv, text, 8)
-          let tx = cx + 4
-          if (col.align === 'right') tx = cx + col.width - w - 4
-          else if (col.align === 'center') tx = cx + (col.width - w) / 2
-          drawTextSafe(page, text, {
-            x: tx,
-            y: y + 5,
-            size: 8,
-            font: helv,
-            color: TEXT_DARK,
+          const lines = cellLines?.get(col.key) ?? ['']
+          // Lines stack from the TOP of the row; single-line cells align
+          // with the first line so numbers sit level with the tag text.
+          const topBaseline = y + 5 + (height - ROW_H)
+          lines.forEach((text, i) => {
+            const w = widthOf(helv, text, 8)
+            let tx = cx + 4
+            if (col.align === 'right') tx = cx + col.width - w - 4
+            else if (col.align === 'center') tx = cx + (col.width - w) / 2
+            drawTextSafe(page, text, {
+              x: tx,
+              y: topBaseline - i * LINE_H,
+              size: 8,
+              font: helv,
+              color: TEXT_DARK,
+            })
           })
           cx += col.width
         }
         rowZebra = !rowZebra
       }
-      y -= ROW_H
     }
   })
 }
@@ -718,12 +759,20 @@ function drawCostPage(
   }
 }
 
-async function drawTagPages(
+/**
+ * Tag-schedule cards. QR codes removed 2026-07-31 (user decision: the
+ * report carries no QR of any form — the Avery L7173 label-sheet export
+ * keeps its QRs since those are physical scan labels, not a report).
+ * With the QR gone the full card width belongs to text: tag names wrap
+ * to up to 3 lines and the detail line to 2 — nothing is ellipsized for
+ * any realistic tag/board name.
+ */
+function drawTagPages(
   pdf: PDFDocument,
   payload: ExportPayload,
   helv: PDFFont,
   helvB: PDFFont,
-): Promise<void> {
+): void {
   if (payload.cableTags.length === 0) return
 
   // 10 per page (2 cols × 5 rows), A4 portrait
@@ -756,84 +805,41 @@ async function drawTagPages(
         borderWidth: 0.5,
       })
 
-      // Tag text — clipped clear of the QR block; long tag names previously
-      // overprinted the QR and bled into the neighbouring card.
+      // Tag text — full card width, wrapped
       const tagSize = 14
-      const tagText = clipText(tag.tag_text, cardW - 70 - 12 * 3, helvB, tagSize)
-      drawTextSafe(page, tagText, {
-        x: x + 12,
-        y: y + cardH - 32,
-        size: tagSize,
-        font: helvB,
-        color: TEXT_DARK,
+      const tagLineH = 17
+      const tagLines = wrapCell(tag.tag_text, helvB, tagSize, cardW - 24, 3)
+      tagLines.forEach((line, k) => {
+        drawTextSafe(page, line, {
+          x: x + 12,
+          y: y + cardH - 32 - k * tagLineH,
+          size: tagSize,
+          font: helvB,
+          color: TEXT_DARK,
+        })
       })
 
-      // End label
+      // End label — directly under the (possibly multi-line) tag block
       drawTextSafe(page, `END: ${tag.end_position}`, {
         x: x + 12,
-        y: y + cardH - 52,
+        y: y + cardH - 32 - tagLines.length * tagLineH - 3,
         size: 8,
         font: helv,
         color: TEXT_MID,
       })
 
-      // Cable detail
+      // Cable detail — bottom of the card, wrapped to 2 lines
       if (cable) {
         const detail = `${cable.size_mm2}mm² ${cable.conductor} ${cable.insulation} · ${cable.from_label} → ${cable.to_label}`
-        drawTextSafe(page, clipText(detail, cardW - 90, helv, 8), {
-          x: x + 12,
-          y: y + 12,
-          size: 8,
-          font: helv,
-          color: TEXT_DIM,
-        })
-      }
-
-      // QR — generate PNG inline, embed.
-      // Encode the human-visible tag text only — never UUIDs, org IDs, or
-      // anything not already legible on the physical printed label. Anyone
-      // with a phone camera at a job site (subbie, visitor, future auditor)
-      // gets only the tag text they can already read. The DB still holds
-      // qr_payload with the UUID bundle for any future server-side scan
-      // resolver.
-      //
-      // Wrap as a URL so phone-camera scans (iOS Camera / Android Lens)
-      // treat it as an actionable link instead of a search query. The
-      // /site/tag/[text] route is follow-up work — until it ships the
-      // scan will 404 on a known host, which is honest and recoverable.
-      const qrText = tag.tag_text || ''
-      if (!qrText) {
-        // No tag text → skip QR; the visible tag-text print is empty too
-        // so there's nothing meaningful to encode anyway.
-        continue
-      }
-      const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live').replace(/\/$/, '')
-      const qrUrl = `${siteUrl}/site/tag/${encodeURIComponent(qrText)}`
-      try {
-        const qrBuffer = await QRCode.toBuffer(qrUrl, {
-          type: 'png',
-          errorCorrectionLevel: 'M',
-          margin: 1,
-          width: 200,
-        })
-        const png = await pdf.embedPng(qrBuffer)
-        const qrSize = 70
-        page.drawImage(png, {
-          x: x + cardW - qrSize - 12,
-          y: y + cardH - qrSize - 16,
-          width: qrSize,
-          height: qrSize,
-        })
-      } catch (err) {
-        // Don't swallow silently — log it and leave a visible marker so a
-        // missing QR is noticed rather than mistaken for an empty label.
-        console.error('[cable-export] tag QR render failed', { tag: qrText, err })
-        drawTextSafe(page, 'QR FAILED', {
-          x: x + cardW - 70 - 12,
-          y: y + cardH - 44,
-          size: 7,
-          font: helv,
-          color: TEXT_MID,
+        const detailLines = wrapCell(detail, helv, 8, cardW - 24, 2)
+        detailLines.forEach((line, k) => {
+          drawTextSafe(page, line, {
+            x: x + 12,
+            y: y + 12 + (detailLines.length - 1 - k) * 11,
+            size: 8,
+            font: helv,
+            color: TEXT_DIM,
+          })
         })
       }
     }
@@ -899,6 +905,62 @@ function money(n: number): string {
   const [int, dec] = Math.abs(n).toFixed(2).split('.')
   const grouped = int.replace(/\B(?=(\d{3})+$)/g, ' ')
   return `${n < 0 ? '-' : ''}${grouped}.${dec}`
+}
+
+/**
+ * Wrap a table-cell value into at most `maxLines` lines of `maxWidth`.
+ * Word-wraps on whitespace; tokens wider than the cell (long hyphenated
+ * tags) hard-break mid-token. Only content beyond the line cap is
+ * ellipsized — the cap (3 lines ≈ 120 chars in the tag column) is far
+ * beyond any real board/tag name.
+ */
+function wrapCell(
+  text: string,
+  font: PDFFont,
+  size: number,
+  maxWidth: number,
+  maxLines: number,
+): string[] {
+  if (widthOf(font, text, size) <= maxWidth) return [text]
+  const lines: string[] = []
+  let line = ''
+  const pushLine = () => {
+    if (line) {
+      lines.push(line)
+      line = ''
+    }
+  }
+  for (const word of text.split(/\s+/)) {
+    if (widthOf(font, word, size) > maxWidth) {
+      // Token alone exceeds the cell — flush, then hard-break it.
+      pushLine()
+      let rest = word
+      while (widthOf(font, rest, size) > maxWidth) {
+        let prefix = rest
+        while (prefix.length > 1 && widthOf(font, prefix, size) > maxWidth) {
+          prefix = prefix.slice(0, -1)
+        }
+        lines.push(prefix)
+        rest = rest.slice(prefix.length)
+      }
+      line = rest
+      continue
+    }
+    const test = line ? `${line} ${word}` : word
+    if (widthOf(font, test, size) > maxWidth && line) {
+      pushLine()
+      line = word
+    } else {
+      line = test
+    }
+  }
+  pushLine()
+  if (lines.length > maxLines) {
+    const kept = lines.slice(0, maxLines)
+    kept[maxLines - 1] = clipText(`${kept[maxLines - 1]}…`, maxWidth, font, size)
+    return kept
+  }
+  return lines.length > 0 ? lines : ['']
 }
 
 function clipText(text: string, maxWidth: number, font: PDFFont, size: number): string {
