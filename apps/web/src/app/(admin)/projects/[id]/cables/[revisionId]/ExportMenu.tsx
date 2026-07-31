@@ -136,7 +136,7 @@ export function ExportMenu({ projectId, revisionId, filterQuery, redactCost }: P
       label: 'PDF revision pack',
       href: `/api/cable-schedule/export/pdf${qs}`,
       emoji: '📄',
-      hint: 'Cover + schedule + cost + tags with QR',
+      hint: 'Cover + schedule + cost + tag schedule',
       fallbackFilename: `cable-schedule-${revStem}.pdf`,
     },
     {
