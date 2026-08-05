@@ -12,6 +12,8 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { signInSchema, type SignInInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { safeNext } from '@/lib/safe-next'
+import { startTimingPad } from '@/lib/timing-pad'
 import { recordAuthEventAction } from '@/actions/auth-event.actions'
 import { CaptchaTurnstile, CAPTCHA_ENABLED } from '@/components/CaptchaTurnstile'
 import { GoogleSignInButton } from '@/components/GoogleSignInButton'
@@ -104,7 +106,8 @@ export default function LoginPage() {
     })
     if (error) { setServerError(error.message); return }
     void recordAuthEventAction('login', { method: 'password' }).catch(() => {})
-    const next = new URLSearchParams(window.location.search).get('next') ?? '/dashboard'
+    // A7: ?next only survives through the allow-list — never raw.
+    const next = safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/dashboard'
     window.location.href = next
   }
 
@@ -117,6 +120,9 @@ export default function LoginPage() {
     }
     const trimmed = email.trim().toLowerCase()
     const emailRedirectTo = `${window.location.origin}/auth/callback?next=/dashboard&from=magic_link`
+    // A6: pad the round-trip to a randomized 1.0–1.3 s minimum so response
+    // latency can't reveal whether the account exists.
+    const pad = startTimingPad()
     const { error } = await supabase.auth.signInWithOtp({
       email: trimmed,
       options: {
@@ -125,6 +131,7 @@ export default function LoginPage() {
         ...(captchaToken ? { captchaToken } : {}),
       },
     })
+    await pad()
     if (error) {
       console.error('signInWithOtp failed', error)
       setServerError(error.message)
@@ -157,7 +164,8 @@ export default function LoginPage() {
       return
     }
     void recordAuthEventAction('login', { method: 'magic_link' }).catch(() => {})
-    const next = new URLSearchParams(window.location.search).get('next') ?? '/dashboard'
+    // A7: ?next only survives through the allow-list — never raw.
+    const next = safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/dashboard'
     window.location.href = next
   }
 

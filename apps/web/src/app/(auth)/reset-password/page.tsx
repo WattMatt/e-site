@@ -11,6 +11,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { resetPasswordSchema, type ResetPasswordInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { startTimingPad } from '@/lib/timing-pad'
 import { recordAuthEventAction } from '@/actions/auth-event.actions'
 import { CaptchaTurnstile, CAPTCHA_ENABLED } from '@/components/CaptchaTurnstile'
 
@@ -123,18 +124,25 @@ export default function ResetPasswordPage() {
     // link). Round-trips: app → Supabase /verify → app /auth/callback → app
     // /reset-password?step=code&email=...
     const redirectTo = `${window.location.origin}/auth/callback?next=/reset-password/confirm&email=${encodeURIComponent(trimmed)}`
+    // A6 enumeration defence: pad the round-trip to a randomized 1.0–1.3 s
+    // minimum AND answer uniformly — neither latency nor copy may reveal
+    // whether an account exists for this email.
+    const pad = startTimingPad()
     const { error } = await supabase.auth.resetPasswordForEmail(trimmed, {
       redirectTo,
       ...(captchaToken ? { captchaToken } : {}),
     })
+    await pad()
     if (error) {
+      // Log for diagnostics but never surface provider error text (it can
+      // distinguish existing from unknown accounts). Advance to the code
+      // step with the same success copy either way.
       console.error('resetPasswordForEmail failed', error)
-      setServerError(error.message)
-      return
+    } else {
+      void recordAuthEventAction('password_reset_requested', {
+        email_domain: trimmed.split('@')[1] ?? null,
+      }).catch(() => { /* audit best-effort */ })
     }
-    void recordAuthEventAction('password_reset_requested', {
-      email_domain: trimmed.split('@')[1] ?? null,
-    }).catch(() => { /* audit best-effort */ })
     setEmail(trimmed)
     setAskEmail(false)
     setStep('code')
