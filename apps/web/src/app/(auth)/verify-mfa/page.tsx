@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { safeNext } from '@/lib/safe-next'
 import { challengeMfaAction } from '@/actions/mfa.actions'
 
 export default function VerifyMfaPage() {
@@ -17,7 +18,8 @@ export default function VerifyMfaPage() {
     startTransition(async () => {
       const r = await challengeMfaAction(code)
       if (r.ok) {
-        const next = new URLSearchParams(window.location.search).get('next') ?? '/dashboard'
+        // A7: ?next only survives through the allow-list — never raw.
+        const next = safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/dashboard'
         router.replace(next)
       } else {
         setError(r.error ?? 'Verification failed.')
