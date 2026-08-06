@@ -127,12 +127,19 @@ export default async function ProjectSnagsPage({ params, searchParams }: Props) 
           </Link>
         </div>
 
-        {/* Page header */}
+        {/* Page header.
+            The "+ New Snag" CTA mirrors the all-snags lens. Without it this
+            (default) lens offered only "Start site visit", so on a project with
+            no visits there was no route to snag creation at all — and therefore
+            none to photo capture, which lives on the create and detail pages. */}
         <div className="page-header">
           <div>
             <h1 className="page-title">Snags</h1>
             <p className="page-subtitle">{project.name}</p>
           </div>
+          <Link href={`/projects/${projectId}/snags/new`} className="btn-primary-amber">
+            + New Snag
+          </Link>
         </div>
 
         {/* Lens toggle */}

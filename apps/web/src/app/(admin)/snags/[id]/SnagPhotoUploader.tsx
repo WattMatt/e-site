@@ -4,40 +4,7 @@ import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/client'
-
-// ─── compressImage (inlined from useFieldPhotos to avoid pulling the full hook
-//     into this page's client bundle — same pattern as _BrandingFields.tsx) ───
-
-const MAX_WIDTH = 2048
-const QUALITY = 0.85
-
-async function compressImage(file: File): Promise<File> {
-  if (!file.type.startsWith('image/')) return file
-  if (typeof createImageBitmap !== 'function') return file
-
-  let bitmap: ImageBitmap | null = null
-  try {
-    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
-    const scale = Math.min(1, MAX_WIDTH / bitmap.width)
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(bitmap.width * scale)
-    canvas.height = Math.round(bitmap.height * scale)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return file
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/jpeg', QUALITY),
-    )
-    if (!blob || blob.size >= file.size) return file
-    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', {
-      type: 'image/jpeg',
-    })
-  } catch {
-    return file
-  } finally {
-    bitmap?.close()
-  }
-}
+import { uploadSnagPhoto } from '@/lib/image/compress'
 
 // ─── Photo types ──────────────────────────────────────────────────────────────
 // These literals MUST stay inside the field.snag_photos CHECK constraint
@@ -87,31 +54,15 @@ export function SnagPhotoUploader({ snagId, orgId, projectId, closeoutCount }: P
     let uploaded = 0
     try {
       for (const [i, raw] of Array.from(files).entries()) {
-        const file = await compressImage(raw)
-        const ext = file.name.split('.').pop() ?? 'jpg'
-        const path = `${orgId}/${projectId}/${snagId}/${Date.now()}-${i}.${ext}`
-
-        const { error: upErr } = await supabase.storage
-          .from('snag-photos')
-          .upload(path, file, { contentType: file.type })
-        if (upErr) throw upErr
-
-        const { error: insErr } = await supabase
-          .schema('field')
-          .from('snag_photos')
-          .insert({
-            snag_id: snagId,
-            file_path: path,
-            caption: raw.name,
-            photo_type: photoType,
-            sort_order: i,
-            uploaded_by: user?.id ?? null,
-          })
-        if (insErr) {
-          // Never strand the object if the row write fails.
-          await supabase.storage.from('snag-photos').remove([path])
-          throw insErr
-        }
+        await uploadSnagPhoto(supabase as never, {
+          file: raw,
+          orgId,
+          projectId,
+          snagId,
+          photoType,
+          sortOrder: i,
+          uploadedBy: user?.id ?? null,
+        })
         uploaded += 1
       }
 
