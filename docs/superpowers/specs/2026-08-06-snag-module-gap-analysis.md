@@ -248,6 +248,29 @@ All 7 CI checks green. shared 1275 / web 1244 / three type-checks / lint clean.
 
 **Not done deliberately:** no live completion email was sent to the real roster. The template is unit-tested (10 tests) and was rendered from the real renderer for review. Sending a live one is a one-line toggle on a project once you want it.
 
+---
+
+## Follow-up — PR [#159](https://github.com/WattMatt/e-site/pull/159) (merged `ca66d32`, deployed + prod-verified)
+
+User report after #158: *"the photo load for images is not in production."*
+
+The uploader **was** deployed and did render — but only on `/snags/[id]`, which a real user could not reach. Walking production as an owner/admin of WM-Consulting on a project with no visits, the page read:
+
+> `Snags` · `By visit | All snags` · **`0 visits`** · `+ Start site visit` · *"No site visits yet — start the first one above."*
+
+- The **by-visit lens is the default** and, unlike the all-snags lens, carried **no "+ New Snag" CTA** — zero links to `snags/new` on the page. On a project with no site visits there was **no route to snag creation at all**, hence none to photo capture.
+- The visit's **"Add snag" form had no photo field**, so even after starting a visit the first chance to attach a photo was three steps later.
+
+**Same design error as the close-out gap**: the capability existed, the flow never let anyone reach it. The control the user actually reaches ("Add snag") did one thing when the intent is two — record the defect *and* its evidence.
+
+Fixed: "+ New Snag" CTA on the by-visit lens; evidence-photo capture on the visit Add-snag form (uploads after creation, `photo_type='evidence'` + `visit_id`, photo failure warns without rolling back the saved snag); shared `compressImage` + orphan-safe `uploadSnagPhoto` helper so creation and the detail uploader run one path.
+
+The **contract test fired on this PR** — flagging `photo_type:'defect'` inside a doc comment in the new helper. The guard working, on prose rather than code. It now strips comments (block comments blanked line-for-line so line numbers still match); re-verified it still catches the real bug at `create.tsx:100`.
+
+Prod-verified on the exact journey: CTA present and linking to the create page, create page photo input present, and the visit-detail chunk carries "Evidence photos" / "Add snag + photos". Zero residue.
+
+⚠ **Verification lesson:** #158 was verified by hitting `/snags/[id]` *directly by URL* with a snag pre-seeded. That proved the page worked and completely missed that nobody could get to it. **Walk the flow from the empty state a real user starts in, not from a deep link into seeded data.**
+
 **Follow-ups worth considering:**
 - `field.snag_photos` INSERT RLS keys on **org membership**, not project access — a cross-org user promoted via `project_members` can view but not upload snag photos. Inherited from `field.snags`; unchanged here.
 - The web `snags/new` page still uploads photos without client-side compression (the new uploader does compress).
