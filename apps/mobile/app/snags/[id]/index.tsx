@@ -5,6 +5,7 @@ import {
 } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import * as ImagePicker from 'expo-image-picker'
 import { snagService, storageService, floorPlanService, formatDate } from '@esite/shared'
 import { useSupabase } from '../../../src/providers/SupabaseProvider'
 import { useAuth } from '../../../src/providers/AuthProvider'
@@ -50,6 +51,55 @@ export default function SnagDetailScreen() {
   })
 
   const orgId = (profile as any)?.user_organisations?.[0]?.organisation_id ?? ''
+
+  // ── Add a photo to an EXISTING snag ────────────────────────────────────────
+  // Until now this screen was read-only for photos, so a close-out photo could
+  // never be captured — and sign-off hard-requires one. photo_type must stay
+  // within the field.snag_photos CHECK set ('evidence' | 'closeout' | 'markup').
+  const [uploadingType, setUploadingType] = useState<'evidence' | 'closeout' | null>(null)
+
+  async function addPhoto(photoType: 'evidence' | 'closeout') {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync()
+    if (status !== 'granted') {
+      Alert.alert('Permission required', 'Allow camera access in Settings.')
+      return
+    }
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.8 })
+    if (result.canceled) return
+
+    const asset = result.assets[0]
+    const mime = asset.mimeType ?? 'image/jpeg'
+    const snagRow = snag as any
+    if (!orgId || !snagRow?.project_id) {
+      Alert.alert('Error', 'Missing project or organisation context.')
+      return
+    }
+
+    setUploadingType(photoType)
+    const ext = mime.split('/')[1] ?? 'jpg'
+    const path = storageService.snagPhotoPath(orgId, snagRow.project_id, id, `${Date.now()}.${ext}`)
+    try {
+      await storageService.uploadFromUri(client, 'snag-photos', path, asset.uri, mime)
+      const { error } = await client.schema('field').from('snag_photos').insert({
+        snag_id: id,
+        file_path: path,
+        photo_type: photoType,
+        sort_order: ((snag as any)?.snag_photos?.length ?? 0),
+        uploaded_by: profile?.id ?? null,
+      })
+      if (error) {
+        // Don't strand the uploaded object if the row write fails.
+        await storageService.remove(client, 'snag-photos', [path]).catch(() => {})
+        throw error
+      }
+      await queryClient.invalidateQueries({ queryKey: ['snag', id] })
+      await queryClient.invalidateQueries({ queryKey: ['snag-photos', id] })
+    } catch (e: any) {
+      Alert.alert('Upload failed', e.message ?? 'Could not add the photo.')
+    } finally {
+      setUploadingType(null)
+    }
+  }
 
   const STATUS_LABELS: Record<string, string> = {
     open: 'Open', in_progress: 'In Progress', resolved: 'Resolved',
@@ -116,6 +166,7 @@ export default function SnagDetailScreen() {
   const nextStatuses = STATUS_FLOW[snag.status] ?? []
   const photos = photoUrls ?? []
   const currentBadge = statusBadge(snag.status)
+  const hasCloseoutPhoto = ((snag as any).snag_photos ?? []).some((p: any) => p.photo_type === 'closeout')
 
   return (
     <>
@@ -163,10 +214,11 @@ export default function SnagDetailScreen() {
             </View>
           ) : null}
 
-          {/* Photos */}
-          {photos.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Photos ({photos.length})</Text>
+          {/* Photos — always rendered so the capture buttons stay reachable
+              even when the snag has no photos yet. */}
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Photos ({photos.length})</Text>
+            {photos.length > 0 && (
               <View style={styles.photoGrid}>
                 {photos.map((p: any) => (
                   <TouchableOpacity key={p.id} onPress={() => setLightbox(p.url)} style={styles.photoThumb}>
@@ -177,11 +229,43 @@ export default function SnagDetailScreen() {
                         <ActivityIndicator color={colors.textDim} size="small" />
                       </View>
                     )}
+                    {p.photo_type === 'closeout' && (
+                      <View style={styles.closeoutTag}>
+                        <Text style={styles.closeoutTagText}>AFTER</Text>
+                      </View>
+                    )}
                   </TouchableOpacity>
                 ))}
               </View>
+            )}
+
+            <View style={styles.photoActions}>
+              <TouchableOpacity
+                style={[styles.photoBtn, uploadingType !== null && styles.photoBtnDisabled]}
+                disabled={uploadingType !== null}
+                onPress={() => addPhoto('evidence')}
+              >
+                <Text style={styles.photoBtnText}>
+                  {uploadingType === 'evidence' ? 'Uploading…' : '📷  Evidence'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.photoBtn, styles.photoBtnCloseout, uploadingType !== null && styles.photoBtnDisabled]}
+                disabled={uploadingType !== null}
+                onPress={() => addPhoto('closeout')}
+              >
+                <Text style={[styles.photoBtnText, styles.photoBtnTextCloseout]}>
+                  {uploadingType === 'closeout' ? 'Uploading…' : '✓  Close-out'}
+                </Text>
+              </TouchableOpacity>
             </View>
-          )}
+
+            {!hasCloseoutPhoto && (
+              <Text style={styles.closeoutHint}>
+                A close-out photo is required before this snag can be signed off.
+              </Text>
+            )}
+          </View>
 
           {/* Floor plan pin */}
           {snag.floor_plan_pin ? (
@@ -283,6 +367,15 @@ const styles = StyleSheet.create({
   photoThumb: { width: 96, height: 96, borderRadius: radius.lg, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   photo: { width: '100%', height: '100%' },
   photoPlaceholder: { backgroundColor: colors.panel, alignItems: 'center', justifyContent: 'center' },
+  closeoutTag: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.greenMid, paddingVertical: 2, alignItems: 'center' },
+  closeoutTagText: { fontSize: 9, fontWeight: fontWeight.bold, color: colors.text, letterSpacing: 0.8 },
+  photoActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  photoBtn: { flex: 1, paddingVertical: spacing.md - 2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderMid, backgroundColor: colors.panel, alignItems: 'center' },
+  photoBtnCloseout: { borderColor: colors.greenMid },
+  photoBtnDisabled: { opacity: 0.5 },
+  photoBtnText: { fontSize: fontSize.small, fontWeight: fontWeight.semibold, color: colors.textMid },
+  photoBtnTextCloseout: { color: colors.green },
+  closeoutHint: { fontSize: fontSize.small, color: colors.amber, marginTop: spacing.sm },
   actionRow: { flexDirection: 'row', gap: spacing.sm + 2, flexWrap: 'wrap', marginTop: spacing.sm },
   actionBtn: { flex: 1, minWidth: 120, paddingVertical: spacing.md, borderRadius: radius.md, borderWidth: 1.5, alignItems: 'center' },
   actionText: { fontSize: fontSize.body, fontWeight: fontWeight.bold, textTransform: 'uppercase', letterSpacing: 0.6 },

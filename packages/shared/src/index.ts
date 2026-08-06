@@ -14,6 +14,7 @@ export * from './utils'
 export * from './email/rfi-email'
 export * from './email/qc-email'
 export * from './email/invite-email'
+export * from './email/snag-visit-email'
 
 // Inspections (Phase 2 — engine + template schema)
 export * from './inspections'

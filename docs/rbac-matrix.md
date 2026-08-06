@@ -239,8 +239,14 @@ Read-only actions require project access (any project member). Write/export acti
 | `addSnagToVisitAction` | W | W | W | W | W | W | — |
 | `closeSnagOnVisitAction` | W | W | W | W | W | W | — |
 | `exportSnagVisitReportAction` (renders + persists to `projects.reports`, kind=`snag`) | W | W | W | — | — | — | — |
+| `completeSnagVisitAction` (issues report + stamps completion + notifies roster) | W | W | W | — | — | — | — |
+| `reopenSnagVisitAction` (clears completion stamps) | W | W | W | — | — | — | — |
 
 > **Widened 2026-06-04:** raising/closing a snag *on a visit* (`addSnagToVisitAction`, `closeSnagOnVisitAction`) is gated to `SNAG_FIELD_ROLES` = every role **except** read-only `client_viewer` — site agents (contractor/inspector/supplier) can both raise and close snags during a visit. Creating/editing the visit and exporting the report stay `ORG_WRITE_ROLES` (owner/admin/PM).
+
+> **Visit completion (2026-08-06, migration 00178):** `completeSnagVisitAction` delegates to `exportSnagVisitReportAction` for the PDF (so versioning/supersede/storage behave identically to a manual export), then stamps `completed_at`/`completed_by`/`report_id` on `field.snag_visits` and fires ONE roster notification — bell `snag_visit_completed` + `notify_snag_email`-gated summary email with counts, top defects and 7-day signed-URL before/after thumbnails, deep-linking to the visit page (not a signed file URL). A stamp failure returns an error rather than announcing a completion the DB doesn't record. While a visit is open, `addSnagToVisitAction` suppresses the *individual* snag email (the bell still fires) so a 40-snag walk sends one message, not forty; snags added to an already-completed visit email immediately as before.
+
+> **Snag photo capture:** photos are written client-side under `field.snag_photos` RLS ("Org members can upload snag photos" — INSERT gated on **org membership**, with the `00161`/`00162` RESTRICTIVE overlay blocking `client_viewer`). The web uploader (`SnagPhotoUploader` on `/snags/[id]`) and the mobile snag-detail capture are rendered behind `SNAG_FIELD_ROLES`, matching the visit actions. Note the table's INSERT policy keys on org membership, **not** project access, so a cross-org user promoted via `project_members` can view but not upload snag photos — a pre-existing narrowness inherited from `field.snags`, unchanged here.
 
 ### Tenant hard-delete (`tenant-delete.actions.ts`)
 
