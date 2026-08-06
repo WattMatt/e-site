@@ -15,6 +15,7 @@ import {
 } from '@esite/shared'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { resolveAccent } from '@/lib/reports/theme'
 import { selectWithFallbackOn42703 } from './postgrest-fallback'
 
 export interface ExportPayload {
@@ -27,6 +28,14 @@ export interface ExportPayload {
    * R0 rates. Defaults to `false` in `getRevisionExportPayload`.
    */
   costRedacted?: boolean
+  /**
+   * Branding accent hex, resolved project → org → default #E69500 — the same
+   * precedence the react-pdf reports use (lib/reports/theme.ts resolveAccent).
+   * Optional so hand-built payloads (tests, fixtures) fall back to the
+   * Watson Mattheus amber via accentColor() in the renderers; when unset the
+   * output is byte-identical to the pre-accent hard-coded amber.
+   */
+  accent?: string
   project: {
     id: string
     name: string
@@ -281,7 +290,7 @@ export async function getRevisionExportPayload(
     (supabase as any)
       .schema('projects')
       .from('projects')
-      .select('id, name, organisation_id')
+      .select('id, name, organisation_id, report_accent_color')
       .eq('id', projectId)
       .single(),
     // vat_pct landed on revisions in migration 00060. SELECT is tolerant —
@@ -426,6 +435,21 @@ export async function getRevisionExportPayload(
 
   void client // silence linter — supabase typed access is via the `any` chain above
   if (!projectRow || !revisionRow) return null
+
+  // Branding accent: project wins → org fallback → default (resolveAccent),
+  // mirroring the react-pdf report gatherers (e.g. snag-visit-report-data).
+  // The org read runs under the caller's RLS — if the row isn't visible the
+  // accent simply falls back down the precedence chain (never fatal).
+  const projectAny = projectRow as any
+  const { data: orgRow } = await (supabase as any)
+    .from('organisations')
+    .select('report_accent_color')
+    .eq('id', projectAny.organisation_id)
+    .maybeSingle()
+  const accent = resolveAccent(
+    projectAny.report_accent_color ?? null,
+    (orgRow as any)?.report_accent_color ?? null,
+  )
 
   const sources = (sourcesData ?? []) as ExportPayload['sources']
   const nodes = (nodesData ?? []) as unknown as ExportPayload['nodes']
@@ -677,7 +701,12 @@ export async function getRevisionExportPayload(
 
   return {
     costRedacted: false,
-    project: projectRow as ExportPayload['project'],
+    accent,
+    project: {
+      id: projectAny.id,
+      name: projectAny.name,
+      organisation_id: projectAny.organisation_id,
+    },
     revision: {
       id: revisionAny.id,
       code: revisionAny.code,

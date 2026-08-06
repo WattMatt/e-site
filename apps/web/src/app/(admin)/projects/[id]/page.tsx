@@ -3,7 +3,6 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, snagService, rfiService, formatDate, formatZAR, COST_VIEW_ROLES } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { ReportButton } from '@/components/ui/ReportButton'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -72,7 +71,6 @@ export default async function ProjectDetailPage({ params }: Props) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span className={statusBadge(project.status)}>{project.status.replace('_', ' ')}</span>
-          <ReportButton type="snag-list" entityId={id} label="↓ Snag Report" />
           <Link href={`/rfis/new?projectId=${id}`} className="btn-primary-amber">+ RFI</Link>
           <Link href={`/projects/${id}/snags/new`} className="btn-primary-amber">+ Snag</Link>
         </div>

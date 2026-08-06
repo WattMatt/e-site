@@ -35,6 +35,16 @@ export interface LegendCardPayload {
   circuits: LegendCardCircuit[]
   /** Pre-formatted date string (route supplies it — keeps the renderer pure). */
   generatedAt: string
+  /**
+   * Branding accent hex, resolved project → org → default by the route (same
+   * precedence as the react-pdf reports; convert via lib/reports/pdf-accent
+   * accentColor when drawing). The card's current layout is deliberately
+   * monochrome (INK/MID/DIM/LINE greys — it prints on a sticker inside a DB
+   * door), so no element consumes the accent yet; the field is wired through
+   * per the portfolio PDF standard (C1) so accent furniture added later
+   * inherits project/org branding without another plumbing pass.
+   */
+  accent?: string | null
 }
 
 interface Geometry {

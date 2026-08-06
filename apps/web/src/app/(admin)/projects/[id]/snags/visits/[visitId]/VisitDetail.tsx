@@ -11,6 +11,7 @@ import {
   addSnagToVisitAction,
   exportSnagVisitReportAction,
 } from '@/actions/snag-visit.actions'
+import { previewViaSignedUrl } from '@/lib/file-open'
 import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -671,20 +672,26 @@ export function VisitDetail({
             onClick={async () => {
               setIsExporting(true)
               setExportError(null)
-              const result = await exportSnagVisitReportAction(visit.id, projectId)
+              // previewViaSignedUrl opens a BLANK tab synchronously (the click
+              // gesture is still on the call stack), awaits the thunk, then
+              // points the tab at the result. A window.open() AFTER awaiting
+              // the export — which renders + uploads the PDF server-side — is
+              // silently popup-blocked (Safari always; Chrome once the ~5s
+              // user activation expires). Same idiom as IssueReportButton.
+              const res = await previewViaSignedUrl(async () => {
+                const result = await exportSnagVisitReportAction(visit.id, projectId)
+                if ('error' in result) return { error: result.error }
+                // The export saved a new projects.reports row — refresh the panel.
+                setReportsKey((k) => k + 1)
+                // Open the inline preview route, which re-renders the current
+                // visit live (equivalent for the latest report) so the
+                // browser's native PDF viewer handles it. The server-load path
+                // serves the frozen storage_path artifact via a signed URL
+                // instead.
+                return { url: `/api/projects/${projectId}/snags/visits/${visit.id}/report` }
+              })
               setIsExporting(false)
-              if ('error' in result) {
-                setExportError(result.error)
-                return
-              }
-              // Build download URL via the inline preview route, which re-renders the
-              // current visit live (equivalent for the latest report). The server-load
-              // path serves the frozen storage_path artifact via a signed URL instead.
-              const previewUrl = `/api/projects/${projectId}/snags/visits/${visit.id}/report`
-              // The export saved a new projects.reports row — refresh the panel.
-              setReportsKey((k) => k + 1)
-              // Open inline in a new tab so the browser's native PDF viewer handles it.
-              window.open(previewUrl, '_blank', 'noopener')
+              if (res.error) setExportError(res.error)
             }}
             style={{
               fontSize: 12,

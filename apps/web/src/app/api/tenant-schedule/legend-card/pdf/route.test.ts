@@ -21,24 +21,28 @@ function req(qs: string) {
   return new NextRequest(`https://app.test/api/tenant-schedule/legend-card/pdf?${qs}`)
 }
 
-/** node: row returned for structure.nodes; details/circuits for the other tables. */
+/** node: row returned for structure.nodes; details/circuits/org for the other tables. */
 function mockClient(opts: {
   user?: boolean
   node?: Record<string, unknown> | null
   details?: Record<string, unknown> | null
   circuits?: Array<Record<string, unknown>>
+  org?: Record<string, unknown> | null
 } = {}) {
-  const { user = true, node = baseNode(), details = null, circuits = [] } = opts
+  const { user = true, node = baseNode(), details = null, circuits = [], org = null } = opts
   function thenable(t: string) {
     const q: any = {
       select: () => q, eq: () => q, order: () => q,
-      maybeSingle: () => Promise.resolve({ data: t === 'nodes' ? node : details }),
+      maybeSingle: () =>
+        Promise.resolve({ data: t === 'nodes' ? node : t === 'organisations' ? org : details }),
       then: (resolve: (v: unknown) => void) => resolve({ data: circuits, error: null }),
     }
     return q
   }
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: user ? { id: 'u-1' } : null } }) },
+    // Top-level from(): public-schema reads (organisations accent fallback).
+    from: (t: string) => thenable(t),
     schema: () => ({
       from: (t: string) => thenable(t),
     }),
