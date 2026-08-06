@@ -16,7 +16,7 @@ import {
 import type { CreateSnagVisitInput, UpdateSnagVisitInput, OrgRole } from '@esite/shared'
 import { gatherSnagVisitReportData } from '@/lib/reports/snag-visit-report-data'
 import { renderSnagVisitReport } from '@/lib/reports/snag-visit-report'
-import { notifySnagCreated, dispatchSnagStatusEmail } from '@/lib/snag-email'
+import { notifySnagCreated, dispatchSnagStatusEmail, notifySnagVisitCompleted } from '@/lib/snag-email'
 
 // ── Validation schemas (local — 'use server' files may NOT export schemas/consts) ──
 
@@ -80,6 +80,30 @@ async function guardVisitBelongsToProject(
     .maybeSingle()
   if (!data) return { error: 'Visit not found or does not belong to this project' }
   return null
+}
+
+/**
+ * Is this visit still in progress (not yet completed)?
+ *
+ * Drives per-snag email suppression: defects raised during an open walk are
+ * reported together in the completion email instead of one-by-one. Falls back
+ * to `false` (i.e. email normally) if the column is missing — the 00178
+ * pre-apply state must not silently swallow notifications.
+ */
+async function isVisitOpen(visitId: string): Promise<boolean> {
+  try {
+    const supabase = await createClient()
+    const { data, error } = await (supabase as any)
+      .schema('field')
+      .from('snag_visits')
+      .select('completed_at')
+      .eq('id', visitId)
+      .maybeSingle()
+    if (error || !data) return false
+    return data.completed_at == null
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -244,7 +268,10 @@ export async function addSnagToVisitAction(input: {
 
   const snagId = (snag as { id: string }).id
 
-  // Notify the whole project roster (bell + email) — best-effort.
+  // Notify the whole project roster — best-effort. While the visit is still in
+  // progress the individual email is suppressed (the bell still fires): these
+  // defects go out together in the visit-completion email, so a 40-snag walk
+  // sends one message rather than forty.
   await notifySnagCreated({
     snagId,
     projectId,
@@ -252,6 +279,7 @@ export async function addSnagToVisitAction(input: {
     priority: snagFields.priority ?? 'medium',
     assigneeId: snagFields.assignedTo ?? null,
     raiserId: guard.userId,
+    suppressEmail: await isVisitOpen(visitId),
   })
 
   revalidatePath(SNAGS_PATH(projectId))
@@ -513,4 +541,109 @@ export async function exportSnagVisitReportAction(
 
   revalidatePath(`/projects/${projectId}/snags/visits/${visitId}`)
   return { reportId, storagePath }
+}
+
+// ── Complete visit ──
+
+export type CompleteSnagVisitResult =
+  | { error: string }
+  | { reportId: string; storagePath: string; completedAt: string }
+
+/**
+ * Mark a snag site visit complete.
+ *
+ * This is the lifecycle event the module previously lacked. Completing a visit:
+ *   1. issues the Snag & Defect Report (reusing exportSnagVisitReportAction, so
+ *      versioning + supersede + storage all behave exactly as a manual export),
+ *   2. stamps completed_at / completed_by / report_id on the visit,
+ *   3. emails the whole project roster ONE summary with counts, top defects and
+ *      before/after thumbnails, plus a deep link to this visit.
+ *
+ * Re-completing is allowed (site teams do re-issue): it supersedes the prior
+ * report and repoints report_id. RBAC: ORG_WRITE_ROLES, matching export.
+ */
+export async function completeSnagVisitAction(
+  visitId: string,
+  projectId: string,
+): Promise<CompleteSnagVisitResult> {
+  const parse = z.tuple([uuidSchema, uuidSchema]).safeParse([visitId, projectId])
+  if (!parse.success) return { error: 'Invalid parameters' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const visitGuard = await guardVisitBelongsToProject(visitId, projectId)
+  if (visitGuard) return { error: visitGuard.error }
+
+  // Issue the report first — if this fails there is nothing to announce, and
+  // the visit stays open so the user can retry.
+  const exported = await exportSnagVisitReportAction(visitId, projectId)
+  if ('error' in exported) return { error: exported.error }
+
+  const completedAt = new Date().toISOString()
+  const serviceClient = createServiceClient()
+
+  const { error: stampError } = await (serviceClient as any)
+    .schema('field')
+    .from('snag_visits')
+    .update({
+      completed_at: completedAt,
+      completed_by: guard.userId,
+      report_id: exported.reportId,
+    })
+    .eq('id', visitId)
+    .eq('project_id', projectId)
+
+  if (stampError) {
+    // The report exists and is valid; only the stamp failed. Surface it rather
+    // than announcing a completion the DB doesn't record.
+    console.error('[completeSnagVisitAction] stamp error', stampError)
+    return { error: `Report issued but the visit could not be marked complete: ${stampError.message}` }
+  }
+
+  // Roster bell + summary email — best-effort, never unwinds the completion.
+  await notifySnagVisitCompleted({
+    visitId,
+    projectId,
+    completedById: guard.userId,
+  })
+
+  revalidatePath(SNAGS_PATH(projectId))
+  revalidatePath(`/projects/${projectId}/snags/visits/${visitId}`)
+  return { reportId: exported.reportId, storagePath: exported.storagePath, completedAt }
+}
+
+/**
+ * Re-open a completed visit (owner / admin / PM).
+ *
+ * Clears the completion stamps so further snags can be raised or closed against
+ * the visit. The issued report row is deliberately left alone — it remains a
+ * valid historical artefact and the next completion supersedes it.
+ */
+export async function reopenSnagVisitAction(
+  visitId: string,
+  projectId: string,
+): Promise<{ error?: string }> {
+  const parse = z.tuple([uuidSchema, uuidSchema]).safeParse([visitId, projectId])
+  if (!parse.success) return { error: 'Invalid parameters' }
+
+  const guard = await guardProjectAccess(projectId)
+  if (guard.error !== undefined) return { error: guard.error }
+
+  const visitGuard = await guardVisitBelongsToProject(visitId, projectId)
+  if (visitGuard) return { error: visitGuard.error }
+
+  const serviceClient = createServiceClient()
+  const { error } = await (serviceClient as any)
+    .schema('field')
+    .from('snag_visits')
+    .update({ completed_at: null, completed_by: null })
+    .eq('id', visitId)
+    .eq('project_id', projectId)
+
+  if (error) return { error: error.message }
+
+  revalidatePath(SNAGS_PATH(projectId))
+  revalidatePath(`/projects/${projectId}/snags/visits/${visitId}`)
+  return {}
 }

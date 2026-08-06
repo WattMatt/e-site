@@ -10,6 +10,8 @@ import {
   closeSnagOnVisitAction,
   addSnagToVisitAction,
   exportSnagVisitReportAction,
+  completeSnagVisitAction,
+  reopenSnagVisitAction,
 } from '@/actions/snag-visit.actions'
 import { previewViaSignedUrl } from '@/lib/file-open'
 import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
@@ -421,9 +423,12 @@ function AddSnagForm({
         </button>
       </div>
 
-      {/* NOTE: Photos are added AFTER creation on the snag detail page.
-          This form intentionally only collects core snag fields.
-          Keeping it simple — upload flow lives on /snags/[id]. */}
+      {/* NOTE: this form intentionally collects only the core snag fields.
+          Photos (evidence AND close-out) are added afterwards via the uploader
+          on the snag detail page, /snags/[id] — see SnagPhotoUploader. Until
+          that uploader existed this comment described a flow that wasn't there,
+          which is why no snag could ever reach sign-off: closing a snag
+          requires a close-out photo and nothing could produce one. */}
       <form onSubmit={onSubmit} noValidate>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Title */}
@@ -571,6 +576,14 @@ export function VisitDetail({
   const [exportError, setExportError] = useState<string | null>(null)
   // Bumped after an export so the (self-loading) saved-reports panel re-fetches.
   const [reportsKey, setReportsKey] = useState(0)
+  const [isCompleting, setIsCompleting] = useState(false)
+  const [completeError, setCompleteError] = useState<string | null>(null)
+  // Two-step confirm: the first click arms, the second commits. Same idiom as
+  // the photo delete control — window.confirm() is silently suppressed in Safari.
+  const [confirmComplete, setConfirmComplete] = useState(false)
+
+  const completedAt: string | null = (visit as any).completed_at ?? null
+  const isCompleted = completedAt != null
 
   // All hooks unconditionally above any conditional render — React #310 rule.
 
@@ -709,8 +722,95 @@ export function VisitDetail({
           >
             {isExporting ? 'Exporting…' : '⬇ Export PDF'}
           </button>
+
+          {/* Complete visit — issues the report AND notifies the whole roster.
+              Export PDF above stays available for a quiet re-issue. */}
+          {!isCompleted && (
+            <button
+              type="button"
+              disabled={isCompleting}
+              onClick={async () => {
+                if (!confirmComplete) {
+                  setConfirmComplete(true)
+                  setTimeout(() => setConfirmComplete(false), 4000)
+                  return
+                }
+                setConfirmComplete(false)
+                setIsCompleting(true)
+                setCompleteError(null)
+                const res = await completeSnagVisitAction(visit.id, projectId)
+                setIsCompleting(false)
+                if ('error' in res) setCompleteError(res.error)
+                else setReportsKey((k) => k + 1)
+              }}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: 'none',
+                background: confirmComplete ? 'var(--c-amber)' : 'var(--c-green)',
+                color: confirmComplete ? 'var(--c-on-amber)' : 'var(--c-on-green, #05130d)',
+                cursor: isCompleting ? 'not-allowed' : 'pointer',
+                opacity: isCompleting ? 0.6 : 1,
+                transition: 'all 0.12s',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {isCompleting
+                ? 'Completing…'
+                : confirmComplete
+                  ? 'Confirm — notify the team?'
+                  : '✓ Complete visit'}
+            </button>
+          )}
+
+          {isCompleted && (
+            <button
+              type="button"
+              disabled={isCompleting}
+              onClick={async () => {
+                setIsCompleting(true)
+                setCompleteError(null)
+                const res = await reopenSnagVisitAction(visit.id, projectId)
+                setIsCompleting(false)
+                if (res.error) setCompleteError(res.error)
+              }}
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: '1px solid var(--c-border)',
+                background: 'transparent',
+                color: 'var(--c-text-dim)',
+                cursor: isCompleting ? 'not-allowed' : 'pointer',
+                opacity: isCompleting ? 0.6 : 1,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {isCompleting ? 'Reopening…' : 'Reopen visit'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* ── Completed banner ──────────────────────────────────────────── */}
+      {isCompleted && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: '8px 12px',
+            borderRadius: 6,
+            border: '1px solid var(--c-green)',
+            background: 'var(--c-green-dim)',
+            color: 'var(--c-green)',
+            fontSize: 12,
+          }}
+        >
+          ✓ Visit completed {formatVisitDate(completedAt!)} — report issued and the project team notified.
+        </div>
+      )}
 
       {/* ── Export error ──────────────────────────────────────────────── */}
       {exportError && (
@@ -722,6 +822,12 @@ export function VisitDetail({
           }}
         >
           Export failed: {exportError}
+        </p>
+      )}
+
+      {completeError && (
+        <p style={{ color: 'var(--c-red)', fontSize: 12, margin: '4px 0 0' }}>
+          Could not complete the visit: {completeError}
         </p>
       )}
 

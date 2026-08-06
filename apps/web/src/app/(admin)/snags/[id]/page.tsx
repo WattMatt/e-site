@@ -1,9 +1,11 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { snagService, formatDate, formatRelative } from '@esite/shared'
+import { snagService, formatDate, formatRelative, SNAG_FIELD_ROLES } from '@esite/shared'
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { SnagStatusForm } from './SnagStatusForm'
 import { SnagPhotoGrid } from './SnagPhotoGrid'
+import { SnagPhotoUploader } from './SnagPhotoUploader'
 
 interface Props { params: Promise<{ id: string }> }
 
@@ -97,6 +99,16 @@ export default async function SnagDetailPage({ params }: Props) {
   // Determine if photos need grouping (>1 distinct visit_id, or any non-null visit_id)
   const hasVisitGroups = photosByVisit.size > 1 || (photosByVisit.size === 1 && !photosByVisit.has(null))
 
+  // ── Photo upload gate ──────────────────────────────────────────────────────
+  // Same role set the visit actions use: every site role EXCEPT read-only
+  // client_viewer. RLS enforces this independently (00161/00162 restrictive
+  // policies); this only decides whether to render the control.
+  const canUploadPhotos =
+    project?.id != null &&
+    (await requireEffectiveRole(supabase, project.id, SNAG_FIELD_ROLES)).ok
+
+  const closeoutCount = photoUrls.filter((p: any) => p.photo_type === 'closeout').length
+
   return (
     <div className="animate-fadeup" style={{ maxWidth: 860 }}>
       {/* Breadcrumb */}
@@ -141,15 +153,22 @@ export default async function SnagDetailPage({ params }: Props) {
             </div>
           )}
 
-          {/* Photos — grouped by visit if visit_id column is populated (00120+) */}
-          {photoUrls.length > 0 && (
+          {/* Photos — grouped by visit if visit_id column is populated (00120+).
+              The panel renders even with zero photos so the uploader is always
+              reachable: before this existed a snag could only ever receive a
+              photo during the seconds of its initial creation. */}
+          {(photoUrls.length > 0 || canUploadPhotos) && (
             <div className="data-panel">
               <div className="data-panel-header">
                 <span className="data-panel-title">Evidence Photos</span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>{photoUrls.length} photo{photoUrls.length !== 1 ? 's' : ''}</span>
               </div>
               <div style={{ padding: '14px 18px' }}>
-                {hasVisitGroups ? (
+                {photoUrls.length === 0 ? (
+                  <p style={{ fontSize: 13, color: 'var(--c-text-dim)', margin: '0 0 14px' }}>
+                    No photos yet.
+                  </p>
+                ) : hasVisitGroups ? (
                   // Grouped by visit — each group gets a small caption label.
                   Array.from(photosByVisit.entries()).map(([visitId, groupPhotos]) => {
                     const visitNo = visitId ? visitMap.get(visitId)?.visit_no : undefined
@@ -175,6 +194,17 @@ export default async function SnagDetailPage({ params }: Props) {
                   })
                 ) : (
                   <SnagPhotoGrid photos={photoUrls} />
+                )}
+
+                {canUploadPhotos && project?.id && (
+                  <div style={{ marginTop: photoUrls.length > 0 ? 16 : 0, paddingTop: photoUrls.length > 0 ? 16 : 0, borderTop: photoUrls.length > 0 ? '1px solid var(--c-border)' : 'none' }}>
+                    <SnagPhotoUploader
+                      snagId={id}
+                      orgId={snag.organisation_id as string}
+                      projectId={project.id}
+                      closeoutCount={closeoutCount}
+                    />
+                  </div>
                 )}
               </div>
             </div>

@@ -88,12 +88,24 @@ export default function CreateSnagScreen() {
           const ext = photo.type.split('/')[1] ?? 'jpg'
           const path = storageService.snagPhotoPath(orgId, snag.project_id, snag.id, `${Date.now()}-${i}.${ext}`)
           await storageService.uploadFromUri(client, 'snag-photos', path, photo.uri, photo.type)
-          await client.schema('field').from('snag_photos').insert({
+          // photo_type MUST be one of the field.snag_photos CHECK values
+          // ('evidence' | 'closeout' | 'markup' — 00004_field_schema.sql). This
+          // previously sent 'defect', which the constraint rejected, so every
+          // mobile snag photo insert failed AFTER its upload had succeeded —
+          // leaving an orphaned object in the bucket and no row. Hence both the
+          // corrected literal and the cleanup below.
+          const { error: insertErr } = await client.schema('field').from('snag_photos').insert({
             snag_id: snag.id,
             file_path: path,
-            photo_type: 'defect',
+            photo_type: 'evidence',
             sort_order: i,
+            uploaded_by: profile!.id,
           })
+          if (insertErr) {
+            // Don't strand the uploaded object if the row write fails.
+            await storageService.remove(client, 'snag-photos', [path]).catch(() => {})
+            throw insertErr
+          }
         }))
       }
 
