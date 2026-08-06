@@ -212,9 +212,43 @@ Any failure returns to phase 1 of the protocol — no patching the patch.
 
 ---
 
-## Open decisions (need the user's call before implementation)
+## Decisions taken (confirmed by the user, 2026-08-06)
 
-1. **Report delivery in the email** — deep link to the visit page (login required, safest) / signed PDF URL with expiry (forwardable to non-users) / PDF attached (heaviest; photo packs run to MBs).
-2. **Per-snag email behaviour during an open visit** — keep as-is (noisy), or suppress while a visit is in progress and roll everything into the completion email.
-3. **Close-out photo requirement** — keep mandatory once the uploader exists (recommended — it is the module's evidentiary value), or make it advisory.
-4. **Scope of this delivery** — all five phases in one PR, or ship phase 1 (the corrective unblock) first as its own fast PR, since it is small, self-contained, needs no migration, and fixes a total outage.
+1. **Report delivery** — deep link to the visit page. Login required, so access stays governed by RLS.
+2. **Per-snag email during an open visit** — suppressed; rolled into the completion email. The bell still fires. Standalone snags, and snags added to an already-completed visit, email immediately.
+3. **Close-out photo** — stays mandatory for sign-off.
+4. **Delivery** — all five phases in one PR.
+
+---
+
+## Outcome — shipped 2026-08-06 (PR [#158](https://github.com/WattMatt/e-site/pull/158), merged `04af21b`, migration `00178` applied, deployed + prod-verified)
+
+All 7 CI checks green. shared 1275 / web 1244 / three type-checks / lint clean.
+
+**Prod verification** ran end-to-end inside a **throwaway project** (`ZZ-SNAG-VERIFY`) with `notify_snag_email = false`, because `project_notification_recipients()` resolved **12 real wmeng.co.za people** for any WM-Consulting project — a live completion email would have gone to the whole company. Verified:
+
+| Check | Result |
+|---|---|
+| `photo_type='evidence'` + `'closeout'` rows insert | ✅ constraint accepted both — the first snag photos ever written to this DB |
+| Close-out guard would pass → snag `signed_off` | ✅ the first sign-off ever, previously impossible |
+| Snag detail page (deployed) | ✅ Evidence/Close-out selector + file input render |
+| Visit page (deployed) | ✅ "Complete visit" control present |
+| Report PDF via preview route | ✅ 200, 2 pages, **embedded image objects present** |
+| `completeSnagVisitAction` invoked over real HTTP | ✅ `completed_at`/`completed_by`/`report_id` all stamped |
+| Report versioning | ✅ v2 issued, v1 `superseded` with `superseded_by` set; `report_id` → current issued row |
+| Bell `snag_visit_completed` | ✅ inserted — proves the 00178 enum re-declaration accepted the new type |
+| Email gate | ✅ suppressed by `notify_snag_email=false` |
+| Completed-state UI | ✅ banner rendered, Complete hidden, Reopen offered |
+| Teardown | ✅ zero residue: 0 test projects / probe users / probe profiles / snag reports / visit bells / auth_events; real data unchanged (6 snags, 1 visit, 13 projects) |
+
+**Gotchas found during verification (worth remembering):**
+
+- **Next server-action IDs must be read from `createServerReference("<id>", …, "<exportName>")`** in the production client chunk. A looser "40-hex near the name" regex mis-mapped `exportSnagVisitReportAction` and `completeSnagVisitAction` to the same id, so the first invocation silently ran *export* — the report appeared but nothing was stamped, which briefly looked like a product bug. It wasn't.
+- **The `Prefer: resolution=merge-duplicates` gotcha bit again.** A supabase-js `.upsert()` on `projects.project_settings` reported no error yet left `notify_snag_email = true`. Always re-read the row after an upsert — especially when the value gates outbound email.
+
+**Not done deliberately:** no live completion email was sent to the real roster. The template is unit-tested (10 tests) and was rendered from the real renderer for review. Sending a live one is a one-line toggle on a project once you want it.
+
+**Follow-ups worth considering:**
+- `field.snag_photos` INSERT RLS keys on **org membership**, not project access — a cross-org user promoted via `project_members` can view but not upload snag photos. Inherited from `field.snags`; unchanged here.
+- The web `snags/new` page still uploads photos without client-side compression (the new uploader does compress).
+- KINGSWALK's 6 real snags still have zero photos — the module now works, but historical snags have no evidence to show.
