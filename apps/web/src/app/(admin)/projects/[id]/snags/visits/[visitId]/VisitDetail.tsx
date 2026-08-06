@@ -15,6 +15,8 @@ import {
 } from '@/actions/snag-visit.actions'
 import { previewViaSignedUrl } from '@/lib/file-open'
 import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
+import { createClient } from '@/lib/supabase/client'
+import { uploadSnagPhoto } from '@/lib/image/compress'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -331,11 +333,13 @@ function labelFor(m: Member) {
 function AddSnagForm({
   visitId,
   projectId,
+  orgId,
   members,
   onClose,
 }: {
   visitId: string
   projectId: string
+  orgId: string
   members: Member[]
   onClose: () => void
 }) {
@@ -346,8 +350,11 @@ function AddSnagForm({
   const [category, setCategory] = useState('general')
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium')
   const [assignedTo, setAssignedTo] = useState('')
+  const [photoFiles, setPhotoFiles] = useState<File[]>([])
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  // Photo trouble must not read as "the snag failed" — the snag is already saved.
+  const [photoWarning, setPhotoWarning] = useState<string | null>(null)
 
   // All state hooks are unconditional — never after a conditional return.
 
@@ -355,6 +362,7 @@ function AddSnagForm({
     e.preventDefault()
     if (!title.trim()) { setError('Title is required'); return }
     setError(null)
+    setPhotoWarning(null)
     startTransition(async () => {
       const result = await addSnagToVisitAction({
         visitId,
@@ -368,10 +376,39 @@ function AddSnagForm({
       })
       if (result.error) {
         setError(result.error)
-      } else {
-        router.refresh()
-        onClose()
+        return
       }
+
+      // Attach the evidence photos to the snag we just created. The snag row
+      // already exists at this point, so a photo failure is reported as a
+      // warning and never rolls the snag back.
+      if (result.snagId && photoFiles.length > 0) {
+        try {
+          const supabase = createClient()
+          const { data: { user } } = await supabase.auth.getUser()
+          for (const [i, file] of photoFiles.entries()) {
+            await uploadSnagPhoto(supabase as never, {
+              file,
+              orgId,
+              projectId,
+              snagId: result.snagId,
+              photoType: 'evidence',
+              sortOrder: i,
+              uploadedBy: user?.id ?? null,
+              visitId,
+            })
+          }
+        } catch (err: unknown) {
+          setPhotoWarning(
+            `Snag saved, but a photo did not upload: ${err instanceof Error ? err.message : 'unknown error'}. Add it from the snag page.`,
+          )
+          router.refresh()
+          return
+        }
+      }
+
+      router.refresh()
+      onClose()
     })
   }
 
@@ -423,12 +460,10 @@ function AddSnagForm({
         </button>
       </div>
 
-      {/* NOTE: this form intentionally collects only the core snag fields.
-          Photos (evidence AND close-out) are added afterwards via the uploader
-          on the snag detail page, /snags/[id] — see SnagPhotoUploader. Until
-          that uploader existed this comment described a flow that wasn't there,
-          which is why no snag could ever reach sign-off: closing a snag
-          requires a close-out photo and nothing could produce one. */}
+      {/* Evidence photos are captured HERE, at the moment the defect is
+          recorded — that is the whole point of a site walk. Close-out photos
+          come later, from the uploader on the snag detail page, because they
+          only exist once the defect has been fixed. */}
       <form onSubmit={onSubmit} noValidate>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Title */}
@@ -538,13 +573,36 @@ function AddSnagForm({
             </select>
           </div>
 
+          {/* Evidence photos */}
+          <div>
+            <label style={FIELD_LABEL} htmlFor="asvf_photos">Evidence photos</label>
+            <input
+              id="asvf_photos"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic"
+              multiple
+              disabled={isPending}
+              onChange={e => setPhotoFiles(Array.from(e.target.files ?? []))}
+              style={{ fontSize: 12, color: 'var(--c-text-dim)', width: '100%' }}
+            />
+            <p style={{ fontSize: 11, color: 'var(--c-text-dim)', margin: '4px 0 0' }}>
+              {photoFiles.length > 0
+                ? `${photoFiles.length} photo${photoFiles.length === 1 ? '' : 's'} will be attached to this snag.`
+                : 'Photograph the defect as found. The close-out photo is added later, once it is fixed.'}
+            </p>
+          </div>
+
           {error && (
             <p style={{ color: 'var(--c-red)', fontSize: 12, marginTop: 0 }}>{error}</p>
           )}
 
+          {photoWarning && (
+            <p style={{ color: 'var(--c-amber)', fontSize: 12, marginTop: 0 }}>{photoWarning}</p>
+          )}
+
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
             <Button type="submit" size="sm" isLoading={isPending}>
-              Add snag
+              {photoFiles.length > 0 ? 'Add snag + photos' : 'Add snag'}
             </Button>
             <Button type="button" variant="secondary" size="sm" onClick={onClose}>
               Cancel
@@ -865,6 +923,7 @@ export function VisitDetail({
         <AddSnagForm
           visitId={visit.id}
           projectId={projectId}
+          orgId={(visit as any).organisation_id as string}
           members={members}
           onClose={() => setShowAddSnag(false)}
         />

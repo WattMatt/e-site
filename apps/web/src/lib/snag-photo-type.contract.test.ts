@@ -65,6 +65,26 @@ function walk(dir: string, out: string[]): void {
 }
 
 /**
+ * Strip comments so prose about the bug doesn't read as the bug.
+ *
+ * Block comments go entirely; for line comments we drop only whole-line `//`
+ * and doc-continuation `*` lines rather than everything after a `//`, so a URL
+ * inside a string can't silently truncate a line and hide a real literal.
+ */
+function stripComments(src: string): string {
+  return src
+    // Replace each block comment with its own newlines so reported line
+    // numbers still match the real file.
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ''))
+    .split('\n')
+    .map((l) => {
+      const t = l.trimStart()
+      return t.startsWith('//') || t.startsWith('*') ? '' : l
+    })
+    .join('\n')
+}
+
+/**
  * Collect every quoted photo_type literal, in either of the two shapes the
  * codebase uses:
  *   photo_type: 'evidence'          (insert payloads / object literals)
@@ -85,7 +105,7 @@ function collectLiterals(): Array<{ file: string; value: string; line: number }>
   for (const file of files) {
     // The contract test itself and the migration-parsing fixtures are exempt.
     if (file.endsWith('snag-photo-type.contract.test.ts')) continue
-    const lines = readFileSync(file, 'utf8').split('\n')
+    const lines = stripComments(readFileSync(file, 'utf8')).split('\n')
     lines.forEach((line, i) => {
       for (const re of patterns) {
         re.lastIndex = 0
@@ -127,7 +147,11 @@ describe('field.snag_photos photo_type contract', () => {
     // both hard-require a 'closeout' photo. If no code path ever WRITES one,
     // snags become impossible to sign off — which is what shipped.
     const writers = collectLiterals().filter(
-      (f) => f.value === 'closeout' && /photo_type\s*:/.test(readFileSync(join(REPO_ROOT, f.file), 'utf8').split('\n')[f.line - 1]),
+      (f) =>
+        f.value === 'closeout' &&
+        /photo_type\s*:/.test(
+          stripComments(readFileSync(join(REPO_ROOT, f.file), 'utf8')).split('\n')[f.line - 1] ?? '',
+        ),
     )
     expect(
       writers.length,
