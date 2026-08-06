@@ -13,6 +13,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { projectService } from '@esite/shared'
+import { resolveAccent } from '@/lib/reports/theme'
 import {
   renderLegendCardPdf,
   type LegendCardCircuit,
@@ -47,6 +48,23 @@ export async function GET(req: NextRequest) {
 
   const project = await projectService.getById(supabase as never, node.project_id).catch(() => null)
   if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // Branding accent: project → org → default, same precedence as the
+  // react-pdf reports (lib/reports/theme.ts). Best-effort like the other
+  // auxiliary reads in this route — an RLS-invisible or failed org read just
+  // falls down the precedence chain (never fatal).
+  let orgAccent: string | null = null
+  try {
+    const { data: orgRow } = await (supabase as any)
+      .from('organisations')
+      .select('report_accent_color')
+      .eq('id', (project as any).organisation_id)
+      .maybeSingle()
+    orgAccent = (orgRow as any)?.report_accent_color ?? null
+  } catch (err) {
+    console.error('[legend-card] organisations read failed (non-fatal):', err)
+  }
+  const accent = resolveAccent((project as any).report_accent_color ?? null, orgAccent)
 
   // Header fields — best-effort (pre-00169 the columns don't exist).
   let details: {
@@ -114,6 +132,7 @@ export async function GET(req: NextRequest) {
       },
       circuits,
       generatedAt: new Date().toISOString().slice(0, 10),
+      accent,
     },
     size,
   )

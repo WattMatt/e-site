@@ -17,6 +17,7 @@ import type { EnrichedCable, ExportPayload } from './export-payload'
 import { stampPdfDraft } from './export-watermark'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
 import { winAnsiSafe } from './winansi'
+import { accentColor } from '@/lib/reports/pdf-accent'
 
 /**
  * Sanitising wrappers — the ONLY way this module draws or measures text.
@@ -45,8 +46,10 @@ const LAND_H = A4_W
 
 const MARGIN = 32
 
-// Watson Mattheus amber accent
-const AMBER = rgb(0.902, 0.584, 0)
+// Brand accent: payload.accent (project → org precedence, resolved by
+// getRevisionExportPayload) through the shared accentColor chokepoint.
+// When no custom accent is set this yields exactly the historical
+// Watson Mattheus amber rgb(0.902, 0.584, 0) — output unchanged.
 const TEXT_DARK = rgb(0.05, 0.05, 0.05)
 const TEXT_MID = rgb(0.4, 0.4, 0.4)
 const TEXT_DIM = rgb(0.6, 0.6, 0.6)
@@ -81,6 +84,7 @@ function drawCoverPage(
   helvB: PDFFont,
   helvI: PDFFont,
 ): void {
+  const AMBER = accentColor(payload.accent)
   const page = pdf.addPage([A4_W, A4_H])
   if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
 
@@ -293,6 +297,7 @@ function drawSchedulePages(
   helv: PDFFont,
   helvB: PDFFont,
 ): void {
+  const AMBER = accentColor(payload.accent)
   // 15 columns over LAND_W = 841.89, accounting for margins.
   // ONE ROW PER RUN (= supply) — parallel strands collapse under "×N".
   function runLabel(run: ExportPayload['runs'][number]): string {
@@ -511,6 +516,7 @@ function drawLandscapeHeader(
   pageNum: number,
   pageTotal: number,
 ): void {
+  const AMBER = accentColor(payload.accent)
   page.drawRectangle({
     x: 0,
     y: LAND_H - 36,
@@ -589,6 +595,7 @@ function drawCostPage(
   helv: PDFFont,
   helvB: PDFFont,
 ): void {
+  const AMBER = accentColor(payload.accent)
   const page = pdf.addPage([A4_W, A4_H])
   if (payload.revision.status === 'DRAFT') stampPdfDraft(page, helvB)
   drawPortraitHeader(page, payload, helv, helvB, 'COST SUMMARY')
@@ -853,6 +860,7 @@ function drawPortraitHeader(
   helvB: PDFFont,
   title: string,
 ): void {
+  const AMBER = accentColor(payload.accent)
   page.drawRectangle({
     x: 0,
     y: A4_H - 56,

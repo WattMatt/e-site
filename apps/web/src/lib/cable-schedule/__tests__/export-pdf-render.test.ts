@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, PDFArray, PDFRawStream, decodePDFRawStream } from 'pdf-lib'
 import { renderRevisionPdf } from '../export-pdf'
 import { renderTagListPdf } from '../export-tag-list-pdf'
 import { renderAveryLabelsPdf } from '../export-avery-labels'
@@ -143,6 +143,34 @@ async function pageCount(bytes: Uint8Array): Promise<number> {
   return doc.getPageCount()
 }
 
+/**
+ * Decode every page content stream so colour operators are assertable.
+ * pdf-lib Flate-compresses content streams on save, so a raw byte search
+ * can't see `r g b rg` fill operators — decompress first.
+ */
+async function contentStreamText(bytes: Uint8Array): Promise<string> {
+  const doc = await PDFDocument.load(bytes)
+  let text = ''
+  for (const page of doc.getPages()) {
+    const contents = page.node.Contents()
+    if (!contents) continue
+    const items = contents instanceof PDFArray ? contents.asArray() : [contents]
+    for (const item of items) {
+      const stream = page.node.context.lookup(item)
+      if (stream instanceof PDFRawStream) {
+        text += new TextDecoder('latin1').decode(decodePDFRawStream(stream).decode())
+      }
+    }
+  }
+  return text
+}
+
+/** Historical hard-coded Watson Mattheus amber — rgb(0.902, 0.584, 0). */
+const AMBER_FILL_OP = '0.902 0.584 0 rg'
+/** #336699 → rgb(0.2, 0.4, 0.6) through the accentColor chokepoint. */
+const CUSTOM_ACCENT = '#336699'
+const CUSTOM_FILL_OP = '0.2 0.4 0.6 rg'
+
 describe('renderRevisionPdf', () => {
   it('renders the full pack with hostile unicode everywhere (Ω/km header + → tag cards)', async () => {
     const bytes = await renderRevisionPdf(hostilePayload())
@@ -170,6 +198,39 @@ describe('renderRevisionPdf', () => {
       costLines: [],
     })
     expect(await pageCount(bytes)).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('branding accent wiring (payload.accent → accentColor)', () => {
+  it('defaults to the historical WM amber when no accent is set (output unchanged)', async () => {
+    const payload = hostilePayload()
+    expect(payload.accent).toBeUndefined()
+    const text = await contentStreamText(await renderRevisionPdf(payload))
+    expect(text).toContain(AMBER_FILL_OP)
+    expect(text).not.toContain(CUSTOM_FILL_OP)
+  })
+
+  it('renders the pack in a custom project/org accent when payload.accent is set', async () => {
+    const text = await contentStreamText(
+      await renderRevisionPdf({ ...hostilePayload(), accent: CUSTOM_ACCENT }),
+    )
+    expect(text).toContain(CUSTOM_FILL_OP)
+    expect(text).not.toContain(AMBER_FILL_OP)
+  })
+
+  it('falls back to the default amber on a malformed accent hex (never crashes a render)', async () => {
+    const text = await contentStreamText(
+      await renderRevisionPdf({ ...hostilePayload(), accent: 'not-a-colour' }),
+    )
+    expect(text).toContain(AMBER_FILL_OP)
+  })
+
+  it('tag renderers accept an accented payload and stay monochrome (no accent furniture)', async () => {
+    const payload = { ...hostilePayload(), accent: CUSTOM_ACCENT }
+    const tagText = await contentStreamText(await renderTagListPdf(payload))
+    const averyText = await contentStreamText(await renderAveryLabelsPdf(payload))
+    expect(tagText).not.toContain(CUSTOM_FILL_OP)
+    expect(averyText).not.toContain(CUSTOM_FILL_OP)
   })
 })
 

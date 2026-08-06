@@ -7,9 +7,11 @@
  * All mapping logic (response→row, photo-vs-file routing, tally, failed-list,
  * group-entry expansion, caption assembly) lives here and is unit-tested.
  *
- * Parity target: apps/edge-functions/supabase/functions/render-inspection-pdf
- * (payload-loader.ts + render.ts). Field formatting, the caption band, the
- * failed-field logic and collectGroupEntryIndices are ported from render.ts.
+ * Parity target (historical): the render-inspection-pdf edge function —
+ * REMOVED in the 2026-08 PDF standardization pass (superseded by this Node
+ * pipeline; recover payload-loader.ts + render.ts from git history if
+ * needed). Field formatting, the caption band, the failed-field logic and
+ * collectGroupEntryIndices were ported from its render.ts.
  *
  * RBAC: the caller is gated with requireEffectiveRole over the full
  * project-roles set (mirrors app/api/projects/[id]/branding-preview/route.ts).
