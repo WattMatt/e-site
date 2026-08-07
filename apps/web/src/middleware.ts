@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
   '/signup',
   '/reset-password',
   '/auth/callback',
+  '/auth/confirm',  // single-use-link interstitial; token holders have no session yet
   '/share',
   '/account-deleted',
   '/inspection',

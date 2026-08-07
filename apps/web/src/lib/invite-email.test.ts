@@ -51,8 +51,9 @@ describe('sendInviteEmail', () => {
     expect(payload.html).toContain('KINGSWALK')
     // Button = token_hash into the app's own callback (server-side verifyOtp),
     // NOT the raw GoTrue action_link (implicit fragment, dead-ends on /login).
+    // email rides along so a failed verify prefills the code-entry page.
     expect(payload.html).toContain(
-      '/auth/callback?token_hash=HTOK123&type=recovery&next=%2Freset-password%2Fconfirm',
+      '/auth/callback?token_hash=HTOK123&type=recovery&next=%2Freset-password%2Fconfirm&email=mike%40bobsbuilding.co.za',
     )
     expect(payload.html).not.toContain('https://app.e-site.live/verify?t=abc')
     expect(resetPasswordForEmail).not.toHaveBeenCalled()
