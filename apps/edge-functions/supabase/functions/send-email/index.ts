@@ -14,6 +14,8 @@
  *   Authorization: Bearer <service_role_key>
  */
 
+import { requireServiceRole } from '../_shared/auth.ts'
+
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 const FROM = 'E-Site <noreply@e-site.live>'
 const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://www.e-site.live'
@@ -81,17 +83,6 @@ function baseTemplate(content: string) {
   <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${SITE_URL}" style="color:#3B82F6">www.e-site.live</a></div></div></body></html>`
 }
 
-// Decode JWT role claim without re-verifying — Supabase gateway already verified the signature.
-function getJwtRole(authHeader: string | null): string | null {
-  if (!authHeader?.startsWith('Bearer ')) return null
-  try {
-    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]))
-    return typeof payload.role === 'string' ? payload.role : null
-  } catch {
-    return null
-  }
-}
-
 // Email types that the public anon client is permitted to trigger (POPIA DSR form).
 const PUBLIC_TYPES = new Set(['data-subject-request'])
 
@@ -108,13 +99,13 @@ Deno.serve(async (req) => {
   try {
     const { type, payload } = await req.json() as { type: string; payload: Record<string, any> }
 
-    // Require service_role for internal notification types.
-    // Public types (POPIA DSR) may be called from the server-side anon client.
-    const role = getJwtRole(req.headers.get('Authorization'))
-    if (!PUBLIC_TYPES.has(type) && role !== 'service_role') {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), {
-        status: 403, headers: { 'Content-Type': 'application/json' },
-      })
+    // Require the service-role key for internal notification types (verified by
+    // bearer-token compare — signature can't be trusted under --no-verify-jwt;
+    // see _shared/auth.ts). Public types (POPIA DSR) may be called from the
+    // server-side anon client and are exempt from the service-role gate.
+    if (!PUBLIC_TYPES.has(type)) {
+      const unauth = requireServiceRole(req)
+      if (unauth) return unauth
     }
 
     if (type === 'account-invite') {

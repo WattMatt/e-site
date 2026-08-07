@@ -14,6 +14,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireServiceRole } from '../_shared/auth.ts'
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 
@@ -36,26 +37,11 @@ Deno.serve(async (req) => {
     })
   }
 
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json' },
-    })
-  }
-
-  // Only service_role callers may trigger push notifications.
-  try {
-    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]))
-    if (payload.role !== 'service_role') {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), {
-        status: 403, headers: { 'Content-Type': 'application/json' },
-      })
-    }
-  } catch {
-    return new Response(JSON.stringify({ error: 'Invalid token' }), {
-      status: 401, headers: { 'Content-Type': 'application/json' },
-    })
-  }
+  // Only service_role callers may trigger push notifications. Verifies the
+  // bearer token IS the service-role key (signature can't be trusted under
+  // --no-verify-jwt — see _shared/auth.ts).
+  const unauth = requireServiceRole(req)
+  if (unauth) return unauth
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
