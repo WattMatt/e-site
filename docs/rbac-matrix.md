@@ -45,6 +45,9 @@ membership.
 | `/projects/[id]/quality-control/new` | W | W | W | W | R | — | R⁹ |
 | `/projects/[id]/quality-control/[reportId]` (report detail) | W | W | W | W | R | — | R⁹ |
 | `/projects/[id]/diary` | W | W | W | W | R | — | R |
+| `/projects/[id]/forms` (site forms list) | W | W | W | W | W | W | R¹⁰ |
+| `/projects/[id]/forms/new` | W | W | W | W | W | W | — |
+| `/projects/[id]/forms/[formId]` (capture / view) | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | R¹⁰ |
 | `/projects/[id]/cables` | W | W | W | R⁷ | — | — | R¹ |
 | `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W | W | W | — | — | — | — |
 | `/projects/[id]/equipment-materials` | W | W | W | W | — | — | R¹ |
@@ -85,6 +88,10 @@ membership.
 ⁷ **Corrected 2026-07 (SANS audit):** this cell previously read `W`, but every cable-schedule write path — server actions (`ROLES_ENGINEER = ORG_WRITE_ROLES`, i.e. owner/admin/project_manager only) and the import API routes — excludes `contractor`. The page renders read-only for contractors (no page-level role gate beyond the `(admin)` layout); their writes are refused server-side. A contractor promoted per-project via `projects.project_members` (role `project_manager`) gains `W` on that project through the effective-role gates.
 
 ⁹ **Quality Control (added 2026-07-14).** `client_viewer` never reaches these `(admin)` routes (`(admin)/layout.tsx` bounces clients to `/portal`); their actual surface is `/portal/[projectId]/quality-control` (see Client portal), and migration `00172`'s `qc_reports` SELECT policy additionally hides every non-`issued` report (drafts AND closed) from client viewers at the DB — a leaked link to a draft 404s. Pages compute `canWrite` via `requireEffectiveRole(..., QC_WRITE_ROLES)` (owner/admin/project_manager/**contractor**) and hide mutating affordances for `inspector`, who renders read-only; every mutation re-gates in its server action (see the Quality control actions section — issue/close/delete-report narrow to `ORG_WRITE_ROLES`).
+
+¹⁰ **Site forms (added 2026-08-12).** `client_viewer` never reaches these `(admin)` routes — `(admin)/layout.tsx` bounces clients to `/portal`. The `field.site_forms` SELECT policy additionally restricts client viewers to `status = 'distributed'` at the DB, so a leaked link to a draft or a voided record returns nothing. There is no portal surface for site forms yet; client viewers receive the distributed record by email as a branded PDF.
+
+¹¹ **Capture is a field action, distribution is not.** Creating, filling and submitting a form is gated to `FORMS_FIELD_ROLES` (every role except `client_viewer`) because site electricians are normally `contractor`. **Distributing, re-distributing and voiding are gated to `ORG_WRITE_ROLES`** (owner/admin/project_manager) — a completed form emails every project member, which is deliberately not a field-level decision. The `W` above therefore means "may capture and submit"; see the site-forms actions section for the distribution split. Writes are additionally constrained by RLS to `status = 'draft'` (`field.user_can_write_form`), and a `BEFORE UPDATE` transition trigger (migration 00179) enforces the state machine at the database level so the role gate cannot be bypassed by a direct PostgREST `PATCH`.
 
 ## Client portal (`apps/web/src/app/(portal)/portal/*`)
 
@@ -161,6 +168,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |
 | `GET /api/jbcc/sign` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `GET /api/projects/[id]/snags/visits/[visitId]/report` | R | R | R | R | R | — | R |
+| `GET /api/projects/[id]/forms/[formId]/report` | R | R | R | R | R | R | R¹⁰ |
 | `GET /api/projects/[id]/quality-control/[reportId]/report` | R | R | R | R | R | — | R⁹ |
 | `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
@@ -362,6 +370,27 @@ Read-only actions require project access (any project member). Write/export acti
 > Manual re-issue of an inspection's branded report (certify auto-runs the same worker). Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireEffectiveRole`, requires `public.has_feature(org_id, 'inspections')`, with a **cross-project guard** (the inspection's `project_id` must match the route project before any write). Renders via the Node renderer → saves versioned to `projects.reports` (kind=`inspection`) → auto-files the cert into handover `compliance_certs` and the inspection's own uploads into `test_certificates`, each tagged `origin_kind='inspection'` for clean re-issue dedup.
 >
 > **Report page read** (`/projects/[id]/inspections/[inspectionId]/report`) — the PDF artifact source moved from `inspections.certificates` to the latest **issued** `projects.reports` row (read by project role via the `reports_select` RLS). Share-link + Revoke are deferred in v1 (the legacy `generateShareLinkAction` / `revokeCertificateAction` remain but are no longer surfaced).
+
+### Site forms (`site-forms.actions.ts`, `site-forms-distribute.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `listFormTemplatesAction` | R | R | R | R | R | R | R |
+| `listProjectFormsAction` | R | R | R | R | R | R | R¹⁰ |
+| `createSiteFormAction` | W | W | W | W | W | W | — |
+| `upsertFormResponseAction` | W | W | W | W | W | W | — |
+| `submitSiteFormAction` | W | W | W | W | W | W | — |
+| `voidSiteFormAction` | W | W | W | — | — | — | — |
+| `previewFormRecipientsAction` | W | W | W | — | — | — | — |
+| `distributeSiteFormAction` | W | W | W | — | — | — | — |
+
+> **The role split is the point.** Capture (`create`/`upsert`/`submit`) is gated to `FORMS_FIELD_ROLES` — every role except `client_viewer` — because the person standing at the board is normally a `contractor`. Distribution and voiding are gated to `ORG_WRITE_ROLES`, because distributing emails **every** project member and withdrawing a record that has already gone out is not a field-level decision. A test asserts `contractor` is refused on both distribution actions; that is the regression most likely to be introduced later.
+>
+> **Three independent layers guard the write window.** (1) The action gate above. (2) RLS: `field.user_can_write_form` permits writes only while `status = 'draft'`, so responses, photos and signatures freeze on submit. (3) A `BEFORE UPDATE` transition trigger (migration `00179`) enforces the state machine in the database — without it any project member could `PATCH status='distributed'` straight over PostgREST and skip the action gate entirely, the same class of hole `00177` closed for `project_members` self-promotion. The trigger exempts `postgres`/`service_role`, since the action layer is what gates those.
+>
+> **Submission is gated on legal constraints, not just completeness.** `submitSiteFormAction` runs `evaluateSubmitGates` and returns the whole issue list rather than submitting partially: no energising without an insulation-resistance reading (SANS 10142-1 8.6.8, with the NOTE 2 exception), no out-of-calibration instrument, no incomplete prove-test-prove sequence, EIR reg 9(3) duties mandatory on any C1 defect, and registration-scope checks. The client shows the same issues live via the shared `buildGateInput`/`evaluateSubmitGates` pair, but the server re-checks independently.
+>
+> **Distribution never silently emails.** `previewFormRecipientsAction` returns the resolved recipient list and the per-project `notify_form_email` state so the reviewer sees exactly who will receive it, and how many, before sending. `project_notification_recipients()` resolves 12 real wmeng.co.za people for any WM-Consulting project, so a mistaken send goes company-wide. Re-distribution is permitted and issues a **new report version** through the `projects.reports` supersede chain; a distributed form is never reopened — it is voided with a reason and reissued, mirroring the spirit of EIR reg 9(5).
 
 ## Public / unauthenticated
 
