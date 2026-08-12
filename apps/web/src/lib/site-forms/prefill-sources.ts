@@ -50,8 +50,12 @@ async function safe<T>(p: PromiseLike<{ data: T | null }>): Promise<T | null> {
  *
  * "Current" is the newest revision; a project with none simply contributes no
  * cable-schedule prefill.
+ *
+ * Exported so callers that need to read the same revision (the board-linking
+ * offer on the new-form page) resolve it identically, rather than each deciding
+ * for itself what "current" means.
  */
-async function currentRevisionId(
+export async function currentCableScheduleRevisionId(
   supabase: AnyClient,
   projectId: string,
 ): Promise<string | null> {
@@ -125,7 +129,7 @@ export async function gatherPrefill(
   let downstream: PrefillSources['downstream'] = []
 
   if (csNodeId) {
-    const revisionId = await currentRevisionId(supabase, opts.projectId)
+    const revisionId = await currentCableScheduleRevisionId(supabase, opts.projectId)
     if (revisionId) {
       // What feeds this board (SANS 6.6.1.21(a) — the label to verify against).
       const feedRows = await safe<
@@ -238,7 +242,43 @@ export async function projectHasCableSchedule(
   supabase: AnyClient,
   projectId: string,
 ): Promise<boolean> {
-  return (await currentRevisionId(supabase, projectId)) !== null
+  return (await currentCableScheduleRevisionId(supabase, projectId)) !== null
+}
+
+/**
+ * Every structure node that appears in the project's current cable schedule, on
+ * either end of a supply.
+ *
+ * The new-form page needs this answer for ALL boards at once so that picking a
+ * board in the dropdown is instant — `nodeIsInCableSchedule` per selection would
+ * be a round trip on every change of the select.
+ *
+ * `hasSchedule` is reported separately from the ids because the two absences
+ * mean different things: no revision at all means there is nothing to offer the
+ * user, while a revision with no nodes means the offer is simply empty.
+ */
+export async function cableScheduleNodeIds(
+  supabase: AnyClient,
+  projectId: string,
+): Promise<{ hasSchedule: boolean; nodeIds: string[] }> {
+  const revisionId = await currentCableScheduleRevisionId(supabase, projectId)
+  if (!revisionId) return { hasSchedule: false, nodeIds: [] }
+
+  const rows = await safe<{ from_node_id: string | null; to_node_id: string | null }[]>(
+    supabase
+      .schema('cable_schedule')
+      .from('supplies')
+      .select('from_node_id, to_node_id')
+      .eq('revision_id', revisionId)
+      .limit(5000),
+  )
+
+  const ids = new Set<string>()
+  for (const r of rows ?? []) {
+    if (r.from_node_id) ids.add(r.from_node_id)
+    if (r.to_node_id) ids.add(r.to_node_id)
+  }
+  return { hasSchedule: true, nodeIds: [...ids] }
 }
 
 /** True when this specific board appears in the current cable schedule. */
@@ -247,7 +287,7 @@ export async function nodeIsInCableSchedule(
   projectId: string,
   nodeId: string,
 ): Promise<boolean> {
-  const revisionId = await currentRevisionId(supabase, projectId)
+  const revisionId = await currentCableScheduleRevisionId(supabase, projectId)
   if (!revisionId) return false
   const rows = await safe<{ id: string }[]>(
     supabase

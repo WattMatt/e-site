@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { projectService, listNodes, FORMS_FIELD_ROLES } from '@esite/shared'
+import { cableScheduleNodeIds } from '@/lib/site-forms/prefill-sources'
 import { NewFormForm, type BoardOption, type TemplateOption } from './NewFormForm'
 
 interface Props {
@@ -22,6 +23,14 @@ export default async function NewSiteFormPage({ params }: Props) {
   if (!gate.ok) redirect(`/projects/${projectId}/forms`)
 
   const nodes = await listNodes(supabase as never, projectId, { status: 'active' })
+
+  // Resolved once here, for every board at once, so the form can tell instantly
+  // whether the board just picked is already covered by the cable schedule
+  // without a round trip per selection.
+  const { hasSchedule, nodeIds: scheduleNodeIds } = await cableScheduleNodeIds(
+    supabase as never,
+    projectId,
+  )
 
   const boards: BoardOption[] = (nodes ?? []).map((n) => ({
     id: n.id as string,
@@ -69,7 +78,13 @@ export default async function NewSiteFormPage({ params }: Props) {
         </Link>
       </div>
 
-      <NewFormForm projectId={projectId} boards={boards} templates={templates} />
+      <NewFormForm
+        projectId={projectId}
+        boards={boards}
+        templates={templates}
+        hasCableSchedule={hasSchedule}
+        cableScheduleBoardIds={scheduleNodeIds}
+      />
     </div>
   )
 }

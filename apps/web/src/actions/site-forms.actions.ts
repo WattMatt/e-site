@@ -5,7 +5,10 @@ import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { gatherPrefill } from '@/lib/site-forms/prefill-sources'
+import {
+  gatherPrefill,
+  currentCableScheduleRevisionId,
+} from '@/lib/site-forms/prefill-sources'
 import {
   projectService,
   ORG_WRITE_ROLES,
@@ -286,6 +289,81 @@ export async function listProjectFormsAction(
 
   if (error) return { error: msg(error, 'Could not load forms') }
   return { forms: (data ?? []) as unknown[] }
+}
+
+/**
+ * Boards that could stand in as a cable-schedule source for a board that is not
+ * itself in the schedule.
+ *
+ * Only boards that appear as a `from_node_id` are offered: a board that feeds
+ * nothing has no circuit rows to lend, so listing it would be an offer of an
+ * empty list. Ordered by how many circuits each feeds, because the richest
+ * board is nearly always the one the electrician means.
+ *
+ * Gated at FORMS_FIELD_ROLES — the same gate as creating the form this feeds
+ * into, since the board codes it returns are exactly what the form page already
+ * shows that caller.
+ */
+export async function listCableScheduleBoardsAction(projectId: string): Promise<
+  | { error: string; boards?: undefined }
+  | {
+      error?: undefined
+      boards: { nodeId: string; code: string; name: string | null; downstreamCount: number }[]
+    }
+> {
+  if (!uuid.safeParse(projectId).success) return { error: 'Invalid project id' }
+
+  const guard = await guardProject(projectId, FORMS_FIELD_ROLES)
+  if (!guard.ok) return { error: guard.error }
+
+  const revisionId = await currentCableScheduleRevisionId(guard.supabase, projectId)
+  // Not an error: a project with no cable schedule simply has nothing to offer.
+  if (!revisionId) return { boards: [] }
+
+  const { data: supplies, error } = await guard.supabase
+    .schema('cable_schedule')
+    .from('supplies')
+    .select('from_node_id')
+    .eq('revision_id', revisionId)
+    .not('from_node_id', 'is', null)
+    .limit(5000)
+
+  if (error) return { error: msg(error, 'Could not load cable-schedule boards') }
+
+  // Counted here rather than in SQL: PostgREST has no GROUP BY, and the largest
+  // live schedule is a few hundred supplies.
+  const counts = new Map<string, number>()
+  for (const s of (supplies ?? []) as { from_node_id: string | null }[]) {
+    if (!s.from_node_id) continue
+    counts.set(s.from_node_id, (counts.get(s.from_node_id) ?? 0) + 1)
+  }
+  if (counts.size === 0) return { boards: [] }
+
+  // project_id is asserted, not assumed: a supply row's node must belong to this
+  // project before its code is shown to this caller.
+  const { data: nodes, error: nodeError } = await guard.supabase
+    .schema('structure')
+    .from('nodes')
+    .select('id, code, name')
+    .eq('project_id', projectId)
+    .in('id', [...counts.keys()])
+
+  if (nodeError) return { error: msg(nodeError, 'Could not load cable-schedule boards') }
+
+  const boards = ((nodes ?? []) as { id: string; code: string | null; name: string | null }[])
+    .map((n) => ({
+      nodeId: n.id,
+      code: n.code ?? '',
+      name: n.name ?? null,
+      downstreamCount: counts.get(n.id) ?? 0,
+    }))
+    .sort(
+      (a, b) =>
+        b.downstreamCount - a.downstreamCount ||
+        a.code.localeCompare(b.code, undefined, { numeric: true }),
+    )
+
+  return { boards }
 }
 
 // ─── Create ──────────────────────────────────────────────────────────────────

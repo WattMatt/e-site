@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { createSiteFormAction } from '@/actions/site-forms.actions'
+import {
+  createSiteFormAction,
+  listCableScheduleBoardsAction,
+} from '@/actions/site-forms.actions'
 
 export interface BoardOption {
   id: string
@@ -16,6 +19,13 @@ export interface TemplateOption {
   id: string
   name: string
   version: string
+}
+
+interface CableScheduleBoard {
+  nodeId: string
+  code: string
+  name: string | null
+  downstreamCount: number
 }
 
 // Mirrors the structure.nodes kind CHECK. Boards a site electrician would
@@ -33,14 +43,24 @@ const KIND_LABELS: Record<string, string> = {
 }
 const KIND_ORDER = Object.keys(KIND_LABELS)
 
+function boardLabel(b: { code: string; name: string | null }): string {
+  return b.name ? `${b.code} — ${b.name}` : b.code
+}
+
 export function NewFormForm({
   projectId,
   boards,
   templates,
+  hasCableSchedule,
+  cableScheduleBoardIds,
 }: {
   projectId: string
   boards: BoardOption[]
   templates: TemplateOption[]
+  /** False when the project has no cable schedule at all — offer nothing. */
+  hasCableSchedule: boolean
+  /** Structure nodes already covered by the current cable schedule. */
+  cableScheduleBoardIds: string[]
 }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
@@ -49,12 +69,51 @@ export function NewFormForm({
   const [useFreeText, setUseFreeText] = useState(false)
   const [boardRef, setBoardRef] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [linkNodeId, setLinkNodeId] = useState('')
+  const [csBoards, setCsBoards] = useState<CableScheduleBoard[]>([])
+  const [csLoaded, setCsLoaded] = useState(false)
 
   const grouped = KIND_ORDER.map((kind) => ({
     kind,
     label: KIND_LABELS[kind],
     items: boards.filter((b) => b.kind === kind),
   })).filter((g) => g.items.length > 0)
+
+  const scheduleIds = useMemo(() => new Set(cableScheduleBoardIds), [cableScheduleBoardIds])
+
+  // The offer is relevant only when there is a schedule to pull from AND the
+  // board this form is about is not already in it. A board that IS in the
+  // schedule gets prefilled on its own and is told nothing.
+  const offerRelevant =
+    hasCableSchedule && (useFreeText ? true : nodeId !== '' && !scheduleIds.has(nodeId))
+
+  useEffect(() => {
+    if (!offerRelevant || csLoaded) return
+    let cancelled = false
+    void listCableScheduleBoardsAction(projectId).then((res) => {
+      if (cancelled) return
+      setCsLoaded(true)
+      // Narrowed on `boards`, not on `error`: an empty error string is falsy,
+      // so the truthiness of `error` does not discriminate the union.
+      // A failure here leaves the offer hidden — it is an assist, not a gate.
+      if (res.boards) setCsBoards(res.boards)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [offerRelevant, csLoaded, projectId])
+
+  // Rendered only once boards are in hand, so nothing flashes in and out while
+  // loading and nothing appears at all if the schedule has no feeder boards.
+  const showLinkOffer = offerRelevant && csBoards.length > 0
+
+  const selectedBoard = boards.find((b) => b.id === nodeId)
+  const subjectLabel = useFreeText
+    ? boardRef.trim() || 'This board'
+    : selectedBoard
+      ? boardLabel(selectedBoard)
+      : 'This board'
+  const linkedBoard = csBoards.find((b) => b.nodeId === linkNodeId)
 
   const canSubmit =
     Boolean(templateRowId) && (useFreeText ? boardRef.trim().length > 0 : Boolean(nodeId))
@@ -67,6 +126,10 @@ export function NewFormForm({
         templateRowId,
         nodeId: useFreeText ? null : nodeId || null,
         boardRef: useFreeText ? boardRef.trim() : null,
+        // Only sent while the offer is actually on screen: a stale selection
+        // from a board the user has since changed away from must not silently
+        // import another board's circuits.
+        cableScheduleNodeId: showLinkOffer && linkNodeId ? linkNodeId : null,
       })
       if ('error' in res && res.error) {
         setError(res.error)
@@ -116,7 +179,11 @@ export function NewFormForm({
             <select
               id="board"
               value={nodeId}
-              onChange={(e) => setNodeId(e.target.value)}
+              onChange={(e) => {
+                setNodeId(e.target.value)
+                // A link chosen for the previous board means nothing for this one.
+                setLinkNodeId('')
+              }}
               disabled={pending || boards.length === 0}
             >
               <option value="">Select a board…</option>
@@ -140,6 +207,7 @@ export function NewFormForm({
                 onClick={() => {
                   setUseFreeText(true)
                   setNodeId('')
+                  setLinkNodeId('')
                 }}
                 disabled={pending}
               >
@@ -167,6 +235,7 @@ export function NewFormForm({
                 onClick={() => {
                   setUseFreeText(false)
                   setBoardRef('')
+                  setLinkNodeId('')
                 }}
                 disabled={pending}
               >
@@ -176,6 +245,43 @@ export function NewFormForm({
           </>
         )}
       </div>
+
+      {showLinkOffer && (
+        <div className="form-field">
+          <label htmlFor="cable-schedule-board">Circuit data (optional)</label>
+          <p className="form-hint">
+            {subjectLabel} isn’t in the cable schedule, so there are no circuits to fill in
+            automatically. Pull circuit data from another board?
+          </p>
+          <select
+            id="cable-schedule-board"
+            value={linkNodeId}
+            onChange={(e) => setLinkNodeId(e.target.value)}
+            disabled={pending}
+          >
+            <option value="">Don’t pull circuit data</option>
+            {csBoards.map((b) => (
+              <option key={b.nodeId} value={b.nodeId}>
+                {boardLabel(b)} — {b.downstreamCount} circuit
+                {b.downstreamCount === 1 ? '' : 's'}
+              </option>
+            ))}
+          </select>
+          {linkedBoard ? (
+            <p className="form-hint">
+              The circuits will be copied from <strong>{boardLabel(linkedBoard)}</strong>. They
+              are that board’s circuits, not {subjectLabel}’s — a starting point to edit, nothing
+              more. Check every row against the board in front of you and correct or delete
+              whatever does not match. This record stays a record of {subjectLabel}.
+            </p>
+          ) : (
+            <p className="form-hint">
+              Leave this unset to start with an empty circuit list. Nothing else on the form is
+              affected.
+            </p>
+          )}
+        </div>
+      )}
 
       {error && <p className="form-error">{error}</p>}
 
