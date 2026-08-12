@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { uploadFormSignature, SITE_FORM_SIGNATURE_BUCKET } from '@/lib/site-forms/upload'
-import type { SiteFormSignatureBlock } from '@esite/shared'
+import { SITE_FORM_SIGNATURE_FIELD_BLOCKS, type SiteFormSignatureBlock } from '@esite/shared'
 
 /**
  * Drawn signature capture for the four `field.form_signatures` blocks.
@@ -27,48 +27,35 @@ export interface FormSignatureRow {
   signed_url?: string | null
 }
 
-/**
- * Template signature field → storage block.
- *
- * The template carries SEVEN signature fields but `field.form_signatures` has
- * `UNIQUE (form_id, block_id)` over exactly FOUR blocks. Only the four §13
- * declaration signatures are bound to a block; the remaining three are aliases
- * of a block signed elsewhere (below). Binding them all would mean the §13
- * declaration silently overwrote the section-6 safe-isolation signature — an
- * overwritten signature on a safety record is worse than a missing one.
- */
-export const SIGNATURE_FIELD_BLOCKS: Record<string, SiteFormSignatureBlock> = {
-  electrician_declaration_signature: 'electrician',
-  registered_person_declaration_signature: 'registered_person',
-  supervisor_signature: 'supervisor',
-  client_signature: 'client_witness',
-}
-
-/**
- * Signature fields that are satisfied by a block captured in §13 Declarations.
- * They render as a live status pointer, not a second pad.
- */
-export const SIGNATURE_FIELD_ALIASES: Record<string, SiteFormSignatureBlock> = {
-  safe_isolation_confirmed: 'electrician',
-  hazard_sweep_technician_signature: 'electrician',
-  hazard_sweep_supervisor_signature: 'supervisor',
-}
-
 export const SIGNATURE_BLOCK_LABELS: Record<SiteFormSignatureBlock, string> = {
   electrician: 'Electrician',
   registered_person: 'Registered person',
   supervisor: 'Supervisor',
   client_witness: 'Client / witness',
+  safe_isolation_confirmed: 'Safe isolation',
+  hazard_sweep_technician: 'Hazard sweep technician',
+  hazard_sweep_supervisor: 'Hazard sweep supervisor',
 }
 
-/** Resolve the block a signature field writes to, if any. */
+/**
+ * Resolve the storage block a template signature field writes to.
+ *
+ * The map itself lives in `@esite/shared` and is pinned to the
+ * `field.form_signatures.block_id` CHECK. It is deliberately NOT duplicated
+ * here: the PDF renderer reads the same map, and a second copy is how capture
+ * and rendering drift into writing one key and reading another.
+ */
 export function blockForSignatureField(fieldId: string): SiteFormSignatureBlock | null {
-  return SIGNATURE_FIELD_BLOCKS[fieldId] ?? null
+  return SITE_FORM_SIGNATURE_FIELD_BLOCKS[fieldId] ?? null
 }
 
-/** Resolve the block a signature field merely reports on, if any. */
-export function aliasBlockForSignatureField(fieldId: string): SiteFormSignatureBlock | null {
-  return SIGNATURE_FIELD_ALIASES[fieldId] ?? null
+/**
+ * Blocks that carry a registration category and number. The client witness is
+ * the only signatory who is never a registered person under the Electrical
+ * Installation Regulations, 2009.
+ */
+function blockCarriesRegistration(blockId: SiteFormSignatureBlock): boolean {
+  return blockId !== 'client_witness'
 }
 
 /** The registration categories a registered person can hold (EIR reg 1). */
@@ -147,7 +134,7 @@ export default function SignaturePad({
   )
   const [regNo, setRegNo] = useState(existing?.registration_number ?? '')
 
-  const needsRegistration = blockId === 'registered_person' || blockId === 'electrician'
+  const needsRegistration = blockCarriesRegistration(blockId)
 
   /**
    * Size the backing store to the CSS box × DPR so strokes are crisp, keeping

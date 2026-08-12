@@ -9,15 +9,11 @@ import {
   parseRepeatingGroupKey,
   type Field,
   type Response as FormResponse,
+  type SiteFormSignatureBlock,
 } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
 import FormPhotoStrip, { type FormPhotoRow } from './FormPhotoStrip'
-import SignaturePad, {
-  SIGNATURE_BLOCK_LABELS,
-  aliasBlockForSignatureField,
-  blockForSignatureField,
-  type FormSignatureRow,
-} from './SignaturePad'
+import SignaturePad, { blockForSignatureField, type FormSignatureRow } from './SignaturePad'
 import { SITE_FORM_PHOTO_BUCKET } from '@/lib/site-forms/upload'
 
 /**
@@ -545,78 +541,66 @@ function PhotoField(p: FormRendererProps) {
   )
 }
 
+/**
+ * Every signature field on the template owns its own storage block, so each one
+ * gets a real pad. Nothing is shared, so no signatory can overwrite another.
+ */
+const CATEGORY_SOURCE_FIELD: Partial<Record<SiteFormSignatureBlock, string>> = {
+  registered_person: 'registered_person_category',
+  electrician: 'electrician_category',
+  safe_isolation_confirmed: 'electrician_category',
+  hazard_sweep_technician: 'electrician_category',
+}
+
 function SignatureField(p: FormRendererProps) {
   const { field, signatures, allResponses } = p
   const block = blockForSignatureField(field.field_id)
 
-  if (block) {
-    const existing = signatures.find((s) => s.block_id === block)
-    // Pre-select the category already captured in §3 for the same person.
-    const suggested =
-      block === 'registered_person'
-        ? (allResponses.find(
-            (r) => r.section_id === 'personnel' && r.field_id === 'registered_person_category',
-          )?.value_text ?? null)
-        : block === 'electrician'
-          ? (allResponses.find(
-              (r) => r.section_id === 'personnel' && r.field_id === 'electrician_category',
-            )?.value_text ?? null)
-          : null
-
+  if (!block) {
+    // A signature field the shared map does not know about. Say so rather than
+    // rendering a pad that would fail the block_id CHECK on save.
     return (
-      <SignaturePad
-        projectId={p.projectId}
-        formId={p.formId}
-        blockId={block}
-        label={field.label}
-        helpText={field.help_text}
-        required={field.required}
-        readOnly={p.readOnly}
-        currentUserId={p.currentUserId}
-        suggestedCategory={suggested}
-        existing={existing}
-        onSaved={p.onSignatureSaved}
-      />
+      <div style={stackStyle}>
+        <FieldLabel field={field} />
+        <Help field={field} />
+        <div
+          style={{
+            border: '1px dashed var(--c-red)',
+            borderRadius: 6,
+            padding: 10,
+            fontSize: 11,
+            color: 'var(--c-red)',
+          }}
+        >
+          No signature block is mapped for “{field.field_id}”. Add it to
+          SITE_FORM_SIGNATURE_FIELD_BLOCKS in @esite/shared and to the
+          form_signatures block_id CHECK before this can be signed.
+        </div>
+      </div>
     )
   }
 
-  // Not one of the four storage blocks — report the block it relies on rather
-  // than opening a second pad that would silently overwrite it.
-  const alias = aliasBlockForSignatureField(field.field_id)
-  const signed = alias ? signatures.find((s) => s.block_id === alias) : undefined
+  // Pre-select the registration category already captured in §3 for this person.
+  const sourceField = CATEGORY_SOURCE_FIELD[block]
+  const suggested = sourceField
+    ? (allResponses.find((r) => r.section_id === 'personnel' && r.field_id === sourceField)
+        ?.value_text ?? null)
+    : null
+
   return (
-    <div style={stackStyle}>
-      <FieldLabel field={field} />
-      <Help field={field} />
-      <div
-        style={{
-          border: '1px solid var(--c-border)',
-          borderRadius: 6,
-          padding: 10,
-          background: 'var(--c-surface)',
-          fontSize: 12,
-          color: signed ? 'var(--c-green)' : 'var(--c-text-mid)',
-        }}
-      >
-        {alias ? (
-          signed ? (
-            <>
-              Signed by <strong>{signed.signatory_name}</strong>
-              {signed.signed_at ? ` on ${new Date(signed.signed_at).toLocaleString()}` : ''} in the{' '}
-              {SIGNATURE_BLOCK_LABELS[alias].toLowerCase()} block of §13 Declarations.
-            </>
-          ) : (
-            <>
-              Captured by the {SIGNATURE_BLOCK_LABELS[alias].toLowerCase()} signature in §13
-              Declarations, which is not signed yet. One signature is held per block, so it is
-              recorded once and referenced here.
-            </>
-          )
-        ) : (
-          'No signature block is bound to this field.'
-        )}
-      </div>
-    </div>
+    <SignaturePad
+      projectId={p.projectId}
+      formId={p.formId}
+      blockId={block}
+      label={field.label}
+      helpText={field.help_text}
+      required={field.required}
+      readOnly={p.readOnly}
+      currentUserId={p.currentUserId}
+      suggestedCategory={suggested}
+      existing={signatures.find((s) => s.block_id === block)}
+      onSaved={p.onSignatureSaved}
+    />
   )
 }
 

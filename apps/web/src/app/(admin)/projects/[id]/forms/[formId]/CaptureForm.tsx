@@ -8,6 +8,7 @@ import {
   evaluateSubmitGates,
   isFieldVisible,
   listRepeatingGroupEntryIndices,
+  SITE_FORM_SIGNATURE_FIELD_BLOCKS,
   type Field,
   type GateIssue,
   type GateResponseRow,
@@ -19,11 +20,7 @@ import {
 import { submitSiteFormAction, upsertFormResponseAction } from '@/actions/site-forms.actions'
 import FormFieldRenderer from './FormFieldRenderer'
 import type { FormPhotoRow } from './FormPhotoStrip'
-import {
-  aliasBlockForSignatureField,
-  blockForSignatureField,
-  type FormSignatureRow,
-} from './SignaturePad'
+import type { FormSignatureRow } from './SignaturePad'
 
 /**
  * Capture screen for one site form.
@@ -243,8 +240,9 @@ export default function CaptureForm(props: CaptureFormProps) {
         return photos.some((p) => p.section_id === sectionId && p.field_id === field.field_id)
       }
       if (field.type === 'signature') {
-        const block =
-          blockForSignatureField(field.field_id) ?? aliasBlockForSignatureField(field.field_id)
+        // Every signature field owns its own block, so a step is satisfied only
+        // by its OWN signature — no field can be ticked off by another's.
+        const block = SITE_FORM_SIGNATURE_FIELD_BLOCKS[field.field_id]
         return !!block && signatures.some((s) => s.block_id === block)
       }
       if (field.type === 'repeating_group') {

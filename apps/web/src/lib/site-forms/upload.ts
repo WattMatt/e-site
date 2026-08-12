@@ -18,6 +18,7 @@
  */
 
 import { compressImage } from '@/lib/image/compress'
+import type { SiteFormSignatureBlock } from '@esite/shared'
 
 type UploadClient = {
   storage: {
@@ -115,7 +116,7 @@ export async function uploadFormSignature(
     pngBlob: Blob
     projectId: string
     formId: string
-    blockId: 'electrician' | 'registered_person' | 'supervisor' | 'client_witness'
+    blockId: SiteFormSignatureBlock
     signatoryName: string
     signatoryRole?: string | null
     registrationCategory?: string | null
