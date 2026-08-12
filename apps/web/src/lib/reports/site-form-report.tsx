@@ -47,6 +47,35 @@ const C1_RED = '#B91C1C'
 const C1_BG = '#FEE2E2'
 const WARN_AMBER = '#B45309'
 
+/**
+ * Marker for a value that was pre-populated from the project record and never
+ * edited on site (field.form_responses.prefilled_from, migration 00182).
+ *
+ * A dagger, in muted grey — deliberately NOT a colour, because the only two
+ * colours this document uses are load-bearing (C1 danger red, temporary-circuit
+ * amber) and provenance is not a hazard. A dagger rather than the more obvious
+ * degree sign because `°` is a unit in this trade ("65 °C", angles) and a
+ * marker must never be mistaken for part of the value it qualifies.
+ */
+const PREFILL_MARKER = '†'
+
+const PREFILL_FOOTNOTE =
+  `${PREFILL_MARKER} Values marked ${PREFILL_MARKER} were pre-populated from the project record ` +
+  'and were not edited on site.'
+
+/** Plain-English source names for the audit trail. */
+const PREFILL_SOURCE_LABELS: Record<string, string> = {
+  project: 'project record',
+  organisation: 'organisation record',
+  user: 'user profile',
+  structure_node: 'board record',
+  cable_schedule: 'cable schedule',
+  system: 'system',
+}
+
+const prefillSourceLabel = (source: string): string =>
+  PREFILL_SOURCE_LABELS[source] ?? source.replace(/_/g, ' ')
+
 const s = StyleSheet.create({
   bodyPage: {
     paddingHorizontal: 36,
@@ -186,6 +215,29 @@ const s = StyleSheet.create({
   sansRef: {
     fontSize: 6,
     color: '#999999',
+  },
+
+  // ── Provenance marker (inherited, not verified on site) ───────────────────
+  prefillMark: {
+    fontSize: 5.5,
+    color: '#8C8C8C',
+  },
+  prefillMarkCell: {
+    fontSize: 4.5,
+    color: '#8C8C8C',
+  },
+  prefillFootnote: {
+    fontSize: 6,
+    color: '#777777',
+    fontStyle: 'italic',
+    marginBottom: 6,
+  },
+  auditSource: {
+    fontSize: 5,
+    color: '#8C8C8C',
+    paddingHorizontal: 3,
+    paddingBottom: 3,
+    lineHeight: 1.15,
   },
   failReason: {
     fontSize: 6.5,
@@ -404,12 +456,45 @@ function RunningFooter({ left }: { left: string }) {
   )
 }
 
-function InfoRow({ label, value }: { label: string; value: string | null | undefined }) {
+/**
+ * The one predicate that decides whether a marker is drawn. The footnote is
+ * gated on exactly the same function, so a legend can never appear for a marker
+ * that occurs zero times, nor a marker without its legend.
+ */
+const rowIsPrefilled = (row: SiteFormReportSection['rows'][number]): boolean =>
+  Boolean(row.prefilledFrom) &&
+  (row.kind === 'result' ? row.pass != null : Boolean(row.value))
+
+const groupHasPrefilled = (group: SiteFormGroupTable): boolean =>
+  group.rows.some((r) => (r.prefilled ?? []).some(Boolean))
+
+const sectionsHavePrefilled = (sections: SiteFormReportSection[]): boolean =>
+  sections.some((sec) => sec.rows.some(rowIsPrefilled) || sec.groups.some(groupHasPrefilled))
+
+const auditHasPrefilled = (audit: SiteFormAuditEntry[]): boolean =>
+  audit.some((a) => Boolean(a.prefilledFrom))
+
+function PrefillMark({ cell }: { cell?: boolean }) {
+  return <Text style={cell ? s.prefillMarkCell : s.prefillMark}>{` ${PREFILL_MARKER}`}</Text>
+}
+
+function InfoRow({
+  label,
+  value,
+  prefilled,
+}: {
+  label: string
+  value: string | null | undefined
+  prefilled?: boolean
+}) {
   const shown = value != null && value !== '' ? value : '—'
   return (
     <View style={s.row}>
       <Text style={s.rowLabel}>{label}</Text>
-      <Text style={value ? s.rowValue : s.rowValueMuted}>{shown}</Text>
+      <Text style={value ? s.rowValue : s.rowValueMuted}>
+        {shown}
+        {prefilled && value ? <PrefillMark /> : null}
+      </Text>
     </View>
   )
 }
@@ -537,11 +622,18 @@ function GroupTable({ group }: { group: SiteFormGroupTable }) {
             {group.rows.map((row) => (
               <View key={`${chunkIdx}-${row.entryNo}`} style={s.tableRow} wrap={false}>
                 <Text style={[s.td, s.colNarrow]}>{row.entryNo}</Text>
-                {cols.map((c, i) => (
-                  <Text key={c.fieldId} style={[s.td, { width }]}>
-                    {row.cells[offset + i] || '—'}
-                  </Text>
-                ))}
+                {cols.map((c, i) => {
+                  const cell = row.cells[offset + i]
+                  // A row imported wholesale from the cable schedule carries a
+                  // marker on every inherited cell; one typed on site carries none.
+                  const inherited = Boolean((row.prefilled ?? [])[offset + i]) && Boolean(cell)
+                  return (
+                    <Text key={c.fieldId} style={[s.td, { width }]}>
+                      {cell || '—'}
+                      {inherited ? <PrefillMark cell /> : null}
+                    </Text>
+                  )
+                })}
               </View>
             ))}
           </View>
@@ -578,7 +670,10 @@ function SectionBlock({ section }: { section: SiteFormReportSection }) {
                 {row.sansRef ? <Text style={s.sansRef}>{`  ${row.sansRef}`}</Text> : null}
               </Text>
               <View style={{ flex: 1 }}>
-                <PassPill pass={row.pass} />
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <PassPill pass={row.pass} />
+                  {rowIsPrefilled(row) ? <PrefillMark /> : null}
+                </View>
                 {row.failReason ? <Text style={s.failReason}>{row.failReason}</Text> : null}
               </View>
             </View>
@@ -589,11 +684,21 @@ function SectionBlock({ section }: { section: SiteFormReportSection }) {
           return (
             <View key={row.fieldId}>
               <Text style={s.rowLabel}>{row.label}</Text>
-              <Text style={s.paragraph}>{row.value}</Text>
+              <Text style={s.paragraph}>
+                {row.value}
+                {rowIsPrefilled(row) ? <PrefillMark /> : null}
+              </Text>
             </View>
           )
         }
-        return <InfoRow key={row.fieldId} label={row.label} value={row.value} />
+        return (
+          <InfoRow
+            key={row.fieldId}
+            label={row.label}
+            value={row.value}
+            prefilled={rowIsPrefilled(row)}
+          />
+        )
       })}
       {section.groups.map((group) => (
         <GroupTable key={group.fieldId} group={group} />
@@ -723,13 +828,17 @@ function SignatureBlock({ block }: { block: SiteFormSignatureBlock }) {
 function AuditTable({
   audit,
   omittedCount,
+  showFootnote,
 }: {
   audit: SiteFormAuditEntry[]
   omittedCount: number
+  /** True only when the marker's first occurrence in the document is here. */
+  showFootnote: boolean
 }) {
   return (
     <View>
       <Text style={s.partHeader}>Response audit history</Text>
+      {showFootnote && <Text style={s.prefillFootnote}>{PREFILL_FOOTNOTE}</Text>}
       {audit.length === 0 ? (
         <Text style={s.empty}>No responses recorded.</Text>
       ) : (
@@ -746,7 +855,20 @@ function AuditTable({
               <Text style={[s.td, { width: '18%' }]}>{entry.at ?? '—'}</Text>
               <Text style={[s.td, { width: '20%' }]}>{entry.sectionTitle}</Text>
               <Text style={[s.td, { width: '27%' }]}>{entry.fieldLabel}</Text>
-              <Text style={[s.td, { width: '20%' }]}>{entry.value || '—'}</Text>
+              {/* An entry that was inherited says so in words as well as by the
+                  marker: this table is the part an enquiry actually reads, and
+                  "pre-populated" and "stated by a person" are different claims. */}
+              <View style={{ width: '20%' }}>
+                <Text style={s.td}>
+                  {entry.value || '—'}
+                  {entry.prefilledFrom ? <PrefillMark cell /> : null}
+                </Text>
+                {entry.prefilledFrom ? (
+                  <Text style={s.auditSource}>
+                    pre-populated · {prefillSourceLabel(entry.prefilledFrom)}
+                  </Text>
+                ) : null}
+              </View>
               <Text style={[s.td, { width: '15%' }]}>{entry.by}</Text>
             </View>
           ))}
@@ -776,6 +898,12 @@ export function SiteFormReportDocument({ data }: { data: SiteFormReportData }) {
     0,
   )
 
+  // The marker's legend is drawn exactly once, where the marker FIRST appears —
+  // and not at all when nothing in the document was inherited. A legend for
+  // something that occurs zero times is noise in a legal record.
+  const recordPrefilled = sectionsHavePrefilled(data.sections)
+  const auditPrefilled = auditHasPrefilled(data.audit)
+
   return (
     <Document title={data.branding.title} producer="e-site.live">
       {/* ── Cover ── */}
@@ -789,6 +917,7 @@ export function SiteFormReportDocument({ data }: { data: SiteFormReportData }) {
         <SummaryBlock data={data} />
 
         <Text style={s.partHeader}>Record</Text>
+        {recordPrefilled && <Text style={s.prefillFootnote}>{PREFILL_FOOTNOTE}</Text>}
         {data.sections.length === 0 ? (
           <Text style={s.empty}>No sections captured.</Text>
         ) : (
@@ -823,7 +952,11 @@ export function SiteFormReportDocument({ data }: { data: SiteFormReportData }) {
           data.signatures.map((block) => <SignatureBlock key={block.blockId} block={block} />)
         )}
 
-        <AuditTable audit={data.audit} omittedCount={data.auditOmittedCount} />
+        <AuditTable
+          audit={data.audit}
+          omittedCount={data.auditOmittedCount}
+          showFootnote={!recordPrefilled && auditPrefilled}
+        />
 
         <RunningFooter left={footerLeft} />
         <DisclaimerFooter />

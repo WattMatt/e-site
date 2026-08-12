@@ -324,6 +324,55 @@ export const siteFormReportFixture: SiteFormReportData = {
 }
 
 /**
+ * The mixed-provenance case: some answers inherited from the project record and
+ * never touched, others typed at the board.
+ *
+ * Deliberately derived from `siteFormReportFixture` (which carries NO
+ * provenance at all) so the pair reads as one controlled variable: same
+ * document, same hostile strings, only `prefilledFrom` / `prefilled` differ.
+ *
+ * Circuit entry 1 is imported wholesale from the cable schedule; entry 2 was
+ * typed on site. That is the case the marker exists for.
+ */
+export const prefilledSiteFormReportFixture: SiteFormReportData = {
+  ...siteFormReportFixture,
+  sections: sections.map((section) => ({
+    ...section,
+    rows: section.rows.map((row) =>
+      // Board identity comes off the structure node; the date of work does not.
+      row.fieldId === 'db_reference' || row.fieldId === 'db_description'
+        ? { ...row, prefilledFrom: 'structure_node' }
+        : row,
+    ),
+    groups: section.groups.map((group) =>
+      group.fieldId !== 'circuits'
+        ? group
+        : {
+            ...group,
+            rows: group.rows.map((row) =>
+              row.entryNo !== 1
+                ? { ...row, prefilled: row.cells.map(() => false) }
+                : {
+                    ...row,
+                    // Way no., circuit reference, as-found description and
+                    // conductor size all came off the cable schedule; the
+                    // action taken and the checks were answered at the board.
+                    prefilled: group.columns.map((c) =>
+                      ['way_no', 'circuit_ref', 'description_as_found', 'conductor_size_phase'].includes(
+                        c.fieldId,
+                      ),
+                    ),
+                  },
+            ),
+          },
+    ),
+  })),
+  audit: audit.map((entry, i) =>
+    i === 0 ? { ...entry, prefilledFrom: 'structure_node' } : entry,
+  ),
+}
+
+/**
  * The empty-draft preview case: a form created seconds ago, with zero
  * responses, zero photos and zero signatures. A real user hits this on their
  * very first click of "Preview", so it must render rather than throw.
