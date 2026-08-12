@@ -98,7 +98,10 @@ export async function uploadFormPhoto(
       sort_order: opts.sortOrder,
       file_size_bytes: prepared.size,
       taken_at: new Date().toISOString(),
-      uploaded_by: opts.uploadedBy,
+      // Omit rather than send null: the column DEFAULTs to auth.uid(), and the
+      // RLS WITH CHECK requires uploaded_by = auth.uid(). An explicit null
+      // would override the default and be refused.
+      ...(opts.uploadedBy ? { uploaded_by: opts.uploadedBy } : {}),
     })
     .select('id')
     .single()
@@ -148,7 +151,8 @@ export async function uploadFormSignature(
         registration_category: opts.registrationCategory?.trim() || null,
         registration_number: opts.registrationNumber?.trim() || null,
         storage_path: path,
-        signed_by: opts.signedBy,
+        // See the photo path above: omit so the auth.uid() DEFAULT applies.
+        ...(opts.signedBy ? { signed_by: opts.signedBy } : {}),
         signed_at: new Date().toISOString(),
       },
       { onConflict: 'form_id,block_id' },

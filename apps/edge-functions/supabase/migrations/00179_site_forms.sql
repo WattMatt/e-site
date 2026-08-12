@@ -52,7 +52,8 @@ CREATE UNIQUE INDEX form_templates_system_key_version_idx
   WHERE organisation_id IS NULL;
 
 CREATE OR REPLACE FUNCTION field.enforce_form_template_immutability()
-RETURNS TRIGGER LANGUAGE plpgsql AS $fn$
+RETURNS TRIGGER LANGUAGE plpgsql
+SET search_path TO 'field', 'public' AS $fn$
 BEGIN
   IF NEW.schema_json IS DISTINCT FROM OLD.schema_json THEN
     RAISE EXCEPTION 'schema_json is immutable; insert a new row with a bumped version instead';
@@ -79,7 +80,7 @@ CREATE TABLE field.site_forms (
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft', 'submitted', 'distributed', 'void')),
   as_left_status TEXT,
-  created_by UUID NOT NULL REFERENCES public.profiles(id),
+  created_by UUID NOT NULL DEFAULT auth.uid() REFERENCES public.profiles(id),
   submitted_by UUID REFERENCES public.profiles(id),
   submitted_at TIMESTAMPTZ,
   distributed_by UUID REFERENCES public.profiles(id),
@@ -160,7 +161,7 @@ CREATE TABLE field.form_responses (
   value_json JSONB,
   pass_state TEXT CHECK (pass_state IN ('pass', 'fail', 'na', 'not_checked')),
   fail_reason TEXT,
-  latest_responded_by UUID REFERENCES public.profiles(id),
+  latest_responded_by UUID DEFAULT auth.uid() REFERENCES public.profiles(id),
   latest_responded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (form_id, section_id, field_id)
 );
@@ -222,7 +223,7 @@ CREATE TABLE field.form_photos (
   height_px INT,
   file_size_bytes INT,
   sort_order INT NOT NULL DEFAULT 0,
-  uploaded_by UUID REFERENCES public.profiles(id),
+  uploaded_by UUID DEFAULT auth.uid() REFERENCES public.profiles(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX form_photos_form_field_idx
@@ -248,7 +249,7 @@ CREATE TABLE field.form_signatures (
   registration_category TEXT,
   registration_number TEXT,
   storage_path TEXT NOT NULL,
-  signed_by UUID REFERENCES public.profiles(id),
+  signed_by UUID DEFAULT auth.uid() REFERENCES public.profiles(id),
   signed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (form_id, block_id)
 );
@@ -261,7 +262,8 @@ SET search_path TO 'field', 'public' SET row_security TO 'off' AS $fn$
     SELECT 1 FROM field.site_forms f
     WHERE f.id = p_form_id
       AND public.user_has_project_access(f.project_id)
-      AND (NOT public.user_is_client_viewer(f.organisation_id) OR f.status = 'distributed')
+      AND (public.user_effective_project_role(f.project_id) IS DISTINCT FROM 'client_viewer'
+           OR f.status = 'distributed')
   )
 $fn$;
 
@@ -273,9 +275,23 @@ SET search_path TO 'field', 'public' SET row_security TO 'off' AS $fn$
     WHERE f.id = p_form_id
       AND f.status = 'draft'                        -- the write window
       AND public.user_has_project_access(f.project_id)
-      AND NOT public.user_is_client_viewer(f.organisation_id)
+      AND public.user_effective_project_role(f.project_id) IS DISTINCT FROM 'client_viewer'
   )
 $fn$;
+
+-- Returns NULL instead of raising on a malformed segment. The storage policies
+-- below cast a path segment to uuid; a bare `::uuid` RAISES 22P02 rather than
+-- denying, which turns a junk object name into a 500 for the uploader and --
+-- once such an object exists -- aborts every SELECT over the whole bucket for
+-- every user.
+CREATE OR REPLACE FUNCTION field.safe_form_uuid(p_txt TEXT)
+RETURNS UUID LANGUAGE plpgsql IMMUTABLE
+SET search_path TO 'pg_catalog' AS $fn$
+BEGIN
+  RETURN p_txt::uuid;
+EXCEPTION WHEN OTHERS THEN
+  RETURN NULL;
+END $fn$;
 
 CREATE OR REPLACE FUNCTION field.user_can_manage_form(p_project_id UUID)
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
@@ -284,12 +300,38 @@ SET search_path TO 'public' SET row_security TO 'off' AS $fn$
          IN ('owner', 'admin', 'project_manager')
 $fn$;
 
--- The `field` schema has no default ACL for FUNCTIONS (verified against prod),
--- so EXECUTE must be granted explicitly here.
+-- Postgres grants EXECUTE to PUBLIC by default on CREATE FUNCTION, and the
+-- `field` schema has no default ACL for functions to override it. A bare GRANT
+-- therefore does NOT restrict anything -- it only adds. Every function must be
+-- revoked from PUBLIC first, or `anon` can call it with the published anon key
+-- over PostgREST, since `field` is an exposed schema.
+--
+-- allocate_form_no is the dangerous one: SECURITY DEFINER, and it walks past
+-- the deliberately policy-less RLS on form_number_seqs. Left PUBLIC, an
+-- unauthenticated caller holding any form UUID -- which the distribution email
+-- puts in front of the whole roster -- could advance the statutory numbering
+-- series of any project, and read back that project's code.
+REVOKE ALL ON FUNCTION field.user_has_form_read(UUID)              FROM PUBLIC;
+REVOKE ALL ON FUNCTION field.user_can_write_form(UUID)             FROM PUBLIC;
+REVOKE ALL ON FUNCTION field.user_can_manage_form(UUID)            FROM PUBLIC;
+REVOKE ALL ON FUNCTION field.allocate_form_no(UUID, TEXT)          FROM PUBLIC;
+REVOKE ALL ON FUNCTION field.safe_form_uuid(TEXT)                  FROM PUBLIC;
+REVOKE ALL ON FUNCTION field.append_form_response_history()        FROM PUBLIC;
+REVOKE ALL ON FUNCTION field.enforce_form_template_immutability()  FROM PUBLIC;
+
 GRANT EXECUTE ON FUNCTION field.user_has_form_read(UUID)     TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION field.user_can_write_form(UUID)    TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION field.user_can_manage_form(UUID)   TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION field.safe_form_uuid(TEXT)         TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION field.allocate_form_no(UUID, TEXT) TO service_role;
+
+-- New tables inherit anon=SELECT from the schema default ACL. RLS denies anon
+-- in practice, but 00168 set the precedent of revoking it outright rather than
+-- relying on a policy to be the only thing standing between anon and the rows.
+REVOKE SELECT ON field.site_forms, field.form_responses, field.form_response_history,
+                 field.form_photos, field.form_signatures, field.form_templates,
+                 field.form_number_seqs
+  FROM anon;
 
 -- ─── 7. State-transition guard ───────────────────────────────────────────────
 -- RLS can gate WHO may update a row, but not WHICH transition they may make.
@@ -310,6 +352,33 @@ BEGIN
   -- the action layer is what gates them.
   IF current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
     RETURN NEW;
+  END IF;
+
+  -- Identity and lifecycle stamps are not the field user's to rewrite. Left
+  -- open, a contractor could re-attribute their own record to a colleague or
+  -- renumber it (form_no is the statutory reference this document is cited by),
+  -- on a form that is printed, emailed to the project and relied on later.
+  IF NEW.created_by     IS DISTINCT FROM OLD.created_by
+     OR NEW.form_no     IS DISTINCT FROM OLD.form_no
+     OR NEW.submitted_by   IS DISTINCT FROM OLD.submitted_by
+     OR NEW.submitted_at   IS DISTINCT FROM OLD.submitted_at
+     OR NEW.distributed_by IS DISTINCT FROM OLD.distributed_by
+     OR NEW.distributed_at IS DISTINCT FROM OLD.distributed_at
+     OR NEW.report_id      IS DISTINCT FROM OLD.report_id
+  THEN
+    -- submitted_* is stamped by the same UPDATE that moves draft -> submitted,
+    -- so allow exactly that transition to set it, and nothing else.
+    IF NOT (OLD.status = 'draft' AND NEW.status = 'submitted'
+            AND NEW.created_by     IS NOT DISTINCT FROM OLD.created_by
+            AND NEW.form_no        IS NOT DISTINCT FROM OLD.form_no
+            AND NEW.distributed_by IS NOT DISTINCT FROM OLD.distributed_by
+            AND NEW.distributed_at IS NOT DISTINCT FROM OLD.distributed_at
+            AND NEW.report_id      IS NOT DISTINCT FROM OLD.report_id
+            AND NEW.submitted_by   IS NOT DISTINCT FROM auth.uid())
+    THEN
+      RAISE EXCEPTION 'Identity and lifecycle columns on a site form are not editable'
+        USING ERRCODE = '42501';
+    END IF;
   END IF;
 
   IF NEW.status = OLD.status THEN
@@ -341,6 +410,8 @@ BEGIN
     OLD.status, NEW.status USING ERRCODE = '42501';
 END $fn$;
 
+REVOKE ALL ON FUNCTION field.enforce_site_form_transition() FROM PUBLIC;
+
 CREATE TRIGGER trg_site_forms_transition
   BEFORE UPDATE ON field.site_forms
   FOR EACH ROW EXECUTE FUNCTION field.enforce_site_form_transition();
@@ -360,18 +431,31 @@ CREATE POLICY form_templates_select ON field.form_templates
   FOR SELECT TO authenticated
   USING (organisation_id IS NULL OR organisation_id = ANY (public.get_user_org_ids()));
 
+-- user_effective_project_role, not user_is_client_viewer: the latter only reads
+-- public.user_organisations, so a client viewer holding access through
+-- projects.project_members (sub-org membership) was invisible to it while the
+-- app layer treated them as a client viewer. Two layers disagreeing about who
+-- is a client viewer is the whole containment.
 CREATE POLICY site_forms_select ON field.site_forms
   FOR SELECT TO authenticated
   USING (
     public.user_has_project_access(project_id)
-    AND (NOT public.user_is_client_viewer(organisation_id) OR status = 'distributed')
+    AND (public.user_effective_project_role(project_id) IS DISTINCT FROM 'client_viewer'
+         OR status = 'distributed')
   );
 
+-- organisation_id MUST match the project's own org. Without this, the
+-- client-viewer test below is defeated by a single PATCH: user_is_client_viewer
+-- returns false for an org you are not a member of, so `NOT false` passes, and
+-- moving a draft into a foreign org made it visible AND writable to that org's
+-- client viewers -- who could then submit it. It also made the issued PDF
+-- render a different organisation's name, logo and accent.
 CREATE POLICY site_forms_insert ON field.site_forms
   FOR INSERT TO authenticated
   WITH CHECK (
     public.user_has_project_access(project_id)
-    AND NOT public.user_is_client_viewer(organisation_id)
+    AND organisation_id = (SELECT p.organisation_id FROM projects.projects p WHERE p.id = project_id)
+    AND public.user_effective_project_role(project_id) IS DISTINCT FROM 'client_viewer'
     AND status = 'draft'
   );
 
@@ -386,11 +470,12 @@ CREATE POLICY site_forms_update ON field.site_forms
   FOR UPDATE TO authenticated
   USING (
     public.user_has_project_access(project_id)
-    AND NOT public.user_is_client_viewer(organisation_id)
+    AND public.user_effective_project_role(project_id) IS DISTINCT FROM 'client_viewer'
   )
   WITH CHECK (
     public.user_has_project_access(project_id)
-    AND NOT public.user_is_client_viewer(organisation_id)
+    AND organisation_id = (SELECT p.organisation_id FROM projects.projects p WHERE p.id = project_id)
+    AND public.user_effective_project_role(project_id) IS DISTINCT FROM 'client_viewer'
     AND (status <> 'distributed' OR field.user_can_manage_form(project_id))
     AND (status <> 'void' OR field.user_can_manage_form(project_id))
   );
@@ -402,12 +487,17 @@ CREATE POLICY site_forms_delete ON field.site_forms
 -- Child tables derive access from the parent form (the node_circuits pattern).
 CREATE POLICY form_responses_select ON field.form_responses
   FOR SELECT TO authenticated USING (field.user_has_form_read(form_id));
+-- Attribution is pinned to the caller. Left open, a field user could post
+-- latest_responded_by = a colleague's uuid, and the append-only history trigger
+-- would faithfully record the forgery as fact -- defeating the one property
+-- that makes this table worth having in an incident enquiry.
 CREATE POLICY form_responses_insert ON field.form_responses
-  FOR INSERT TO authenticated WITH CHECK (field.user_can_write_form(form_id));
+  FOR INSERT TO authenticated
+  WITH CHECK (field.user_can_write_form(form_id) AND latest_responded_by = auth.uid());
 CREATE POLICY form_responses_update ON field.form_responses
   FOR UPDATE TO authenticated
   USING (field.user_can_write_form(form_id))
-  WITH CHECK (field.user_can_write_form(form_id));
+  WITH CHECK (field.user_can_write_form(form_id) AND latest_responded_by = auth.uid());
 CREATE POLICY form_responses_delete ON field.form_responses
   FOR DELETE TO authenticated USING (field.user_can_write_form(form_id));
 
@@ -417,23 +507,50 @@ CREATE POLICY form_response_history_select ON field.form_response_history
 
 CREATE POLICY form_photos_select ON field.form_photos
   FOR SELECT TO authenticated USING (field.user_has_form_read(form_id));
+-- storage_path is client-supplied. The storage policies stop you WRITING an
+-- object into another form's prefix, but nothing stopped the ROW pointing at
+-- one -- and both consumers dereference it with the RLS-bypassing service
+-- client (the PDF embeds the bytes, the email mints a 7-day signed URL). That
+-- made any object in the bucket readable across every project and org.
 CREATE POLICY form_photos_insert ON field.form_photos
-  FOR INSERT TO authenticated WITH CHECK (field.user_can_write_form(form_id));
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    field.user_can_write_form(form_id)
+    AND storage_path LIKE '%/' || form_id::text || '/%'
+    AND uploaded_by = auth.uid()
+  );
 CREATE POLICY form_photos_update ON field.form_photos
   FOR UPDATE TO authenticated
   USING (field.user_can_write_form(form_id))
-  WITH CHECK (field.user_can_write_form(form_id));
+  WITH CHECK (
+    field.user_can_write_form(form_id)
+    AND storage_path LIKE '%/' || form_id::text || '/%'
+  );
 CREATE POLICY form_photos_delete ON field.form_photos
   FOR DELETE TO authenticated USING (field.user_can_write_form(form_id));
 
 CREATE POLICY form_signatures_select ON field.form_signatures
   FOR SELECT TO authenticated USING (field.user_has_form_read(form_id));
+-- signatory_name and registration_number are deliberately free text: a client
+-- witness signs on the electrician's tablet, so the signatory need not be the
+-- app user. signed_by is therefore the honest field -- it records WHO CAPTURED
+-- the signature -- and it is pinned to the caller so that at least the operator
+-- cannot be forged.
 CREATE POLICY form_signatures_insert ON field.form_signatures
-  FOR INSERT TO authenticated WITH CHECK (field.user_can_write_form(form_id));
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    field.user_can_write_form(form_id)
+    AND storage_path LIKE '%/' || form_id::text || '/%'
+    AND signed_by = auth.uid()
+  );
 CREATE POLICY form_signatures_update ON field.form_signatures
   FOR UPDATE TO authenticated
   USING (field.user_can_write_form(form_id))
-  WITH CHECK (field.user_can_write_form(form_id));
+  WITH CHECK (
+    field.user_can_write_form(form_id)
+    AND storage_path LIKE '%/' || form_id::text || '/%'
+    AND signed_by = auth.uid()
+  );
 CREATE POLICY form_signatures_delete ON field.form_signatures
   FOR DELETE TO authenticated USING (field.user_can_write_form(form_id));
 
@@ -453,23 +570,23 @@ ON CONFLICT (id) DO NOTHING;
 -- id. Every policy below keys on that -- changing the layout silently denies.
 CREATE POLICY site_form_photos_read ON storage.objects FOR SELECT TO authenticated
   USING (bucket_id = 'site-form-photos'
-         AND field.user_has_form_read(((storage.foldername(name))[2])::uuid));
+         AND field.user_has_form_read(field.safe_form_uuid((storage.foldername(name))[2])));
 CREATE POLICY site_form_photos_insert ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (bucket_id = 'site-form-photos'
-         AND field.user_can_write_form(((storage.foldername(name))[2])::uuid));
+         AND field.user_can_write_form(field.safe_form_uuid((storage.foldername(name))[2])));
 CREATE POLICY site_form_photos_delete ON storage.objects FOR DELETE TO authenticated
   USING (bucket_id = 'site-form-photos'
-         AND field.user_can_write_form(((storage.foldername(name))[2])::uuid));
+         AND field.user_can_write_form(field.safe_form_uuid((storage.foldername(name))[2])));
 
 CREATE POLICY site_form_sigs_read ON storage.objects FOR SELECT TO authenticated
   USING (bucket_id = 'site-form-signatures'
-         AND field.user_has_form_read(((storage.foldername(name))[2])::uuid));
+         AND field.user_has_form_read(field.safe_form_uuid((storage.foldername(name))[2])));
 CREATE POLICY site_form_sigs_insert ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (bucket_id = 'site-form-signatures'
-         AND field.user_can_write_form(((storage.foldername(name))[2])::uuid));
+         AND field.user_can_write_form(field.safe_form_uuid((storage.foldername(name))[2])));
 CREATE POLICY site_form_sigs_delete ON storage.objects FOR DELETE TO authenticated
   USING (bucket_id = 'site-form-signatures'
-         AND field.user_can_write_form(((storage.foldername(name))[2])::uuid));
+         AND field.user_can_write_form(field.safe_form_uuid((storage.foldername(name))[2])));
 
 -- ─── 10. Notification type ───────────────────────────────────────────────────
 -- The constraint is re-declared wholesale each time (00066 -> 00072 -> 00173
