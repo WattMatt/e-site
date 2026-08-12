@@ -1,7 +1,12 @@
 import { notFound } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { projectService, FORMS_FIELD_ROLES, type Template } from '@esite/shared'
+import {
+  projectService,
+  FORMS_FIELD_ROLES,
+  ORG_WRITE_ROLES,
+  type Template,
+} from '@esite/shared'
 import {
   SITE_FORM_PHOTO_BUCKET,
   SITE_FORM_SIGNATURE_BUCKET,
@@ -20,11 +25,18 @@ interface SiteFormRow {
   board_ref: string | null
   board_label: string | null
   status: string
+  as_left_status: string | null
   void_reason: string | null
   created_by: string | null
   submitted_by: string | null
   submitted_at: string | null
+  distributed_by: string | null
+  distributed_at: string | null
   template_row_id: string
+}
+
+interface ReportRow {
+  version: number
 }
 
 interface TemplateRow {
@@ -53,6 +65,7 @@ type PgError = { message: string } | null
 interface SelectChain<T> extends PromiseLike<{ data: T[] | null; error: PgError }> {
   eq(column: string, value: string): SelectChain<T>
   order(column: string, opts: { ascending: boolean }): SelectChain<T>
+  limit(count: number): SelectChain<T>
   maybeSingle(): PromiseLike<{ data: T | null; error: PgError }>
 }
 
@@ -81,7 +94,7 @@ export default async function SiteFormCapturePage({ params }: Props) {
     .schema('field')
     .from('site_forms')
     .select<SiteFormRow>(
-      'id, form_no, board_ref, board_label, status, void_reason, created_by, submitted_by, submitted_at, template_row_id',
+      'id, form_no, board_ref, board_label, status, as_left_status, void_reason, created_by, submitted_by, submitted_at, distributed_by, distributed_at, template_row_id',
     )
     .eq('id', formId)
     .eq('project_id', projectId)
@@ -128,6 +141,21 @@ export default async function SiteFormCapturePage({ params }: Props) {
   const rawPhotos = photoRows ?? []
   const rawSignatures = signatureRows ?? []
 
+  // Highest issued report version filed for this form. Read on the CALLER's
+  // client (projects.reports RLS scopes it to their projects) — the panel only
+  // uses it to name the version a re-distribution would issue, so a null here
+  // degrades to "v1" rather than blocking anything.
+  const { data: latestReport } = await fdb
+    .schema('projects')
+    .from('reports')
+    .select<ReportRow>('version')
+    .eq('source_table', 'site_forms')
+    .eq('source_id', formId)
+    .eq('status', 'issued')
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
   // One-hour signed URLs, batched per bucket. A failure to sign is not fatal:
   // the strip renders a placeholder and the record still shows the photo count.
   const photoUrls = new Map<string, string>()
@@ -160,7 +188,12 @@ export default async function SiteFormCapturePage({ params }: Props) {
   // caller's own row, so a cookie-client lookup leaves every name blank.
   const personIds = [
     ...new Set(
-      [form.created_by, form.submitted_by, ...rawSignatures.map((s) => s.signed_by)].filter(
+      [
+        form.created_by,
+        form.submitted_by,
+        form.distributed_by,
+        ...rawSignatures.map((s) => s.signed_by),
+      ].filter(
         (x): x is string => !!x,
       ),
     ),
@@ -181,6 +214,12 @@ export default async function SiteFormCapturePage({ params }: Props) {
   // only a draft is writable — the same window RLS and the actions enforce.
   const gate = await requireEffectiveRole(supabase as never, projectId, FORMS_FIELD_ROLES)
   const canEdit = gate.ok && form.status === 'draft'
+
+  // Distribution and voiding are MANAGEMENT acts — putting the record in front
+  // of the whole project team, or withdrawing one that already went out. The
+  // gate is resolved once here and passed down; the actions re-check it.
+  const writeGate = await requireEffectiveRole(supabase as never, projectId, ORG_WRITE_ROLES)
+  const canDistribute = writeGate.ok
 
   const photos: FormPhotoRow[] = rawPhotos.map((p) => ({
     ...p,
@@ -222,6 +261,11 @@ export default async function SiteFormCapturePage({ params }: Props) {
       submittedByName={form.submitted_by ? (names.get(form.submitted_by) ?? null) : null}
       submittedAt={form.submitted_at}
       canEdit={canEdit}
+      canDistribute={canDistribute}
+      asLeftStatus={form.as_left_status}
+      currentReportVersion={latestReport?.version ?? null}
+      distributedAt={form.distributed_at}
+      distributedByName={form.distributed_by ? (names.get(form.distributed_by) ?? null) : null}
       todayISO={new Date().toISOString().slice(0, 10)}
     />
   )

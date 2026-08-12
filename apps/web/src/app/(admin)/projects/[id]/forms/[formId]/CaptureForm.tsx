@@ -18,6 +18,7 @@ import {
   type Template,
 } from '@esite/shared'
 import { submitSiteFormAction, upsertFormResponseAction } from '@/actions/site-forms.actions'
+import DistributePanel, { PreviewReportButton } from './DistributePanel'
 import FormFieldRenderer from './FormFieldRenderer'
 import type { FormPhotoRow } from './FormPhotoStrip'
 import type { FormSignatureRow } from './SignaturePad'
@@ -73,6 +74,18 @@ export interface CaptureFormProps {
   submittedAt: string | null
   /** Whether the caller may edit — role gate AND draft status, resolved server-side. */
   canEdit: boolean
+  /**
+   * Whether the caller holds an ORG_WRITE_ROLES effective role on this project.
+   * Resolved once by the server shell and passed down — the panel must never
+   * re-query the gate, and the actions re-check it server-side regardless.
+   */
+  canDistribute: boolean
+  /** As-left state of the board, shown on the distribute panel. */
+  asLeftStatus: string | null
+  /** Highest issued report version filed for this form, if any. */
+  currentReportVersion: number | null
+  distributedAt: string | null
+  distributedByName: string | null
   /** Computed on the server so the gate messages do not differ between renders. */
   todayISO: string
 }
@@ -393,9 +406,14 @@ export default function CaptureForm(props: CaptureFormProps) {
             {props.templateName} v{props.templateVersion} · {props.boardLabel} · {props.projectName}
           </p>
         </div>
-        <Link href={`/projects/${projectId}/forms`} className="btn">
-          Back to forms
-        </Link>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* Available on EVERY status, to every project role: an electrician
+              must be able to read the document before submitting it. */}
+          <PreviewReportButton projectId={projectId} formId={formId} status={status} />
+          <Link href={`/projects/${projectId}/forms`} className="btn">
+            Back to forms
+          </Link>
+        </div>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -437,6 +455,20 @@ export default function CaptureForm(props: CaptureFormProps) {
             </p>
           )}
         </div>
+      )}
+
+      {/* Distribution, filed reports and void. A submitted form used to dead-end
+          here: the actions existed but nothing in the app called them. */}
+      {props.canDistribute && (status === 'submitted' || status === 'distributed') && (
+        <DistributePanel
+          projectId={projectId}
+          formId={formId}
+          status={status}
+          asLeftStatus={props.asLeftStatus}
+          currentVersion={props.currentReportVersion}
+          distributedAt={props.distributedAt}
+          distributedByName={props.distributedByName}
+        />
       )}
 
       {saveError && (
