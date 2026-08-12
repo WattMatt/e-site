@@ -84,6 +84,14 @@ export const MARKUP_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'projec
  * though the sets coincide today — separate concerns.
  */
 export const QC_WRITE_ROLES: readonly OrgRole[] = ['owner', 'admin', 'project_manager', 'contractor']
+/**
+ * Roles that may create, fill and submit a site form. Site electricians are
+ * typically `contractor`, so this is deliberately wider than ORG_WRITE_ROLES.
+ * Distributing and voiding a form remain ORG_WRITE_ROLES.
+ */
+export const FORMS_FIELD_ROLES: readonly OrgRole[] = ORG_ROLES.filter(
+  (r) => r !== 'client_viewer',
+)
 export type ProjectRole = 'project_manager' | 'contractor' | 'client_viewer'
 
 /**
