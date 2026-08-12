@@ -283,6 +283,8 @@ interface GatherOpts {
   responses?: any[]
   photos?: any[]
   downloads?: Record<string, { data: any; error: any }>
+  /** Effective project role the gate resolves to. */
+  role?: string
 }
 
 async function gather(opts: GatherOpts = {}): Promise<SiteFormReportData> {
@@ -361,7 +363,7 @@ async function gather(opts: GatherOpts = {}): Promise<SiteFormReportData> {
   }
 
   createServiceClientMock.mockReturnValue(service)
-  requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'owner' })
+  requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: opts.role ?? 'owner' })
 
   const cookieClient: any = {
     auth: { getUser: async () => ({ data: { user: { id: 'viewer-1' } } }) },
@@ -374,6 +376,42 @@ const rowOf = (data: SiteFormReportData, sectionId: string, fieldId: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+})
+
+// ─── SECURITY: client viewers may only read a DISTRIBUTED record ───────────
+// This route lives under app/api/…, NOT under (admin)/layout.tsx, so the
+// "client viewers are bounced to /portal" protection does not apply; and every
+// read after the gate is on the service client, which bypasses the
+// field.site_forms RLS that restricts client viewers to status='distributed'.
+// Without this check the endpoint is a live read-oracle: the distribution email
+// hands every client viewer the projectId + formId, so a later VOID (the
+// documented withdrawal path) or any leaked draft id would still render the
+// complete PDF — audit trail, photos and signatures included.
+
+describe('gatherSiteFormReportData — client-viewer status gate', () => {
+  it('serves a distributed record to a client viewer', async () => {
+    const data = await gather({ role: 'client_viewer', formOver: { status: 'distributed' } })
+    expect(data.summary.status).toBe('distributed')
+  })
+
+  it('refuses a draft to a client viewer, indistinguishably from not-found', async () => {
+    await expect(
+      gather({ role: 'client_viewer', formOver: { status: 'draft' } }),
+    ).rejects.toThrow('Form not found')
+  })
+
+  it('refuses a voided record to a client viewer', async () => {
+    // The withdrawal path: RLS hides it everywhere else, this route must too.
+    await expect(
+      gather({ role: 'client_viewer', formOver: { status: 'void' } }),
+    ).rejects.toThrow('Form not found')
+  })
+
+  it('still lets a non-client role preview their own draft', async () => {
+    // An electrician previewing a draft before submitting is the normal path.
+    const data = await gather({ role: 'contractor', formOver: { status: 'draft' } })
+    expect(data.summary.status).toBe('draft')
+  })
 })
 
 // ─── FINDING 1 ─────────────────────────────────────────────────────────────

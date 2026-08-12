@@ -417,6 +417,27 @@ export async function gatherSiteFormReportData(
     .maybeSingle()
   if (!form) throw new Error('Form not found')
 
+  // ── 2a. Client viewers see DISTRIBUTED records only. ──────────────────────
+  //
+  //     This is not redundant with the gate above. Every read from here down is
+  //     on the service client, which bypasses the `field.site_forms` RLS that
+  //     restricts client viewers to `status = 'distributed'` — and this route
+  //     lives under app/api/…, not under (admin)/layout.tsx, so the "client
+  //     viewers are bounced to /portal" protection does not apply either.
+  //
+  //     Without this, the endpoint is a live read-oracle. The distribution
+  //     email hands every client viewer the projectId and formId, so a record
+  //     later VOIDED (the documented withdrawal path) would keep rendering
+  //     indefinitely, and any leaked draft id would be a rolling window into an
+  //     in-progress record — audit trail, photos and signatures included.
+  //
+  //     Mirrors migration 00172's rule for `qc_reports` at the database level.
+  //     The wording is deliberately the same not-found message used above: a
+  //     distinguishable "forbidden" would still confirm the form exists.
+  if (gate.role === 'client_viewer' && form.status !== 'distributed') {
+    throw new Error('Form not found')
+  }
+
   const [
     { data: project },
     { data: template },
