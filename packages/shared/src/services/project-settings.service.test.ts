@@ -437,6 +437,7 @@ describe('projectSettingsService.convenience bundles', () => {
     notify_inspection_email: false,
     notify_snag_email: true, notify_diary_email: false,
     notify_qc_email: false,
+    notify_form_email: true,
     created_at: '2026-05-26T00:00:00.000Z',
     updated_at: '2026-05-26T00:00:00.000Z', updated_by: null,
   }
@@ -476,7 +477,7 @@ describe('projectSettingsService.convenience bundles', () => {
     })
   })
 
-  it('getNotificationConfig returns ALL six channel keys from the row', async () => {
+  it('getNotificationConfig returns ALL seven channel keys from the row', async () => {
     // Full-object toEqual: toEqual ignores undefined-valued keys, so a lost
     // mapper line (e.g. qcEmail reading a missing column → undefined) only
     // fails if EVERY key is pinned here with a concrete boolean.
@@ -488,6 +489,7 @@ describe('projectSettingsService.convenience bundles', () => {
       snagEmail: true,
       diaryEmail: false,
       qcEmail: false,
+      formEmail: true,
     })
   })
 
@@ -500,7 +502,21 @@ describe('projectSettingsService.convenience bundles', () => {
       snagEmail: true,
       diaryEmail: true,
       qcEmail: true,
+      formEmail: true,
     })
+  })
+
+  it('getNotificationConfig returns formEmail: false when the row has notify_form_email: false', async () => {
+    const result = await projectSettingsService.getNotificationConfig(
+      clientForGet({ ...fullRow, notify_form_email: false }),
+      'p1',
+    )
+    expect(result).toMatchObject({ formEmail: false })
+  })
+
+  it('getNotificationConfig returns formEmail: true when there is no settings row at all', async () => {
+    const result = await projectSettingsService.getNotificationConfig(clientForGet(null), 'p1')
+    expect(result).toMatchObject({ formEmail: true })
   })
 })
 

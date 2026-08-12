@@ -1,0 +1,2374 @@
+{
+  "template_id": "termination-and-making-safe",
+  "name": "Termination and Making Safe",
+  "version": "1.0",
+  "applies_to_node_types": [
+    "board",
+    "any"
+  ],
+  "sans_reference": "SANS 10142-1",
+  "sans_edition": "Edition 3 (2020)",
+  "deliverable_type": "inspection_only",
+  "requires_separate_verifier": true,
+  "sections": [
+    {
+      "section_id": "project_site",
+      "title": "1. Project and site identification",
+      "fields": [
+        {
+          "field_id": "record_number",
+          "label": "Form / record number",
+          "type": "text",
+          "required": true,
+          "help_text": "System-generated and immutable, e.g. TMS-{project}-{DB}-{seq}."
+        },
+        {
+          "field_id": "project_name",
+          "label": "Project name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "project_number",
+          "label": "Project number / WM job no.",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "client_employer",
+          "label": "Client / employer",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "site_building_name",
+          "label": "Site / building name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "physical_address",
+          "label": "Physical address",
+          "type": "textarea",
+          "required": true
+        },
+        {
+          "field_id": "erf_lot_no",
+          "label": "Erf / Lot no.",
+          "type": "text"
+        },
+        {
+          "field_id": "gps_coordinates",
+          "label": "GPS coordinates",
+          "type": "text",
+          "help_text": "lat, long — auto-captured on mobile."
+        },
+        {
+          "field_id": "tenant_unit_shop_no",
+          "label": "Tenant / unit / shop no.",
+          "type": "text",
+          "help_text": "Mandatory for tenanted revamps."
+        },
+        {
+          "field_id": "existing_coc_on_record",
+          "label": "Existing Certificate of Compliance on record?",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "existing_coc_number",
+          "label": "Existing certificate number",
+          "type": "text",
+          "conditional_on": {
+            "field_id": "existing_coc_on_record",
+            "equals": true
+          }
+        },
+        {
+          "field_id": "existing_coc_date_issued",
+          "label": "Existing certificate date issued",
+          "type": "date",
+          "conditional_on": {
+            "field_id": "existing_coc_on_record",
+            "equals": true
+          }
+        },
+        {
+          "field_id": "original_coc_obtained_before_commencement",
+          "label": "Original certificate obtained before commencement?",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "yes_copy_on_file",
+            "no_client_could_not_produce_client_advised_of_remediation_cost",
+            "not_applicable_pre_1992_exemption"
+          ],
+          "help_text": "ECA(SA) advises obtaining the existing certificate before starting work in an existing property and warning the client about remediation cost."
+        },
+        {
+          "field_id": "health_safety_file_reference",
+          "label": "Health & safety file reference",
+          "type": "text",
+          "help_text": "Construction Regulations, 2014."
+        },
+        {
+          "field_id": "principal_contractor",
+          "label": "Principal contractor",
+          "type": "text",
+          "help_text": "Where the revamp is notified construction work."
+        },
+        {
+          "field_id": "risk_assessment_reference",
+          "label": "Risk assessment / safe work procedure reference",
+          "type": "text",
+          "required": true,
+          "help_text": "Construction Regulations 2014 reg 9 — a documented safe work procedure is a legal requirement."
+        },
+        {
+          "field_id": "temporary_installation_competent_person",
+          "label": "Competent person appointed in writing for temporary electrical installations",
+          "type": "text",
+          "help_text": "Construction Regulations 2014 reg 24(c); required where a temporary installation exists on site."
+        },
+        {
+          "field_id": "temporary_installation_register_reference",
+          "label": "Weekly temporary-installation inspection register ref",
+          "type": "text",
+          "help_text": "Construction Regulations 2014 reg 24(d)."
+        }
+      ]
+    },
+    {
+      "section_id": "db_identification",
+      "title": "2. Distribution board / equipment identification",
+      "fields": [
+        {
+          "field_id": "db_reference",
+          "label": "DB reference / code",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "db_description",
+          "label": "DB description / name on nameplate (as found)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "db_location",
+          "label": "Location of DB",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "db_fed_from",
+          "label": "DB fed from (upstream board + way)",
+          "type": "text",
+          "required": true,
+          "sans_ref": "6.6.1.21(a)",
+          "help_text": "Verify on site — do not copy the existing label."
+        },
+        {
+          "field_id": "upstream_device_rating",
+          "label": "Upstream protective device rating",
+          "type": "number",
+          "unit": "A"
+        },
+        {
+          "field_id": "supply_system",
+          "label": "Supply system",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "tn_s",
+            "tn_c_s",
+            "tn_c",
+            "tt",
+            "it",
+            "unknown"
+          ]
+        },
+        {
+          "field_id": "nominal_voltage",
+          "label": "Nominal voltage",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "230_v",
+            "400_v",
+            "525_v",
+            "other"
+          ]
+        },
+        {
+          "field_id": "phases",
+          "label": "Number of phases",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "1",
+            "2",
+            "3"
+          ]
+        },
+        {
+          "field_id": "main_switch_type",
+          "label": "Main switch type",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "switch_disconnector_on_load_isolator",
+            "fuse_switch",
+            "circuit_breaker",
+            "earth_leakage_circuit_breaker",
+            "earth_leakage_switch_disconnector"
+          ]
+        },
+        {
+          "field_id": "main_switch_rating",
+          "label": "Main switch rating",
+          "type": "number",
+          "required": true,
+          "unit": "A"
+        },
+        {
+          "field_id": "short_circuit_withstand",
+          "label": "Short-circuit / withstand rating",
+          "type": "number",
+          "unit": "kA"
+        },
+        {
+          "field_id": "earth_leakage_tripping_current",
+          "label": "Rated earth leakage tripping current I∆n",
+          "type": "number",
+          "unit": "mA",
+          "default_value": 30
+        },
+        {
+          "field_id": "db_above_10ka",
+          "label": "DB short-circuit rating greater than 10 kA?",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Gates the 6.6.6.2 alteration questions."
+        },
+        {
+          "field_id": "alternative_supplies",
+          "label": "Alternative / secondary supplies present?",
+          "type": "multi_select",
+          "required": true,
+          "options": [
+            "none",
+            "generator",
+            "ups",
+            "pv_or_inverter",
+            "bus_tie_or_interconnector",
+            "landlord_or_house_supply",
+            "other"
+          ],
+          "sans_ref": "7.12",
+          "help_text": "The single most safety-critical field on this form. Cross-checked in section 6."
+        },
+        {
+          "field_id": "alternative_supply_details",
+          "label": "Alternative supply details",
+          "type": "textarea",
+          "conditional_on": {
+            "field_id": "alternative_supplies",
+            "not_equals": "none"
+          }
+        },
+        {
+          "field_id": "above_1kv",
+          "label": "Is any part of this board above 1 kV?",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "If yes, the work falls outside SANS 10142-1 — route to SANS 10142-2 / an ORHVS permit."
+        },
+        {
+          "field_id": "specialised_installation",
+          "label": "Is this a specialised installation (hazardous / medical / explosive / petroleum)?",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "If yes, only a master installation electrician may take responsibility (SANS 10142-1 Annex M)."
+        },
+        {
+          "field_id": "board_sits_in",
+          "label": "Board sits in",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "tenant_installation",
+            "landlord_sub_reticulation",
+            "common_area_sectional_title",
+            "supply_authority_side_of_point_of_control"
+          ],
+          "sans_ref": "7.16",
+          "help_text": "Determines who the user or lessor is and which certificate the work eventually feeds."
+        },
+        {
+          "field_id": "lightning_protection_installed",
+          "label": "Lightning protection installed?",
+          "type": "pass_fail"
+        },
+        {
+          "field_id": "photo_db_nameplate",
+          "label": "Photo — DB nameplate / label (as found)",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_db_closed_as_found",
+          "label": "Photo — DB closed, doors shut (as found)",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_db_open_as_found",
+          "label": "Photo — DB open, covers on (as found)",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_existing_legend_card",
+          "label": "Photo — existing legend card (as found)",
+          "type": "photo",
+          "required": true
+        }
+      ]
+    },
+    {
+      "section_id": "earthing_adequacy",
+      "title": "2A. Adequacy of existing earthing and bonding",
+      "fields": [
+        {
+          "field_id": "system_earthing_confirmed_on_site",
+          "label": "System earthing arrangement confirmed on site",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "tn_s",
+            "tn_c_s",
+            "tn_c",
+            "tt",
+            "it",
+            "could_not_determine"
+          ],
+          "help_text": "Confirm by inspection; do not copy from the drawing."
+        },
+        {
+          "field_id": "earth_fault_loop_impedance_at_db",
+          "label": "Earth fault loop impedance at the DB supplying the affected circuits (Zdb)",
+          "type": "number",
+          "required": true,
+          "unit": "Ω"
+        },
+        {
+          "field_id": "earthing_conductor_adequate",
+          "label": "Earthing conductor present and adequate",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "earthing_conductor_size",
+          "label": "Earthing conductor size",
+          "type": "number",
+          "unit": "mm²"
+        },
+        {
+          "field_id": "main_bonding_present_to",
+          "label": "Main protective bonding present to",
+          "type": "multi_select",
+          "required": true,
+          "options": [
+            "water",
+            "gas",
+            "oil",
+            "structural_steel",
+            "lightning_protection",
+            "other",
+            "none_found"
+          ],
+          "sans_ref": "6.13.2"
+        },
+        {
+          "field_id": "existing_bonding_continuity",
+          "label": "Bonding continuity verified",
+          "type": "number",
+          "required": true,
+          "unit": "Ω",
+          "pass_when": "<= 0.2",
+          "sans_ref": "8.6.2"
+        },
+        {
+          "field_id": "consumers_earth_terminal_accessible",
+          "label": "Consumer's earth terminal accessible and identified",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "6.11.5"
+        },
+        {
+          "field_id": "photo_main_earth_and_bonding",
+          "label": "Photo — main earth terminal and bonding",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "pre_existing_damage_noted",
+          "label": "Any pre-existing damage or defect noted before work commenced",
+          "type": "textarea",
+          "required": true,
+          "help_text": "Answer before work starts. On a revamp this is the contractor's defence against being blamed for pre-existing defects."
+        },
+        {
+          "field_id": "photo_pre_existing_damage",
+          "label": "Photo — pre-existing damage",
+          "type": "photo",
+          "help_text": "Required if pre-existing damage was noted above."
+        }
+      ]
+    },
+    {
+      "section_id": "personnel",
+      "title": "3. Date, time and personnel",
+      "fields": [
+        {
+          "field_id": "date_of_work",
+          "label": "Date of work",
+          "type": "date",
+          "required": true
+        },
+        {
+          "field_id": "time_isolation_commenced",
+          "label": "Time isolation commenced",
+          "type": "text",
+          "required": true,
+          "help_text": "Date and time, e.g. 2026-08-12 07:40."
+        },
+        {
+          "field_id": "time_work_completed",
+          "label": "Time work completed",
+          "type": "text",
+          "required": true,
+          "help_text": "Date and time, e.g. 2026-08-12 15:10."
+        },
+        {
+          "field_id": "electrician_name",
+          "label": "Electrician — full name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "electrician_id_no",
+          "label": "Electrician — ID / employee no.",
+          "type": "text"
+        },
+        {
+          "field_id": "electrician_category",
+          "label": "Electrician — registration category",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "master_installation_electrician",
+            "installation_electrician",
+            "electrical_tester_single_phase",
+            "not_a_registered_person_under_general_control"
+          ],
+          "help_text": "Verbatim from Electrical Installation Regulations, 2009 reg 11(2)."
+        },
+        {
+          "field_id": "electrician_registration_no",
+          "label": "Electrician — registration certificate no.",
+          "type": "text",
+          "conditional_on": {
+            "field_id": "electrician_category",
+            "not_equals": "not_a_registered_person_under_general_control"
+          },
+          "help_text": "(wireman's licence no.)"
+        },
+        {
+          "field_id": "electrician_registration_expiry",
+          "label": "Electrician — registration expiry",
+          "type": "date"
+        },
+        {
+          "field_id": "registered_person_name",
+          "label": "Registered person exercising general control — name",
+          "type": "text",
+          "required": true,
+          "help_text": "Electrical Installation Regulations, 2009 reg 5(4) — required for all installation work, including where the person on site is not themselves registered."
+        },
+        {
+          "field_id": "registered_person_no",
+          "label": "Registered person — registration no.",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "registered_person_category",
+          "label": "Registered person — category",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "master_installation_electrician",
+            "installation_electrician",
+            "electrical_tester_single_phase"
+          ],
+          "help_text": "Validated against the installation type captured in section 2."
+        },
+        {
+          "field_id": "electrical_contractor",
+          "label": "Electrical contractor (company)",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "electrical_contractor_registration_no",
+          "label": "Electrical contractor registration no.",
+          "type": "text",
+          "required": true,
+          "help_text": "Electrical Installation Regulations, 2009 reg 6 — renewed annually."
+        },
+        {
+          "field_id": "contractor_registration_expiry",
+          "label": "Contractor registration expiry",
+          "type": "date"
+        },
+        {
+          "field_id": "crew",
+          "label": "Other persons on site (crew)",
+          "type": "repeating_group",
+          "item_label_template": "{{crew_name}} — {{crew_role}}",
+          "help_text": "Each crew member who applies a lock must be listed.",
+          "fields": [
+            {
+              "field_id": "crew_name",
+              "label": "Name",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "crew_role",
+              "label": "Role",
+              "type": "text",
+              "required": true
+            }
+          ]
+        },
+        {
+          "field_id": "ppe_confirmed",
+          "label": "PPE confirmed appropriate and serviceable",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Electrical Machinery Regulations, 2011 reg 3."
+        }
+      ]
+    },
+    {
+      "section_id": "scope_of_work",
+      "title": "4. Scope of work",
+      "fields": [
+        {
+          "field_id": "nature_of_work",
+          "label": "Nature of work",
+          "type": "multi_select",
+          "required": true,
+          "options": [
+            "termination_of_redundant_circuits",
+            "making_safe_for_demolition_or_strip_out",
+            "board_modification_or_extension",
+            "temporary_supply_installation",
+            "decommissioning_of_board",
+            "isolation_for_third_party_work",
+            "other"
+          ]
+        },
+        {
+          "field_id": "scope_description",
+          "label": "Scope description",
+          "type": "textarea",
+          "required": true,
+          "help_text": "Description of the installation covered by this record."
+        },
+        {
+          "field_id": "reason_for_work",
+          "label": "Reason for the work",
+          "type": "textarea"
+        },
+        {
+          "field_id": "reference_drawings",
+          "label": "Reference drawings (no. + revision)",
+          "type": "text"
+        },
+        {
+          "field_id": "reference_drawing_file",
+          "label": "Reference drawing attachment",
+          "type": "file"
+        },
+        {
+          "field_id": "instruction_reference",
+          "label": "Instruction / RFI / variation reference",
+          "type": "text"
+        },
+        {
+          "field_id": "areas_tenants_affected",
+          "label": "Areas / tenants affected by the isolation",
+          "type": "textarea",
+          "required": true
+        },
+        {
+          "field_id": "written_authorisation_obtained",
+          "label": "Written authorisation to isolate obtained",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "authorisation_granted_by",
+          "label": "Authorisation granted by (name + role)",
+          "type": "text",
+          "conditional_on": {
+            "field_id": "written_authorisation_obtained",
+            "equals": true
+          }
+        },
+        {
+          "field_id": "authorisation_reference",
+          "label": "Authorisation reference / permit no.",
+          "type": "text"
+        },
+        {
+          "field_id": "agreed_isolation_window",
+          "label": "Agreed isolation window",
+          "type": "text"
+        },
+        {
+          "field_id": "third_party_permit_required",
+          "label": "Third-party permit to work required?",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Landlord, utility or Eskom systems."
+        },
+        {
+          "field_id": "permit_to_work_number",
+          "label": "Permit to work number",
+          "type": "text",
+          "conditional_on": {
+            "field_id": "third_party_permit_required",
+            "equals": true
+          }
+        }
+      ]
+    },
+    {
+      "section_id": "circuits_affected",
+      "title": "5. Circuits affected",
+      "fields": [
+        {
+          "field_id": "circuits",
+          "label": "Circuits acted upon",
+          "type": "repeating_group",
+          "required": true,
+          "min_count": 1,
+          "item_label_template": "Way {{way_no}} — {{circuit_ref}}",
+          "fields": [
+            {
+              "field_id": "way_no",
+              "label": "Way / position no.",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "circuit_ref",
+              "label": "Circuit reference",
+              "type": "text",
+              "required": true,
+              "help_text": "As per the existing legend."
+            },
+            {
+              "field_id": "description_as_found",
+              "label": "Circuit description (as found)",
+              "type": "text",
+              "required": true,
+              "help_text": "What the legend said."
+            },
+            {
+              "field_id": "description_as_verified",
+              "label": "Circuit description (as verified)",
+              "type": "text",
+              "required": true,
+              "help_text": "What it actually feeds."
+            },
+            {
+              "field_id": "protective_device_type",
+              "label": "Protective device type",
+              "type": "dropdown",
+              "required": true,
+              "options": [
+                "mcb",
+                "mccb",
+                "rcbo",
+                "rcd_or_elu",
+                "fuse",
+                "isolator",
+                "contactor",
+                "none_direct"
+              ]
+            },
+            {
+              "field_id": "protective_device_rating",
+              "label": "Protective device rating",
+              "type": "number",
+              "required": true,
+              "unit": "A"
+            },
+            {
+              "field_id": "poles",
+              "label": "Number of poles",
+              "type": "dropdown",
+              "required": true,
+              "options": [
+                "1",
+                "1+N",
+                "2",
+                "3",
+                "3+N",
+                "4"
+              ]
+            },
+            {
+              "field_id": "conductor_size_phase",
+              "label": "Conductor size (phase)",
+              "type": "number",
+              "required": true,
+              "unit": "mm²"
+            },
+            {
+              "field_id": "conductor_size_earth",
+              "label": "Conductor size (earth / CPC)",
+              "type": "number",
+              "unit": "mm²"
+            },
+            {
+              "field_id": "number_of_cores",
+              "label": "Number of cores",
+              "type": "dropdown",
+              "options": [
+                "2",
+                "3",
+                "4",
+                "5",
+                "other"
+              ]
+            },
+            {
+              "field_id": "cable_type",
+              "label": "Cable type",
+              "type": "dropdown",
+              "options": [
+                "surfix",
+                "pvc_in_conduit",
+                "swa",
+                "ecc",
+                "flex",
+                "busbar",
+                "other"
+              ]
+            },
+            {
+              "field_id": "action_taken",
+              "label": "Action taken",
+              "type": "dropdown",
+              "required": true,
+              "options": [
+                "terminated_and_removed",
+                "disconnected_and_capped_left_in_situ",
+                "disconnected_at_db_only_far_end_open",
+                "left_isolated_locked_off",
+                "retained_and_reconnected",
+                "made_safe_pending_removal_by_others",
+                "no_action_reference_only"
+              ],
+              "help_text": "\"Disconnected at DB only — far end open\" is listed deliberately so it can be flagged as a defect rather than hidden."
+            },
+            {
+              "field_id": "termination_method",
+              "label": "Termination method",
+              "type": "dropdown",
+              "options": [
+                "removed_to_source",
+                "terminated_in_accessible_junction_box",
+                "insulated_crimp_and_enclosure",
+                "conductor_coiled_and_insulated_labelled",
+                "gland_terminated_into_enclosure",
+                "cut_back_flush_and_removed_from_wireway",
+                "other"
+              ],
+              "sans_ref": "5.2.1",
+              "help_text": "Required where the action involves capping or leaving a conductor in situ. PVC insulating tape is not an accepted method of termination or of isolation under SANS 10142-1 5.2.1 / 6.3.7 and is therefore not offered here."
+            },
+            {
+              "field_id": "clear_break_made",
+              "label": "Clear break made between feed and appliance (conductor physically cut, break visible)",
+              "type": "pass_fail",
+              "help_text": "NFDC DRG108:2019 — the definitive, photographable evidence test for a made-safe conductor."
+            },
+            {
+              "field_id": "termination_compliant",
+              "label": "Termination compliant with SANS 10142-1 6.3.7 / 5.2.1 (accessible, protected, strain-relieved)",
+              "type": "pass_fail",
+              "sans_ref": "6.3.7.1"
+            },
+            {
+              "field_id": "far_end_made_safe",
+              "label": "Far end of conductor made safe?",
+              "type": "pass_fail"
+            },
+            {
+              "field_id": "far_end_location",
+              "label": "Far-end location",
+              "type": "text"
+            },
+            {
+              "field_id": "conductor_labelled_dead",
+              "label": "Conductor labelled \"DEAD — DO NOT ENERGISE\" + date + by whom",
+              "type": "pass_fail",
+              "required": true
+            },
+            {
+              "field_id": "neutral_not_shared",
+              "label": "Neutral of this circuit confirmed not shared / borrowed",
+              "type": "pass_fail",
+              "required": true,
+              "help_text": "A borrowed neutral can become live when disconnected. Record the N–E reading in section 8A."
+            },
+            {
+              "field_id": "way_blanked_off",
+              "label": "Way blanked off (blanking plate fitted)",
+              "type": "pass_fail",
+              "sans_ref": "6.6.1.19",
+              "help_text": "Required where a device was removed."
+            },
+            {
+              "field_id": "proved_dead_at_point_of_work",
+              "label": "Proved dead at point of work",
+              "type": "pass_fail",
+              "required": true
+            },
+            {
+              "field_id": "circuit_notes",
+              "label": "Notes / deviations",
+              "type": "textarea"
+            },
+            {
+              "field_id": "photo_circuit_termination",
+              "label": "Photo — circuit termination",
+              "type": "photo",
+              "required": true
+            }
+          ]
+        },
+        {
+          "field_id": "circuits_left_temporary",
+          "label": "Circuits left energised or in a temporary state",
+          "type": "computed",
+          "formula": "count(circuits where action_taken in [left_isolated_locked_off, made_safe_pending_removal_by_others, disconnected_at_db_only_far_end_open])",
+          "help_text": "Rolled up onto the handover section — this is the number the next person needs to know."
+        }
+      ]
+    },
+    {
+      "section_id": "safe_isolation",
+      "title": "6. Safe isolation checklist",
+      "fields": [
+        {
+          "field_id": "point_of_isolation_under_control",
+          "label": "The point of isolation is under the control of the person carrying out the work",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "If it is not — for example the isolator sits in a landlord switchroom — escalate to a third-party permit in section 4."
+        },
+        {
+          "field_id": "point_of_isolation_description",
+          "label": "Point of isolation identified (device + board + way) and described",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "all_sources_identified",
+          "label": "All sources capable of making the circuit live have been identified",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Cross-check against the alternative supplies recorded in section 2."
+        },
+        {
+          "field_id": "tt_it_phase_and_neutral_disconnected",
+          "label": "Circuit is TT or IT and therefore requires phase and neutral disconnection",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Single-pole isolation is not acceptable on TT or IT. N/A on TN-S or TN-C-S."
+        },
+        {
+          "field_id": "alternative_supply_isolated",
+          "label": "Alternative supply (generator / UPS / PV / bus-tie) isolated or proven incapable of back-feed",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "7.12",
+          "help_text": "N/A permitted only where section 2 alternative supplies = none."
+        },
+        {
+          "field_id": "circuit_de_energised",
+          "label": "Circuit de-energised at the identified point of isolation",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "all_required_poles_isolated",
+          "label": "All required poles isolated (including neutral where required)",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "6.9.2.2"
+        },
+        {
+          "field_id": "isolating_device_secured",
+          "label": "Isolating device secured in the off position (padlock / lock-off device / lockable enclosure)",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "7.4.6.6",
+          "help_text": "General Machinery Regulations, 1988 reg 6(2) requires a positive means of securing; Electrical Machinery Regulations, 2011 reg 7(3) applies."
+        },
+        {
+          "field_id": "securing_method",
+          "label": "Method of securing",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "safety_padlock_unique_key",
+            "breaker_lock_out_device",
+            "lockable_enclosure",
+            "multiple_locking_hasp_or_lock_out_box",
+            "fuse_removed_and_retained",
+            "lockable_insulating_blank_in_empty_fuseway",
+            "plug_withdrawn_and_locked_out"
+          ],
+          "help_text": "General Machinery Regulations, 1988 reg 6(2): a positive means is required, so merely leaving a switch in the off position is not offered as an option."
+        },
+        {
+          "field_id": "every_person_applied_own_lock",
+          "label": "Every person at risk has applied their own lock and holds their own key",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "N/A where a single worker is on site."
+        },
+        {
+          "field_id": "lock_device_id",
+          "label": "Lock / lock-off device ID",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "key_held_by",
+          "label": "Key held by (name)",
+          "type": "text",
+          "required": true,
+          "help_text": "Single key, held by the person at risk, retained securely."
+        },
+        {
+          "field_id": "caution_notice_posted",
+          "label": "Caution notice posted at the point of disconnection, warning against reclosing",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Electrical Machinery Regulations, 2011 reg 7(5)."
+        },
+        {
+          "field_id": "danger_notices_adjacent",
+          "label": "Danger notices posted on adjacent live equipment",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "N/A where nothing adjacent remains live."
+        },
+        {
+          "field_id": "tag_notice_reference",
+          "label": "Tag / notice reference",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "photo_lock_and_notice",
+          "label": "Photo — lock and warning notice in position",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "voltage_indicator_details",
+          "label": "Voltage indicator make / model / serial",
+          "type": "text",
+          "required": true,
+          "help_text": "Two-pole voltage detector, test lamp, or voltmeter with insulated probes and fused leads. Multimeters and non-contact volt sticks are not acceptable for proving dead."
+        },
+        {
+          "field_id": "indicator_proved_before",
+          "label": "Voltage indicator proved on a known source immediately before use",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Step 1 of prove — test — prove."
+        },
+        {
+          "field_id": "proving_source",
+          "label": "Proving source used",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "dedicated_proving_unit",
+            "known_live_supply"
+          ]
+        },
+        {
+          "field_id": "tested_dead",
+          "label": "Tested dead at the point of work — all conductor combinations",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Step 2 of prove — test — prove. Readings go in section 8A."
+        },
+        {
+          "field_id": "indicator_proved_after",
+          "label": "Voltage indicator re-proved on the known source immediately after",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Step 3 of prove — test — prove."
+        },
+        {
+          "field_id": "stored_energy_discharged",
+          "label": "Stored energy discharged / earths applied where the equipment can retain or acquire a charge",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Electrical Machinery Regulations, 2011 reg 4. N/A permitted with a stated reason."
+        },
+        {
+          "field_id": "stored_energy_sources",
+          "label": "Stored-energy sources addressed",
+          "type": "multi_select",
+          "required": true,
+          "options": [
+            "none",
+            "pfc_capacitor_bank",
+            "vsd_dc_link",
+            "ups_battery",
+            "pv_string",
+            "long_cable_run",
+            "other"
+          ]
+        },
+        {
+          "field_id": "adjacent_live_parts_screened",
+          "label": "Adjacent live parts screened / barriered where work proceeds nearby",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "prevention_of_re_energisation",
+          "label": "Method by which the circuit will be prevented from being brought back into operation",
+          "type": "textarea",
+          "required": true,
+          "help_text": "A stated method, not a checkbox — this is what an incident enquiry reads."
+        },
+        {
+          "field_id": "people_informed",
+          "label": "Relevant people informed that the isolation is in place",
+          "type": "multi_select",
+          "required": true,
+          "options": [
+            "client",
+            "building_manager",
+            "tenants",
+            "principal_contractor",
+            "other_trades_on_site",
+            "security",
+            "none_required"
+          ]
+        },
+        {
+          "field_id": "safe_isolation_confirmed",
+          "label": "Safe isolation confirmed — work may proceed",
+          "type": "signature",
+          "required": true,
+          "help_text": "Signature and timestamp. This is the moment the isolation is owned."
+        }
+      ]
+    },
+    {
+      "section_id": "lock_register",
+      "title": "6A. Lock and tag register",
+      "fields": [
+        {
+          "field_id": "lock_entries",
+          "label": "Isolation points locked and tagged",
+          "type": "repeating_group",
+          "required": true,
+          "min_count": 1,
+          "item_label_template": "{{index}}. {{lock_no}} — {{isolation_point}}",
+          "fields": [
+            {
+              "field_id": "isolation_point",
+              "label": "Equipment / isolation point description",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "isolation_method",
+              "label": "Isolation method",
+              "type": "dropdown",
+              "required": true,
+              "options": [
+                "safety_padlock_unique_key",
+                "breaker_lock_out_device",
+                "lockable_enclosure",
+                "multiple_locking_hasp_or_lock_out_box",
+                "fuse_removed_and_retained",
+                "lockable_insulating_blank_in_empty_fuseway",
+                "plug_withdrawn_and_locked_out"
+              ]
+            },
+            {
+              "field_id": "lock_no",
+              "label": "Lock #",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "tag_no",
+              "label": "Tag #",
+              "type": "text"
+            },
+            {
+              "field_id": "applied_by",
+              "label": "Applied by (name + initial)",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "verified_by",
+              "label": "Verified by (name + initial)",
+              "type": "text",
+              "required": true,
+              "help_text": "Second-person verification — the strongest control in the form."
+            },
+            {
+              "field_id": "applied_at",
+              "label": "Date / time applied",
+              "type": "text",
+              "required": true,
+              "help_text": "Date and time, e.g. 2026-08-12 07:40."
+            },
+            {
+              "field_id": "removed_at",
+              "label": "Date / time removed",
+              "type": "text",
+              "help_text": "Completed at return to service."
+            },
+            {
+              "field_id": "removed_by",
+              "label": "Removed by",
+              "type": "text",
+              "help_text": "Must equal \"Applied by\" unless an exception reason is given."
+            },
+            {
+              "field_id": "exception_reason",
+              "label": "Exception reason (lock removed by someone else)",
+              "type": "textarea",
+              "help_text": "Requires supervisor countersignature."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "test_instruments",
+      "title": "7. Test instruments used",
+      "fields": [
+        {
+          "field_id": "instruments",
+          "label": "Instruments used",
+          "type": "repeating_group",
+          "required": true,
+          "min_count": 1,
+          "item_label_template": "{{instrument_function}} — {{make}} {{model}}",
+          "fields": [
+            {
+              "field_id": "instrument_function",
+              "label": "Instrument function",
+              "type": "dropdown",
+              "required": true,
+              "options": [
+                "voltage_indicator_proving_dead",
+                "proving_unit",
+                "insulation_resistance",
+                "continuity_low_ohm",
+                "earth_fault_loop_impedance",
+                "rcd_elu_tester",
+                "multifunction_tester",
+                "clamp_meter",
+                "fault_current_meter",
+                "other"
+              ]
+            },
+            {
+              "field_id": "make",
+              "label": "Make",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "model",
+              "label": "Model",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "serial_number",
+              "label": "Serial number",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "calibration_date",
+              "label": "Calibration date",
+              "type": "date",
+              "required": true
+            },
+            {
+              "field_id": "calibration_due_date",
+              "label": "Calibration due date",
+              "type": "date",
+              "required": true,
+              "help_text": "A calibration due date earlier than the date of work blocks certification. WM / client requirement."
+            },
+            {
+              "field_id": "calibration_certificate_no",
+              "label": "Calibration certificate no.",
+              "type": "text"
+            },
+            {
+              "field_id": "calibration_certificate",
+              "label": "Calibration certificate attached",
+              "type": "file"
+            },
+            {
+              "field_id": "accuracy_within_5_percent",
+              "label": "Instrument accuracy within ±5 %",
+              "type": "pass_fail",
+              "required": true,
+              "sans_ref": "8.6.1"
+            },
+            {
+              "field_id": "measurement_category",
+              "label": "Measurement category (CAT rating)",
+              "type": "dropdown",
+              "options": [
+                "cat_ii",
+                "cat_iii",
+                "cat_iv"
+              ],
+              "help_text": "Mandatory for the voltage indicator and any instrument used on a live circuit."
+            },
+            {
+              "field_id": "leads_rated_same_or_higher",
+              "label": "Test leads rated at the same or higher CAT",
+              "type": "pass_fail",
+              "help_text": "Instruments and leads are separate entities — CAT II leads on a CAT III instrument derate the whole set to CAT II."
+            },
+            {
+              "field_id": "voltage_indicator_conforms",
+              "label": "Voltage indicator conforms to BS EN 61243-3 (or equivalent)",
+              "type": "pass_fail",
+              "help_text": "Applies only where this instrument's function is \"Voltage indicator (proving dead)\". Answer N/A for any other instrument. GS38: the indicator and its leads are separate entities."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "section_id": "proving_dead",
+      "title": "8A. Proving dead — voltage readings",
+      "fields": [
+        {
+          "field_id": "reading_l_n",
+          "label": "L–N",
+          "type": "number",
+          "required": true,
+          "unit": "V"
+        },
+        {
+          "field_id": "reading_l_e",
+          "label": "L–E",
+          "type": "number",
+          "required": true,
+          "unit": "V"
+        },
+        {
+          "field_id": "reading_n_e",
+          "label": "N–E",
+          "type": "number",
+          "required": true,
+          "unit": "V",
+          "help_text": "A non-zero N–E reading is the classic borrowed-neutral signature."
+        },
+        {
+          "field_id": "reading_l1_l2",
+          "label": "L1–L2",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "reading_l2_l3",
+          "label": "L2–L3",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "reading_l1_l3",
+          "label": "L1–L3",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "reading_l1_n",
+          "label": "L1–N",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "reading_l2_n",
+          "label": "L2–N",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "reading_l3_n",
+          "label": "L3–N",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "reading_l1_e",
+          "label": "L1–E",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "reading_l2_e",
+          "label": "L2–E",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "reading_l3_e",
+          "label": "L3–E",
+          "type": "number",
+          "unit": "V",
+          "conditional_on": {
+            "field_id": "phases",
+            "equals": "3"
+          }
+        },
+        {
+          "field_id": "point_of_reading",
+          "label": "Point at which readings were taken",
+          "type": "text",
+          "required": true,
+          "help_text": "The point of work, not the DB."
+        },
+        {
+          "field_id": "all_readings_dead",
+          "label": "All readings ≤ 0 V (dead confirmed)",
+          "type": "computed",
+          "formula": "all(reading_l_n, reading_l_e, reading_n_e, reading_l1_l2, reading_l2_l3, reading_l1_l3, reading_l1_n, reading_l2_n, reading_l3_n, reading_l1_e, reading_l2_e, reading_l3_e) <= 0",
+          "help_text": "Drives a hard gate — the work may not proceed until this evaluates true."
+        }
+      ]
+    },
+    {
+      "section_id": "electrical_tests",
+      "title": "8B. Electrical tests",
+      "fields": [
+        {
+          "field_id": "insulation_resistance",
+          "label": "Insulation resistance",
+          "type": "number",
+          "unit": "MΩ",
+          "pass_when": ">= 1.0",
+          "sans_ref": "8.6.8",
+          "help_text": "SANS 10142-1 8.6.8 requires at least 1,0 MΩ."
+        },
+        {
+          "field_id": "insulation_test_voltage",
+          "label": "Insulation resistance — test voltage applied",
+          "type": "number",
+          "unit": "V",
+          "pass_when": ">= 500",
+          "sans_ref": "8.6.8.1"
+        },
+        {
+          "field_id": "ir_note2_justification",
+          "label": "Justification where insulation resistance could not be measured (8.6.8 NOTE 2)",
+          "type": "textarea",
+          "sans_ref": "8.6.8",
+          "help_text": "For example: the circuit could not be isolated and was live, per SANS 10142-1 8.6.8 NOTE 2."
+        },
+        {
+          "field_id": "earth_continuity_conductor_resistance",
+          "label": "Resistance of earth continuity conductor",
+          "type": "number",
+          "unit": "Ω",
+          "sans_ref": "8.6.3",
+          "help_text": "Compare against the Table 8.1 value for the protective device rating in the edition of SANS 10142-1 stamped on this template."
+        },
+        {
+          "field_id": "bonding_continuity",
+          "label": "Continuity of bonding",
+          "type": "number",
+          "unit": "Ω",
+          "pass_when": "<= 0.2",
+          "sans_ref": "8.6.2"
+        },
+        {
+          "field_id": "polarity",
+          "label": "Polarity at points of consumption",
+          "type": "pass_fail",
+          "sans_ref": "8.6.14"
+        },
+        {
+          "field_id": "test_instrument_used",
+          "label": "Instrument used (from section 7)",
+          "type": "text",
+          "sans_ref": "8.7"
+        },
+        {
+          "field_id": "tests_not_applicable_reason",
+          "label": "Reason where a test above is recorded as not applicable",
+          "type": "textarea"
+        }
+      ]
+    },
+    {
+      "section_id": "labelling_reinstatement",
+      "title": "9. Labelling and board reinstatement",
+      "fields": [
+        {
+          "field_id": "blanking_plates_fitted",
+          "label": "Blanking plates fitted to all unoccupied openings",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "6.6.1.19"
+        },
+        {
+          "field_id": "circuits_permanently_labelled",
+          "label": "All incoming and outgoing circuits permanently labelled",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "6.6.1.20"
+        },
+        {
+          "field_id": "legend_card_updated",
+          "label": "Legend card / circuit schedule updated to as-left state",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "6.6.1.20"
+        },
+        {
+          "field_id": "fed_from_label_correct",
+          "label": "\"Fed from\" label correct and current",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "6.6.1.21(a)"
+        },
+        {
+          "field_id": "alternative_supply_warning_label",
+          "label": "Alternative-supply warning label at main switch",
+          "type": "pass_fail",
+          "sans_ref": "7.12.2.1",
+          "conditional_on": {
+            "field_id": "alternative_supplies",
+            "not_equals": "none"
+          }
+        },
+        {
+          "field_id": "multi_supply_notice",
+          "label": "Multi-supply notice at each main switch-disconnector",
+          "type": "pass_fail",
+          "sans_ref": "6.9.1.1"
+        },
+        {
+          "field_id": "disconnecting_device_cross_notice",
+          "label": "Notice at each disconnecting device giving location/function of the other",
+          "type": "pass_fail",
+          "sans_ref": "6.9.3.2"
+        },
+        {
+          "field_id": "supplementary_nameplate_updated",
+          "label": "Supplementary nameplate updated for changed DB properties",
+          "type": "pass_fail",
+          "sans_ref": "6.6.6.2(e)",
+          "conditional_on": {
+            "field_id": "db_above_10ka",
+            "equals": true
+          }
+        },
+        {
+          "field_id": "labels_durable_and_legible",
+          "label": "Labels durable, legible, indelible and not removable except deliberately",
+          "type": "pass_fail",
+          "required": true,
+          "sans_ref": "4.2"
+        },
+        {
+          "field_id": "controlling_apparatus_marked",
+          "label": "Controlling apparatus permanently marked (front and back where accessible from both)",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Electrical Machinery Regulations, 2011 reg 7(4)."
+        },
+        {
+          "field_id": "ip_rating_not_reduced",
+          "label": "IP rating not reduced by the alteration",
+          "type": "pass_fail",
+          "sans_ref": "6.6.6.2(f)"
+        },
+        {
+          "field_id": "fire_barrier_reinstated",
+          "label": "Fire barrier integrity reinstated where cables were withdrawn",
+          "type": "pass_fail",
+          "sans_ref": "8.5.3(11)",
+          "help_text": "The most commonly missed item on a strip-out."
+        },
+        {
+          "field_id": "board_interior_cleaned",
+          "label": "Board interior cleaned of debris, offcuts and dust",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "covers_and_doors_refitted",
+          "label": "All covers, shrouds and doors refitted",
+          "type": "pass_fail",
+          "required": true
+        }
+      ]
+    },
+    {
+      "section_id": "photographic_evidence",
+      "title": "10. Photographic evidence",
+      "fields": [
+        {
+          "field_id": "photo_slots_note",
+          "label": "Slots captured elsewhere: DB as-found photos (§2), main earth and bonding (§2A), lock and warning notice (§6), each circuit termination and clear break (§5), and one photo per defect (§11).",
+          "type": "header"
+        },
+        {
+          "field_id": "photo_voltage_indicator_proving",
+          "label": "Voltage indicator proving on the known source",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_test_dead_reading",
+          "label": "Test-dead reading at the point of work (meter display legible)",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_conductors_labelled_dead",
+          "label": "Terminated conductors labelled \"DEAD\"",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_blanking_plates",
+          "label": "Blanking plates fitted / vacated ways",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_updated_legend_card",
+          "label": "Updated legend card in position",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_db_open_as_left",
+          "label": "DB open, covers on — as left",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_db_closed_as_left",
+          "label": "DB closed — as left",
+          "type": "photo",
+          "required": true
+        },
+        {
+          "field_id": "photo_fire_barrier_reinstatement",
+          "label": "Fire barrier reinstatement",
+          "type": "photo",
+          "help_text": "Required where penetrations were disturbed."
+        },
+        {
+          "field_id": "photo_temporary_supply_board",
+          "label": "Temporary supply board",
+          "type": "photo",
+          "help_text": "Required where a temporary supply was installed."
+        }
+      ]
+    },
+    {
+      "section_id": "hazards_defects",
+      "title": "11. Hazards, defects and deviations",
+      "fields": [
+        {
+          "field_id": "hazard_sweep_header",
+          "label": "11A — Pre-work hazard sweep (every item pass / fail / N-A)",
+          "type": "header"
+        },
+        {
+          "field_id": "hs_disconnection_planned_and_tagged",
+          "label": "Disconnection planned before removal of power/lighting cabling; power isolated and tagged",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_no_bare_conductor_contact",
+          "label": "No bare conductors can contact any live part",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_breakers_off_locked_tagged",
+          "label": "All circuit-breakers switched off, locked and tagged",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_locking_device_on_individual_circuit",
+          "label": "Locking device used on the individual circuit to prevent operation of the MCCB in the off position",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_auxiliary_and_alternative_supplies_dead",
+          "label": "Auxiliary circuits and alternative power supplies checked and confirmed dead before commencing",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_power_cables_tested_and_isolated",
+          "label": "All power cables tested and isolated before removal of points and lights",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_live_cables_in_work_zones_isolated",
+          "label": "Live cables in work zones isolated",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_temporary_cabling_tagged",
+          "label": "Temporary light and power cabling clearly tagged with construction and danger tape",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_danger_tags_at_all_points",
+          "label": "Danger tags placed at all points, not to be removed without supervisor approval",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_cabling_tested_in_ceilings_and_cavities",
+          "label": "All cabling tested for isolation in ceiling spaces and wall cavities — rogue cabling, remotely-fed cabling, light sensors, time clocks",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_in_use_cabling_labelled",
+          "label": "Existing cabling still in use in demolition areas labelled with danger tags",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_power_to_demolition_areas_disconnected",
+          "label": "All power to demolition areas disconnected",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_power_to_offices_and_partitions_isolated",
+          "label": "All power to offices, consult rooms, workstations and partition walls isolated",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_lighting_and_emergency_lighting_isolated",
+          "label": "All lighting, switches, exit and emergency lighting isolated in demolition areas",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_all_demolition_areas_isolated",
+          "label": "All areas for demolition isolated",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_borrowed_neutrals_checked",
+          "label": "Borrowed / shared neutrals checked for",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hs_backfeed_prevented_heaters_shutters",
+          "label": "Back-feed prevented; anti-condensation heaters isolated and tagged; shutters locked",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "hazard_sweep_technician_name",
+          "label": "Hazard sweep — technician name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "hazard_sweep_technician_signature",
+          "label": "Hazard sweep — technician signature",
+          "type": "signature",
+          "required": true
+        },
+        {
+          "field_id": "hazard_sweep_technician_datetime",
+          "label": "Hazard sweep — technician date / time",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "hazard_sweep_supervisor_name",
+          "label": "Hazard sweep — supervisor name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "hazard_sweep_supervisor_signature",
+          "label": "Hazard sweep — supervisor signature",
+          "type": "signature",
+          "required": true
+        },
+        {
+          "field_id": "hazard_sweep_supervisor_datetime",
+          "label": "Hazard sweep — supervisor date / time",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "defects_header",
+          "label": "11B — Defects and deviations",
+          "type": "header"
+        },
+        {
+          "field_id": "hazards_or_defects_identified",
+          "label": "Hazards or defects identified?",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "defect_register",
+          "label": "Defect register",
+          "type": "repeating_group",
+          "item_label_template": "{{classification}} — {{description}}",
+          "conditional_on": {
+            "field_id": "hazards_or_defects_identified",
+            "equals": true
+          },
+          "fields": [
+            {
+              "field_id": "description",
+              "label": "Description",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "location",
+              "label": "Location",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "classification",
+              "label": "Classification code",
+              "type": "dropdown",
+              "required": true,
+              "options": [
+                "C1",
+                "C2",
+                "C3",
+                "FI"
+              ],
+              "help_text": "C1 — Danger present, risk of injury, immediate remedial action required. C2 — Potentially dangerous, urgent remedial action required. C3 — Improvement recommended. FI — Further investigation required without delay."
+            },
+            {
+              "field_id": "regulation_reference",
+              "label": "SANS / regulation reference",
+              "type": "text"
+            },
+            {
+              "field_id": "defect_photo",
+              "label": "Photo — defect",
+              "type": "photo"
+            },
+            {
+              "field_id": "defect_action_taken",
+              "label": "Action taken",
+              "type": "textarea"
+            },
+            {
+              "field_id": "defect_action_by",
+              "label": "Action by",
+              "type": "text"
+            },
+            {
+              "field_id": "target_date",
+              "label": "Target date",
+              "type": "date"
+            }
+          ]
+        },
+        {
+          "field_id": "immediate_danger_present",
+          "label": "Immediate danger present? (any C1)",
+          "type": "pass_fail",
+          "required": true,
+          "help_text": "Derived from the defect register. If yes, the next three fields become mandatory."
+        },
+        {
+          "field_id": "supply_disconnected",
+          "label": "Supply to the affected circuit disconnected",
+          "type": "pass_fail",
+          "conditional_on": {
+            "field_id": "immediate_danger_present",
+            "equals": true
+          },
+          "help_text": "Electrical Installation Regulations, 2009 reg 9(3) — a statutory duty, not a choice."
+        },
+        {
+          "field_id": "chief_inspector_notified",
+          "label": "Chief inspector notified",
+          "type": "pass_fail",
+          "conditional_on": {
+            "field_id": "immediate_danger_present",
+            "equals": true
+          },
+          "help_text": "Electrical Installation Regulations, 2009 reg 9(3)."
+        },
+        {
+          "field_id": "notification_reference",
+          "label": "Notification reference / date",
+          "type": "text",
+          "conditional_on": {
+            "field_id": "immediate_danger_present",
+            "equals": true
+          }
+        },
+        {
+          "field_id": "supplier_notification_required",
+          "label": "Potential danger requiring supplier notification (elevated neutral voltage / voltage outside limits)?",
+          "type": "pass_fail",
+          "required": true
+        },
+        {
+          "field_id": "annex_h_notification_issued",
+          "label": "Annex H notification issued to the supplier",
+          "type": "pass_fail",
+          "sans_ref": "Annex H",
+          "conditional_on": {
+            "field_id": "supplier_notification_required",
+            "equals": true
+          }
+        },
+        {
+          "field_id": "deviations_from_specification",
+          "label": "Deviations from specification or drawing",
+          "type": "textarea"
+        },
+        {
+          "field_id": "extent_and_limitations",
+          "label": "Extent and limitations of this record",
+          "type": "textarea",
+          "required": true,
+          "help_text": "What was inspected, what was not, and why."
+        },
+        {
+          "field_id": "limitations_agreed_with",
+          "label": "Limitations agreed with (name + role)",
+          "type": "text",
+          "required": true,
+          "help_text": "An agreed limitation is a defence; an unagreed one is an omission."
+        },
+        {
+          "field_id": "parts_not_covered",
+          "label": "Parts of the installation NOT covered by this record",
+          "type": "textarea",
+          "required": true
+        },
+        {
+          "field_id": "recommendations",
+          "label": "Recommendations / further work required",
+          "type": "textarea"
+        }
+      ]
+    },
+    {
+      "section_id": "handover_status",
+      "title": "12. Handover status",
+      "fields": [
+        {
+          "field_id": "as_left_status",
+          "label": "As-left status of this board",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "made_safe_de_energised",
+            "energised_returned_to_service",
+            "left_isolated_lock_wm",
+            "left_isolated_lock_client",
+            "partially_energised",
+            "decommissioned_removed"
+          ]
+        },
+        {
+          "field_id": "circuits_left_temporary_count",
+          "label": "Number of circuits left in a temporary state",
+          "type": "computed",
+          "required": true,
+          "formula": "circuits_left_temporary"
+        },
+        {
+          "field_id": "ir_test_completed_before_energising",
+          "label": "Insulation resistance test completed before energising",
+          "type": "pass_fail",
+          "sans_ref": "8.6.8",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "energised_returned_to_service",
+              "partially_energised"
+            ]
+          },
+          "help_text": "SANS 10142-1 8.6.8 NOTE 1."
+        },
+        {
+          "field_id": "persons_withdrawn_and_warned",
+          "label": "All persons under the signatory's charge withdrawn and warned that it is no longer safe to work on the apparatus",
+          "type": "pass_fail",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "energised_returned_to_service",
+              "partially_energised"
+            ]
+          }
+        },
+        {
+          "field_id": "tools_and_instruments_removed",
+          "label": "All work equipment, tools and test instruments removed from the equipment",
+          "type": "pass_fail",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "energised_returned_to_service",
+              "partially_energised"
+            ]
+          }
+        },
+        {
+          "field_id": "temporary_earths_removed",
+          "label": "Temporary earths removed",
+          "type": "pass_fail",
+          "help_text": "Required where earths were applied in section 6."
+        },
+        {
+          "field_id": "covers_refitted_before_energising",
+          "label": "Covers, shrouds and doors refitted before energising",
+          "type": "pass_fail",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "energised_returned_to_service",
+              "partially_energised"
+            ]
+          }
+        },
+        {
+          "field_id": "locks_removed_by_applier",
+          "label": "Locks removed by the person who applied them",
+          "type": "pass_fail",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "energised_returned_to_service",
+              "partially_energised"
+            ]
+          }
+        },
+        {
+          "field_id": "warning_notices_removed",
+          "label": "Warning / caution / danger notices removed",
+          "type": "pass_fail",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "energised_returned_to_service",
+              "partially_energised"
+            ]
+          }
+        },
+        {
+          "field_id": "post_energisation_function_check",
+          "label": "Post-energisation function check completed (expected loads live, no unexpected loads)",
+          "type": "pass_fail",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "energised_returned_to_service",
+              "partially_energised"
+            ]
+          }
+        },
+        {
+          "field_id": "earth_leakage_retested_after_energising",
+          "label": "Earth leakage unit re-tested after energising",
+          "type": "pass_fail",
+          "sans_ref": "8.6.13",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "energised_returned_to_service",
+              "partially_energised"
+            ]
+          }
+        },
+        {
+          "field_id": "locks_remaining",
+          "label": "Locks remaining in place",
+          "type": "repeating_group",
+          "item_label_template": "{{remaining_lock_no}} — {{remaining_isolation_point}}",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "made_safe_de_energised",
+              "left_isolated_lock_wm",
+              "left_isolated_lock_client",
+              "partially_energised"
+            ]
+          },
+          "help_text": "Reads from the section 6A register — rows with no removal timestamp.",
+          "fields": [
+            {
+              "field_id": "remaining_isolation_point",
+              "label": "Isolation point",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "remaining_lock_no",
+              "label": "Lock #",
+              "type": "text",
+              "required": true
+            },
+            {
+              "field_id": "remaining_key_held_by",
+              "label": "Key held by",
+              "type": "text",
+              "required": true
+            }
+          ]
+        },
+        {
+          "field_id": "isolation_review_date",
+          "label": "Review / removal date for remaining isolations",
+          "type": "date",
+          "conditional_on": {
+            "field_id": "as_left_status",
+            "in": [
+              "made_safe_de_energised",
+              "left_isolated_lock_wm",
+              "left_isolated_lock_client",
+              "partially_energised"
+            ]
+          }
+        },
+        {
+          "field_id": "temporary_supplies_left",
+          "label": "Temporary supplies left in place for the client",
+          "type": "textarea",
+          "help_text": "Where any circuit was left energised for temporary use, SANS 10142-1 7.4 / 7.8 apply to it."
+        },
+        {
+          "field_id": "handover_to_other_trade",
+          "label": "Handover to demolition / strip-out contractor with safety clearance",
+          "type": "pass_fail"
+        },
+        {
+          "field_id": "person_accepting_handover",
+          "label": "Person accepting handover — name, company, role",
+          "type": "text"
+        },
+        {
+          "field_id": "equipment_demonstrated_dead",
+          "label": "Equipment demonstrated dead to the accepting person's satisfaction",
+          "type": "pass_fail",
+          "help_text": "Where a third party takes over an isolated board, showing them it is dead is the control that prevents the next incident."
+        },
+        {
+          "field_id": "responsible_party",
+          "label": "Responsible party for the installation on handover",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "user",
+            "lessor",
+            "lessee_by_written_undertaking",
+            "principal_contractor"
+          ],
+          "help_text": "Electrical Installation Regulations, 2009 reg 2. There is no mechanism to leave responsibility with the contractor."
+        },
+        {
+          "field_id": "responsible_party_name",
+          "label": "Responsible party — name and contact",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "coc_required",
+          "label": "Certificate of Compliance required for this alteration",
+          "type": "pass_fail",
+          "required": true,
+          "default_value": true,
+          "help_text": "Electrical Installation Regulations, 2009 reg 7(4). This record is not itself a Certificate of Compliance."
+        },
+        {
+          "field_id": "coc_number",
+          "label": "Certificate number (if already issued)",
+          "type": "text"
+        },
+        {
+          "field_id": "coc_to_be_issued_by",
+          "label": "Certificate to be issued by (registered person)",
+          "type": "text",
+          "conditional_on": {
+            "field_id": "coc_required",
+            "equals": true
+          }
+        },
+        {
+          "field_id": "coc_target_date",
+          "label": "Target date for the certificate",
+          "type": "date",
+          "conditional_on": {
+            "field_id": "coc_required",
+            "equals": true
+          }
+        },
+        {
+          "field_id": "outstanding_items",
+          "label": "Outstanding items",
+          "type": "textarea"
+        }
+      ]
+    },
+    {
+      "section_id": "declarations",
+      "title": "13. Declarations and sign-off",
+      "fields": [
+        {
+          "field_id": "not_a_certificate_notice",
+          "label": "This is a record of termination and making-safe work. It is not a Certificate of Compliance. A Certificate of Compliance in the form of Annexure 1 to the Electrical Installation Regulations, 2009, accompanied by the SANS 10142-1 test report, must be issued by a registered person for the altered part of the installation.",
+          "type": "header"
+        },
+        {
+          "field_id": "electrician_declaration",
+          "label": "13.1 Electrician — \"I certify that the work described in this record was carried out by me or under my direct supervision, that the safe isolation procedure recorded in section 6 was followed in full, that the readings recorded are correct, and that the work covered by this record does not impair the safety of the existing installation. No attempt was made by me or by persons under my charge to work on any other apparatus or in any other area than that described in section 4.\"",
+          "type": "header"
+        },
+        {
+          "field_id": "electrician_declaration_name",
+          "label": "Electrician — name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "electrician_declaration_registration",
+          "label": "Electrician — registration category + number",
+          "type": "text",
+          "conditional_on": {
+            "field_id": "electrician_category",
+            "not_equals": "not_a_registered_person_under_general_control"
+          }
+        },
+        {
+          "field_id": "electrician_declaration_signature",
+          "label": "Electrician — signature",
+          "type": "signature",
+          "required": true
+        },
+        {
+          "field_id": "electrician_declaration_date",
+          "label": "Electrician — date",
+          "type": "date",
+          "required": true
+        },
+        {
+          "field_id": "registered_person_declaration",
+          "label": "13.2 Registered person (general control) — \"I confirm that I exercised general control over this electrical installation work in terms of regulation 5(4) of the Electrical Installation Regulations, 2009, and that the altered part of the installation is, to the best of my knowledge, reasonably safe in its as-left state.\"",
+          "type": "header"
+        },
+        {
+          "field_id": "registered_person_declaration_name",
+          "label": "Registered person — name",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "registered_person_certificate_no",
+          "label": "Registered person — registration certificate no.",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "registered_person_declaration_type",
+          "label": "Registered person — type of registration",
+          "type": "dropdown",
+          "required": true,
+          "options": [
+            "master_installation_electrician",
+            "installation_electrician",
+            "electrical_tester_single_phase"
+          ]
+        },
+        {
+          "field_id": "registered_person_contact_tel",
+          "label": "Registered person — contact tel.",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "registered_person_declaration_signature",
+          "label": "Registered person — signature",
+          "type": "signature",
+          "required": true,
+          "required_qualifications": [
+            "registered_person"
+          ]
+        },
+        {
+          "field_id": "registered_person_declaration_date",
+          "label": "Registered person — date",
+          "type": "date",
+          "required": true
+        },
+        {
+          "field_id": "supervisor_declaration",
+          "label": "13.3 Supervisor / engineer (WM)",
+          "type": "header"
+        },
+        {
+          "field_id": "supervisor_name_and_position",
+          "label": "Supervisor — name and position",
+          "type": "text",
+          "required": true
+        },
+        {
+          "field_id": "supervisor_registration_no",
+          "label": "Supervisor — Pr Eng / Pr Tech / ECSA registration no.",
+          "type": "text"
+        },
+        {
+          "field_id": "supervisor_signature",
+          "label": "Supervisor — signature",
+          "type": "signature",
+          "required": true
+        },
+        {
+          "field_id": "supervisor_date",
+          "label": "Supervisor — date",
+          "type": "date",
+          "required": true
+        },
+        {
+          "field_id": "client_acknowledgement",
+          "label": "13.4 Client / witness — \"I acknowledge receipt of this record and the as-left status stated in section 12. I confirm I have been informed of any circuits left isolated and of the Certificate of Compliance obligation under regulation 7(4).\"",
+          "type": "header"
+        },
+        {
+          "field_id": "client_name_and_organisation",
+          "label": "Client / witness — name and organisation",
+          "type": "text",
+          "help_text": "Mandatory where the client witnessed the isolation or takes custody of a lock."
+        },
+        {
+          "field_id": "client_role",
+          "label": "Client / witness — role",
+          "type": "dropdown",
+          "options": [
+            "client_representative",
+            "building_manager",
+            "tenant",
+            "principal_contractor",
+            "other"
+          ]
+        },
+        {
+          "field_id": "client_signature",
+          "label": "Client / witness — signature",
+          "type": "signature",
+          "required_qualifications": [
+            "client",
+            "witness"
+          ]
+        },
+        {
+          "field_id": "client_date",
+          "label": "Client / witness — date",
+          "type": "date"
+        }
+      ]
+    }
+  ]
+}
