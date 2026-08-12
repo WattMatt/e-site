@@ -14,10 +14,12 @@
 
 export {
   evaluateSubmitGates,
+  buildGateInput,
   type GateIssue,
   type GateInput,
   type GateInstrument,
   type GateDefect,
+  type GateResponseRow,
 } from './gates'
 
 export const TERMINATION_AND_MAKING_SAFE_KEY = 'termination-and-making-safe'

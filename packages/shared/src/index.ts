@@ -15,6 +15,10 @@ export * from './email/rfi-email'
 export * from './email/qc-email'
 export * from './email/invite-email'
 export * from './email/snag-visit-email'
+// The first branded layout. The four templates above still carry their own
+// private copies of the wrapper; migrating them is deliberately out of scope.
+export * from './email/layout'
+export * from './email/site-form-email'
 
 // Inspections (Phase 2 — engine + template schema)
 export * from './inspections'
