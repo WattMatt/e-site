@@ -6,6 +6,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import {
+  gatherPrefill,
+  currentCableScheduleRevisionId,
+} from '@/lib/site-forms/prefill-sources'
+import {
   projectService,
   ORG_WRITE_ROLES,
   FORMS_FIELD_ROLES,
@@ -34,6 +38,9 @@ const createInputSchema = z
     templateRowId: uuid,
     nodeId: uuid.nullable().optional(),
     boardRef: z.string().trim().max(200).nullable().optional(),
+    // Board to read the cable schedule from, when this board is not itself in
+    // it. Defaults to nodeId.
+    cableScheduleNodeId: uuid.nullable().optional(),
   })
   .refine(
     (v) => Boolean(v.nodeId) || Boolean(v.boardRef && v.boardRef.trim() !== ''),
@@ -284,6 +291,81 @@ export async function listProjectFormsAction(
   return { forms: (data ?? []) as unknown[] }
 }
 
+/**
+ * Boards that could stand in as a cable-schedule source for a board that is not
+ * itself in the schedule.
+ *
+ * Only boards that appear as a `from_node_id` are offered: a board that feeds
+ * nothing has no circuit rows to lend, so listing it would be an offer of an
+ * empty list. Ordered by how many circuits each feeds, because the richest
+ * board is nearly always the one the electrician means.
+ *
+ * Gated at FORMS_FIELD_ROLES — the same gate as creating the form this feeds
+ * into, since the board codes it returns are exactly what the form page already
+ * shows that caller.
+ */
+export async function listCableScheduleBoardsAction(projectId: string): Promise<
+  | { error: string; boards?: undefined }
+  | {
+      error?: undefined
+      boards: { nodeId: string; code: string; name: string | null; downstreamCount: number }[]
+    }
+> {
+  if (!uuid.safeParse(projectId).success) return { error: 'Invalid project id' }
+
+  const guard = await guardProject(projectId, FORMS_FIELD_ROLES)
+  if (!guard.ok) return { error: guard.error }
+
+  const revisionId = await currentCableScheduleRevisionId(guard.supabase, projectId)
+  // Not an error: a project with no cable schedule simply has nothing to offer.
+  if (!revisionId) return { boards: [] }
+
+  const { data: supplies, error } = await guard.supabase
+    .schema('cable_schedule')
+    .from('supplies')
+    .select('from_node_id')
+    .eq('revision_id', revisionId)
+    .not('from_node_id', 'is', null)
+    .limit(5000)
+
+  if (error) return { error: msg(error, 'Could not load cable-schedule boards') }
+
+  // Counted here rather than in SQL: PostgREST has no GROUP BY, and the largest
+  // live schedule is a few hundred supplies.
+  const counts = new Map<string, number>()
+  for (const s of (supplies ?? []) as { from_node_id: string | null }[]) {
+    if (!s.from_node_id) continue
+    counts.set(s.from_node_id, (counts.get(s.from_node_id) ?? 0) + 1)
+  }
+  if (counts.size === 0) return { boards: [] }
+
+  // project_id is asserted, not assumed: a supply row's node must belong to this
+  // project before its code is shown to this caller.
+  const { data: nodes, error: nodeError } = await guard.supabase
+    .schema('structure')
+    .from('nodes')
+    .select('id, code, name')
+    .eq('project_id', projectId)
+    .in('id', [...counts.keys()])
+
+  if (nodeError) return { error: msg(nodeError, 'Could not load cable-schedule boards') }
+
+  const boards = ((nodes ?? []) as { id: string; code: string | null; name: string | null }[])
+    .map((n) => ({
+      nodeId: n.id,
+      code: n.code ?? '',
+      name: n.name ?? null,
+      downstreamCount: counts.get(n.id) ?? 0,
+    }))
+    .sort(
+      (a, b) =>
+        b.downstreamCount - a.downstreamCount ||
+        a.code.localeCompare(b.code, undefined, { numeric: true }),
+    )
+
+  return { boards }
+}
+
 // ─── Create ──────────────────────────────────────────────────────────────────
 
 export async function createSiteFormAction(
@@ -294,7 +376,7 @@ export async function createSiteFormAction(
 > {
   const parsed = createInputSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
-  const { projectId, templateRowId, nodeId, boardRef } = parsed.data
+  const { projectId, templateRowId, nodeId, boardRef, cableScheduleNodeId } = parsed.data
 
   const guard = await guardProject(projectId, FORMS_FIELD_ROLES)
   if (!guard.ok) return { error: guard.error }
@@ -353,6 +435,39 @@ export async function createSiteFormAction(
     // Deliberately swallowed; see above.
   }
 
+  // Pre-populate from what the project already knows. Best-effort by design:
+  // the form exists and is usable even if every lookup fails, so a prefill
+  // error must never lose the user their new form.
+  try {
+    const prefill = await gatherPrefill(guard.supabase, {
+      projectId,
+      nodeId: nodeId ?? null,
+      cableScheduleNodeId: cableScheduleNodeId ?? nodeId ?? null,
+      userId: guard.userId,
+      formNo,
+    })
+    if (prefill.length > 0) {
+      await guard.supabase
+        .schema('field')
+        .from('form_responses')
+        .upsert(
+          prefill.map((r) => ({
+            form_id: formId,
+            section_id: r.sectionId,
+            field_id: r.fieldId,
+            value_text: r.valueText ?? null,
+            value_number: r.valueNumber ?? null,
+            latest_responded_by: guard.userId,
+            latest_responded_at: new Date().toISOString(),
+            prefilled_from: r.source,
+          })),
+          { onConflict: 'form_id,section_id,field_id' },
+        )
+    }
+  } catch (e) {
+    console.error('[createSiteFormAction] prefill failed', e)
+  }
+
   revalidatePath(`/projects/${projectId}/forms`)
   return { formId, formNo }
 }
@@ -391,6 +506,9 @@ export async function upsertFormResponseAction(
         value_array: v.valueArray ?? null,
         pass_state: v.passState ?? null,
         fail_reason: v.failReason ?? null,
+        // Clearing this is the point: NULL means a person entered the value.
+        // A prefilled answer that someone then edited is no longer inherited.
+        prefilled_from: null,
         latest_responded_by: guard.userId,
         latest_responded_at: new Date().toISOString(),
       },

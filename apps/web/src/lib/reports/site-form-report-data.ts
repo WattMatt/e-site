@@ -71,6 +71,18 @@ export interface SiteFormFieldRow {
   failReason?: string | null
   sansRef?: string | null
   value?: string
+  /**
+   * `field.form_responses.prefilled_from` (migration 00182) — the source name of
+   * a value that was pre-populated from the project record and never edited:
+   * project | organisation | user | structure_node | cable_schedule | system.
+   *
+   * NULL/absent means the answer was entered on site. Set ONLY when the row
+   * actually prints something, so the marker can never land on an em dash.
+   *
+   * Optional purely so hand-written fixtures predating it stay valid; every
+   * reader must treat `undefined` as "entered on site".
+   */
+  prefilledFrom?: string | null
 }
 
 /** A repeating group flattened into a table: one row per entry. */
@@ -79,8 +91,14 @@ export interface SiteFormGroupTable {
   label: string
   /** Columns with at least one non-empty cell (empty columns are pruned). */
   columns: Array<{ fieldId: string; label: string }>
-  /** rows[i] aligns with columns[]; rows[i].entryNo is the 1-based entry index. */
-  rows: Array<{ entryNo: number; cells: string[] }>
+  /**
+   * rows[i] aligns with columns[]; rows[i].entryNo is the 1-based entry index.
+   * `prefilled[j]` aligns with `cells[j]`: true when that cell was inherited
+   * from the project record and never edited (see SiteFormFieldRow.prefilledFrom).
+   * A whole circuit row imported from the cable schedule is therefore visibly
+   * distinguishable from one an electrician typed.
+   */
+  rows: Array<{ entryNo: number; cells: string[]; prefilled?: boolean[] }>
 }
 
 export interface SiteFormReportSection {
@@ -122,6 +140,12 @@ export interface SiteFormAuditEntry {
   fieldLabel: string
   value: string
   by: string
+  /**
+   * `field.form_response_history.prefilled_from` (00182). The history is the
+   * part an enquiry actually reads, so an entry that was pre-populated when the
+   * form was created must not read as one a person stated. Absent = stated.
+   */
+  prefilledFrom?: string | null
 }
 
 export interface SiteFormReportSummary {
@@ -336,6 +360,20 @@ function formatValue(field: FlatField | undefined, resp: any): string {
   return ps ? ps.toUpperCase() : ''
 }
 
+/**
+ * The provenance of a stored answer, or null when a person entered it.
+ *
+ * `prefilled_from` is cleared to NULL on every user edit (00182 +
+ * upsertFormResponseAction), so a non-empty value here means the answer is
+ * still exactly what the project record said — nobody verified it at the board.
+ */
+function prefilledSourceOf(resp: any): string | null {
+  const src = resp?.prefilled_from
+  if (typeof src !== 'string') return null
+  const trimmed = src.trim()
+  return trimmed === '' ? null : trimmed
+}
+
 /** Field types that never render as a row or a table column. */
 const NON_ROW_TYPES = new Set(['photo', 'file', 'signature', 'repeating_group'])
 
@@ -348,18 +386,26 @@ function mapFieldToRow(field: FlatField, resp: any): SiteFormFieldRow | null {
     sansRef: field.sans_ref ?? null,
   }
 
+  // Provenance travels with the PRINTED value: a source recorded against a row
+  // that prints nothing would hang a marker on an em dash.
+  const source = prefilledSourceOf(resp)
+
   if (field.type === 'header') return { ...base, kind: 'subheading' }
   if (field.type === 'pass_fail') {
+    const pass = passStateOf(resp)
     return {
       ...base,
       kind: 'result',
-      pass: passStateOf(resp),
+      pass,
       failReason: (resp?.fail_reason as string | null) ?? null,
+      prefilledFrom: pass ? source : null,
     }
   }
-  if (field.type === 'textarea') return { ...base, kind: 'paragraph', value: formatValue(field, resp) }
-  if (field.type === 'multi_select') return { ...base, kind: 'list', value: formatValue(field, resp) }
-  return { ...base, kind: 'value', value: formatValue(field, resp) }
+  const value = formatValue(field, resp)
+  const prefilledFrom = value ? source : null
+  if (field.type === 'textarea') return { ...base, kind: 'paragraph', value, prefilledFrom }
+  if (field.type === 'multi_select') return { ...base, kind: 'list', value, prefilledFrom }
+  return { ...base, kind: 'value', value, prefilledFrom }
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +504,8 @@ export async function gatherSiteFormReportData(
       .select('name, version, schema_json')
       .eq('id', form.template_row_id)
       .maybeSingle(),
+    // `*` on both response tables — which is what carries `prefilled_from`
+    // (migration 00182) through to the rendered rows and the audit trail.
     (service as any).schema('field').from('form_responses').select('*').eq('form_id', formId),
     (service as any)
       .schema('field')
@@ -698,7 +746,12 @@ export async function gatherSiteFormReportData(
       if (!row) continue
       if (field.type === 'computed') {
         const computed = computedRowValue(field, sectionId)
-        if (computed !== null) row.value = computed
+        if (computed !== null) {
+          row.value = computed
+          // Derived here and now from the circuit entries — whatever provenance
+          // the stored response carried does not describe THIS number.
+          row.prefilledFrom = null
+        }
         // No formula we can evaluate and nothing stored: suppress rather than
         // print a bare "—" that reads as an overlooked answer.
         else if (!row.value) continue
@@ -731,10 +784,14 @@ export async function gatherSiteFormReportData(
       (sub) => !NON_ROW_TYPES.has(sub.type ?? '') && sub.type !== 'header',
     )
 
-    const cellsByEntry = indices.map((i) =>
-      subs.map((sub) =>
-        formatValue(sub, responseAt(sectionId, `${field.field_id}[${i}].${sub.field_id}`)),
-      ),
+    // The response rows are kept alongside the formatted cells: a circuit row
+    // imported wholesale from the cable schedule has to stay distinguishable
+    // from one an electrician typed, and only the row carries that.
+    const respsByEntry = indices.map((i) =>
+      subs.map((sub) => responseAt(sectionId, `${field.field_id}[${i}].${sub.field_id}`)),
+    )
+    const cellsByEntry = respsByEntry.map((resps) =>
+      resps.map((resp, col) => formatValue(subs[col], resp)),
     )
 
     // Prune columns that are empty for every entry — `circuits` has 22
@@ -756,6 +813,12 @@ export async function gatherSiteFormReportData(
       rows: indices.map((entryIdx, rowIdx) => ({
         entryNo: entryDisplayNo(sectionId, field.field_id, entryIdx),
         cells: keep.map((col) => cellsByEntry[rowIdx][col]),
+        // Only a cell that actually prints something can be marked.
+        prefilled: keep.map(
+          (col) =>
+            cellsByEntry[rowIdx][col].trim() !== '' &&
+            prefilledSourceOf(respsByEntry[rowIdx][col]) !== null,
+        ),
       })),
     }
   }
@@ -895,13 +958,18 @@ export async function gatherSiteFormReportData(
 
   // ── 9. Response audit history. ────────────────────────────────────────────
   const auditOmittedCount = Math.max(0, history.length - AUDIT_ROW_CAP)
-  const audit: SiteFormAuditEntry[] = history.slice(0, AUDIT_ROW_CAP).map((h) => ({
-    at: (h.responded_at as string | null) ?? null,
-    sectionTitle: sectionTitleById.get(String(h.section_id)) ?? String(h.section_id),
-    fieldLabel: fieldLabelFor(String(h.section_id), String(h.field_id)),
-    value: formatValue(fieldDefFor(String(h.section_id), String(h.field_id)), h),
-    by: nameOf(h.responded_by) ?? '—',
-  }))
+  const audit: SiteFormAuditEntry[] = history.slice(0, AUDIT_ROW_CAP).map((h) => {
+    const value = formatValue(fieldDefFor(String(h.section_id), String(h.field_id)), h)
+    return {
+      at: (h.responded_at as string | null) ?? null,
+      sectionTitle: sectionTitleById.get(String(h.section_id)) ?? String(h.section_id),
+      fieldLabel: fieldLabelFor(String(h.section_id), String(h.field_id)),
+      value,
+      by: nameOf(h.responded_by) ?? '—',
+      // Same rule as the field rows: provenance describes a printed value.
+      prefilledFrom: value ? prefilledSourceOf(h) : null,
+    }
+  })
 
   // ── 10. Summary. ──────────────────────────────────────────────────────────
   const textOf = (sectionId: string, fieldId: string): string | null => {

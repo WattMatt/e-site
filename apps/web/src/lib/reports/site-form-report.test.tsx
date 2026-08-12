@@ -9,6 +9,7 @@ import { NOT_A_COC_DISCLAIMER } from '@esite/shared'
 import { renderSiteFormReport } from './render-site-form'
 import {
   siteFormReportFixture,
+  prefilledSiteFormReportFixture,
   emptySiteFormReportFixture,
   HOSTILE_MULTILINE,
   HOSTILE_GLYPHS,
@@ -32,6 +33,39 @@ vi.mock('@/lib/auth/require-role', () => ({
 }))
 
 import { gatherSiteFormReportData } from './site-form-report-data'
+
+/**
+ * WinAnsiEncoding 0x80-0x9F as Unicode code points, indexed by (byte - 0x80);
+ * 0 marks the five codes WinAnsi leaves undefined.
+ *
+ * A PDF standard font (Helvetica here) writes text in WinAnsi, which agrees
+ * with latin1 everywhere EXCEPT this 32-byte window — where latin1 has control
+ * characters and WinAnsi has the punctuation the document actually uses. The
+ * provenance marker (U+2020 DAGGER) is WinAnsi byte 0x86, so without this it
+ * decodes to an invisible control character and every assertion about it passes
+ * vacuously — the same silent-pass trap a raw buffer grep falls into. Code
+ * points rather than literals so the table stays readable and diffable.
+ */
+const WINANSI_HIGH = [
+  0x20ac, 0, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021,
+  0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017d, 0,
+  0, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+  0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0, 0x017e, 0x0178,
+]
+
+function fromWinAnsi(raw: string): string {
+  let out = ''
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i)
+    if (code >= 0x80 && code <= 0x9f) {
+      const mapped = WINANSI_HIGH[code - 0x80]
+      out += mapped === 0 ? '' : String.fromCharCode(mapped)
+    } else {
+      out += raw[i]
+    }
+  }
+  return out
+}
 
 /**
  * Pull the visible text back out of a rendered PDF.
@@ -63,7 +97,7 @@ function extractPdfTextPerStream(buf: Buffer): string[] {
     }
     let text = ''
     for (const match of decoded.matchAll(/<([0-9a-fA-F]+)>/g)) {
-      text += Buffer.from(match[1], 'hex').toString('latin1')
+      text += fromWinAnsi(Buffer.from(match[1], 'hex').toString('latin1'))
     }
     out.push(text)
     cursor = end + endMarker.length
@@ -176,6 +210,82 @@ describe('renderSiteFormReport', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Inherited vs verified-on-site — field.form_responses.prefilled_from (00182)
+//
+// A value copied off a drawing and a value verified at the board must not look
+// identical on a document read in an incident enquiry. SANS 10142-1 6.6.1.21(a)
+// says in terms to VERIFY the fed-from label rather than copy it.
+// ---------------------------------------------------------------------------
+
+/** U+2020 DAGGER — written as a code point so no editor can mangle it. */
+const PREFILL_MARKER = String.fromCharCode(0x2020)
+
+/** The ASCII spine of the footnote; asserting on prose, not on punctuation. */
+const FOOTNOTE_SPINE =
+  'were pre-populated from the project record and were not edited on site'
+
+const countMarkers = (text: string): number =>
+  [...text].filter((c) => c === PREFILL_MARKER).length
+
+describe('renderSiteFormReport — inherited values', () => {
+  it('marks inherited values and explains the marker', async () => {
+    const text = squash(extractPdfText(await renderSiteFormReport(prefilledSiteFormReportFixture)))
+
+    // The legend…
+    expect(text).toContain(FOOTNOTE_SPINE)
+    // …and markers beyond the two the legend itself contains.
+    expect(countMarkers(text)).toBeGreaterThan(2)
+    // The marker sits ON the inherited value, not adrift in the page.
+    expect(text).toContain(`DB-1 ${PREFILL_MARKER}`)
+    // The audit trail says it in words too — that is the part an enquiry reads.
+    expect(text).toContain('pre-populated')
+    expect(text).toContain('board record')
+  })
+
+  it('renders NEITHER the marker NOR the footnote when nothing was inherited', async () => {
+    // Same document, same hostile strings — only the provenance differs. A
+    // legend for something that occurs zero times is noise in a legal record.
+    const text = squash(extractPdfText(await renderSiteFormReport(siteFormReportFixture)))
+    expect(countMarkers(text)).toBe(0)
+    expect(text).not.toContain(FOOTNOTE_SPINE)
+    expect(text).not.toContain('pre-populated')
+  })
+
+  it('distinguishes a circuit row imported from the cable schedule from a typed one', async () => {
+    const circuits = prefilledSiteFormReportFixture.sections
+      .find((sec) => sec.sectionId === 'circuits_affected')
+      ?.groups.find((g) => g.fieldId === 'circuits')
+    expect(circuits).toBeDefined()
+
+    // Entry 1 came off the cable schedule; entry 2 was typed at the board.
+    const imported = circuits!.rows.find((r) => r.entryNo === 1)!
+    const typed = circuits!.rows.find((r) => r.entryNo === 2)!
+    const inheritedCells = (imported.prefilled ?? []).filter(Boolean).length
+    expect(inheritedCells).toBeGreaterThan(0)
+    expect((typed.prefilled ?? []).some(Boolean)).toBe(false)
+
+    // …and that difference survives into the rendered page. Isolating the
+    // circuits table is what makes this a statement about the ROW rather than
+    // about the document: nothing else in this payload is inherited.
+    const onlyCircuits: SiteFormReportData = {
+      ...siteFormReportFixture,
+      sections: prefilledSiteFormReportFixture.sections.map((sec) => ({
+        ...sec,
+        rows: sec.rows.map((r) => ({ ...r, prefilledFrom: null })),
+      })),
+      audit: siteFormReportFixture.audit,
+    }
+    const marked = countMarkers(squash(extractPdfText(await renderSiteFormReport(onlyCircuits))))
+    const unmarked = countMarkers(
+      squash(extractPdfText(await renderSiteFormReport(siteFormReportFixture))),
+    )
+    expect(unmarked).toBe(0)
+    // One per inherited cell, plus the two in the footnote's own wording.
+    expect(marked).toBe(inheritedCells + 2)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // gatherSiteFormReportData — the data layer the document renders from
 // ---------------------------------------------------------------------------
 
@@ -281,6 +391,7 @@ const THREE_CIRCUITS = [
 interface GatherOpts {
   formOver?: Record<string, any>
   responses?: any[]
+  history?: any[]
   photos?: any[]
   downloads?: Record<string, { data: any; error: any }>
   /** Effective project role the gate resolves to. */
@@ -330,7 +441,7 @@ async function gather(opts: GatherOpts = {}): Promise<SiteFormReportData> {
       error: null,
     },
     'field.form_responses': { data: opts.responses ?? THREE_CIRCUITS, error: null },
-    'field.form_response_history': { data: [], error: null },
+    'field.form_response_history': { data: opts.history ?? [], error: null },
     'field.form_photos': { data: opts.photos ?? [], error: null },
     'field.form_signatures': { data: [], error: null },
     'public.organisations': {
@@ -550,6 +661,89 @@ describe('gatherSiteFormReportData — computed fields', () => {
         }
       }
     }
+  })
+})
+
+// ─── PROVENANCE ────────────────────────────────────────────────────────────
+
+describe('gatherSiteFormReportData — prefilled_from provenance', () => {
+  it('carries provenance onto field rows, group cells and the audit trail', async () => {
+    const data = await gather({
+      responses: [
+        {
+          section_id: 'db_identification',
+          field_id: 'db_reference',
+          value_text: 'DB-1',
+          prefilled_from: 'structure_node',
+        },
+        // Way number came off the cable schedule; the action was answered at
+        // the board (the upsert clears prefilled_from on every user edit).
+        {
+          section_id: 'circuits_affected',
+          field_id: 'circuits[0].way_no',
+          value_text: '4',
+          prefilled_from: 'cable_schedule',
+        },
+        {
+          section_id: 'circuits_affected',
+          field_id: 'circuits[0].action_taken',
+          value_text: 'terminated_and_removed',
+          prefilled_from: null,
+        },
+      ],
+      history: [
+        {
+          section_id: 'db_identification',
+          field_id: 'db_reference',
+          value_text: 'DB-1',
+          responded_at: '2026-08-11T09:02:11.000Z',
+          responded_by: 'user-1',
+          prefilled_from: 'structure_node',
+        },
+        {
+          section_id: 'db_identification',
+          field_id: 'db_reference',
+          value_text: 'DB-1A',
+          responded_at: '2026-08-11T09:40:00.000Z',
+          responded_by: 'user-1',
+          prefilled_from: null,
+        },
+      ],
+    })
+
+    expect(rowOf(data, 'db_identification', 'db_reference')?.prefilledFrom).toBe('structure_node')
+
+    const group = data.sections
+      .find((s) => s.sectionId === 'circuits_affected')
+      ?.groups.find((g) => g.fieldId === 'circuits')
+    const wayCol = group!.columns.findIndex((c) => c.fieldId === 'way_no')
+    const actionCol = group!.columns.findIndex((c) => c.fieldId === 'action_taken')
+    expect(group!.rows[0].prefilled?.[wayCol]).toBe(true)
+    expect(group!.rows[0].prefilled?.[actionCol]).toBe(false)
+
+    // The history keeps BOTH statements apart: inherited, then stated.
+    expect(data.audit.map((a) => a.prefilledFrom ?? null)).toEqual(['structure_node', null])
+  })
+
+  it('never attributes a value it did not print', async () => {
+    // A source recorded against an answer that renders nothing would hang the
+    // marker on an em dash, and a derived figure is nobody's inherited value.
+    const data = await gather({
+      responses: [
+        {
+          section_id: 'db_identification',
+          field_id: 'db_reference',
+          value_text: '',
+          prefilled_from: 'structure_node',
+        },
+        ...THREE_CIRCUITS.map((r) => ({ ...r, prefilled_from: 'cable_schedule' })),
+      ],
+    })
+    expect(rowOf(data, 'db_identification', 'db_reference')?.prefilledFrom).toBeNull()
+    // circuits_left_temporary_count is computed from the entries, not inherited.
+    const computed = rowOf(data, 'handover_status', 'circuits_left_temporary_count')
+    expect(computed?.value).toBe('2')
+    expect(computed?.prefilledFrom).toBeNull()
   })
 })
 
