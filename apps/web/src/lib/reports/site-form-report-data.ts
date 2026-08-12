@@ -190,14 +190,32 @@ const TEMPORARY_ACTIONS = new Set([
 ])
 
 const SIGNATURE_BLOCK_LABELS: Record<string, string> = {
+  safe_isolation_confirmed: 'Safe isolation confirmed — work may proceed (§6)',
+  hazard_sweep_technician: 'Pre-work hazard sweep — technician (§11A)',
+  hazard_sweep_supervisor: 'Pre-work hazard sweep — supervisor (§11A)',
   electrician: 'Electrician',
   registered_person: 'Registered person (general control)',
   supervisor: 'Supervisor / engineer',
   client_witness: 'Client / witness',
 }
 
-/** Stable render order for the signature blocks, independent of insert order. */
-const SIGNATURE_BLOCK_ORDER = ['electrician', 'registered_person', 'supervisor', 'client_witness']
+/**
+ * Stable render order, independent of insert order, following the order the
+ * signatures are given on site: the isolation is owned first (§6), then the
+ * hazard sweep (§11A), then the §13 declarations.
+ *
+ * Must cover every value in the `block_id` CHECK — an unlisted block sorts to
+ * `indexOf` −1 and would silently jump ahead of the electrician's declaration.
+ */
+const SIGNATURE_BLOCK_ORDER = [
+  'safe_isolation_confirmed',
+  'hazard_sweep_technician',
+  'hazard_sweep_supervisor',
+  'electrician',
+  'registered_person',
+  'supervisor',
+  'client_witness',
+]
 
 // ---------------------------------------------------------------------------
 // Storage helpers
