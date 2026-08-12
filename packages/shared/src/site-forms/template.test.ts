@@ -217,3 +217,45 @@ describe('scope restrictions agreed for v1', () => {
     }
   });
 });
+
+// The engine flattens repeating-group entries into synthetic response ids of the
+// form `<group>[<i>].<sub>`, but `checkCondition` resolves `conditional_on` by
+// matching a bare `field_id` against stored responses. A sub-field conditional
+// therefore never finds its trigger, and neither `evaluateInspection` nor
+// `RepeatingGroupField` calls `isFieldVisible` for sub-fields at all -- so the
+// declaration is silently ignored and the field always renders.
+//
+// Rather than ship a declaration the engine does not honour, sub-field
+// conditions are stated in `help_text`. These tests pin that decision.
+describe('engine conditional-resolution limits', () => {
+  const groups = allFields.filter((f) => f.type === 'repeating_group');
+
+  it('declares no conditional_on on any repeating-group sub-field', () => {
+    const offenders: string[] = [];
+    for (const g of groups) {
+      for (const sub of g.fields ?? []) {
+        if ((sub as { conditional_on?: unknown }).conditional_on) {
+          offenders.push(`${g.field_id}[].${sub.field_id}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('never makes a top-level field conditional on a repeating-group sub-field', () => {
+    const subIds = new Set(groups.flatMap((g) => (g.fields ?? []).map((s) => s.field_id)));
+    const offenders = allFields
+      .filter((f) => f.conditional_on && subIds.has(f.conditional_on.field_id))
+      .map((f) => `${f.field_id} -> ${f.conditional_on!.field_id}`);
+    // Such a field would be permanently hidden, silently collecting nothing.
+    expect(offenders).toEqual([]);
+  });
+
+  it('resolves every conditional_on to a real top-level field', () => {
+    const topIds = new Set(allFields.map((f) => f.field_id));
+    const broken = allFields
+      .filter((f) => f.conditional_on && !topIds.has(f.conditional_on.field_id))
+      .map((f) => `${f.field_id} -> ${f.conditional_on!.field_id}`);
+    expect(broken).toEqual([]);
+  });
+});
