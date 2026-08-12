@@ -286,8 +286,14 @@ GRANT EXECUTE ON FUNCTION field.allocate_form_no(UUID, TEXT) TO service_role;
 -- Without this, any project member could PATCH status='distributed' straight
 -- over PostgREST and bypass the server-action role gate entirely -- the same
 -- class of hole 00177 had to close for project_members self-promotion.
+-- Deliberately SECURITY INVOKER (the default). Under SECURITY DEFINER,
+-- `current_user` is the function OWNER, so the trusted-role exemption below
+-- would be true for every caller and this trigger would silently enforce
+-- nothing at all. It needs no elevated rights: it only reads OLD/NEW and calls
+-- user_can_manage_form(), which is itself SECURITY DEFINER and granted to
+-- authenticated.
 CREATE OR REPLACE FUNCTION field.enforce_site_form_transition()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER
+RETURNS TRIGGER LANGUAGE plpgsql
 SET search_path TO 'field', 'public' AS $fn$
 BEGIN
   -- Trusted callers (migrations, service-role server actions) are unrestricted;
@@ -361,6 +367,11 @@ CREATE POLICY site_forms_insert ON field.site_forms
 
 -- WITH CHECK is present from day one; 00067 had to retrofit it for inspections
 -- to stop callers moving a row into another org/project mid-update.
+-- The WITH CHECK independently refuses to let a non-manager leave a row in
+-- `distributed` or `void`, so the management gate does not rest on the
+-- transition trigger alone. Belt and braces, deliberately: the first version of
+-- that trigger was inert (SECURITY DEFINER made its role check always true) and
+-- this predicate is what would have caught it.
 CREATE POLICY site_forms_update ON field.site_forms
   FOR UPDATE TO authenticated
   USING (
@@ -370,6 +381,8 @@ CREATE POLICY site_forms_update ON field.site_forms
   WITH CHECK (
     public.user_has_project_access(project_id)
     AND NOT public.user_is_client_viewer(organisation_id)
+    AND (status <> 'distributed' OR field.user_can_manage_form(project_id))
+    AND (status <> 'void' OR field.user_can_manage_form(project_id))
   );
 
 CREATE POLICY site_forms_delete ON field.site_forms
