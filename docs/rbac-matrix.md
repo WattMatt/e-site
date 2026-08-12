@@ -386,6 +386,7 @@ Read-only actions require project access (any project member). Write/export acti
 |---|---|---|---|---|---|---|---|
 | `listFormTemplatesAction` | R | R | R | R | R | R | R |
 | `listProjectFormsAction` | R | R | R | R | R | R | R¹⁰ |
+| `listCableScheduleBoardsAction` | R | R | R | R | R | R | — |
 | `createSiteFormAction` | W | W | W | W | W | W | — |
 | `upsertFormResponseAction` | W | W | W | W | W | W | — |
 | `submitSiteFormAction` | W | W | W | W | W | W | — |
