@@ -231,8 +231,18 @@ CREATE INDEX form_photos_form_field_idx
 CREATE TABLE field.form_signatures (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   form_id UUID NOT NULL REFERENCES field.site_forms(id) ON DELETE CASCADE,
+  -- One block per signature the form actually collects. The termination &
+  -- making-safe template declares seven, three of them required: the §6.22
+  -- safe-isolation confirmation (the moment the isolation is owned), and the
+  -- §11A dual technician/supervisor hazard-sweep sign-off. A narrower set would
+  -- force two fields onto one block, where signing the second silently
+  -- overwrites the first -- an overwritten signature on a safety record is
+  -- worse than a missing one.
   block_id TEXT NOT NULL
-    CHECK (block_id IN ('electrician', 'registered_person', 'supervisor', 'client_witness')),
+    CHECK (block_id IN (
+      'electrician', 'registered_person', 'supervisor', 'client_witness',
+      'safe_isolation_confirmed', 'hazard_sweep_technician', 'hazard_sweep_supervisor'
+    )),
   signatory_name TEXT NOT NULL,
   signatory_role TEXT,
   registration_category TEXT,
