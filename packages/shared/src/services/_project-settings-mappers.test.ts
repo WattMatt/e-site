@@ -31,6 +31,7 @@ const sampleRow = {
   notify_snag_email: true,
   notify_diary_email: false,
   notify_qc_email: true,
+  notify_form_email: true,
   created_at: '2026-05-26T10:00:00.000Z',
   updated_at: '2026-05-26T10:00:00.000Z',
   updated_by: null,
