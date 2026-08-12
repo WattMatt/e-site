@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { evaluateSubmitGates, type GateInput } from './gates'
+import { evaluateSubmitGates, buildGateInput, type GateInput } from './gates'
 
 const base: GateInput = {
   responses: {},
@@ -330,5 +330,85 @@ describe('gate result shape', () => {
       expect(i.sectionId).toBeTruthy()
       expect(i.message).toBeTruthy()
     }
+  })
+})
+
+// ─── buildGateInput ──────────────────────────────────────────────────────────
+describe('buildGateInput', () => {
+  it('reads flat responses into section:field keys', () => {
+    const gi = buildGateInput(
+      [{ section_id: 'handover_status', field_id: 'as_left_status', value_text: 'partially_energised' }],
+      '2026-08-12',
+    )
+    expect(gi.responses['handover_status:as_left_status']).toBe('partially_energised')
+  })
+
+  it('reassembles instruments from synthetic repeating-group ids', () => {
+    const gi = buildGateInput(
+      [
+        { section_id: 'test_instruments', field_id: 'instruments[0].make', value_text: 'Megger' },
+        { section_id: 'test_instruments', field_id: 'instruments[0].model', value_text: 'MFT1741' },
+        { section_id: 'test_instruments', field_id: 'instruments[0].calibration_due_date', value_text: '2025-01-01' },
+      ],
+      '2026-08-12',
+    )
+    expect(gi.instruments).toEqual([{ label: 'Megger MFT1741', calibrationDue: '2025-01-01' }])
+  })
+
+  it('keeps instrument entries separate and ordered by index', () => {
+    const gi = buildGateInput(
+      [
+        { section_id: 'test_instruments', field_id: 'instruments[1].make', value_text: 'B' },
+        { section_id: 'test_instruments', field_id: 'instruments[0].make', value_text: 'A' },
+      ],
+      '2026-08-12',
+    )
+    expect(gi.instruments.map((i) => i.label)).toEqual(['A', 'B'])
+  })
+
+  it('reassembles defect classifications and drops blank rows', () => {
+    const gi = buildGateInput(
+      [
+        { section_id: 'hazards_defects', field_id: 'defect_register[0].classification', value_text: 'C1' },
+        { section_id: 'hazards_defects', field_id: 'defect_register[1].description', value_text: 'no grade yet' },
+      ],
+      '2026-08-12',
+    )
+    expect(gi.defects).toEqual([{ classification: 'C1' }])
+  })
+
+  it('prefers the recorded date of work over the fallback', () => {
+    const gi = buildGateInput(
+      [{ section_id: 'personnel', field_id: 'date_of_work', value_text: '2026-07-01' }],
+      '2026-08-12',
+    )
+    expect(gi.workDate).toBe('2026-07-01')
+  })
+
+  it('falls back when no date of work has been captured', () => {
+    expect(buildGateInput([], '2026-08-12').workDate).toBe('2026-08-12')
+  })
+
+  it('ignores repeating groups that no gate consumes', () => {
+    const gi = buildGateInput(
+      [{ section_id: 'circuits_affected', field_id: 'circuits[0].way_no', value_text: '3' }],
+      '2026-08-12',
+    )
+    expect(gi.instruments).toEqual([])
+    expect(gi.defects).toEqual([])
+  })
+
+  it('feeds straight into evaluateSubmitGates', () => {
+    const issues = evaluateSubmitGates(
+      buildGateInput(
+        [
+          { section_id: 'test_instruments', field_id: 'instruments[0].make', value_text: 'Fluke' },
+          { section_id: 'test_instruments', field_id: 'instruments[0].calibration_due_date', value_text: '2020-01-01' },
+          { section_id: 'personnel', field_id: 'date_of_work', value_text: '2026-08-12' },
+        ],
+        '2026-08-12',
+      ),
+    )
+    expect(issues.map((i) => i.code)).toContain('instrument_out_of_calibration')
   })
 })

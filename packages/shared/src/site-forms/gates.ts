@@ -85,6 +85,83 @@ function isBefore(a: string, b: string): boolean {
   return a < b
 }
 
+/** Minimal shape of a stored response row, matching `field.form_responses`. */
+export interface GateResponseRow {
+  section_id: string
+  field_id: string
+  value_bool?: boolean | null
+  value_number?: number | null
+  value_text?: string | null
+  value_array?: string[] | null
+}
+
+/** `<group>[<index>].<sub>` — the engine's synthetic repeating-group response id. */
+const RG_KEY = /^([a-z0-9_]+)\[(\d+)\]\.([a-z0-9_]+)$/
+
+function firstDefined(r: GateResponseRow): unknown {
+  if (r.value_bool !== undefined && r.value_bool !== null) return r.value_bool
+  if (r.value_number !== undefined && r.value_number !== null) return r.value_number
+  if (r.value_array !== undefined && r.value_array !== null) return r.value_array
+  if (r.value_text !== undefined && r.value_text !== null) return r.value_text
+  return undefined
+}
+
+/**
+ * Turn stored responses into gate input.
+ *
+ * Kept here, beside the gates themselves, so the server action and the capture
+ * UI cannot compute gates from differently-shaped data and disagree about
+ * whether a form may be submitted.
+ *
+ * Repeating-group rows arrive under synthetic ids, so instruments and defects
+ * are reassembled by entry index rather than read as flat fields.
+ */
+export function buildGateInput(
+  responses: GateResponseRow[],
+  fallbackWorkDate: string,
+): GateInput {
+  const flat: Record<string, unknown> = {}
+  const instrumentRows = new Map<number, Record<string, unknown>>()
+  const defectRows = new Map<number, Record<string, unknown>>()
+
+  for (const r of responses) {
+    const m = r.field_id.match(RG_KEY)
+    if (!m) {
+      flat[`${r.section_id}:${r.field_id}`] = firstDefined(r)
+      continue
+    }
+    const [, group, idxRaw, sub] = m
+    const idx = parseInt(idxRaw, 10)
+    const bucket =
+      group === 'instruments' ? instrumentRows : group === 'defect_register' ? defectRows : null
+    if (!bucket) continue
+    const entry = bucket.get(idx) ?? {}
+    entry[sub] = firstDefined(r)
+    bucket.set(idx, entry)
+  }
+
+  const str = (v: unknown): string | null =>
+    typeof v === 'string' && v.trim() !== '' ? v.trim() : null
+
+  const instruments: GateInstrument[] = [...instrumentRows.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([idx, e]) => ({
+      label:
+        [str(e.make), str(e.model)].filter(Boolean).join(' ') ||
+        str(e.instrument_function) ||
+        `Instrument ${idx + 1}`,
+      calibrationDue: str(e.calibration_due_date),
+    }))
+
+  const defects: GateDefect[] = [...defectRows.values()]
+    .map((e) => ({ classification: str(e.classification) ?? '' }))
+    .filter((d) => d.classification !== '')
+
+  const workDate = str(flat['personnel:date_of_work']) ?? fallbackWorkDate
+
+  return { responses: flat, instruments, defects, workDate }
+}
+
 export function evaluateSubmitGates(input: GateInput): GateIssue[] {
   const issues: GateIssue[] = []
 

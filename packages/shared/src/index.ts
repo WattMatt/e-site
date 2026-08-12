@@ -19,6 +19,9 @@ export * from './email/snag-visit-email'
 // Inspections (Phase 2 — engine + template schema)
 export * from './inspections'
 
+// Site forms — reuses the inspections engine; adds submit gates + templates.
+export * from './site-forms'
+
 // Structure (Phase 2 — nodes, tenant schedule import)
 export * from './structure'
 
