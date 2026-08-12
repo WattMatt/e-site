@@ -51,6 +51,16 @@ export interface SiteFormPhotoField {
   photos: SiteFormReportPhoto[]
   /** Photos beyond MAX_PHOTOS_PER_FIELD, summarised rather than rendered. */
   omittedCount: number
+  /**
+   * Photos that exist in the database but whose download failed (moved object,
+   * transient storage error, bad path). Counted SEPARATELY from omittedCount and
+   * surfaced in the document: silently dropping them would turn missing evidence
+   * into an unqualified "no photographs captured".
+   *
+   * Optional purely so hand-written fixtures predating it stay valid; the
+   * gatherer always sets it, and every reader must treat `undefined` as 0.
+   */
+  unavailableCount?: number
 }
 
 export interface SiteFormFieldRow {
@@ -263,6 +273,8 @@ interface FlatField {
   type?: string
   unit?: string
   sans_ref?: string
+  /** Present on `computed` fields — see computedRowValue in the gatherer. */
+  formula?: string
   fields?: FlatField[]
 }
 
@@ -524,7 +536,7 @@ export async function gatherSiteFormReportData(
     const sub = subFieldByKey.get(`${sectionId}|${parsed.group}|${parsed.sub}`)
     const groupLabel = group ? String(group.label ?? group.field_id) : parsed.group
     const subLabel = sub ? String(sub.label ?? sub.field_id) : parsed.sub
-    return `${groupLabel} [${parsed.index + 1}] · ${subLabel}`
+    return `${groupLabel} [${entryDisplayNo(sectionId, parsed.group, parsed.index)}] · ${subLabel}`
   }
 
   const responseAt = (sectionId: string, fieldId: string): any =>
@@ -534,6 +546,115 @@ export async function gatherSiteFormReportData(
   function entryIndices(sectionId: string, groupId: string): number[] {
     const scoped = responses.filter((r) => r.section_id === sectionId)
     return listRepeatingGroupEntryIndices(groupId, scoped as any)
+  }
+
+  /**
+   * 1-based, gap-free number for a repeating-group entry, as printed.
+   *
+   * Synthetic indices are NOT stable: deleting entry 0 of 3 leaves indices 1
+   * and 2, which used to print as rows "2, 3". People cite these records by row
+   * number, so every part of the document (tables, defect register, photo
+   * captions, audit labels) numbers what it actually prints.
+   *
+   * Falls back to index+1 for an index that is no longer present — an audit row
+   * for a since-deleted entry has no printed row to agree with.
+   */
+  const entryOrderCache = new Map<string, Map<number, number>>()
+  function entryDisplayNo(sectionId: string, groupId: string, index: number): number {
+    const cacheKey = `${sectionId}|${groupId}`
+    let order = entryOrderCache.get(cacheKey)
+    if (!order) {
+      order = new Map(entryIndices(sectionId, groupId).map((idx, pos) => [idx, pos + 1]))
+      entryOrderCache.set(cacheKey, order)
+    }
+    return order.get(index) ?? index + 1
+  }
+
+  // ── 4a. Derivations the document states in more than one place. ───────────
+  //     Computed BEFORE the sections are built so the §12 rows and the summary
+  //     hero block are rendered from the SAME values — a legal record must not
+  //     contain two contradictory answers to the same question.
+
+  // Circuits left in a temporary state — derived from the circuit entries
+  // themselves (the source of truth), matching the template's
+  // `circuits_left_temporary` formula. The stored computed response is used
+  // only when no circuit entries were captured at all.
+  let circuitCount = 0
+  let circuitsLeftTemporary = 0
+  for (const section of sections) {
+    const sectionId = String(section.section_id)
+    const hasCircuits = flattenSectionFields(section).some(
+      (f) => f.type === 'repeating_group' && f.field_id === CIRCUITS_GROUP_ID,
+    )
+    if (!hasCircuits) continue
+    for (const i of entryIndices(sectionId, CIRCUITS_GROUP_ID)) {
+      circuitCount++
+      const action = responseAt(sectionId, `${CIRCUITS_GROUP_ID}[${i}].action_taken`)
+      const token = String(action?.value_text ?? '').trim()
+      if (TEMPORARY_ACTIONS.has(token)) circuitsLeftTemporary++
+    }
+  }
+  if (circuitCount === 0) {
+    const stored =
+      responseAt('handover_status', 'circuits_left_temporary_count') ??
+      responseAt('circuits_affected', 'circuits_left_temporary')
+    const n = Number(stored?.value_number ?? stored?.value_text ?? NaN)
+    if (Number.isFinite(n) && n > 0) circuitsLeftTemporary = n
+  }
+
+  /**
+   * The as-left status, resolved ONCE from the §12 response.
+   *
+   * `field.site_forms.as_left_status` is a denormalised copy written at submit
+   * so the list page can filter without loading responses; the response row is
+   * the source of truth (design spec, `field.site_forms`). The column is a
+   * fallback only — if the two ever diverge, the real answer must still be the
+   * one printed, in the field row AND in the summary.
+   */
+  const asLeftResponse =
+    responseAt('handover_status', 'as_left_status') ??
+    responses.find((r) => r.field_id === 'as_left_status')
+  const asLeftStatus =
+    (String(asLeftResponse?.value_text ?? '').trim() ||
+      String((form.as_left_status as string | null) ?? '').trim()) ||
+    null
+  const asLeftStatusText = asLeftStatus ? asLeftStatusLabel(asLeftStatus) : 'Not recorded'
+
+  /**
+   * Evaluate a `computed` field. These carry no response row of their own, so
+   * without this they printed "—" beside a summary block asserting the opposite.
+   *
+   * Returns null when the formula is one this renderer cannot evaluate; the
+   * caller then keeps any stored value and otherwise suppresses the row. A
+   * fabricated answer is worse than no row, and a blank in a legal record
+   * invites the question of whether it was overlooked.
+   */
+  function computedRowValue(field: FlatField, sectionId: string): string | null {
+    const formula = String(field.formula ?? '').trim()
+
+    // `circuits_left_temporary` (§5) and the §12 field that mirrors it — the
+    // same derivation the summary uses, deliberately not a second copy of it.
+    if (formula === 'circuits_left_temporary' || /^count\(\s*circuits\b/i.test(formula)) {
+      return String(circuitsLeftTemporary)
+    }
+
+    // `all(<field ids>) <= 0` — the proving-dead gate.
+    const all = /^all\(([^)]*)\)\s*<=\s*0$/i.exec(formula)
+    if (all) {
+      const readings = all[1]
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .map((id) => responseAt(sectionId, id))
+        .map((r) => (r?.value_number == null ? NaN : Number(r.value_number)))
+        .filter((n) => Number.isFinite(n))
+      // A single-phase board never answers the three-phase readings, so the
+      // gate is evaluated over the readings actually captured.
+      if (readings.length === 0) return 'Not recorded'
+      return readings.every((v) => v <= 0) ? 'Yes' : 'No'
+    }
+
+    return null
   }
 
   // ── 5. Sections: scalar rows + repeating groups as tables. ────────────────
@@ -554,9 +675,18 @@ export async function gatherSiteFormReportData(
       }
       const row = mapFieldToRow(field, responseAt(sectionId, field.field_id))
       if (!row) continue
-      // The one field whose wording is legally load-bearing: never a raw token.
-      if (field.field_id === 'as_left_status' && form.as_left_status) {
-        row.value = asLeftStatusLabel(String(form.as_left_status))
+      if (field.type === 'computed') {
+        const computed = computedRowValue(field, sectionId)
+        if (computed !== null) row.value = computed
+        // No formula we can evaluate and nothing stored: suppress rather than
+        // print a bare "—" that reads as an overlooked answer.
+        else if (!row.value) continue
+      }
+      // The one field whose wording is legally load-bearing: rendered from the
+      // response (never a raw token, never the denormalised column), and from
+      // the SAME resolution the summary hero block uses.
+      if (field.field_id === 'as_left_status') {
+        row.value = asLeftStatusText
       }
       rows.push(row)
     }
@@ -600,8 +730,10 @@ export async function gatherSiteFormReportData(
         fieldId: subs[col].field_id,
         label: String(subs[col].label ?? subs[col].field_id),
       })),
+      // Numbered by printed position, not by the synthetic index — see
+      // entryDisplayNo. Delete entry 0 of 3 and these stay "1, 2".
       rows: indices.map((entryIdx, rowIdx) => ({
-        entryNo: entryIdx + 1,
+        entryNo: entryDisplayNo(sectionId, field.field_id, entryIdx),
         cells: keep.map((col) => cellsByEntry[rowIdx][col]),
       })),
     }
@@ -635,12 +767,16 @@ export async function gatherSiteFormReportData(
         return { id: String(ph.id), dataUri, caption: buildPhotoCaption(ph, nameLookup) }
       }),
     )
+    const photosOk = resolved.filter(Boolean) as SiteFormReportPhoto[]
     photoFields.push({
       sectionId,
       fieldId,
       label,
-      photos: resolved.filter(Boolean) as SiteFormReportPhoto[],
+      photos: photosOk,
       omittedCount: Math.max(0, rowsForField.length - MAX_PHOTOS_PER_FIELD),
+      // Downloads that failed are COUNTED, never dropped: the field still
+      // renders, saying how much evidence could not be retrieved.
+      unavailableCount: resolved.length - photosOk.length,
     })
   }
 
@@ -666,7 +802,7 @@ export async function gatherSiteFormReportData(
           await pushPhotoField(
             sectionId,
             `${field.field_id}[${i}].${sub.field_id}`,
-            `${sectionTitle} — ${groupLabel} [${i + 1}] · ${subLabel}`,
+            `${sectionTitle} — ${groupLabel} [${entryDisplayNo(sectionId, field.field_id, i)}] · ${subLabel}`,
           )
         }
       }
@@ -700,7 +836,8 @@ export async function gatherSiteFormReportData(
     for (const i of entryIndices(sectionId, DEFECT_GROUP_ID)) {
       const classification = cell(i, 'classification').trim()
       defects.push({
-        entryNo: i + 1,
+        // Printed position, not the synthetic index — same rule as the tables.
+        entryNo: entryDisplayNo(sectionId, DEFECT_GROUP_ID, i),
         description: cell(i, 'description'),
         location: cell(i, 'location'),
         classification,
@@ -752,33 +889,6 @@ export async function gatherSiteFormReportData(
     return v === '' ? null : v
   }
 
-  // Circuits left in a temporary state — derived from the circuit entries
-  // themselves (the source of truth), matching the template's
-  // `circuits_left_temporary` formula. The stored computed response is used
-  // only when no circuit entries were captured at all.
-  let circuitCount = 0
-  let circuitsLeftTemporary = 0
-  for (const section of sections) {
-    const sectionId = String(section.section_id)
-    const hasCircuits = flattenSectionFields(section).some(
-      (f) => f.type === 'repeating_group' && f.field_id === CIRCUITS_GROUP_ID,
-    )
-    if (!hasCircuits) continue
-    for (const i of entryIndices(sectionId, CIRCUITS_GROUP_ID)) {
-      circuitCount++
-      const action = responseAt(sectionId, `${CIRCUITS_GROUP_ID}[${i}].action_taken`)
-      const token = String(action?.value_text ?? '').trim()
-      if (TEMPORARY_ACTIONS.has(token)) circuitsLeftTemporary++
-    }
-  }
-  if (circuitCount === 0) {
-    const stored =
-      responseAt('handover_status', 'circuits_left_temporary_count') ??
-      responseAt('circuits_affected', 'circuits_left_temporary')
-    const n = Number(stored?.value_number ?? stored?.value_text ?? NaN)
-    if (Number.isFinite(n) && n > 0) circuitsLeftTemporary = n
-  }
-
   const boardLabel =
     (form.board_label as string | null) ??
     textOf('db_identification', 'db_description') ??
@@ -795,7 +905,6 @@ export async function gatherSiteFormReportData(
     textOf('declarations', 'registered_person_declaration_name')
 
   const formNo = (form.form_no as string | null) ?? '— unnumbered draft —'
-  const asLeftStatus = (form.as_left_status as string | null) ?? null
 
   const summary: SiteFormReportSummary = {
     formNo,
@@ -806,8 +915,10 @@ export async function gatherSiteFormReportData(
     templateVersion: (template?.version as string | null) ?? null,
     boardLabel,
     boardRef,
+    // Both resolved from the §12 response (§4a) — the same values the field row
+    // carries, so the summary and the record can never state different answers.
     asLeftStatus,
-    asLeftStatusText: asLeftStatus ? asLeftStatusLabel(asLeftStatus) : 'Not recorded',
+    asLeftStatusText,
     dateOfWork,
     electricianName,
     registeredPersonName,

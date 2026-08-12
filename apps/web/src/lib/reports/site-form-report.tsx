@@ -288,6 +288,23 @@ const s = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: 2,
   },
+  /**
+   * Evidence that exists but could not be retrieved. Deliberately NOT the grey
+   * italic used for "capped, not rendered": a reader must be able to tell a
+   * deliberate omission from a hole in the record.
+   */
+  unavailable: {
+    fontSize: 6.5,
+    fontFamily: 'Helvetica-Bold',
+    color: WARN_AMBER,
+    marginTop: 2,
+  },
+  unavailableSummary: {
+    fontSize: 7.5,
+    fontFamily: 'Helvetica-Bold',
+    color: WARN_AMBER,
+    marginBottom: 6,
+  },
 
   // ── Signatures ────────────────────────────────────────────────────────────
   sigBlock: {
@@ -590,7 +607,13 @@ function SectionBlock({ section }: { section: SiteFormReportSection }) {
 // ---------------------------------------------------------------------------
 
 function PhotoFieldBlock({ field }: { field: SiteFormPhotoField }) {
-  if (field.photos.length === 0 && field.omittedCount === 0) return null
+  const unavailable = field.unavailableCount ?? 0
+  // A field whose photos ALL failed to download still renders — the reader is
+  // told the evidence exists and could not be retrieved, never left to infer
+  // from an absent block that nothing was ever photographed.
+  if (field.photos.length === 0 && field.omittedCount === 0 && unavailable === 0) {
+    return null
+  }
   return (
     <View style={s.photoBlock}>
       <Text style={s.photoLabel}>{field.label}</Text>
@@ -602,6 +625,12 @@ function PhotoFieldBlock({ field }: { field: SiteFormPhotoField }) {
           </View>
         ))}
       </View>
+      {unavailable > 0 && (
+        <Text style={s.unavailable}>
+          {unavailable} image{unavailable === 1 ? '' : 's'} unavailable —
+          {unavailable === 1 ? ' the file' : ' the files'} could not be retrieved from storage.
+        </Text>
+      )}
       {field.omittedCount > 0 && (
         <Text style={s.omitted}>
           + {field.omittedCount} further photo{field.omittedCount === 1 ? '' : 's'} not rendered.
@@ -739,6 +768,14 @@ function AuditTable({
 export function SiteFormReportDocument({ data }: { data: SiteFormReportData }) {
   const footerLeft = `${data.summary.formNo} · ${data.summary.boardLabel}`
 
+  // "None were captured" and "some could not be retrieved" are different
+  // statements about the evidence, and only one of them can be made honestly.
+  const unavailablePhotos = data.photoFields.reduce((n, f) => n + (f.unavailableCount ?? 0), 0)
+  const capturedPhotos = data.photoFields.reduce(
+    (n, f) => n + f.photos.length + f.omittedCount + (f.unavailableCount ?? 0),
+    0,
+  )
+
   return (
     <Document title={data.branding.title} producer="e-site.live">
       {/* ── Cover ── */}
@@ -761,7 +798,15 @@ export function SiteFormReportDocument({ data }: { data: SiteFormReportData }) {
         )}
 
         <Text style={s.partHeader}>Photographic evidence</Text>
-        {data.photoFields.length === 0 ? (
+        {unavailablePhotos > 0 && (
+          <Text style={s.unavailableSummary}>
+            {unavailablePhotos} photograph{unavailablePhotos === 1 ? '' : 's'} recorded against this
+            form {unavailablePhotos === 1 ? 'is' : 'are'} not shown below:{' '}
+            {unavailablePhotos === 1 ? 'the image' : 'the images'} could not be retrieved from
+            storage.
+          </Text>
+        )}
+        {capturedPhotos === 0 ? (
           <Text style={s.empty}>No photographs captured.</Text>
         ) : (
           data.photoFields.map((field) => (
