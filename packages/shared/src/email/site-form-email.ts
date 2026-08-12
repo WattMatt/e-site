@@ -31,8 +31,19 @@ export const AS_LEFT_STATUS_LABELS: Record<string, string> = {
   decommissioned_removed: 'Decommissioned — removed',
 }
 
-/** Human label for an as-left token, falling back to the raw token. */
-export function asLeftStatusLabel(token: string): string {
+/** The wording used when a board's handover state was never recorded. */
+export const AS_LEFT_NOT_RECORDED = 'Not recorded'
+
+/**
+ * Human label for an as-left token.
+ *
+ * Absence is rendered as "Not recorded", never as a status. Defaulting a
+ * missing handover state to a real token asserts something about a board that
+ * nobody wrote down — and the safest-sounding default is the most dangerous
+ * thing to invent, because it is the one nobody double-checks.
+ */
+export function asLeftStatusLabel(token: string | null | undefined): string {
+  if (token === null || token === undefined || token.trim() === '') return AS_LEFT_NOT_RECORDED
   return AS_LEFT_STATUS_LABELS[token] ?? token
 }
 
@@ -71,8 +82,12 @@ export interface SiteFormDistributedVars {
   boardLabel: string
   boardRef: string | null
   templateName: string
-  /** Machine token, e.g. 'made_safe_de_energised'. */
-  asLeftStatus: string
+  /**
+   * Machine token, e.g. 'made_safe_de_energised', or null when the handover
+   * state was never recorded. Null renders as "Not recorded" — never as a
+   * status, and never defaulted to one.
+   */
+  asLeftStatus: string | null
   circuitsLeftTemporary: number
   topDefects?: SiteFormDefectLine[]
   /** Defects beyond `topDefects` — summarised, not listed. */

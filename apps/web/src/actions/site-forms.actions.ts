@@ -11,10 +11,12 @@ import {
   FORMS_FIELD_ROLES,
   buildGateInput,
   evaluateSubmitGates,
+  evaluateInspection,
+  SITE_FORM_SIGNATURE_FIELD_BLOCKS,
   type GateIssue,
   type GateResponseRow,
 } from '@esite/shared'
-import type { OrgRole } from '@esite/shared'
+import type { OrgRole, Template } from '@esite/shared'
 
 // `use server` files may only export async functions, so everything below that
 // is not an action stays module-private.
@@ -125,6 +127,93 @@ async function guardFormBelongsToProject(
 
 function msg(e: unknown, fallback: string): string {
   return (e as { message?: string } | null)?.message ?? fallback
+}
+
+/**
+ * Completeness check, run server-side at submit.
+ *
+ * The legal gates in `evaluateSubmitGates` answer "is this record lawful"; this
+ * answers "is this record finished". Both must hold. Enforcing only the gates
+ * allowed a form with three answered fields to be submitted and then read as
+ * complete everywhere downstream.
+ *
+ * Delegates to the shared engine so visibility rules (`conditional_on`) are
+ * honoured — a hidden field is not missing.
+ */
+async function missingRequiredIssues(
+  supabase: AnyClient,
+  formId: string,
+  templateRowId: string,
+  responses: GateResponseRow[],
+): Promise<GateIssue[]> {
+  const { data: tpl } = await supabase
+    .schema('field')
+    .from('form_templates')
+    .select('schema_json')
+    .eq('id', templateRowId)
+    .maybeSingle()
+
+  const template = (tpl as { schema_json?: unknown } | null)?.schema_json as Template | undefined
+  if (!template?.sections) return []
+
+  const [{ data: photoRows }, { data: sigRows }] = await Promise.all([
+    supabase.schema('field').from('form_photos').select('section_id, field_id').eq('form_id', formId),
+    supabase.schema('field').from('form_signatures').select('block_id').eq('form_id', formId),
+  ])
+
+  // The engine keys signatures by (section_id, field_id); we store them by
+  // block_id. Translate through the single shared map, or a signed block would
+  // read as unsigned and the form could never be submitted.
+  const blockToField = new Map<string, string>()
+  for (const [fieldId, block] of Object.entries(SITE_FORM_SIGNATURE_FIELD_BLOCKS)) {
+    blockToField.set(block, fieldId)
+  }
+  const sectionOfField = new Map<string, string>()
+  const labelOfField = new Map<string, string>()
+  for (const section of template.sections) {
+    for (const f of section.fields ?? []) {
+      sectionOfField.set(f.field_id, section.section_id)
+      labelOfField.set(f.field_id, f.label ?? f.field_id)
+      for (const sub of f.fields ?? []) labelOfField.set(sub.field_id, sub.label ?? sub.field_id)
+    }
+  }
+
+  const signatures = ((sigRows ?? []) as { block_id: string }[])
+    .map((s) => blockToField.get(s.block_id))
+    .filter((fieldId): fieldId is string => Boolean(fieldId))
+    .map((fieldId) => ({ section_id: sectionOfField.get(fieldId), field_id: fieldId }))
+
+  const result = evaluateInspection(template, responses as never, {
+    photos: (photoRows ?? []) as { section_id: string; field_id: string }[],
+    signatures,
+  })
+
+  if (result.missingRequired.length === 0) return []
+
+  // Grouped by section: 180 individual issues would be unreadable, and the
+  // capture UI deep-links by sectionId anyway.
+  const bySection = new Map<string, string[]>()
+  for (const m of result.missingRequired) {
+    const list = bySection.get(m.sectionId) ?? []
+    // Strip the repeating-group prefix so the user sees the sub-field's name.
+    const bare = m.fieldId.replace(/^[a-z0-9_]+\[\d+\]\./, '')
+    list.push(labelOfField.get(bare) ?? bare)
+    bySection.set(m.sectionId, list)
+  }
+
+  return [...bySection.entries()].map(([sectionId, fields]) => {
+    const shown = [...new Set(fields)].slice(0, 6)
+    const more = fields.length - shown.length
+    return {
+      code: 'missing_required',
+      sectionId,
+      message:
+        `${fields.length} required answer${fields.length === 1 ? '' : 's'} still outstanding: ` +
+        shown.join(', ') +
+        (more > 0 ? `, and ${more} more` : '') +
+        '.',
+    }
+  })
 }
 
 // ─── Reads ───────────────────────────────────────────────────────────────────
@@ -336,7 +425,7 @@ export async function submitSiteFormAction(
   const { data: rows, error: readError } = await guard.supabase
     .schema('field')
     .from('form_responses')
-    .select('section_id, field_id, value_bool, value_number, value_text, value_array')
+    .select('section_id, field_id, value_bool, value_number, value_text, value_array, pass_state')
     .eq('form_id', formId)
 
   if (readError) return { error: msg(readError, 'Could not load responses') }
@@ -345,16 +434,32 @@ export async function submitSiteFormAction(
   const today = new Date().toISOString().slice(0, 10)
   const issues = evaluateSubmitGates(buildGateInput(responses, today))
 
-  // Return the whole issue list rather than submitting partially — a form that
-  // fails a legal gate must not enter the record in any state.
-  if (issues.length > 0) return { issues }
+  // Required-field completeness is enforced HERE, not only in the UI. Without
+  // it, three taps on the prove-test-prove steps produced a `submitted` record
+  // with no handover state, no instruments, no circuits and no signatures --
+  // which then read as complete to the list page, the PDF and the email.
+  const missing = await missingRequiredIssues(
+    guard.supabase,
+    formId,
+    belongs.templateRowId,
+    responses,
+  )
+
+  // Return the whole list rather than submitting partially: a form that fails a
+  // legal gate or is incomplete must not enter the record in any state.
+  const all = [...issues, ...missing]
+  if (all.length > 0) return { issues: all }
 
   const asLeft =
     responses.find(
       (r) => r.section_id === 'handover_status' && r.field_id === 'as_left_status',
     )?.value_text ?? null
 
-  const { error: updateError } = await guard.supabase
+  // .select() so we can count affected rows. Without it PostgREST returns
+  // error: null when the predicate matched nothing, and the caller would tell
+  // the user the form was submitted while the row sat untouched -- and with
+  // as_left_status never written, which the distribution email then reads.
+  const { data: updated, error: updateError } = await guard.supabase
     .schema('field')
     .from('site_forms')
     .update({
@@ -366,8 +471,13 @@ export async function submitSiteFormAction(
     .eq('id', formId)
     .eq('project_id', projectId)
     .eq('status', 'draft')
+    .select('id')
 
   if (updateError) return { error: msg(updateError, 'Could not submit the form') }
+  if (!Array.isArray(updated) || updated.length === 0) {
+    // Lost the race: someone else submitted or voided this form first.
+    return { error: 'This form is no longer a draft — reload to see its current state.' }
+  }
 
   revalidatePath(`/projects/${projectId}/forms`)
   revalidatePath(`/projects/${projectId}/forms/${formId}`)
@@ -398,14 +508,19 @@ export async function voidSiteFormAction(
   if (!belongs.ok) return { error: belongs.error }
   if (belongs.status === 'void') return { error: 'This form is already void.' }
 
-  const { error } = await guard.supabase
+  const { data: voided, error } = await guard.supabase
     .schema('field')
     .from('site_forms')
     .update({ status: 'void', void_reason: trimmed })
     .eq('id', formId)
     .eq('project_id', projectId)
+    .neq('status', 'void')
+    .select('id')
 
   if (error) return { error: msg(error, 'Could not void the form') }
+  if (!Array.isArray(voided) || voided.length === 0) {
+    return { error: 'This form could not be voided — reload to see its current state.' }
+  }
 
   revalidatePath(`/projects/${projectId}/forms`)
   revalidatePath(`/projects/${projectId}/forms/${formId}`)

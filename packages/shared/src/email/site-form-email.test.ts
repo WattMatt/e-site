@@ -214,3 +214,40 @@ describe('renderSiteFormDistributedEmail', () => {
     expect((html.match(/<img /g) ?? []).length).toBe(1)
   })
 })
+
+// ─── A missing handover state must never be defaulted ────────────────────────
+// Regression: the caller defaulted a null as_left_status to
+// 'made_safe_de_energised', so a board whose handover was never recorded was
+// announced to the whole project as safely de-energised — while the PDF from
+// the same distribution said "Not recorded".
+describe('as-left status is never invented', () => {
+  it('renders "Not recorded" when the status is null', () => {
+    const { subject, html } = renderSiteFormDistributedEmail({
+      ...vars,
+      asLeftStatus: null,
+    })
+    expect(subject).toContain('Not recorded')
+    expect(html).toContain('Not recorded')
+  })
+
+  it('never claims a safe state for an unrecorded handover', () => {
+    const { subject, html } = renderSiteFormDistributedEmail({
+      ...vars,
+      asLeftStatus: null,
+    })
+    expect(subject).not.toContain('Made safe')
+    expect(html).not.toContain('Made safe — de-energised')
+  })
+
+  it('treats an empty string the same as null', () => {
+    expect(
+      renderSiteFormDistributedEmail({ ...vars, asLeftStatus: '   ' }).subject,
+    ).toContain('Not recorded')
+  })
+
+  it('still renders a real status normally', () => {
+    expect(
+      renderSiteFormDistributedEmail({ ...vars, asLeftStatus: 'partially_energised' }).subject,
+    ).toContain('Partially energised')
+  })
+})

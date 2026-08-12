@@ -121,8 +121,10 @@ describe('gate: instrument calibration', () => {
     expect(issue?.message).toContain('Megger MFT1741')
   })
 
-  it('does not block on an instrument with no recorded due date', () => {
-    // Absence is caught by the template's own required-field validation, not here.
+  it('reports a missing due date as absence, not as expiry', () => {
+    // A missing date is still blocking — see instrument_calibration_unknown
+    // below — but it is a different statement from "this one has expired", and
+    // the message the user reads must say which.
     expect(
       codes({ ...base, instruments: [{ label: 'Unknown', calibrationDue: null }] }),
     ).not.toContain('instrument_out_of_calibration')
@@ -366,7 +368,9 @@ describe('buildGateInput', () => {
     expect(gi.instruments.map((i) => i.label)).toEqual(['A', 'B'])
   })
 
-  it('reassembles defect classifications and drops blank rows', () => {
+  it('keeps a defect row that has content but no grade', () => {
+    // Dropping it would let a dangerous, ungraded defect submit clean, because
+    // the C1 gate keys on a dropdown nothing forces the user to set.
     const gi = buildGateInput(
       [
         { section_id: 'hazards_defects', field_id: 'defect_register[0].classification', value_text: 'C1' },
@@ -374,7 +378,18 @@ describe('buildGateInput', () => {
       ],
       '2026-08-12',
     )
-    expect(gi.defects).toEqual([{ classification: 'C1' }])
+    expect(gi.defects).toEqual([{ classification: 'C1' }, { classification: '' }])
+  })
+
+  it('ignores a defect row with no content at all', () => {
+    const gi = buildGateInput(
+      [
+        { section_id: 'hazards_defects', field_id: 'defect_register[0].description', value_text: '  ' },
+        { section_id: 'hazards_defects', field_id: 'defect_register[0].classification', value_text: null },
+      ],
+      '2026-08-12',
+    )
+    expect(gi.defects).toEqual([])
   })
 
   it('prefers the recorded date of work over the fallback', () => {
@@ -410,5 +425,68 @@ describe('buildGateInput', () => {
       ),
     )
     expect(issues.map((i) => i.code)).toContain('instrument_out_of_calibration')
+  })
+})
+
+// ─── Gate 2b: calibration date missing (fail closed) ─────────────────────────
+describe('gate: instrument with no calibration date', () => {
+  it('blocks when an instrument has no recorded calibration due date', () => {
+    // Previously this passed silently, making the gate opt-out by omission.
+    expect(
+      codes({ ...base, instruments: [{ label: 'Fluke 1663', calibrationDue: null }] }),
+    ).toContain('instrument_calibration_unknown')
+  })
+
+  it('names the undated instrument', () => {
+    const issue = evaluateSubmitGates({
+      ...base,
+      instruments: [{ label: 'Megger MFT1741', calibrationDue: null }],
+    }).find((i) => i.code === 'instrument_calibration_unknown')
+    expect(issue?.message).toContain('Megger MFT1741')
+  })
+
+  it('does not fire when the date is present', () => {
+    expect(
+      codes({ ...base, instruments: [{ label: 'Fluke', calibrationDue: '2027-01-01' }] }),
+    ).not.toContain('instrument_calibration_unknown')
+  })
+
+  it('reports expiry and absence as separate issues', () => {
+    const c = codes({
+      ...base,
+      instruments: [
+        { label: 'Expired', calibrationDue: '2020-01-01' },
+        { label: 'Undated', calibrationDue: null },
+      ],
+    })
+    expect(c).toContain('instrument_out_of_calibration')
+    expect(c).toContain('instrument_calibration_unknown')
+  })
+})
+
+// ─── Gate 4: ungraded defects ────────────────────────────────────────────────
+describe('gate: defect without a classification', () => {
+  it('blocks when a recorded defect has no grade', () => {
+    expect(codes({ ...base, defects: [{ classification: '' }] })).toContain('defect_unclassified')
+  })
+
+  it('does not fire when every defect is graded', () => {
+    expect(
+      codes({ ...base, defects: [{ classification: 'C2' }, { classification: 'C3' }] }),
+    ).not.toContain('defect_unclassified')
+  })
+
+  it('counts the ungraded rows in the message', () => {
+    const issue = evaluateSubmitGates({
+      ...base,
+      defects: [{ classification: '' }, { classification: 'C1' }, { classification: '  ' }],
+    }).find((i) => i.code === 'defect_unclassified')
+    expect(issue?.message).toContain('2 recorded defects')
+  })
+
+  it('an ungraded defect does not suppress the C1 gate for a graded one', () => {
+    const c = codes({ ...base, defects: [{ classification: '' }, { classification: 'C1' }] })
+    expect(c).toContain('defect_unclassified')
+    expect(c).toContain('c1_requires_reg_9_3')
   })
 })

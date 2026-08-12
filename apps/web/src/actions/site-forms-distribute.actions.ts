@@ -216,7 +216,13 @@ export async function distributeSiteFormAction(
   if ('error' in filed) return { error: filed.error }
 
   const service = createServiceClient() as unknown as AnyClient
-  const { error: stampError } = await service
+  // The status predicate is load-bearing. This stamp runs on the service
+  // client, which the transition trigger exempts and which bypasses the
+  // site_forms_update WITH CHECK, so nothing else stops it. Without it, a void
+  // landing between the ownership guard above and this write would resurrect
+  // the withdrawn record as `distributed` -- still carrying its void_reason --
+  // and email the whole project roster about it.
+  const { data: stamped, error: stampError } = await service
     .schema('field')
     .from('site_forms')
     .update({
@@ -227,6 +233,8 @@ export async function distributeSiteFormAction(
     })
     .eq('id', formId)
     .eq('project_id', projectId)
+    .in('status', ['submitted', 'distributed'])
+    .select('id')
 
   if (stampError) {
     // The report exists and is valid; only the stamp failed. Surface it rather
@@ -237,6 +245,18 @@ export async function distributeSiteFormAction(
         stampError,
         'unknown error',
       )}`,
+    }
+  }
+
+  // Zero rows means the status predicate rejected it — the form was voided
+  // between the guard and the write. PostgREST reports no error for that, so
+  // without this check we would fall through and email the whole project about
+  // a withdrawn record.
+  if (!Array.isArray(stamped) || stamped.length === 0) {
+    return {
+      error:
+        'This form is no longer distributable — it was changed while you were working. ' +
+        'Reload to see its current state. A report version was issued and has been superseded.',
     }
   }
 

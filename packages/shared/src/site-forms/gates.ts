@@ -153,9 +153,13 @@ export function buildGateInput(
       calibrationDue: str(e.calibration_due_date),
     }))
 
+  // A row with content but no grade is KEPT, deliberately. Dropping it would
+  // let "live 400 V conductor exposed behind the gland plate" submit clean
+  // with c1Count = 0, because the C1 -> reg 9(3) gate depends on a dropdown
+  // nothing forces the user to set. An ungraded defect is its own gate issue.
   const defects: GateDefect[] = [...defectRows.values()]
+    .filter((e) => Object.values(e).some((v) => str(v) !== null || typeof v === 'number'))
     .map((e) => ({ classification: str(e.classification) ?? '' }))
-    .filter((d) => d.classification !== '')
 
   const workDate = str(flat['personnel:date_of_work']) ?? fallbackWorkDate
 
@@ -201,6 +205,21 @@ export function evaluateSubmitGates(input: GateInput): GateIssue[] {
     })
   }
 
+  // Fail closed on a missing date. Treating absence as "fine" made the gate
+  // opt-out by omission: leaving the field blank silenced the one rule whose
+  // own message says readings from an out-of-calibration instrument cannot
+  // support this record.
+  const undated = input.instruments.filter((i) => i.calibrationDue === null)
+  if (undated.length > 0) {
+    issues.push({
+      code: 'instrument_calibration_unknown',
+      sectionId: 'test_instruments',
+      message:
+        `No calibration due date is recorded for: ${undated.map((i) => i.label).join('; ')}. ` +
+        `Calibration currency cannot be confirmed, so these readings cannot support this record.`,
+    })
+  }
+
   // ── 3. Prove - test - prove (the whole safety argument of the form) ────────
   const proveSteps = [
     value(input, 'safe_isolation', 'indicator_proved_before'),
@@ -218,7 +237,24 @@ export function evaluateSubmitGates(input: GateInput): GateIssue[] {
     })
   }
 
-  // ── 4. C1 immediate danger triggers EIR reg 9(3) duties ───────────────────
+  // ── 4. Defects: every recorded defect must carry a grade ──────────────────
+  // The C1 gate below keys on the classification dropdown, so an ungraded
+  // defect row would silently bypass the reg 9(3) duties no matter how
+  // dangerous its description.
+  const ungraded = input.defects.filter((d) => d.classification.trim() === '').length
+  if (ungraded > 0) {
+    issues.push({
+      code: 'defect_unclassified',
+      sectionId: 'hazards_defects',
+      message:
+        `${ungraded} recorded defect${ungraded === 1 ? ' has' : 's have'} no classification. ` +
+        `Grade each one C1 (danger present), C2 (potentially dangerous), C3 (improvement ` +
+        `recommended) or FI (further investigation required) — an ungraded defect cannot be ` +
+        `acted on, and a C1 carries statutory duties under regulation 9(3).`,
+    })
+  }
+
+  // ── 4b. C1 immediate danger triggers EIR reg 9(3) duties ──────────────────
   if (input.defects.some((d) => d.classification.trim().toUpperCase() === 'C1')) {
     const disconnected = isAffirmative(value(input, 'hazards_defects', 'supply_disconnected'))
     const notified = isAffirmative(value(input, 'hazards_defects', 'chief_inspector_notified'))
