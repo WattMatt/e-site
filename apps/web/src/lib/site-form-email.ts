@@ -302,7 +302,12 @@ export async function notifySiteFormDistributed(
 
     const boardLabel = form.board_label ?? form.board_ref ?? 'Distribution board'
     const formNo = form.form_no ?? 'Unnumbered'
-    const asLeftStatus = form.as_left_status ?? 'made_safe_de_energised'
+    // NEVER default this. It drives the subject line, the hero block and the
+    // in-app bell, so defaulting to a token asserted the SAFEST possible state
+    // ("Made safe — de-energised") for a board whose handover was never
+    // recorded — and the PDF from the same distribution said "Not recorded",
+    // so the two artefacts of one distribution contradicted each other.
+    const asLeftStatus = form.as_left_status ?? null
     const projectName = project.name ?? 'your project'
 
     const { subject, html } = renderSiteFormDistributedEmail({
