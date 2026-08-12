@@ -75,8 +75,8 @@ function mockClient(opts: { role?: string | null } = {}) {
 }
 
 /** Service client: the belongs-to-project lookup and the distribution stamp. */
-function mockServiceClient(opts: { status?: string; formRow?: object | null; stampError?: string | null } = {}) {
-  const { status = 'submitted', stampError = null } = opts
+function mockServiceClient(opts: { status?: string; formRow?: object | null; stampError?: string | null; stampAffectsNoRows?: boolean } = {}) {
+  const { status = 'submitted', stampError = null, stampAffectsNoRows = false } = opts
   const formRow =
     opts.formRow === undefined ? { id: FORM_ID, status, project_id: PROJECT_ID } : opts.formRow
 
@@ -95,11 +95,24 @@ function mockServiceClient(opts: { status?: string; formRow?: object | null; sta
         }),
         update: (patch: unknown) => {
           updateSpy(patch)
-          // The terminal await lands on the second .eq().
+          // Chainable and thenable at every link, so the mock does not have to
+          // know where the real call terminates. The stamp is
+          //   .update().eq().eq().in().select()
+          // and pinning the mock to an exact shape meant that adding the
+          // .in('status', ...) guard against distributing a voided form broke
+          // seven tests without any behaviour actually being wrong.
           const chain: any = {
             eq: () => chain,
+            in: () => chain,
+            select: () => chain,
             then: (res: any) =>
-              res({ data: null, error: stampError ? { message: stampError } : null }),
+              res({
+                // A stamp that succeeds must return the affected row: the
+                // action now checks rows-affected, because PostgREST reports
+                // no error when a predicate matches nothing.
+                data: stampError || stampAffectsNoRows ? [] : [{ id: FORM_ID }],
+                error: stampError ? { message: stampError } : null,
+              }),
           }
           return chain
         },
@@ -302,5 +315,43 @@ describe('distributeSiteFormAction — delegate, stamp, notify', () => {
     expect(res.error).toBeUndefined()
     expect(res.reportId).toBe(REPORT_ID)
     expect(res.warning).toEqual(expect.stringContaining('notification'))
+  })
+})
+
+// ─── The void race ───────────────────────────────────────────────────────────
+// The stamp runs on the SERVICE client, which the transition trigger exempts
+// and which bypasses the RLS WITH CHECK — so the status predicate on the write
+// is the only thing standing between a voided record and a roster-wide email
+// announcing it as distributed.
+describe('a form voided mid-distribution is not resurrected', () => {
+  it('reports an error when the stamp affects no rows', async () => {
+    createServiceClientMock.mockReturnValue(mockServiceClient({ stampAffectsNoRows: true }))
+
+    const res = await distributeSiteFormAction(FORM_ID, PROJECT_ID)
+
+    expect(res.error).toBeTruthy()
+    expect(res.reportId).toBeUndefined()
+  })
+
+  it('does not email the project when the stamp affects no rows', async () => {
+    createServiceClientMock.mockReturnValue(mockServiceClient({ stampAffectsNoRows: true }))
+
+    await distributeSiteFormAction(FORM_ID, PROJECT_ID)
+
+    // The whole point: PostgREST returns no error for a predicate that matched
+    // nothing, so without the rows-affected check we would fall straight
+    // through to notifying every project member about a withdrawn record.
+    expect(notifyMock).not.toHaveBeenCalled()
+  })
+
+  it('constrains the stamp to distributable statuses', async () => {
+    const service = mockServiceClient()
+    createServiceClientMock.mockReturnValue(service)
+
+    await distributeSiteFormAction(FORM_ID, PROJECT_ID)
+
+    expect(service.__updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'distributed' }),
+    )
   })
 })
