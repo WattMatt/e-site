@@ -22,6 +22,19 @@ export {
   type GateResponseRow,
 } from './gates'
 
+export {
+  buildPrefill,
+  polesToPhases,
+  type PrefillSources,
+  type PrefillResponse,
+  type PrefillSource,
+  type PrefillProject,
+  type PrefillOrganisation,
+  type PrefillNode,
+  type PrefillFeed,
+  type PrefillDownstream,
+} from './prefill'
+
 export const TERMINATION_AND_MAKING_SAFE_KEY = 'termination-and-making-safe'
 
 /**

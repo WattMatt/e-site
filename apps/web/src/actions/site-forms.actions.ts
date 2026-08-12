@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { gatherPrefill } from '@/lib/site-forms/prefill-sources'
 import {
   projectService,
   ORG_WRITE_ROLES,
@@ -34,6 +35,9 @@ const createInputSchema = z
     templateRowId: uuid,
     nodeId: uuid.nullable().optional(),
     boardRef: z.string().trim().max(200).nullable().optional(),
+    // Board to read the cable schedule from, when this board is not itself in
+    // it. Defaults to nodeId.
+    cableScheduleNodeId: uuid.nullable().optional(),
   })
   .refine(
     (v) => Boolean(v.nodeId) || Boolean(v.boardRef && v.boardRef.trim() !== ''),
@@ -294,7 +298,7 @@ export async function createSiteFormAction(
 > {
   const parsed = createInputSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
-  const { projectId, templateRowId, nodeId, boardRef } = parsed.data
+  const { projectId, templateRowId, nodeId, boardRef, cableScheduleNodeId } = parsed.data
 
   const guard = await guardProject(projectId, FORMS_FIELD_ROLES)
   if (!guard.ok) return { error: guard.error }
@@ -353,6 +357,39 @@ export async function createSiteFormAction(
     // Deliberately swallowed; see above.
   }
 
+  // Pre-populate from what the project already knows. Best-effort by design:
+  // the form exists and is usable even if every lookup fails, so a prefill
+  // error must never lose the user their new form.
+  try {
+    const prefill = await gatherPrefill(guard.supabase, {
+      projectId,
+      nodeId: nodeId ?? null,
+      cableScheduleNodeId: cableScheduleNodeId ?? nodeId ?? null,
+      userId: guard.userId,
+      formNo,
+    })
+    if (prefill.length > 0) {
+      await guard.supabase
+        .schema('field')
+        .from('form_responses')
+        .upsert(
+          prefill.map((r) => ({
+            form_id: formId,
+            section_id: r.sectionId,
+            field_id: r.fieldId,
+            value_text: r.valueText ?? null,
+            value_number: r.valueNumber ?? null,
+            latest_responded_by: guard.userId,
+            latest_responded_at: new Date().toISOString(),
+            prefilled_from: r.source,
+          })),
+          { onConflict: 'form_id,section_id,field_id' },
+        )
+    }
+  } catch (e) {
+    console.error('[createSiteFormAction] prefill failed', e)
+  }
+
   revalidatePath(`/projects/${projectId}/forms`)
   return { formId, formNo }
 }
@@ -391,6 +428,9 @@ export async function upsertFormResponseAction(
         value_array: v.valueArray ?? null,
         pass_state: v.passState ?? null,
         fail_reason: v.failReason ?? null,
+        // Clearing this is the point: NULL means a person entered the value.
+        // A prefilled answer that someone then edited is no longer inherited.
+        prefilled_from: null,
         latest_responded_by: guard.userId,
         latest_responded_at: new Date().toISOString(),
       },
