@@ -85,7 +85,7 @@ describe('report kind read policy contract', () => {
         undeclared.map((u) => `  • '${u.kind}' in ${u.file}`).join('\n') +
         `\n\nAdd each to REPORT_KIND_READ_ROLES (gated) or OPEN_READ_REPORT_KINDS ` +
         `(open to project members) in report-kind-access.ts, and mirror any gated ` +
-        `kind into public.report_kind_is_sensitive() in migration 00183.`,
+        `kind into public.report_kind_is_sensitive() in migration 00184.`,
     ).toEqual([])
   })
 
@@ -103,12 +103,12 @@ describe('report kind read policy contract', () => {
     const migration = fs.readFileSync(
       path.resolve(
         SRC_ROOT,
-        '../../edge-functions/supabase/migrations/00183_report_notes_summary_and_kind_read_gate.sql',
+        '../../edge-functions/supabase/migrations/00184_report_notes_summary_and_kind_read_gate.sql',
       ),
       'utf8',
     )
     const m = migration.match(/SELECT _kind IN \(([^)]*)\)/)
-    expect(m, 'report_kind_is_sensitive() not found in migration 00183').toBeTruthy()
+    expect(m, 'report_kind_is_sensitive() not found in migration 00184').toBeTruthy()
     const sqlKinds = [...m![1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort()
     expect(sqlKinds).toEqual(Object.keys(REPORT_KIND_READ_ROLES).sort())
   })

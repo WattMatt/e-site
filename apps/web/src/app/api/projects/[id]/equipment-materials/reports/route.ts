@@ -23,7 +23,7 @@ const MAX_NOTE_LENGTH = 500
  *
  * The role gate (ORG_WRITE_ROLES) lives in gatherEquipmentMaterialsReportData.
  * Reads of the saved artifact are gated separately and by kind — see
- * lib/reports/report-kind-access.ts and migration 00183.
+ * lib/reports/report-kind-access.ts and migration 00184.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
