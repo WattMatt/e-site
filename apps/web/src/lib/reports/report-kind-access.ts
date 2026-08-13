@@ -20,7 +20,7 @@
  * writes a kind that appears in neither. A new report kind therefore cannot
  * silently inherit open reads.
  *
- * Migration 00184 enforces the same split in the database via a RESTRICTIVE
+ * Migration 00183 enforces the same split in the database via a RESTRICTIVE
  * SELECT policy, so direct PostgREST is closed too — this module is the
  * application half of a defence that does not depend on it.
  */
@@ -28,7 +28,7 @@ import { ORG_WRITE_ROLES, COST_VIEW_ROLES, type OrgRole } from '@esite/shared'
 
 /**
  * Kinds gated on READ, with the roles permitted to list and download them.
- * Keep in lockstep with public.report_kind_is_sensitive() in migration 00184.
+ * Keep in lockstep with public.report_kind_is_sensitive() in migration 00183.
  *
  * The two sets coincide today; they are named separately on purpose, because
  * COST_VIEW_ROLES documents itself as the money-field gate and asks not to be
