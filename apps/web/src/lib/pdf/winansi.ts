@@ -25,6 +25,11 @@
  *   3. NFKD-decomposable → transliterate (strip combining marks, expand
  *      ligatures) when the result is encodable.
  *   4. Otherwise → '?' (never throw).
+ *
+ * Whitespace (`collapseWhitespace`) is the ONE thing the two renderers must not
+ * share. See the option's own comment on winAnsiSafe — collapsing is a pdf-lib
+ * constraint, not a property of WinAnsi, and applying it on the react-pdf path
+ * flattens every multi-line answer into one run-on paragraph.
  */
 
 /** Unicode code points that map into WinAnsi's 0x80–0x9F slots. */
@@ -65,16 +70,33 @@ export function isWinAnsiSafe(text: string): boolean {
   return [...text].every(isWinAnsi)
 }
 
-export function winAnsiSafe(text: string): string {
+export interface WinAnsiSafeOptions {
+  /**
+   * Fold `\n`, `\r` and `\t` to a single space. Defaults to TRUE, which is the
+   * behaviour every pdf-lib call site needs and must keep.
+   *
+   * This is a **pdf-lib constraint, not a WinAnsi one**: `widthOfTextAtSize`
+   * THROWS on a newline (even though `drawText` would line-split it), and every
+   * pdf-lib call site is single-line by construction because multi-line text is
+   * put through `wrapText` BEFORE it is sanitised. A pasted newline in a tag or
+   * board name must not 500 the export.
+   *
+   * @react-pdf/renderer has no such constraint — `<Text>` line-breaks on `\n`
+   * natively — so the report renderers pass `false`. Collapsing there would
+   * flatten every multi-line answer (18 textarea fields on the site form alone:
+   * scope_description, extent_and_limitations, parts_not_covered, …) into one
+   * run-on paragraph: a second silent-corruption bug of exactly the shape this
+   * module exists to prevent, since something still renders and nothing throws.
+   */
+  collapseWhitespace?: boolean
+}
+
+export function winAnsiSafe(text: string, opts?: WinAnsiSafeOptions): string {
+  const collapseWhitespace = opts?.collapseWhitespace ?? true
   let out = ''
   for (const ch of text) {
-    // Whitespace controls become spaces: widthOfTextAtSize throws on \n/\r
-    // even though drawText would line-split them, and every call site in
-    // the renderers is single-line (multi-line text goes through wrapText
-    // BEFORE sanitising). A pasted newline in a tag or board name must not
-    // 500 the export.
     if (ch === '\n' || ch === '\r' || ch === '\t') {
-      out += ' '
+      out += collapseWhitespace ? ' ' : ch
       continue
     }
     if (isWinAnsi(ch)) {
