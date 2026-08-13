@@ -1,4 +1,11 @@
--- 00183_site_forms_template_v1_1.sql
+-- 00184_site_forms_template_v1_1.sql
+--
+-- RENUMBERED FROM 00183. A concurrent session applied its own migration as
+-- version 00183 (report_notes_summary_and_kind_read_gate) between the number
+-- being checked and this file being merged. `supabase db push` keys on the
+-- version prefix, saw 00183 already in schema_migrations, reported "Remote
+-- database is up to date" and skipped this file entirely -- so it sat on main
+-- as a silent no-op while appearing to have deployed.
 -- Seeds Termination & Making Safe v1.1 and retires v1.0.
 --
 -- WHY A NEW VERSION RATHER THAN AN EDIT: field.form_templates.schema_json is

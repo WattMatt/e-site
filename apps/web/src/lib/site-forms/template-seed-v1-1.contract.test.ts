@@ -6,7 +6,7 @@ import v11 from '../../../../../packages/shared/src/site-forms/templates/termina
 import v10 from '../../../../../packages/shared/src/site-forms/templates/termination-and-making-safe.json'
 
 /**
- * Contract for migration 00183, which seeds template v1.1 and retires v1.0.
+ * Contract for migration 00184, which seeds template v1.1 and retires v1.0.
  *
  * The sibling test for 00180 guards the v1.0 seed. This guards three things
  * that only matter for a VERSION BUMP:
@@ -33,7 +33,7 @@ function findRepoRoot(): string {
 const REPO_ROOT = findRepoRoot()
 const MIGRATION = join(
   REPO_ROOT,
-  'apps/edge-functions/supabase/migrations/00183_site_forms_template_v1_1.sql',
+  'apps/edge-functions/supabase/migrations/00184_site_forms_template_v1_1.sql',
 )
 const TEMPLATE_JSON = resolve(
   REPO_ROOT,
@@ -78,7 +78,7 @@ function identifiers(t: unknown): {
   return { sections, fields, options }
 }
 
-describe('00183 v1.1 seed contract', () => {
+describe('00184 v1.1 seed contract', () => {
   it('seeds the JSON file byte-for-byte', () => {
     const seeded = seedBlock(migrationSql())
     expect(seeded).toBe(readFileSync(TEMPLATE_JSON, 'utf8').trim())
