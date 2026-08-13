@@ -27,7 +27,7 @@ import {
   type RawNode,
   type RawOrder,
   type UnifiedGroup,
-} from '@/app/(admin)/projects/[id]/equipment-materials/_lib/gather-unified-boards'
+} from '@/lib/equipment-materials/gather-unified-boards'
 
 export interface PortalAccess {
   userId: string

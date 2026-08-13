@@ -12,7 +12,7 @@ import { useState } from 'react'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { TableScrollX } from '@/components/ui/TableScrollX'
-import type { UnifiedGroup } from '../_lib/gather-unified-boards'
+import type { UnifiedGroup } from '@/lib/equipment-materials/gather-unified-boards'
 import { BoardRow } from './BoardRow'
 
 const th: React.CSSProperties = {

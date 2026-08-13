@@ -10,7 +10,7 @@
  */
 import { computeOrderRequiredBy, computeRagStatus } from '@esite/shared'
 import { naturalCompare } from '@/lib/natural-compare'
-import type { OrderDoc, ShopDrawing } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
+import type { OrderDoc, ShopDrawing } from '@/lib/equipment-materials/order-types'
 
 export type ProcStatus = 'by_tenant' | 'required' | 'ordered' | 'received'
 
@@ -28,6 +28,13 @@ export interface ProcLine {
   required_by: string | null; rag: 'red' | 'amber' | 'green' | 'neutral'
   documents: { quote: OrderDoc[]; order_instruction: OrderDoc[] }
   shopDrawings: ShopDrawing[]
+  /**
+   * Free-text procurement note. Loaded from node_orders but not currently shown
+   * on screen; the PDF register prints it. Staff-side only — the client portal
+   * withholds order notes as commercial artefacts, which is why the report kind
+   * is read-gated (see lib/reports/report-kind-access.ts).
+   */
+  notes: string
 }
 export interface UnifiedBoard {
   nodeId: string; code: string; name: string | null; kind: string
@@ -82,6 +89,7 @@ export function gatherUnifiedBoards(
       required_by: requiredBy, rag: computeRagStatus(requiredBy, o.status, today),
       documents: docsByOrder.get(o.id) ?? EMPTY_DOCS(),
       shopDrawings: drawingsByOrder.get(o.id) ?? [],
+      notes: o.notes ?? '',
     }
   }
 

@@ -4,7 +4,7 @@ import { PortalCard, EmptyState, thStyle, tdStyle, fmtDate } from '@/components/
 import type {
   ProcLine,
   UnifiedBoard,
-} from '@/app/(admin)/projects/[id]/equipment-materials/_lib/gather-unified-boards'
+} from '@/lib/equipment-materials/gather-unified-boards'
 
 export const dynamic = 'force-dynamic'
 

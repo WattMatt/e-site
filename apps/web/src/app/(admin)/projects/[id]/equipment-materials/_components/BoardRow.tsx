@@ -18,7 +18,7 @@ import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { reactivateEquipmentNodeAction } from '@/actions/equipment.actions'
-import type { ProcStatus, UnifiedBoard } from '../_lib/gather-unified-boards'
+import type { ProcStatus, UnifiedBoard } from '@/lib/equipment-materials/gather-unified-boards'
 import { BoardDetail } from './BoardDetail'
 import { EditBoardModal, DecommissionBoardModal } from './BoardManageModals'
 
