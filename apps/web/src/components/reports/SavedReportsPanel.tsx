@@ -196,7 +196,7 @@ export function SavedReportsPanel({ projectId, kind, source, reports, canManage 
                   </div>
 
                   {/* Headline figures + note wrap onto their own line (migration
-                      00183). Absent on rows saved before it — nothing renders. */}
+                      00184). Absent on rows saved before it — nothing renders. */}
                   {(summaryLine(rep) || rep.note) && (
                     <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 2 }}>
                       {summaryLine(rep) && (

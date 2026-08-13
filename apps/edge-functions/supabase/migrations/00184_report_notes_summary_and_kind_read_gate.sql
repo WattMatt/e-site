@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 00183 — saved-report notes/summary + per-kind read gating
+-- Migration 00184 — saved-report notes/summary + per-kind read gating
 -- =============================================================================
 -- Two changes to projects.reports (00117), both additive and idempotent:
 --
