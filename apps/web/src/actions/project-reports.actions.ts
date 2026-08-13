@@ -25,9 +25,9 @@ export interface ProjectReportRow {
   generated_by: string | null
   generated_at: string
   created_at: string
-  /** Optional revision note captured at generate time (migration 00184). */
+  /** Optional revision note captured at generate time (migration 00183). */
   note?: string | null
-  /** Headline figures for the list, so it never re-gathers (migration 00184). */
+  /** Headline figures for the list, so it never re-gathers (migration 00183). */
   summary?: Record<string, number | string> | null
   /** Resolved display name for generated_by — not a column. */
   generated_by_name?: string | null
@@ -37,7 +37,7 @@ const SELECT_COLS =
   'id, project_id, organisation_id, kind, title, storage_path, mime_type, size_bytes, status, version, generated_by, generated_at, created_at, note, summary'
 
 /**
- * Pre-00184 databases have no note/summary columns; PostgREST answers the whole
+ * Pre-00183 databases have no note/summary columns; PostgREST answers the whole
  * SELECT with 42703 rather than ignoring them. Retrying without them keeps the
  * panel working between merge and migration.
  */
@@ -174,7 +174,7 @@ export async function getProjectReportUrlAction(
   if (!report) return { error: 'Not found' }
 
   // The kind is only known once the row is read, so the gate runs here. After
-  // migration 00184 the RESTRICTIVE policy already hides the row from an
+  // migration 00183 the RESTRICTIVE policy already hides the row from an
   // unauthorised reader; this keeps the action correct before it is applied and
   // if the service client is ever used for the lookup.
   const readRoles = readRolesForKind(report.kind)

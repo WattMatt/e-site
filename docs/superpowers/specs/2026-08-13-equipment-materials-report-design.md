@@ -3,7 +3,7 @@
 **Date:** 2026-08-13
 **Status:** approved, in implementation
 **Branch:** `feat/equipment-materials-report`
-**Migration:** `00184`
+**Migration:** `00183`
 
 ---
 
@@ -91,7 +91,7 @@ recorded choice rather than an oversight.
 
 ### 5.1 Shared-layer changes
 
-**Migration `00184`** (additive, idempotent):
+**Migration `00183`** (additive, idempotent):
 
 - `projects.reports.note TEXT` — optional revision note supplied at generate time.
 - `projects.reports.summary JSONB` — headline figures for the history list, so listing never
@@ -188,7 +188,7 @@ the viewer cannot already see.
 
 Stated before deploy, per the investigation protocol.
 
-1. Migration `00184` applied via the Management API and logged in `schema_migrations`.
+1. Migration `00183` applied via the Management API and logged in `schema_migrations`.
 2. `rbac-test` contractor fixture → 403 on both routes; cannot list or download the kind.
 3. Throwaway probe-admin → generate v1, then v2; assert the supersede chain
    (`v1.status='superseded'`, `superseded_by=v2.id`) and that the panel renders author,
