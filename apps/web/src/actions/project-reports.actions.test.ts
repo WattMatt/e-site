@@ -3,12 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const createClientMock = vi.fn()
 const createServiceClientMock = vi.fn()
 const requireRoleMock = vi.fn()
+const requireEffectiveRoleMock = vi.fn()
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: createClientMock,
   createServiceClient: createServiceClientMock,
 }))
-vi.mock('@/lib/auth/require-role', () => ({ requireRole: requireRoleMock }))
+vi.mock('@/lib/auth/require-role', () => ({
+  requireRole: requireRoleMock,
+  requireEffectiveRole: requireEffectiveRoleMock,
+}))
 
 const PROJECT_ID = '00000000-0000-0000-0000-000000000011'
 const ORG_ID     = '00000000-0000-0000-0000-000000000001'
@@ -251,5 +255,76 @@ describe('deleteProjectReportAction', () => {
     expect(result).toEqual({ ok: true })
     expect(service.storageFrom).toHaveBeenCalledWith('qc-reports')
     expect(service.remove).toHaveBeenCalledWith([qcRow.storage_path])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Read gate by kind — the regression proof for the exposure described in
+// lib/reports/report-kind-access.ts.
+//
+// projects.reports.reports_select gates only on user_has_project_access(), which
+// is TRUE for ANY project_members row regardless of role (00106 clause (a)), and
+// these actions are directly invocable server actions — so before this gate a
+// client_viewer could list and download a staff-only report at will.
+// ---------------------------------------------------------------------------
+
+describe('sensitive report kinds are gated on read', () => {
+  beforeEach(() => { vi.resetModules(); vi.clearAllMocks() })
+
+  const EQUIP_ROW = {
+    ...REPORT_ROW,
+    kind: 'equipment_materials',
+    title: 'Equipment & Materials Report',
+    storage_path: `${ORG_ID}/${PROJECT_ID}/equipment-materials-v1.pdf`,
+  }
+
+  it('refuses to LIST equipment_materials for a disallowed role', async () => {
+    const { client } = makeSupabase({ listRows: [EQUIP_ROW] })
+    createClientMock.mockResolvedValue(client)
+    requireEffectiveRoleMock.mockResolvedValue({ ok: false, error: 'Your role (client_viewer) is not allowed to perform this action' })
+
+    const { listProjectReportsAction } = await import('./project-reports.actions')
+    const result = await listProjectReportsAction(PROJECT_ID, 'equipment_materials')
+
+    expect(result).toEqual({ error: 'Your role (client_viewer) is not allowed to perform this action' })
+    expect(requireEffectiveRoleMock).toHaveBeenCalledWith(client, PROJECT_ID, ['owner', 'admin', 'project_manager'])
+  })
+
+  it('refuses to mint a DOWNLOAD URL for equipment_materials for a disallowed role', async () => {
+    const { client } = makeSupabase({ reportRow: EQUIP_ROW })
+    createClientMock.mockResolvedValue(client)
+    const createSignedUrl = vi.fn()
+    createServiceClientMock.mockReturnValue({ storage: { from: () => ({ createSignedUrl }) } })
+    requireEffectiveRoleMock.mockResolvedValue({ ok: false, error: 'Your role (contractor) is not allowed to perform this action' })
+
+    const { getProjectReportUrlAction } = await import('./project-reports.actions')
+    const result = await getProjectReportUrlAction(PROJECT_ID, REPORT_ID)
+
+    expect(result).toEqual({ error: 'Your role (contractor) is not allowed to perform this action' })
+    // The signed URL is the actual leak — it must never be created.
+    expect(createSignedUrl).not.toHaveBeenCalled()
+  })
+
+  it('allows an org write role through to the rows and the URL', async () => {
+    const { client } = makeSupabase({ listRows: [EQUIP_ROW], reportRow: EQUIP_ROW })
+    createClientMock.mockResolvedValue(client)
+    const createSignedUrl = vi.fn().mockResolvedValue({ data: { signedUrl: 'https://signed' }, error: null })
+    createServiceClientMock.mockReturnValue({ storage: { from: () => ({ createSignedUrl }) } })
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
+
+    const mod = await import('./project-reports.actions')
+    expect(await mod.listProjectReportsAction(PROJECT_ID, 'equipment_materials')).toEqual([EQUIP_ROW])
+    expect(await mod.getProjectReportUrlAction(PROJECT_ID, REPORT_ID)).toEqual({ url: 'https://signed' })
+  })
+
+  it('leaves open kinds ungated — no role check runs for tenant_schedule', async () => {
+    const { client } = makeSupabase({ listRows: [REPORT_ROW] })
+    createClientMock.mockResolvedValue(client)
+
+    const { listProjectReportsAction } = await import('./project-reports.actions')
+    const result = await listProjectReportsAction(PROJECT_ID, 'tenant_schedule')
+
+    expect(result).toEqual([REPORT_ROW])
+    expect(requireEffectiveRoleMock).not.toHaveBeenCalled()
   })
 })

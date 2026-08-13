@@ -179,6 +179,8 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `GET /api/projects/[id]/snags/visits/[visitId]/report` | R | R | R | R | R | — | R |
 | `GET /api/projects/[id]/forms/[formId]/report` | R | R | R | R | R | R | R¹⁰ |
 | `GET /api/projects/[id]/quality-control/[reportId]/report` | R | R | R | R | R | — | R⁹ |
+| `GET /api/projects/[id]/equipment-materials/report-preview` | R | R | R | — | — | — | — |
+| `POST /api/projects/[id]/equipment-materials/reports` | W | W | W | — | — | — | — |
 | `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/tenant-schedule/commit` | W | W | W | —⁷ | — | — | — |
@@ -203,6 +205,10 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 
 > `GET /api/projects/[id]/quality-control/[reportId]/report` (inline QC PDF preview, no persistence — snag-visit report pattern) returns 401 unauthenticated, then gates inside `gatherQcReportData`: the cookie-client **RLS read of the `qc_reports` row is the visibility gate** — a report invisible to the caller (wrong org, or ⁹ a non-`issued` report for a `client_viewer`, per 00172) 404s — plus `requireEffectiveRole` over all 7 project roles (403 for non-members). Photo bytes are fetched with the service client only after both gates pass.
 >
+> **Equipment & Materials report.** `GET …/equipment-materials/report-preview` (render + stream, no persistence) and `POST …/equipment-materials/reports` (render + save a new version to `projects.reports`) both gate on `requireEffectiveRole(projectId, ORG_WRITE_ROLES)` inside `gatherEquipmentMaterialsReportData`, which throws `ReportAccessError` → 403. This is deliberately stricter than the tenant-schedule report's view-level gate: that report is a snapshot of what any project member can already see, whereas this one prints **order notes and quote/order-instruction status**, which the portal tab `/portal/[projectId]/equipment-materials` deliberately withholds as commercial artefacts. Preview streams byte-identical content to the saved artifact, so both routes carry the same gate — gating only the save would be theatre. Report content is a fixed full snapshot of all **active** boards; the tab's status filter and show-decommissioned toggle do not affect it.
+>
+> **Saved-report reads are now gated by kind.** `projects.reports.reports_select` (00117) gates only on `public.user_has_project_access()`, which is TRUE for any `project_members` row **regardless of role** (00106 clause (a)), and `listProjectReportsAction` / `getProjectReportUrlAction` are directly-invocable server actions — so before **migration 00183** any project member, `client_viewer` included, could list and download a saved report of any kind. Sensitive kinds are now declared in [`report-kind-access.ts`](../apps/web/src/lib/reports/report-kind-access.ts) (`equipment_materials`, `valuation` → `ORG_WRITE_ROLES`); every other kind stays open to project members and is listed explicitly there. Both actions consult the map, and 00183 adds a **RESTRICTIVE** SELECT policy calling `public.user_can_read_report_kind()` so direct PostgREST is closed too. A contract test fails the build if any `kind` written to `projects.reports` declares no read policy.
+
 > `POST /api/medium-voltage/study` runs the heavy MV Z-bus + earth-fault solve and caches per-node `fault_results` for a revision. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org; refused on non-DRAFT revisions (an ISSUED snapshot is frozen). Discrimination/coordination compute is deferred to Phase 4b (device-pairing design).
 
 ## Server actions (`apps/web/src/actions/*`)

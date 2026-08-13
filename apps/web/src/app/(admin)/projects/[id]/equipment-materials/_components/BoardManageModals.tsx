@@ -32,7 +32,7 @@ import {
   editEquipmentNodeAction,
   decommissionEquipmentNodeAction,
 } from '@/actions/equipment.actions'
-import type { UnifiedBoard } from '../_lib/gather-unified-boards'
+import type { UnifiedBoard } from '@/lib/equipment-materials/gather-unified-boards'
 
 // ---------------------------------------------------------------------------
 // Shared dialog shell — fixed overlay + centred card (mirrors EquipmentTable)

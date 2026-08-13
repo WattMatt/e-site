@@ -21,7 +21,7 @@ import {
 } from '@/actions/node-order-document.actions'
 import { triggerDownload } from '@/lib/file-open'
 import { DocumentPreviewModal } from './DocumentPreviewModal'
-import type { OrderDoc, OrderDocKind } from '@/app/(admin)/projects/[id]/equipment-materials/_lib/order-types'
+import type { OrderDoc, OrderDocKind } from '@/lib/equipment-materials/order-types'
 
 export type OrderDocType = 'quote' | 'order_instruction'
 

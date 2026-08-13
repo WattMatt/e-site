@@ -36,6 +36,32 @@ interface Props {
   reloadKey?: number
 }
 
+/**
+ * Human labels for the headline figures a report kind chooses to store in
+ * `summary`. Unknown keys fall back to the key itself, so a new kind can store
+ * whatever it likes and still read sensibly without touching this component.
+ */
+const SUMMARY_LABELS: Record<string, string> = {
+  boards: 'boards',
+  lines: 'lines',
+  received: 'received',
+  overdue: 'overdue',
+  receivedPct: '% received',
+}
+
+/** "48 boards · 31 received · 6 overdue", or null when there is no summary. */
+function summaryLine(rep: ProjectReportRow): string | null {
+  const summary = rep.summary
+  if (!summary || typeof summary !== 'object') return null
+  const parts = Object.entries(summary)
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([k, v]) => {
+      const label = SUMMARY_LABELS[k] ?? k
+      return label.startsWith('%') ? `${v}${label}` : `${v} ${label}`
+    })
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -152,6 +178,9 @@ export function SavedReportsPanel({ projectId, kind, source, reports, canManage 
                 <div key={rep.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '8px 4px', borderBottom: '1px solid var(--c-border)' }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--c-amber)', whiteSpace: 'nowrap' }}>v{rep.version}</span>
                   <span style={{ fontSize: 12, color: 'var(--c-text-dim)', whiteSpace: 'nowrap' }}>{formatDate(rep.generated_at)}</span>
+                  {rep.generated_by_name && (
+                    <span style={{ fontSize: 12, color: 'var(--c-text-mid)', whiteSpace: 'nowrap' }}>{rep.generated_by_name}</span>
+                  )}
                   <span style={{ fontSize: 11, color: rep.status === 'issued' ? 'var(--c-green)' : 'var(--c-text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{rep.status}</span>
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
                     <Button variant="secondary" size="sm" onClick={() => handlePreview(rep)} disabled={busy} style={{ fontSize: 11 }}>Preview</Button>
@@ -165,6 +194,19 @@ export function SavedReportsPanel({ projectId, kind, source, reports, canManage 
                       <Button variant="ghost" size="sm" onClick={() => setConfirmDeleteId(rep.id)} disabled={busy} style={{ fontSize: 11, color: 'var(--c-red)' }}>Delete</Button>
                     ))}
                   </div>
+
+                  {/* Headline figures + note wrap onto their own line (migration
+                      00183). Absent on rows saved before it — nothing renders. */}
+                  {(summaryLine(rep) || rep.note) && (
+                    <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 2 }}>
+                      {summaryLine(rep) && (
+                        <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>{summaryLine(rep)}</span>
+                      )}
+                      {rep.note && (
+                        <span style={{ fontSize: 11, color: 'var(--c-text-mid)', fontStyle: 'italic' }}>{`“${rep.note}”`}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}

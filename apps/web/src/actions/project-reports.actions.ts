@@ -1,8 +1,9 @@
 'use server'
 
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-import { requireRole } from '@/lib/auth/require-role'
+import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
+import { readRolesForKind } from '@/lib/reports/report-kind-access'
 
 const REPORTS_BUCKET = 'reports'
 const SIGNED_URL_TTL_SECONDS = 600 // 10 minutes
@@ -24,10 +25,62 @@ export interface ProjectReportRow {
   generated_by: string | null
   generated_at: string
   created_at: string
+  /** Optional revision note captured at generate time (migration 00183). */
+  note?: string | null
+  /** Headline figures for the list, so it never re-gathers (migration 00183). */
+  summary?: Record<string, number | string> | null
+  /** Resolved display name for generated_by — not a column. */
+  generated_by_name?: string | null
 }
 
 const SELECT_COLS =
+  'id, project_id, organisation_id, kind, title, storage_path, mime_type, size_bytes, status, version, generated_by, generated_at, created_at, note, summary'
+
+/**
+ * Pre-00183 databases have no note/summary columns; PostgREST answers the whole
+ * SELECT with 42703 rather than ignoring them. Retrying without them keeps the
+ * panel working between merge and migration.
+ */
+const SELECT_COLS_LEGACY =
   'id, project_id, organisation_id, kind, title, storage_path, mime_type, size_bytes, status, version, generated_by, generated_at, created_at'
+
+/**
+ * True for "column does not exist". Matched on the Postgres code AND the message
+ * because PostgREST has surfaced this as both `42703` and `PGRST204` depending on
+ * version — relying on one alone would leave the panel broken between merge and
+ * migration rather than silently degrading.
+ */
+function isMissingColumnError(error: unknown): boolean {
+  const e = error as { code?: string; message?: string } | null
+  if (!e) return false
+  if (e.code === '42703' || e.code === 'PGRST204') return true
+  return /column .* does not exist|could not find the .* column/i.test(e.message ?? '')
+}
+
+/** Resolve generated_by ids to display names; failure degrades to no name. */
+async function attachAuthorNames(
+  rows: ProjectReportRow[],
+): Promise<ProjectReportRow[]> {
+  const ids = [...new Set(rows.map((r) => r.generated_by).filter((v): v is string => !!v))]
+  if (ids.length === 0) return rows
+  try {
+    const service = createServiceClient()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (service as any)
+      .from('profiles').select('id, full_name, email').in('id', ids)
+    const byId = new Map<string, string>()
+    for (const p of (data ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>) {
+      const name = p.full_name?.trim() || p.email || null
+      if (name) byId.set(p.id, name)
+    }
+    return rows.map((r) => ({
+      ...r,
+      generated_by_name: r.generated_by ? byId.get(r.generated_by) ?? null : null,
+    }))
+  } catch {
+    return rows
+  }
+}
 
 /** Download-disposition filename, derived from kind + version. */
 function downloadFileName(kind: string, version: number): string {
@@ -62,22 +115,38 @@ export async function listProjectReportsAction(
   source?: { table: string; id: string },
 ): Promise<ProjectReportRow[] | ErrResult> {
   const supabase = await createClient()
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let query = (supabase as any)
-    .schema('projects').from('reports')
-    .select(SELECT_COLS)
-    .eq('project_id', projectId)
-    .eq('kind', kind)
-    .in('status', ['issued', 'superseded'])
-  // Per-entity sections (inspection/snag/valuation) scope to one source row;
-  // project-level sections (tenant_schedule) pass no source.
-  if (source) {
-    query = query.eq('source_table', source.table).eq('source_id', source.id)
+
+  // Sensitive kinds carry more than the reader can see on screen — RLS alone
+  // would let any project member list them (see report-kind-access.ts).
+  const readRoles = readRolesForKind(kind)
+  if (readRoles) {
+    const guard = await requireEffectiveRole(supabase, projectId, readRoles)
+    if (!guard.ok) return { error: guard.error }
   }
-  const { data, error } = await query.order('version', { ascending: false })
+
+  const run = async (cols: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (supabase as any)
+      .schema('projects').from('reports')
+      .select(cols)
+      .eq('project_id', projectId)
+      .eq('kind', kind)
+      .in('status', ['issued', 'superseded'])
+    // Per-entity sections (inspection/snag/valuation) scope to one source row;
+    // project-level sections (tenant_schedule) pass no source.
+    if (source) {
+      query = query.eq('source_table', source.table).eq('source_id', source.id)
+    }
+    return query.order('version', { ascending: false })
+  }
+
+  let { data, error } = await run(SELECT_COLS)
+  if (error && isMissingColumnError(error)) {
+    ;({ data, error } = await run(SELECT_COLS_LEGACY))
+  }
 
   if (error) return { error: error.message ?? 'Failed to load saved reports' }
-  return (data ?? []) as ProjectReportRow[]
+  return attachAuthorNames((data ?? []) as ProjectReportRow[])
 }
 
 /**
@@ -103,6 +172,16 @@ export async function getProjectReportUrlAction(
 
   const report = row as { storage_path: string; kind: string; version: number } | null
   if (!report) return { error: 'Not found' }
+
+  // The kind is only known once the row is read, so the gate runs here. After
+  // migration 00183 the RESTRICTIVE policy already hides the row from an
+  // unauthorised reader; this keeps the action correct before it is applied and
+  // if the service client is ever used for the lookup.
+  const readRoles = readRolesForKind(report.kind)
+  if (readRoles) {
+    const guard = await requireEffectiveRole(supabase, projectId, readRoles)
+    if (!guard.ok) return { error: guard.error }
+  }
 
   const service = createServiceClient()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

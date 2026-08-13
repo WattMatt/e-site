@@ -19,7 +19,7 @@ import Link from 'next/link'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { markOrderedAction, markReceivedAction } from '@/actions/node-order.actions'
-import type { ProcLine, ProcStatus, UnifiedBoard } from '../_lib/gather-unified-boards'
+import type { ProcLine, ProcStatus, UnifiedBoard } from '@/lib/equipment-materials/gather-unified-boards'
 import { UnifiedDocSlot } from './UnifiedDocSlot'
 import { UnifiedShopDrawingList } from './UnifiedShopDrawingList'
 
