@@ -82,15 +82,29 @@ SET row_security TO 'off'
 AS $function$
   SELECT CASE
     WHEN NOT public.report_kind_is_sensitive(_kind) THEN TRUE
-    ELSE public.user_effective_project_role(_project_id)
-           IN ('owner', 'admin', 'project_manager')
+    -- COALESCE, not a bare IN: user_effective_project_role returns NULL for a
+    -- non-member, and `NULL IN (...)` is NULL, not FALSE. A RESTRICTIVE USING
+    -- treats NULL as false so the row is still hidden, but a boolean gate that
+    -- can return NULL is one refactor away from being read as "unknown =
+    -- allowed". Verified on prod: a caller with no role now gets FALSE.
+    ELSE COALESCE(
+      public.user_effective_project_role(_project_id)
+        IN ('owner', 'admin', 'project_manager'),
+      FALSE)
   END
 $function$;
 
--- Postgres grants EXECUTE to PUBLIC by default; restrict before granting so the
--- GRANT actually narrows rather than merely adding (the PR #160 #1 lesson).
-REVOKE ALL ON FUNCTION public.report_kind_is_sensitive(TEXT)           FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.user_can_read_report_kind(UUID, TEXT)    FROM PUBLIC;
+-- Postgres grants EXECUTE to PUBLIC by default, so restrict before granting or
+-- the GRANT merely adds (the PR #160 #1 lesson).
+--
+-- REVOKing PUBLIC is NOT sufficient here. Supabase ships
+-- `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO
+-- anon, authenticated, service_role`, which grants `anon` DIRECTLY at creation
+-- time — a separate grant that a REVOKE FROM PUBLIC does not touch. Verified on
+-- prod: after the first apply, `anon` still held EXECUTE on both functions.
+-- anon must be named explicitly.
+REVOKE ALL ON FUNCTION public.report_kind_is_sensitive(TEXT)           FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.user_can_read_report_kind(UUID, TEXT)    FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.report_kind_is_sensitive(TEXT)        TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.user_can_read_report_kind(UUID, TEXT) TO authenticated, service_role;
 
