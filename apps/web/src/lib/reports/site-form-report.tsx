@@ -21,6 +21,13 @@
  *
  * Node-only: any test importing the renderer must carry
  * `// @vitest-environment node` — the browser build stubs out renderToBuffer.
+ *
+ * GLYPH RULE: every caller- or template-supplied string drawn here goes through
+ * `toWinAnsiSafe` (./winansi-text). react-pdf's standard Helvetica encodes only
+ * WinAnsi and does NOT throw on anything else — it truncates the code point to
+ * its low byte and draws a different character. The seeded template's six `Ω`
+ * units printed as `©` and its `≤` as the letter `d` until 2026-08-13. Own
+ * hardcoded ASCII literals are exempt; anything from `data` is not.
  */
 
 // No 'use client' — server-side PDF rendering only.
@@ -38,6 +45,7 @@ import type {
   SiteFormAuditEntry,
 } from './site-form-report-data'
 import { MAX_TABLE_COLUMNS } from './site-form-report-data'
+import { toWinAnsiSafe, toWinAnsiSafeOptional } from './winansi-text'
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -487,13 +495,17 @@ function InfoRow({
   value: string | null | undefined
   prefilled?: boolean
 }) {
-  const shown = value != null && value !== '' ? value : '—'
+  // Sanitise BEFORE the emptiness test, so a string that survives as nothing
+  // (a bare combining mark, say) styles as absent rather than hanging a
+  // provenance marker on an em dash.
+  const safe = toWinAnsiSafeOptional(value)
+  const shown = safe != null && safe !== '' ? safe : '—'
   return (
     <View style={s.row}>
-      <Text style={s.rowLabel}>{label}</Text>
-      <Text style={value ? s.rowValue : s.rowValueMuted}>
+      <Text style={s.rowLabel}>{toWinAnsiSafe(label)}</Text>
+      <Text style={safe ? s.rowValue : s.rowValueMuted}>
         {shown}
-        {prefilled && value ? <PrefillMark /> : null}
+        {prefilled && safe ? <PrefillMark /> : null}
       </Text>
     </View>
   )
@@ -519,7 +531,7 @@ function SummaryBlock({ data }: { data: SiteFormReportData }) {
 
       <View style={[s.asLeftBox, { borderLeftColor: branding.accent }]}>
         <Text style={s.asLeftLabel}>Board left as</Text>
-        <Text style={s.asLeftValue}>{summary.asLeftStatusText}</Text>
+        <Text style={s.asLeftValue}>{toWinAnsiSafe(summary.asLeftStatusText)}</Text>
       </View>
 
       {temp > 0 && (
@@ -600,22 +612,23 @@ function chunkColumns<T>(cols: T[], size: number): T[][] {
 
 function GroupTable({ group }: { group: SiteFormGroupTable }) {
   const chunks = chunkColumns(group.columns, MAX_TABLE_COLUMNS)
+  const label = toWinAnsiSafe(group.label)
   return (
     <View>
-      <Text style={s.tableTitle}>{group.label}</Text>
+      <Text style={s.tableTitle}>{label}</Text>
       {chunks.map((cols, chunkIdx) => {
         const offset = chunkIdx * MAX_TABLE_COLUMNS
         const width = `${(100 / cols.length).toFixed(3)}%`
         return (
           <View key={`chunk-${chunkIdx}`} style={{ marginBottom: 4 }}>
             {chunkIdx > 0 && (
-              <Text style={s.omitted}>{group.label} (continued)</Text>
+              <Text style={s.omitted}>{label} (continued)</Text>
             )}
             <View style={s.tableHeadRow}>
               <Text style={[s.th, s.colNarrow]}>#</Text>
               {cols.map((c) => (
                 <Text key={c.fieldId} style={[s.th, { width }]}>
-                  {c.label}
+                  {toWinAnsiSafe(c.label)}
                 </Text>
               ))}
             </View>
@@ -623,7 +636,7 @@ function GroupTable({ group }: { group: SiteFormGroupTable }) {
               <View key={`${chunkIdx}-${row.entryNo}`} style={s.tableRow} wrap={false}>
                 <Text style={[s.td, s.colNarrow]}>{row.entryNo}</Text>
                 {cols.map((c, i) => {
-                  const cell = row.cells[offset + i]
+                  const cell = toWinAnsiSafe(row.cells[offset + i] ?? '')
                   // A row imported wholesale from the cable schedule carries a
                   // marker on every inherited cell; one typed on site carries none.
                   const inherited = Boolean((row.prefilled ?? [])[offset + i]) && Boolean(cell)
@@ -650,7 +663,7 @@ function GroupTable({ group }: { group: SiteFormGroupTable }) {
 function SectionBlock({ section }: { section: SiteFormReportSection }) {
   return (
     <View>
-      <Text style={s.sectionHeader}>{section.title}</Text>
+      <Text style={s.sectionHeader}>{toWinAnsiSafe(section.title)}</Text>
       {section.rows.length === 0 && section.groups.length === 0 && (
         <Text style={s.empty}>No answers recorded.</Text>
       )}
@@ -658,7 +671,7 @@ function SectionBlock({ section }: { section: SiteFormReportSection }) {
         if (row.kind === 'subheading') {
           return (
             <Text key={row.fieldId} style={s.subheading}>
-              {row.label}
+              {toWinAnsiSafe(row.label)}
             </Text>
           )
         }
@@ -666,15 +679,19 @@ function SectionBlock({ section }: { section: SiteFormReportSection }) {
           return (
             <View key={row.fieldId} style={s.row} wrap={false}>
               <Text style={s.rowLabel}>
-                {row.label}
-                {row.sansRef ? <Text style={s.sansRef}>{`  ${row.sansRef}`}</Text> : null}
+                {toWinAnsiSafe(row.label)}
+                {row.sansRef ? (
+                  <Text style={s.sansRef}>{`  ${toWinAnsiSafe(row.sansRef)}`}</Text>
+                ) : null}
               </Text>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
                   <PassPill pass={row.pass} />
                   {rowIsPrefilled(row) ? <PrefillMark /> : null}
                 </View>
-                {row.failReason ? <Text style={s.failReason}>{row.failReason}</Text> : null}
+                {row.failReason ? (
+                  <Text style={s.failReason}>{toWinAnsiSafe(row.failReason)}</Text>
+                ) : null}
               </View>
             </View>
           )
@@ -683,9 +700,11 @@ function SectionBlock({ section }: { section: SiteFormReportSection }) {
           if (!row.value) return <InfoRow key={row.fieldId} label={row.label} value={null} />
           return (
             <View key={row.fieldId}>
-              <Text style={s.rowLabel}>{row.label}</Text>
+              <Text style={s.rowLabel}>{toWinAnsiSafe(row.label)}</Text>
+              {/* Line breaks are PRESERVED here: react-pdf splits on \n, and a
+                  multi-line scope description must not become one paragraph. */}
               <Text style={s.paragraph}>
-                {row.value}
+                {toWinAnsiSafe(row.value)}
                 {rowIsPrefilled(row) ? <PrefillMark /> : null}
               </Text>
             </View>
@@ -721,12 +740,12 @@ function PhotoFieldBlock({ field }: { field: SiteFormPhotoField }) {
   }
   return (
     <View style={s.photoBlock}>
-      <Text style={s.photoLabel}>{field.label}</Text>
+      <Text style={s.photoLabel}>{toWinAnsiSafe(field.label)}</Text>
       <View style={s.photoGrid}>
         {field.photos.map((p) => (
           <View key={p.id} style={s.photoCell} wrap={false}>
             <Image src={p.dataUri} style={s.photoImage} />
-            {p.caption ? <Text style={s.photoCaption}>{p.caption}</Text> : null}
+            {p.caption ? <Text style={s.photoCaption}>{toWinAnsiSafe(p.caption)}</Text> : null}
           </View>
         ))}
       </View>
@@ -780,7 +799,7 @@ function DefectRegister({ defects }: { defects: SiteFormDefectRow[] }) {
               <Text style={[d.isC1 ? s.tdC1 : s.td, s.colNarrow]}>{d.entryNo}</Text>
               {DEFECT_COLS.map((c) => (
                 <Text key={String(c.key)} style={[d.isC1 ? s.tdC1 : s.td, { width: c.width }]}>
-                  {String(d[c.key] ?? '') || '—'}
+                  {toWinAnsiSafe(String(d[c.key] ?? '')) || '—'}
                 </Text>
               ))}
             </View>
@@ -802,16 +821,20 @@ function DefectRegister({ defects }: { defects: SiteFormDefectRow[] }) {
 // ---------------------------------------------------------------------------
 
 function SignatureBlock({ block }: { block: SiteFormSignatureBlock }) {
-  const registration = [block.registrationCategory, block.registrationNumber]
-    .filter(Boolean)
-    .join(' · ')
+  const registration = toWinAnsiSafe(
+    [block.registrationCategory, block.registrationNumber].filter(Boolean).join(' · '),
+  )
   return (
     <View style={s.sigBlock} wrap={false}>
-      <Text style={s.sigRole}>{block.blockLabel}</Text>
-      <Text style={s.sigName}>{block.signatoryName}</Text>
-      {block.signatoryRole ? <Text style={s.sigMeta}>{block.signatoryRole}</Text> : null}
+      <Text style={s.sigRole}>{toWinAnsiSafe(block.blockLabel)}</Text>
+      <Text style={s.sigName}>{toWinAnsiSafe(block.signatoryName)}</Text>
+      {block.signatoryRole ? (
+        <Text style={s.sigMeta}>{toWinAnsiSafe(block.signatoryRole)}</Text>
+      ) : null}
       {registration ? <Text style={s.sigMeta}>Registration: {registration}</Text> : null}
-      {block.signedAt ? <Text style={s.sigMeta}>Signed {block.signedAt}</Text> : null}
+      {block.signedAt ? (
+        <Text style={s.sigMeta}>Signed {toWinAnsiSafe(block.signedAt)}</Text>
+      ) : null}
       {block.imageDataUri ? (
         <Image src={block.imageDataUri} style={s.sigImage} />
       ) : (
@@ -852,24 +875,26 @@ function AuditTable({
           </View>
           {audit.map((entry, i) => (
             <View key={`${entry.at ?? 'n'}-${i}`} style={s.tableRow} wrap={false}>
-              <Text style={[s.td, { width: '18%' }]}>{entry.at ?? '—'}</Text>
-              <Text style={[s.td, { width: '20%' }]}>{entry.sectionTitle}</Text>
-              <Text style={[s.td, { width: '27%' }]}>{entry.fieldLabel}</Text>
+              <Text style={[s.td, { width: '18%' }]}>
+                {toWinAnsiSafeOptional(entry.at) ?? '—'}
+              </Text>
+              <Text style={[s.td, { width: '20%' }]}>{toWinAnsiSafe(entry.sectionTitle)}</Text>
+              <Text style={[s.td, { width: '27%' }]}>{toWinAnsiSafe(entry.fieldLabel)}</Text>
               {/* An entry that was inherited says so in words as well as by the
                   marker: this table is the part an enquiry actually reads, and
                   "pre-populated" and "stated by a person" are different claims. */}
               <View style={{ width: '20%' }}>
                 <Text style={s.td}>
-                  {entry.value || '—'}
+                  {toWinAnsiSafe(entry.value) || '—'}
                   {entry.prefilledFrom ? <PrefillMark cell /> : null}
                 </Text>
                 {entry.prefilledFrom ? (
                   <Text style={s.auditSource}>
-                    pre-populated · {prefillSourceLabel(entry.prefilledFrom)}
+                    pre-populated · {toWinAnsiSafe(prefillSourceLabel(entry.prefilledFrom))}
                   </Text>
                 ) : null}
               </View>
-              <Text style={[s.td, { width: '15%' }]}>{entry.by}</Text>
+              <Text style={[s.td, { width: '15%' }]}>{toWinAnsiSafe(entry.by)}</Text>
             </View>
           ))}
           {omittedCount > 0 && (
@@ -887,8 +912,30 @@ function AuditTable({
 // Main document
 // ---------------------------------------------------------------------------
 
+/**
+ * The cover is drawn by the shared `Cover` (./components), which is used by
+ * every report and knows nothing about glyphs. Sanitise on the way in rather
+ * than reaching into it: the project name, org wordmark and title are all
+ * user-typed, and the cover is the first page anybody looks at.
+ */
+function safeBranding(b: SiteFormReportData['branding']): SiteFormReportData['branding'] {
+  return {
+    ...b,
+    title: toWinAnsiSafe(b.title),
+    kicker: toWinAnsiSafe(b.kicker),
+    projectLine: toWinAnsiSafe(b.projectLine),
+    footerStamp: toWinAnsiSafe(b.footerStamp),
+    issuer:
+      b.issuer.wordmark != null
+        ? { ...b.issuer, wordmark: toWinAnsiSafe(b.issuer.wordmark) }
+        : b.issuer,
+    parties: b.parties.map((p) => ({ ...p, label: toWinAnsiSafe(p.label) })),
+  }
+}
+
 export function SiteFormReportDocument({ data }: { data: SiteFormReportData }) {
-  const footerLeft = `${data.summary.formNo} · ${data.summary.boardLabel}`
+  const footerLeft = toWinAnsiSafe(`${data.summary.formNo} · ${data.summary.boardLabel}`)
+  const branding = safeBranding(data.branding)
 
   // "None were captured" and "some could not be retrieved" are different
   // statements about the evidence, and only one of them can be made honestly.
@@ -905,10 +952,10 @@ export function SiteFormReportDocument({ data }: { data: SiteFormReportData }) {
   const auditPrefilled = auditHasPrefilled(data.audit)
 
   return (
-    <Document title={data.branding.title} producer="e-site.live">
+    <Document title={branding.title} producer="e-site.live">
       {/* ── Cover ── */}
       <Page size="A4" style={pageStyles.page}>
-        <Cover resolved={data.branding} />
+        <Cover resolved={branding} />
         <DisclaimerFooter />
       </Page>
 

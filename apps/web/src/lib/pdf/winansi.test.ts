@@ -47,3 +47,37 @@ describe('winAnsiSafe', () => {
     expect(winAnsiSafe('a\r\nb\tc')).toBe('a  b c')
   })
 })
+
+/**
+ * `collapseWhitespace` is asserted in BOTH directions on purpose.
+ *
+ * Only testing the react-pdf direction would let a later "simplification" that
+ * deletes the whitespace branch outright go green — the newline survives, the
+ * new test passes — while silently changing behaviour for every pdf-lib caller,
+ * which is the exact regression the default exists to prevent. One test guards
+ * the new path; it takes both to guard the flag.
+ */
+describe('winAnsiSafe — collapseWhitespace', () => {
+  const INPUT = 'Line one\nLine two'
+
+  it('collapses by default — the pdf-lib direction', () => {
+    // Every existing pdf-lib call site relies on this: widthOfTextAtSize THROWS
+    // on a newline, and those renderers wrap BEFORE they sanitise.
+    expect(winAnsiSafe(INPUT)).toBe('Line one Line two')
+    expect(winAnsiSafe(INPUT, {})).toBe('Line one Line two')
+    expect(winAnsiSafe(INPUT, { collapseWhitespace: true })).toBe('Line one Line two')
+    expect(winAnsiSafe('a\r\nb\tc', { collapseWhitespace: true })).toBe('a  b c')
+  })
+
+  it('preserves when asked — the react-pdf direction', () => {
+    // <Text> line-breaks on \n natively; collapsing flattens multi-line answers.
+    expect(winAnsiSafe(INPUT, { collapseWhitespace: false })).toBe(INPUT)
+    expect(winAnsiSafe('a\r\nb\tc', { collapseWhitespace: false })).toBe('a\r\nb\tc')
+  })
+
+  it('sanitises glyphs identically whichever way whitespace goes', () => {
+    const ohm = String.fromCharCode(0x03a9)
+    expect(winAnsiSafe(`0,2 ${ohm}\nx`, { collapseWhitespace: true })).toBe('0,2 Ohm x')
+    expect(winAnsiSafe(`0,2 ${ohm}\nx`, { collapseWhitespace: false })).toBe('0,2 Ohm\nx')
+  })
+})

@@ -210,6 +210,228 @@ describe('renderSiteFormReport', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Glyph fidelity — what the page ACTUALLY says
+//
+// react-pdf's standard Helvetica encodes only WinAnsi and, unlike pdf-lib, does
+// NOT throw on anything else: it truncates the code point to its low byte and
+// draws whatever character that lands on. Measured 2026-08-13 by rendering a
+// probe page and inflating its content stream:
+//
+//   INPUT : A[MΩ]B[≤]C[mm²]D[65 °C]E[†]F[·]G[∆]H[µ]I[μ]
+//   OUTPUT: A[M©]B[d]C[mm²]D[65 °C]E[†]F[·]G[ ]H[µ]I[¼]
+//
+// The seeded template carries six `Ω` units, a `≤` in the proving-dead label
+// and an `I∆n` label, so a SANS 10142-1 record printed `≤ 0,2 Ω` as `d 0,2 ©`
+// in production. Nothing threw and nothing logged — the only test that can
+// catch this class is one that reads the glyphs back off the rendered page,
+// which is what every assertion below does.
+// ---------------------------------------------------------------------------
+
+/**
+ * Code points, never literals: an input an editor or a git filter could launder
+ * is an input that proves nothing.
+ */
+const OHM = String.fromCharCode(0x03a9) // Ω
+const LE = String.fromCharCode(0x2264) // ≤
+const COPY = String.fromCharCode(0x00a9) // © — what Ω used to become
+const SUP2 = String.fromCharCode(0x00b2) // ²  ┐
+const DEG = String.fromCharCode(0x00b0) // °   ├ all genuine WinAnsi:
+const DAGGER = String.fromCharCode(0x2020) // † │ these must survive verbatim
+const MIDDOT = String.fromCharCode(0x00b7) // · ┘
+const MICRO = String.fromCharCode(0x00b5) // µ MICRO SIGN (WinAnsi)
+const MU_GREEK = String.fromCharCode(0x03bc) // μ GREEK SMALL MU (not WinAnsi)
+
+/** One section of rows on an otherwise empty draft — nothing else to confuse the assertions. */
+const glyphDoc = (rows: SiteFormReportData['sections'][number]['rows']): SiteFormReportData => ({
+  ...emptySiteFormReportFixture,
+  sections: [{ sectionId: 'glyphs', title: 'Test values', rows, groups: [] }],
+})
+
+const renderText = async (data: SiteFormReportData): Promise<string> =>
+  squash(extractPdfText(await renderSiteFormReport(data)))
+
+describe('renderSiteFormReport — WinAnsi glyph fidelity', () => {
+  it('prints an MΩ unit as "Mohm", never as the copyright sign', async () => {
+    // electrical_tests.insulation_resistance carries unit `MΩ`; the gatherer
+    // appends it to the value, so this is the literal production string.
+    const text = await renderText(
+      glyphDoc([
+        {
+          fieldId: 'insulation_resistance',
+          label: 'Insulation resistance',
+          kind: 'value',
+          value: `500 M${OHM}`,
+        },
+      ]),
+    )
+    expect(text).toContain('500 MOhm')
+    expect(text).not.toContain(COPY)
+    expect(text).not.toContain(OHM)
+  })
+
+  it('prints "<=" for a less-than-or-equal, never the letter d', async () => {
+    // proving_dead.all_readings_dead — the label that decides whether a board
+    // was proved dead. "d 0 V" is not a statement anybody can rely on.
+    const text = await renderText(
+      glyphDoc([
+        {
+          fieldId: 'all_readings_dead',
+          label: `All readings ${LE} 0 V (dead confirmed)`,
+          kind: 'value',
+          value: 'Yes',
+        },
+      ]),
+    )
+    expect(text).toContain('All readings <= 0 V (dead confirmed)')
+    expect(text).not.toContain('All readings d 0 V')
+  })
+
+  it('converts an ohm sign inside free text, not only in a unit', async () => {
+    // Units are composed by the gatherer, but an electrician types Ω into notes
+    // and defect descriptions too — sanitising only the unit would miss those.
+    const text = await renderText(
+      glyphDoc([
+        {
+          fieldId: 'circuit_notes',
+          label: 'Notes',
+          kind: 'paragraph',
+          value: `Measured 0,35 ${OHM} at the DB, ${LE} the 0,4 ${OHM} limit`,
+        },
+      ]),
+    )
+    expect(text).toContain('Measured 0,35 Ohm at the DB, <= the 0,4 Ohm limit')
+    expect(text).not.toContain(COPY)
+  })
+
+  it('leaves genuine WinAnsi characters alone — over-sanitising is its own bug', async () => {
+    // `2,5 mm2`, `65 degC` or `50 uF` on a compliance record would be a
+    // regression of the same severity, in the opposite direction.
+    const value = `2,5 mm${SUP2} at 65 ${DEG}C ${DAGGER} ${MIDDOT} 50 ${MICRO}F`
+    const text = await renderText(
+      glyphDoc([{ fieldId: 'conductor', label: 'Conductor', kind: 'value', value }]),
+    )
+    expect(text).toContain(value)
+  })
+
+  it('rescues Greek mu to the micro sign rather than dropping the unit', async () => {
+    // μ (U+03BC) drew as ¼. It is not WinAnsi; µ (U+00B5) is, and means the same.
+    const text = await renderText(
+      glyphDoc([
+        { fieldId: 'leakage', label: 'Leakage', kind: 'value', value: `50 ${MU_GREEK}F` },
+      ]),
+    )
+    expect(text).toContain(`50 ${MICRO}F`)
+    expect(text).not.toContain('¼')
+  })
+
+  it('sanitises a group table cell and its column heading', async () => {
+    // The circuits table is the densest part of the record and takes its
+    // headings straight from the template.
+    const data: SiteFormReportData = {
+      ...emptySiteFormReportFixture,
+      sections: [
+        {
+          sectionId: 'glyphs',
+          title: 'Test values',
+          rows: [],
+          groups: [
+            {
+              fieldId: 'tests',
+              label: `Loop impedance (${OHM})`,
+              columns: [{ fieldId: 'zs', label: `Zs (${OHM})` }],
+              rows: [{ entryNo: 1, cells: [`0,35 ${OHM}`] }],
+            },
+          ],
+        },
+      ],
+    }
+    const text = await renderText(data)
+    expect(text).toContain('Loop impedance (Ohm)')
+    expect(text).toContain('Zs (Ohm)')
+    expect(text).toContain('0,35 Ohm')
+    expect(text).not.toContain(COPY)
+  })
+
+  it('sanitises the cover, which is drawn by the shared Cover component', async () => {
+    // site-form-report.tsx does not own <Cover>, so the branding is sanitised on
+    // the way in. The cover is the first page anybody looks at.
+    const data: SiteFormReportData = {
+      ...emptySiteFormReportFixture,
+      branding: {
+        ...emptySiteFormReportFixture.branding,
+        projectLine: `Kingswalk ${OHM} Mall`,
+        issuer: { wordmark: `Watson ${OHM} Mattheus` },
+      },
+    }
+    const text = await renderText(data)
+    expect(text).toContain('Kingswalk Ohm Mall')
+    expect(text).toContain('Watson Ohm Mattheus')
+    expect(text).not.toContain(COPY)
+  })
+
+  it('leaves no unencodable character anywhere in a hostile payload', async () => {
+    // The document-wide statement the per-case tests cannot make: after the
+    // full hostile fixture renders, nothing on the page is a substituted glyph.
+    const text = extractPdfText(await renderSiteFormReport(siteFormReportFixture))
+    expect(text).not.toContain(OHM)
+    expect(text).not.toContain(COPY)
+    expect(text).not.toContain(String.fromCharCode(0x2192)) // →
+    expect(text).not.toContain('¼') // what Greek μ drew as
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Multi-line answers
+//
+// The pdf-lib sanitiser folds \n to a space because widthOfTextAtSize THROWS on
+// a newline. Reusing that here would have fixed the glyphs and quietly
+// introduced a second bug of the identical shape — all 18 textarea fields on
+// this template (scope_description, extent_and_limitations, parts_not_covered,
+// circuit_notes, the defect descriptions …) flattened into one run-on
+// paragraph, still rendering, still not throwing.
+// ---------------------------------------------------------------------------
+
+describe('renderSiteFormReport — multi-line answers', () => {
+  it('preserves a line break in a textarea answer', async () => {
+    const text = await renderText(
+      glyphDoc([
+        {
+          fieldId: 'scope_description',
+          label: 'Scope of work',
+          kind: 'paragraph',
+          value: 'ZALPHA\nZBETA',
+        },
+      ]),
+    )
+
+    // How this discriminates, given the extractor: PDFKit emits ONE text-showing
+    // run per LAID-OUT LINE, and extractPdfTextPerStream concatenates the runs
+    // within a page's content stream with nothing between them. Two lines
+    // therefore read back butted together, while a collapsed single line still
+    // carries the space that replaced the newline. That space is the only thing
+    // in the byte stream that tells the two apart.
+    expect(text).toContain('ZALPHAZBETA')
+    expect(text).not.toContain('ZALPHA ZBETA')
+  })
+
+  it('still sanitises glyphs on every line of a multi-line answer', async () => {
+    const text = await renderText(
+      glyphDoc([
+        {
+          fieldId: 'recommendations',
+          label: 'Recommendations',
+          kind: 'paragraph',
+          value: `ZALPHA 0,35 ${OHM}\nZBETA ${LE} 1 s`,
+        },
+      ]),
+    )
+    expect(text).toContain('ZALPHA 0,35 Ohm')
+    expect(text).toContain('ZBETA <= 1 s')
+    expect(text).not.toContain(COPY)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Inherited vs verified-on-site — field.form_responses.prefilled_from (00182)
 //
 // A value copied off a drawing and a value verified at the board must not look
