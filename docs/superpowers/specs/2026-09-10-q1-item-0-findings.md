@@ -58,8 +58,11 @@ programme's answer to dormancy.
 This is the finding that changes what item 0 builds.
 
 **246 automated emails have been sent** — four onboarding plus three re-engagement, to all 36 users —
-between 2026-04-20 and 2026-08-30. `resend_message_id` is populated on all but two, so Resend accepted
-them.
+between 2026-04-20 and 2026-08-30. `resend_message_id` is populated on **235 of the 246**, so Resend
+accepted those. The other **11 sends errored** and are worth naming rather than rounding away: they are
+4.5% of every automated email this platform has ever attempted, all of them in April 2026, split 7 at
+`wmeng.co.za` and 4 at `esite-staging.co.za`. **None is on a contractor domain**, so the historical send
+failures do not explain contractor dormancy.
 
 | Sequence | Step | Sent | Opened | Clicked |
 |---|---|---|---|---|
@@ -119,7 +122,40 @@ writes it.
 | `generate-report` deploy step | **Dead.** `.github/workflows/deploy-edge-functions.yml:41-45` deploys a function with no directory under `apps/edge-functions/supabase/functions/`. It was removed deliberately by `dbe2328` ("PDF standardization: remove dead edge fns") and the workflow step was left behind, so **any dispatch run of that workflow fails at that step today.** Delete the step. |
 | Workflow-scoped token | Still required to edit either file. Q1 adds no edge function, so nothing in this quarter is gated on it; Q2's `inbound-email` and `send-web-push` are. Nominating Arno to edit both files by hand is an acceptable and cheaper answer. |
 
-## 5. Two facts item 2 and item 3 depend on, now confirmed
+## 5. "Zero contractors active" is a broken measurement, not a true zero
+
+The roadmap's most-quoted figure — **0 of 13 contractor accounts active in 30 days** — is computed from
+`auth.users.last_sign_in_at`. That column is updated only on an explicit credential login. **It is not
+updated when a returning cookie session is resumed**, which is how anyone who stays signed in on a phone
+or a laptop actually uses the product.
+
+Measured over the trailing 28 days, using the author columns that already carry history rather than
+sign-in timestamps:
+
+| Role | Domain | Writes | People |
+|---|---|---|---|
+| contractor | siyayapower.co.za | 27 | 2 |
+| admin | wmeng.co.za | 13 | 2 |
+| owner | wmeng.co.za | 6 | 1 |
+| contractor | qualelect.co.za | 1 | 1 |
+| **Total** | | **35** | **5** |
+
+**Three of the five people who wrote to E-Site in the last four weeks are contractors** — and both Siyaya
+Power accounts show a `last_sign_in_at` of 21 July, seven weeks before writes they demonstrably made. The
+sign-in column is stale, not the users.
+
+This does not soften the diagnosis. Five active people out of 36 accounts is still a product that almost
+nobody opens, and Siyaya alone accounts for most site-originated content. But it changes two things:
+
+1. **The Q1 baseline must be published on writes, not sign-ins**, or the programme will appear to
+   manufacture contractor engagement in October that in fact already existed in September. Item 1's
+   rollup unions the author columns for exactly this reason — it is the only arm measurable
+   retrospectively, because `user_sessions` has no writer until item 4.
+2. **`last_sign_in_at` must never again be a metric source.** It joins `notifications.read_at` and
+   `email_sequence_events.opened_at` on the list of columns that look like measurements and are not.
+   §15's metric 7 already refuses `auth_events` for the same reason; the same refusal applies here.
+
+## 6. Facts items 2 and 3 depend on, now confirmed
 
 - **`projects.qc_entries` carries `conformance` and `severity`** (added by `00176`). A section of the spec
   claimed otherwise and has been corrected. The `qc_defect` mirror's failed-entry predicate is expressible,
@@ -132,3 +168,25 @@ writes it.
   closed reports, 6 diary entries carrying delays, and 440 `node_orders` which are deliberately **not**
   back-filled.
 - **No name collisions.** None of the planned Q1 or Q2 objects exists yet.
+- **All six live snags belong to the E-Site DEMO organisation.** There are exactly six snags in
+  production and every one is a seeded demo row, so the snag arm of the backfill touches no real work.
+- **All six diary entries carrying "delays" say there were none.** The distinct values are `NO`, `None`,
+  `None,` and "No delays or info required was noted in the site walk and or meeting". Mirroring them
+  would manufacture six work items instructing somebody to action a non-delay, so the `diary_action` arm
+  is excluded from the backfill. The trigger still fires for future entries.
+- Together these drop the measured backfill from 46 items to **34** — 15 RFIs, 18 inspections and 1 site
+  form.
+
+## 7. Two defects in the spec, caught while planning against it
+
+Planning surfaced two errors in the design that would have failed at implementation time.
+
+1. **The single trigger declaration §03 §1.2 mandates is invalid PostgreSQL.** An `INSERT` trigger's
+   `WHEN` clause cannot reference `OLD`, so the combined `INSERT OR UPDATE` trigger carrying the spec's
+   `WHEN` would fail with `42P17`. Each source therefore gets a separate `_ins` and `_upd` trigger, with
+   the `WHEN` on the update half only. This is also why the original "no-op `UPDATE … SET status = status`"
+   backfill could never have worked.
+2. **Item 2's gatekeeper guard must exempt `pg_trigger_depth() > 0`.** Without the exemption, a
+   contractor closing their own RFI aborts the RFI close, because the mirror's write-back re-enters the
+   guard as the contractor rather than the gatekeeper. This is a requirement item 3 places on item 2, and
+   item 3's migration refuses to apply without it.
