@@ -41,7 +41,10 @@ export interface SendResult {
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 const FROM = Deno.env.get('RESEND_FROM') ?? 'E-Site <noreply@e-site.live>'
-const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://app.e-site.live'
+// www is canonical. app.e-site.live has no DNS record and is the host that
+// dead-ended every invite link in PR #138; a fallback to it produces mail whose
+// buttons go nowhere, with "nobody clicks" as the only symptom.
+const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://www.e-site.live'
 
 export function getSiteUrl(): string {
   return SITE_URL
