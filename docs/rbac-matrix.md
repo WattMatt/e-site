@@ -445,6 +445,33 @@ Read-only actions require project access (any project member). Write/export acti
 3. **Update this matrix.** Add a row with the verified W/R/— cells for each role.
 4. **RLS.** Confirm Postgres RLS independently denies cross-org reads/writes. The app-layer gate should not be load-bearing — RLS is the backstop.
 
+## Edge function callers — `send-email`
+
+`send-email` is not a route and has no role matrix, but it is an authorisation
+surface and it belongs here: it mails from `noreply@e-site.live`, the
+DKIM-signed identity that also carries every invite and password reset.
+
+| Caller | Credential | Types allowed |
+| --- | --- | --- |
+| `lib/{invite-email,rfi-email,snag-email,notify,diary-email,qc-email,site-form-email}.ts` | service-role key | all |
+| `actions/data-request.actions.ts` (public POPIA form) | service-role key (was the SSR anon client until the 2026-09-10 audit) | `data-subject-request` only |
+| anyone else, incl. an unauthenticated caller | — | `data-subject-request` only, and it controls no recipient, subject, timestamp or markup |
+
+Rules, each of which was violated in production until 2026-09-10:
+
+1. **A caller is trusted only if it PROVES it holds a service-role credential.**
+   Never authorise on a decoded-but-unverified JWT — see
+   [`auth-pitfalls-playbook.md` §18](auth-pitfalls-playbook.md). The old
+   `getJwtRole` base64-decoded the bearer token, and combined with the
+   `--no-verify-jwt` deploy flag a JWT signed with the literal string
+   `notasignature` reached the arbitrary-HTML passthroughs.
+2. **A public type must let its caller choose nothing that reaches the wire** —
+   not the recipient, not the subject, and no unescaped string. Contract tests:
+   [`send-email-hardening.test.ts`](../apps/web/src/lib/email/send-email-hardening.test.ts).
+3. **`--no-verify-jwt` must not be used on this function.** Tracked in
+   [`.github/workflows/deploy-edge-functions.yml`](../.github/workflows/deploy-edge-functions.yml);
+   `send-notification` carries the same flag and is not yet audited.
+
 ## Known gaps & open audits
 
 These are tracked outside this doc:
