@@ -163,7 +163,33 @@ describe('POST /api/webhooks/resend', () => {
     insertResult.value = { error: { code: '23505' } }
     const res = await POST(signed(bounced))
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ received: true, duplicate: true })
+    // `stamped` is present on a replay too. Task 7's production curl reads this
+    // body, and a replay answering `stamped: undefined` would read as a broken
+    // stamp rather than as a duplicate that had nothing to stamp.
+    expect(await res.json()).toEqual({ received: true, duplicate: true, stamped: 0 })
+  })
+
+  it('still writes the suppression on a duplicate delivery, so the retry the suppression 500 asks for can finish the work', async () => {
+    // The sequence this exists to stop:
+    //   1. delivery 1 — the email_events insert succeeds, the suppression
+    //      upsert fails, the route 500s to ask Svix to retry;
+    //   2. Svix retries with the SAME svix-id, so the insert now lands 23505.
+    // Returning early on 23505 would mean the suppression is never attempted
+    // again and Svix marks the delivery succeeded — the address stays mailable
+    // forever. Both post-insert writes are idempotent (upsert on the primary
+    // key; the stamp is filtered `.is(col, null)`), so the retry must fall
+    // through and do them.
+    //
+    // A bounce partially self-heals — the next send produces a new bounce with
+    // a new svix-id — but email.complained does not: a repeat complaint is
+    // precisely the event we must not need.
+    insertResult.value = { error: { code: '23505' } }
+    const res = await POST(signed(bounced))
+    expect(res.status).toBe(200)
+    expect(calls.find(c => c.table === 'email_events')?.op).toBe('insert')
+    const sup = calls.find(c => c.table === 'email_suppressions')
+    expect(sup?.op).toBe('upsert')
+    expect(sup?.payload).toMatchObject({ email_address: 'ghost@aeec.co.za', reason: 'hard_bounce' })
   })
 
   it('500s a real storage failure so Svix retries', async () => {
