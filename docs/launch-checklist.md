@@ -1,7 +1,21 @@
 # E-Site Launch Checklist
 
-**Last updated:** 2026-04-19  
+**Last updated:** 2026-04-19 · **hostname + Paystack-secret corrections 2026-09-10**  
 **Audience:** Arno (founder) — non-developer steps only. Each section links to the exact place to go and tells you what to hand to Claude Code once you have it.
+
+---
+
+## ⚠ What actually got built — read before following any URL in this document
+
+This checklist was written in April 2026 against a planned two-environment layout. What shipped is different, and three of its instructions will send you at hosts that do not exist. Probed 2026-09-10:
+
+| This doc says | Reality |
+|---|---|
+| `app.e-site.live` is the production web app | **`NXDOMAIN`.** Never created. Production is **`https://www.e-site.live`** (`e-site.live` apex resolves and 307s to it). The 2026-05-28 DNS cutover covered apex + `www` only. |
+| `staging.e-site.live` is the staging web app | **`NXDOMAIN`.** No staging host exists, and there is one Vercel project (`esite`), not two. Pre-production is the Vercel alias **`esite-lilac.vercel.app`**. |
+| `PAYSTACK_WEBHOOK_SECRET` is a required secret | **Read by zero code.** Paystack signs webhooks with `PAYSTACK_SECRET_KEY` itself (HMAC-SHA512 over the raw body, `apps/web/src/app/api/paystack/webhook/route.ts`). The name occurs in this repo only in markdown — and yet a secret by that name is live in the Supabase store, doing nothing. Do not generate, paste or rely on one. Deleting the stray secret is its own reviewed change, not part of following this checklist. |
+
+Where a step below still names a dead host, it is annotated inline. The live-mode Paystack cutover has its own current runbook: [`paystack-go-live-roadmap.md`](paystack-go-live-roadmap.md).
 
 ---
 
@@ -149,11 +163,11 @@ E-Site uses Paystack for subscriptions and supplier payouts. You need a South Af
    - **Test Public Key** (starts with `pk_test_`)
    - **Test Secret Key** (starts with `sk_test_`)
 
-#### 3c. Set webhook URL (needed for staging)
+#### 3c. Set webhook URL
 1. On the same Settings → API Keys & Webhooks page, scroll to **Webhooks**.
-2. Add webhook URL: `https://staging.e-site.live/api/paystack/webhook`
-3. Generate a random webhook secret (use [https://generate-secret.vercel.app/32](https://generate-secret.vercel.app/32)) and paste it into the **Signature** field.
-4. Copy the webhook secret (store in 1Password).
+2. Add webhook URL — **`https://www.e-site.live/api/paystack/webhook`** for the live-mode endpoint, or `https://esite-lilac.vercel.app/api/paystack/webhook` for test mode against the Vercel alias. *(This step used to say `https://staging.e-site.live/…`, which is `NXDOMAIN` — see the banner at the top.)*
+3. ~~Generate a random webhook secret and paste it into the **Signature** field.~~ **Deleted — there is no such field and no such secret.** Paystack signs every event with your **secret key**; the handler verifies HMAC-SHA512 of the raw body against `PAYSTACK_SECRET_KEY`. Nothing in this repo reads a `PAYSTACK_WEBHOOK_SECRET`.
+4. Verify the endpoint is reachable rather than assuming it: `curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '{}' <the URL from step 2>` → **expect `401`** (reached the handler, bad signature, rejected). `500` = the secret key is missing in that environment; `307` = middleware is redirecting webhooks to `/login`, which Paystack records as failed delivery; `000` = the host does not resolve.
 
 #### 3d. Live activation (production only — do later)
 Before production launch, go to **Settings → Business Settings** and complete KYC:
@@ -170,13 +184,13 @@ Set in Vercel (item 4) and Supabase Edge Function secrets:
 |---|---|---|
 | `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY` | `pk_test_xxxx` | Vercel (public) |
 | `PAYSTACK_SECRET_KEY` | `sk_test_xxxx` | Vercel (server-only) + Supabase secrets |
-| `PAYSTACK_WEBHOOK_SECRET` | the secret you generated | Vercel (server-only) + Supabase secrets |
+
+There is no `PAYSTACK_WEBHOOK_SECRET` row: webhook signatures are verified with `PAYSTACK_SECRET_KEY`. Note that the Supabase secret store is a **separate** store from Vercel's — three edge functions (`paystack-webhook`, `marketplace-payment`, `eft-invoice`) read the key from there, so setting it on Vercel alone leaves them on the old value.
 
 ```bash
 npx supabase secrets set \
   PAYSTACK_SECRET_KEY=sk_test_xxxx \
-  PAYSTACK_WEBHOOK_SECRET=your_32_char_secret \
-  --project-ref <staging-ref>
+  --project-ref <project-ref>
 ```
 
 ### Verification
@@ -187,7 +201,7 @@ npx tsx scripts/paystack/pilot-test.ts
 # Expected: all 5 split variants + EFT + subscriptions pass
 ```
 
-Also visit `https://staging.e-site.live/settings/billing` — the billing page should load and "Upgrade" should redirect to a Paystack checkout page.
+Also visit `/settings/billing` on whichever host you deployed (`https://esite-lilac.vercel.app` for pre-production, `https://www.e-site.live` for production — **not** `staging.e-site.live`, which does not resolve). The billing page should load and "Upgrade" should redirect to a Paystack checkout page.
 
 ### Dependencies
 Must complete 3c before Claude Code runs staging smoke tests.
@@ -216,10 +230,9 @@ Go to **Project → Settings → Environment Variables** and add every row below
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase dashboard → staging project → Settings → API | Preview only for staging; Production for prod |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Same location — "anon public" key | All |
 | `SUPABASE_SERVICE_ROLE_KEY` | Same — "service_role" key | All (server-only) |
-| `NEXT_PUBLIC_SITE_URL` | `https://staging.e-site.live` for staging; `https://app.e-site.live` for prod | Per-environment |
+| `NEXT_PUBLIC_SITE_URL` | **Production: `https://www.e-site.live`** (already set, 2026-05-28 — verify, do not overwrite). Preview: `https://esite-lilac.vercel.app`. **Never `app.e-site.live` or `staging.e-site.live` — neither resolves.** This value is the Paystack `callback_url` and the base URL of every link in every outbound email and PDF. | Per-environment |
 | `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY` | Paystack → Settings → API Keys (item 3) | All |
 | `PAYSTACK_SECRET_KEY` | Same — secret key | All (server-only) |
-| `PAYSTACK_WEBHOOK_SECRET` | The secret you set in Paystack (item 3c) | All (server-only) |
 | `NEXT_PUBLIC_POWERSYNC_URL` | Your PowerSync dashboard instance URL | All |
 | `NEXT_PUBLIC_POSTHOG_KEY` | PostHog (item 7) | All |
 | `NEXT_PUBLIC_POSTHOG_HOST` | `https://eu.posthog.com` | All |
@@ -229,17 +242,22 @@ Go to **Project → Settings → Environment Variables** and add every row below
 | `RESEND_API_KEY` | Resend (item 2) | All (server-only) |
 
 #### 4c. Set staging subdomain
-In **Project → Settings → Domains**, add `staging.e-site.live`. Vercel will show you DNS records to add (usually a CNAME). Add them at your DNS provider.
+*(Historical: this prescribed adding `staging.e-site.live`. That record was never created and there is no separate staging project — pre-production runs on the `esite` project's own Vercel alias, `esite-lilac.vercel.app`, which needs no DNS work. The production domains `e-site.live` + `www.e-site.live` were attached and cut over on 2026-05-28.)*
 
 #### 4d. Redeploy
 Trigger a new deployment from the Vercel dashboard after setting all variables.
 
 ### Verification
+⚠ **The check this section used to prescribe cannot fail, on any host.** `/api/health` is in none of the middleware allowlists, so `GET /api/health` returns `307 → /login?next=%2Fapi%2Fhealth`; following the redirect yields a 200 **login page**, never the JSON. Probed on production 2026-09-10. A `curl` that "returns 200" here is proof of nothing.
+
 ```bash
-curl https://staging.e-site.live/api/health
-# Expected: {"healthy":true,"components":{"database":{"status":"ok"},...}}
+# Reachability + Paystack key, in one call. 401 = pass.
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+  -d '{}' https://www.e-site.live/api/paystack/webhook
 ```
-All components must show `"ok"` or `"degraded"` (not `"error"`).
+`401` = the deployment is serving and the Paystack secret is loaded. `500` = key missing. `307` = middleware is redirecting webhooks. `000` = DNS.
+
+Making `/api/health` genuinely readable by an uptime monitor is a middleware change (and adding it to `PUBLIC_PATHS` alone trips the signed-in bounce rule) — deliberate work, not a checklist step.
 
 ### Dependencies
 Requires items 1, 2, and 3 to be complete first.
@@ -365,7 +383,7 @@ pnpm add @sentry/react-native expo-application expo-device expo-localization --f
 ```
 
 ### Verification
-**Web:** Visit any page on staging and check Sentry dashboard for a session. Or trigger a test error by visiting `https://staging.e-site.live/api/health` and checking the Sentry → Issues list.
+**Web:** Visit any page on the deployed host (`esite-lilac.vercel.app` or `www.e-site.live`) and check the Sentry dashboard for a session. *(The old suggestion — hit `/api/health` to trigger an error — does not work: that path 307s to `/login` and raises nothing.)*
 
 **Mobile:** In the dev build, shake the device and a Sentry event should appear within 30 seconds in the Sentry dashboard.
 
@@ -423,10 +441,15 @@ Several DNS records are needed for the app to work correctly: the web app domain
 All records go at your DNS provider for `e-site.live`. If you don't know your DNS provider, check your domain registrar (likely Domains.co.za, Afrihost, or Hetzner SA).
 
 #### Web app
-| Type | Name | Value | Purpose |
-|---|---|---|---|
-| `CNAME` | `app` | `cname.vercel-dns.com` | Production web app |
-| `CNAME` | `staging` | `cname.vercel-dns.com` | Staging web app |
+
+⚠ **Neither of the two records this table originally listed — `app` and `staging` — was ever created, and production does not need either.** The 2026-05-28 cutover went to the apex + `www` instead — `A @ → 76.76.21.21` and `CNAME www → cname.vercel-dns.com` — and `https://www.e-site.live` is the canonical production host today. The table is kept because the mobile app still points at `app.e-site.live` (see Universal Links below), so the record is *planned*, not *present*.
+
+| Type | Name | Value | Purpose | Status (2026-09-10) |
+|---|---|---|---|---|
+| `A` | `@` | `76.76.21.21` | Apex → Vercel; 307s to `www` | **Live** |
+| `CNAME` | `www` | `cname.vercel-dns.com` | **Canonical production web app** | **Live** |
+| `CNAME` | `app` | `cname.vercel-dns.com` | Only needed if iOS Universal Links keep `applinks:app.e-site.live` | **`NXDOMAIN` — never created** |
+| `CNAME` | `staging` | `cname.vercel-dns.com` | Staging web app | **`NXDOMAIN` — never created; no staging project exists** |
 
 > Vercel gives you the exact value when you add the domain in **Project → Settings → Domains**.
 
@@ -439,20 +462,28 @@ Resend gives you the exact records to add (item 2). Typically:
 | `TXT` | `send` | `v=spf1 include:amazonses.com ~all` |
 
 #### iOS Universal Links (for magic-link auth on iPhone)
-Apple requires an HTTPS endpoint at `https://e-site.live/.well-known/apple-app-site-association` that returns a JSON file. This is served by the Next.js app. Make sure the `app` A/CNAME record above is live before testing.
+Apple requires an HTTPS endpoint at `https://<host>/.well-known/apple-app-site-association` returning a JSON file, served over the host named in `associatedDomains`.
 
-The file is already generated by the `app.config.ts` `associatedDomains: ['applinks:e-site.live']` setting — Expo handles this automatically during the App Store submission process.
+⚠ **Two claims in the previous version of this section were wrong, and Universal Links do not work today.** `apps/mobile/app.config.ts:40` reads `associatedDomains: ['applinks:app.e-site.live']` — **`app.`**, not the apex this section claimed — and that host is `NXDOMAIN`, so Apple can fetch nothing. Nor is the file "already generated": `https://www.e-site.live/.well-known/apple-app-site-association` returns **`307`** (there is no such route in `apps/web`), and Expo does not synthesise an AASA file for you — it only declares the entitlement.
+
+Fixing this is a **coordinated change, not a DNS tweak**: serve a real AASA file from the web app at the chosen host, repoint `associatedDomains` (and `EXPO_PUBLIC_WEB_URL` in `apps/mobile/eas.json`), then rebuild natively and resubmit. Do not repoint `associatedDomains` on its own — an entitlement pointing at a host with no AASA file is just as broken, and the break only shows up on a real device.
 
 ### Verification
 ```bash
-# Check web app DNS
+# Canonical production host — MUST resolve
+dig +short www.e-site.live
+
+# The planned app host. As of 2026-09-10 this correctly returns NOTHING
+# (NXDOMAIN): the record was never created. Keep this check — it is how you
+# tell whether the mobile Universal-Links host has been cut over yet. An empty
+# answer here means anything pointing at app.e-site.live is broken.
 dig CNAME app.e-site.live
 
 # Check email DNS
 dig TXT resend._domainkey.e-site.live
 
-# After app is live — check Apple site association
-curl https://e-site.live/.well-known/apple-app-site-association
+# Apple site association — currently 307s (no AASA file is served anywhere)
+curl -sS -o /dev/null -w '%{http_code}\n' https://www.e-site.live/.well-known/apple-app-site-association
 ```
 
 ### Dependencies
@@ -737,10 +768,9 @@ Once all 6 items are confirmed, tell Claude Code: **"Staging is ready — run th
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL | No |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key | No |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key | **Yes** |
-| `NEXT_PUBLIC_SITE_URL` | Full URL of the web app | No |
+| `NEXT_PUBLIC_SITE_URL` | Full URL of the web app — production is `https://www.e-site.live` | No |
 | `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY` | Paystack public key | No |
-| `PAYSTACK_SECRET_KEY` | Paystack secret key | **Yes** |
-| `PAYSTACK_WEBHOOK_SECRET` | Paystack webhook verification | **Yes** |
+| `PAYSTACK_SECRET_KEY` | Paystack secret key — **also** verifies webhook signatures | **Yes** |
 | `NEXT_PUBLIC_POWERSYNC_URL` | PowerSync instance URL | No |
 | `NEXT_PUBLIC_POSTHOG_KEY` | PostHog project API key | No |
 | `NEXT_PUBLIC_POSTHOG_HOST` | `https://eu.posthog.com` | No |
@@ -755,11 +785,12 @@ Once all 6 items are confirmed, tell Claude Code: **"Staging is ready — run th
 npx supabase secrets set \
   RESEND_API_KEY=re_... \
   RESEND_FROM="E-Site <noreply@e-site.live>" \
-  SITE_URL=https://app.e-site.live \
+  SITE_URL=https://www.e-site.live \
   PAYSTACK_SECRET_KEY=sk_... \
-  PAYSTACK_WEBHOOK_SECRET=... \
   --project-ref <your-project-ref>
 ```
+
+⚠ `SITE_URL` here is the base URL for every link in every edge-sent email. This block previously prescribed `https://app.e-site.live`, and the 2026-09 payments audit found the live secret still set to exactly that — a host that does not resolve. `PAYSTACK_WEBHOOK_SECRET` has been dropped from the block because no code reads it; a stray secret by that name is live in the store and should be removed under its own change.
 
 ### EAS Secrets (mobile build)
 

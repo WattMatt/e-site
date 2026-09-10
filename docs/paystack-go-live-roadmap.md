@@ -6,6 +6,25 @@
 
 ---
 
+## ⚠ Canonical hostname — read this before typing a URL into any dashboard
+
+**Production is `https://www.e-site.live`. Nothing else.**
+
+| Host | Reality — probed 2026-09-10 |
+|---|---|
+| `www.e-site.live` | **Canonical production.** Resolves (`cname.vercel-dns.com`). `NEXT_PUBLIC_SITE_URL` Production has held this value since 2026-05-28, and the live `sitemap.xml` emits `https://www.e-site.live/…` for every URL. |
+| `e-site.live` (apex) | Resolves, `307`s to `www`. Fine to click in a browser; **wrong in an env var or a webhook field** — a redirect is not followed by every caller, and a redirected signed POST can lose its body. |
+| `app.e-site.live` | **Does not exist.** `dig` → `NXDOMAIN` (authority `ns-cloud-d1.googledomains.com`); `curl` → `Could not resolve host`. It has never been created. |
+| `staging.e-site.live` | **Does not exist.** `NXDOMAIN`. There is no staging host — the pre-production URL is the Vercel alias `esite-lilac.vercel.app`. |
+
+**Why this warning exists, and why the old conditional was worse than a plain mistake.** Earlier revisions of this runbook pre-filled `app.e-site.live` and hedged it with *"(if DNS cutover done)"*. The project's own source of truth — `SPEC DOCS/paystack/00-master-spec.md` item **C8** — records the DNS cutover as **executed and closed on 2026-05-28**. So an operator who checks whether the cutover was done gets **YES**, takes that branch in good faith, and lands on a host that resolves to nothing. The cutover was **apex + `www` only**; an `app` record was never part of it. Every such conditional has been deleted from this document rather than corrected: there is no state of the world in which `app.e-site.live` is the right answer.
+
+**If you see `app.e-site.live` in a Paystack, Vercel or Supabase field, it is wrong. Replace it with `www.e-site.live`.**
+
+The one place it legitimately still appears is the mobile app — `apps/mobile/app.config.ts` (`associatedDomains: ['applinks:app.e-site.live']`) and `apps/mobile/eas.json` (`EXPO_PUBLIC_WEB_URL`). **Do not "fix" those from this runbook.** Repointing `associatedDomains` requires an `apple-app-site-association` file served at the new host (none is served at `www` today — `/.well-known/apple-app-site-association` returns `307`), a native rebuild and a store submission. Flagged, tracked separately, out of scope here.
+
+---
+
 ## How to use this doc
 
 This roadmap is split into two layers:
@@ -47,7 +66,7 @@ This roadmap is split into two layers:
 
 **Schema:** `billing.subscriptions` table already has `paystack_plan_code` + `paystack_subscription_code` + `paystack_customer_code` + `next_billing_date` columns from migration `00007_billing_schema.sql`. No migration needed.
 
-**Cancellation:** the `subscription.disable` webhook handler already flips status → `cancelled`. A user-facing "Cancel my subscription" button in the app is NOT yet wired — Arno currently has to cancel via Paystack dashboard (Customers → ⋯ → Disable subscription). Adding the button is a separate ~30min task: server action calls `POST https://api.paystack.co/subscription/disable` with the row's `paystack_subscription_code` + `email_token` (which Paystack returns on subscription.create — needs persisting). Defer until first real customer asks.
+**Cancellation — this paragraph was stale; the button shipped.** `apps/web/src/app/(admin)/settings/billing/CancelSubscriptionButton.tsx` is rendered from `settings/billing/page.tsx` whenever the subscription is not already `cancelled`, and calls `cancelSubscriptionAction` (`apps/web/src/actions/billing.actions.ts`), which is **owner/admin only**, disables the subscription at Paystack via `paystack_subscription_code` and then writes `status='cancelled'` locally. The `subscription.disable` webhook applies the same flip, idempotently. Nothing here needs building; do **not** route Arno to the Paystack dashboard to cancel.
 
 **The rest of this doc assumes Path B is shipped (it is) and that Arno is now ready to provision live mode.**
 
@@ -155,7 +174,7 @@ Paste this into Claude-in-Chrome (after the PRE-FILL block above is fully resolv
 >    - Country: South Africa
 >    - Currency: ZAR
 >    - Business address (registered address from CIPC)
->    - Business website: `https://e-site.live` (or staging URL until DNS cutover, but Paystack prefers a live website)
+>    - Business website: `https://www.e-site.live` (live and serving; the apex `https://e-site.live` 307s here)
 >    - Business description (1–2 sentences, e.g. "Construction site management SaaS for South African electrical contractors — snag tracking, COC compliance, RFIs, and site diaries.")
 > 5. **Director / shareholder information** — for each director:
 >    - Full name (matches ID)
@@ -229,7 +248,7 @@ Paste this into Claude-in-Chrome **only after Paystack confirms verification by 
 >
 > **C. Configure live webhook**
 > 7. Settings → API Keys & Webhooks → **Webhooks** section → Add webhook URL.
-> 8. URL: `https://app.e-site.live/api/paystack/webhook` *(if DNS cutover done)*, **OR** `https://esite-lilac.vercel.app/api/paystack/webhook` *(if cutover not done yet — change later)*.
+> 8. URL: **`https://www.e-site.live/api/paystack/webhook`** — exactly that, no conditional. Not `app.e-site.live` (does not resolve — see the canonical-hostname section at the top of this doc), not the apex `e-site.live` (307s to `www`), not the Vercel alias.
 > 9. Subscribe to events: tick **all** of these (Paystack signs every event with the secret key, no per-event secret):
 >    - `charge.success`
 >    - `charge.failed`
@@ -240,7 +259,18 @@ Paste this into Claude-in-Chrome **only after Paystack confirms verification by 
 >    - `invoice.update`
 >    - `invoice.payment_failed`
 >    - `customeridentification.success` (only if you decide to verify customers, optional)
-> 10. Save. Hit **Test webhook** → pick `charge.success` → send. Confirm 200 from `/api/paystack/webhook`.
+> 10. Save, then run **both** of these, in order:
+>     - **a.** From any terminal, no auth needed:
+>       ```bash
+>       curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+>         -d '{}' https://www.e-site.live/api/paystack/webhook
+>       ```
+>       **Expect `401`.** Each possible result means something different, and all three are distinguishable:
+>       · `401` → **pass.** The request reached the handler and was rejected for a bad signature, which proves both that middleware is letting it through and that `PAYSTACK_SECRET_KEY` is loaded (the handler computes an HMAC with it before comparing).
+>       · `500` → the key is **missing** in that environment (`{"error":"Webhook not configured"}` — the handler fails closed).
+>       · `307` → **middleware is redirecting the webhook to `/login`.** Paystack records a redirect as a failed delivery and disables the endpoint after enough of them — a failure that looks exactly like Paystack never sending anything. `/api/paystack/webhook` is exempted via `SIGNED_WEBHOOK_PATHS` in `apps/web/src/middleware.ts`; a `307` means that exemption is gone.
+>       · `000` / `Could not resolve host` → the URL in step 8 is wrong.
+>     - **b.** Paystack dashboard → **Test webhook** → pick `charge.success` → send → confirm **200**.
 >
 > **D. Branding (optional but recommended)**
 > 11. Settings → Branding → upload E-Site logo (PNG, ideally 512×512 transparent). Set brand colour `#E8923A` (the amber). This shows on Paystack-hosted checkout pages and email receipts.
@@ -269,9 +299,11 @@ Paste this into Claude-in-Chrome **only after Paystack confirms verification by 
 > # Format check: must start with "pk_live_".
 > PK_LIVE=<pk_live_...>
 >
-> # The production site URL. Default below assumes DNS cutover is done.
-> # If brand domain not yet cutover, use https://esite-lilac.vercel.app and update later.
-> PRODUCTION_SITE_URL=<https://app.e-site.live>
+> # NOT a blank to fill in — a fixed, verified constant. Production has served
+> # https://www.e-site.live since 2026-05-28. Do NOT substitute app.e-site.live
+> # (NXDOMAIN) or the bare apex (307s to www). This value is only ever READ in
+> # step 4 below; nothing in this runbook writes it.
+> PRODUCTION_SITE_URL=https://www.e-site.live
 > ```
 
 Paste this into Claude-in-Chrome (after the PRE-FILL block above is filled):
@@ -289,22 +321,45 @@ Paste this into Claude-in-Chrome (after the PRE-FILL block above is filled):
 > 2. Find `PAYSTACK_SECRET_KEY`. Click the row → "Edit." Three environment checkboxes will appear (Production / Preview / Development). For the **Production** row only, paste the `SK_LIVE` value. Leave **Preview** and **Development** rows untouched (they keep the test key).
 >    - **Vercel UX gotcha:** if the value field shows the test key as the current value across all envs, you need to "split" the var — click "Add another value" or similar to create a per-env override. Confirm afterward that `vercel env ls` (read-only) shows the var with two distinct entries: one for Production, one for Preview/Development.
 > 3. Find `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY`. Same edit: Production → `PK_LIVE`, Preview/Development untouched.
-> 4. Find `NEXT_PUBLIC_SITE_URL`. Confirm Production value matches `PRODUCTION_SITE_URL`. If wrong, fix it. Preview value should stay `https://esite-lilac.vercel.app`.
+> 4. Find `NEXT_PUBLIC_SITE_URL`. **This step is a read-only verification. Do not edit this variable.**
+>    Its Production value is already correct — `https://www.e-site.live`, set 2026-05-28 — and it has the widest blast radius of anything on this page: it is the `callback_url` for all four Paystack checkouts (`checkout`, `feature-unlock`, `feature-seat`, `mv-subscribe`) **and** the base URL of every link in every RFI, QC, snag, diary, site-form and invite email, and in the PDFs. Overwriting it with a host that does not resolve breaks both redundant subscription-activation paths at once and ships dead links to every recipient.
+>    Read the Production value and record it verbatim in the report-back. **If, and only if, it reads anything other than `https://www.e-site.live` — STOP and report. Do not "fix" it from this runbook.** Preview should stay `https://esite-lilac.vercel.app`.
+> 4b. **Rotate the Supabase Edge secret as well — this runbook used to rotate only Vercel.**
+>    Three deployed edge functions read `PAYSTACK_SECRET_KEY` from Supabase's own secret store, which Vercel knows nothing about: `paystack-webhook`, `marketplace-payment` and `eft-invoice`. Rotate Vercel alone and you ship a split brain — Vercel on `sk_live_`, the edge functions still on `sk_test_` — in which every edge-side charge, split and signature verification silently transacts against the wrong Paystack account.
+>    ```bash
+>    npx supabase secrets set PAYSTACK_SECRET_KEY="$SK_LIVE" --project-ref cbskbnvvgcybmfikxgky
+>    npx supabase secrets list --project-ref cbskbnvvgcybmfikxgky   # confirm the digest for that name changed
+>    ```
+>    A secret change needs no function redeploy — the next invocation reads the new value. (Edge functions do **not** auto-deploy on merge; that is a separate CLI step, and not part of this rotation.)
+>    There is **no separate webhook secret to rotate**: Paystack signs with the secret key itself. A `PAYSTACK_WEBHOOK_SECRET` exists in that store and is read by **zero** code in this repo — see the quick-reference table at the foot of this doc. Leave it alone here; deleting a production secret is its own reviewed change.
+>    ⚠ While you are in that store: the 2026-09 payments audit found **`SITE_URL` set to `https://app.e-site.live`** — the host that does not resolve — and every link in every edge-sent email is built from it. Confirm the current value and correct it to `https://www.e-site.live`, **as its own tracked change**, not smuggled into a key rotation.
+>
 > 5. Trigger a Vercel **redeploy** of the latest production deployment (env-var changes do NOT auto-redeploy).
 >    - Deployments tab → filter by Production → latest → ⋯ menu → **Redeploy** → tick "Use existing Build Cache" → Redeploy.
 > 6. Wait until status shows READY (~50s typical). Note the new `dpl_…` ID from the URL bar.
 >
 > **Post-rotation verification (do this in this same Chrome session):**
-> 7. Open `https://app.e-site.live/api/health` (or whichever the production domain is). The route reads `PAYSTACK_SECRET_KEY` and reports `status:'degraded'` if missing — a 200 response with no Paystack-degraded message confirms the key is loaded post-redeploy.
+> 7. **`/api/health` cannot be used for this, and the check this step used to prescribe was structurally incapable of failing.** `GET https://www.e-site.live/api/health` returns **`307 → /login?next=%2Fapi%2Fhealth`**: the route is in none of the middleware allowlists (`PUBLIC_PATHS`, `PUBLIC_EXACT_PATHS`, `SELF_AUTH_PATHS`, `SIGNED_WEBHOOK_PATHS`, `PUBLIC_API_PATHS` in `apps/web/src/middleware.ts`). Follow that redirect and you get a **200 login page that contains no Paystack text at all** — so the old instruction, *"a 200 response with no Paystack-degraded message"*, passed unconditionally, including with Paystack entirely misconfigured. Probed 2026-09-10. The same redirect is why external uptime monitors have never actually been reading this endpoint either.
+>
+>    Use this instead — one command, four outcomes, and it fails visibly:
+>    ```bash
+>    curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+>      -d '{}' https://www.e-site.live/api/paystack/webhook
+>    ```
+>    `401` = key loaded (an unsigned body was HMAC'd and rejected) → **pass**. `500` = `PAYSTACK_SECRET_KEY` missing from the Production env → the rotation did not take. `307` = middleware is swallowing webhooks. `000` = DNS. This proves the key is **present**; only step 8 proves it is the **live** key.
+>
+>    **Follow-up, not part of this cutover:** making `/api/health` readable by uptime monitors is a code change in `apps/web/src/middleware.ts`, and adding it to `PUBLIC_PATHS` alone clears rule 1 and then trips rule 2 (the signed-in bounce to `/dashboard`). Do it deliberately, with tests — never improvised mid-cutover.
 > 8. As a non-destructive end-to-end check, log in to a real org and click **Subscribe** on `/settings/billing` for the cheapest tier. The Paystack hosted checkout page that opens has a small "Powered by Paystack" footer — if it says "Test mode" anywhere on that page, the rotation didn't take effect (still serving test keys). DO NOT actually pay — just confirm the badge is absent → close the tab.
 >
 > **Report back:**
 > - `PAYSTACK_SECRET_KEY` Production updated? Y/N + screenshot of env-vars page (with values blurred)
 > - `PAYSTACK_PUBLIC_KEY` Production updated? Y/N
 > - Preview/Development still on `sk_test_…`? Y/N
-> - `NEXT_PUBLIC_SITE_URL` Production correct? Y/N + value
+> - Supabase Edge `PAYSTACK_SECRET_KEY` rotated (step 4b)? Y/N + confirmation the digest changed
+> - Supabase Edge `SITE_URL` current value? (report it — do not change it here)
+> - `NEXT_PUBLIC_SITE_URL` Production value, read verbatim? (expect `https://www.e-site.live`; anything else = STOP)
 > - Redeploy READY? Y/N + new `dpl_…` ID
-> - `/api/health` returns 200 with no Paystack-degraded message? Y/N
+> - Unsigned POST to `/api/paystack/webhook` returns 401? Y/N + the actual code
 > - Hosted checkout page in §4.8 absent the "Test mode" badge? Y/N
 
 ---
@@ -338,7 +393,7 @@ Steps Arno does himself (NOT a Claude-Chrome task — requires real card, real b
    ```
    Note the `org_id` UUID of the chosen test org. Save it as `SMOKE_ORG_ID` for steps 5 + 7 below.
 
-1. Open `https://app.e-site.live/settings/billing` (production, real auth, while logged in as a member of `SMOKE_ORG_ID`).
+1. Open `https://www.e-site.live/settings/billing` (production, real auth, while logged in as a member of `SMOKE_ORG_ID`).
 2. Pick **Starter Monthly** (R499 — the cheapest non-free tier; R10 isn't an option because pricing is plan-fixed). Click **Subscribe**.
 3. On Paystack hosted checkout, pay with real card.
 4. Confirm redirect back to `/settings/billing?success=1`.
@@ -413,7 +468,7 @@ Flagged here so they don't get missed. None block go-live, but they create silen
 | Checkout body shape (one-off → plan) | `apps/web/src/app/api/paystack/checkout/route.ts` |
 | Callback subscription-write logic | `apps/web/src/app/api/paystack/callback/route.ts` |
 | Webhook event handlers | `apps/web/src/app/api/paystack/webhook/route.ts` |
-| Webhook signature secret (auto, no env var) | uses `PAYSTACK_SECRET_KEY` directly |
+| Webhook signature secret (auto, no env var) | uses `PAYSTACK_SECRET_KEY` directly — HMAC-SHA512 over the raw body. There is **no** `PAYSTACK_WEBHOOK_SECRET` in code: the name appears in this repo only in markdown, yet exists as a live Supabase secret. Do not create, set or paste one. |
 | Test card numbers (test mode only) | https://paystack.com/docs/payments/test-payments/ |
 | Vercel env var inventory | [`.secrets/vercel.md`](../.secrets/vercel.md) |
 

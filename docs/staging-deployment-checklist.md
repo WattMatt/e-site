@@ -1,5 +1,20 @@
 # T-059 Staging Deployment Checklist
 
+> # ⚠ SUPERSEDED — historical record, do not execute
+>
+> **Annotated 2026-09-10.** This checklist describes a staging environment that was never built. Every host and one required secret in it are fiction:
+>
+> | This doc says | Reality (probed 2026-09-10) |
+> |---|---|
+> | `staging.e-site.live` — used in §5a, §5c, §7, §8 and the sign-off table | **`NXDOMAIN`.** The record was never created and there is no separate staging Vercel project. |
+> | A staging Supabase project (`<staging-ref>`) | There is one project, `cbskbnvvgcybmfikxgky`, and it is production. |
+> | `PAYSTACK_WEBHOOK_SECRET` — "generate a random 32-char hex string" | **Read by zero code.** Paystack signs with `PAYSTACK_SECRET_KEY` (HMAC-SHA512 over the raw body). A secret by this name is nonetheless live in the Supabase store, doing nothing. |
+> | `/api/health` returns `{ healthy: true }` | `/api/health` is in no middleware allowlist, so it **`307`s to `/login`** on every host. Following that redirect gives a 200 **login page** — a verification that cannot fail. |
+>
+> Pre-production today is the Vercel alias **`esite-lilac.vercel.app`** on the single `esite` project; production is **`https://www.e-site.live`**. Live-mode payment cutover: [`paystack-go-live-roadmap.md`](paystack-go-live-roadmap.md). Founder-facing setup: [`launch-checklist.md`](launch-checklist.md).
+>
+> Nothing below has been rewritten — rewriting a runbook for an environment that does not exist would invent a second fiction. It is kept verbatim as the record of what was planned in April 2026.
+
 This checklist covers everything required to stand up the E-Site v2 platform on
 the staging environment before the production launch (T-060).
 
