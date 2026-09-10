@@ -689,7 +689,10 @@ Pure, no I/O, so every decision the webhook makes is testable without a database
 - Create: `apps/web/src/lib/webhooks/resend-events.test.ts`
 - Create: `apps/web/src/lib/webhooks/resend-events.ts`
 
-**Constraint that bites here:** `project_id` lands in a `uuid` column. A tag carrying anything else would make the insert fail with SQLSTATE `22P02`, the route would 500, and **Svix would retry that request forever**. The mapper drops a non-UUID `project_id` rather than passing it on, and a test pins that.
+**Constraints that bite here.** Two columns take a raw payload string straight into a typed column, and **both** need a guard — the first was in this plan from the start, the second was missing from it and was found in review:
+
+- `project_id` lands in a `uuid` column. A tag carrying anything else fails the insert with SQLSTATE `22P02`, the route 500s, and **Svix retries that request forever**. The mapper drops a non-UUID `project_id` rather than passing it on, and a test pins that.
+- `occurred_at` lands in `TIMESTAMPTZ NOT NULL` (00185:56). An unparseable string is the same failure exactly — `22007`, a 500, an endless retry of that svix-id. **And the silent case is worse than the loud one:** Postgres *accepts* `'infinity'`, `'now'`, `'today'`, `'yesterday'` and `'epoch'` as timestamptz literals, so `created_at: "infinity"` inserts cleanly and poisons an append-only evidence log — it sorts first forever in `email_events_to_email_idx (to_email, occurred_at DESC)` and breaks every weekly bucket this table exists to support, with nothing erroring anywhere. `Date.parse` returns `NaN` for all five, so one parseability check (`stamp()` in Step 3) closes both halves.
 
 - [ ] **Step 1: Write the failing test.** Create `apps/web/src/lib/webhooks/resend-events.test.ts`.
 
@@ -767,6 +770,39 @@ describe('mapResendEvent', () => {
     const payload: any = base('email.opened')
     delete payload.created_at
     expect(mapResendEvent('msg_1', payload)?.occurred_at).toBe('2026-09-10T05:59:00.000Z')
+  })
+})
+
+describe('mapResendEvent occurred_at', () => {
+  const at = (payload: unknown) => mapResendEvent('msg_1', payload)!.occurred_at
+
+  it('drops an unparseable created_at rather than poisoning a timestamptz column', () => {
+    const p: any = base('email.delivered')
+    p.created_at = 'yesterday afternoon'
+    delete p.data.created_at
+    expect(Number.isNaN(Date.parse(at(p)))).toBe(false)
+  })
+
+  it('rejects the literals Postgres ACCEPTS — the silent half, which nothing errors on', () => {
+    // The first assertion pins the premise: if a future Date.parse starts
+    // reading these, this test fails loudly instead of silently reopening
+    // the hole it exists to close.
+    for (const literal of ['infinity', '-infinity', 'now', 'today', 'yesterday', 'epoch']) {
+      expect(Number.isNaN(Date.parse(literal))).toBe(true)
+      const p: any = base('email.delivered')
+      p.created_at = literal
+      delete p.data.created_at
+      expect(at(p)).not.toBe(literal)
+      expect(Number.isNaN(Date.parse(at(p)))).toBe(false)
+    }
+  })
+
+  it('stamps a real now() when the payload carries no timestamp at all', () => {
+    const p: any = base('email.sent')
+    delete p.created_at
+    delete p.data.created_at
+    expect(at(p)).not.toBe('')
+    expect(Number.isNaN(Date.parse(at(p)))).toBe(false)
   })
 })
 
@@ -956,6 +992,25 @@ function isHandled(t: unknown): t is ResendEventType {
   return typeof t === 'string' && (RESEND_EVENT_TYPES as readonly string[]).includes(t)
 }
 
+/**
+ * occurred_at is TIMESTAMPTZ NOT NULL (00185:56). Anything Postgres cannot read
+ * as a timestamp is a 22007 on insert — a 500 and the same endless Svix retry
+ * the project_id guard exists to avoid. Worse, Postgres ACCEPTS 'infinity',
+ * 'now', 'today' and 'epoch', so an unvalidated string can also land a silently
+ * wrong instant in an append-only evidence log: 'infinity' sorts first forever
+ * in email_events_to_email_idx (to_email, occurred_at DESC) and breaks every
+ * weekly bucket the table exists to support, with nothing erroring anywhere.
+ *
+ * Date.parse rejects all five of those literals (verified in Node), so one
+ * parseability check closes both the loud and the silent case.
+ *
+ * Any later writer of occurred_at — Task 5's backfill, Task 6's send_failure —
+ * must validate it the same way. It is the only column with no other gate.
+ */
+function stamp(v: unknown): string | null {
+  return typeof v === 'string' && v !== '' && !Number.isNaN(Date.parse(v)) ? v : null
+}
+
 /** `null` means "acknowledge and ignore" — never "reject". */
 export function mapResendEvent(webhookId: string, raw: unknown): ResendEventRow | null {
   const evt = raw as { type?: unknown; created_at?: unknown; data?: Record<string, unknown> } | null
@@ -979,11 +1034,12 @@ export function mapResendEvent(webhookId: string, raw: unknown): ResendEventRow 
     webhook_id: webhookId,
     resend_message_id: typeof data.email_id === 'string' ? data.email_id : null,
     event_type: evt.type,
-    occurred_at:
-      (typeof evt.created_at === 'string' && evt.created_at) ||
-      (typeof data.created_at === 'string' && data.created_at) ||
-      new Date().toISOString(),
-    to_email: typeof to[0] === 'string' ? (to[0] as string).trim().toLowerCase() : null,
+    occurred_at: stamp(evt.created_at) ?? stamp(data.created_at) ?? new Date().toISOString(),
+    // `|| null` and not just `.trim()`: an all-whitespace recipient trims to '',
+    // which matches nothing in the RLS policy's lower(p.email) = to_email join
+    // (00185:182), so the row would be invisible to every human who can read
+    // the table. NULL at least reads as "no recipient recorded".
+    to_email: typeof to[0] === 'string' ? (to[0] as string).trim().toLowerCase() || null : null,
     subject: typeof data.subject === 'string' ? data.subject : null,
     bounce_type: typeof bounce?.type === 'string' ? bounce.type : null,
     project_id: projectId,
@@ -1043,17 +1099,25 @@ export function sequenceTimestampFor(
 pnpm --filter web test src/lib/webhooks/resend-events.test.ts
 ```
 
-Expected: `Tests 21 passed`.
+Expected: `Tests 24 passed`.
 
-- [ ] **Step 5: Prove the tag guard can fail.** Temporarily delete `&& UUID_RE.test(tags.project_id)` from the `projectId` line, re-run, and confirm **one** test fails — `drops a non-UUID project_id instead of poisoning a uuid column` — with `expected 'KINGSWALK' to be null`. Revert and confirm `Tests 21 passed`. A guard whose test passes with the guard removed is decorative.
+- [ ] **Step 5: Prove the tag guard can fail.** Temporarily delete `&& UUID_RE.test(tags.project_id)` from the `projectId` line, re-run, and confirm **one** test fails — `drops a non-UUID project_id instead of poisoning a uuid column` — with `expected 'KINGSWALK' to be null`. Revert and confirm `Tests 24 passed`. A guard whose test passes with the guard removed is decorative.
 
-- [ ] **Step 5b: Sweep the other guards, because this step only mutates one of them.** Step 5 proves a single guard. When this task was executed, a full sweep of 24 mutants found that **three more branches survived all 21 tests above**, each with a production consequence — so the test set as written was incomplete, in exactly the way `CLAUDE.md` records three shipped times. Break each of the following, confirm a test fails, and restore:
+- [ ] **Step 5b: Sweep EVERY guard, because Step 5 only mutates one of them.** Step 5 proves a single guard. Two sweeps — one at execution, one in review — found **nine** further branches that survived every test then in the file. Three carried a production consequence outright; six were defensive guards whose shipped behaviour was correct but unproven, which by this plan's own standard makes them decorative. The test block above now covers all of them; break each of the following one at a time, confirm a **named** test fails, and restore:
 
 | Break this | What it would cost in production |
 |---|---|
 | `row.event_type === 'email.bounced'` in the hard-bounce condition | A `delivery_delayed` or `failed` payload carrying a classification suppresses the address — silently deleting the channel to a contractor |
 | `if (!row.to_email) return null` in `suppressionFor` | A null into `email_suppressions.email_address`, which is the PRIMARY KEY: 23502 → 500 → Svix retries that request forever |
 | `.trim()` on the address | A padded address matches neither the suppression key nor the RLS join on `lower(profiles.email)`, and fails silently in both |
+| `stamp()` on `occurred_at` | `22007` → 500 → endless Svix retry; and, silently, `'infinity'` inserts cleanly and poisons the index the weekly buckets read |
+| `|| null` on the address | An all-whitespace recipient stores `''`, which matches nothing in the RLS join — the row is invisible to every human |
+| `new Date().toISOString()` fallback (mutate to `''`) | A payload with no usable timestamp writes `''` into a NOT NULL timestamptz: `22007` again |
+| `!evt` in the null-payload guard | `null` body → TypeError → 500 → Svix retries that svix-id forever |
+| `evt.data ?? {}` | A handled event with no `data` object → TypeError on `data.to` → same |
+| `typeof` on `subject`, on `email_id`, on tag values (**both** encodings) | A non-string reaches a TEXT column, or a numeric `kind` becomes the `entity_ref` string `'42'` — wrong attribution, no error |
+
+⚠ **Any later writer of `occurred_at` must validate it the same way.** Task 5 (`source='backfill'`) and Task 6 (`source='send_failure'`) insert into the same `TIMESTAMPTZ NOT NULL` column and would inherit this hole verbatim from a copied line — `occurred_at` is the only column in `email_events` with no other gate: `event_type` and `source` are pinned by the CHECK contract below, `project_id` by `UUID_RE`, `to_email` by the suppression guard.
 
 Also add a contract test that parses the three CHECK constraints out of `00185_resend_email_delivery_evidence.sql` and asserts this mapper's vocabulary agrees with them — event types, `source`, and `reason`. Prove it is not decorative by adding a bogus value such as `'email.scheduled'` to `RESEND_EVENT_TYPES` and watching it fail. A mapper that emits a value the CHECK rejects is a 500 on a live webhook, and nothing else in the suite would catch it.
 
