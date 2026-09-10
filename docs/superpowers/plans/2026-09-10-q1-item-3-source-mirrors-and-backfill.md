@@ -1169,7 +1169,7 @@ The status reconciliation matters because A(b) maps `inspection.assigned → ope
 
 - [ ] **Step 7: Run it and watch it pass.**
   ```bash
-  pnpm --filter web test -- source-status-map
+  pnpm --filter web test source-status-map
   ```
   Expected: 13 passed (5 parse + 5 coverage + diary-null + universal + stop-list).
 
@@ -3295,7 +3295,7 @@ One function serves all six, keyed on `TG_ARGV[0]`. `format('%I')` quotes the id
 
 - [ ] **Step 7: Run it and watch 9 pass.**
   ```bash
-  pnpm --filter web test -- mirror-triggers
+  pnpm --filter web test mirror-triggers
   ```
 
 - [ ] **Step 8: Prove each of the nine tests can fail — ten mutations, because the F7 test carries three assertions.** One at a time, undo the thing it guards, run, confirm the named failure, restore:

@@ -557,7 +557,7 @@ describe('readSvixHeaders', () => {
 
 ```bash
 cd "/Volumes/Extreme SSD/DEVELOPER/APPS/ESITE.V1/wt-v2-roadmap"
-pnpm --filter web test -- src/lib/webhooks/svix-signature.test.ts
+pnpm --filter web test src/lib/webhooks/svix-signature.test.ts
 ```
 
 Expected: `Error: Failed to load url ./svix-signature` — the module does not exist yet.
@@ -640,7 +640,7 @@ export function verifySvixSignature(opts: {
 - [ ] **Step 4: Run it and watch it pass.**
 
 ```bash
-pnpm --filter web test -- src/lib/webhooks/svix-signature.test.ts
+pnpm --filter web test src/lib/webhooks/svix-signature.test.ts
 ```
 
 Expected: `Test Files 1 passed`, `Tests 14 passed`.
@@ -866,7 +866,7 @@ describe('sequenceTimestampFor', () => {
 - [ ] **Step 2: Run it and watch it fail.**
 
 ```bash
-pnpm --filter web test -- src/lib/webhooks/resend-events.test.ts
+pnpm --filter web test src/lib/webhooks/resend-events.test.ts
 ```
 
 Expected: `Failed to load url ./resend-events`.
@@ -1040,7 +1040,7 @@ export function sequenceTimestampFor(
 - [ ] **Step 4: Run it and watch it pass.**
 
 ```bash
-pnpm --filter web test -- src/lib/webhooks/resend-events.test.ts
+pnpm --filter web test src/lib/webhooks/resend-events.test.ts
 ```
 
 Expected: `Tests 22 passed`.
@@ -1273,7 +1273,7 @@ describe('POST /api/webhooks/resend', () => {
 - [ ] **Step 2: Run it and watch it fail.**
 
 ```bash
-pnpm --filter web test -- src/app/api/webhooks/resend/route.test.ts
+pnpm --filter web test src/app/api/webhooks/resend/route.test.ts
 ```
 
 Expected: `Failed to load url ./route`.
@@ -1399,7 +1399,7 @@ export async function POST(req: NextRequest) {
 - [ ] **Step 4: Run it and watch it pass.**
 
 ```bash
-pnpm --filter web test -- src/app/api/webhooks/resend/route.test.ts
+pnpm --filter web test src/app/api/webhooks/resend/route.test.ts
 ```
 
 Expected: `Tests 11 passed`.
@@ -1479,7 +1479,7 @@ describe('signed webhook bypass', () => {
 - [ ] **Step 2: Run it and watch it fail.**
 
 ```bash
-pnpm --filter web test -- src/middleware.test.ts
+pnpm --filter web test src/middleware.test.ts
 ```
 
 Expected: the **first two** new tests fail with `expected '/login' to be null` (or `expected 307 to be 200`). **That is the live bug, demonstrated twice.** The third passes already — `/api/webhooks` with no trailing segment is deliberately *not* bypassed, so a `startsWith` that is too loose gets caught here.
@@ -1516,7 +1516,7 @@ Then extend the bypass at `:85-87`:
 - [ ] **Step 4: Run it and watch it pass.**
 
 ```bash
-pnpm --filter web test -- src/middleware.test.ts
+pnpm --filter web test src/middleware.test.ts
 ```
 
 Expected: all tests pass, including all three new ones.
@@ -1665,7 +1665,7 @@ describe('isSuppressed', () => {
 - [ ] **Step 2: Run it and watch it fail.**
 
 ```bash
-pnpm --filter @esite/shared test -- src/email/suppression.test.ts
+pnpm --filter @esite/shared test src/email/suppression.test.ts
 ```
 
 Expected: `Failed to load url ./suppression`.
@@ -1740,7 +1740,7 @@ export * from './email/suppression'
 ```
 
 ```bash
-pnpm --filter @esite/shared test -- src/email/suppression.test.ts
+pnpm --filter @esite/shared test src/email/suppression.test.ts
 ```
 
 Expected: `Tests 5 passed`.
@@ -2403,7 +2403,7 @@ describe('edge senders agree on the SITE_URL default', () => {
 - [ ] **Step 2: Run it and watch it fail.**
 
 ```bash
-pnpm --filter web test -- src/lib/email/edge-site-url.contract.test.ts
+pnpm --filter web test src/lib/email/edge-site-url.contract.test.ts
 ```
 
 Expected: **both** tests fail —
@@ -2429,7 +2429,7 @@ supabase secrets set SITE_URL="https://www.e-site.live" --project-ref <ref>
 - [ ] **Step 5: Run it and watch it pass.**
 
 ```bash
-pnpm --filter web test -- src/lib/email/edge-site-url.contract.test.ts
+pnpm --filter web test src/lib/email/edge-site-url.contract.test.ts
 ```
 
 Expected: `Tests 2 passed`.

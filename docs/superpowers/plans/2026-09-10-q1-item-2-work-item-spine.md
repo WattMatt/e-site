@@ -376,7 +376,7 @@ describe('STATE_LABELS — the reader-facing word for a universal status', () =>
 
 ```bash
 cd "/Volumes/Extreme SSD/DEVELOPER/APPS/ESITE.V1/wt-v2-roadmap"
-pnpm --filter @esite/shared test -- ball-in-court
+pnpm --filter @esite/shared test ball-in-court
 ```
 
 Expected: `Failed to resolve import "./types"` — nine failing tests. That is your red.
@@ -573,7 +573,7 @@ export * from './types'
 - [ ] **Step 4: Run it and watch it pass.**
 
 ```bash
-pnpm --filter @esite/shared test -- ball-in-court
+pnpm --filter @esite/shared test ball-in-court
 ```
 
 Expected: `Test Files 1 passed`, `Tests 9 passed`.
@@ -4339,7 +4339,7 @@ describe('setWorkItemDueDateAction', () => {
 - [ ] **Step 2: Run it and watch it fail.**
 
 ```bash
-pnpm --filter web test -- work-items.actions
+pnpm --filter web test work-items.actions
 ```
 
 Expected: `Failed to resolve import "./work-items.actions"` — fifteen failing tests. Red.
@@ -4639,7 +4639,7 @@ export async function voidWorkItemAction(
 - [ ] **Step 4: Run it and watch it pass.**
 
 ```bash
-pnpm --filter web test -- work-items.actions
+pnpm --filter web test work-items.actions
 ```
 
 Expected: `Tests 15 passed`.
@@ -4687,7 +4687,7 @@ Expected: `Tests 15 passed`.
 - [ ] **Step 10: Lint, type-check and commit.**
 
 ```bash
-pnpm --filter web type-check && pnpm --filter web lint && pnpm --filter web test -- work-items.actions
+pnpm --filter web type-check && pnpm --filter web lint && pnpm --filter web test work-items.actions
 git add apps/web/src/actions/work-items.actions.ts \
         apps/web/src/actions/work-items.actions.test.ts \
         docs/rbac-matrix.md CONFORMANCE.md
@@ -4893,7 +4893,7 @@ describe('work-item type registry — A(b) <-> migration <-> TypeScript', () => 
 - [ ] **Step 2: Run it and watch it pass.**
 
 ```bash
-pnpm --filter @esite/shared test -- work-item-types.contract
+pnpm --filter @esite/shared test work-item-types.contract
 ```
 
 Expected: `Tests 10 passed`. If the `write_roles` assertion fails, the seed diverged from the shared constants — fix the **seed**, not the test.
