@@ -9,10 +9,27 @@ export const metadata: Metadata = {
 }
 
 // Server component. Running the opt-out as part of the page render gives
-// one-click unsubscribe (no "click to confirm" extra step) — matches the
-// expected behaviour of a List-Unsubscribe / mailto link.
+// one-click unsubscribe (no "click to confirm" extra step). This is the human
+// path — the recipient clicking the footer link; the mailbox provider's own
+// Unsubscribe control POSTs to /api/unsubscribe instead (RFC 8058), and both
+// call the same writer.
+//
+// ⚠ This page was 307'd to /login for every anonymous visitor until 2026-09,
+// i.e. for every recipient who clicked it from an inbox. It is public because
+// middleware.ts lists it in LEGAL_PREFIXES; it must also stay out of the
+// signed-in bounce, the unconfirmed-email gate and the MFA gate, all of which
+// would send a dormant recipient somewhere other than here. middleware.test.ts
+// enumerates app/(legal) from disk and pins all four.
+//
+// `!result.ok` now covers the case that used to render as success: an UPDATE
+// that matched zero rows. Never tell someone they are unsubscribed on the
+// strength of a write that changed nothing.
 //
 // Spec: spec-v2.md §19 (POPIA consent revocation + anti-spam compliance).
+
+// The opt-out is a write; it must never be served from a cache, and the
+// rendered confirmation is specific to one ?user.
+export const dynamic = 'force-dynamic'
 
 export default async function UnsubscribePage(props: {
   searchParams: Promise<{ user?: string }>

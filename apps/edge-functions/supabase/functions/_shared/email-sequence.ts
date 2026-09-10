@@ -51,10 +51,43 @@ export function getSiteUrl(): string {
 }
 
 export function unsubscribeUrlFor(userId: string): string {
-  // /unsubscribe page is Phase 1 final task (T-065 area). Until then the URL
-  // resolves to a placeholder — but the link must be present in every email
-  // per POPIA + CAN-SPAM equivalents.
+  // Human-facing footer link: a GET that renders confirmation.
   return `${SITE_URL}/unsubscribe?user=${encodeURIComponent(userId)}`
+}
+
+// RFC 8058 one-click target. A POST endpoint, NOT the page — App Router pages
+// answer GET only, so pointing the header at /unsubscribe would make every
+// provider-rendered click a 405. Kept as a named export so the cross-file
+// contract test can check it resolves to a real route handler that the
+// middleware does not redirect.
+export const ONE_CLICK_UNSUBSCRIBE_PATH = '/api/unsubscribe'
+
+/**
+ * List-Unsubscribe (RFC 2369) + List-Unsubscribe-Post (RFC 8058).
+ *
+ * Why these exist at all: the footer link alone is a link inside HTML that a
+ * recipient has to find. With these headers Gmail, Outlook and Yahoo render
+ * their own Unsubscribe control at the top of the message, and — this is the
+ * part that matters for deliverability — a recipient who has that control is
+ * far less likely to reach for "mark as spam" instead. Every spam complaint
+ * lands against the same e-site.live sending reputation that carries password
+ * resets and project invites.
+ *
+ * Before this, resendSend posted from/to/subject/html only. There was no
+ * header, the page behind the footer link 307'd to /login, and the write
+ * behind the page matched zero rows: 246 marketing sends, 36 recipients,
+ * 0 opt-outs, and no way for anyone to record one.
+ *
+ * `List-Unsubscribe-Post` must be exactly `List-Unsubscribe=One-Click`; any
+ * other spelling is silently treated as no one-click support.
+ */
+export function listUnsubscribeHeaders(userId: string): Record<string, string> {
+  const oneClick =
+    `${SITE_URL}${ONE_CLICK_UNSUBSCRIBE_PATH}?user=${encodeURIComponent(userId)}`
+  return {
+    'List-Unsubscribe': `<${oneClick}>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+  }
 }
 
 export function serviceRoleClient(): SupabaseClient {
@@ -99,7 +132,12 @@ async function insertEvent(
   return { eventId: data.id }
 }
 
-async function resendSend(to: string, subject: string, html: string): Promise<string> {
+async function resendSend(
+  to: string,
+  subject: string,
+  html: string,
+  headers?: Record<string, string>,
+): Promise<string> {
   if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY not set')
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -107,7 +145,9 @@ async function resendSend(to: string, subject: string, html: string): Promise<st
       Authorization: `Bearer ${RESEND_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from: FROM, to, subject, html }),
+    // `headers` here is the custom-header map Resend injects into the outbound
+    // MIME message — not the headers of this API call.
+    body: JSON.stringify({ from: FROM, to, subject, html, headers }),
   })
   if (!res.ok) {
     const body = await res.text()
@@ -129,7 +169,12 @@ export async function sendSequenceEmail(
   if ('duplicate' in insertResult) return { status: 'skipped_duplicate' }
 
   try {
-    const messageId = await resendSend(input.toEmail, input.subject, input.html)
+    const messageId = await resendSend(
+      input.toEmail,
+      input.subject,
+      input.html,
+      listUnsubscribeHeaders(input.userId),
+    )
     await (supabase as any)
       .from('email_sequence_events')
       .update({ resend_message_id: messageId })

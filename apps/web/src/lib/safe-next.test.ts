@@ -32,6 +32,26 @@ describe('safeNext', () => {
     expect(safeNext('')).toBeNull()
   })
 
+  // Every ?next=/unsubscribe already emitted by the broken middleware is still
+  // in inboxes and browser history. Without these prefixes safeNext drops them
+  // and login lands on /dashboard, so the user who just proved they wanted to
+  // unsubscribe is silently taken somewhere else.
+  it('allows the compliance pages an email link can bounce through login', () => {
+    expect(safeNext('/unsubscribe?user=018f2d31-bbe8-4cc1-bbdd-63af0187081e')).toBe(
+      '/unsubscribe?user=018f2d31-bbe8-4cc1-bbdd-63af0187081e',
+    )
+    expect(safeNext('/privacy/request')).toBe('/privacy/request')
+    expect(safeNext('/cookies')).toBe('/cookies')
+  })
+
+  it('rejects look-alikes of the compliance prefixes', () => {
+    expect(safeNext('/unsubscribex')).toBeNull()
+    expect(safeNext('/cookiesevil')).toBeNull()
+    // '/privacy' alone is a next.config 308 to /legal/privacy, not a page here.
+    expect(safeNext('/privacy')).toBeNull()
+    expect(safeNext('/privacy/requests')).toBeNull()
+  })
+
   it('rejects prefix look-alikes', () => {
     expect(safeNext('/dashboardevil')).toBeNull()
     expect(safeNext('/portalx/foo')).toBeNull()
