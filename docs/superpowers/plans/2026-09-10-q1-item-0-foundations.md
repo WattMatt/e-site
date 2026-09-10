@@ -1156,7 +1156,7 @@ EOF
 
 - **Read `process.env.RESEND_WEBHOOK_SECRET` inside `POST`, not at module scope.** A module-scope constant is captured once per lambda instance, so a warm instance that started before the variable was set keeps serving 500s after it is set. Reading per request costs nothing and removes that class of bug — and it removes `vi.resetModules()` from the unconfigured-secret test. **It does not remove the redeploy in Task 7**: Vercel binds environment variables at deploy time, so a variable added after a build is absent from the running deployment's environment regardless of where the code reads it.
 - **Page-level gating is not a gate**, and neither is middleware. `app/api/*` handlers are directly invocable; the signature is the only authenticator here, and it is checked before anything is parsed or written.
-- **Do not use `.upsert()` for the event insert.** PostgREST emits `ON CONFLICT` only when `Prefer: resolution=merge-duplicates` arrives as an HTTP **header**, and this repository has twice shipped an upsert that reported no error and changed nothing (PR #143, PR #158). Use a plain `.insert()` and treat SQLSTATE `23505` as success — a duplicate Svix delivery is a no-op by definition. The one genuine upsert (suppressions) is re-read in production in Task 7 rather than trusted.
+- **Do not use `.upsert()` for the event insert.** PostgREST emits `ON CONFLICT` only when `Prefer: resolution=merge-duplicates` arrives as an HTTP **header**, and this repository has twice shipped an upsert that reported no error and changed nothing (PR #143, PR #158). Use a plain `.insert()` and treat SQLSTATE `23505` as success — but **fall through to the post-insert writes on it, do not return**. A duplicate delivery is not a no-op: the retry that a suppression failure asks for arrives with the **same** `svix-id`, so it lands on `23505`, and an early return there makes that retry structurally incapable of writing the suppression it was requested for. Both post-insert writes are idempotent (upsert on the primary key; the stamp is filtered `.is(column, null)`), so re-running them costs nothing. The one genuine upsert (suppressions) is re-read in production in Task 7 rather than trusted.
 - **Never return a 4xx for an event you simply do not handle.** Svix retries non-2xx with backoff and disables an endpoint that keeps failing. Unhandled types get a 200.
 - **Report the stamp count in the response body.** The `email_sequence_events` update is the single write this whole item exists to make. If it only ever `console.error`s while the route returns 200, it can fail permanently and invisibly — the exact defect class this item was written to end. `.select('id')` gives the affected rows, and the count goes in the body so Task 7 can assert on it from a curl.
 
@@ -1318,7 +1318,33 @@ describe('POST /api/webhooks/resend', () => {
     insertResult.value = { error: { code: '23505' } }
     const res = await POST(signed(bounced))
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ received: true, duplicate: true })
+    // `stamped` is present on a replay too. Task 7's production curl reads this
+    // body, and a replay answering `stamped: undefined` would read as a broken
+    // stamp rather than as a duplicate that had nothing to stamp.
+    expect(await res.json()).toEqual({ received: true, duplicate: true, stamped: 0 })
+  })
+
+  it('still writes the suppression on a duplicate delivery, so the retry the suppression 500 asks for can finish the work', async () => {
+    // The sequence this exists to stop:
+    //   1. delivery 1 — the email_events insert succeeds, the suppression
+    //      upsert fails, the route 500s to ask Svix to retry;
+    //   2. Svix retries with the SAME svix-id, so the insert now lands 23505.
+    // Returning early on 23505 would mean the suppression is never attempted
+    // again and Svix marks the delivery succeeded — the address stays mailable
+    // forever. Both post-insert writes are idempotent (upsert on the primary
+    // key; the stamp is filtered `.is(col, null)`), so the retry must fall
+    // through and do them.
+    //
+    // A bounce partially self-heals — the next send produces a new bounce with
+    // a new svix-id — but email.complained does not: a repeat complaint is
+    // precisely the event we must not need.
+    insertResult.value = { error: { code: '23505' } }
+    const res = await POST(signed(bounced))
+    expect(res.status).toBe(200)
+    expect(calls.find(c => c.table === 'email_events')?.op).toBe('insert')
+    const sup = calls.find(c => c.table === 'email_suppressions')
+    expect(sup?.op).toBe('upsert')
+    expect(sup?.payload).toMatchObject({ email_address: 'ghost@aeec.co.za', reason: 'hard_bounce' })
   })
 
   it('500s a real storage failure so Svix retries', async () => {
@@ -1420,11 +1446,18 @@ export async function POST(req: NextRequest) {
   // nothing. webhook_id is UNIQUE, so a Svix retry lands 23505 — which is
   // success, not failure.
   const { error: insertError } = await supabase.from('email_events').insert(row)
-  if (insertError) {
-    if (insertError.code === '23505') return NextResponse.json({ received: true, duplicate: true })
+  const duplicate = insertError?.code === '23505'
+  if (insertError && !duplicate) {
     console.error('Resend webhook: email_events insert failed', insertError)
     return NextResponse.json({ error: 'store failed' }, { status: 500 })
   }
+  // Fall through on 23505 rather than returning here. The suppression upsert
+  // and the stamp are both idempotent (upsert on the primary key; the stamp is
+  // filtered `.is(column, null)`), so re-running them on a retry costs nothing
+  // — and the retry the suppression 500 below asks for arrives with the SAME
+  // svix-id, so it lands here. An early return would make that retry incapable
+  // of doing the one thing it was requested for: the suppression would be lost
+  // permanently while Svix recorded the delivery as succeeded.
 
   const suppression = suppressionFor(row)
   if (suppression) {
@@ -1443,9 +1476,12 @@ export async function POST(req: NextRequest) {
   // .is(column, null) so the FIRST open wins — a message opened five times
   // keeps the timestamp of the open that mattered.
   //
-  // A stamp failure does NOT 500: email_events already holds the row, so a
-  // Svix retry would short-circuit on 23505 and never reach this code again.
-  // Reporting it is the only useful thing left to do.
+  // A stamp failure does NOT 500, and — since the 23505 fall-through above — it
+  // is a deliberate choice rather than a fact about retries. The stamp is
+  // measurement; the suppression is a control. A persistent stamp failure (a
+  // 42501, say) would 500 every delivery, and Svix disables an endpoint that
+  // keeps failing — which would take the suppressions down with it. The
+  // stamp_error flag in the body is the signal instead.
   let stamped = 0
   let stampError = false
   const stamp = sequenceTimestampFor(row)
@@ -1464,9 +1500,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json(
-    stampError ? { received: true, stamped: 0, stamp_error: true } : { received: true, stamped },
-  )
+  // `duplicate` is carried into the body, and `stamped` is reported on a
+  // duplicate too: Task 7's production curl reads this body, and a replay that
+  // answered `stamped: undefined` would read as a broken stamp.
+  return NextResponse.json({
+    received: true,
+    ...(duplicate ? { duplicate: true } : {}),
+    ...(stampError ? { stamped: 0, stamp_error: true } : { stamped }),
+  })
 }
 ```
 
@@ -1476,9 +1517,9 @@ export async function POST(req: NextRequest) {
 pnpm --filter web test src/app/api/webhooks/resend/route.test.ts
 ```
 
-Expected: `Tests 11 passed`.
+Expected: `Tests 12 passed`.
 
-- [ ] **Step 5: Prove the signature gate can fail.** Temporarily replace the `if (!headers || !verifySvixSignature(...))` condition with `if (false)`, re-run, and confirm **exactly three** tests fail — the three `401s …` cases, each with `expected 200 to be 401`. Revert and confirm `Tests 11 passed`. A webhook whose tests pass with verification disabled is guarding nothing.
+- [ ] **Step 5: Prove the signature gate can fail.** Temporarily replace the `if (!headers || !verifySvixSignature(...))` condition with `if (false)`, re-run, and confirm **exactly three** tests fail — the three `401s …` cases. Two report `expected 200 to be 401`. The third, **no signature headers at all**, instead dies with `TypeError: Cannot read properties of null (reading 'id')`: the composite condition is what leaves `headers` null, and `mapResendEvent(headers.id, …)` dereferences it before any status is chosen. The mutant is still killed — but expect that message, not a status mismatch, or you will read a killed mutant as an escaped one. Revert and confirm `Tests 12 passed`. A webhook whose tests pass with verification disabled is guarding nothing.
 
 - [ ] **Step 6: Commit.**
 
