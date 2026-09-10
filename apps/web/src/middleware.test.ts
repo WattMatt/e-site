@@ -184,3 +184,51 @@ describe('middleware — self-authenticating API bypass', () => {
     expect(res).not.toBe(state.supabaseResponse)
   })
 })
+
+// `run(path)` issues a GET; middleware.ts does not branch on method, so the
+// bypass it proves is the same one a POST takes.
+describe('signed webhook bypass', () => {
+  it('lets an unauthenticated request to /api/webhooks/resend through to its handler', async () => {
+    state.user = null
+    const res = await run('/api/webhooks/resend')
+    // Not a redirect. If this is a 307 to /login, Svix records a delivery
+    // failure, retries, and eventually disables the endpoint — and the symptom
+    // is indistinguishable from "Resend never sends webhooks".
+    expect(res.headers.get('location')).toBeNull()
+    expect(res.status).toBe(200)
+  })
+
+  it('lets an unauthenticated request to /api/paystack/webhook through — broken since it shipped', async () => {
+    state.user = null
+    const res = await run('/api/paystack/webhook')
+    expect(res.headers.get('location')).toBeNull()
+    expect(res.status).toBe(200)
+  })
+
+  it('still redirects an unauthenticated request to a neighbouring path', async () => {
+    state.user = null
+    const res = await run('/api/webhooks')
+    expect(locationOf(res).pathname).toBe('/login')
+  })
+
+  // The assertion that kills a prefix match. `/api/webhooks` (above) does NOT
+  // discriminate: it is not a prefix OF either bypassed path, so it stays
+  // redirected under `startsWith` too. A sub-path of a bypassed route is the
+  // only shape that separates `includes(pathname)` from
+  // `some(p => pathname.startsWith(p))`.
+  it('does not bypass a sub-path of a signed webhook route', async () => {
+    state.user = null
+    const res = await run('/api/webhooks/resend/extra')
+    expect(locationOf(res).pathname).toBe('/login')
+  })
+
+  // Next parses the request URL with the WHATWG parser, so `..` segments are
+  // resolved before `nextUrl.pathname` is read — the comparison never sees a
+  // traversal. Pinned because the bypass would be unsafe if it were ever
+  // re-expressed against the raw request URL instead of the parsed pathname.
+  it('normalises traversal away before the bypass comparison sees it', async () => {
+    state.user = null
+    const res = await run('/api/webhooks/resend/../../something')
+    expect(locationOf(res).pathname).toBe('/login')
+  })
+})

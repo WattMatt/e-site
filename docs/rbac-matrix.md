@@ -172,6 +172,8 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/projects/[id]/boq/import`    | W | W | W | — | — | — | — |
 | `POST /api/paystack/cancel-subscription` | W | W | — | — | — | — | — |
 | `POST /api/paystack/callback` | n/a — public webhook, signature-validated |
+| `POST /api/webhooks/resend` | n/a — public webhook, Svix/standardwebhooks HMAC-SHA256 over the raw body; writes only as service_role; bypassed in `middleware.ts` by exact path |
+| `POST /api/paystack/webhook` | n/a — public webhook, HMAC-SHA512 over the raw body; was never listed here and was 307'd to `/login` until `SIGNED_WEBHOOK_PATHS` |
 | `POST /api/inspections/delete-photo` | W | W | W | W² | W² | — | — |
 | `POST /api/notifications/dispatch` | bearer-token; not session-gated — **not yet audited** |
 | `POST /api/paystack/feature-unlock` | W | W | — | — | — | — | — |

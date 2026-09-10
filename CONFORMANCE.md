@@ -81,6 +81,7 @@ ESITE deleted the invite subsystem in migration `00079_admin_managed_users.sql` 
 | E4 | Password change requires re-auth | MUST | ✓ (by flow) | All password changes route through the recovery flow (email round-trip = isolated re-auth); no silent in-session change path |
 | E5 | Docs match code; stale " 2" duplicates removed | SHOULD | ✓ | `docs/auth-*.md` + `docs/rbac-matrix.md` maintained under the same-PR rule (this file now included). Note: a stale `esite 2` sibling exists OUTSIDE the repo (not in git) — flagged for deletion |
 | E6 | Guard units + invite→accept→login and reset→login smoke | MUST | partial | Guard units ✓ (`middleware.test.ts`, `safe-next.test.ts`, require-role, auth-callback, login/reset page tests) + Playwright `00-auth-guard`/`08`/`09-rbac`; a CI-run invite/reset end-to-end smoke is not yet scripted (live smokes performed manually 2026-07-07) |
+| E7 | Unauthenticated signed webhook surfaces verify a signature over the raw body, in constant time, fail closed on a missing secret, and are reachable — not redirected by middleware | MUST | ✓ | `apps/web/src/lib/webhooks/svix-signature.ts` (Svix/standardwebhooks HMAC-SHA256, 5-min replay window, `timingSafeEqual`) consumed by `app/api/webhooks/resend/route.ts`; `app/api/paystack/webhook/route.ts` (HMAC-SHA512). Both listed in `middleware.ts` `SIGNED_WEBHOOK_PATHS` (exact match) and covered by `middleware.test.ts`. The Svix verifier is tested against the published standardwebhooks vector plus tampered body/signature/id, wrong secret and stale timestamp |
 
 ## Env-gated items (user action required)
 
@@ -88,6 +89,7 @@ ESITE deleted the invite subsystem in migration `00079_admin_managed_users.sql` 
 |---|---|---|
 | Turnstile captcha (A8/E2) | code-complete, provider config pending | Set `NEXT_PUBLIC_TURNSTILE_SITE_KEY` (+ secret in Supabase) per `docs/auth-captcha-setup.md` |
 | Google OAuth sign-in | code-complete, provider config pending | Set `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` + provider setup per `docs/auth-google-oauth-setup.md` |
+| Resend delivery evidence (E7) | code-complete, endpoint registration pending | Set `RESEND_WEBHOOK_SECRET` in Vercel, redeploy, then create the endpoint in the Resend dashboard for the eight `email.*` events and enable Open Tracking on the domain |
 
 ## Native companion note (N profile)
 
