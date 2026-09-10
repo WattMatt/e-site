@@ -1938,6 +1938,21 @@ git fetch origin main && git ls-tree --name-only origin/main apps/edge-functions
 
 Both must show `00184` as the highest. If they do, `00185` stands and no rename is needed. If either has moved, `git mv` the file to `max + 1` **and** update every reference to it in this plan's later steps. Announce the number to peer sessions before pushing.
 
+⚠ **Also look *below* the head, not only above it.** This step checks that nobody has taken `00185`; it does not see a *lower* number about to arrive, which is the other half of the same hazard. Two exist right now:
+
+| File | Where it lives |
+|---|---|
+| `00174_user_can_manage_project_effective_role.sql` | an unmerged branch, commit `3a45f2e` |
+| `00181_client_viewer_project_aware_rls.sql` | untracked in the shared checkout (recorded in `CLAUDE.md`) |
+
+`origin/main` jumps 00180 → 00182, which is the visible symptom. Neither blocks `00185` — it sorts cleanly after 00184 either way — but whichever of them lands next will hit *"Found local migration files to be inserted before the last migration on remote"*, the exact break this repository has already had twice. Naming them here saves the next session the diagnosis.
+
+```bash
+git ls-tree --name-only origin/main apps/edge-functions/supabase/migrations/ | sed 's/_.*//' | sort | awk 'p && $1 != p+1 {print "  gap: " p " -> " $1} {p=$1+0}'
+```
+
+Expected today: one gap, `00180 -> 00182`. A second gap means a third such file has appeared since this was written.
+
 - [ ] **Step 3: Push the branch and open the PR against the right base.** Task 0 settled this: if the roadmap branch has not merged yet, `--base docs/v2-platform-roadmap`. Note the branch carries no `.github/workflows/**` change — Task 12 is a separate PR precisely because this token cannot push one.
 
 ```bash
@@ -1991,10 +2006,21 @@ pgq "select
        has_table_privilege('anon','public.email_suppressions','INSERT') as anon_sup_ins,
        has_table_privilege('anon','public.email_suppressions','UPDATE') as anon_sup_upd,
        has_table_privilege('anon','public.email_suppressions','DELETE') as anon_sup_del,
-       has_table_privilege('authenticated','public.email_suppressions','SELECT') as auth_sup_sel"
+       has_table_privilege('authenticated','public.email_suppressions','SELECT') as auth_sup_sel,
+       has_table_privilege('authenticated','public.email_events','INSERT') as auth_ev_ins,
+       has_table_privilege('authenticated','public.email_events','UPDATE') as auth_ev_upd,
+       has_table_privilege('authenticated','public.email_events','DELETE') as auth_ev_del,
+       (select count(*) from pg_constraint c join pg_class t on t.oid = c.conrelid
+         where t.relname in ('email_events','email_suppressions')
+           and c.conname in ('email_events_webhook_id_key','email_events_event_type_check',
+                             'email_events_source_check','email_suppressions_reason_check')) as constraint_rows"
 ```
 
-Expected exactly: `events_table true, supp_table true, policy_rows 1, idx_rows 2`, and **every one of the nine privilege columns `false`**. Any `true` among them fails the task — do not accept `relacl` being NULL as evidence of anything; a NULL `relacl` *is* the default grant.
+Expected exactly: `events_table true, supp_table true, policy_rows 1, idx_rows 2, constraint_rows 4`, and **every one of the twelve privilege columns `false`**. Any `true` among them fails the task — do not accept `relacl` being NULL as evidence of anything; a NULL `relacl` *is* the default grant.
+
+**`constraint_rows` is not bookkeeping.** The `-- @verify:` block names four constraints, and until Q1 item 1 builds `scripts/verify-migration-applied.ts` **this query is that block's only executor** — so a constraint it does not check is a constraint nothing checks. One of the four is load-bearing in a way that is easy to miss: `email_events_webhook_id_key` is the *entirety* of the webhook's replay protection, as `apps/web/src/lib/webhooks/svix-signature.ts:16-19` states outright. Were it ever absent, every Svix replay would insert a fresh row, `duplicate` would never be true, replay protection would be gone — **and nothing would error.** That is this repository's signature failure mode, so it gets an assertion rather than a comment.
+
+**The three `authenticated` write columns.** `email_events` is the one table here that deliberately keeps an `authenticated` grant (SELECT, gated by the policy), so it is the only place the migration's own stated principle — "a new `public` table is born forgeable" (`00185:188-192`) — still has work left to do. Defence in depth: the table has no INSERT policy, so RLS denies the write regardless. Check it anyway, because the grant layer and the policy layer fail independently.
 
 **Prove this check can fail**, once, so it is not decorative:
 

@@ -101,6 +101,19 @@ COMMENT ON COLUMN public.email_events.project_id IS
   'Deliberately NO foreign key: this is an append-only evidence log and '
   'deleting a project must not rewrite what was delivered. NULL until §13 '
   'item 4''s dispatcher starts sending tags.';
+COMMENT ON COLUMN public.email_events.payload IS
+  'The verified Resend webhook body, stored verbatim. '
+  'POPIA NOTE, because this is latent rather than theoretical: '
+  '''email.opened'' carries no IP address and no user agent, but '
+  '''email.clicked'' carries data.click.ipAddress and data.click.userAgent. '
+  'This table is append-only by design, has deliberately no foreign key so it '
+  'survives project deletion, and has no retention policy — so with Click '
+  'Tracking ON it would accumulate recipient IP addresses permanently. The '
+  'only thing preventing that is a Resend dashboard toggle: Click Tracking is '
+  'deliberately left OFF (see the item-0 plan, Task 7 Step 8, where it is set '
+  'for branding reasons — the privacy consequence is the larger half). '
+  'Before Click Tracking is ever enabled, this column needs a retention rule '
+  'and a line in the client data annexe.';
 COMMENT ON COLUMN public.email_events.entity_ref IS
   'The thing the message was about, as ''<kind>:<entity_id>'' (or just '
   '''<kind>'' when there is no id), from the Resend tags. The vocabulary is '
