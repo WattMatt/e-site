@@ -329,7 +329,7 @@ Storage is `projects.project_settings.enabled_modules text[] NOT NULL` with the 
 | Quarter | New tables / views / functions | Schema |
 |---|---|---|
 | **Q1** | `work_items`, `work_item_types`, `work_item_events`, `work_item_watchers`, `activity`, `public_holidays`, `calendar_years`, `working_days_between()` | `projects` |
-| | `inbox_state`, `notification_types`, `notification_preferences`, `notification_project_mutes`, `user_presence`, `user_sessions`, `touch_presence()`, `user_is_org_admin()`, `notification_dispatch_runs`, `recap_runs`, `notification_dead_letters`, `product_events`, `platform_metrics_weekly`, `metric_cohorts`, `metric_accounts` (view) | `public` |
+| | `inbox_state`, `notification_types`, `notification_preferences`, `notification_project_mutes`, `user_presence`, `user_sessions`, `touch_presence()`, `user_is_org_admin()`, `notification_dispatch_runs`, `recap_runs`, `notification_dead_letters`, `product_events`, `platform_metrics_weekly`, `metric_cohorts`, `metric_accounts` (view), `email_events`, `email_suppressions` | `public` |
 | | *Column adds:* `project_settings` (`work_item_defaults`, `triage_owner_id`, `enabled_modules`, `suppress_all_outbound`, `client_comments_enabled`, shutdown window); `notifications` (§05's **thirteen** columns — `project_id`, `actor_id`, `tier`, `dedupe_key`, `coalesced_count`, `hold_until`, `hold_extensions`, `delivered_at`, `seen_at`, `cleared_at`, `email_state`, `push_state`, `read_at_estimated`; counted off §05's `ALTER TABLE` block, and the thirteenth is the one a stale twelve drops — metric 5's standing `read_at_estimated = false` filter has no column without it); `auth_events.session_id` | |
 | | *Drops:* `notifications.is_read` (after the client change deploys); `notifications_own` policy; `notifications_type_check` (replaced by the FK) | |
 | **Q2** | `threads`, `thread_messages`, `message_mentions`, `thread_participants`, `thread_subject_types`, `instructions`, `instruction_recipients`, `instruction_events` | `projects` |
@@ -352,6 +352,8 @@ Storage is `projects.project_settings.enabled_modules text[] NOT NULL` with the 
 **Every destructive migration in that list takes a pre-migration snapshot** into a timestamped `backup_<version>_<object>` table in the same transaction, retained 90 days, with the restore statement named in the migration header [R52].
 
 #### The Q1 migration ledger — **eleven migrations**, in this order, owned here
+
+**Item 0's delivery-evidence migration is a twelfth, and it is pre-window.** It creates `public.email_events` and `public.email_suppressions` and lands three weeks before ordinal 0, because §05 §(d) fact (4) makes the suppression list a precondition of the recap rather than a part of it. It is not renumbered into this ledger: the ledger's ordinals are the ten-week window's, and this file merges before the window opens.
 
 **Four sections previously gave four different homes and orderings for the same Q1 objects, and §05's security migration was booked in no quarter's ledger at all.** This block settles all of it: §12 §(c), §13's migration table and exit criterion, and §15's cost paragraph **cite this ledger and do not re-order it**. Numbers are still claimed at merge against `max(version)` **and** `origin/main`, never here; each migration carries a `-- @verify:` header checked by `scripts/verify-migration-applied.ts` after the push.
 
