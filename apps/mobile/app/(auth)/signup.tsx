@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform, ScrollView, Switch } from 'react-native'
 import { Link } from 'expo-router'
 import { useAuth } from '../../src/providers/AuthProvider'
+import { supabase } from '../../src/lib/supabase'
 import { signUpSchema } from '@esite/shared'
 import { colors, fontSize, fontWeight, radius, spacing } from '../../src/theme'
 
@@ -14,6 +15,13 @@ export default function SignupScreen() {
   const [popiaConsent, setPopiaConsent] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [success, setSuccess] = useState(false)
+  // Did signUp leave us signed in? GoTrue's mailer_autoconfirm is ON in
+  // production, so it confirms the address itself and mails NOTHING — 0 of 36
+  // accounts have confirmation_sent_at. Telling every new user to go and click
+  // a confirmation link sent them looking for an email that does not exist.
+  // Read the session instead of asserting either configuration, so this screen
+  // stays honest if autoconfirm is ever turned off.
+  const [activated, setActivated] = useState(false)
 
   async function handleSignUp() {
     const result = signUpSchema.safeParse({ fullName, email, password, confirmPassword, popiaConsent })
@@ -24,6 +32,8 @@ export default function SignupScreen() {
     setIsLoading(true)
     try {
       await signUp(email, password, fullName)
+      const { data: { session } } = await supabase.auth.getSession()
+      setActivated(Boolean(session))
       setSuccess(true)
     } catch (err: unknown) {
       Alert.alert('Error', err instanceof Error ? err.message : 'Sign up failed')
@@ -36,12 +46,22 @@ export default function SignupScreen() {
     return (
       <View style={styles.container}>
         <View style={styles.successBox}>
-          <Text style={styles.successIcon}>📧</Text>
-          <Text style={styles.successTitle}>Check your email</Text>
-          <Text style={styles.successDesc}>
-            We sent a confirmation link to {email}. Click it to activate your account.
+          <Text style={styles.successIcon}>{activated ? '✅' : '📧'}</Text>
+          <Text style={styles.successTitle}>
+            {activated ? 'Your account is ready' : 'Check your email'}
           </Text>
-          <Link href="/(auth)/login" style={styles.link}>Back to sign in</Link>
+          <Text style={styles.successDesc}>
+            {activated
+              ? `You're signed in as ${email} — no confirmation email to wait for. Head to your projects to get started.`
+              : `We sent a confirmation link to ${email}. Click it to activate your account.`}
+          </Text>
+          {/* A brand-new account has no org yet, so AuthProvider's redirect
+              sends it to /onboarding anyway — this card is what shows in the
+              instant before that, and the whole screen when there is no
+              session because autoconfirm is off. */}
+          <Link href={activated ? '/onboarding' : '/(auth)/login'} style={styles.link}>
+            {activated ? 'Continue' : 'Back to sign in'}
+          </Link>
         </View>
       </View>
     )

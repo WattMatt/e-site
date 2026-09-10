@@ -19,7 +19,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
 import { createProjectSchema, type CreateProjectInput, PLANS, type PlanTier, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
@@ -150,10 +150,25 @@ export async function createProjectAction(
     source: 'standalone',
   })
 
-  // Best-effort conversion-prompt nudge (mirrors the previous client-side call).
-  void supabase.functions
-    .invoke('conversion-prompt', { body: { projectId: project.id, organisationId: orgId } })
-    .catch(() => {})
+  // Conversion-prompt nudge — the upsell that fires exactly when the free
+  // tier's 1-project limit bites. It had never sent a single email: this was
+  // `void supabase.functions.invoke(...).catch(() => {})` on the CALLER-scoped
+  // client, and conversion-prompt's first act is requireServiceRole. Worse,
+  // `functions.invoke` resolves with { data, error } rather than rejecting, so
+  // the `.catch` never fired and a 100% failure rate produced no log line —
+  // zero 'conversion' rows in email_sequence_events across 12 qualifying
+  // project creations. Service client, awaited, and logged.
+  try {
+    const { error: nudgeErr } = await createServiceClient().functions
+      .invoke('conversion-prompt', { body: { projectId: project.id, organisationId: orgId } })
+    if (nudgeErr) {
+      console.error('[conversion-prompt] nudge rejected', {
+        projectId: project.id, orgId, error: String(nudgeErr.message ?? nudgeErr),
+      })
+    }
+  } catch (e) {
+    console.error('[conversion-prompt] nudge threw', { projectId: project.id, orgId, error: String(e) })
+  }
 
   revalidatePath('/projects')
   revalidatePath('/dashboard')
