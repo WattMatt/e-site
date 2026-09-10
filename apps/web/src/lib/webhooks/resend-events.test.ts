@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'fs'
-import { resolve, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   mapResendEvent,
   suppressionFor,
@@ -88,6 +88,125 @@ describe('mapResendEvent', () => {
     const payload: any = base('email.opened')
     delete payload.created_at
     expect(mapResendEvent('msg_1', payload)?.occurred_at).toBe('2026-09-10T05:59:00.000Z')
+  })
+})
+
+/**
+ * occurred_at is the one output column with no other gate. event_type and
+ * source are pinned by the CHECK contract at the bottom of this file,
+ * project_id by UUID_RE, to_email by the suppression guard — occurred_at went
+ * from the payload straight into TIMESTAMPTZ NOT NULL (00185:56) on the
+ * strength of `typeof === 'string'` alone.
+ */
+describe('mapResendEvent occurred_at', () => {
+  const at = (payload: unknown) => mapResendEvent('msg_1', payload)!.occurred_at
+
+  it('drops an unparseable created_at rather than poisoning a timestamptz column', () => {
+    // 22007 invalid input syntax for type timestamp with time zone -> 500 ->
+    // Svix retries that same svix-id forever. Verbatim the failure the
+    // project_id guard three lines above it exists to prevent.
+    const p: any = base('email.delivered')
+    p.created_at = 'yesterday afternoon'
+    delete p.data.created_at
+    expect(Number.isNaN(Date.parse(at(p)))).toBe(false)
+  })
+
+  it('falls back to the data timestamp when the envelope timestamp is garbage', () => {
+    const p: any = base('email.delivered')
+    p.created_at = 'yesterday afternoon'
+    expect(at(p)).toBe('2026-09-10T05:59:00.000Z')
+  })
+
+  it('rejects the literals Postgres ACCEPTS — the silent half, which nothing errors on', () => {
+    // Postgres reads every one of these as a real timestamptz, so an
+    // unvalidated string inserts cleanly and is wrong forever: 'infinity'
+    // sorts first in email_events_to_email_idx (to_email, occurred_at DESC)
+    // and breaks every weekly bucket, with no error anywhere. Date.parse
+    // returns NaN for all of them, which is what makes one check enough — the
+    // first assertion pins that premise so a Date.parse change fails loudly
+    // here rather than silently reopening the hole.
+    for (const literal of ['infinity', '-infinity', 'now', 'today', 'yesterday', 'epoch']) {
+      expect(Number.isNaN(Date.parse(literal))).toBe(true)
+      const p: any = base('email.delivered')
+      p.created_at = literal
+      delete p.data.created_at
+      expect(at(p)).not.toBe(literal)
+      expect(Number.isNaN(Date.parse(at(p)))).toBe(false)
+    }
+  })
+
+  it('stamps a real now() when the payload carries no timestamp at all', () => {
+    const p: any = base('email.sent')
+    delete p.created_at
+    delete p.data.created_at
+    expect(at(p)).not.toBe('')
+    expect(Number.isNaN(Date.parse(at(p)))).toBe(false)
+  })
+
+  it('rejects a non-string and an empty-string created_at', () => {
+    const p: any = base('email.sent')
+    p.created_at = 1788998400000
+    p.data.created_at = ''
+    expect(at(p)).not.toBe('')
+    expect(Number.isNaN(Date.parse(at(p)))).toBe(false)
+  })
+})
+
+/**
+ * The defensive guards. Each of these mutates to something that leaves every
+ * other test in this file green, so each needs its own killer: a guard whose
+ * test passes with the guard removed is decorative.
+ */
+describe('mapResendEvent guards', () => {
+  it('never throws on a hostile payload shape', () => {
+    // A throw is a 500, and Svix retries a 5xx with the same svix-id forever.
+    // null/undefined pin the `!evt` guard; the type-only object pins the
+    // `evt.data ?? {}` default, without which `data.to` throws.
+    for (const payload of [null, undefined, 42, 'x', [], { type: 'email.delivered' }]) {
+      expect(() => mapResendEvent('msg_1', payload)).not.toThrow()
+    }
+    expect(mapResendEvent('msg_1', null)).toBeNull()
+    expect(mapResendEvent('msg_1', undefined)).toBeNull()
+  })
+
+  it('maps a handled event carrying no data object onto a well-formed row', () => {
+    const row = mapResendEvent('msg_1', { type: 'email.delivered' })!
+    expect(row.event_type).toBe('email.delivered')
+    expect(row.to_email).toBeNull()
+    expect(row.subject).toBeNull()
+    expect(row.resend_message_id).toBeNull()
+    expect(row.project_id).toBeNull()
+    expect(row.entity_ref).toBeNull()
+    expect(Number.isNaN(Date.parse(row.occurred_at))).toBe(false)
+  })
+
+  it('nulls a non-string subject and email_id instead of handing them to TEXT columns', () => {
+    const row = mapResendEvent('msg_1', base('email.delivered', {
+      subject: { html: '<b>Your open items</b>' },
+      email_id: 12345,
+    }))!
+    expect(row.subject).toBeNull()
+    expect(row.resend_message_id).toBeNull()
+  })
+
+  it('drops non-string tag values in both encodings', () => {
+    const arrayForm = mapResendEvent('msg_1', base('email.delivered', {
+      tags: [{ name: 'kind', value: 42 }, { name: 'project_id', value: PROJECT }],
+    }))!
+    expect(arrayForm.entity_ref).toBeNull()
+    expect(arrayForm.project_id).toBe(PROJECT)
+
+    const objectForm = mapResendEvent('msg_1', base('email.delivered', {
+      tags: { kind: ['rfi'], project_id: PROJECT },
+    }))!
+    expect(objectForm.entity_ref).toBeNull()
+    expect(objectForm.project_id).toBe(PROJECT)
+  })
+
+  it("returns null rather than '' for an all-whitespace recipient", () => {
+    // '' matches nothing in the RLS policy's lower(p.email) = to_email join
+    // (00185:182), so the row would be invisible to every human.
+    expect(mapResendEvent('msg_1', base('email.sent', { to: ['   '] }))?.to_email).toBeNull()
   })
 })
 

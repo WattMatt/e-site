@@ -50,6 +50,11 @@ export interface SuppressionRow {
  *   project_id the project the message is about (a UUID)
  *   entity_id  the RFI / snag / report id, when there is one
  *
+ * `kind` is MANDATORY for attribution: entity_ref is built as `kind:entity_id`,
+ * so an entity_id sent WITHOUT a kind is silently dropped — an unqualified id
+ * names nothing, and guessing a kind for it would attribute an event to the
+ * wrong module. Item 4's dispatcher must always send kind alongside entity_id.
+ *
  * Nothing sends tags today — send-email/index.ts:27 returns void and discards
  * the Resend response entirely — so project_id and entity_ref are NULL on every
  * message until item 4. The columns exist now because adding them to a live
@@ -80,6 +85,25 @@ function isHandled(t: unknown): t is ResendEventType {
   return typeof t === 'string' && (RESEND_EVENT_TYPES as readonly string[]).includes(t)
 }
 
+/**
+ * occurred_at is TIMESTAMPTZ NOT NULL (00185:56). Anything Postgres cannot read
+ * as a timestamp is a 22007 on insert — a 500 and the same endless Svix retry
+ * the project_id guard exists to avoid. Worse, Postgres ACCEPTS 'infinity',
+ * 'now', 'today' and 'epoch', so an unvalidated string can also land a silently
+ * wrong instant in an append-only evidence log: 'infinity' sorts first forever
+ * in email_events_to_email_idx (to_email, occurred_at DESC) and breaks every
+ * weekly bucket the table exists to support, with nothing erroring anywhere.
+ *
+ * Date.parse rejects all five of those literals (verified in Node), so one
+ * parseability check closes both the loud and the silent case.
+ *
+ * Any later writer of occurred_at — Task 5's backfill, Task 6's send_failure —
+ * must validate it the same way. It is the only column with no other gate.
+ */
+function stamp(v: unknown): string | null {
+  return typeof v === 'string' && v !== '' && !Number.isNaN(Date.parse(v)) ? v : null
+}
+
 /** `null` means "acknowledge and ignore" — never "reject". */
 export function mapResendEvent(webhookId: string, raw: unknown): ResendEventRow | null {
   const evt = raw as { type?: unknown; created_at?: unknown; data?: Record<string, unknown> } | null
@@ -103,11 +127,12 @@ export function mapResendEvent(webhookId: string, raw: unknown): ResendEventRow 
     webhook_id: webhookId,
     resend_message_id: typeof data.email_id === 'string' ? data.email_id : null,
     event_type: evt.type,
-    occurred_at:
-      (typeof evt.created_at === 'string' && evt.created_at) ||
-      (typeof data.created_at === 'string' && data.created_at) ||
-      new Date().toISOString(),
-    to_email: typeof to[0] === 'string' ? (to[0] as string).trim().toLowerCase() : null,
+    occurred_at: stamp(evt.created_at) ?? stamp(data.created_at) ?? new Date().toISOString(),
+    // `|| null` and not just `.trim()`: an all-whitespace recipient trims to '',
+    // which matches nothing in the RLS policy's lower(p.email) = to_email join
+    // (00185:182), so the row would be invisible to every human who can read
+    // the table. NULL at least reads as "no recipient recorded".
+    to_email: typeof to[0] === 'string' ? (to[0] as string).trim().toLowerCase() || null : null,
     subject: typeof data.subject === 'string' ? data.subject : null,
     bounce_type: typeof bounce?.type === 'string' ? bounce.type : null,
     project_id: projectId,
