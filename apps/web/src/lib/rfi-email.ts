@@ -62,7 +62,7 @@ export async function dispatchRfiEmail(args: DispatchRfiEmailArgs): Promise<void
     const raiser = profiles[args.raiserId] ?? null
     const assignee = args.assigneeId ? profiles[args.assigneeId] : null
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live'
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.e-site.live'
     const { subject, html } = renderRfiCreatedEmail({
       raisedByName: raiser?.full_name ?? 'A team member',
       assigneeName: assignee?.full_name ?? null,

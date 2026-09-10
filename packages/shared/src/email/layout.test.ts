@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import {
   renderBrandedEmail,
   escapeHtml,
+  siteHostLabel,
   DEFAULT_ACCENT_COLOR,
   type BrandedEmailOptions,
 } from './layout'
@@ -21,6 +22,21 @@ describe('escapeHtml', () => {
     expect(escapeHtml('<script>"x"&y</script>')).toBe(
       '&lt;script&gt;&quot;x&quot;&amp;y&lt;/script&gt;',
     )
+  })
+})
+
+describe('siteHostLabel', () => {
+  it('strips the scheme so the label is the host the href actually goes to', () => {
+    expect(siteHostLabel('https://www.e-site.live')).toBe('www.e-site.live')
+    expect(siteHostLabel('http://localhost:3000')).toBe('localhost:3000')
+  })
+
+  it('drops a trailing slash', () => {
+    expect(siteHostLabel('https://www.e-site.live/')).toBe('www.e-site.live')
+  })
+
+  it('escapes HTML so a hostile origin cannot break out of the anchor', () => {
+    expect(siteHostLabel('https://x.example/<b>')).toBe('x.example/&lt;b&gt;')
   })
 })
 
@@ -68,6 +84,13 @@ describe('renderBrandedEmail', () => {
     })
     expect(html.toLowerCase()).not.toContain('data:image')
     expect(html).not.toContain('<img ')
+  })
+
+  it('labels the footer link with the host of siteUrl, never a typed-out hostname', () => {
+    const html = renderBrandedEmail({ ...opts, siteUrl: 'https://staging.e-site.live' })
+    expect(html).toContain('href="https://staging.e-site.live"')
+    expect(html).toContain('>staging.e-site.live</a>')
+    expect(html).not.toContain('>e-site.live</a>')
   })
 
   it('escapes the project name, title and footer note', () => {

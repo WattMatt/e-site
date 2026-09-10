@@ -198,7 +198,7 @@ export default async function TagSchedulePage({ params, searchParams }: Props) {
           // scan will 404 on a known host, which is honest and recoverable.
           const qrText = r.tag!.tag_text || ''
           if (!qrText) return
-          const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live').replace(/\/$/, '')
+          const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.e-site.live').replace(/\/$/, '')
           const qrUrl = `${siteUrl}/site/tag/${encodeURIComponent(qrText)}`
           const png = await QRCode.toDataURL(qrUrl, {
             margin: 0, width: 96, errorCorrectionLevel: 'M',

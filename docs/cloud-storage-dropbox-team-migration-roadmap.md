@@ -97,7 +97,7 @@ Total: ~2.5 hours from start to working team-scoped flow.
 > DROPBOX_TEAM_APP_DESCRIPTION=<Construction site management — sync project drawings + documents from your Dropbox team folders.>
 >
 > # Redirect URIs (paste ALL THREE — same as the user-scoped app uses).
-> REDIRECT_URI_PROD=https://app.e-site.live/api/auth/cloud-callback
+> REDIRECT_URI_PROD=https://www.e-site.live/api/auth/cloud-callback
 > REDIRECT_URI_STAGING=https://esite-lilac.vercel.app/api/auth/cloud-callback
 > REDIRECT_URI_BRANCH=https://esite-git-feat-powersync-arno-mattheus-projects.vercel.app/api/auth/cloud-callback
 > ```

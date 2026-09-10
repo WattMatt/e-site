@@ -7,6 +7,8 @@
  * Edge Function's `rfi-created` passthrough branch.
  */
 
+import { siteHostLabel } from './layout'
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -64,7 +66,7 @@ function baseEmailTemplate(content: string, siteUrl: string): string {
 h2{margin:0 0 16px;font-size:18px}
 .btn{display:inline-block;margin-top:16px;background:#3B82F6;color:#fff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600;font-size:14px}
 .footer{margin-top:24px;font-size:11px;color:#64748B}</style></head>
-<body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${siteUrl}" style="color:#3B82F6">app.e-site.live</a></div></div></body></html>`
+<body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${siteUrl}" style="color:#3B82F6">${siteHostLabel(siteUrl)}</a></div></div></body></html>`
 }
 
 /** Render the recipient-neutral "new RFI" email (description + deep link). */

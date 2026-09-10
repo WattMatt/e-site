@@ -11,7 +11,7 @@ import { ENTRY_TYPE_LABELS, projectSettingsService, renderDiaryCreatedEmail, typ
 import { createServiceClient } from '@/lib/supabase/server'
 import { notifyEntityEvent } from './notify'
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live'
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.e-site.live'
 const MAX_INLINE_PHOTOS = 6
 const SIGNED_URL_TTL = 60 * 60 * 24 * 7 // 7 days — survives email-client open delays
 
