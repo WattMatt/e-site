@@ -1043,9 +1043,19 @@ export function sequenceTimestampFor(
 pnpm --filter web test src/lib/webhooks/resend-events.test.ts
 ```
 
-Expected: `Tests 22 passed`.
+Expected: `Tests 21 passed`.
 
-- [ ] **Step 5: Prove the tag guard can fail.** Temporarily delete `&& UUID_RE.test(tags.project_id)` from the `projectId` line, re-run, and confirm **one** test fails — `drops a non-UUID project_id instead of poisoning a uuid column` — with `expected 'KINGSWALK' to be null`. Revert and confirm `Tests 22 passed`. A guard whose test passes with the guard removed is decorative.
+- [ ] **Step 5: Prove the tag guard can fail.** Temporarily delete `&& UUID_RE.test(tags.project_id)` from the `projectId` line, re-run, and confirm **one** test fails — `drops a non-UUID project_id instead of poisoning a uuid column` — with `expected 'KINGSWALK' to be null`. Revert and confirm `Tests 21 passed`. A guard whose test passes with the guard removed is decorative.
+
+- [ ] **Step 5b: Sweep the other guards, because this step only mutates one of them.** Step 5 proves a single guard. When this task was executed, a full sweep of 24 mutants found that **three more branches survived all 21 tests above**, each with a production consequence — so the test set as written was incomplete, in exactly the way `CLAUDE.md` records three shipped times. Break each of the following, confirm a test fails, and restore:
+
+| Break this | What it would cost in production |
+|---|---|
+| `row.event_type === 'email.bounced'` in the hard-bounce condition | A `delivery_delayed` or `failed` payload carrying a classification suppresses the address — silently deleting the channel to a contractor |
+| `if (!row.to_email) return null` in `suppressionFor` | A null into `email_suppressions.email_address`, which is the PRIMARY KEY: 23502 → 500 → Svix retries that request forever |
+| `.trim()` on the address | A padded address matches neither the suppression key nor the RLS join on `lower(profiles.email)`, and fails silently in both |
+
+Also add a contract test that parses the three CHECK constraints out of `00185_resend_email_delivery_evidence.sql` and asserts this mapper's vocabulary agrees with them — event types, `source`, and `reason`. Prove it is not decorative by adding a bogus value such as `'email.scheduled'` to `RESEND_EVENT_TYPES` and watching it fail. A mapper that emits a value the CHECK rejects is a 500 on a live webhook, and nothing else in the suite would catch it.
 
 - [ ] **Step 6: Commit.**
 
