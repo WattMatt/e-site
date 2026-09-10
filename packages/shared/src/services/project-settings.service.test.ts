@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { projectSettingsService } from './project-settings.service'
 import { projectSettingsDefaults } from '../schemas/project-settings.schema'
+import { patchToRow } from './_project-settings-mappers'
 
 // Minimal mock of TypedSupabaseClient — only the methods we exercise.
 // We type as `any` to bypass the strict @esite/db generated-types check,
@@ -44,7 +45,6 @@ describe('projectSettingsService.get', () => {
       practical_completion_date: null,
       retention_pct: '5.00',
       notify_rfi_email: true,
-      notify_rfi_to: [],
       notify_inspection_email: false,
       created_at: '2026-05-26T00:00:00.000Z',
       updated_at: '2026-05-26T00:00:00.000Z',
@@ -86,7 +86,7 @@ describe('projectSettingsService.reset', () => {
         default_rfi_due_days: 7, default_inspection_template_id: null,
         contract_type: 'jbcc_pba', contract_signed_date: null,
         practical_completion_date: null, retention_pct: '5.00',
-        notify_rfi_email: true, notify_rfi_to: [], notify_inspection_email: false,
+        notify_rfi_email: true, notify_inspection_email: false,
         created_at: '2026-05-26T00:00:00.000Z',
         updated_at: '2026-05-26T00:00:00.000Z', updated_by: null,
       },
@@ -125,7 +125,7 @@ describe('projectSettingsService.resetAll', () => {
       default_rfi_due_days: 7, default_inspection_template_id: null,
       contract_type: 'jbcc_pba', contract_signed_date: null,
       practical_completion_date: null, retention_pct: '5.00',
-      notify_rfi_email: true, notify_rfi_to: [], notify_inspection_email: false,
+      notify_rfi_email: true, notify_inspection_email: false,
       created_at: '2026-05-26T00:00:00.000Z',
       updated_at: '2026-05-26T00:00:00.000Z', updated_by: null,
     }
@@ -179,14 +179,15 @@ describe('projectSettingsService.validatePatch', () => {
     expect(result.ok).toBe(false)
   })
 
-  it('rejects invalid email in notify_rfi_to', () => {
+  it('drops notifyRfiTo entirely — the column was removed in 00189', () => {
+    // Not "rejects": the field is gone from the shape, so Zod strips it. What
+    // matters is that it cannot reach the DB (patchToRow test below) and cannot
+    // come back through a snapshot restore.
     const result = projectSettingsService.validatePatch({
       notifyRfiTo: ['ok@example.com', 'not-an-email'],
     })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(JSON.stringify(result.errors)).toMatch(/notifyRfiTo/)
-    }
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.patch).not.toHaveProperty('notifyRfiTo')
   })
 
   it('rejects retention_pct > 100', () => {
@@ -224,7 +225,7 @@ describe('projectSettingsService.getHistory', () => {
           default_rfi_due_days: 7, default_inspection_template_id: null,
           contract_type: 'jbcc_pba', contract_signed_date: null,
           practical_completion_date: null, retention_pct: '7.50',
-          notify_rfi_email: true, notify_rfi_to: [], notify_inspection_email: false,
+          notify_rfi_email: true, notify_inspection_email: false,
           created_at: '2026-05-26T00:00:00.000Z',
           updated_at: '2026-05-26T00:01:00.000Z', updated_by: null,
         },
@@ -261,7 +262,7 @@ describe('projectSettingsService.getAsOf', () => {
         default_rfi_due_days: 7, default_inspection_template_id: null,
         contract_type: 'jbcc_pba', contract_signed_date: null,
         practical_completion_date: null, retention_pct: '5.00',
-        notify_rfi_email: true, notify_rfi_to: [], notify_inspection_email: false,
+        notify_rfi_email: true, notify_inspection_email: false,
         created_at: '2026-05-22T00:00:00.000Z',
         updated_at: '2026-05-22T00:00:00.000Z', updated_by: null,
       },
@@ -313,7 +314,7 @@ describe('projectSettingsService.restore', () => {
         default_rfi_due_days: 14, default_inspection_template_id: null,
         contract_type: 'nec3', contract_signed_date: '2026-04-01',
         practical_completion_date: null, retention_pct: '7.50',
-        notify_rfi_email: false, notify_rfi_to: ['a@b.com'],
+        notify_rfi_email: false,
         notify_inspection_email: true,
         created_at: '2026-05-20T00:00:00.000Z',
         updated_at: '2026-05-20T00:00:00.000Z', updated_by: null,
@@ -333,7 +334,7 @@ describe('projectSettingsService.restore', () => {
       default_rfi_due_days: 14, default_inspection_template_id: null,
       contract_type: 'nec3', contract_signed_date: '2026-04-01',
       practical_completion_date: null, retention_pct: '7.50',
-      notify_rfi_email: false, notify_rfi_to: ['a@b.com'],
+      notify_rfi_email: false,
       notify_inspection_email: true,
       created_at: '2026-05-20T00:00:00.000Z',
       updated_at: '2026-05-26T00:00:00.000Z', updated_by: null,
@@ -385,7 +386,7 @@ describe('projectSettingsService.getFieldHistory', () => {
           default_rfi_due_days: 7, default_inspection_template_id: null,
           contract_type: 'jbcc_pba', contract_signed_date: null,
           practical_completion_date: null, retention_pct: '7.50',
-          notify_rfi_email: true, notify_rfi_to: [], notify_inspection_email: false,
+          notify_rfi_email: true, notify_inspection_email: false,
           created_at: '2026-05-26T00:00:00.000Z',
           updated_at: '2026-05-26T00:01:00.000Z', updated_by: null,
         },
@@ -433,7 +434,7 @@ describe('projectSettingsService.convenience bundles', () => {
     default_inspection_template_id: 't1',
     contract_type: 'nec3', contract_signed_date: '2026-04-01',
     practical_completion_date: '2027-04-01', retention_pct: '7.50',
-    notify_rfi_email: true, notify_rfi_to: ['arno@wmeng.co.za'],
+    notify_rfi_email: true,
     notify_inspection_email: false,
     notify_snag_email: true, notify_diary_email: false,
     notify_qc_email: false,
@@ -477,14 +478,13 @@ describe('projectSettingsService.convenience bundles', () => {
     })
   })
 
-  it('getNotificationConfig returns ALL seven channel keys from the row', async () => {
+  it('getNotificationConfig returns ALL six channel keys from the row', async () => {
     // Full-object toEqual: toEqual ignores undefined-valued keys, so a lost
     // mapper line (e.g. qcEmail reading a missing column → undefined) only
     // fails if EVERY key is pinned here with a concrete boolean.
     const result = await projectSettingsService.getNotificationConfig(clientForGet(fullRow), 'p1')
     expect(result).toEqual({
       rfiEmail: true,
-      rfiTo: ['arno@wmeng.co.za'],
       inspectionEmail: false,
       snagEmail: true,
       diaryEmail: false,
@@ -497,7 +497,6 @@ describe('projectSettingsService.convenience bundles', () => {
     const result = await projectSettingsService.getNotificationConfig(clientForGet(null), 'p1')
     expect(result).toEqual({
       rfiEmail: true,
-      rfiTo: [],
       inspectionEmail: false,
       snagEmail: true,
       diaryEmail: true,
@@ -547,5 +546,110 @@ describe('projectSettingsService.subscribe', () => {
     )
     expect(channelMock.subscribe).toHaveBeenCalled()
     expect(result).toBe(channelMock)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// restore — the field list is the whole implementation, so it is the whole test
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('restore rebuilds EVERY notification toggle', () => {
+  /** A snapshot in which every notify_* boolean is the opposite of its default. */
+  const SNAPSHOT = {
+    id: 'old', project_id: 'p1', organisation_id: 'o',
+    working_days: [1, 2, 3, 4, 5], holiday_calendar: 'ZA', extra_holidays: [],
+    builders_holiday: true, units: 'metric', date_format: 'YYYY-MM-DD',
+    default_rfi_priority: 'medium', default_rfi_assignee_id: null,
+    default_rfi_due_days: 7, default_inspection_template_id: null,
+    contract_type: 'jbcc_pba', contract_signed_date: null,
+    practical_completion_date: null, retention_pct: '5.00',
+    notify_rfi_email: false,
+    notify_inspection_email: true,
+    notify_snag_email: false,
+    notify_diary_email: false,
+    notify_qc_email: false,
+    notify_form_email: false,
+    created_at: '2026-05-20T00:00:00.000Z',
+    updated_at: '2026-05-20T00:00:00.000Z', updated_by: null,
+  }
+
+  function clientCapturingPatch() {
+    const captured: { patch?: any } = {}
+    const historyRow = {
+      id: 'h1', project_id: 'p1', organisation_id: 'o', operation: 'UPDATE' as const,
+      snapshot: SNAPSHOT, diff: null, changed_by: null,
+      changed_at: '2026-05-20T00:00:00.000Z',
+    }
+    const from = vi.fn((table: string) => {
+      if (table === 'project_settings_history') {
+        return { select: () => ({ eq: () => ({ single: async () => ({ data: historyRow, error: null }) }) }) }
+      }
+      return {
+        update: (patch: any) => {
+          captured.patch = patch
+          return {
+            eq: () => ({ select: () => ({ single: async () => ({ data: SNAPSHOT, error: null }) }) }),
+          }
+        },
+      }
+    })
+    return { client: { schema: () => ({ from }) } as any, captured }
+  }
+
+  it('writes all six notify_* columns back, not just the two the field list used to name', async () => {
+    // notifySnagEmail / notifyQcEmail / notifyDiaryEmail / notifyFormEmail were
+    // all absent from the explicit patch the restore builds, so "restore this
+    // settings state" silently left four of the toggles at whatever they
+    // happened to be. patchToRow skips undefined, so the omission produced no
+    // error anywhere — the restore just did less than it said.
+    const { client, captured } = clientCapturingPatch()
+
+    await projectSettingsService.restore(client, 'p1', 'h1')
+
+    expect(captured.patch).toMatchObject({
+      notify_rfi_email: false,
+      notify_inspection_email: true,
+      notify_snag_email: false,
+      notify_diary_email: false,
+      notify_qc_email: false,
+      notify_form_email: false,
+    })
+  })
+
+  it('does not try to restore the dropped notify_rfi_to column', async () => {
+    // The 15 production history snapshots predate the drop and still carry the
+    // key. Passing it through would make every restore a 42703.
+    const { client, captured } = clientCapturingPatch()
+    await projectSettingsService.restore(client, 'p1', 'h1')
+    expect(captured.patch).not.toHaveProperty('notify_rfi_to')
+  })
+})
+
+describe('notify_rfi_to is gone, not merely unread', () => {
+  it('patchToRow emits nothing for it, so it can never be written again', () => {
+    expect(patchToRow({ notifyRfiTo: ['arno@wmeng.co.za'] } as any)).toEqual({})
+  })
+
+  it('getNotificationConfig does not surface an rfiTo key', async () => {
+    const row = {
+      id: 's', project_id: 'p1', organisation_id: 'o',
+      working_days: [1, 2, 3, 4, 5], holiday_calendar: 'ZA', extra_holidays: [],
+      builders_holiday: true, units: 'metric', date_format: 'YYYY-MM-DD',
+      default_rfi_priority: 'medium', default_rfi_assignee_id: null,
+      default_rfi_due_days: 7, default_inspection_template_id: null,
+      contract_type: 'jbcc_pba', contract_signed_date: null,
+      practical_completion_date: null, retention_pct: '5.00',
+      notify_rfi_email: true, notify_inspection_email: false,
+      notify_snag_email: true, notify_diary_email: true,
+      notify_qc_email: true, notify_form_email: true,
+      created_at: 'x', updated_at: 'x', updated_by: null,
+    }
+    const client = {
+      schema: () => ({
+        from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) }) }),
+      }),
+    } as any
+    const cfg = await projectSettingsService.getNotificationConfig(client, 'p1')
+    expect(cfg).not.toHaveProperty('rfiTo')
   })
 })

@@ -25,7 +25,7 @@ import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { projectService, projectSettingsService, ORG_WRITE_ROLES } from '@esite/shared'
+import { projectService, projectSettingsService, filterSuppressed, ORG_WRITE_ROLES } from '@esite/shared'
 import type { OrgRole } from '@esite/shared'
 import { resolveProjectRecipients } from '@/lib/recipients'
 import { notifySiteFormDistributed } from '@/lib/site-form-email'
@@ -44,6 +44,9 @@ const uuid = z.string().uuid()
 
 /** Statuses a completed record may be distributed from. */
 const DISTRIBUTABLE_STATUSES = new Set(['submitted', 'distributed'])
+
+/** The bit of a resolved recipient the preview partitions on. */
+type ProjectRecipientLike = { email: string | null; fullName: string | null }
 
 type Guarded =
   | { ok: false; error: string }
@@ -128,12 +131,20 @@ function msg(e: unknown, fallback: string): string {
  * Resolved through the service client (inside resolveProjectRecipients) because
  * the caller usually cannot read cross-org profiles under RLS — a caller-scoped
  * read would silently show a shorter list than the one that actually gets mailed.
+ *
+ * ⚠ THE PREVIEW MUST MATCH THE SEND. `notifyEntityEvent` withholds addresses on
+ * the bounce/complaint suppression list, so this preview consults the same list
+ * with the same helper. A preview that lists someone the send will drop is a
+ * safety control that lies. The dropped people are RETURNED, not silently
+ * removed — `suppressed` names them so the reviewer can chase a real address
+ * rather than assume a record reached someone it did not.
  */
 export async function previewFormRecipientsAction(projectId: string): Promise<
-  | { error: string; recipients?: undefined; emailEnabled?: undefined }
+  | { error: string; recipients?: undefined; suppressed?: undefined; emailEnabled?: undefined }
   | {
       error?: undefined
       recipients: { name: string | null; email: string }[]
+      suppressed: { name: string | null; email: string }[]
       emailEnabled: boolean
     }
 > {
@@ -143,10 +154,10 @@ export async function previewFormRecipientsAction(projectId: string): Promise<
   if (!guard.ok) return { error: guard.error }
 
   const { recipients } = await resolveProjectRecipients(projectId)
+  const service = createServiceClient()
 
   let emailEnabled: boolean
   try {
-    const service = createServiceClient()
     const cfg = await projectSettingsService.getNotificationConfig(service as never, projectId)
     emailEnabled = Boolean(cfg.formEmail)
   } catch {
@@ -155,11 +166,23 @@ export async function previewFormRecipientsAction(projectId: string): Promise<
     emailEnabled = false
   }
 
+  // Only addressable recipients: a roster member without an email still gets
+  // the in-app bell, but showing them here would overstate the mail audience.
+  const addressable = recipients.filter((r) => Boolean(r.email))
+  const { suppressed } = await filterSuppressed(
+    service as never,
+    addressable.map((r) => r.email as string),
+  )
+  const blocked = new Set(suppressed.map((a) => a.trim().toLowerCase()))
+  const isBlocked = (r: ProjectRecipientLike) =>
+    blocked.has((r.email as string).trim().toLowerCase())
+
   return {
-    // Only addressable recipients: a roster member without an email still gets
-    // the in-app bell, but showing them here would overstate the mail audience.
-    recipients: recipients
-      .filter((r) => Boolean(r.email))
+    recipients: addressable
+      .filter((r) => !isBlocked(r))
+      .map((r) => ({ name: r.fullName, email: r.email as string })),
+    suppressed: addressable
+      .filter(isBlocked)
       .map((r) => ({ name: r.fullName, email: r.email as string })),
     emailEnabled,
   }

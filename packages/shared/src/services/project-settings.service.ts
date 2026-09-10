@@ -295,8 +295,18 @@ export const projectSettingsService = {
       practicalCompletionDate: snap.practicalCompletionDate,
       retentionPct: snap.retentionPct,
       notifyRfiEmail: snap.notifyRfiEmail,
-      notifyRfiTo: snap.notifyRfiTo,
       notifyInspectionEmail: snap.notifyInspectionEmail,
+      // ⚠ THIS LIST IS THE WHOLE IMPLEMENTATION. Anything missing from it is
+      // silently NOT restored: patchToRow skips undefined, so an omitted field
+      // produces no error anywhere — the restore just quietly does less than it
+      // says. notifySnagEmail / notifyQcEmail / notifyDiaryEmail /
+      // notifyFormEmail were all missing, so four of the six notification
+      // toggles survived a "restore" untouched. Add every new column here in
+      // the same PR that adds the column.
+      notifySnagEmail: snap.notifySnagEmail,
+      notifyQcEmail: snap.notifyQcEmail,
+      notifyDiaryEmail: snap.notifyDiaryEmail,
+      notifyFormEmail: snap.notifyFormEmail,
     }
     return this.update(client, projectId, patch)
   },
@@ -371,7 +381,6 @@ export const projectSettingsService = {
     if (!s) {
       return {
         rfiEmail: projectSettingsDefaults.notifyRfiEmail,
-        rfiTo: projectSettingsDefaults.notifyRfiTo,
         inspectionEmail: projectSettingsDefaults.notifyInspectionEmail,
         snagEmail: projectSettingsDefaults.notifySnagEmail,
         diaryEmail: projectSettingsDefaults.notifyDiaryEmail,
@@ -381,7 +390,14 @@ export const projectSettingsService = {
     }
     return {
       rfiEmail: s.notifyRfiEmail,
-      rfiTo: s.notifyRfiTo,
+      // ⚠ `inspectionEmail` HAS NO CONSUMER. Nothing in apps/web/src or
+      // packages/shared/src reads it — there is no inspection email sender. Its
+      // UI toggle was removed (see IntegrationsPanel.tsx) rather than leave a
+      // control for something that does not happen. A contract test in
+      // apps/web pins that: adding it back to TOGGLES fails the build until a
+      // sender exists, and the sender must be written to the events the code
+      // actually has (inspection_assigned / inspection_awaiting_verification /
+      // inspection_abandoned), not to "scheduled" or "completed".
       inspectionEmail: s.notifyInspectionEmail,
       snagEmail: s.notifySnagEmail,
       diaryEmail: s.notifyDiaryEmail,

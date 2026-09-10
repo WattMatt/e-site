@@ -2,11 +2,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { projectSettingsService } from '@esite/shared'
-import { dispatchRfiEmail } from './rfi-email'
+import { notifyRfiEvent } from './rfi-email'
 
 /**
  * Live-DB integration test for the RFI email channel. Proves that
- * dispatchRfiEmail, fed real profiles + project settings, resolves the right
+ * notifyRfiEvent, fed real profiles + project settings, resolves the right
  * recipients and invokes send-email per recipient with the link + description.
  * The external Resend HTTP call (send-email → Resend) is the only mocked seam.
  *
@@ -23,7 +23,7 @@ const runIntegration = process.env.RUN_INTEGRATION_TESTS === 'true'
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
 
-describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', () => {
+describe.skipIf(!runIntegration)('notifyRfiEvent — INTEGRATION (live DB)', () => {
   let admin: SupabaseClient
   let orgId: string
   let projectId: string
@@ -39,7 +39,7 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
 
   beforeAll(async () => {
     if (!URL || !SERVICE) throw new Error('Set NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY')
-    // dispatchRfiEmail reads these from the env at call time.
+    // notifyRfiEvent reads these from the env at call time.
     process.env.NEXT_PUBLIC_SUPABASE_URL = URL
     process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE
     process.env.NEXT_PUBLIC_SITE_URL = 'https://app.e-site.live'
@@ -96,11 +96,15 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
     vi.restoreAllMocks()
   }, 60_000)
 
+  // NOTE: notifyRfiEvent now also fires the in-app bell through
+  // dispatchNotification, whose own fetch passes through to the real backend
+  // here. That is a real notification row against the throwaway project this
+  // suite creates and tears down; it is not asserted on.
   function mockFetch() {
     const calls: Array<{ url: string; body: any }> = []
     const realFetch = globalThis.fetch.bind(globalThis)
     // Intercept ONLY the send-email call; pass Supabase REST/DB reads through
-    // to the real fetch (dispatchRfiEmail reads profiles/settings via the client).
+    // to the real fetch (notifyRfiEvent reads profiles/settings via the client).
     const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any, init: any) => {
       const u = String(url)
       if (u.includes('/functions/v1/send-email')) {
@@ -115,9 +119,9 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
   it('sends nothing when notifyRfiEmail is OFF', async () => {
     await projectSettingsService.update(admin as any, projectId, { notifyRfiEmail: false })
     const { calls, spy } = mockFetch()
-    await dispatchRfiEmail({
-      projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
-      priority: 'high', dueDate: '2026-07-01', assigneeId, raiserId,
+    await notifyRfiEvent({
+      event: 'created', projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
+      priority: 'high', dueDate: '2026-07-01', assigneeId, raiserId, actorId: raiserId,
     })
     expect(calls).toHaveLength(0)
     spy.mockRestore()
@@ -126,9 +130,9 @@ describe.skipIf(!runIntegration)('dispatchRfiEmail — INTEGRATION (live DB)', (
   it('emails every ACTIVE project member (not inactive, not non-members) when ON', async () => {
     await projectSettingsService.update(admin as any, projectId, { notifyRfiEmail: true })
     const { calls, spy } = mockFetch()
-    await dispatchRfiEmail({
-      projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
-      priority: 'high', dueDate: '2026-07-01', assigneeId, raiserId,
+    await notifyRfiEvent({
+      event: 'created', projectId, rfiId: 'rfi-xyz', rfiSubject: 'Busbar query',
+      priority: 'high', dueDate: '2026-07-01', assigneeId, raiserId, actorId: raiserId,
     })
 
     // ONE batched send-email call carrying all recipients in `to` (array).

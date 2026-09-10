@@ -71,7 +71,6 @@ describe.skipIf(!runIntegration)('projectSettingsService — INTEGRATION (live D
     expect(s!.units).toBe('metric')
     expect(s!.retentionPct).toBe(5.0)
     expect(s!.contractType).toBe('jbcc_pba')
-    expect(s!.notifyRfiTo).toEqual([])
   })
 
   it('update() persists changes and the audit trigger writes a history row with diff', async () => {
