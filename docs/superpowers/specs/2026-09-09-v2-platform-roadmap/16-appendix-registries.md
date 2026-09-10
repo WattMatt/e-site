@@ -388,6 +388,7 @@ Storage is `projects.project_settings.enabled_modules text[] NOT NULL` with the 
 | `/projects/[id]/settings/modules` | `(admin)` | Q1 | view `ALL`, edit `ORG_WRITE_ROLES` |
 | `POST /api/cron/dispatch` ‡ | `api` | Q1 | constant-time `x-cron-secret`; service-only |
 | `POST /api/cron/daily-recap` ‡ | `api` | Q1 | constant-time `x-cron-secret`; service-only |
+| `POST /api/webhooks/resend` ‡ | `api` | Q1 (pre-window, item 0) | Svix/standardwebhooks signature over the raw body; no session; service-role writes only; bypassed in `middleware.ts` by exact path |
 | `/projects/[id]/instructions` | `(admin)` | Q2 | `ORG_WRITE_ROLES` |
 | `/i/[token]` (instruction acknowledgement) ‡ | ungrouped, unauthenticated | Q2 | single-use HMAC, explicit confirm click; a bare GET acknowledges nothing |
 | `/portal/[projectId]` consolidated to timeline · reports · approvals | `(portal)` | Q3 | `requirePortalAccess` re-cut onto `user_effective_project_role(project_id)` |
