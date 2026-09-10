@@ -38,6 +38,23 @@ const VERIFY_MFA_PATH = '/verify-mfa'
 // get bounced to /login. See apps/web/src/app/api/notifications/dispatch/route.ts.
 const SELF_AUTH_PATHS = ['/api/notifications/dispatch']
 
+// Webhook endpoints authenticated by a signature over the raw request body,
+// not by a session or a bearer token. They must NOT be redirected: a 307 to
+// /login is recorded by the sender as a failed delivery, and after enough
+// failures the provider disables the endpoint — a failure mode that looks
+// exactly like the provider never sending anything.
+//
+// Exact paths, not prefixes: '/api/webhooks' itself is not an endpoint, and
+// neither is any sub-path of a listed route. `request.nextUrl.pathname` is
+// already WHATWG-normalised, so '..' segments are resolved before this
+// comparison — never compare against the raw request URL here.
+//
+// /api/paystack/webhook was in no list at all and has therefore been 307'd
+// since it shipped. Paystack is not in live mode yet, so nothing is broken
+// today — but finding this during the KYC smoke test would cost a round trip
+// with a payment provider.
+const SIGNED_WEBHOOK_PATHS = ['/api/webhooks/resend', '/api/paystack/webhook']
+
 // Service-role client for org membership checks — bypasses RLS entirely.
 // Safe because we always verify the user session via updateSession() first.
 const serviceClient = createClient(
@@ -82,7 +99,10 @@ export async function middleware(request: NextRequest) {
   // The route handler enforces its own JWT verification, same-org boundaries,
   // and rate limits. Skipping updateSession also avoids an unnecessary Supabase
   // round-trip for cookieless mobile callers.
-  if (SELF_AUTH_PATHS.some((p) => pathname.startsWith(p))) {
+  if (
+    SELF_AUTH_PATHS.some((p) => pathname.startsWith(p)) ||
+    SIGNED_WEBHOOK_PATHS.includes(pathname)
+  ) {
     return NextResponse.next()
   }
 
