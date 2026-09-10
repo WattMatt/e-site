@@ -118,7 +118,7 @@ The programme's own history is the argument for this subsection: `cloud-sync-pol
 | Nightly active-project stamp (Q4) | `pg_cron` | one `product_events` row per run, plus `projects.projects.last_active_at` | nightly 02:00 SAST | 30 h | invoice correctness | Arno |
 | Calendar-year re-seed | manual, annual | `projects.calendar_years` | each October, for the following year | next year's row absent on 1 November | Immediate | Arno |
 
-**Rule 3 — one weekly ops review, Monday, off the `/metrics` page.** It reads the eight headline numbers and the nine ledgers' last-run times on the same screen, takes fifteen minutes, and is the second of the programme's two recurring operational tasks (the first is the October calendar re-seed). A dashboard nobody is scheduled to open is the same failure as a metric with no audience.
+**Rule 3 — one weekly ops review, Monday, off the `/metrics` page.** It reads the eight headline numbers and the nine ledgers' last-run times on the same screen, takes fifteen minutes, and is the second of the programme's two recurring operational tasks (the first is the October calendar re-seed). A dashboard nobody is scheduled to open is the same failure as a metric with no audience. **It also reads `select * from public.email_suppressions`.** That list is written by the Resend webhook from the pre-window and is not consulted by any sender until §13 item 7, so between those two dates a hard-bounced address keeps receiving lifecycle mail daily. One line in a review that already happens is proportionate to a table with zero rows; a growing list before item 7 is a signal to bring the consult forward.
 
 ### (c) Rollout and change management
 

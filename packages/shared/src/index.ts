@@ -19,6 +19,7 @@ export * from './email/snag-visit-email'
 // private copies of the wrapper; migrating them is deliberately out of scope.
 export * from './email/layout'
 export * from './email/site-form-email'
+export * from './email/suppression'
 
 // Inspections (Phase 2 — engine + template schema)
 export * from './inspections'
