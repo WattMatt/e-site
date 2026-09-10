@@ -10,7 +10,13 @@ import { createHmac, timingSafeEqual } from 'crypto'
  * (apps/edge-functions/.../auth-email-hook/index.ts:22,177-180); apps/web
  * carries no such dependency and needs none for thirty lines of node:crypto.
  *
- * The timestamp check is what stops a captured-and-replayed request.
+ * The timestamp check BOUNDS the replay window to five minutes — it does not
+ * stop replay, and nothing in this file does. Within those five minutes a
+ * captured request replays byte-for-byte and verifies, correctly: it IS a
+ * genuine Resend request. What makes the replay a no-op is the UNIQUE
+ * constraint on `email_events.webhook_id` (migration 00185), keyed on the
+ * `svix-id` this file authenticates. Any caller that stops de-duplicating on
+ * that column loses replay protection entirely.
  */
 
 export interface SvixHeaders {
@@ -26,15 +32,33 @@ const SECRET_PREFIX = 'whsec_'
  * Resend sends `svix-*`; the standardwebhooks specification names `webhook-*`.
  * Accept either — getting this wrong rejects every request with a 401 that
  * looks exactly like a wrong secret.
+ *
+ * Null means "this request is not signed at all", which is a different incident
+ * from "signed wrongly" — so a present-but-blank header counts as absent. The
+ * returned values are deliberately NOT trimmed: `id` and `timestamp` go into
+ * the signed string verbatim, so normalising them here would break verification
+ * against whatever the sender actually hashed.
  */
 export function readSvixHeaders(get: (name: string) => string | null): SvixHeaders | null {
   const id = get('svix-id') ?? get('webhook-id')
   const timestamp = get('svix-timestamp') ?? get('webhook-timestamp')
   const signature = get('svix-signature') ?? get('webhook-signature')
-  if (!id || !timestamp || !signature) return null
+  if (!id?.trim() || !timestamp?.trim() || !signature?.trim()) return null
   return { id, timestamp, signature }
 }
 
+/**
+ * Contract: returns FALSE for every invalid input — a missing, empty or
+ * undecodable secret, an absent, malformed or wrong-length signature, a
+ * non-numeric or stale timestamp — and NEVER throws.
+ *
+ * That is a security property, not tidiness. This is the only gate on a public
+ * unauthenticated endpoint, and such handlers are routinely wrapped in
+ * `try/catch -> 200` so a provider stops retrying; inside one of those, a throw
+ * IS the bypass. `secret: string` also type-checks a
+ * `process.env.RESEND_WEBHOOK_SECRET!` that is undefined at runtime, so the
+ * missing-input cases are reachable from correct-looking calling code.
+ */
 export function verifySvixSignature(opts: {
   secret: string
   body: string
@@ -45,6 +69,12 @@ export function verifySvixSignature(opts: {
   const { secret, body, headers } = opts
   const now = opts.now ?? Date.now()
 
+  // Guard first: everything below dereferences these.
+  if (!secret || !headers?.signature) return false
+
+  // A NaN timestamp must be rejected, not merely compared: `Math.abs(NaN) > x`
+  // is false, so without this line a non-numeric timestamp SKIPS the freshness
+  // check below and drops the replay window altogether.
   const seconds = Number(headers.timestamp)
   if (!Number.isFinite(seconds)) return false
   if (Math.abs(now - seconds * 1000) > TOLERANCE_MS) return false
