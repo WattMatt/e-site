@@ -295,7 +295,7 @@ Paste this into Claude-in-Chrome (after the PRE-FILL block above is filled):
 > 6. Wait until status shows READY (~50s typical). Note the new `dpl_…` ID from the URL bar.
 >
 > **Post-rotation verification (do this in this same Chrome session):**
-> 7. Open `https://app.e-site.live/api/health` (or whichever the production domain is). The route reads `PAYSTACK_SECRET_KEY` and reports `status:'degraded'` if missing — a 200 response with no Paystack-degraded message confirms the key is loaded post-redeploy.
+> 7. Open `https://www.e-site.live/api/health` (or whichever the production domain is). The route reads `PAYSTACK_SECRET_KEY` and reports `status:'degraded'` if missing — a 200 response with no Paystack-degraded message confirms the key is loaded post-redeploy.
 > 8. As a non-destructive end-to-end check, log in to a real org and click **Subscribe** on `/settings/billing` for the cheapest tier. The Paystack hosted checkout page that opens has a small "Powered by Paystack" footer — if it says "Test mode" anywhere on that page, the rotation didn't take effect (still serving test keys). DO NOT actually pay — just confirm the badge is absent → close the tab.
 >
 > **Report back:**
@@ -338,7 +338,7 @@ Steps Arno does himself (NOT a Claude-Chrome task — requires real card, real b
    ```
    Note the `org_id` UUID of the chosen test org. Save it as `SMOKE_ORG_ID` for steps 5 + 7 below.
 
-1. Open `https://app.e-site.live/settings/billing` (production, real auth, while logged in as a member of `SMOKE_ORG_ID`).
+1. Open `https://www.e-site.live/settings/billing` (production, real auth, while logged in as a member of `SMOKE_ORG_ID`).
 2. Pick **Starter Monthly** (R499 — the cheapest non-free tier; R10 isn't an option because pricing is plan-fixed). Click **Subscribe**.
 3. On Paystack hosted checkout, pay with real card.
 4. Confirm redirect back to `/settings/billing?success=1`.

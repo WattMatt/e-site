@@ -1213,7 +1213,7 @@ async function drawAveryL7173Pages(
   const QR_SIZE = 99.21    // 35mm
   const PAD = 8            // 2.8mm inner label padding
 
-  const SITE_URL_BASE = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live').replace(/\/$/, '')
+  const SITE_URL_BASE = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.e-site.live').replace(/\/$/, '')
 
   const cableById = new Map(payload.cables.map((c) => [c.id, c] as const))
 

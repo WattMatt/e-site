@@ -71,6 +71,18 @@ function safeLogoUrl(raw: string | null | undefined): string | null {
   return v
 }
 
+/**
+ * The visible label for a link to the app: the host of `siteUrl`, derived from
+ * the URL so it can never disagree with the href. Four templates once typed
+ * `app.e-site.live` here while the href went to www — telling the reader they
+ * were headed for a host with no DNS record. A contract test
+ * (`apps/web/src/lib/email/email-link-text.contract.test.ts`) fails on any
+ * anchor whose literal text contains a hostname.
+ */
+export function siteHostLabel(siteUrl: string): string {
+  return escapeHtml(siteUrl.replace(/^https?:\/\//, '').replace(/\/$/, ''))
+}
+
 export interface BrandedEmailOptions {
   /** Already resolved by the caller: project → organisation → DEFAULT_ACCENT_COLOR. */
   accentColor: string
@@ -120,6 +132,6 @@ ${logoHtml}<div style="font-size:11px;letter-spacing:0.08em;text-transform:upper
 <div style="height:3px;width:56px;background:${accent};border-radius:2px;margin:14px 0 20px"></div>
 <div style="font-size:14px;line-height:1.6;color:${p.text}">${o.contentHtml}</div>
 ${footerNoteHtml}
-<div style="margin-top:24px;font-size:11px;color:${p.footer}">E-Site Construction Management · <a href="${escapeHtml(o.siteUrl)}" style="color:${accent}">e-site.live</a></div>
+<div style="margin-top:24px;font-size:11px;color:${p.footer}">E-Site Construction Management · <a href="${escapeHtml(o.siteUrl)}" style="color:${accent}">${siteHostLabel(o.siteUrl)}</a></div>
 </div></body></html>`
 }

@@ -12,7 +12,7 @@ import { projectSettingsService, renderQcIssuedEmail } from '@esite/shared'
 import { createServiceClient } from '@/lib/supabase/server'
 import { notifyEntityEvent } from './notify'
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live'
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.e-site.live'
 const QC_REPORTS_BUCKET = 'qc-reports'
 const SIGNED_URL_TTL = 60 * 60 * 24 * 7 // 7 days — survives email-client open delays
 

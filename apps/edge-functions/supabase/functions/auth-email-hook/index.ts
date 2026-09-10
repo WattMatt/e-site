@@ -51,7 +51,7 @@ function baseTemplate(content: string) {
   .otp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:26px;letter-spacing:0.35em;color:#F1F5F9;background:#0F172A;border:1px solid #334155;border-radius:8px;padding:12px 16px;text-align:center;margin:12px 0}
   .note{font-size:12px;color:#64748B;line-height:1.6}
   .footer{margin-top:24px;font-size:11px;color:#475569;text-align:center}</style></head>
-  <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${APP_URL}" style="color:#3B82F6">www.e-site.live</a></div></div></body></html>`
+  <body><div class="card">${content}<div class="footer">E-Site Construction Management · <a href="${APP_URL}" style="color:#3B82F6">${APP_URL.replace(/^https?:\/\//, '')}</a></div></div></body></html>`
 }
 
 /** token_hash link into the app's own callback (server-side verifyOtp). */

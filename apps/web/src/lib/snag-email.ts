@@ -25,7 +25,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { resolveProjectRecipients } from './recipients'
 import { notifyEntityEvent } from './notify'
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://app.e-site.live'
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.e-site.live'
 
 /** Inline thumbnails in the visit email; the rest are summarised as a count. */
 const MAX_EMAIL_PHOTOS = 6

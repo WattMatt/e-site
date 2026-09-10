@@ -216,7 +216,7 @@ Go to **Project → Settings → Environment Variables** and add every row below
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase dashboard → staging project → Settings → API | Preview only for staging; Production for prod |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Same location — "anon public" key | All |
 | `SUPABASE_SERVICE_ROLE_KEY` | Same — "service_role" key | All (server-only) |
-| `NEXT_PUBLIC_SITE_URL` | `https://staging.e-site.live` for staging; `https://app.e-site.live` for prod | Per-environment |
+| `NEXT_PUBLIC_SITE_URL` | `https://staging.e-site.live` for staging; `https://www.e-site.live` for prod | Per-environment |
 | `NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY` | Paystack → Settings → API Keys (item 3) | All |
 | `PAYSTACK_SECRET_KEY` | Same — secret key | All (server-only) |
 | `PAYSTACK_WEBHOOK_SECRET` | The secret you set in Paystack (item 3c) | All (server-only) |
@@ -755,7 +755,7 @@ Once all 6 items are confirmed, tell Claude Code: **"Staging is ready — run th
 npx supabase secrets set \
   RESEND_API_KEY=re_... \
   RESEND_FROM="E-Site <noreply@e-site.live>" \
-  SITE_URL=https://app.e-site.live \
+  SITE_URL=https://www.e-site.live \
   PAYSTACK_SECRET_KEY=sk_... \
   PAYSTACK_WEBHOOK_SECRET=... \
   --project-ref <your-project-ref>

@@ -78,7 +78,7 @@ SELECT count(*) FROM supabase_migrations.schema_migrations;
 # Required secrets (run once per environment)
 supabase secrets set RESEND_API_KEY=re_... --project-ref <ref>
 supabase secrets set RESEND_FROM="E-Site <noreply@e-site.live>" --project-ref <ref>
-supabase secrets set SITE_URL="https://app.e-site.live" --project-ref <ref>
+supabase secrets set SITE_URL="https://www.e-site.live" --project-ref <ref>
 
 # All internal functions (including lifecycle email + payment recovery + health scoring)
 for fn in onboarding-email-d0 onboarding-email-d1 onboarding-email-d3 \

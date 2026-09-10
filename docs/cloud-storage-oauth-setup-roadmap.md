@@ -76,7 +76,7 @@ Save both to a temporary secure note (1Password / Bitwarden / sticky note that g
 > DROPBOX_APP_DESCRIPTION=<Construction site management — sync project drawings + documents from your Dropbox folders.>
 >
 > # Redirect URIs (paste BOTH; Dropbox accepts a list).
-> REDIRECT_URI_PROD=https://app.e-site.live/api/auth/cloud-callback
+> REDIRECT_URI_PROD=https://www.e-site.live/api/auth/cloud-callback
 > REDIRECT_URI_STAGING=https://esite-lilac.vercel.app/api/auth/cloud-callback
 > ```
 
@@ -142,12 +142,12 @@ Save both to a temporary secure note (1Password / Bitwarden / sticky note that g
 > # the app is verified. Limit ~100. Add yourself + anyone testing.
 > GOOGLE_TEST_USERS=<arno@watsonmattheus.com,otheruser@gmail.com,...>
 >
-> REDIRECT_URI_PROD=https://app.e-site.live/api/auth/cloud-callback
+> REDIRECT_URI_PROD=https://www.e-site.live/api/auth/cloud-callback
 > REDIRECT_URI_STAGING=https://esite-lilac.vercel.app/api/auth/cloud-callback
 >
 > # Authorised JavaScript origins (NOT the redirect URIs — these are the
 > # origins that will host the OAuth init). Same hosts, no path.
-> JS_ORIGIN_PROD=https://app.e-site.live
+> JS_ORIGIN_PROD=https://www.e-site.live
 > JS_ORIGIN_STAGING=https://esite-lilac.vercel.app
 > ```
 
@@ -232,7 +232,7 @@ Save both to a temporary secure note (1Password / Bitwarden / sticky note that g
 > # uses the /common/ tenant which assumes the broadest setting.
 > MS_SUPPORTED_ACCOUNTS=<AzureADandPersonalMicrosoftAccount>
 >
-> REDIRECT_URI_PROD=https://app.e-site.live/api/auth/cloud-callback
+> REDIRECT_URI_PROD=https://www.e-site.live/api/auth/cloud-callback
 > REDIRECT_URI_STAGING=https://esite-lilac.vercel.app/api/auth/cloud-callback
 > ```
 
