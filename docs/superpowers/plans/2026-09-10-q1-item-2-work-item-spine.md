@@ -197,7 +197,19 @@ gh pr list --state open --json number,files --jq '.[] | {n:.number, m:[.files[].
 
 Take the highest of the three, add one, add two.
 
-As of 2026-09-10 all three sources read `00184`. **Every other Q1 plan in `docs/superpowers/plans/` currently writes `00185` as its placeholder** — items 0, 1 and 3 all do, which is the collision this protocol exists to prevent, arriving before a single file is written. The tie-break is A(f)'s ledger order, not who writes first: ordinal 0 (item 0), ordinal 1 (item 1), ordinals 2–5 (item 4's notification group), then **ordinals 6 and 7, which are this plan's**. That puts item 2 at `00191_` and `00192_`, and those are the placeholders used throughout below.
+As of 2026-09-10 all three sources read `00184`, and the four written Q1 plans have already been
+reconciled so that no two claim the same placeholder:
+
+| Plan | A(f) ordinal | Placeholder |
+|---|---|---|
+| Item 0 | 0 | `00185_resend_email_delivery_evidence.sql` |
+| Item 1 | 1 | `00186_q1_metrics_presence_calendar.sql` |
+| Item 4 (not yet planned) | 2–5 | reserved, the notification group |
+| **Item 2 — this plan** | **6 and 7** | **`00191_work_item_project_settings.sql`, `00192_work_item_spine.sql`** |
+| Item 3 | 9 | none — it identifies its migration by ordinal only, which is the pattern to prefer |
+
+The tie-break is A(f)'s ledger order, not who writes a file first. Item 3 is the model: a plan that names
+no number cannot collide, and the number is supplied at merge.
 
 **These are placeholders, not claims.** The number is attached to a file only at the moment of merge, under the protocol in Task 15 Step 1 and Task 16 Step 4. If the ledger or `origin/main` has moved, or a peer merged out of ledger order, rename both files everywhere they appear in this plan before you start. Announce the two numbers to peer sessions now, and re-check immediately before merge.
 

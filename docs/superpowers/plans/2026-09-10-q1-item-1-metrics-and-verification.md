@@ -4745,9 +4745,15 @@ Four decisions this section makes concrete.
 
 - [ ] **Step 4: One final dry run at the claimed number.**
 
+  ⚠ **`00187` below is the worked example from Step 3, not your number.** Substitute whatever number you
+  actually claimed. If the ledger had not moved, that is still `00186` and you renamed nothing — run this
+  step against `00186_q1_metrics_presence_calendar.sql` and read every `00187` in the rest of this task as
+  `00186`. Running the command verbatim without checking is how a dry run passes against a file that is
+  not the one being merged.
+
   ```
   scripts/db/dry-run-migration.sh \
-    apps/edge-functions/supabase/migrations/00187_q1_metrics_presence_calendar.sql \
+    apps/edge-functions/supabase/migrations/<claimed>_q1_metrics_presence_calendar.sql \
     scripts/db/assert-metrics-foundation-seeded.sql \
     scripts/db/assert-metrics-foundation-static.sql
   ```
