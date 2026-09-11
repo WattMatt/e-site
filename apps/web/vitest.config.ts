@@ -13,6 +13,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // `server-only` is not installed here — Next aliases it at build time.
+      // Resolve it to an empty stub so server modules can import it verbatim
+      // and tests can vi.mock it. See src/test/server-only-stub.ts.
+      'server-only': path.resolve(__dirname, './src/test/server-only-stub.ts'),
     },
   },
 })

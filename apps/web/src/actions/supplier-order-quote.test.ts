@@ -37,8 +37,8 @@ const { authUser, updatePayloads, rpcCalls, rpcResult, updateResult } = vi.hoist
   updateResult: { value: { error: null as any } },
 }))
 
-// Not under test; mocking it also keeps its `server-only` guard (via
-// lib/server-only.ts) out of the vitest module graph — see that file.
+// Isolate the event writer: the real emitProductEvent would construct a
+// service client. These tests are about the action, not the metric row.
 vi.mock('@/lib/analytics/product-events', () => ({ emitProductEvent: vi.fn() }))
 
 vi.mock('@/lib/supabase/server', () => ({

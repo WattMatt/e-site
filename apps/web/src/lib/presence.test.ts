@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// `server-only` throws outside the react-server condition and is not resolvable
-// from apps/web under Vite (see lib/server-only.ts and
-// analytics/product-events.test.ts); the mock must sit above the import.
-vi.mock('@/lib/server-only', () => ({}))
+// `server-only` throws outside the react-server condition (see
+// analytics/product-events.test.ts; under vitest it resolves to
+// src/test/server-only-stub.ts); the mock must sit above the import.
+vi.mock('server-only', () => ({}))
 
 const h = vi.hoisted(() => ({
   userAgent: null as string | null,

@@ -1,5 +1,4 @@
-// The `server-only` guard via a Vite-resolvable path — see lib/server-only.ts.
-import '@/lib/server-only'
+import 'server-only'
 import { PRODUCT_EVENTS, type ProductEvent } from '@esite/shared'
 import { createServiceClient } from '@/lib/supabase/server'
 
@@ -15,10 +14,9 @@ import { createServiceClient } from '@/lib/supabase/server'
  * Never throws and is never awaited on a path the user is waiting on. A metric
  * that can fail a write is worse than no metric.
  *
- * ⚠ Any test importing this module must `vi.mock('@/lib/server-only', () => ({}))`
+ * ⚠ Any test importing this module must `vi.mock('server-only', () => ({}))`
  * ABOVE the import — the real package throws outside the react-server
- * condition, which is the condition vitest runs in (and is not even resolvable
- * from apps/web, which is why the guard sits behind lib/server-only.ts).
+ * condition, which is the condition vitest runs in.
  */
 export interface ProductEventArgs {
   actorId: string | null

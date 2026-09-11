@@ -1,5 +1,4 @@
-// The `server-only` guard via a Vite-resolvable path — see lib/server-only.ts.
-import '@/lib/server-only'
+import 'server-only'
 import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 

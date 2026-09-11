@@ -1,16 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ⚠ `server-only` THROWS on import outside the react-server condition, which is
-// exactly the condition vitest runs in — and it is not even resolvable from
-// apps/web (Next aliases it at build time; Vite does not), so a direct
-// `vi.mock('server-only', …)` fails at transform time before it can intercept.
-// This repo already knows it: actions/cloud-storage.actions.test.ts:51-52 mocks
-// two services partly to keep their `server-only` imports out of the module
-// graph, and every module that imports it is mocked away rather than imported
-// by a test. The module under test therefore takes the guard through
-// lib/server-only.ts, which IS resolvable and is mocked here.
+// exactly the condition vitest runs in. This repo already knows it —
+// actions/cloud-storage.actions.test.ts:51-52 mocks two services partly to keep
+// their `server-only` imports out of the module graph, and every one of the five
+// modules that imports it is mocked away rather than imported by a test.
+// (Under vitest the specifier resolves to src/test/server-only-stub.ts — see
+// vitest.config.ts — which is what makes this mock resolvable at all.)
 // vi.mock is hoisted, so this must sit ABOVE the import of the module under test.
-vi.mock('@/lib/server-only', () => ({}))
+vi.mock('server-only', () => ({}))
 
 const rpc = vi.fn()
 vi.mock('@/lib/supabase/server', () => ({
