@@ -72,6 +72,7 @@
 -- index: product_events_org_time_idx ON public.product_events
 -- index: product_events_actor_time_idx ON public.product_events
 -- index: product_events_event_time_idx ON public.product_events
+-- index: product_events_project_idx ON public.product_events
 -- index: user_sessions_user_last_seen_idx ON public.user_sessions
 -- cron: platform-metrics-weekly
 -- grant_absent: anon SELECT ON public.product_events
@@ -224,6 +225,9 @@ CREATE TABLE public.product_events (
 CREATE INDEX product_events_org_time_idx ON public.product_events (organisation_id, occurred_at DESC);
 CREATE INDEX product_events_actor_time_idx ON public.product_events (actor_id, occurred_at DESC);
 CREATE INDEX product_events_event_time_idx ON public.product_events (event, occurred_at DESC);
+-- The project FK has no index of its own; without one, ON DELETE SET NULL
+-- seq-scans the whole stream on every project delete.
+CREATE INDEX product_events_project_idx ON public.product_events (project_id);
 
 ALTER TABLE public.product_events ENABLE ROW LEVEL SECURITY;
 
@@ -246,15 +250,23 @@ CREATE POLICY product_events_admin_only ON public.product_events
 -- No INSERT / UPDATE / DELETE policy at all. Writes arrive only through
 -- emit_product_event() below, and only a service_role holder can call it.
 
-REVOKE SELECT ON public.product_events FROM anon;
+-- ALL, not just SELECT: RLS already denies every write (no INSERT/UPDATE/DELETE
+-- policy), but anon receives INSERT/UPDATE/DELETE/SELECT through pg_default_acl
+-- at creation, and a grant that RLS happens to neutralise is still a grant.
+REVOKE ALL ON public.product_events FROM anon;
 
 -- ---------------------------------------------------------------------------
 -- public.emit_product_event — the ONLY writer
 -- ---------------------------------------------------------------------------
 -- The role stamp and the organisation are resolved SERVER-SIDE so a caller
--- cannot invent either. Granted to service_role alone: the web app verifies the
--- user with its own client first and then calls this with the service client,
--- the same shape dispatchNotification already uses (lib/notifications.ts:26).
+-- cannot invent either: with a project, the organisation is the PROJECT's and
+-- a supplied p_organisation_id must agree with it or the call raises; without
+-- a project, p_organisation_id is required. A project_deleted event fires
+-- after the row is gone, so it must pass p_project_id => NULL and carry the
+-- id in properties (Task 13 does this). Granted to service_role alone: the web
+-- app verifies the user with its own client first and then calls this with
+-- the service client, the same shape dispatchNotification already uses
+-- (lib/notifications.ts:26).
 --
 -- ⚠ effective_role is stamped HERE, at write time, through
 -- user_effective_project_role(project_id, actor_id) and is never re-resolved.
@@ -281,19 +293,37 @@ SET search_path TO 'public', 'projects'
 SET row_security TO 'off'
 AS $$
 DECLARE
-    v_org  uuid;
-    v_role text;
-    v_id   uuid;
+    v_org         uuid;
+    v_project_org uuid;
+    v_role        text;
+    v_id          uuid;
 BEGIN
+    -- p_event carries DEFAULT NULL only because PostgreSQL requires every
+    -- parameter after p_project_id's default to have one; this RAISE is the real guard.
     IF p_event IS NULL THEN
         RAISE EXCEPTION 'emit_product_event: p_event is required';
     END IF;
 
-    v_org := COALESCE(
-        p_organisation_id,
-        (SELECT p.organisation_id FROM projects.projects p WHERE p.id = p_project_id));
-    IF v_org IS NULL THEN
-        RAISE EXCEPTION 'emit_product_event: organisation_id could not be resolved (project_id=%)', p_project_id;
+    IF p_project_id IS NOT NULL THEN
+        -- With a project the organisation is the PROJECT's, full stop. A caller
+        -- may pass p_organisation_id alongside, but it must agree.
+        SELECT p.organisation_id INTO v_project_org
+          FROM projects.projects p
+         WHERE p.id = p_project_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'emit_product_event: project % not found — pass p_project_id => NULL for an event about a deleted project', p_project_id;
+        END IF;
+        IF p_organisation_id IS NOT NULL AND p_organisation_id <> v_project_org THEN
+            RAISE EXCEPTION 'emit_product_event: p_organisation_id % disagrees with project %''s organisation %',
+                p_organisation_id, p_project_id, v_project_org;
+        END IF;
+        v_org := v_project_org;
+    ELSE
+        -- No project: the caller must name the organisation.
+        v_org := p_organisation_id;
+        IF v_org IS NULL THEN
+            RAISE EXCEPTION 'emit_product_event: organisation_id could not be resolved (project_id=%)', p_project_id;
+        END IF;
     END IF;
 
     -- Per project, at event time. NULL when there is no project to stamp against.

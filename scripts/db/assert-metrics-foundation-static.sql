@@ -66,10 +66,18 @@ SELECT 'product_events read gate is org-scoped, not platform-wide',
                    FROM pg_policies WHERE schemaname='public' AND tablename='product_events'
                     AND policyname='product_events_admin_only'), false)
 UNION ALL
-SELECT 'anon cannot SELECT product_events', NOT has_table_privilege('anon','public.product_events','SELECT')
+-- CASE-guarded like the function arms: has_table_privilege RAISES on an absent
+-- relation, which would abort the statement and hide every other arm.
+SELECT 'anon cannot SELECT product_events',
+       CASE WHEN to_regclass('public.product_events') IS NULL THEN false
+            ELSE NOT has_table_privilege('anon', 'public.product_events', 'SELECT') END
 UNION ALL
--- CASE-guarded for the same reason as the two arms above: an absent function
+-- CASE-guarded for the same reason as the arms above: an absent function
 -- must print a red line, not abort the statement.
+SELECT 'anon cannot EXECUTE emit_product_event',
+       CASE WHEN to_regprocedure('public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)') IS NULL THEN false
+            ELSE NOT has_function_privilege('anon', 'public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)', 'EXECUTE') END
+UNION ALL
 SELECT 'authenticated cannot EXECUTE emit_product_event',
        CASE WHEN to_regprocedure('public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)') IS NULL THEN false
             ELSE NOT has_function_privilege('authenticated', 'public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)', 'EXECUTE') END
