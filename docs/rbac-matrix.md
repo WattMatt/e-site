@@ -70,6 +70,7 @@ membership.
 | `/settings/branding` | W | W | — | — | — | — | — |
 | `/settings/organisation` | W | W | ? | — | — | — | — |
 | `/settings/integrations` | W | W | ? | — | — | — | — |
+| `/metrics` | W | W | — | — | — | — | — |
 | `/projects/[id]/jbcc/unlock` | R⁴ | R⁴ | R⁴ | R⁴ | R⁴ | — | — |
 | `/projects/[id]/jbcc` (library landing) | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/notice/[code]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
@@ -77,6 +78,17 @@ membership.
 | `/projects/[id]/jbcc/tracking` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/tracking/[letterId]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/parties` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
+
+> `/metrics` (labelled "Adoption" in the sidebar) renders
+> `public.platform_metrics_weekly` and is gated twice:
+> `requireRolePage(OWNER_ADMIN)` on the page, and a RESTRICTIVE SELECT policy on
+> the three metrics tables. `platform_metrics_weekly` uses the zero-argument
+> `public.user_is_org_admin()` because it holds platform-wide aggregates with no
+> per-org row; `product_events` and `metric_cohorts` use the one-argument
+> `public.user_is_org_admin(organisation_id)`, because they do. The page reads
+> through the caller's own session — never the service client — so the database
+> gate is exercised on every render. There is no `/team/metrics`; `/team` is
+> never created.
 
 ¹ Cost-redacted export (2026-07-31): contractor / inspector / supplier / client_viewer download every format with all cost data stripped ([`export-role.ts`](../apps/web/src/lib/cable-schedule/export-role.ts) `redactPayloadCost`); redaction derives from `COST_VIEW_ROLES`. Requires an **effective role on the project** (`public.user_effective_project_role`) — unassigned org members of any role are blocked.
 ² All inspections access requires `public.has_feature(org_id, 'inspections') = true` — the paywall layer comes before the role check. WM-Consulting bypasses.
