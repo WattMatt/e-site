@@ -1,0 +1,184 @@
+-- =============================================================================
+-- Migration 00194 — Q1 ordinal 1: metrics, presence and the working-day calendar
+-- =============================================================================
+-- Appendix A(f)'s Q1 ledger, migration 1. It lands first of the substantive set
+-- because everything downstream reads it:
+--
+--   • public.product_events          — the append-only first-party event stream
+--   • public.platform_metrics_weekly — the immutable weekly snapshot store
+--   • public.metric_cohorts          — the FROZEN September-2026 denominators
+--   • public.metric_accounts (view)  — fixture exclusion, stated once
+--   • public.metric_account_excluded — the exclusion RULE, in one function
+--   • public.user_presence / user_sessions / touch_presence()
+--   • public.user_is_org_admin()     — the zero-arg SQL counterpart of OWNER_ADMIN
+--   • projects.public_holidays / calendar_years / working_days_between()
+--   • the pg_cron job `platform-metrics-weekly`
+--
+-- The calendar is here, not in the spine's migration, because work_items.due_date
+-- is NOT NULL and its BEFORE INSERT trigger raises no_data_found on an unseeded
+-- year. Creating it first satisfies that ordering for free (§12 §(c) hard
+-- dependency 4) and removes the second place it was previously booked.
+--
+-- Additive and idempotent. No schema is created — `public` and `projects` are
+-- both already PostgREST-exposed (config.toml:9) — so a trailing NOTIFY suffices
+-- and NO Management-API config PATCH is required (the 00117 / 00183 precedent).
+--
+-- Destructive? NO. Nothing is dropped, so no backup_<version>_<object> snapshot
+-- is taken (§12 §(j) applies only to destructive migrations).
+--
+-- TWO DELIBERATE DIVERGENCES FROM §15, recorded so a later reader does not
+-- treat either as drift:
+--   (a) §15 §(a) specifies the weekly job "following the inline-key
+--       net.http_post pattern (00148:136-142)". This schedules the function
+--       DIRECTLY, because there is no edge function to call and the direct form
+--       removes the sb_secret_-is-not-a-JWT failure that broke cloud-sync-poll
+--       4/4 on its first tick.
+--   (b) §15 §(b) specifies public.touch_presence(p_platform), one argument.
+--       This ships two — p_user_agent has no other source, and user_agent is in
+--       §15's own user_sessions column list.
+--
+-- @verify:begin
+-- table: public.product_events
+-- table: public.platform_metrics_weekly
+-- table: public.metric_cohorts
+-- table: public.user_presence
+-- table: public.user_sessions
+-- table: projects.public_holidays
+-- table: projects.calendar_years
+-- view: public.metric_accounts
+-- function: public.user_is_org_admin()
+-- function: public.metric_account_excluded(text)
+-- function: public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)
+-- function: public.touch_presence(text,text)
+-- function: public.compute_platform_metrics_weekly(date,date,boolean)
+-- function: projects.working_days_between(timestamp with time zone,timestamp with time zone,uuid,text)
+-- policy: product_events_read ON public.product_events PERMISSIVE
+-- policy: product_events_admin_only ON public.product_events RESTRICTIVE
+-- policy: platform_metrics_weekly_read ON public.platform_metrics_weekly PERMISSIVE
+-- policy: platform_metrics_weekly_admin_only ON public.platform_metrics_weekly RESTRICTIVE
+-- policy: metric_cohorts_read ON public.metric_cohorts PERMISSIVE
+-- policy: metric_cohorts_admin_only ON public.metric_cohorts RESTRICTIVE
+-- policy: user_sessions_own ON public.user_sessions PERMISSIVE
+-- policy: user_presence_own ON public.user_presence PERMISSIVE
+-- policy: public_holidays_read ON projects.public_holidays PERMISSIVE
+-- policy: calendar_years_read ON projects.calendar_years PERMISSIVE
+-- constraint: platform_metrics_weekly_window ON public.platform_metrics_weekly
+-- constraint: platform_metrics_weekly_baseline_week ON public.platform_metrics_weekly
+-- constraint: platform_metrics_weekly_measured_has_value ON public.platform_metrics_weekly
+-- index: platform_metrics_weekly_week_uk ON public.platform_metrics_weekly
+-- index: platform_metrics_weekly_baseline_uk ON public.platform_metrics_weekly
+-- index: product_events_org_time_idx ON public.product_events
+-- index: product_events_actor_time_idx ON public.product_events
+-- index: product_events_event_time_idx ON public.product_events
+-- index: user_sessions_user_last_seen_idx ON public.user_sessions
+-- cron: platform-metrics-weekly
+-- grant_absent: anon SELECT ON public.product_events
+-- grant_absent: anon SELECT ON public.platform_metrics_weekly
+-- grant_absent: anon SELECT ON public.metric_cohorts
+-- grant_absent: anon SELECT ON public.user_presence
+-- grant_absent: anon SELECT ON public.user_sessions
+-- grant_absent: anon SELECT ON projects.public_holidays
+-- grant_absent: anon SELECT ON projects.calendar_years
+-- grant_absent: anon EXECUTE ON public.user_is_org_admin()
+-- grant_absent: anon EXECUTE ON public.metric_account_excluded(text)
+-- grant_absent: anon EXECUTE ON public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)
+-- grant_absent: anon EXECUTE ON public.touch_presence(text,text)
+-- grant_absent: anon EXECUTE ON public.compute_platform_metrics_weekly(date,date,boolean)
+-- grant_absent: anon EXECUTE ON projects.working_days_between(timestamp with time zone,timestamp with time zone,uuid,text)
+-- sql: SELECT bool_and(EXISTS (SELECT 1 FROM projects.public_holidays ph WHERE extract(year from ph.d)::int = cy.year)) FROM projects.calendar_years cy
+-- sql: SELECT count(*) >= 3 FROM projects.calendar_years WHERE year BETWEEN extract(year from CURRENT_DATE)::int AND extract(year from CURRENT_DATE)::int + 2
+-- sql: SELECT count(*) BETWEEN 10 AND 35 FROM public.metric_cohorts WHERE cohort_key = 'weekly_active_denominator'
+-- @verify:end
+--
+-- ⚠ ON THE TWO CALENDAR `sql:` DIRECTIVES. They assert an INVARIANT, never a
+-- row count. `SELECT count(*) = 8 FROM projects.calendar_years` would be false
+-- the day §15 §(b2)'s scheduled re-seed adds a year, the CLI would exit 1, and
+-- `Deploy DB Migrations` would fail for EVERY subsequent migration — a hard
+-- block on the whole programme, self-inflicted by the tool built to prevent
+-- silent failure. The first directive instead catches a real defect (a year
+-- registered with no holidays seeded); the second catches the horizon running
+-- out, which is what makes working_days_between raise in production.
+
+-- ---------------------------------------------------------------------------
+-- 1a. public.user_is_org_admin() — the zero-argument overload
+-- ---------------------------------------------------------------------------
+-- OWNER_ADMIN is a TypeScript constant (packages/shared/src/types/index.ts:36)
+-- and has no meaning inside Postgres; this is its SQL counterpart.
+--
+-- ⚠ SCOPE. This returns true for an owner/admin of ANY organisation, so it is
+-- used as the RESTRICTIVE read gate ONLY on public.platform_metrics_weekly,
+-- which holds platform-wide aggregates and carries no per-org row. The two
+-- tables that DO carry per-org rows — product_events (organisation_id NOT NULL)
+-- and metric_cohorts — are gated with the existing ONE-ARGUMENT overload, so an
+-- admin of org A cannot read org B's event stream or cohort membership through
+-- PostgREST. Invisible today because WM-Consulting is effectively the only real
+-- org; a cross-tenant leak the moment metric 8 succeeds.
+--
+-- ⚠ This is an OVERLOAD, not a replacement. public.user_is_org_admin(p_org_id
+-- uuid) already exists (00177:256) and THREE RESTRICTIVE write policies on
+-- public.user_organisations depend on it. Never re-declare that signature here.
+--
+-- COALESCE to FALSE because a non-member yields NULL and NULL IN (...) is NULL.
+-- auth.uid(), never current_user — inside SECURITY DEFINER, current_user is the
+-- function OWNER, which is what made 00179's transition trigger silently inert.
+CREATE OR REPLACE FUNCTION public.user_is_org_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path TO 'public'
+SET row_security TO 'off'
+AS $$
+  SELECT COALESCE(
+    (SELECT true
+       FROM public.user_organisations
+      WHERE user_id = auth.uid()
+        AND is_active
+        AND role IN ('owner', 'admin')
+      LIMIT 1),
+    false);
+$$;
+
+-- Two revokes, not one. pg_default_acl on public still grants anon EXECUTE
+-- directly at creation, which FROM PUBLIC does not touch, so FROM anon is
+-- load-bearing (00113:15-24). 00177:273 named PUBLIC and authenticated, never
+-- anon; 00186's sweep closed it (has_function_privilege on the uuid overload = false today).
+REVOKE ALL     ON FUNCTION public.user_is_org_admin()      FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.user_is_org_admin()      FROM anon;
+GRANT  EXECUTE ON FUNCTION public.user_is_org_admin()      TO authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- 1b. public.metric_account_excluded — the exclusion RULE, in ONE place
+-- ---------------------------------------------------------------------------
+-- Every denominator in this programme selects from public.metric_accounts,
+-- which calls this. Keeping the rule in a function rather than in the view's
+-- WHERE clause means a future exclusion is one CREATE OR REPLACE, auditable,
+-- with each entry and its reason as a comment beside it — instead of a second
+-- WHERE clause somewhere else, which is a second source of truth.
+--
+-- What is excluded, and why, exhaustively:
+--   • rbac-test@e-site.live — a PERMANENT production regression fixture
+--     (CLAUDE.md), not a user. Holds an active contractor role, so it lands in
+--     metric 2a's cohort if not excluded.
+--   • %probe% — the throwaway-admin pattern used for prod verification in
+--     PRs #142, #154, #158 and #162. Zero such accounts exist right now
+--     (measured: metric_accounts holds 35 of 36 profiles), which is exactly why
+--     the rule must survive the next one.
+--
+-- NOT excluded, deliberately: esite-demo.co.za holds 2 accounts (measured), one
+-- of them a contractor, and they inflate metric 2b's denominator permanently.
+-- Adding them is a PRODUCT decision for the owner, reported as a diagnostic in
+-- docs/metrics-baseline-2026-10.md rather than decided here.
+CREATE OR REPLACE FUNCTION public.metric_account_excluded(p_email text)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SET search_path TO 'public'
+AS $$
+  SELECT p_email IS NULL
+      OR p_email = 'rbac-test@e-site.live'
+      OR p_email LIKE '%probe%';
+$$;
+
+REVOKE ALL     ON FUNCTION public.metric_account_excluded(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.metric_account_excluded(text) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.metric_account_excluded(text) TO authenticated, service_role;
