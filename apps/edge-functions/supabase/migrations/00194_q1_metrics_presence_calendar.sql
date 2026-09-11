@@ -120,11 +120,12 @@
 -- The FOURTH and FIFTH are EXACT (= 12, = 4) where the third is a band, and
 -- that is safe because two things hold together: the set is FROZEN (dated
 -- as_of, never recomputed) AND the seed is PINNED — section 3b's activity
--- window and membership cut-off are literal timestamps, so the same rows come
--- out on any apply date — and user_id carries no ON DELETE CASCADE, which
--- removes the only thing that could shrink the count after the apply. The DO
--- block in 3b raises on the same two numbers, so a drift is caught at apply
--- time rather than by the verifier afterwards.
+-- window and membership cut-off are literal timestamps (the predicates 3b
+-- reads LIVE at apply time are the caveat recorded there) — and NEITHER
+-- user_id NOR organisation_id carries a foreign key, so no ON DELETE CASCADE
+-- can shrink the count after the apply. The DO block in 3b raises on the same
+-- two numbers, so a drift is caught at apply time rather than by the verifier
+-- afterwards.
 
 -- ---------------------------------------------------------------------------
 -- 1a. public.user_is_org_admin() — the zero-argument overload
@@ -400,12 +401,20 @@ REVOKE ALL ON public.metric_accounts FROM anon;
 CREATE TABLE public.metric_cohorts (
     cohort_key      text NOT NULL CHECK (cohort_key IN (
                       'weekly_active_denominator', 'contractor_frozen', 'client_viewer_frozen')),
-    -- NO FK to profiles, deliberately. ON DELETE CASCADE would silently shrink
-    -- a FROZEN denominator the day a profile is deleted, and the numerator
-    -- already excludes deleted users because it counts through metric_accounts.
-    -- The organisation FK stays: it is what the org-scoped read gate keys on.
+    -- NO FK on user_id OR organisation_id, deliberately. ON DELETE CASCADE
+    -- would silently shrink a FROZEN denominator: on user_id the day a profile
+    -- is deleted (the numerator already excludes deleted users because it
+    -- counts through metric_accounts); on organisation_id the day an
+    -- organisation is deleted. A rolled-back probe showed every cohort spans
+    -- TWO organisations, and the second is "E-Site DEMO — Contractor/Client
+    -- Preview" (2 of 23, 1 of 12, 1 of 4). Deleting that org would cascade the
+    -- frozen counts to 21 / 11 / 3, the exact `sql:` guards in the @verify
+    -- block would go red, and the post-push verifier would fail EVERY later
+    -- deploy. A dangling organisation_id merely makes the row invisible —
+    -- user_is_org_admin(<dangling>) is false for everyone — because the
+    -- org-scoped read gate keys on the column's VALUE, not on a constraint.
     user_id         uuid NOT NULL,
-    organisation_id uuid NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
+    organisation_id uuid NOT NULL,
     as_of           date NOT NULL,
     PRIMARY KEY (cohort_key, user_id, as_of)
 );
@@ -469,12 +478,20 @@ GRANT  EXECUTE ON FUNCTION projects.project_had_activity(uuid,timestamptz,timest
 -- 2026-09-10: 23 accounts.
 --
 -- ⚠ The window and the cut-off are PINNED literals, never now()-relative.
--- The seed must reproduce 23 / 12 / 4 on whatever day the migration actually
--- applies (a merge slips; a deploy is re-run), and a trailing-90-days
--- predicate would enumerate a different set on each of those days while still
--- passing the band — a "frozen" cohort whose membership depends on the apply
--- date. [2026-06-12, 2026-09-10) is the 90 days ending on the measurement
--- date; the membership cut-off is the same instant.
+-- A trailing-90-days predicate would enumerate a different set on each apply
+-- day (a merge slips; a deploy is re-run) while still passing the band — a
+-- "frozen" cohort whose membership depends on the apply date. [2026-06-12,
+-- 2026-09-10) is the 90 days ending on the measurement date; the membership
+-- cut-off is the same instant.
+--
+-- ⚠ Pinning the literals does NOT make the seed a pure function of its text.
+-- pm.is_active, user_effective_project_role(...) and the existence of a
+-- profiles row (via metric_accounts) are read LIVE at apply time, so the
+-- exact guards below — and the `sql:` directives in the @verify block — WILL
+-- abort `db push` if a membership is deactivated, a contractor is promoted or
+-- a profile is deleted between the last dry run and merge. That is the
+-- intended failure, and the guards stay: recovery is to read the live count,
+-- adjust the guard in a new commit, and re-deploy — never to widen it.
 -- Every literal carries an explicit +00 offset: an offset-less literal resolves
 -- through the session TimeZone — UTC today, but a future `ALTER ROLE … SET
 -- timezone` would silently shift the cut-off.
@@ -1117,9 +1134,10 @@ BEGIN
     -- exist and already carry history. This is what makes metric 1 measure
     -- BEHAVIOUR rather than the office lane's instrumentation schedule:
     -- product_events covers ten trackServer call sites in five office files,
-    -- user_sessions has no writer until item 4, and the source mirrors for
-    -- diary/QC/forms/inspections are item 3. A foreman who writes a diary
-    -- entry every day would otherwise read as inactive for two-thirds of Q1.
+    -- user_sessions has one writer (the admin shell's touchPresence) until
+    -- item 4's heartbeat, and the source mirrors for diary/QC/forms/inspections
+    -- are item 3. A foreman who writes a diary entry every day would otherwise
+    -- read as inactive for two-thirds of Q1.
     --
     -- It is also the only arm measurable RETROSPECTIVELY, which is exactly
     -- what a frozen baseline over a window in the past requires.
@@ -1346,10 +1364,11 @@ BEGIN
 
     -- 5b — notification VOLUME, as a RATIO. The Q1 exit criterion is "down
     -- >= 60% on the Sept-2026 baseline"; 750 of the 964 production
-    -- notifications are diary_created, so a bare count falls whenever diary
-    -- volume falls — a contractor leaves, a project completes — and the target
-    -- is met while the notification engine has changed nothing. A metric where
-    -- success and abandonment are the same number is not a metric.
+    -- notifications (measured 2026-09-10; 822 of 1036 on 2026-09-11) are
+    -- diary_created, so a bare count falls whenever diary volume falls — a
+    -- contractor leaves, a project completes — and the target is met while
+    -- the notification engine has changed nothing. A metric where success and
+    -- abandonment are the same number is not a metric.
     UNION ALL SELECT 'notifications_created', v_year, v_week, p_window_start, p_window_end,
            v_notif, v_writes,
            CASE WHEN v_writes > 0 THEN ROUND(v_notif::numeric / v_writes, 4) END,
