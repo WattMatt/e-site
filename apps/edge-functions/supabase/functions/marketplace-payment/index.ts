@@ -70,7 +70,7 @@ async function paystackPost<T>(
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response(null, {
       headers: {
@@ -177,10 +177,17 @@ Deno.serve(async (req) => {
         Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
       )
 
+      // NOTE: percentage_charge is deliberately NOT read here. It was selected
+      // and never used, which reads as if the supplier's stored share governs
+      // the split when in fact `commissionRate` does. The two disagree in the
+      // schema (migration 00016 defaults percentage_charge to 6.00 under a
+      // comment calling it the E-Site commission %, while the subaccount route
+      // writes 94) and reconciling them is a separate commercial decision —
+      // see the 2026-09 payments audit, rank 11. Do not wire it in here.
       const { data: sub } = await serviceSupabase
         .schema('marketplace')
         .from('paystack_subaccounts')
-        .select('subaccount_code, split_code, percentage_charge')
+        .select('subaccount_code, split_code')
         .eq('supplier_id', order.supplier_id)
         .maybeSingle()
 
@@ -198,7 +205,14 @@ Deno.serve(async (req) => {
             type: 'percentage',
             currency: 'ZAR',
             subaccounts: [{ subaccount: sub.subaccount_code, share: supplierSharePercent }],
-            bearer_type: 'all',
+            // The SUPPLIER bears the Paystack transaction fee — live Terms of
+            // Service 4.2, and what the KYC pack declares. 'all' shares the fee
+            // across every account in the split INCLUDING the payout account,
+            // which made E-Site absorb roughly half of every fee (~3% of its own
+            // commission). Paystack requires bearer_subaccount to be named
+            // whenever bearer_type is 'subaccount'.
+            bearer_type: 'subaccount',
+            bearer_subaccount: sub.subaccount_code,
           },
           paystackKey,
         )
@@ -212,6 +226,20 @@ Deno.serve(async (req) => {
           .update({ split_code: splitCode })
           .eq('supplier_id', order.supplier_id)
       }
+    }
+
+    // A charge with no split settles 100% into E-Site's account while the code
+    // below still stamps commission_rate/commission_amount on the order and the
+    // supplier's order page still promises them 94% "on settlement". Refuse
+    // instead: a supplier who has not completed payout onboarding must not be
+    // transacted against at all.
+    if (!splitCode) {
+      return new Response(
+        JSON.stringify({
+          error: 'This supplier has not completed payout onboarding, so the order cannot be paid yet.',
+        }),
+        { status: 422, headers: { 'Content-Type': 'application/json' } },
+      )
     }
 
     // 4. Generate unique reference
@@ -242,9 +270,10 @@ Deno.serve(async (req) => {
       },
     }
 
-    if (splitCode) {
-      txPayload.split_code = splitCode
-    }
+    // Unconditional: the guard above already refused a null splitCode. Never
+    // re-introduce an `if` here — it is how a split-less full-value capture
+    // shipped in the first place.
+    txPayload.split_code = splitCode
 
     if (callbackUrl) {
       txPayload.callback_url = callbackUrl
@@ -296,4 +325,6 @@ Deno.serve(async (req) => {
       headers: { 'Content-Type': 'application/json' },
     })
   }
-})
+}
+
+Deno.serve(handler)

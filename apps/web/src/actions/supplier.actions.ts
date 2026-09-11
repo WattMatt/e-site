@@ -321,9 +321,16 @@ export async function updateOrderStatusAction(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
 
+  // ⚠ status and notes ONLY. `authenticated` no longer holds column UPDATE on
+  // anything else (migration 00191), and a RESTRICTIVE WITH CHECK pins the
+  // money columns to their stored values, so adding total_amount back here
+  // fails 42501 at runtime. It used to be written straight through the RLS
+  // client with `if (!user)` as the whole gate, and the UPDATE policy is
+  // role-blind on contractor_org_id OR supplier_org_id — so the BUYER could
+  // set the price they were about to be charged, since marketplace-payment
+  // charges order.total_amount.
   const updates: Record<string, unknown> & any = { status }
   if (extras?.notes !== undefined) updates.notes = extras.notes
-  if (extras?.quotedAmount !== undefined) updates.total_amount = extras.quotedAmount
 
   const { error } = await supabase
     .schema('marketplace')
@@ -332,6 +339,17 @@ export async function updateOrderStatusAction(
     .eq('id', orderId)
 
   if (error) return { error: error.message }
+
+  // The quote is a privileged write. marketplace.set_order_quote is
+  // SECURITY DEFINER and asserts that the caller is in the order's
+  // supplier_org_id (and is not a client_viewer) and that payment_status is
+  // still 'pending' — authorisation the app layer never performed.
+  if (extras?.quotedAmount !== undefined) {
+    const { error: quoteErr } = await (supabase as any)
+      .schema('marketplace')
+      .rpc('set_order_quote', { p_order_id: orderId, p_total_amount: extras.quotedAmount })
+    if (quoteErr) return { error: quoteErr.message }
+  }
 
   // Notify contractor (best-effort)
   try {

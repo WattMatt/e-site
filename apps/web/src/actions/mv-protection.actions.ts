@@ -23,6 +23,7 @@ import { revalidatePath } from 'next/cache'
 
 import { createClient } from '@/lib/supabase/server'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
+import { hasMvAccess } from '@/lib/mv-access'
 import {
   mvProtectionService,
   mvSignoffComplete,
@@ -71,6 +72,37 @@ async function resolveWritableRevision(
   }
 }
 
+/**
+ * The R2 000/user/yr Medium-Voltage entitlement check (spec §7 paywall).
+ *
+ * ⚠ This is deliberately NOT folded into resolveWritableRevision. That helper
+ * is shared with overrideFaultLevel, which is called from FaultLevelEditor in
+ * the FREE cable-schedule workspace on every DRAFT revision and is the only
+ * writer of revisions.fault_level_ka — the source value the LV schedule's
+ * short-circuit check consumes. Gating the shared helper would silently break
+ * short-circuit checking for every LV user, with no error anywhere.
+ *
+ * ⚠ It also deliberately does not use requireMvAccess: that calls Next's
+ * redirect(), which throws NEXT_REDIRECT — the wrong semantics for an action
+ * whose contract is { data } | { error }. hasMvAccess fails closed on error.
+ *
+ * Divergence from the house pattern, recorded on purpose: the sibling paid
+ * feature (Generator Cost-Recovery) gates the REPORT and leaves data entry
+ * open. MV gates data entry because the paid artefact is not a document — it
+ * is the Z-bus fault solve and the register that feeds it, and fault_results
+ * are cached in the database where a page gate cannot reach them at all (see
+ * the RESTRICTIVE read policy in migration 00191). docs/rbac-matrix.md records
+ * both conditions.
+ */
+async function requireMvSubscription(supabase: any): Promise<{ error: string } | null> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+  if (!(await hasMvAccess(user.id, supabase))) {
+    return { error: 'Medium-Voltage subscription required' }
+  }
+  return null
+}
+
 function bust(projectId: string, revisionId: string): void {
   revalidatePath(`/projects/${projectId}/medium-voltage/${revisionId}`)
   // overrideFaultLevel writes revisions.fault_level_ka, which the cables
@@ -86,6 +118,9 @@ export async function upsertMvStudySettings(
   const supabase = await createClient()
   const ctx = await resolveWritableRevision(supabase, input.revisionId)
   if ('error' in ctx) return { error: ctx.error }
+
+  const locked = await requireMvSubscription(supabase)
+  if (locked) return locked
 
   try {
     const data = await mvProtectionService.upsertMvStudySettings(
@@ -110,6 +145,9 @@ export async function upsertFaultSource(
   const ctx = await resolveWritableRevision(supabase, input.revisionId)
   if ('error' in ctx) return { error: ctx.error }
 
+  const locked = await requireMvSubscription(supabase)
+  if (locked) return locked
+
   try {
     const data = await mvProtectionService.upsertFaultSource(
       supabase as any,
@@ -133,6 +171,9 @@ export async function upsertProtectionDevice(
   const supabase = await createClient()
   const ctx = await resolveWritableRevision(supabase, input.revisionId)
   if ('error' in ctx) return { error: ctx.error }
+
+  const locked = await requireMvSubscription(supabase)
+  if (locked) return locked
 
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -229,6 +270,9 @@ export async function upsertMvStudySignoff(
   const supabase = await createClient()
   const ctx = await resolveWritableRevision(supabase, input.revisionId)
   if ('error' in ctx) return { error: ctx.error }
+
+  const locked = await requireMvSubscription(supabase)
+  if (locked) return locked
 
   const { data: { user } } = await supabase.auth.getUser()
 
