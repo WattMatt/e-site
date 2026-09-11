@@ -19,9 +19,11 @@
 -- year. Creating it first satisfies that ordering for free (§12 §(c) hard
 -- dependency 4) and removes the second place it was previously booked.
 --
--- Additive and idempotent. No schema is created — `public` and `projects` are
--- both already PostgREST-exposed (config.toml:9) — so a trailing NOTIFY suffices
--- and NO Management-API config PATCH is required (the 00117 / 00183 precedent).
+-- Additive. NOT re-runnable: plain CREATE throughout; `db push` applies it in
+-- one transaction so a failure rolls back whole — never re-apply by hand.
+-- No schema is created — `public` and `projects` are both already
+-- PostgREST-exposed (config.toml:9) — so a trailing NOTIFY suffices and NO
+-- Management-API config PATCH is required (the 00117 / 00183 precedent).
 --
 -- Destructive? NO. Nothing is dropped, so no backup_<version>_<object> snapshot
 -- is taken (§12 §(j) applies only to destructive migrations).
@@ -75,6 +77,7 @@
 -- grant_absent: anon SELECT ON public.product_events
 -- grant_absent: anon SELECT ON public.platform_metrics_weekly
 -- grant_absent: anon SELECT ON public.metric_cohorts
+-- grant_absent: anon SELECT ON public.metric_accounts
 -- grant_absent: anon SELECT ON public.user_presence
 -- grant_absent: anon SELECT ON public.user_sessions
 -- grant_absent: anon SELECT ON projects.public_holidays
@@ -87,17 +90,22 @@
 -- grant_absent: anon EXECUTE ON projects.working_days_between(timestamp with time zone,timestamp with time zone,uuid,text)
 -- sql: SELECT bool_and(EXISTS (SELECT 1 FROM projects.public_holidays ph WHERE extract(year from ph.d)::int = cy.year)) FROM projects.calendar_years cy
 -- sql: SELECT count(*) >= 3 FROM projects.calendar_years WHERE year BETWEEN extract(year from CURRENT_DATE)::int AND extract(year from CURRENT_DATE)::int + 2
--- sql: SELECT count(*) BETWEEN 10 AND 35 FROM public.metric_cohorts WHERE cohort_key = 'weekly_active_denominator'
+-- sql: SELECT count(*) BETWEEN 10 AND 35 FROM public.metric_cohorts WHERE cohort_key = 'weekly_active_denominator' AND as_of = DATE '2026-09-09'
 -- @verify:end
 --
--- ⚠ ON THE TWO CALENDAR `sql:` DIRECTIVES. They assert an INVARIANT, never a
--- row count. `SELECT count(*) = 8 FROM projects.calendar_years` would be false
--- the day §15 §(b2)'s scheduled re-seed adds a year, the CLI would exit 1, and
--- `Deploy DB Migrations` would fail for EVERY subsequent migration — a hard
+-- ⚠ ON THE THREE `sql:` DIRECTIVES. The two calendar ones assert an INVARIANT,
+-- never a row count. `SELECT count(*) = 8 FROM projects.calendar_years` would be
+-- false the day §15 §(b2)'s scheduled re-seed adds a year, the CLI would exit 1,
+-- and `Deploy DB Migrations` would fail for EVERY subsequent migration — a hard
 -- block on the whole programme, self-inflicted by the tool built to prevent
 -- silent failure. The first directive instead catches a real defect (a year
 -- registered with no holidays seeded); the second catches the horizon running
 -- out, which is what makes working_days_between raise in production.
+--
+-- The THIRD is a bounded count on a DATED frozen set, and the `as_of` pin is
+-- what makes it safe: metric_cohorts' PK is (cohort_key, user_id, as_of), so a
+-- second freeze is legal. Without the pin that second freeze doubles the count
+-- past 35 and blocks every later deploy exactly as the calendar case would.
 
 -- ---------------------------------------------------------------------------
 -- 1a. public.user_is_org_admin() — the zero-argument overload
@@ -118,7 +126,8 @@
 -- uuid) already exists (00177:256) and THREE RESTRICTIVE write policies on
 -- public.user_organisations depend on it. Never re-declare that signature here.
 --
--- COALESCE to FALSE because a non-member yields NULL and NULL IN (...) is NULL.
+-- COALESCE to FALSE because the scalar subquery returns NO ROW for a non-member
+-- (role itself is NOT NULL), and a scalar subquery with no row is NULL, not false.
 -- auth.uid(), never current_user — inside SECURITY DEFINER, current_user is the
 -- function OWNER, which is what made 00179's transition trigger silently inert.
 CREATE OR REPLACE FUNCTION public.user_is_org_admin()
@@ -168,6 +177,9 @@ GRANT  EXECUTE ON FUNCTION public.user_is_org_admin()      TO authenticated, ser
 -- of them a contractor, and they inflate metric 2b's denominator permanently.
 -- Adding them is a PRODUCT decision for the owner, reported as a diagnostic in
 -- docs/metrics-baseline-2026-10.md rather than decided here.
+--
+-- IMMUTABLE is correct ONLY while the body reads no table; a future rule that
+-- reads one must be declared STABLE in the same CREATE OR REPLACE.
 CREATE OR REPLACE FUNCTION public.metric_account_excluded(p_email text)
 RETURNS boolean
 LANGUAGE sql
