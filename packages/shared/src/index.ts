@@ -43,3 +43,8 @@ export * from './lib/jbcc/sa-public-holidays'
 export * from './lib/jbcc/working-days'
 // letter-values is pure (no zip/mammoth) — safe to re-export from the barrel.
 export * from './lib/jbcc/letter-values'
+
+// Migrations — the `-- @verify:` block grammar and its predicate builder.
+// Pure: no I/O and no node built-ins, so it is safe in this barrel (the CLI
+// that opens a database connection lives outside @esite/shared).
+export * from './lib/migrations/verify-header'
