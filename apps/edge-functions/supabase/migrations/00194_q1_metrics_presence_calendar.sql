@@ -948,6 +948,10 @@ ON CONFLICT (year) DO NOTHING;
 -- that makes him look late. The same reasoning that forbids a calendar-day
 -- fallback forbids a calendar default.
 --
+-- No shutdown arm here, by design (A(h)): the December push belongs to the
+-- due-date rule (addProjectWorkingDays in @esite/shared), and the count must
+-- not skip a window it never entered. Keep the two in step.
+--
 -- working_days and extra_holidays are read from the EXISTING project_settings
 -- row (00101:20,22) — no new column. A project with no settings row falls back
 -- to the column defaults, which is what the row would have carried.
@@ -975,7 +979,10 @@ BEGIN
         RAISE EXCEPTION 'working_days_between: unknown calendar %', COALESCE(p_calendar, '<null>');
     END IF;
 
-    FOR y IN SELECT generate_series(extract(year from v_from)::int, extract(year from v_to)::int) LOOP
+    -- LEAST .. GREATEST, not generate_series(from, to): on a reversed span the
+    -- series was empty, so an unseeded year returned 0 silently instead of raising.
+    FOR y IN LEAST(extract(year from v_from)::int, extract(year from v_to)::int)
+          .. GREATEST(extract(year from v_from)::int, extract(year from v_to)::int) LOOP
         IF NOT EXISTS (SELECT 1 FROM projects.calendar_years cy WHERE cy.year = y) THEN
             RAISE EXCEPTION 'working_days_between: % is not seeded in projects.calendar_years', y
               USING ERRCODE = 'no_data_found';

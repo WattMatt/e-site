@@ -11,6 +11,11 @@
 // function has no DEFAULT on p_calendar: the chase ladder uses 'site' and
 // metric 4 uses 'office', they are written weeks apart, and a silent default
 // produces a one-day drift in the direction that makes a contractor look late.
+//
+// The shutdown push lives in the due-date rule (addWorkingDays), never in the
+// count: projects.working_days_between in migration 00194 has no shutdown arm,
+// by design (A(h)) — the count must not skip a window it never entered — and
+// the two must stay in step.
 
 const SAST_OFFSET_MS = 2 * 60 * 60 * 1000   // UTC+2, no DST
 const MS_PER_DAY = 24 * 60 * 60 * 1000
@@ -60,12 +65,17 @@ function assertSeeded(ymd: string, cal: ProjectCalendar): void {
   }
 }
 
+/** The base predicate — effective day-of-week, public holiday, extra holiday. Mirrors the SQL exactly. */
 function isWorkingDay(ymd: string, cal: ProjectCalendar): boolean {
   if (!cal.effectiveDays.has(sastIsoDow(ymd))) return false
   if (cal.holidays.has(ymd)) return false
   if (cal.extraHolidays.includes(ymd)) return false
-  if (cal.shutdown && ymd >= cal.shutdown.from && ymd <= cal.shutdown.to) return false
   return true
+}
+
+/** Inside the per-project shutdown window. Applied by the due-date rule ONLY, never by the count. */
+function inShutdown(ymd: string, cal: ProjectCalendar): boolean {
+  return cal.shutdown !== undefined && ymd >= cal.shutdown.from && ymd <= cal.shutdown.to
 }
 
 function nextDay(ymd: string): string {
@@ -93,7 +103,14 @@ export function workingDaysBetween(from: Date, to: Date, cal: ProjectCalendar): 
   return count
 }
 
-/** The instant `n` working days after `from`, at SAST midnight of the landing day. */
+/**
+ * The instant `n` working days after `from`, skipping the shutdown window —
+ * this is the due-date rule, and the only place the shutdown applies.
+ *
+ * Returns UTC midnight of the landing day (02:00 SAST, not local midnight).
+ * Take the date with sastDate() or .toISOString().slice(0, 10); do not read
+ * local-time fields off it.
+ */
 export function addWorkingDays(from: Date, n: number, cal: ProjectCalendar): Date {
   let cursor = sastDate(from)
   assertSeeded(cursor, cal)
@@ -101,7 +118,7 @@ export function addWorkingDays(from: Date, n: number, cal: ProjectCalendar): Dat
   while (remaining > 0) {
     cursor = nextDay(cursor)
     assertSeeded(cursor, cal)
-    if (isWorkingDay(cursor, cal)) remaining -= 1
+    if (isWorkingDay(cursor, cal) && !inShutdown(cursor, cal)) remaining -= 1
   }
   return new Date(`${cursor}T00:00:00Z`)
 }

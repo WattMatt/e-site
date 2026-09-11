@@ -15,18 +15,25 @@ import { listHolidaysNamed } from '../../packages/shared/src/lib/jbcc/sa-public-
 
 const USAGE =
   'usage: node --experimental-strip-types scripts/db/gen-public-holidays-seed.ts <from-year> <to-year>' +
-  '  (both integers, from <= to; defaults 2024 2035)'
+  '  (four-digit years in 2000..2100, from <= to; defaults 2024 2035)'
 
-// Refuse anything that is not an integer year range. Before this guard
-// `… foo bar` printed a syntactically valid, empty VALUES block and exited 0 —
-// a seed that would "apply" and register nothing.
+// Refuse anything that is not a four-digit year inside 2000..2100. Before this
+// guard `… foo bar` printed a syntactically valid, empty VALUES block and
+// exited 0 — a seed that would "apply" and register nothing — and a two-digit
+// year was worse: Date.UTC(24, …) is the year 1924, so `… 24 35` would have
+// seeded 1924-1935 silently.
 function yearArg(raw: string | undefined, fallback: number): number {
   if (raw === undefined) return fallback
-  if (!/^\d+$/.test(raw)) {
+  if (!/^\d{4}$/.test(raw)) {
     console.error(USAGE)
     process.exit(2)
   }
-  return Number(raw)
+  const y = Number(raw)
+  if (y < 2000 || y > 2100) {
+    console.error(USAGE)
+    process.exit(2)
+  }
+  return y
 }
 
 const from = yearArg(process.argv[2], 2024)

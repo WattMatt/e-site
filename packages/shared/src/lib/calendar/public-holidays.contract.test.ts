@@ -28,9 +28,11 @@ const MIGRATIONS = join(REPO_ROOT, 'apps/edge-functions/supabase/migrations')
 // statements, never the whole file. The combined migration carries other
 // ('YYYY-MM-DD', 'text')-shaped tuples (dated literals, comments), and a
 // whole-file scan would turn one of them into a phantom holiday.
-const SEED_STATEMENT = /INSERT INTO projects\.public_holidays\b[\s\S]*?;/g
+// Both statement matchers are bounded by `[^;]*?` so a lazy match can never run
+// past the statement's own `;` into the next one.
+const SEED_STATEMENT = /INSERT INTO projects\.public_holidays\b[^;]*?;/g
 const SEED_ROW = /\(\s*'(\d{4}-\d{2}-\d{2})'\s*,\s*'((?:[^']|'')*)'\s*\)/g
-const YEARS_STATEMENT = /INSERT INTO projects\.calendar_years\b[\s\S]*?generate_series\(\s*(\d{4})\s*,\s*(\d{4})\s*\)/g
+const YEARS_STATEMENT = /INSERT INTO projects\.calendar_years\b[^;]*?generate_series\(\s*(\d{4})\s*,\s*(\d{4})\s*\)/g
 
 interface SeedRow {
   d: string

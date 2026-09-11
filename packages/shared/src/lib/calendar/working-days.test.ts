@@ -32,6 +32,14 @@ describe('workingDaysBetween — office', () => {
     const c = cal({ extraHolidays: ['2026-06-03'] })
     expect(workingDaysBetween(new Date('2026-06-01T08:00:00Z'), new Date('2026-06-05T08:00:00Z'), c)).toBe(3)
   })
+
+  it('returns 0 when to <= from', () => {
+    expect(workingDaysBetween(new Date('2026-06-05T08:00:00Z'), new Date('2026-06-01T08:00:00Z'), cal())).toBe(0)
+  })
+
+  it('returns 0 for two instants on the same local day', () => {
+    expect(workingDaysBetween(new Date('2026-06-01T06:00:00Z'), new Date('2026-06-01T15:00:00Z'), cal())).toBe(0)
+  })
 })
 
 describe('workingDaysBetween — site', () => {
@@ -44,6 +52,23 @@ describe('workingDaysBetween — site', () => {
   it('does not double-count Saturday for a project that already works Saturdays', () => {
     const c = cal({ workingDays: [1, 2, 3, 4, 5, 6], calendar: 'site' })
     expect(workingDaysBetween(new Date('2026-06-01T08:00:00Z'), new Date('2026-06-08T08:00:00Z'), c)).toBe(6)
+  })
+
+  it('an extra_holidays date removes even the Saturday the site rule added', () => {
+    // Mon 1 → Mon 8 June 2026 on site = 6; Sat 6 June declared an extra holiday → 5.
+    const c = cal({ extraHolidays: ['2026-06-06'], calendar: 'site' })
+    expect(workingDaysBetween(new Date('2026-06-01T08:00:00Z'), new Date('2026-06-08T08:00:00Z'), c)).toBe(5)
+  })
+})
+
+describe('the shutdown window belongs to the due-date rule, not the count', () => {
+  it('workingDaysBetween ignores the shutdown window (parity with projects.working_days_between)', () => {
+    // Mon 14 Dec 2026 → Mon 21 Dec 2026 on site: Tue 15, Thu 17, Fri 18, Sat 19,
+    // Mon 21 = 5 (Wed 16 is Day of Reconciliation). Every one of those days sits
+    // inside the shutdown and the count must still see them: the SQL function
+    // has no shutdown arm, and the two must agree on elapsed working days.
+    const c = cal({ shutdown: { from: '2026-12-15', to: '2027-01-15' }, calendar: 'site' })
+    expect(workingDaysBetween(new Date('2026-12-14T08:00:00Z'), new Date('2026-12-21T08:00:00Z'), c)).toBe(5)
   })
 })
 
