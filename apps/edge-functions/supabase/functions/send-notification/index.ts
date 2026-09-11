@@ -14,6 +14,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireServiceRole } from '../_shared/auth.ts'
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 
@@ -36,26 +37,24 @@ Deno.serve(async (req) => {
     })
   }
 
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401, headers: { 'Content-Type': 'application/json' },
-    })
-  }
-
   // Only service_role callers may trigger push notifications.
-  try {
-    const payload = JSON.parse(atob(authHeader.slice(7).split('.')[1]))
-    if (payload.role !== 'service_role') {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), {
-        status: 403, headers: { 'Content-Type': 'application/json' },
-      })
-    }
-  } catch {
-    return new Response(JSON.stringify({ error: 'Invalid token' }), {
-      status: 401, headers: { 'Content-Type': 'application/json' },
-    })
-  }
+  //
+  // ⚠ This used to be an inline copy of the role decode, and this function was
+  // deployed --no-verify-jwt, so nothing verified the signature: any
+  // unauthenticated caller could send a self-made
+  // `<b64>.<b64 {"role":"service_role"}>.anything` and push arbitrary titles
+  // and bodies to any user's device, plus insert arbitrary rows into
+  // public.notifications. Confirmed reachable on production 2026-09-11.
+  //
+  // Two things fix it, and BOTH are required — the guard is only as good as the
+  // deploy flag behind it:
+  //   1. the shared helper, whose header documents that trust model, and
+  //   2. deploying this function WITHOUT --no-verify-jwt, so the gateway
+  //      verifies the signature before the handler ever runs.
+  // `FUNCTIONS_REQUIRING_GATEWAY_JWT` in _shared/auth.ts names this function so
+  // a test can enforce (2) rather than relying on anyone remembering it.
+  const authError = requireServiceRole(req)
+  if (authError) return authError
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
