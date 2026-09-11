@@ -160,4 +160,44 @@ UNION ALL
 SELECT 'anon cannot SELECT metric_cohorts',
        CASE WHEN to_regclass('public.metric_cohorts') IS NULL THEN false
             ELSE NOT has_table_privilege('anon', 'public.metric_cohorts', 'SELECT') END
+UNION ALL
+-- Section 4: user_presence, user_sessions, touch_presence().
+SELECT 'user_presence exists', to_regclass('public.user_presence') IS NOT NULL
+UNION ALL
+SELECT 'user_sessions exists', to_regclass('public.user_sessions') IS NOT NULL
+UNION ALL
+-- = 2, one CHECK per table. The vocabulary is fixed HERE, before three callers
+-- in three different Q1 items invent three spellings; a drift is unrecoverable
+-- for the quarter item 10 needs to split sessions by platform.
+SELECT 'the platform vocabulary is fixed by a CHECK on both tables',
+       (SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+         WHERE t.relname IN ('user_presence','user_sessions')
+           AND c.contype = 'c'
+           AND pg_get_constraintdef(c.oid) LIKE '%mobile_app%') = 2
+UNION ALL
+-- CASE-guarded like every other privilege arm: an absent function must print a
+-- red line, not abort the statement.
+SELECT 'anon cannot EXECUTE touch_presence',
+       CASE WHEN to_regprocedure('public.touch_presence(text,text)') IS NULL THEN false
+            ELSE NOT has_function_privilege('anon', 'public.touch_presence(text,text)', 'EXECUTE') END
+UNION ALL
+SELECT 'authenticated CAN execute touch_presence (the app shell calls it)',
+       CASE WHEN to_regprocedure('public.touch_presence(text,text)') IS NULL THEN false
+            ELSE has_function_privilege('authenticated', 'public.touch_presence(text,text)', 'EXECUTE') END
+UNION ALL
+-- COALESCE to false: no policy row means the subquery is NULL, and NULL is not
+-- true — but it must read as a red line, not vanish.
+SELECT 'a user reads only their own session rows',
+       COALESCE((SELECT qual LIKE '%auth.uid()%' FROM pg_policies
+                  WHERE schemaname='public' AND tablename='user_sessions'
+                    AND policyname='user_sessions_own'), false)
+UNION ALL
+-- CASE-guarded: has_table_privilege RAISES on an absent relation.
+SELECT 'anon cannot SELECT user_sessions',
+       CASE WHEN to_regclass('public.user_sessions') IS NULL THEN false
+            ELSE NOT has_table_privilege('anon', 'public.user_sessions', 'SELECT') END
+UNION ALL
+SELECT 'anon cannot SELECT user_presence',
+       CASE WHEN to_regclass('public.user_presence') IS NULL THEN false
+            ELSE NOT has_table_privilege('anon', 'public.user_presence', 'SELECT') END
 ;

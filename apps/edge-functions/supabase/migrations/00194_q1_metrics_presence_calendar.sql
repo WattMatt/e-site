@@ -620,3 +620,95 @@ CREATE POLICY platform_metrics_weekly_admin_only ON public.platform_metrics_week
 -- ALL, not just SELECT: the snapshot is append-only by the rollup alone, and
 -- anon's default-ACL write grants are still grants until revoked.
 REVOKE ALL ON public.platform_metrics_weekly FROM anon;
+
+-- ---------------------------------------------------------------------------
+-- 4. Presence and sessions — two objects, ONE writer
+-- ---------------------------------------------------------------------------
+-- user_presence is the current-state row the notification dispatcher branches
+-- on. user_sessions is the append-only history the metrics read. The SAME RPC
+-- writes both, so they cannot disagree.
+--
+-- The platform CHECK is fixed HERE, before three callers in three different Q1
+-- items invent three spellings. Item 10's success criterion is contractor use
+-- on a 375px Android screen, which can only be evidenced by splitting sessions
+-- by platform; a vocabulary that drifts is unrecoverable for that quarter.
+CREATE TABLE public.user_presence (
+    user_id        uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+    last_active_at timestamptz NOT NULL DEFAULT now(),
+    platform       text CHECK (platform IN ('web','mobile_web','mobile_app'))
+);
+
+CREATE TABLE public.user_sessions (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    started_at   timestamptz NOT NULL DEFAULT now(),
+    last_seen_at timestamptz NOT NULL DEFAULT now(),
+    user_agent   text,
+    platform     text CHECK (platform IN ('web','mobile_web','mobile_app'))
+);
+
+CREATE INDEX user_sessions_user_last_seen_idx ON public.user_sessions (user_id, last_seen_at DESC);
+
+ALTER TABLE public.user_presence ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_sessions ENABLE ROW LEVEL SECURITY;
+
+-- Own-row read only. No write policy: writes arrive through touch_presence().
+CREATE POLICY user_presence_own ON public.user_presence
+    FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY user_sessions_own ON public.user_sessions
+    FOR SELECT USING (user_id = auth.uid());
+
+-- ALL, not just SELECT: no write policy exists, but anon's default-ACL
+-- INSERT/UPDATE/DELETE grants are still grants until revoked.
+REVOKE ALL ON public.user_presence FROM anon;
+REVOKE ALL ON public.user_sessions FROM anon;
+
+-- The single writer. SECURITY DEFINER so it can write through the own-row-read
+-- policies, and it touches ONLY auth.uid()'s rows — never a user_id argument,
+-- which would make it a forgery primitive. auth.uid(), never current_user.
+CREATE OR REPLACE FUNCTION public.touch_presence(
+    p_platform   text DEFAULT 'web',
+    p_user_agent text DEFAULT NULL
+) RETURNS void
+LANGUAGE plpgsql
+VOLATILE SECURITY DEFINER
+SET search_path TO 'public'
+SET row_security TO 'off'
+AS $$
+DECLARE
+    v_uid     uuid := auth.uid();
+    v_session uuid;
+    v_plat    text := COALESCE(p_platform, 'web');
+BEGIN
+    IF v_uid IS NULL THEN RETURN; END IF;
+    IF v_plat NOT IN ('web','mobile_web','mobile_app') THEN
+        RAISE EXCEPTION 'touch_presence: unknown platform %', v_plat;
+    END IF;
+
+    INSERT INTO public.user_presence (user_id, last_active_at, platform)
+    VALUES (v_uid, now(), v_plat)
+    ON CONFLICT (user_id) DO UPDATE
+      SET last_active_at = now(), platform = EXCLUDED.platform;
+
+    -- Extend the most recent session, or open a new one. The 30-minute gap is
+    -- ALSO applied at read time over last_seen_at (§15 §(b)); this write-time
+    -- split is a convenience for the dispatcher, not the metric's authority.
+    SELECT s.id INTO v_session
+      FROM public.user_sessions s
+     WHERE s.user_id = v_uid
+       AND s.last_seen_at > now() - interval '30 minutes'
+     ORDER BY s.last_seen_at DESC
+     LIMIT 1;
+
+    IF v_session IS NULL THEN
+        INSERT INTO public.user_sessions (user_id, user_agent, platform)
+        VALUES (v_uid, p_user_agent, v_plat);
+    ELSE
+        UPDATE public.user_sessions SET last_seen_at = now() WHERE id = v_session;
+    END IF;
+END;
+$$;
+
+REVOKE ALL     ON FUNCTION public.touch_presence(text,text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.touch_presence(text,text) FROM anon;
+GRANT  EXECUTE ON FUNCTION public.touch_presence(text,text) TO authenticated, service_role;
