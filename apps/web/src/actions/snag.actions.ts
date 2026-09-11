@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { emitProductEvent } from '@/lib/analytics/product-events'
 import { dispatchNotification } from '@/lib/notifications'
 import { notifySnagCreated, dispatchSnagStatusEmail } from '@/lib/snag-email'
 
@@ -102,6 +103,15 @@ export async function signOffSnagAction(
     org_id: snag.organisation_id,
     new_status: 'signed_off',
   })
+  // Per state TRANSITION, not per snag — updateSnagStatusAction emits the same
+  // key for 'resolved' and 'signed_off', so one defect can write two or three
+  // rows. Any count off this event must be count(DISTINCT properties->>'snag_id').
+  await emitProductEvent({
+    actorId: user.id,
+    projectId,
+    event: 'snag_resolved',
+    properties: { snag_id: snagId, new_status: 'signed_off' },
+  })
 
   // Targeted bell to raiser + assignee (minus the actor) …
   await dispatchNotification({
@@ -177,6 +187,14 @@ export async function updateSnagStatusAction(
       project_id: validProjectId,
       org_id: snag.organisation_id,
       new_status: validStatus,
+    })
+    // Fires once per qualifying transition (resolved, then signed_off), and
+    // signOffSnagAction emits the same key again — see the note there.
+    await emitProductEvent({
+      actorId: user.id,
+      projectId: validProjectId,
+      event: 'snag_resolved',
+      properties: { snag_id: validSnagId, new_status: validStatus },
     })
   }
 

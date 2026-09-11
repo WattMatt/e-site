@@ -22,6 +22,7 @@ import { z } from 'zod'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole } from '@/lib/auth/require-role'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { emitProductEvent } from '@/lib/analytics/product-events'
 import { createProjectSchema, type CreateProjectInput, PLANS, type PlanTier, ORG_WRITE_ROLES, type OrgRole } from '@esite/shared'
 
 export interface ProjectGateInfo {
@@ -149,6 +150,12 @@ export async function createProjectAction(
     org_id: orgId,
     source: 'standalone',
   })
+  await emitProductEvent({
+    actorId: user.id,
+    projectId: project.id,
+    event: 'project_created',
+    properties: { source: 'standalone' },
+  })
 
   // Conversion-prompt nudge — the upsell that fires exactly when the free
   // tier's 1-project limit bites. It had never sent a single email: this was
@@ -250,6 +257,17 @@ export async function deleteProjectAction(
     project_id: projectId,
     org_id: project.organisation_id,
     project_name: project.name,
+  })
+  // projectId MUST be null: the row is gone (cascade above), product_events
+  // carries an FK to it, and emit_product_event RAISES on an absent project.
+  // The organisation is supplied explicitly instead, and the id rides in
+  // properties. No project_name — properties carry ids and enums only.
+  await emitProductEvent({
+    actorId: user.id,
+    projectId: null,
+    organisationId: project.organisation_id,
+    event: 'project_deleted',
+    properties: { project_id: projectId },
   })
 
   revalidatePath('/projects')

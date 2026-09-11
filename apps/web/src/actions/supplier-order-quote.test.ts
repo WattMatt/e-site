@@ -37,6 +37,10 @@ const { authUser, updatePayloads, rpcCalls, rpcResult, updateResult } = vi.hoist
   updateResult: { value: { error: null as any } },
 }))
 
+// Not under test; mocking it also keeps its `server-only` guard (via
+// lib/server-only.ts) out of the vitest module graph — see that file.
+vi.mock('@/lib/analytics/product-events', () => ({ emitProductEvent: vi.fn() }))
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({
     auth: { getUser: async () => ({ data: { user: authUser.value }, error: null }) },
