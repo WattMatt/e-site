@@ -43,7 +43,7 @@ for a in "$@"; do
   [[ -f "$a" ]] || { echo "ERROR: no such assertions file: $a" >&2; exit 1; }
 done
 
-TMP="$(mktemp -t dryrun)"
+TMP="$(mktemp "${TMPDIR:-/tmp}/dryrun.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 
 TOTAL=0
@@ -78,7 +78,6 @@ for a in "$@"; do
     continue
   fi
 
-  ROWS=""
   ROWS="$(printf '%s' "$RESULT" | jq -e 'if type == "array" then length else error("unexpected response shape") end' 2>&1)" || {
     echo "  ✗ $NAME returned an unreadable response:"
     printf '%s\n' "$ROWS" | sed 's/^/      /'
@@ -88,6 +87,16 @@ for a in "$@"; do
   }
   if [[ "$ROWS" == "0" ]]; then
     echo "  ✗ $NAME produced NO rows — refusing to report green on nothing"
+    FAILED=$((FAILED + 1))
+    TOTAL=$((TOTAL + 1))
+    continue
+  fi
+
+  # Rows of the wrong shape would print as "✗ null" and be counted as failures
+  # for the wrong reason — a file whose last statement is not the (check, ok)
+  # chain is a harness-contract violation, and is named as one.
+  if ! printf '%s' "$RESULT" | jq -e 'all(has("check") and has("ok"))' > /dev/null 2>&1; then
+    echo "  ✗ $NAME returned rows without (check, ok) — the assertions did not end in a (check, ok) statement"
     FAILED=$((FAILED + 1))
     TOTAL=$((TOTAL + 1))
     continue
