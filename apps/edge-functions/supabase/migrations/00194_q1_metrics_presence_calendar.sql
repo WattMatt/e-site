@@ -1029,9 +1029,17 @@ GRANT  EXECUTE ON FUNCTION projects.working_days_between(timestamptz,timestamptz
 -- only reason anyone found out was users reporting stale floor plans.
 --
 -- p_is_baseline writes the single frozen row per metric (§13 item 1's "four
--- weeks to 30 September"). value is always a WEEKLY RATE or a ratio, never a
--- cumulative all-time figure, because a weekly rate is the only thing a weekly
--- target can be measured against.
+-- weeks to 30 September"). value is a WEEKLY RATE or a ratio — never a
+-- cumulative all-time figure — because a weekly rate is the only thing a
+-- weekly target can be measured against. ONE deliberate exception:
+-- paying_organisations is a STOCK (the count of paying organisations at the
+-- window's end), because "how many pay" is the question §11.7 asks, not "how
+-- many started paying this week".
+--
+-- timezone is pinned to UTC for the function body: CURRENT_DATE and every
+-- date -> timestamptz promotion below would otherwise follow the CALLER's
+-- session TimeZone, so a Management-API or psql caller in another zone could
+-- pass the whole-window guard on a window the cron would have refused.
 CREATE OR REPLACE FUNCTION public.compute_platform_metrics_weekly(
     p_window_start date,
     p_window_end   date,               -- exclusive
@@ -1041,23 +1049,58 @@ LANGUAGE plpgsql
 VOLATILE SECURITY DEFINER
 SET search_path TO 'public', 'projects', 'billing', 'field', 'inspections'
 SET row_security TO 'off'
+SET timezone TO 'UTC'
 AS $$
 DECLARE
+    v_days       int     := p_window_end - p_window_start;
     v_weeks      numeric := GREATEST(1, (p_window_end - p_window_start) / 7.0);
     v_year       int     := extract(isoyear from p_window_start)::int;
     v_week       int     := CASE WHEN p_is_baseline THEN NULL ELSE extract(week from p_window_start)::int END;
     v_as_of      date    := DATE '2026-09-09';   -- the ONE frozen cohort date
+    -- Appended to the four active-ratio notes on the BASELINE row only: that
+    -- window is 28 days, so "active" there means active at least once in four
+    -- weeks, which a 7-day tick cannot be read against directly. The owner's
+    -- decision on averaging is recorded separately; the row is deliberately
+    -- not restructured into sub-windows.
+    v_baseline_note text := CASE WHEN p_is_baseline
+                              THEN ' 28-day window — active means active at least once in four weeks; not directly comparable to a 7-day tick.'
+                              ELSE '' END;
     v_cohort     int;
     v_contract   int;
     v_client     int;
     v_all_contr  int;
     v_writes     int;
     v_diary      int;
+    -- Numerators, computed ONCE before the INSERT and read by numerator and
+    -- value alike, so the two columns of a row can never disagree.
+    v_active           int;
+    v_contr_active     int;
+    v_all_contr_active int;
+    v_client_active    int;
+    v_diary_same       int;
+    v_notif            int;
+    v_paying           int;
     v_written    int := 0;
 BEGIN
-    IF p_is_baseline AND p_window_end > CURRENT_DATE THEN
-        RAISE EXCEPTION 'refusing to freeze a baseline over an incomplete window (ends %, today is %)',
+    -- Whole-window guards, for EVERY call. A snapshot over a window that has
+    -- not finished is a lie; and a "weekly" row whose window is not one ISO
+    -- week Monday->Monday would be labelled (iso_year, iso_week) and deduped
+    -- by platform_metrics_weekly_week_uk on a label that does not describe
+    -- its data. The cron passes both by construction: it runs at 04:00 UTC on
+    -- Monday for [previous Monday, this Monday), and this Monday is
+    -- CURRENT_DATE in UTC, never beyond it.
+    IF p_window_end > CURRENT_DATE THEN
+        IF p_is_baseline THEN
+            RAISE EXCEPTION 'refusing to freeze a baseline over an incomplete window (ends %, today is %)',
+                            p_window_end, CURRENT_DATE;
+        END IF;
+        RAISE EXCEPTION 'refusing to compute over an incomplete window (ends %, today is %)',
                         p_window_end, CURRENT_DATE;
+    END IF;
+    IF NOT p_is_baseline
+       AND NOT (extract(isodow from p_window_start) = 1 AND p_window_end = p_window_start + 7) THEN
+        RAISE EXCEPTION 'weekly rows must cover exactly one ISO week Monday→Monday (got % → %)',
+                        p_window_start, p_window_end;
     END IF;
 
     -- ⚠ as_of is filtered, not omitted. The PK is (cohort_key, user_id, as_of),
@@ -1081,8 +1124,12 @@ BEGIN
     -- It is also the only arm measurable RETROSPECTIVELY, which is exactly
     -- what a frozen baseline over a window in the past requires.
     -- ---------------------------------------------------------------------
-    DROP TABLE IF EXISTS _writes;
-    CREATE TEMP TABLE _writes ON COMMIT DROP AS
+    -- pg_temp-qualified on DROP, CREATE and every read: this is SECURITY
+    -- DEFINER with public first on the search path, and an unqualified DROP
+    -- TABLE IF EXISTS _writes would resolve to — and drop — a public._writes
+    -- if one ever existed. The temp namespace is named, never searched for.
+    DROP TABLE IF EXISTS pg_temp._writes;
+    CREATE TEMP TABLE pg_temp._writes ON COMMIT DROP AS
     SELECT d.created_by AS user_id FROM projects.site_diary_entries d
      WHERE d.created_at >= p_window_start AND d.created_at < p_window_end
     UNION ALL
@@ -1107,12 +1154,17 @@ BEGIN
     SELECT rp.generated_by FROM projects.reports rp
      WHERE rp.created_at >= p_window_start AND rp.created_at < p_window_end;
 
-    SELECT count(*) INTO v_writes FROM _writes WHERE user_id IS NOT NULL;
+    -- Only authors inside metric_accounts count, so notifications_created's
+    -- denominator is the SAME population metric 1 counts — a fixture or probe
+    -- account writing a diary entry must not inflate one and not the other.
+    SELECT count(*) INTO v_writes FROM pg_temp._writes
+     WHERE user_id IS NOT NULL
+       AND user_id IN (SELECT user_id FROM public.metric_accounts);
 
     -- Active = a session row touched in the window, OR a first-party event in
     -- it, OR a write to any source table in it.
-    DROP TABLE IF EXISTS _active;
-    CREATE TEMP TABLE _active ON COMMIT DROP AS
+    DROP TABLE IF EXISTS pg_temp._active;
+    CREATE TEMP TABLE pg_temp._active ON COMMIT DROP AS
     SELECT DISTINCT ma.user_id
       FROM public.metric_accounts ma
      WHERE EXISTS (SELECT 1 FROM public.user_sessions s
@@ -1121,7 +1173,7 @@ BEGIN
         OR EXISTS (SELECT 1 FROM public.product_events pe
                     WHERE pe.actor_id = ma.user_id
                       AND pe.occurred_at >= p_window_start AND pe.occurred_at < p_window_end)
-        OR EXISTS (SELECT 1 FROM _writes w WHERE w.user_id = ma.user_id);
+        OR EXISTS (SELECT 1 FROM pg_temp._writes w WHERE w.user_id = ma.user_id);
 
     -- Metric 2b's denominator, by EFFECTIVE PROJECT ROLE (§15 §(a): "every
     -- account whose effective role on any ACTIVE project is contractor"), never
@@ -1148,6 +1200,52 @@ BEGIN
     SELECT count(*) INTO v_diary FROM projects.site_diary_entries d
      WHERE d.created_at >= p_window_start AND d.created_at < p_window_end;
 
+    -- ---------------------------------------------------------------------
+    -- Numerators, once. Each ratio arm below writes the variable as its
+    -- numerator and derives value as ROUND(numerator / denominator, 4)
+    -- inside its status CASE, so a row's numerator, value and status are
+    -- three views of one computation rather than three computations.
+    -- ---------------------------------------------------------------------
+    SELECT count(*) INTO v_active FROM pg_temp._active;
+
+    SELECT count(*) INTO v_contr_active
+      FROM pg_temp._active a
+      JOIN public.metric_cohorts c
+        ON c.user_id = a.user_id AND c.cohort_key = 'contractor_frozen' AND c.as_of = v_as_of;
+
+    SELECT count(*) INTO v_client_active
+      FROM pg_temp._active a
+      JOIN public.metric_cohorts c
+        ON c.user_id = a.user_id AND c.cohort_key = 'client_viewer_frozen' AND c.as_of = v_as_of;
+
+    -- Same "active project" predicate and window anchor as v_all_contr above.
+    SELECT count(DISTINCT a.user_id) INTO v_all_contr_active
+      FROM pg_temp._active a
+     WHERE EXISTS (SELECT 1 FROM projects.project_members pm
+                    WHERE pm.user_id = a.user_id
+                      AND pm.is_active
+                      AND projects.project_had_activity(pm.project_id, (p_window_end - interval '90 days')::timestamptz, p_window_end::timestamptz)
+                      AND public.user_effective_project_role(pm.project_id, pm.user_id) = 'contractor');
+
+    -- SAST is UTC+2 with no DST, so the UTC date runs BEHIND the local date;
+    -- the misclassification window is 00:00-02:00 SAST.
+    SELECT count(*) INTO v_diary_same FROM projects.site_diary_entries d
+     WHERE d.created_at >= p_window_start AND d.created_at < p_window_end
+       AND d.entry_date = (d.created_at AT TIME ZONE 'Africa/Johannesburg')::date;
+
+    SELECT count(*) INTO v_notif FROM public.notifications n
+     WHERE n.created_at >= p_window_start AND n.created_at < p_window_end;
+
+    -- "Paying" = an ACTIVE subscription on a tier other than free that carries
+    -- a Paystack subscription code. status is load-bearing: the live CHECK
+    -- admits past_due / grace_period / paused / cancelled / trialing, and a
+    -- cancelled subscription keeps both its tier and its code.
+    SELECT count(*) INTO v_paying FROM billing.subscriptions s
+     WHERE s.status = 'active'
+       AND s.tier <> 'free'
+       AND s.paystack_subscription_code IS NOT NULL
+       AND s.organisation_id <> 'dddddddd-0000-0000-0000-000000000001'::uuid;
+
     INSERT INTO public.platform_metrics_weekly
       (metric_key, iso_year, iso_week, window_start, window_end, numerator, denominator, value, status, is_baseline, note, detail)
 
@@ -1157,83 +1255,53 @@ BEGIN
     -- platform_metrics_weekly_measured_has_value, which aborts this ENTIRE
     -- INSERT and writes zero rows — read downstream as "the job did not run".
     SELECT 'weekly_active', v_year, v_week, p_window_start, p_window_end,
-           (SELECT count(*) FROM _active), v_cohort,
-           CASE WHEN v_cohort > 0 THEN ROUND((SELECT count(*) FROM _active)::numeric / v_cohort, 4) END,
+           v_active, v_cohort,
+           CASE WHEN v_cohort > 0 THEN ROUND(v_active::numeric / v_cohort, 4) END,
            CASE WHEN v_cohort > 0 THEN 'measured' ELSE 'unmeasurable' END, p_is_baseline,
-           'Denominator is the frozen September-2026 cohort (as_of 2026-09-09), never a running count. Active = a session, a first-party event, OR a write to any source table.',
-           jsonb_build_object('accounts_total', (SELECT count(*) FROM public.metric_accounts),
+           'Denominator is the frozen September-2026 cohort (as_of 2026-09-09), never a running count. Active = a session, a first-party event, OR a write to any source table.' || v_baseline_note,
+           jsonb_build_object('window_days', v_days,
+                              'accounts_total', (SELECT count(*) FROM public.metric_accounts),
                               'first_party_writes', v_writes)
 
     -- 2a — contractor, frozen cohort
     UNION ALL SELECT 'contractor_active_frozen', v_year, v_week, p_window_start, p_window_end,
-           (SELECT count(*) FROM _active a JOIN public.metric_cohorts c
-              ON c.user_id = a.user_id AND c.cohort_key = 'contractor_frozen' AND c.as_of = v_as_of),
-           v_contract,
-           CASE WHEN v_contract > 0 THEN
-             ROUND((SELECT count(*) FROM _active a JOIN public.metric_cohorts c
-                      ON c.user_id = a.user_id AND c.cohort_key = 'contractor_frozen' AND c.as_of = v_as_of)::numeric
-                   / v_contract, 4) END,
+           v_contr_active, v_contract,
+           CASE WHEN v_contract > 0 THEN ROUND(v_contr_active::numeric / v_contract, 4) END,
            CASE WHEN v_contract > 0 THEN 'measured' ELSE 'unmeasurable' END, p_is_baseline,
-           'Frozen at 12: 13 accounts hold a contractor role, one is the rbac-test fixture that metric_accounts excludes. Q1 target restated as 6 of 12 (50%).',
-           '{}'::jsonb
+           'Frozen at 12: 13 accounts hold a contractor role, one is the rbac-test fixture that metric_accounts excludes. Q1 target restated as 6 of 12 (50%).' || v_baseline_note,
+           jsonb_build_object('window_days', v_days)
 
     -- 2b — contractor, all, by EFFECTIVE PROJECT ROLE on an active project
     -- (project_had_activity over the trailing 90 days, never updated_at — see
     -- the v_all_contr comment above).
     UNION ALL SELECT 'contractor_active_all', v_year, v_week, p_window_start, p_window_end,
-           (SELECT count(DISTINCT a.user_id) FROM _active a
-             WHERE EXISTS (SELECT 1 FROM projects.project_members pm
-                            WHERE pm.user_id = a.user_id
-                              AND pm.is_active
-                              AND projects.project_had_activity(pm.project_id, (p_window_end - interval '90 days')::timestamptz, p_window_end::timestamptz)
-                              AND public.user_effective_project_role(pm.project_id, pm.user_id) = 'contractor')),
-           v_all_contr,
-           CASE WHEN v_all_contr > 0 THEN
-             ROUND((SELECT count(DISTINCT a.user_id) FROM _active a
-                     WHERE EXISTS (SELECT 1 FROM projects.project_members pm
-                                    WHERE pm.user_id = a.user_id
-                                      AND pm.is_active
-                                      AND projects.project_had_activity(pm.project_id, (p_window_end - interval '90 days')::timestamptz, p_window_end::timestamptz)
-                                      AND public.user_effective_project_role(pm.project_id, pm.user_id) = 'contractor'))::numeric
-                   / v_all_contr, 4) END,
+           v_all_contr_active, v_all_contr,
+           CASE WHEN v_all_contr > 0 THEN ROUND(v_all_contr_active::numeric / v_all_contr, 4) END,
            CASE WHEN v_all_contr > 0 THEN 'measured' ELSE 'unmeasurable' END, p_is_baseline,
-           'Effective role on an active project, per §15 §(a) — never user_organisations.role, which is a different fact.',
-           '{}'::jsonb
+           'Effective role on an active project, per §15 §(a) — never user_organisations.role, which is a different fact.' || v_baseline_note,
+           jsonb_build_object('window_days', v_days)
 
     -- 2c — client viewers, frozen cohort. There is no client metric in §15's
     -- eight, and §15 §(c) puts client viewers in Wave 3 (Q3). Instrumenting it
     -- now means Q3's portal is judged against a baseline that exists, instead
     -- of one first computed the quarter it ships.
     UNION ALL SELECT 'client_active', v_year, v_week, p_window_start, p_window_end,
-           (SELECT count(*) FROM _active a JOIN public.metric_cohorts c
-              ON c.user_id = a.user_id AND c.cohort_key = 'client_viewer_frozen' AND c.as_of = v_as_of),
-           v_client,
-           CASE WHEN v_client > 0 THEN
-             ROUND((SELECT count(*) FROM _active a JOIN public.metric_cohorts c
-                      ON c.user_id = a.user_id AND c.cohort_key = 'client_viewer_frozen' AND c.as_of = v_as_of)::numeric
-                   / v_client, 4) END,
+           v_client_active, v_client,
+           CASE WHEN v_client > 0 THEN ROUND(v_client_active::numeric / v_client, 4) END,
            CASE WHEN v_client > 0 THEN 'measured' ELSE 'unmeasurable' END, p_is_baseline,
-           'No client wave runs before Q3 (§15 §(c)), so a low figure here is a fact about the programme sequence, not about clients. Frozen cohort of 4.',
-           '{}'::jsonb
+           'No client wave runs before Q3 (§15 §(c)), so a low figure here is a fact about the programme sequence, not about clients. Frozen cohort of 4.' || v_baseline_note,
+           jsonb_build_object('window_days', v_days)
 
-    -- 3 — diary same day. SAST is UTC+2 with no DST, so the UTC date runs
-    -- BEHIND the local date; the misclassification window is 00:00-02:00 SAST.
+    -- 3 — diary same day (v_diary_same is computed in SAST above).
     -- ⚠ THE arm that proved the CHECK violation: 53 diary rows exist all-time
     -- and only 10 of the last 27 weeks contain any (measured 2026-09-10), so
     -- ~63% of Monday ticks have a zero denominator here.
     UNION ALL SELECT 'diary_same_day', v_year, v_week, p_window_start, p_window_end,
-           (SELECT count(*) FROM projects.site_diary_entries d
-             WHERE d.created_at >= p_window_start AND d.created_at < p_window_end
-               AND d.entry_date = (d.created_at AT TIME ZONE 'Africa/Johannesburg')::date),
-           v_diary,
-           CASE WHEN v_diary > 0 THEN
-             (SELECT ROUND(count(*) FILTER (WHERE d.entry_date = (d.created_at AT TIME ZONE 'Africa/Johannesburg')::date)::numeric
-                           / count(*), 4)
-                FROM projects.site_diary_entries d
-               WHERE d.created_at >= p_window_start AND d.created_at < p_window_end) END,
+           v_diary_same, v_diary,
+           CASE WHEN v_diary > 0 THEN ROUND(v_diary_same::numeric / v_diary, 4) END,
            CASE WHEN v_diary > 0 THEN 'measured' ELSE 'unmeasurable' END, p_is_baseline,
            CASE WHEN v_diary > 0 THEN NULL ELSE 'No diary entries in this window, so there is no same-day share to compute. A zero here would be an invented number.' END,
-           '{}'::jsonb
+           jsonb_build_object('window_days', v_days)
 
     -- 4 — RFI response median. CENSORED until work_item_events exists: the
     -- pre-release median over items RAISED is not retrospectively recoverable.
@@ -1241,6 +1309,7 @@ BEGIN
            NULL, NULL, NULL, 'censored', p_is_baseline,
            'No work_item_events before Q1 item 2. Published as the answered-ever share plus the unanswered count.',
            jsonb_build_object(
+             'window_days',   v_days,
              'rfis_total',    (SELECT count(*) FROM projects.rfis),
              'answered_ever', (SELECT count(DISTINCT rr.rfi_id) FROM projects.rfi_responses rr),
              'response_rows', (SELECT count(*) FROM projects.rfi_responses))
@@ -1250,22 +1319,30 @@ BEGIN
     -- writers set is_read alone (components/ui/NotificationCentre.tsx:52-55,
     -- :62). public.inbox_state does not exist until Q1 item 8.
     --
-    -- detail also carries the EMAIL-DELIVERY gap, because the entire Q1 outcome
-    -- is delivered over email and nobody has ever measured whether one was
-    -- opened. Measured: 246 sends to all 36 accounts, opened_at NULL on all
-    -- 246, clicked_at NULL on all 246, resend_message_id populated on 235 —
-    -- 00030_email_sequences.sql:24-25 marks both columns "populated by Resend
-    -- webhook (Phase 2)" and Phase 2 never shipped. Publishing it here makes
-    -- the gap visible in week one instead of buried in a markdown file.
+    -- detail also carries the EMAIL-DELIVERY evidence, because the entire Q1
+    -- outcome is delivered over email. Two generations of it: the legacy
+    -- email_sequence_events columns (246 sends, opened_at / clicked_at NULL on
+    -- all 246 — 00030_email_sequences.sql:24-25's "Phase 2" webhook never
+    -- wrote them) and public.email_events, the Resend webhook ledger Q1 item 0
+    -- shipped (measured 2026-09-11: email.sent 96, email.delivered 48,
+    -- email.bounced 48, email.opened 11). Opens and bounces are now recorded
+    -- PER MESSAGE, but nothing joins them back to a notification or a sequence
+    -- row yet, so the engagement RATIO is still unmeasurable; the counts are
+    -- published so the join's arrival is visible here, not in a markdown file.
     UNION ALL SELECT 'inbox_engagement', v_year, v_week, p_window_start, p_window_end,
            NULL, NULL, NULL, 'unmeasurable', p_is_baseline,
-           'read_at has never been written; inbox_state does not exist yet; and no Resend webhook has ever written an email open. Re-based at method_version 2 when items 4 and 8 land.',
+           'read_at has never been written and inbox_state does not exist yet, so no per-notification engagement exists. Email opens and bounces ARE recorded per message in email_events (Resend webhook, Q1 item 0) but are not yet joined to notifications or email_sequence_events. Re-based at method_version 2 when items 4 and 8 land.',
            jsonb_build_object(
-             'is_read_true_all_time',  (SELECT count(*) FROM public.notifications WHERE is_read),
-             'created_all_time',       (SELECT count(*) FROM public.notifications),
-             'emails_sent_all_time',   (SELECT count(*) FROM public.email_sequence_events),
+             'window_days',               v_days,
+             'is_read_true_all_time',     (SELECT count(*) FROM public.notifications WHERE is_read),
+             'created_all_time',          (SELECT count(*) FROM public.notifications),
+             'emails_sent_all_time',      (SELECT count(*) FROM public.email_sequence_events),
              'emails_with_open_evidence', (SELECT count(opened_at) FROM public.email_sequence_events),
-             'emails_accepted_by_resend', (SELECT count(resend_message_id) FROM public.email_sequence_events))
+             'emails_accepted_by_resend', (SELECT count(resend_message_id) FROM public.email_sequence_events),
+             'email_events_by_type',      COALESCE((SELECT jsonb_object_agg(event_type, n)
+                                                      FROM (SELECT event_type, count(*) AS n
+                                                              FROM public.email_events GROUP BY 1) t),
+                                                   '{}'::jsonb))
 
     -- 5b — notification VOLUME, as a RATIO. The Q1 exit criterion is "down
     -- >= 60% on the Sept-2026 baseline"; 750 of the 964 production
@@ -1274,18 +1351,12 @@ BEGIN
     -- is met while the notification engine has changed nothing. A metric where
     -- success and abandonment are the same number is not a metric.
     UNION ALL SELECT 'notifications_created', v_year, v_week, p_window_start, p_window_end,
-           (SELECT count(*) FROM public.notifications n
-             WHERE n.created_at >= p_window_start AND n.created_at < p_window_end),
-           v_writes,
-           CASE WHEN v_writes > 0 THEN
-             ROUND((SELECT count(*) FROM public.notifications n
-                     WHERE n.created_at >= p_window_start AND n.created_at < p_window_end)::numeric
-                   / v_writes, 4) END,
+           v_notif, v_writes,
+           CASE WHEN v_writes > 0 THEN ROUND(v_notif::numeric / v_writes, 4) END,
            CASE WHEN v_writes > 0 THEN 'measured' ELSE 'unmeasurable' END, p_is_baseline,
-           'Notifications per first-party write, so a quiet quarter cannot be mistaken for a fixed engine. The raw weekly rate is in detail.per_week.',
-           jsonb_build_object('per_week',
-             ROUND((SELECT count(*) FROM public.notifications n
-                     WHERE n.created_at >= p_window_start AND n.created_at < p_window_end)::numeric / v_weeks, 2))
+           'Notifications per first-party write, so a quiet quarter cannot be mistaken for a fixed engine. The denominator counts only authors inside metric_accounts — the same population as weekly_active. The raw weekly rate is in detail.per_week.',
+           jsonb_build_object('window_days', v_days,
+                              'per_week', ROUND(v_notif::numeric / v_weeks, 2))
 
     -- 6 — report schedules. projects.report_schedules does not exist until Q3,
     -- so a non-zero target here would be unattainable by construction. The
@@ -1297,16 +1368,18 @@ BEGIN
              WHERE projects.project_had_activity(pr.id, (p_window_end - interval '90 days')::timestamptz, p_window_end::timestamptz)),
            0, 'not_yet_instrumented', p_is_baseline,
            'projects.report_schedules lands in Q3. Zero by construction, instrumented now so the arrival is visible.',
-           '{}'::jsonb
+           jsonb_build_object('window_days', v_days)
 
     -- 7 — activation. Needs user_sessions x work_item_events; the latter
     -- arrives with the spine.
     UNION ALL SELECT 'activation_first_session', v_year, v_week, p_window_start, p_window_end,
            NULL, NULL, NULL, 'not_yet_instrumented', p_is_baseline,
            'projects.work_item_events lands with Q1 item 2. Session boundary is user_sessions, never auth_events.',
-           '{}'::jsonb
+           jsonb_build_object('window_days', v_days)
 
     -- 8 — the commercial metric. Instrumented now, zero by design until Q3.
+    -- A STOCK, not a rate: the count of paying organisations at the window's
+    -- end (see the header). v_paying is computed above with status = 'active'.
     -- ⚠ The live CHECK on billing.subscriptions.tier is
     -- ('free','starter','professional','enterprise') — MEASURED, not assumed.
     -- §11.7's practice_solo / practice / practice_unlimited bands do not exist
@@ -1315,18 +1388,10 @@ BEGIN
     -- "paid band" = anything but free, which survives the cutover unchanged.
     -- WM-Consulting's own row is excluded per §11.7.
     UNION ALL SELECT 'paying_organisations', v_year, v_week, p_window_start, p_window_end,
-           (SELECT count(*) FROM billing.subscriptions s
-             WHERE s.tier <> 'free'
-               AND s.paystack_subscription_code IS NOT NULL
-               AND s.organisation_id <> 'dddddddd-0000-0000-0000-000000000001'::uuid),
-           NULL,
-           (SELECT count(*) FROM billing.subscriptions s
-             WHERE s.tier <> 'free'
-               AND s.paystack_subscription_code IS NOT NULL
-               AND s.organisation_id <> 'dddddddd-0000-0000-0000-000000000001'::uuid),
+           v_paying, NULL, v_paying,
            'measured', p_is_baseline,
-           'Zero by design until Q3. Publishing a commercial metric that reads zero for two quarters is the point.',
-           '{}'::jsonb
+           'Zero by design until Q3. "Paying" = an ACTIVE subscription on a tier other than free that carries a Paystack subscription code; a cancelled or paused subscription keeps its tier and code and does not count. A stock at window end, not a weekly rate. Publishing a commercial metric that reads zero for two quarters is the point.',
+           jsonb_build_object('window_days', v_days)
     ;
 
     GET DIAGNOSTICS v_written = ROW_COUNT;
@@ -1351,11 +1416,14 @@ GRANT  EXECUTE ON FUNCTION public.compute_platform_metrics_weekly(date,date,bool
 -- SUPABASE_SERVICE_ROLE_KEY as sb_secret_…, not a JWT, so a function-to-
 -- function call fails the JWT-role gate.
 -- ---------------------------------------------------------------------------
+-- Guarded by an existence test, not by EXCEPTION WHEN OTHERS: a blanket catch
+-- would also swallow a permissions or connectivity error and let the schedule
+-- below silently duplicate or silently fail.
 DO $$
 BEGIN
-    PERFORM cron.unschedule('platform-metrics-weekly');
-EXCEPTION WHEN OTHERS THEN
-    NULL;   -- not previously scheduled
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'platform-metrics-weekly') THEN
+        PERFORM cron.unschedule('platform-metrics-weekly');
+    END IF;
 END $$;
 
 SELECT cron.schedule(

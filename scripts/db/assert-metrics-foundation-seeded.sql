@@ -52,6 +52,11 @@ SELECT id, now() - interval '2 minutes', 'web', 'assert-metrics-foundation-seede
 
 -- Two real windows, both computed inside the rolled-back transaction.
 --
+-- ⚠ If weeks 28 or 36 of 2026 are ever BACKFILLED into the live table, these
+-- two calls will raise on platform_metrics_weekly_week_uk and the smoke test
+-- will fail for that reason alone — pick two other PAST Monday→Monday weeks
+-- (one with diary rows, one without) if that ever happens.
+--
 -- (1) 2026-08-31 is a Monday (ISO week 36 of 2026) and the window is complete.
 --     It contains 2 diary rows (measured), so every ratio arm has a denominator.
 SELECT public.compute_platform_metrics_weekly(DATE '2026-08-31', DATE '2026-09-07', false);
@@ -142,4 +147,10 @@ SELECT 'paying_organisations is measured and reads zero by design',
        (SELECT status = 'measured' AND value = 0
           FROM public.platform_metrics_weekly
          WHERE metric_key = 'paying_organisations' AND iso_week = 36 AND iso_year = 2026)
+UNION ALL
+-- Over the whole table, deliberately: after the real apply this also covers
+-- every row the cron has written, and a row without window_days would mean a
+-- writer other than the rollup — or a rollup edit that dropped the key.
+SELECT 'every row carries window_days',
+       NOT EXISTS (SELECT 1 FROM public.platform_metrics_weekly WHERE NOT (detail ? 'window_days'))
 ;
