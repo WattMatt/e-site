@@ -76,6 +76,25 @@ describe('/metrics', () => {
     expect(screen.queryByText('0.0%')).toBeNull()
   })
 
+  // The rollup's CASE writes value NULL for an unmeasured ratio, but the page
+  // must not depend on that: a 0 that reached this cell would render "0.0%"
+  // beside "no honest number yet" — the number nobody can read.
+  it('never renders an unmeasured ratio as a number, even when value is 0', async () => {
+    rows.push({
+      metric_key: 'inbox_engagement', iso_year: 2026, iso_week: 40,
+      window_start: recentWindow(), window_end: recentWindow(),
+      numerator: 0, denominator: 0, value: 0,
+      status: 'unmeasurable', is_baseline: false,
+      note: 'read_at has never been written', detail: {},
+    })
+    render(await MetricsPage())
+    expect(screen.queryByText('0.0%')).toBeNull()
+    const row = screen.getByText(/Inbox engagement/i).closest('tr')
+    expect(row).not.toBeNull()
+    // Column order: Metric, Sept-2026 baseline, Previous week, Latest week, Q1 target, Status.
+    expect(row!.querySelectorAll('td')[3].textContent).toBe('—')
+  })
+
   // The state this team has actually lived through: cloud-sync-poll was
   // specified, merged, never scheduled, ran 11 times manually, and surfaced two
   // months later as a user complaint about stale floor plans. A dashboard that

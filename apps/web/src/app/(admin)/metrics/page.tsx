@@ -26,6 +26,12 @@ interface SnapshotRow {
 
 function present(row: SnapshotRow | undefined): string {
   if (!row || row.value === null) return '—'
+  // An unmeasured ratio is never a number. The rollup's CASE writes NULL here,
+  // but the page must not depend on it: a 0 that reached this cell would render
+  // as "0.0%" beside "no honest number yet". Non-ratio keys keep their value —
+  // report_schedules_per_project legitimately reads "0 per project" under
+  // not_yet_instrumented, by plan.
+  if (row.status !== 'measured' && RATIO_METRIC_KEYS.has(row.metric_key)) return '—'
   const n = Number(row.value)
   if (RATIO_METRIC_KEYS.has(row.metric_key)) return `${(n * 100).toFixed(1)}%`
   return `${n}${METRIC_UNITS[row.metric_key]}`
@@ -75,7 +81,14 @@ export default async function MetricsPage() {
   const latest = new Map(weekly.filter((r) => r.window_start === latestWindow).map((r) => [r.metric_key, r]))
   const prior = new Map(weekly.filter((r) => r.window_start === priorWindow).map((r) => [r.metric_key, r]))
 
-  const staleDays = latestWindow ? daysBetween(latestWindow, new Date()) : null
+  // Staleness is measured from window_end — the day the data closed — not from
+  // window_start. The Monday tick writes the week just CLOSED, so window_start
+  // is already 7 days old on tick day; measured from there the banner read
+  // "9 days old" on every healthy Wednesday. From window_end it is 0 on tick
+  // day, and a missed Monday tick shows "9 days old" from the following
+  // Wednesday.
+  const latestRow = latestWindow ? weekly.find((r) => r.window_start === latestWindow) : undefined
+  const staleDays = latestRow ? daysBetween(latestRow.window_end, new Date()) : null
   const isStale = staleDays !== null && staleDays > 8
 
   return (
