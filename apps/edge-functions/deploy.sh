@@ -60,15 +60,22 @@ FUNCTIONS=(
   "onboarding-email-d7:"
   "onboarding-email-d14:"
 
-  # ── No gateway verification, deliberately.
-  # send-email serves the PUBLIC data-subject-request type, so unauthenticated
-  # callers must reach it. It does NOT trust a decoded claim: it requires the
-  # caller to prove it holds a service-role credential. That is the pattern to
-  # copy if a function ever genuinely needs this flag.
-  "send-email:--no-verify-jwt"
-  # paystack-webhook is a retired 410 stub. Paystack sends no JWT, and the whole
-  # point is that a mis-pasted URL gets a loud 410 rather than a 401 that reads
-  # like a transient auth blip.
+  # send-email serves the PUBLIC data-subject-request type, and it is tempting to
+  # conclude that it therefore needs --no-verify-jwt. It does NOT, and production
+  # has run it with verification ON. A public caller reaches it with the ANON
+  # key, which is a perfectly valid JWT, so the gateway is satisfied; the public
+  # branch is then exempted at the application layer by PUBLIC_TYPES, and
+  # `isVerifiedServiceRoleCaller` explicitly DENIES the anon key so it can never
+  # reach an internal type. Setting the flag here would have flipped production
+  # from verifying to not, widening exposure while looking like documentation.
+  # Nothing needs the flag just because it has a public path.
+  "send-email:"
+
+  # ── No gateway verification, deliberately. One function, one reason.
+  # paystack-webhook is a retired 410 stub. Paystack sends NO Authorization
+  # header at all, so with verification on the gateway answers 401 and the
+  # retirement notice never reaches whoever mis-pasted the URL. The whole
+  # purpose of the stub is that message. It reads no input and touches nothing.
   "paystack-webhook:--no-verify-jwt"
 
   # ── No service-role guard; they authenticate their callers differently.
