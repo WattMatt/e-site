@@ -644,6 +644,13 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
             <Link href={`/projects/${projectId}/cables/${revisionId}/diff`} style={headerNavLinkStyle}
               title={priorIssued ? `Diff against ${priorIssued.code}` : 'No prior issued revision to diff against'}>🔀 Diff</Link>
             <Link href={`/projects/${projectId}/cables/${revisionId}/discrepancies`} style={headerNavLinkStyle}>📐 Discrepancies</Link>
+            {revision.status === 'DRAFT' && (
+              <Link
+                href={`/projects/${projectId}/cables/${revisionId}/measure`}
+                style={headerNavLinkStyle}
+                title="Trace each run on the project drawings and assign its length"
+              >📏 Measure runs</Link>
+            )}
             <Link href={`/projects/${projectId}/medium-voltage/${revisionId}/fault`} style={headerNavLinkStyle}>⚡ Medium Voltage</Link>
           </div>
           <div style={{ display: 'inline-flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
