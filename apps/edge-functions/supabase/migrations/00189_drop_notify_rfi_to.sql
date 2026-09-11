@@ -44,6 +44,24 @@
 --
 -- No PostgREST config PATCH is needed (no schema created or dropped), but the
 -- schema cache must be reloaded so PostgREST stops advertising the column.
+--
+-- This migration CREATES nothing, so there is no object to assert the existence
+-- of. What it claims is an ABSENCE, and a `sql:` predicate is the only directive
+-- kind that can express one. The absence is anchored on two presences so it
+-- cannot pass vacuously: `table: projects.project_settings` (a dropped or
+-- renamed TABLE would also make the column query return no rows, and would
+-- report green for the wrong reason), and a sibling notify_* column that this
+-- migration must NOT have taken with it.
+--
+-- @verify:begin
+-- table: projects.project_settings
+-- sql: NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'projects' AND table_name = 'project_settings' AND column_name = 'notify_rfi_to')
+-- sql: EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'projects' AND table_name = 'project_settings' AND column_name = 'notify_snag_email')
+-- behaviour: PostgREST PATCH projects.project_settings with notify_rfi_to -> PGRST204 unknown column
+--            (previously 200 + a value nothing would ever read)
+-- behaviour: restore of a pre-drop project_settings_history snapshot -> succeeds; the
+--            JSONB snapshot keeps its notify_rfi_to key and is simply no longer read
+-- @verify:end
 
 ALTER TABLE projects.project_settings
   DROP COLUMN IF EXISTS notify_rfi_to;

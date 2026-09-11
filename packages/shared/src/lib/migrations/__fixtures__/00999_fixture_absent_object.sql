@@ -1,0 +1,6 @@
+-- Fixture for verify-migration-applied.ts. NEVER applied to any database.
+-- Its block deliberately names an object that does not and will not exist,
+-- so a run over this file MUST fail. If it ever passes, the tool is broken.
+-- @verify:begin
+-- table: public.this_table_does_not_exist_and_never_will
+-- @verify:end
