@@ -13,6 +13,7 @@
 import {
   projectSettingsService,
   buildRfiEmailRecipients,
+  filterSuppressed,
   renderSnagCreatedEmail,
   renderSnagStatusEmail,
   renderSnagVisitCompletedEmail,
@@ -285,7 +286,16 @@ export async function dispatchSnagStatusEmail(args: DispatchSnagStatusEmailArgs)
     if (!cfg.snagEmail) return
 
     const { emails } = await resolveProjectRecipients(args.projectId)
-    const recipients = buildRfiEmailRecipients({ notifyRfiEmail: cfg.snagEmail, emails })
+    // Bounce/complaint consult on the EMAIL leg. This path resolves the roster
+    // itself instead of going through notifyEntityEvent, so it needs its own —
+    // otherwise every status change re-mails an address Resend has stopped
+    // delivering to. Fails open on a read error. The targeted bell is sent by
+    // the caller and is deliberately unaffected.
+    const { allowed, suppressed } = await filterSuppressed(createServiceClient() as never, emails)
+    if (suppressed.length) {
+      console.warn('[snag-email] suppressed', { projectId: args.projectId, count: suppressed.length, addresses: suppressed })
+    }
+    const recipients = buildRfiEmailRecipients({ notifyRfiEmail: cfg.snagEmail, emails: allowed })
     if (recipients.length === 0) return
 
     let changedByName: string | null = null

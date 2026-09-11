@@ -54,11 +54,15 @@ export default async function Page({ params }: Props) {
     // billing schema or table not present — show degraded state
   }
 
-  const notifyRfiEmail = settings?.notifyRfiEmail ?? false
-  const notifyInspectionEmail = settings?.notifyInspectionEmail ?? false
+  // ⚠ Each fallback must mirror the COLUMN DEFAULT in 00101/00147, not a
+  // convenient `false`. A box that renders unchecked for a column that defaults
+  // true lies about the state it controls — and the user's first click would
+  // then "turn on" something already on, saving nothing.
+  const notifyRfiEmail = settings?.notifyRfiEmail ?? true
   const notifySnagEmail = settings?.notifySnagEmail ?? true
   const notifyQcEmail = settings?.notifyQcEmail ?? true
   const notifyDiaryEmail = settings?.notifyDiaryEmail ?? true
+  const notifyFormEmail = settings?.notifyFormEmail ?? true
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -113,10 +117,10 @@ export default async function Page({ params }: Props) {
       <IntegrationsPanel
         projectId={id}
         initialNotifyRfiEmail={notifyRfiEmail}
-        initialNotifyInspectionEmail={notifyInspectionEmail}
         initialNotifySnagEmail={notifySnagEmail}
         initialNotifyQcEmail={notifyQcEmail}
         initialNotifyDiaryEmail={notifyDiaryEmail}
+        initialNotifyFormEmail={notifyFormEmail}
       />
     </div>
   )

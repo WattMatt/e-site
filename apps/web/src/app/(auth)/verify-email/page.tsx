@@ -13,6 +13,22 @@ import { createClient } from '@/lib/supabase/client'
 // statically pre-render.
 export const dynamic = 'force-dynamic'
 
+/**
+ * UNREACHABLE IN PRODUCTION TODAY, deliberately kept.
+ *
+ * Middleware step 3 routes here only when `user && !user.email_confirmed_at`.
+ * GoTrue's `mailer_autoconfirm` is TRUE, so every account is confirmed inside
+ * a few milliseconds of creation: 36 of 36 users have `email_confirmed_at`,
+ * 0 of 36 have `confirmation_sent_at`. Nobody has ever landed here.
+ *
+ * That is exactly why the copy mattered. It asserted "We sent a confirmation
+ * link… Click it to activate your account" — the same false promise the signup
+ * success card made, on a page that only exists in the configuration where
+ * autoconfirm is OFF, a path GoTrue's `signup` branch has never once executed.
+ * The wording below states what is actually known (the address is unconfirmed)
+ * and points at the Resend control instead of at an email that may not exist.
+ */
+
 const POLL_MS = 4000
 
 export default function VerifyEmailPage() {
@@ -70,9 +86,10 @@ export default function VerifyEmailPage() {
     <div className="auth-card">
       <h2 className="auth-card-title">Verify your email</h2>
       <p className="auth-card-sub">
-        We sent a confirmation link to <strong>{email ?? 'your email'}</strong>. Click
-        it to activate your account. We&apos;ll forward you automatically once
-        confirmed.
+        <strong>{email ?? 'Your email address'}</strong> hasn&apos;t been confirmed
+        yet. If a confirmation email is waiting for you, open it and follow the
+        link — otherwise send yourself a fresh one below. We&apos;ll forward you
+        automatically the moment it&apos;s confirmed.
       </p>
 
       <div className="auth-field" style={{ marginTop: 18 }}>

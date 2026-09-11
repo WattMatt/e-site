@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { NextRequest } from 'next/server'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
  * Middleware gate tests (Onboarding Standard A11).
@@ -85,9 +88,9 @@ describe('middleware — session gate', () => {
     expect(url.searchParams.get('next')).toBe('/projects/abc-123/settings/rates')
   })
 
-  it('passes PUBLIC_PATHS through untouched for anonymous visitors', async () => {
-    for (const path of ['/login', '/signup', '/reset-password', '/pricing', '/legal/terms']) {
-      const res = await run(path)
+  it('passes auth-flow PUBLIC_PATHS through untouched for anonymous visitors', async () => {
+    for (const p of ['/login', '/signup', '/reset-password']) {
+      const res = await run(p)
       expect(res).toBe(state.supabaseResponse)
     }
   })
@@ -232,3 +235,174 @@ describe('signed webhook bypass', () => {
     expect(locationOf(res).pathname).toBe('/login')
   })
 })
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contract tests. The list these replace was five hardcoded strings, so every
+// public page that shipped after it was written — /cookies, /privacy/request
+// and /unsubscribe among them — was outside the assertion. /unsubscribe 307'd
+// to /login in production for the entire life of the lifecycle-email programme
+// (246 marketing sends, 0 opt-outs) and no unit test could have noticed,
+// because no unit test knew the route existed.
+//
+// These enumerate the filesystem instead: every page under app/(legal) and
+// app/(public), and every route handler that authenticates itself. A new page
+// in either group, or a new self-authenticating handler, joins the contract
+// the moment its file lands.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const APP_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'app')
+
+function pagesUnder(group: string): string[] {
+  const root = path.join(APP_DIR, group)
+  const out: string[] = []
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (entry.name === 'page.tsx' || entry.name === 'page.ts') {
+        // Strip the app root and every (route group) segment; /page.tsx → ''.
+        const rel = path.relative(APP_DIR, path.dirname(full))
+        const segs = rel.split(path.sep).filter((s) => s && !s.startsWith('('))
+        out.push('/' + segs.join('/'))
+      }
+    }
+  }
+  walk(root)
+  return out.sort()
+}
+
+// Route handlers that do their own auth: a Bearer JWT they verify themselves,
+// or an HMAC/Svix signature over the raw body. Both classes MUST bypass the
+// cookie middleware — a 307 to /login is an auth failure for a mobile client
+// and a delivery failure for a webhook provider.
+function selfAuthenticatingRoutes(): string[] {
+  const root = path.join(APP_DIR, 'api')
+  const out: string[] = []
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (entry.name === 'route.ts') {
+        const src = fs.readFileSync(full, 'utf8')
+        const bearer = /headers\.get\(\s*['"][Aa]uthorization['"]/.test(src)
+        const signature =
+          /x-paystack-signature|svix-signature|createHmac|new Webhook\(/i.test(src)
+        if (bearer || signature) {
+          out.push('/' + path.relative(APP_DIR, path.dirname(full)).split(path.sep).join('/'))
+        }
+      }
+    }
+  }
+  walk(root)
+  return out.sort()
+}
+
+const LEGAL_PAGES = pagesUnder('(legal)')
+const PUBLIC_PAGES = pagesUnder('(public)')
+const PUBLIC_CONTENT_PAGES = [...LEGAL_PAGES, ...PUBLIC_PAGES]
+
+describe('middleware — public-content contract (app/(legal) + app/(public))', () => {
+  it('enumerates the groups from disk, and they are not empty', () => {
+    expect(LEGAL_PAGES.length).toBeGreaterThan(0)
+    expect(PUBLIC_PAGES.length).toBeGreaterThan(0)
+    // Pins the routes this finding is about, so a rename cannot quietly empty
+    // the enumeration and leave the suite green over nothing.
+    expect(LEGAL_PAGES).toEqual(
+      expect.arrayContaining(['/cookies', '/privacy/request', '/unsubscribe']),
+    )
+    expect(PUBLIC_PAGES).toEqual(expect.arrayContaining(['/', '/pricing', '/legal/terms']))
+  })
+
+  it.each(PUBLIC_CONTENT_PAGES)('%s is reachable by an anonymous visitor', async (route) => {
+    state.user = null
+    const res = await run(route)
+    // The sentinel is only returned on a pass-through; a redirect would be a
+    // NextResponse with a Location header, never this object.
+    expect(res).toBe(state.supabaseResponse)
+  })
+
+  it.each(PUBLIC_CONTENT_PAGES)('%s is NOT bounced to /dashboard when signed in', async (route) => {
+    state.user = CONFIRMED
+    state.aal = 'aal2'
+    state.orgCount = 1
+    const res = await run(route)
+    // The sentinel is only returned on a pass-through; a redirect would be a
+    // NextResponse with a Location header, never this object.
+    expect(res).toBe(state.supabaseResponse)
+  })
+
+  // Rule 3 and rule 4b fire regardless of isPublicPath, and they target exactly
+  // the cohort the re-engagement sequence mails: dormant accounts. An
+  // unsubscribe link that lands on /verify-email is an unsubscribe link that
+  // does not work.
+  it.each(PUBLIC_CONTENT_PAGES)('%s is NOT intercepted by the unconfirmed-email gate', async (route) => {
+    state.user = { id: 'user-1' } // no email_confirmed_at
+    state.aal = 'aal2'
+    state.orgCount = 1
+    const res = await run(route)
+    // The sentinel is only returned on a pass-through; a redirect would be a
+    // NextResponse with a Location header, never this object.
+    expect(res).toBe(state.supabaseResponse)
+  })
+
+  it.each(PUBLIC_CONTENT_PAGES)('%s is NOT intercepted by the aal1 MFA gate', async (route) => {
+    state.user = CONFIRMED
+    state.aal = 'aal1'
+    state.orgCount = 1
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ factors: [{ status: 'verified' }] }) })),
+    )
+    const res = await run(route)
+    // The sentinel is only returned on a pass-through; a redirect would be a
+    // NextResponse with a Location header, never this object.
+    expect(res).toBe(state.supabaseResponse)
+  })
+
+  // The control. Without this, "everything passes through" would satisfy every
+  // assertion above, and the contract would be decorative.
+  it('still redirects an anonymous visitor on a protected path', async () => {
+    state.user = null
+    const res = await run('/settings/billing')
+    expect(locationOf(res).pathname).toBe('/login')
+  })
+})
+
+describe('middleware — self-authenticating route contract (app/api)', () => {
+  const routes = selfAuthenticatingRoutes()
+
+  it('finds the handlers that carry their own auth', () => {
+    expect(routes).toEqual(
+      expect.arrayContaining([
+        '/api/notifications/dispatch',
+        '/api/paystack/webhook',
+        '/api/webhooks/resend',
+      ]),
+    )
+  })
+
+  it.each(routes)('%s is never redirected by the cookie middleware', async (route) => {
+    state.user = null
+    const res = await run(route)
+    expect(res.headers.get('location')).toBeNull()
+  })
+})
+
+describe('middleware — one-click unsubscribe endpoint', () => {
+  // RFC 8058: the mailbox provider POSTs here with no session and no cookies.
+  // A 307 to /login is recorded as a failed one-click, and the provider stops
+  // offering the control — the same silent-failure shape as the page itself.
+  it('never redirects an anonymous POST to /api/unsubscribe', async () => {
+    state.user = null
+    const res = await run('/api/unsubscribe?user=018f2d31-bbe8-4cc1-bbdd-63af0187081e')
+    expect(res.headers.get('location')).toBeNull()
+  })
+
+  it('does not bypass a neighbouring path', async () => {
+    state.user = null
+    const res = await run('/api/unsubscribes')
+    expect(locationOf(res).pathname).toBe('/login')
+  })
+})
+

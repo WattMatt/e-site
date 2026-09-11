@@ -31,7 +31,6 @@ type ProjectSettingsRow = {
   practical_completion_date: string | null
   retention_pct: string | number
   notify_rfi_email: boolean
-  notify_rfi_to: string[]
   notify_inspection_email: boolean
   notify_snag_email: boolean
   notify_diary_email: boolean
@@ -77,7 +76,6 @@ export function rowToProjectSettings(row: ProjectSettingsRow): ProjectSettings {
     practicalCompletionDate: row.practical_completion_date,
     retentionPct: typeof row.retention_pct === 'string' ? Number(row.retention_pct) : row.retention_pct,
     notifyRfiEmail: row.notify_rfi_email,
-    notifyRfiTo: row.notify_rfi_to,
     notifyInspectionEmail: row.notify_inspection_email,
     notifySnagEmail: row.notify_snag_email,
     notifyDiaryEmail: row.notify_diary_email,
@@ -111,7 +109,6 @@ export function patchToRow(patch: ProjectSettingsPatch): Record<string, unknown>
   if (patch.practicalCompletionDate !== undefined) out.practical_completion_date = patch.practicalCompletionDate
   if (patch.retentionPct !== undefined) out.retention_pct = patch.retentionPct
   if (patch.notifyRfiEmail !== undefined) out.notify_rfi_email = patch.notifyRfiEmail
-  if (patch.notifyRfiTo !== undefined) out.notify_rfi_to = patch.notifyRfiTo
   if (patch.notifyInspectionEmail !== undefined) out.notify_inspection_email = patch.notifyInspectionEmail
   if (patch.notifySnagEmail !== undefined) out.notify_snag_email = patch.notifySnagEmail
   if (patch.notifyDiaryEmail !== undefined) out.notify_diary_email = patch.notifyDiaryEmail

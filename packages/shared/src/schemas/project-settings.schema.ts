@@ -28,9 +28,16 @@ export const workingDaysSchema = z
     'working_days must not contain duplicates',
   )
 
-/** notify_rfi_to: array of valid email addresses (may be empty). */
-export const notifyRfiToSchema = z
-  .array(z.string().email('notify_rfi_to entries must be valid email addresses'))
+// `notifyRfiTo` (notify_rfi_to text[]) was DROPPED in migration 00189. It was a
+// settable-but-ignored dead field: a dedicated validator, a mapper round-trip,
+// a restore entry and a `getNotificationConfig` key — and no sender anywhere
+// ever read it. An owner could set it, get a success result, and be told
+// nothing would come of it by nothing. RFI recipients are the live project
+// roster (project_notification_recipients), which is the deliberate replacement
+// recorded in docs/superpowers/specs/2026-06-24-unified-notifications-design.md.
+// It was NOT wired instead of dropped, because the RFI email's only CTA is an
+// RLS-gated /rfis/<id> link: an external non-member would get mail announcing
+// an RFI they cannot open.
 
 // ─────────────────────────────────────────────────────────────────────────
 // Full ProjectSettings shape — camelCase, matches spec §6 ProjectSettings
@@ -62,7 +69,6 @@ export const projectSettingsSchema = z.object({
 
   // Notifications
   notifyRfiEmail: z.boolean(),
-  notifyRfiTo: notifyRfiToSchema,
   notifyInspectionEmail: z.boolean(),
   notifySnagEmail: z.boolean(),
   notifyDiaryEmail: z.boolean(),
@@ -105,7 +111,6 @@ export const projectSettingsDefaults: Readonly<ProjectSettingsDefaults> = Object
   practicalCompletionDate: null,
   retentionPct: 5.0,
   notifyRfiEmail: true,
-  notifyRfiTo: [],
   notifyInspectionEmail: false,
   notifySnagEmail: true,
   notifyDiaryEmail: true,

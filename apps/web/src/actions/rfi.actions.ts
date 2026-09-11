@@ -1,13 +1,14 @@
 'use server'
 
 /**
- * RFI server actions — RFI lifecycle (create / respond / close) with
- * notification dispatch to the affected parties.
+ * RFI server actions — RFI lifecycle (create / respond / close), each one
+ * announced on the project's shared notification channel.
  *
- * Mirrors the snag.actions.ts pattern: validates with Zod, performs the
- * write, then best-effort fires the `send-notification` Edge Function
- * (service_role) so the affected users get a push notification with a
- * deep-link route to the RFI.
+ * All three events go through `notifyRfiEvent` → `notifyEntityEvent`, the same
+ * bell+email channel diary, QC, snags and site forms use. Before that, only
+ * `create` sent an email while the toggle promised all three, and respond/close
+ * relied on push — which delivers nothing, because `public.push_tokens` is
+ * empty. See apps/web/src/lib/rfi-email.ts for the close-window rule.
  *
  * Attachment uploads stay client-side (they need access to browser File
  * objects + signed-URL flow); these actions return the inserted row's id
@@ -16,7 +17,6 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { resolveProjectRecipients } from '@/lib/recipients'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
 import {
   createRfiSchema,
@@ -27,8 +27,7 @@ import {
 } from '@esite/shared'
 import { z } from 'zod'
 
-import { dispatchNotification } from '@/lib/notifications'
-import { dispatchRfiEmail } from '@/lib/rfi-email'
+import { notifyRfiEvent } from '@/lib/rfi-email'
 
 const uuidSchema = z.string().uuid()
 
@@ -78,27 +77,15 @@ export async function createRfiAction(
     priority: i.priority,
   })
 
-  // In-app bell → the whole project team (every active member + implicit org
-  // owners/admins/PMs), resolved live (00146), minus the raiser. Same audience
-  // as the email.
-  const { userIds: bellUserIds } = await resolveProjectRecipients(i.projectId, { excludeUserId: user.id })
-  if (bellUserIds.length) {
-    await dispatchNotification({
-      userIds: bellUserIds,
-      title: 'New RFI raised',
-      body: `"${rfi.subject}" — ${i.priority} priority${i.dueDate ? ` · due ${i.dueDate}` : ''}`,
-      route: `/rfis/${rfi.id}`,
-      type: 'rfi_created',
-      entityType: 'rfi',
-      entityId: rfi.id,
-    })
-  }
-
-  // Email channel → all active project members, gated on notifyRfiEmail.
-  await dispatchRfiEmail({
+  // Bell to the whole project team minus the raiser (every active member +
+  // implicit org owners/admins/PMs, resolved live), email to the roster gated
+  // on notifyRfiEmail — one resolve for both channels.
+  await notifyRfiEvent({
+    event: 'created',
     projectId: i.projectId,
     rfiId: rfi.id,
     rfiSubject: rfi.subject,
+    actorId: user.id,
     priority: i.priority,
     dueDate: i.dueDate ?? null,
     assigneeId: rfi.assigned_to,
@@ -159,17 +146,17 @@ export async function respondToRfiAction(
     org_id: rfi.organisation_id,
   })
 
-  // Notify the raiser + assignee (skip the responder themselves).
-  await dispatchNotification({
-    userIds: [rfi.raised_by, rfi.assigned_to].filter(
-      (uid): uid is string => Boolean(uid) && uid !== user.id,
-    ),
-    title: 'RFI response received',
-    body: `"${rfi.subject}" — new response posted`,
-    route: `/rfis/${rfi.id}`,
-    type: 'rfi_response',
-    entityType: 'rfi_response',
-    entityId: response.id,
+  // The contractually significant half. This used to be a bell to raiser +
+  // assignee only — and every responded RFI in production has assigned_to
+  // null, so "both" was one person, on a channel with no push behind it.
+  await notifyRfiEvent({
+    event: 'responded',
+    projectId: rfi.project_id,
+    rfiId: rfi.id,
+    rfiSubject: rfi.subject,
+    actorId: user.id,
+    assigneeId: rfi.assigned_to,
+    bellEntityId: response.id,
   })
 
   revalidatePath(`/rfis/${rfi.id}`)
@@ -215,17 +202,15 @@ export async function closeRfiAction(rfiId: string): Promise<{ error?: string }>
     org_id: rfi.organisation_id,
   })
 
-  // Notify both raiser and assignee unless the closer is one of them.
-  await dispatchNotification({
-    userIds: [rfi.raised_by, rfi.assigned_to].filter(
-      (uid): uid is string => Boolean(uid) && uid !== user.id,
-    ),
-    title: 'RFI closed',
-    body: `"${rfi.subject}" — closed`,
-    route: `/rfis/${rfi.id}`,
-    type: 'rfi_closed',
-    entityType: 'rfi',
-    entityId: rfi.id,
+  // Bell always; the email is withheld when a response landed moments ago, so
+  // one answer-and-close sitting is one email, not two.
+  await notifyRfiEvent({
+    event: 'closed',
+    projectId: rfi.project_id,
+    rfiId: rfi.id,
+    rfiSubject: rfi.subject,
+    actorId: user.id,
+    assigneeId: rfi.assigned_to,
   })
 
   revalidatePath(`/rfis/${rfi.id}`)

@@ -60,8 +60,17 @@ Deno.serve(async (req) => {
     .from('user_organisations')
     .select('user_id, role, profile:profiles!user_id(id, full_name, email)')
     .eq('organisation_id', body.organisationId)
-    .eq('role', 'org_admin')
+    // 'org_admin' is not a role this system has. ORG_ROLES (the single source
+    // of truth, mirroring the user_organisations_role_check CHECK constraint)
+    // is owner | admin | project_manager | contractor | inspector | supplier |
+    // client_viewer — zero production rows have ever held 'org_admin', so this
+    // lookup matched nothing and the function 404'd before sending, even for a
+    // caller presenting a valid service-role JWT.
+    .in('role', ['owner', 'admin'])
     .eq('is_active', true)
+    // Prefer the owner when an org has both ('owner' sorts after 'admin').
+    // .limit(1) keeps .maybeSingle() single-valued now that .in() can match many.
+    .order('role', { ascending: false })
     .limit(1)
     .maybeSingle()
 

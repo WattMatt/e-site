@@ -1,39 +1,64 @@
 'use client'
 
+/**
+ * Project notification toggles.
+ *
+ * ⚠ A CONTROL HERE IS A PROMISE. Every entry in TOGGLES must drive a column
+ * something actually reads, and every notify_* boolean column must either
+ * appear here or have a recorded reason for not appearing. A contract test
+ * (notification-toggles.contract.test.ts) enforces both directions — this panel
+ * accumulated four separate instances of a switch that controlled nothing.
+ *
+ * Removed: "Inspection email notifications". It wrote notify_inspection_email,
+ * was surfaced as cfg.inspectionEmail, and had ZERO consumers anywhere. It was
+ * switched on for (643) KINGSWALK on 2026-06-18 and sent nothing for twelve
+ * weeks. It is not rebuilt here because the module's real events are
+ * inspection_assigned / inspection_awaiting_verification / inspection_abandoned
+ * — not the "scheduled or completed" the copy promised — so the events have to
+ * be chosen and the copy written to them before a control can be honest. And
+ * KINGSWALK's column is still true, so shipping a sender would start mailing
+ * that project's whole roster on the next deploy with nobody re-consenting.
+ *
+ * Added: "Site form email notifications". notify_form_email defaults TRUE on
+ * every project and mails the whole roster a SANS 10142-1 making-safe record
+ * with inline photos — the highest-consequence email the platform sends — and
+ * it had no control at all.
+ */
+
 import { useState, useTransition } from 'react'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { updateProjectSettingsAction } from '@/actions/project-settings.actions'
 
 type ToggleField =
   | 'notifyRfiEmail'
-  | 'notifyInspectionEmail'
   | 'notifySnagEmail'
   | 'notifyQcEmail'
   | 'notifyDiaryEmail'
+  | 'notifyFormEmail'
 
 interface Props {
   projectId: string
   initialNotifyRfiEmail: boolean
-  initialNotifyInspectionEmail: boolean
   initialNotifySnagEmail: boolean
   initialNotifyQcEmail: boolean
   initialNotifyDiaryEmail: boolean
+  initialNotifyFormEmail: boolean
 }
 
 export function IntegrationsPanel({
   projectId,
   initialNotifyRfiEmail,
-  initialNotifyInspectionEmail,
   initialNotifySnagEmail,
   initialNotifyQcEmail,
   initialNotifyDiaryEmail,
+  initialNotifyFormEmail,
 }: Props) {
   const [values, setValues] = useState<Record<ToggleField, boolean>>({
     notifyRfiEmail: initialNotifyRfiEmail,
-    notifyInspectionEmail: initialNotifyInspectionEmail,
     notifySnagEmail: initialNotifySnagEmail,
     notifyQcEmail: initialNotifyQcEmail,
     notifyDiaryEmail: initialNotifyDiaryEmail,
+    notifyFormEmail: initialNotifyFormEmail,
   })
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
@@ -73,9 +98,10 @@ export function IntegrationsPanel({
       description: 'Send an email to the project team for every site diary entry logged on this project.',
     },
     {
-      field: 'notifyInspectionEmail',
-      label: 'Inspection email notifications',
-      description: 'Send an email when an inspection is scheduled or completed on this project.',
+      field: 'notifyFormEmail',
+      label: 'Site form email notifications',
+      description:
+        'Send the branded PDF to the project team when a site form (such as a Termination & Making Safe record) is distributed on this project. Turning this off leaves the in-app notification in place.',
     },
   ]
 

@@ -13,7 +13,7 @@
  */
 
 import { headers } from 'next/headers'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import { rateLimit } from '@/lib/rate-limit'
 import { z } from 'zod'
 
@@ -62,12 +62,30 @@ export async function submitDataRequestAction(formData: FormData): Promise<{
   const label = LABELS[requestType]
   const receivedAt = new Date().toISOString()
 
-  const supabase = await createClient()
+  // SERVICE-ROLE, not the SSR anon client.
+  //
+  // `data-subject-request` is the only type send-email accepts without a
+  // service-role credential, and that exemption is exactly what made the
+  // function an unauthenticated relay (audit 2026-09-10). This action is the
+  // one legitimate anonymous caller, so it stops being anonymous here: the
+  // exemption can then be withdrawn, and the form keeps working when the
+  // Supabase gateway is switched to verifying JWTs (dropping --no-verify-jwt).
+  // The visitor is still unauthenticated — the elevation is server-side only,
+  // and the input has already been schema-validated and rate-limited above.
+  const supabase = createServiceClient()
 
   const { error } = await supabase.functions.invoke('send-email', {
     body: {
       type: 'data-subject-request',
       payload: {
+        // The hardened function IGNORES `to`, `subject`, `requestTypeLabel`
+        // and `receivedAt` — it hardcodes the Information Officer and builds
+        // the subject and timestamp itself, so a caller controls nothing that
+        // reaches the wire. They are still sent because the edge function is
+        // deployed MANUALLY: between merging this and redeploying send-email,
+        // the currently-live handler still reads them, and dropping them now
+        // would send `to: undefined` and break the published privacy notice's
+        // request form. Remove them once the hardened function is live.
         to:        INFO_OFFICER_EMAIL,
         subject:   `[POPIA] ${label} from ${name}`,
         requester: { name, email },

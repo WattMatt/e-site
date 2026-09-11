@@ -26,7 +26,6 @@ const sampleRow = {
   practical_completion_date: null,
   retention_pct: '5.00',                       // numeric → string in PG
   notify_rfi_email: true,
-  notify_rfi_to: [],
   notify_inspection_email: false,
   notify_snag_email: true,
   notify_diary_email: false,
@@ -56,7 +55,6 @@ describe('rowToProjectSettings', () => {
       contractType: 'jbcc_pba',
       retentionPct: 5.0,                       // string → number
       notifyRfiEmail: true,
-      notifyRfiTo: [],
       // Module email toggles — each column must round-trip to ITS OWN camelCase
       // key (a crossed wire here silently kills/mistargets a whole channel).
       notifySnagEmail: true,

@@ -75,8 +75,8 @@ function mockClient(opts: { role?: string | null } = {}) {
 }
 
 /** Service client: the belongs-to-project lookup and the distribution stamp. */
-function mockServiceClient(opts: { status?: string; formRow?: object | null; stampError?: string | null; stampAffectsNoRows?: boolean } = {}) {
-  const { status = 'submitted', stampError = null, stampAffectsNoRows = false } = opts
+function mockServiceClient(opts: { status?: string; formRow?: object | null; stampError?: string | null; stampAffectsNoRows?: boolean; suppressedAddresses?: string[]; suppressionError?: string | null } = {}) {
+  const { status = 'submitted', stampError = null, stampAffectsNoRows = false, suppressedAddresses = [], suppressionError = null } = opts
   const formRow =
     opts.formRow === undefined ? { id: FORM_ID, status, project_id: PROJECT_ID } : opts.formRow
 
@@ -84,6 +84,18 @@ function mockServiceClient(opts: { status?: string; formRow?: object | null; sta
 
   const client: any = {
     __updateSpy: updateSpy,
+    // public.email_suppressions — the batch consult, reached WITHOUT .schema().
+    from: () => ({
+      select: () => ({
+        in: (_col: string, values: string[]) =>
+          Promise.resolve({
+            data: suppressionError
+              ? null
+              : suppressedAddresses.filter((a) => values.includes(a)).map((a) => ({ email_address: a })),
+            error: suppressionError ? { message: suppressionError } : null,
+          }),
+      }),
+    }),
     schema: () => ({
       from: () => ({
         select: () => ({
@@ -217,6 +229,41 @@ describe('previewFormRecipientsAction', () => {
     expect(res.emailEnabled).toBe(false)
     // Bell recipients still resolve — the list is the point of the preview.
     expect(res.recipients).toHaveLength(1)
+  })
+
+  // ── The preview is a SAFETY CONTROL ──────────────────────────────────────
+  // A making-safe record is not "distributed" to someone Resend refuses to
+  // deliver to. If the send leg filters the bounced address but the preview
+  // does not, the reviewer signs off on an audience that never existed.
+  it('shows the SAME filtered list the send will use', async () => {
+    resolveRecipientsMock.mockResolvedValue({
+      userIds: ['a', 'b', 'c'],
+      emails: ['live@wmeng.co.za', 'ghost@aeec.co.za'],
+      recipients: [
+        { userId: 'a', email: 'live@wmeng.co.za', fullName: 'Live Person' },
+        { userId: 'b', email: 'Ghost@AEEC.co.za', fullName: 'Ghost' },
+        { userId: 'c', email: null, fullName: 'No Mailbox' },
+      ],
+    })
+    createServiceClientMock.mockReturnValue(
+      mockServiceClient({ suppressedAddresses: ['ghost@aeec.co.za'] }),
+    )
+
+    const res = await previewFormRecipientsAction(PROJECT_ID)
+
+    expect(res.recipients).toEqual([{ name: 'Live Person', email: 'live@wmeng.co.za' }])
+    // Silently shrinking the list would be a NEW lie, so the dropped people are
+    // named, not just counted away.
+    expect(res.suppressed).toEqual([{ name: 'Ghost', email: 'Ghost@AEEC.co.za' }])
+  })
+
+  it('fails open: a suppression read error shows the whole roster', async () => {
+    createServiceClientMock.mockReturnValue(
+      mockServiceClient({ suppressionError: 'permission denied' }),
+    )
+    const res = await previewFormRecipientsAction(PROJECT_ID)
+    expect(res.recipients).toEqual([{ name: 'Site Manager', email: 'site@wmeng.co.za' }])
+    expect(res.suppressed).toEqual([])
   })
 })
 

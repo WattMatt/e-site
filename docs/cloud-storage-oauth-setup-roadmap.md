@@ -6,6 +6,24 @@
 
 ---
 
+## ⚠ Production redirect URI — `https://www.e-site.live`, never `app.e-site.live`
+
+An OAuth redirect URI is matched **exactly** by the provider. Register the wrong host and nothing fails until a real user clicks **Connect** and hits a provider error page mid-consent — the most expensive place to discover a typo.
+
+The production redirect URI is derived at runtime from `NEXT_PUBLIC_SITE_URL` + `/api/auth/cloud-callback` (`apps/web/src/actions/cloud-storage.actions.ts`, `siteUrl()` / `REDIRECT_PATH`). Production has held `https://www.e-site.live` since 2026-05-28, so:
+
+| Purpose | Register exactly |
+|---|---|
+| Production | `https://www.e-site.live/api/auth/cloud-callback` |
+| Pre-production (Vercel alias) | `https://esite-lilac.vercel.app/api/auth/cloud-callback` |
+| Preview branches | the branch's own `…vercel.app` alias — non-production deploys prefer `VERCEL_BRANCH_URL`, so a preview's callback lands on that preview |
+
+**`app.e-site.live` returns `NXDOMAIN` — verified 2026-09-10 — and has never existed.** Earlier revisions of this doc prescribed it "once DNS cutover is done"; the cutover happened on 2026-05-28 and went to the apex + `www`, not `app`, so that conditional pointed at nothing and read as satisfied. Every instance below now names `www` unconditionally. The apex `https://e-site.live` is not a substitute either: it `307`s to `www`, and providers do not follow redirects when matching a registered URI.
+
+---
+
+---
+
 ## How to use this doc
 
 Same two-layer pattern as the Paystack roadmap:
@@ -34,7 +52,7 @@ Once the mailbox is sorted, you can rotate the contact email on each provider da
 **Decisions:**
 - [ ] **Developer contact email** — used on all three provider dashboards as the "developer / support" contact. Recommended: Arno's primary email (`arno@watsonmattheus.com`). Can be rotated later.
 - [ ] **Test users** — list of email addresses that will test the OAuth flow during dev. At minimum, the Gmail / Microsoft accounts you'll use to test each provider's "Connect" button. Each provider's test allowlist accepts ~100 users.
-- [ ] **Production redirect URL** — `https://app.e-site.live/api/auth/cloud-callback` once DNS cutover is done; for testing today, use `https://esite-lilac.vercel.app/api/auth/cloud-callback`. Each provider lets you register multiple redirect URIs, so register both (production + staging-vercel-alias) up-front to avoid round-tripping later.
+- [ ] **Production redirect URL** — `https://www.e-site.live/api/auth/cloud-callback`. Not conditional on anything: `www` has been production since 2026-05-28 (see the warning at the top of this doc). For pre-production testing also register `https://esite-lilac.vercel.app/api/auth/cloud-callback`. Every provider accepts a list of redirect URIs, so register both up-front rather than round-tripping later.
 
 **Existing accounts you'll need:**
 - [ ] A **Dropbox** account (any — personal works; will be used both as the dev account AND the "test user" Arno connects from in `/settings/integrations`).
@@ -76,7 +94,7 @@ Save both to a temporary secure note (1Password / Bitwarden / sticky note that g
 > DROPBOX_APP_DESCRIPTION=<Construction site management — sync project drawings + documents from your Dropbox folders.>
 >
 > # Redirect URIs (paste BOTH; Dropbox accepts a list).
-> REDIRECT_URI_PROD=https://app.e-site.live/api/auth/cloud-callback
+> REDIRECT_URI_PROD=https://www.e-site.live/api/auth/cloud-callback
 > REDIRECT_URI_STAGING=https://esite-lilac.vercel.app/api/auth/cloud-callback
 > ```
 
@@ -142,12 +160,12 @@ Save both to a temporary secure note (1Password / Bitwarden / sticky note that g
 > # the app is verified. Limit ~100. Add yourself + anyone testing.
 > GOOGLE_TEST_USERS=<arno@watsonmattheus.com,otheruser@gmail.com,...>
 >
-> REDIRECT_URI_PROD=https://app.e-site.live/api/auth/cloud-callback
+> REDIRECT_URI_PROD=https://www.e-site.live/api/auth/cloud-callback
 > REDIRECT_URI_STAGING=https://esite-lilac.vercel.app/api/auth/cloud-callback
 >
 > # Authorised JavaScript origins (NOT the redirect URIs — these are the
 > # origins that will host the OAuth init). Same hosts, no path.
-> JS_ORIGIN_PROD=https://app.e-site.live
+> JS_ORIGIN_PROD=https://www.e-site.live
 > JS_ORIGIN_STAGING=https://esite-lilac.vercel.app
 > ```
 
@@ -232,7 +250,7 @@ Save both to a temporary secure note (1Password / Bitwarden / sticky note that g
 > # uses the /common/ tenant which assumes the broadest setting.
 > MS_SUPPORTED_ACCOUNTS=<AzureADandPersonalMicrosoftAccount>
 >
-> REDIRECT_URI_PROD=https://app.e-site.live/api/auth/cloud-callback
+> REDIRECT_URI_PROD=https://www.e-site.live/api/auth/cloud-callback
 > REDIRECT_URI_STAGING=https://esite-lilac.vercel.app/api/auth/cloud-callback
 > ```
 
@@ -322,7 +340,7 @@ Save both to a temporary secure note (1Password / Bitwarden / sticky note that g
 > 4. Wait for status READY (~50s).
 >
 > **Post-rotation verification:**
-> 5. Open `https://app.e-site.live/settings/integrations` (or staging URL until DNS cutover) and log in as a user with role admin/owner/PM.
+> 5. Open `https://www.e-site.live/settings/integrations` (or the `esite-lilac.vercel.app` alias if you are verifying a pre-production deploy) and log in as a user with role admin/owner/PM.
 > 6. Click **Connect Dropbox** (or whichever provider you registered).
 >    - Expected: redirect to the provider's consent screen, NOT an inline error.
 >    - If the inline error still says "Missing X / Y env vars," step 1 didn't take effect — check that you ticked both Production AND Preview, and that the redeploy actually completed.

@@ -16,9 +16,17 @@
 //   (auth)        → /onboarding (the middleware's no-org gate target)
 //   (marketplace) → /supplier (supplier portal; /register is a public page,
 //                   never a post-login destination)
+//   (legal)       → /unsubscribe /privacy/request /cookies
 // The middleware writes ?next=<pathname> for every protected path, so this
 // list must cover every signed-in shell. Update it when a new route group
 // (or a new top-level segment in (admin)) ships.
+//
+// The (legal) entries are recovery, not routing: those pages are public now,
+// so the middleware no longer writes ?next for them — but every ?next that the
+// broken middleware already emitted is still sitting in inboxes and browser
+// history, and dropping it sends a user who clicked "unsubscribe" to
+// /dashboard instead. They are same-origin content pages with no application
+// surface, so allowing them costs nothing.
 const ALLOWED_PREFIXES = [
   '/dashboard',
   '/projects',
@@ -33,6 +41,9 @@ const ALLOWED_PREFIXES = [
   '/portal',
   '/onboarding',
   '/supplier',
+  '/unsubscribe',
+  '/privacy/request',
+  '/cookies',
 ]
 
 export function safeNext(raw: string | null | undefined): string | null {

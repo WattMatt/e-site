@@ -1,0 +1,51 @@
+-- 00189_drop_notify_rfi_to.sql
+--
+-- Drop projects.project_settings.notify_rfi_to — a settable-but-ignored dead
+-- field, and the fourth instance of the same pattern in the notifications
+-- settings surface.
+--
+-- WHAT IT WAS. A text[] with a dedicated Zod validator that rejected malformed
+-- addresses, a mapper round-trip, an entry in the history restore, and a
+-- `getNotificationConfig().rfiTo` accessor. NO SENDER ANYWHERE EVER READ IT.
+-- An owner/admin/PM could set it through updateProjectSettingsAction or
+-- straight through PostgREST, receive a success result, and nothing would ever
+-- come of it — and nothing told them so. 00185:175 even reasons about "any
+-- external notify_rfi_to recipient" as though such recipients exist.
+--
+-- WHY DROP RATHER THAN WIRE.
+-- docs/superpowers/specs/2026-06-24-unified-notifications-design.md:18 already
+-- locked the decision: "notifyRfiTo — Drop (settable-but-ignored dead field)",
+-- with the live project roster (project_notification_recipients, 00146) as its
+-- deliberate replacement. Wiring it would be actively worse: renderRfiCreatedEmail's
+-- only CTA is an RLS-gated /rfis/<id> link, so an external non-member listed
+-- here would receive mail announcing an RFI they cannot open.
+--
+-- DATA LOSS: NONE. Verified against production immediately before writing this
+-- migration:
+--   * projects.project_settings — 14 rows, 0 with a non-empty notify_rfi_to.
+--   * projects.project_settings_history — 15 snapshots, 0 with a non-empty
+--     notify_rfi_to in the JSONB snapshot.
+-- Every row holds the ARRAY[]::text[] default. Nobody ever used it.
+--
+-- HISTORY SNAPSHOTS ARE UNAFFECTED. project_settings_history.snapshot is JSONB
+-- written by the audit trigger; the 15 existing rows keep their notify_rfi_to
+-- key and simply stop being read. `rowToProjectSettings` no longer maps it and
+-- `restore`'s explicit patch no longer names it, so a restore of a pre-drop
+-- snapshot does not attempt to write a column that is gone.
+--
+-- ⚠ NUMBERING. Production's schema_migrations head is 00185 at the time of
+-- writing; 00186 (revoke anon EXECUTE) and 00187 (billing read gate) are
+-- already taken on this branch, and 00188 is claimed by a peer session in this
+-- same wave. This file is 00189. Re-check max(version) AND origin/main
+-- immediately before applying — `supabase db push` keys on the version PREFIX,
+-- so a number already in the ledger makes it print "Remote database is up to
+-- date", exit 0 and skip the file in silence. A green Deploy DB Migrations run
+-- is NOT evidence this ran: verify by reading the column list back.
+--
+-- No PostgREST config PATCH is needed (no schema created or dropped), but the
+-- schema cache must be reloaded so PostgREST stops advertising the column.
+
+ALTER TABLE projects.project_settings
+  DROP COLUMN IF EXISTS notify_rfi_to;
+
+NOTIFY pgrst, 'reload schema';

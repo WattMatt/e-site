@@ -6,6 +6,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { signUpSchema, type SignUpInput } from '@esite/shared'
 import { createClient } from '@/lib/supabase/client'
+import { sendWelcomeEmailAction } from '@/actions/onboarding-email.actions'
 import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter'
 import { CaptchaTurnstile, CAPTCHA_ENABLED } from '@/components/CaptchaTurnstile'
 import { GoogleSignInButton } from '@/components/GoogleSignInButton'
@@ -16,7 +17,12 @@ const MIN_ACCEPTABLE_SCORE = 2  // zxcvbn 2 = "fair" — blocks "weak" and "very
 export default function SignupPage() {
   const supabase = createClient()
   const [serverError, setServerError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
+  // null = not submitted yet. Otherwise: did signUp hand back a live session?
+  // With GoTrue's mailer_autoconfirm ON (production today) it always does, and
+  // no confirmation email exists to check for. With it OFF, session is null and
+  // GoTrue really has mailed a link. The success card reads this rather than
+  // asserting one of the two, so it stays true either side of that decision.
+  const [signedInOnSignup, setSignedInOnSignup] = useState<boolean | null>(null)
   const [pwEval, setPwEval] = useState<PasswordEvaluation | null>(null)
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
 
@@ -52,20 +58,48 @@ export default function SignupPage() {
     })
     if (error) { setServerError(error.message); return }
 
-    // Fire the Day-0 onboarding email. Non-blocking — we still show the
-    // "check your inbox" success state even if the Edge Function hiccups.
-    // The d0 email is idempotent on the server side, so a retry on next
-    // signup attempt won't double-send.
+    // Fire the Day-0 welcome through a SERVER action. This used to be
+    // `supabase.functions.invoke('onboarding-email-d0', …)` from right here —
+    // the browser client, whose Authorization is the anon key, against an edge
+    // function gated on service_role. It 403'd every time, and because
+    // `functions.invoke` RESOLVES with {data, error} instead of rejecting, the
+    // trailing `.catch` never fired: zero d0 rows in email_sequence_events
+    // across four months while d1/d3/d7/d14 all sent normally.
+    //
+    // The action re-reads the recipient from the account, refuses anything but
+    // a just-created user, rate-limits per IP and LOGS its verdict. Awaited so
+    // a failure is a server log line instead of nothing at all; the outcome
+    // never changes what the user sees — the account exists either way.
     if (data.user?.id) {
-      void supabase.functions.invoke('onboarding-email-d0', {
-        body: { userId: data.user.id, email, firstName: fullName.split(' ')[0] },
-      }).catch(() => { /* swallow — the welcome is a nice-to-have */ })
+      try {
+        await sendWelcomeEmailAction(data.user.id)
+      } catch (e) {
+        console.error('[signup] welcome email trigger failed', e)
+      }
     }
 
-    setSuccess(true)
+    setSignedInOnSignup(Boolean(data.session))
   }
 
-  if (success) {
+  if (signedInOnSignup === true) {
+    return (
+      <div className="auth-card auth-success">
+        <div className="auth-success-icon">✅</div>
+        <h2>Your account is ready</h2>
+        <p>
+          You&apos;re signed in — there&apos;s no confirmation email to wait for.
+          Next, set up your organisation and your first project.
+        </p>
+        <div className="auth-links" style={{ marginTop: 28 }}>
+          <Link href="/onboarding" className="auth-btn" style={{ display: 'inline-block' }}>
+            Continue setup →
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (signedInOnSignup === false) {
     return (
       <div className="auth-card auth-success">
         <div className="auth-success-icon">📬</div>
