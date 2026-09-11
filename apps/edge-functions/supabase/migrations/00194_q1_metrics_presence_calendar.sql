@@ -473,6 +473,9 @@ GRANT  EXECUTE ON FUNCTION projects.project_had_activity(uuid,timestamptz,timest
 -- passing the band — a "frozen" cohort whose membership depends on the apply
 -- date. [2026-06-12, 2026-09-10) is the 90 days ending on the measurement
 -- date; the membership cut-off is the same instant.
+-- Every literal carries an explicit +00 offset: an offset-less literal resolves
+-- through the session TimeZone — UTC today, but a future `ALTER ROLE … SET
+-- timezone` would silently shift the cut-off.
 INSERT INTO public.metric_cohorts (cohort_key, user_id, organisation_id, as_of)
 SELECT DISTINCT ON (ma.user_id)
        'weekly_active_denominator', ma.user_id, pr.organisation_id, DATE '2026-09-09'
@@ -480,9 +483,9 @@ SELECT DISTINCT ON (ma.user_id)
   JOIN projects.project_members pm
     ON pm.user_id = ma.user_id
    AND pm.is_active
-   AND pm.created_at < TIMESTAMPTZ '2026-09-10'
+   AND pm.created_at < TIMESTAMPTZ '2026-09-10 00:00:00+00'
   JOIN projects.projects pr ON pr.id = pm.project_id
- WHERE projects.project_had_activity(pr.id, TIMESTAMPTZ '2026-06-12', TIMESTAMPTZ '2026-09-10')
+ WHERE projects.project_had_activity(pr.id, TIMESTAMPTZ '2026-06-12 00:00:00+00', TIMESTAMPTZ '2026-09-10 00:00:00+00')
  ORDER BY ma.user_id, pr.organisation_id
 ON CONFLICT DO NOTHING;
 
@@ -506,10 +509,10 @@ SELECT DISTINCT ON (cohort_key, ma.user_id)
   JOIN projects.project_members pm
     ON pm.user_id = ma.user_id
    AND pm.is_active
-   AND pm.created_at < TIMESTAMPTZ '2026-09-10'
+   AND pm.created_at < TIMESTAMPTZ '2026-09-10 00:00:00+00'
   JOIN projects.projects pr ON pr.id = pm.project_id
  CROSS JOIN LATERAL (SELECT public.user_effective_project_role(pm.project_id, ma.user_id) AS role) eff
- WHERE projects.project_had_activity(pr.id, TIMESTAMPTZ '2026-06-12', TIMESTAMPTZ '2026-09-10')
+ WHERE projects.project_had_activity(pr.id, TIMESTAMPTZ '2026-06-12 00:00:00+00', TIMESTAMPTZ '2026-09-10 00:00:00+00')
    AND eff.role IN ('contractor', 'client_viewer')
  ORDER BY cohort_key, ma.user_id, pr.organisation_id
 ON CONFLICT DO NOTHING;
