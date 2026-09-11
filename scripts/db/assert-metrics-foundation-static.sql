@@ -264,4 +264,22 @@ UNION ALL
 SELECT 'anon cannot EXECUTE working_days_between',
        CASE WHEN to_regprocedure('projects.working_days_between(timestamptz,timestamptz,uuid,text)') IS NULL THEN false
             ELSE NOT has_function_privilege('anon', 'projects.working_days_between(timestamptz,timestamptz,uuid,text)', 'EXECUTE') END
+UNION ALL
+-- Section 6: the rollup and its schedule. The cron arm reads cron.job, which
+-- exists on every Supabase project; inside the dry run the row is the one the
+-- migration just inserted (and rolls back with it), after the real apply it
+-- is the live job. NOT a commented-out block: that is how cloud-sync-poll came
+-- to be merged and never scheduled.
+SELECT 'the cron job is scheduled AND active',
+       EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'platform-metrics-weekly' AND active)
+UNION ALL
+-- CASE-guarded like every other privilege arm. service_role only: cron runs it
+-- as the job owner and nothing else should be able to write a snapshot row.
+SELECT 'anon cannot EXECUTE the rollup',
+       CASE WHEN to_regprocedure('public.compute_platform_metrics_weekly(date,date,boolean)') IS NULL THEN false
+            ELSE NOT has_function_privilege('anon','public.compute_platform_metrics_weekly(date,date,boolean)','EXECUTE') END
+UNION ALL
+SELECT 'authenticated cannot EXECUTE the rollup either',
+       CASE WHEN to_regprocedure('public.compute_platform_metrics_weekly(date,date,boolean)') IS NULL THEN false
+            ELSE NOT has_function_privilege('authenticated','public.compute_platform_metrics_weekly(date,date,boolean)','EXECUTE') END
 ;
