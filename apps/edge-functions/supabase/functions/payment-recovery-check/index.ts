@@ -189,6 +189,36 @@ async function downgradeExpiredCancellations(supabase: SupabaseClient): Promise<
   return (data ?? []).length
 }
 
+/**
+ * Count — never downgrade — cancelled paid subscriptions with no period end.
+ *
+ * `downgradeExpiredCancellations` filters `.lt('next_billing_date', today)`,
+ * and `NULL < today` is NULL, so a row with a NULL period end is invisible to
+ * it and the customer keeps their tier forever. Nothing wrote that column in
+ * one-off mode until the callback and the charge.success branch were fixed
+ * (PR: payments pre-go-live, finding #19); confirmed on production, where both
+ * billing.subscriptions rows carried NULL including the one with three paid
+ * invoices.
+ *
+ * ⚠ This deliberately does NOT add `next_billing_date IS NULL` to the
+ * downgrade predicate. That would strip a customer who paid R1,499 on Monday
+ * and cancelled on Tuesday of the period they have already bought — exactly
+ * what the billing page promises them. Making the gap VISIBLE is the fix; a
+ * nightly non-zero `cancellations_stuck` means a row was written by a code
+ * path that still does not stamp the period end.
+ */
+async function countStuckCancellations(supabase: SupabaseClient): Promise<number> {
+  const { count, error } = await (supabase as any)
+    .schema('billing')
+    .from('subscriptions')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'cancelled')
+    .neq('tier', 'free')
+    .is('next_billing_date', null)
+  if (error) throw new Error(`countStuckCancellations: ${error.message}`)
+  return count ?? 0
+}
+
 async function sendRecoveryEmail(
   supabase: SupabaseClient,
   step: EmailStep,
@@ -237,6 +267,9 @@ Deno.serve(async (req) => {
     actions: { day3_retry_failed: 0, day7_final_warning: 0, day14_paused: 0, day30_cancelled: 0 },
     projects_paused: 0,
     cancellations_downgraded: 0,
+    // Non-zero means at least one cancelled paid subscription has no period end
+    // and can therefore never be downgraded. See countStuckCancellations.
+    cancellations_stuck: 0,
     errors: [] as Array<{ subscriptionId: string; message: string }>,
   }
 
@@ -285,6 +318,24 @@ Deno.serve(async (req) => {
     } catch (err) {
       report.errors.push({
         subscriptionId: 'downgrade-expired',
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
+
+    // Fail safe rather than fail open: surface the rows the downgrade query is
+    // structurally unable to see, instead of leaving a silent revenue leak.
+    try {
+      report.cancellations_stuck = await countStuckCancellations(supabase)
+      if (report.cancellations_stuck > 0) {
+        console.warn(
+          `cancellations_stuck=${report.cancellations_stuck}: cancelled paid subscriptions with ` +
+          `next_billing_date IS NULL are invisible to downgradeExpiredCancellations and keep their ` +
+          `tier indefinitely. Something wrote a subscription without stamping the period end.`,
+        )
+      }
+    } catch (err) {
+      report.errors.push({
+        subscriptionId: 'count-stuck-cancellations',
         message: err instanceof Error ? err.message : String(err),
       })
     }

@@ -53,6 +53,26 @@ This roadmap is split into two layers:
 - [`apps/web/src/app/api/paystack/callback/route.ts`](../apps/web/src/app/api/paystack/callback/route.ts) — captures `plan_code` from metadata, persists to `paystack_plan_code`. Documents the race: `paystack_subscription_code` is intentionally omitted (webhook fills it).
 - [`apps/web/src/app/api/paystack/webhook/route.ts`](../apps/web/src/app/api/paystack/webhook/route.ts) — new `subscription.create` handler matches by (customer_code + plan_code) and fills in `subscription_code` + `next_billing_date`. Existing `subscription.disable` / `not_renew` / `payment_failed` handlers unchanged.
 
+**Blocking prerequisite added 2026-09-11 — migration `00190` must be applied before live mode.**
+`00190_payment_events_and_unlock_revocation.sql` creates `billing.payment_events`, adds
+`revoked_at` / `revoked_reason` to `billing.org_feature_unlocks` (and teaches
+`public.has_feature` to honour them), and extends `notifications_type_check` with the three
+billing types. Without it the refund, dispute and duplicate-charge handlers all 500 on a live
+event. **A green `Deploy DB Migrations` run is not evidence it applied** — `db push` keys on the
+version prefix and silently skips a file whose number is already in the ledger; read the objects
+back (the verification block at the foot of the migration lists the queries).
+
+**Also fixed in the same change, all of which only bite in live mode:**
+- Every non-subscription purchase (`feature_unlock`, `feature_seat`, `mv_subscription`) used to
+  return the payer to `/settings/billing?error=meta` with no confirmation — the callback now
+  branches on `metadata.type` and honours a validated `return_to`.
+- `next_billing_date` was never written in one-off mode, so `downgradeExpiredCancellations`
+  could never see a cancelled row and a one-off paid tier was permanent. It is now stamped at
+  charge time and refreshed on renewal; the recovery cron reports `cancellations_stuck` for any
+  row it still cannot see.
+- Webhook write failures were swallowed and acknowledged with 200. They now return 500 so
+  Paystack retries, and do so *before* the invoice is written so the retry finds a clean state.
+
 **Env vars to set on Vercel** (Production env only — leave Preview unset to keep PR previews on one-off mode):
 
 | Env var name | Value (pasted from §3 step 6) |
@@ -258,7 +278,29 @@ Paste this into Claude-in-Chrome **only after Paystack confirms verification by 
 >    - `invoice.create`
 >    - `invoice.update`
 >    - `invoice.payment_failed`
+>    - `refund.pending`
+>    - `refund.processed`
+>    - `refund.failed`
+>    - `charge.dispute.create`
+>    - `charge.dispute.remind`
+>    - `charge.dispute.resolve`
 >    - `customeridentification.success` (only if you decide to verify customers, optional)
+>
+>    ⚠ The refund and dispute events are **not optional** — step 7 of §5 below
+>    instructs refunding the live smoke-test charge, and a refunded feature
+>    unlock is lifetime access unless `refund.processed` lands. The handler
+>    sets `revoked_at` on `billing.org_feature_unlocks` (migration `00190`),
+>    which `public.has_feature` now reads.
+>
+>    ⚠ `transfer.*` is deliberately NOT subscribed: nothing in the monorepo
+>    initiates a Paystack transfer, `initiateTransfer` has zero callers, and
+>    settlement is by `split_code`.
+>
+>    ⚠ **There is exactly one handler.** The edge function `paystack-webhook`
+>    was a second, divergent implementation that answered on the same secret;
+>    it is now a **410 stub**. If a delivery ever shows 410, the dashboard is
+>    pointing at `…supabase.co/functions/v1/paystack-webhook` instead of the
+>    URL in step 8 — repoint it, do not "fix" the stub.
 > 10. Save, then run **both** of these, in order:
 >     - **a.** From any terminal, no auth needed:
 >       ```bash
@@ -325,7 +367,7 @@ Paste this into Claude-in-Chrome (after the PRE-FILL block above is filled):
 >    Its Production value is already correct — `https://www.e-site.live`, set 2026-05-28 — and it has the widest blast radius of anything on this page: it is the `callback_url` for all four Paystack checkouts (`checkout`, `feature-unlock`, `feature-seat`, `mv-subscribe`) **and** the base URL of every link in every RFI, QC, snag, diary, site-form and invite email, and in the PDFs. Overwriting it with a host that does not resolve breaks both redundant subscription-activation paths at once and ships dead links to every recipient.
 >    Read the Production value and record it verbatim in the report-back. **If, and only if, it reads anything other than `https://www.e-site.live` — STOP and report. Do not "fix" it from this runbook.** Preview should stay `https://esite-lilac.vercel.app`.
 > 4b. **Rotate the Supabase Edge secret as well — this runbook used to rotate only Vercel.**
->    Three deployed edge functions read `PAYSTACK_SECRET_KEY` from Supabase's own secret store, which Vercel knows nothing about: `paystack-webhook`, `marketplace-payment` and `eft-invoice`. Rotate Vercel alone and you ship a split brain — Vercel on `sk_live_`, the edge functions still on `sk_test_` — in which every edge-side charge, split and signature verification silently transacts against the wrong Paystack account.
+>    Deployed edge functions read `PAYSTACK_SECRET_KEY` from Supabase's own secret store, which Vercel knows nothing about: `marketplace-payment` and `eft-invoice`. (`paystack-webhook` used to be a third — it is now a 410 stub and reads no secret, but the secret itself is still worth rotating in that store.) Rotate Vercel alone and you ship a split brain — Vercel on `sk_live_`, the edge functions still on `sk_test_` — in which every edge-side charge, split and signature verification silently transacts against the wrong Paystack account.
 >    ```bash
 >    npx supabase secrets set PAYSTACK_SECRET_KEY="$SK_LIVE" --project-ref cbskbnvvgcybmfikxgky
 >    npx supabase secrets list --project-ref cbskbnvvgcybmfikxgky   # confirm the digest for that name changed
@@ -419,7 +461,19 @@ Steps Arno does himself (NOT a Claude-Chrome task — requires real card, real b
    - `paystack_subscription_code` non-NULL (starts with `SUB_`) — **this is the critical Path B proof**: a NULL here means the checkout still ran in one-off mode, the §0 code change didn't actually land, and recurring billing won't work next month.
    - `current_period_end` ≈ `current_period_start + 1 month`
 6. Verify in Paystack dashboard → Transactions → the R499 charge is present, status "Success", and clicking it shows Customer + Subscription IDs matching step 5.
-7. **Refund the R499** from Paystack dashboard (Transactions → ⋯ → Refund full amount). This is "good citizen" behaviour for a smoke test. The refund webhook will fire `charge.refund` and `charge.success` should already have flipped the subscription to `active`. Confirm the refund does NOT trip `subscription.disable` — re-run the SQL in step 5 after the refund webhook lands (~30s later); `status` should still be `active`. (If status flips to `cancelled`, the webhook handler is over-eager and needs a fix before more customers go live.)
+7. **Refund the R499** from Paystack dashboard (Transactions → ⋯ → Refund full amount). This is "good citizen" behaviour for a smoke test. The refund fires **`refund.pending` then `refund.processed`** — *not* `charge.refund`, which is not a Paystack event and was named wrongly here until 2026-09-11. `charge.success` should already have flipped the subscription to `active`. Confirm the refund does NOT trip `subscription.disable` — re-run the SQL in step 5 after the refund webhook lands (~30s later); `status` should still be `active`. (If status flips to `cancelled`, the webhook handler is over-eager and needs a fix before more customers go live.) Then confirm the refund was actually **recorded and acted on**, which is the half that did not exist before:
+
+   ```sql
+   -- both should return a row
+   SELECT event_type, amount_kobo, created_at
+     FROM billing.payment_events WHERE paystack_reference = '<ref>';
+   SELECT status FROM billing.invoices WHERE paystack_reference = '<ref>';  -- 'refunded'
+   ```
+
+   If this had been a **feature unlock** rather than a subscription charge, also check
+   `SELECT revoked_at FROM billing.org_feature_unlocks WHERE paystack_reference = '<ref>'` —
+   non-NULL, and `SELECT public.has_feature('<org>', '<feature>')` → `f`. A refunded unlock
+   used to be permanent access with no revoke path anywhere in the monorepo.
 8. **Cancel the test subscription** so it doesn't try to renew next month and re-charge the refunded card. From the app: `/settings/billing` → "Cancel subscription" (if UI exists). Otherwise from Paystack dashboard → Customers → the test customer → Subscriptions → ⋯ → Disable.
 9. **Wait for settlement** (24–48h, T+1 to T+2 SA bank schedule). Check the operating-entity bank account: should see `+R499` settlement and shortly after `-R499` refund. Net zero. Confirms the bank link is correct.
 

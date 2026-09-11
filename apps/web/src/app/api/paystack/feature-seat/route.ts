@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { FEATURE_PRICES } from '@esite/shared'
 import { hasFeatureSeat } from '@/lib/features'
 import { rateLimit } from '@/lib/rate-limit'
+import { safeReturnTo } from '@/lib/paystack/return-to'
 
 // Initialises a one-time Paystack charge to assign a per-seat feature unlock to
 // a specific user within the caller's organisation. The webhook handler at
@@ -14,7 +15,14 @@ import { rateLimit } from '@/lib/rate-limit'
 const bodySchema = z.object({
   feature_key: z.literal('generator_cost_recovery'),
   target_user_id: z.string().uuid(),
+  // Where the payer lands on the way back, and where "cancel" sends them.
+  // Generator cost-recovery is project-scoped, so only the calling paywall
+  // knows the right path. Validated as a same-origin absolute path before it
+  // reaches Paystack — see lib/paystack/return-to.ts.
+  return_to: z.string().optional(),
 })
+
+const SEAT_DEFAULT_RETURN_TO = '/settings/billing/seats'
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 
@@ -36,6 +44,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
   const { feature_key, target_user_id } = parsed.data
+  const returnTo = safeReturnTo(parsed.data.return_to, SEAT_DEFAULT_RETURN_TO)
 
   // Resolve caller's org — owner/admin only, to match the paywall CTA gating.
   const { data: membership } = await supabase
@@ -95,7 +104,8 @@ export async function POST(req: NextRequest) {
       org_id,
       user_id: target_user_id,
       amount_kobo: price.amountKobo,
-      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}/settings/billing/seats`,
+      return_to: returnTo,
+      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}${returnTo}`,
     },
   }
 

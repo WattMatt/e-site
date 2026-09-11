@@ -96,7 +96,7 @@ function req(reference = REFERENCE) {
 }
 
 /** A genuine Paystack `transaction/verify` success body for a subscription charge. */
-function paystackSuccess() {
+function paystackSuccess(metadata?: Record<string, unknown>, extra?: Record<string, unknown>) {
   return {
     ok: true,
     json: async () => ({
@@ -105,14 +105,16 @@ function paystackSuccess() {
         status: 'success',
         amount: 49900,
         reference: REFERENCE,
+        paid_at: '2026-09-11T08:00:00.000Z',
         customer: { customer_code: 'CUS_x' },
-        metadata: {
+        metadata: metadata ?? {
           org_id: ORG_ID,
           tier: 'starter',
           period: 'monthly',
           amount_kobo: 49900,
           mode: 'one_off',
         },
+        ...extra,
       },
     }),
   }
@@ -227,5 +229,149 @@ describe('GET /api/paystack/callback — replay guard', () => {
     existingInvoiceResult.value = { data: { id: 'inv-1' }, error: null }
     const res = await GET(req())
     expect(location(res)).toContain('error=forbidden')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #18 — every non-subscription purchase dead-ended on ?error=meta
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// All four purchase routes pass the same callback_url, but this route
+// destructured { org_id, tier } and bailed unless BOTH were present.
+// feature_unlock / feature_seat / mv_subscription metadata carry no `tier`
+// (mv carries no org_id either), so a customer who had just paid R250, R1,999
+// or R2,000 was redirected to /settings/billing?error=meta — a page that never
+// read searchParams, so it did not even render the error. Prod has 0 unlocks,
+// 0 seats and 0 MV subscriptions, so this has never had a chance to bite.
+//
+// The assertions check the *destination*, not just "not error=meta": a fix
+// that merely swapped the error code would still strand the payer.
+
+describe('GET /api/paystack/callback — non-subscription purchases (#18)', () => {
+  function purchase(metadata: Record<string, unknown>) {
+    fetchMock.mockResolvedValue(paystackSuccess(metadata))
+    return GET(req())
+  }
+
+  it('returns a feature-unlock buyer to the path the purchase route chose', async () => {
+    const res = await purchase({
+      type: 'feature_unlock',
+      org_id: ORG_ID,
+      feature_key: 'jbcc',
+      return_to: '/projects/p1/jbcc',
+    })
+    expect(location(res)).toContain('/projects/p1/jbcc')
+    expect(location(res)).not.toContain('error=meta')
+  })
+
+  it('acknowledges the payment on the destination so the buyer sees confirmation', async () => {
+    const res = await purchase({
+      type: 'feature_unlock',
+      org_id: ORG_ID,
+      feature_key: 'inspections',
+      return_to: '/inspections',
+    })
+    expect(location(res)).toMatch(/[?&]payment=received/)
+  })
+
+  it('returns a seat buyer to their own return_to', async () => {
+    const res = await purchase({
+      type: 'feature_seat',
+      org_id: ORG_ID,
+      user_id: 'u-1',
+      feature_key: 'generator_cost_recovery',
+      return_to: '/projects/p1/generator-cost-recovery',
+    })
+    expect(location(res)).toContain('/projects/p1/generator-cost-recovery')
+  })
+
+  it('returns an MV subscriber to a page their role can actually see', async () => {
+    // mv_subscribe applies no role gate, so the buyer may be a contractor or
+    // inspector — /settings/billing is requireRolePage(OWNER_ADMIN) and would
+    // bounce them a second time, to /dashboard, with no evidence of payment.
+    const res = await purchase({ type: 'mv_subscription', user_id: 'u-1', return_to: '/dashboard' })
+    expect(location(res)).toContain('/dashboard')
+    expect(location(res)).not.toContain('/settings/billing')
+  })
+
+  it('does NOT write entitlements from the callback — the webhook is the sole writer', async () => {
+    await purchase({ type: 'feature_unlock', org_id: ORG_ID, feature_key: 'jbcc', return_to: '/x' })
+    expect(upsertSubscriptionMock).not.toHaveBeenCalled()
+    expect(recordInvoiceMock).not.toHaveBeenCalled()
+  })
+
+  it('branches on metadata.type BEFORE the org_id/tier gate', async () => {
+    // mv_subscription metadata has no org_id at all — under the old ordering
+    // this was the guaranteed ?error=meta case.
+    const res = await purchase({ type: 'mv_subscription', user_id: 'u-1' })
+    expect(location(res)).not.toContain('error=meta')
+  })
+
+  it('still reports ?error=meta for metadata that names no purchase at all', async () => {
+    const res = await purchase({ something: 'else' })
+    expect(location(res)).toContain('error=meta')
+  })
+
+  it('keeps the subscription flow working — checkout sets no metadata.type', async () => {
+    const res = await GET(req())
+    expect(location(res)).toContain('success=1')
+    expect(upsertSubscriptionMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('GET /api/paystack/callback — return_to cannot leave the origin (#18)', () => {
+  it.each([
+    '//evil.test/pwn',
+    'https://evil.test',
+    'javascript:alert(1)',
+    '\\\\evil.test',
+  ])('refuses to redirect off-site for %s', async (hostile) => {
+    fetchMock.mockResolvedValue(
+      paystackSuccess({ type: 'feature_unlock', org_id: ORG_ID, feature_key: 'jbcc', return_to: hostile }),
+    )
+    const res = await GET(req())
+    // The property that matters: whatever is emitted stays on this origin.
+    expect(new URL(location(res)).origin).toBe('https://www.e-site.live')
+    expect(location(res)).not.toContain('evil.test')
+  })
+
+  it('falls back to the billing page rather than dropping the payer nowhere', async () => {
+    fetchMock.mockResolvedValue(
+      paystackSuccess({ type: 'feature_unlock', org_id: ORG_ID, feature_key: 'jbcc', return_to: '//evil.test' }),
+    )
+    const res = await GET(req())
+    expect(location(res)).toContain('/settings/billing')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #19 — a one-off paid tier was permanent
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// downgradeExpiredCancellations filters .lt('next_billing_date', today). In
+// one-off mode — the only mode exercised in production — nothing ever wrote
+// next_billing_date, so it stayed NULL, `NULL < today` is NULL, the row was
+// never selected, and a cancelled customer kept their tier forever. Verified
+// on prod: both billing.subscriptions rows have next_billing_date NULL,
+// including the one with three paid invoices.
+
+describe('GET /api/paystack/callback — the paid period gets an end date (#19)', () => {
+  it('stamps next_billing_date one month out for a monthly charge', async () => {
+    await GET(req())
+    expect(upsertSubscriptionMock.mock.calls[0][2].nextBillingDate).toBe('2026-10-11')
+  })
+
+  it('stamps next_billing_date one year out for an annual charge', async () => {
+    fetchMock.mockResolvedValue(
+      paystackSuccess({ org_id: ORG_ID, tier: 'professional', period: 'annual', amount_kobo: 1499000 }),
+    )
+    await GET(req())
+    expect(upsertSubscriptionMock.mock.calls[0][2].nextBillingDate).toBe('2027-09-11')
+  })
+
+  it('never leaves it undefined — a NULL is invisible to the downgrade job', async () => {
+    fetchMock.mockResolvedValue(paystackSuccess({ org_id: ORG_ID, tier: 'starter' }))
+    await GET(req())
+    expect(upsertSubscriptionMock.mock.calls[0][2].nextBillingDate).toBeTruthy()
   })
 })

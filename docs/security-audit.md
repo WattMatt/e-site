@@ -112,9 +112,23 @@
 
 ## 5. Paystack Webhook Signature Verification
 
-**Implementation:** `apps/edge-functions/supabase/functions/paystack-webhook/index.ts`
+**Implementation:** `apps/web/src/app/api/paystack/webhook/route.ts` — **the single registered Paystack ingress.**
 
-**Method:** HMAC SHA-512 over raw request body, compared to `x-paystack-signature` header
+> ⚠ **Corrected 2026-09-11.** This section previously named
+> `apps/edge-functions/supabase/functions/paystack-webhook/index.ts` as "the implementation".
+> Both handlers were deployed and both failed closed on the same `PAYSTACK_SECRET_KEY`, so
+> either URL looked healthy when probed — but Paystack accepts **one** webhook URL per mode,
+> and `docs/paystack-go-live-roadmap.md` §3C step 8 registers the **Next route**. With this
+> doc pointing the other way, the wrong URL was genuinely pasteable in either direction, and
+> each direction silently dropped a different half of the product (no `invoice.update`, so
+> nothing could clear `projects.status='payment_paused'`; or no feature unlocks, seats or MV
+> subscriptions granted at all). The edge function is now a **410 stub** so a mis-pasted URL
+> fails loudly. Do not restore it.
+
+**Method:** HMAC SHA-512 over raw request body (`createHmac('sha512', …)`), compared to the
+`x-paystack-signature` header with `crypto.timingSafeEqual` after a byte-length check, before
+the body is parsed or any DB write happens. A missing `PAYSTACK_SECRET_KEY` returns 500 — it
+never falls open.
 
 **Status:** ✅ Code-complete per review. Signature verification happens before any payload processing.
 
@@ -123,7 +137,11 @@
 - Timing-safe comparison used (`crypto.timingSafeEqual` or direct string comparison — **Action:** Upgrade to `crypto.timingSafeEqual` for resistance to timing attacks)
 - Invalid signatures return 401 before any DB writes
 
-**Status:** ✅ Upgraded — now uses `crypto.subtle.verify('HMAC', key, sigBytes, msgData)` which is timing-safe by design (session 9). The hex signature is decoded to bytes before the call.
+**Status:** ✅ Upgraded — the retired edge function used `crypto.subtle.verify('HMAC', key, sigBytes, msgData)` (session 9); the Next route uses `crypto.timingSafeEqual` over hex digests with a byte-length pre-check so a malformed header cannot make it throw. Both are timing-safe.
+
+**Status 2026-09-11:** ⚠️ Signature verification was never the weak link here — **reachability** was. Until 2026-09-11 middleware 307-redirected `/api/paystack/webhook` to `/login`, so the registered endpoint had never received a single real delivery and every billing row in production was written by `/api/paystack/callback`. The exemption is `SIGNED_WEBHOOK_PATHS` in `apps/web/src/middleware.ts`; a `307` from the unsigned-POST probe in the go-live runbook means it is gone again. A 401 is the pass condition, not a 200.
+
+**Error policy:** the route returns **500** on any genuine storage failure so Paystack retries — there is no reconciliation cron, so a 200 over a failed write destroys the only recovery mechanism. The single exception is a `23505` on a business-identity unique index (`org_feature_unlocks_organisation_id_feature_key_key`, `uq_org_feature_seats_assignment`), which a retry can never satisfy: those mean the customer was charged twice and are escalated to a `public.notifications` row for the org owner/admin.
 
 ---
 
