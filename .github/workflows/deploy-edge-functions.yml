@@ -1,9 +1,41 @@
 name: Deploy Edge Functions
 
-# Manual-only — auto-trigger on push removed because the GitHub Actions
-# secrets (SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF) aren't bound, so
-# every main push generated a noise email. Re-enable the push trigger
-# once those secrets are set in Settings → Secrets and Variables → Actions.
+# ⚠ THIS WORKFLOW CANNOT RUN YET — ITS SECRETS ARE UNBOUND.
+# `SUPABASE_ACCESS_TOKEN` and `SUPABASE_PROJECT_REF` have never been set in
+# Settings → Secrets and Variables → Actions, so the "Link project" step fails
+# on an empty project ref and this workflow has never successfully deployed
+# anything. It is manual-dispatch only for that reason — the auto-trigger on
+# push was removed because every main push generated a failure email. Bind both
+# secrets before re-enabling the push trigger.
+#
+# Until then these functions are deployed BY HAND via
+# `apps/edge-functions/deploy.sh`, which is the CANONICAL source of truth for
+# slugs and flags. This file must agree with it: every slug below appears in
+# that script with exactly these flags, and
+# `apps/web/src/lib/edge-function-jwt.contract.test.ts` asserts that, failing
+# the build on any disagreement. Change a flag there first, never here.
+#
+# ⚠ --no-verify-jwt IS A SECURITY DECISION, NOT A CONVENIENCE FLAG.
+# It tells the Supabase gateway not to verify the JWT signature. A function
+# whose authorisation is `requireServiceRole` — which DECODES a role claim, it
+# does not verify one — then accepts a self-made `{"role":"service_role"}`
+# token from any unauthenticated caller. That was live on `send-notification`
+# until 2026-09-11 (PR #175) precisely because this workflow carried the flag,
+# so a rerun would have silently re-opened the hole after production was fixed.
+#
+# Nothing needs the flag just because it has a public path: `send-email` serves
+# the public data-subject-request type and runs with verification ON, because a
+# public caller arrives with the ANON key, which is a perfectly valid JWT (see
+# PR #176). Exactly one function carries the flag — the retired
+# `paystack-webhook` 410 stub, because Paystack sends NO Authorization header at
+# all, and the stub's entire purpose is that its retirement message reaches
+# whoever mis-pasted the URL rather than a 401 that reads like a transient blip.
+#
+# NOTE: this file deploys a SUBSET of deploy.sh (8 of its 19 slugs). The
+# onboarding-email-d*, reengagement-check, conversion-prompt,
+# calculate-health-scores, payment-recovery-check, auth-email-hook and
+# marketplace-payment functions are deployed only from the script. Deploy from
+# the script for a full rollout.
 on:
   workflow_dispatch:
 
@@ -26,26 +58,59 @@ jobs:
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: supabase link --project-ref $SUPABASE_PROJECT_REF
 
+      # ── Gateway verifies the JWT. Required: these authorise by decoding a
+      #    role claim, which is only meaningful if something verified the
+      #    signature first.
       - name: Deploy send-notification
         working-directory: apps/edge-functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy send-notification --no-verify-jwt
+        run: supabase functions deploy send-notification
 
+      - name: Deploy eft-invoice
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy eft-invoice
+
+      - name: Deploy compliance-complete
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy compliance-complete
+
+      - name: Deploy cloud-sync-project
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy cloud-sync-project
+
+      - name: Deploy cloud-sync-cron
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy cloud-sync-cron
+
+      # Verification stays ON — the public branch is exempted at the
+      # application layer by PUBLIC_TYPES, and isVerifiedServiceRoleCaller
+      # explicitly DENIES the anon key so it can never reach an internal type.
       - name: Deploy send-email
         working-directory: apps/edge-functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy send-email --no-verify-jwt
+        run: supabase functions deploy send-email
 
-      - name: Deploy generate-report
-        working-directory: apps/edge-functions
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy generate-report
-
+      # ── No service-role guard; authenticates its callers differently.
       - name: Deploy validate-inspection
         working-directory: apps/edge-functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: supabase functions deploy validate-inspection
+
+      # ── No gateway verification, deliberately. One function, one reason.
+      #    Retired 410 stub; reads no input and touches nothing.
+      - name: Deploy paystack-webhook
+        working-directory: apps/edge-functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy paystack-webhook --no-verify-jwt

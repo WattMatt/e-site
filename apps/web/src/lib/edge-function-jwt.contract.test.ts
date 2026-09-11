@@ -42,6 +42,15 @@ const FUNCTIONS_DIR = join(REPO_ROOT, 'apps/edge-functions/supabase/functions')
  */
 const DEPLOY_SCRIPT = join(REPO_ROOT, 'apps/edge-functions/deploy.sh')
 
+/**
+ * The GitHub workflow deploys a SUBSET of the same functions with its own copy
+ * of the flags, and that copy is how the hole survived being fixed: production
+ * was corrected on 2026-09-11, but this file still said `--no-verify-jwt` for
+ * `send-notification`, so the next dispatch would have re-opened it. Asserting
+ * deploy.sh alone would leave the second copy unguarded.
+ */
+const DEPLOY_WORKFLOW = join(REPO_ROOT, '.github/workflows/deploy-edge-functions.yml')
+
 /** Function slugs whose index.ts imports the decode-only service-role guard. */
 function functionsWithDecodeOnlyGuard(): string[] {
   return readdirSync(FUNCTIONS_DIR)
@@ -68,6 +77,75 @@ function deployTable(): Array<{ slug: string; flags: string }> {
   }
   return out
 }
+
+/**
+ * The `supabase functions deploy <slug> [flags]` commands in the workflow.
+ * Parsed from the `run:` lines rather than from step names, because the step
+ * name is a label nobody executes — a step named "Deploy send-email" that runs
+ * a different slug would be invisible to a name-based scan.
+ */
+function workflowTable(): Array<{ slug: string; flags: string }> {
+  const yml = readFileSync(DEPLOY_WORKFLOW, 'utf8')
+  const out: Array<{ slug: string; flags: string }> = []
+  for (const m of yml.matchAll(
+    /^\s*run:\s*supabase\s+functions\s+deploy\s+([a-z0-9-]+)([^\n]*)$/gm,
+  )) {
+    out.push({ slug: m[1], flags: m[2].trim() })
+  }
+  return out
+}
+
+describe('edge functions: the deploy workflow agrees with deploy.sh', () => {
+  it('finds deploy commands in the workflow at all (guards the parser itself)', () => {
+    // Without this, a renamed file or a reformatted `run:` line would empty the
+    // scan and every assertion below would pass while asserting nothing — the
+    // same vacuous-fixture failure this suite exists to prevent.
+    const cmds = workflowTable()
+    expect(cmds.length).toBeGreaterThan(5)
+    expect(cmds.map((c) => c.slug)).toContain('send-notification')
+    expect(cmds.map((c) => c.slug)).toContain('send-email')
+  })
+
+  it('deploys no slug that deploy.sh does not list', () => {
+    // The workflow carried a `generate-report` step for a function that exists
+    // neither in this repository nor on the Supabase project. A step deploying
+    // a slug the canonical script has never heard of is either a typo that
+    // fails the run or a function nobody reviews.
+    const known = new Set(deployTable().map((c) => c.slug))
+    const unknown = workflowTable()
+      .map((c) => c.slug)
+      .filter((slug) => !known.has(slug))
+
+    expect(
+      unknown,
+      `The deploy workflow deploys slugs that are absent from ` +
+      `apps/edge-functions/deploy.sh: ${unknown.join(', ')}. deploy.sh is the ` +
+      `source of truth for slugs — add them there, or drop the step.`,
+    ).toEqual([])
+  })
+
+  it('uses exactly the flags deploy.sh uses for the same slug', () => {
+    // This is the assertion that keeps the two copies of a SECURITY DECISION in
+    // step. It subsumes the decode-only check above for the workflow: deploy.sh
+    // is already asserted never to hand a decode-only-guarded function
+    // `--no-verify-jwt`, so a workflow that matches it byte-for-byte cannot
+    // either. It also catches the opposite mistake — adding the flag to
+    // `send-email`, whose public path is NOT a reason to stop verifying
+    // signatures (PR #176), and which production runs with verify_jwt=true.
+    const canonical = new Map(deployTable().map((c) => [c.slug, c.flags.trim()]))
+    const mismatched = workflowTable()
+      .filter((c) => canonical.has(c.slug) && canonical.get(c.slug) !== c.flags)
+      .map((c) => `${c.slug}: workflow "${c.flags}" vs deploy.sh "${canonical.get(c.slug)}"`)
+
+    expect(
+      mismatched,
+      `The deploy workflow and apps/edge-functions/deploy.sh disagree on deploy ` +
+      `flags: ${mismatched.join('; ')}. --no-verify-jwt disables gateway ` +
+      `signature verification, so the two files disagreeing means one of them ` +
+      `silently re-opens a hole the other closed. deploy.sh is the source of truth.`,
+    ).toEqual([])
+  })
+})
 
 describe('edge functions: decode-only auth requires a verifying gateway', () => {
   it('finds the guarded functions at all (guards the scanner itself)', () => {
