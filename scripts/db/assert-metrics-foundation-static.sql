@@ -201,4 +201,67 @@ UNION ALL
 SELECT 'anon cannot SELECT user_presence',
        CASE WHEN to_regclass('public.user_presence') IS NULL THEN false
             ELSE NOT has_table_privilege('anon', 'public.user_presence', 'SELECT') END
+UNION ALL
+-- Section 5: the A(h) calendar — public_holidays, calendar_years,
+-- working_days_between(). The two invariants mirror the migration's `sql:`
+-- directives: never a row count, which would go red the day the October
+-- re-seed adds a year and block every later deploy.
+SELECT 'calendar_years and public_holidays agree — every registered year has holidays seeded',
+       (SELECT bool_and(EXISTS (SELECT 1 FROM projects.public_holidays ph
+                                 WHERE extract(year from ph.d)::int = cy.year))
+          FROM projects.calendar_years cy)
+UNION ALL
+SELECT 'the calendar horizon reaches at least five years past today',
+       (SELECT max(year) FROM projects.calendar_years) >= extract(year from CURRENT_DATE)::int + 5
+UNION ALL
+-- COALESCE to false: no pg_proc row means the subquery is NULL, and an absent
+-- function must read as a red line.
+SELECT 'working_days_between is STABLE, never IMMUTABLE',
+       COALESCE((SELECT p.provolatile = 's' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                  WHERE n.nspname = 'projects' AND p.proname = 'working_days_between'), false)
+UNION ALL
+SELECT 'p_calendar has NO default — every caller states its calendar',
+       COALESCE((SELECT pronargdefaults = 0 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                  WHERE n.nspname = 'projects' AND p.proname = 'working_days_between'), false)
+UNION ALL
+-- Every arm below resolves the SAME pinned project: one whose working week is
+-- the default Mon-Fri with no extra holidays. Measured 2026-09-10: all 14
+-- project_settings rows qualify. An unordered LIMIT 1 over projects.projects
+-- would make these numbers flap the day one project works Saturdays.
+SELECT 'office: Mon 2026-06-01 -> Fri 2026-06-05 is 4 working days',
+       projects.working_days_between(timestamptz '2026-06-01 08:00+02', timestamptz '2026-06-05 08:00+02',
+         (SELECT project_id FROM projects.project_settings
+           WHERE working_days = ARRAY[1,2,3,4,5] AND COALESCE(array_length(extra_holidays,1),0) = 0
+           ORDER BY project_id LIMIT 1), 'office') = 4
+UNION ALL
+SELECT 'office skips Youth Day: Mon 15 -> Wed 17 June 2026 is 1',
+       projects.working_days_between(timestamptz '2026-06-15 08:00+02', timestamptz '2026-06-17 08:00+02',
+         (SELECT project_id FROM projects.project_settings
+           WHERE working_days = ARRAY[1,2,3,4,5] AND COALESCE(array_length(extra_holidays,1),0) = 0
+           ORDER BY project_id LIMIT 1), 'office') = 1
+UNION ALL
+SELECT 'site adds Saturday: Mon 1 -> Mon 8 June 2026 is 6, office is 5',
+       projects.working_days_between(timestamptz '2026-06-01 08:00+02', timestamptz '2026-06-08 08:00+02',
+         (SELECT project_id FROM projects.project_settings
+           WHERE working_days = ARRAY[1,2,3,4,5] AND COALESCE(array_length(extra_holidays,1),0) = 0
+           ORDER BY project_id LIMIT 1), 'site') = 6
+   AND projects.working_days_between(timestamptz '2026-06-01 08:00+02', timestamptz '2026-06-08 08:00+02',
+         (SELECT project_id FROM projects.project_settings
+           WHERE working_days = ARRAY[1,2,3,4,5] AND COALESCE(array_length(extra_holidays,1),0) = 0
+           ORDER BY project_id LIMIT 1), 'office') = 5
+UNION ALL
+-- CASE-guarded like every other privilege arm: has_table_privilege and
+-- has_function_privilege RAISE on an absent object, which would abort the
+-- statement and hide every other arm.
+SELECT 'anon cannot SELECT projects.public_holidays',
+       CASE WHEN to_regclass('projects.public_holidays') IS NULL THEN false
+            ELSE NOT has_table_privilege('anon', 'projects.public_holidays', 'SELECT') END
+UNION ALL
+SELECT 'anon cannot SELECT projects.calendar_years',
+       CASE WHEN to_regclass('projects.calendar_years') IS NULL THEN false
+            ELSE NOT has_table_privilege('anon', 'projects.calendar_years', 'SELECT') END
+UNION ALL
+SELECT 'anon cannot EXECUTE working_days_between',
+       CASE WHEN to_regprocedure('projects.working_days_between(timestamptz,timestamptz,uuid,text)') IS NULL THEN false
+            ELSE NOT has_function_privilege('anon', 'projects.working_days_between(timestamptz,timestamptz,uuid,text)', 'EXECUTE') END
 ;

@@ -13,8 +13,28 @@
  */
 import { listHolidaysNamed } from '../../packages/shared/src/lib/jbcc/sa-public-holidays.ts'
 
-const from = Number(process.argv[2] ?? 2024)
-const to = Number(process.argv[3] ?? 2035)
+const USAGE =
+  'usage: node --experimental-strip-types scripts/db/gen-public-holidays-seed.ts <from-year> <to-year>' +
+  '  (both integers, from <= to; defaults 2024 2035)'
+
+// Refuse anything that is not an integer year range. Before this guard
+// `… foo bar` printed a syntactically valid, empty VALUES block and exited 0 —
+// a seed that would "apply" and register nothing.
+function yearArg(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback
+  if (!/^\d+$/.test(raw)) {
+    console.error(USAGE)
+    process.exit(2)
+  }
+  return Number(raw)
+}
+
+const from = yearArg(process.argv[2], 2024)
+const to = yearArg(process.argv[3], 2035)
+if (from > to) {
+  console.error(USAGE)
+  process.exit(2)
+}
 
 const rows: string[] = []
 for (let y = from; y <= to; y++) {

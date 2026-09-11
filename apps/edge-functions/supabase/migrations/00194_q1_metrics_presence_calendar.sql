@@ -722,3 +722,293 @@ $$;
 REVOKE ALL     ON FUNCTION public.touch_presence(text,text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.touch_presence(text,text) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.touch_presence(text,text) TO authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- 5. The working-day calendar (Appendix A(h)) — one statutory source
+-- ---------------------------------------------------------------------------
+-- Created HERE, in the first substantive migration, because the spine's
+-- BEFORE INSERT trigger computes a NOT NULL due_date and raises without it
+-- (§12 §(c) hard dependency 4). public.sa_public_holidays is NOT created —
+-- it would duplicate a set the JBCC module already computes. No
+-- works_saturdays column is added — working_days already carries that fact.
+CREATE TABLE projects.public_holidays (
+    d    date PRIMARY KEY,
+    name text NOT NULL
+);
+
+CREATE TABLE projects.calendar_years (
+    year      int PRIMARY KEY,
+    seeded_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE projects.public_holidays ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects.calendar_years  ENABLE ROW LEVEL SECURITY;
+CREATE POLICY public_holidays_read ON projects.public_holidays FOR SELECT TO authenticated USING (true);
+CREATE POLICY calendar_years_read  ON projects.calendar_years  FOR SELECT TO authenticated USING (true);
+-- ALL, not just SELECT: 00025:25-26's default privileges hand anon SELECT (and
+-- authenticated SELECT/INSERT/UPDATE/DELETE) to every new table in projects at
+-- creation. No write policy exists, so RLS already denies every write, but a
+-- grant that RLS happens to neutralise is still a grant.
+REVOKE ALL ON projects.public_holidays FROM anon;
+REVOKE ALL ON projects.calendar_years  FROM anon;
+
+-- ⚠ SEED GENERATED — do not hand-edit. Regenerate with
+--   node --experimental-strip-types scripts/db/gen-public-holidays-seed.ts 2024 2035
+-- packages/shared/src/lib/calendar/public-holidays.contract.test.ts asserts
+-- these rows equal listHolidaysNamed() for every seeded year, so a hand edit
+-- fails the build naming the date.
+--
+-- The horizon is 2035, not 2031: working_days_between RAISES on an unseeded
+-- year with no fallback, so the last seeded year is the year after which every
+-- due-date computation in the product throws when a user saves an RFI.
+--
+-- 159 VALUES rows across 12 years (2024-2035). 159, not 160: 2033-12-26 is ONE
+-- row — Christmas Day 2033 falls on a Sunday and its observed Monday is already
+-- Day of Goodwill (Public Holidays Act 36 of 1994 s2(1); the 2016/2022
+-- precedent declared no further day).
+INSERT INTO projects.public_holidays (d, name) VALUES
+  ('2024-01-01', 'New Year''s Day'),
+  ('2024-03-21', 'Human Rights Day'),
+  ('2024-03-29', 'Good Friday'),
+  ('2024-04-01', 'Family Day'),
+  ('2024-04-27', 'Freedom Day'),
+  ('2024-05-01', 'Workers'' Day'),
+  ('2024-06-16', 'Youth Day'),
+  ('2024-06-17', 'Youth Day (observed)'),
+  ('2024-08-09', 'National Women''s Day'),
+  ('2024-09-24', 'Heritage Day'),
+  ('2024-12-16', 'Day of Reconciliation'),
+  ('2024-12-25', 'Christmas Day'),
+  ('2024-12-26', 'Day of Goodwill'),
+  ('2025-01-01', 'New Year''s Day'),
+  ('2025-03-21', 'Human Rights Day'),
+  ('2025-04-18', 'Good Friday'),
+  ('2025-04-21', 'Family Day'),
+  ('2025-04-27', 'Freedom Day'),
+  ('2025-04-28', 'Freedom Day (observed)'),
+  ('2025-05-01', 'Workers'' Day'),
+  ('2025-06-16', 'Youth Day'),
+  ('2025-08-09', 'National Women''s Day'),
+  ('2025-09-24', 'Heritage Day'),
+  ('2025-12-16', 'Day of Reconciliation'),
+  ('2025-12-25', 'Christmas Day'),
+  ('2025-12-26', 'Day of Goodwill'),
+  ('2026-01-01', 'New Year''s Day'),
+  ('2026-03-21', 'Human Rights Day'),
+  ('2026-04-03', 'Good Friday'),
+  ('2026-04-06', 'Family Day'),
+  ('2026-04-27', 'Freedom Day'),
+  ('2026-05-01', 'Workers'' Day'),
+  ('2026-06-16', 'Youth Day'),
+  ('2026-08-09', 'National Women''s Day'),
+  ('2026-08-10', 'National Women''s Day (observed)'),
+  ('2026-09-24', 'Heritage Day'),
+  ('2026-12-16', 'Day of Reconciliation'),
+  ('2026-12-25', 'Christmas Day'),
+  ('2026-12-26', 'Day of Goodwill'),
+  ('2027-01-01', 'New Year''s Day'),
+  ('2027-03-21', 'Human Rights Day'),
+  ('2027-03-22', 'Human Rights Day (observed)'),
+  ('2027-03-26', 'Good Friday'),
+  ('2027-03-29', 'Family Day'),
+  ('2027-04-27', 'Freedom Day'),
+  ('2027-05-01', 'Workers'' Day'),
+  ('2027-06-16', 'Youth Day'),
+  ('2027-08-09', 'National Women''s Day'),
+  ('2027-09-24', 'Heritage Day'),
+  ('2027-12-16', 'Day of Reconciliation'),
+  ('2027-12-25', 'Christmas Day'),
+  ('2027-12-26', 'Day of Goodwill'),
+  ('2027-12-27', 'Day of Goodwill (observed)'),
+  ('2028-01-01', 'New Year''s Day'),
+  ('2028-03-21', 'Human Rights Day'),
+  ('2028-04-14', 'Good Friday'),
+  ('2028-04-17', 'Family Day'),
+  ('2028-04-27', 'Freedom Day'),
+  ('2028-05-01', 'Workers'' Day'),
+  ('2028-06-16', 'Youth Day'),
+  ('2028-08-09', 'National Women''s Day'),
+  ('2028-09-24', 'Heritage Day'),
+  ('2028-09-25', 'Heritage Day (observed)'),
+  ('2028-12-16', 'Day of Reconciliation'),
+  ('2028-12-25', 'Christmas Day'),
+  ('2028-12-26', 'Day of Goodwill'),
+  ('2029-01-01', 'New Year''s Day'),
+  ('2029-03-21', 'Human Rights Day'),
+  ('2029-03-30', 'Good Friday'),
+  ('2029-04-02', 'Family Day'),
+  ('2029-04-27', 'Freedom Day'),
+  ('2029-05-01', 'Workers'' Day'),
+  ('2029-06-16', 'Youth Day'),
+  ('2029-08-09', 'National Women''s Day'),
+  ('2029-09-24', 'Heritage Day'),
+  ('2029-12-16', 'Day of Reconciliation'),
+  ('2029-12-17', 'Day of Reconciliation (observed)'),
+  ('2029-12-25', 'Christmas Day'),
+  ('2029-12-26', 'Day of Goodwill'),
+  ('2030-01-01', 'New Year''s Day'),
+  ('2030-03-21', 'Human Rights Day'),
+  ('2030-04-19', 'Good Friday'),
+  ('2030-04-22', 'Family Day'),
+  ('2030-04-27', 'Freedom Day'),
+  ('2030-05-01', 'Workers'' Day'),
+  ('2030-06-16', 'Youth Day'),
+  ('2030-06-17', 'Youth Day (observed)'),
+  ('2030-08-09', 'National Women''s Day'),
+  ('2030-09-24', 'Heritage Day'),
+  ('2030-12-16', 'Day of Reconciliation'),
+  ('2030-12-25', 'Christmas Day'),
+  ('2030-12-26', 'Day of Goodwill'),
+  ('2031-01-01', 'New Year''s Day'),
+  ('2031-03-21', 'Human Rights Day'),
+  ('2031-04-11', 'Good Friday'),
+  ('2031-04-14', 'Family Day'),
+  ('2031-04-27', 'Freedom Day'),
+  ('2031-04-28', 'Freedom Day (observed)'),
+  ('2031-05-01', 'Workers'' Day'),
+  ('2031-06-16', 'Youth Day'),
+  ('2031-08-09', 'National Women''s Day'),
+  ('2031-09-24', 'Heritage Day'),
+  ('2031-12-16', 'Day of Reconciliation'),
+  ('2031-12-25', 'Christmas Day'),
+  ('2031-12-26', 'Day of Goodwill'),
+  ('2032-01-01', 'New Year''s Day'),
+  ('2032-03-21', 'Human Rights Day'),
+  ('2032-03-22', 'Human Rights Day (observed)'),
+  ('2032-03-26', 'Good Friday'),
+  ('2032-03-29', 'Family Day'),
+  ('2032-04-27', 'Freedom Day'),
+  ('2032-05-01', 'Workers'' Day'),
+  ('2032-06-16', 'Youth Day'),
+  ('2032-08-09', 'National Women''s Day'),
+  ('2032-09-24', 'Heritage Day'),
+  ('2032-12-16', 'Day of Reconciliation'),
+  ('2032-12-25', 'Christmas Day'),
+  ('2032-12-26', 'Day of Goodwill'),
+  ('2032-12-27', 'Day of Goodwill (observed)'),
+  ('2033-01-01', 'New Year''s Day'),
+  ('2033-03-21', 'Human Rights Day'),
+  ('2033-04-15', 'Good Friday'),
+  ('2033-04-18', 'Family Day'),
+  ('2033-04-27', 'Freedom Day'),
+  ('2033-05-01', 'Workers'' Day'),
+  ('2033-05-02', 'Workers'' Day (observed)'),
+  ('2033-06-16', 'Youth Day'),
+  ('2033-08-09', 'National Women''s Day'),
+  ('2033-09-24', 'Heritage Day'),
+  ('2033-12-16', 'Day of Reconciliation'),
+  ('2033-12-25', 'Christmas Day'),
+  ('2033-12-26', 'Day of Goodwill'),
+  ('2034-01-01', 'New Year''s Day'),
+  ('2034-01-02', 'New Year''s Day (observed)'),
+  ('2034-03-21', 'Human Rights Day'),
+  ('2034-04-07', 'Good Friday'),
+  ('2034-04-10', 'Family Day'),
+  ('2034-04-27', 'Freedom Day'),
+  ('2034-05-01', 'Workers'' Day'),
+  ('2034-06-16', 'Youth Day'),
+  ('2034-08-09', 'National Women''s Day'),
+  ('2034-09-24', 'Heritage Day'),
+  ('2034-09-25', 'Heritage Day (observed)'),
+  ('2034-12-16', 'Day of Reconciliation'),
+  ('2034-12-25', 'Christmas Day'),
+  ('2034-12-26', 'Day of Goodwill'),
+  ('2035-01-01', 'New Year''s Day'),
+  ('2035-03-21', 'Human Rights Day'),
+  ('2035-03-23', 'Good Friday'),
+  ('2035-03-26', 'Family Day'),
+  ('2035-04-27', 'Freedom Day'),
+  ('2035-05-01', 'Workers'' Day'),
+  ('2035-06-16', 'Youth Day'),
+  ('2035-08-09', 'National Women''s Day'),
+  ('2035-09-24', 'Heritage Day'),
+  ('2035-12-16', 'Day of Reconciliation'),
+  ('2035-12-17', 'Day of Reconciliation (observed)'),
+  ('2035-12-25', 'Christmas Day'),
+  ('2035-12-26', 'Day of Goodwill')
+ON CONFLICT (d) DO NOTHING;
+
+INSERT INTO projects.calendar_years (year)
+SELECT generate_series(2024, 2035)
+ON CONFLICT (year) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- projects.working_days_between — STABLE, never IMMUTABLE, no default calendar
+-- ---------------------------------------------------------------------------
+-- It reads a table; marking it IMMUTABLE would let the planner fold a result
+-- across a calendar refresh. Both bounds are evaluated AT TIME ZONE
+-- 'Africa/Johannesburg'. An unseeded year raises no_data_found; there is NO
+-- fallback to calendar days.
+--
+-- ⚠ p_calendar has NO DEFAULT, deliberately. §15 fixes three calendars for
+-- three consumers — metric 4 is 'office', the chase ladder is 'site', JBCC is
+-- statutory-only — and the chase ladder is written by a different author in a
+-- later item. A silent 'office' default would compute a Saturday-working
+-- contractor's deadline on a Mon-Fri week, drifting one day in the direction
+-- that makes him look late. The same reasoning that forbids a calendar-day
+-- fallback forbids a calendar default.
+--
+-- working_days and extra_holidays are read from the EXISTING project_settings
+-- row (00101:20,22) — no new column. A project with no settings row falls back
+-- to the column defaults, which is what the row would have carried.
+CREATE OR REPLACE FUNCTION projects.working_days_between(
+    p_from     timestamptz,
+    p_to       timestamptz,
+    p_project  uuid,
+    p_calendar text
+) RETURNS int
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $$
+DECLARE
+    v_from  date := (p_from AT TIME ZONE 'Africa/Johannesburg')::date;
+    v_to    date := (p_to   AT TIME ZONE 'Africa/Johannesburg')::date;
+    v_days  int[];
+    v_extra date[];
+    v_count int := 0;
+    v_cur   date;
+    y       int;
+BEGIN
+    IF p_calendar IS NULL OR p_calendar NOT IN ('office', 'site') THEN
+        RAISE EXCEPTION 'working_days_between: unknown calendar %', COALESCE(p_calendar, '<null>');
+    END IF;
+
+    FOR y IN SELECT generate_series(extract(year from v_from)::int, extract(year from v_to)::int) LOOP
+        IF NOT EXISTS (SELECT 1 FROM projects.calendar_years cy WHERE cy.year = y) THEN
+            RAISE EXCEPTION 'working_days_between: % is not seeded in projects.calendar_years', y
+              USING ERRCODE = 'no_data_found';
+        END IF;
+    END LOOP;
+
+    SELECT ps.working_days, ps.extra_holidays INTO v_days, v_extra
+      FROM projects.project_settings ps WHERE ps.project_id = p_project;
+    v_days  := COALESCE(v_days, ARRAY[1,2,3,4,5]);
+    v_extra := COALESCE(v_extra, ARRAY[]::date[]);
+
+    -- site = office plus Saturday where Saturday is absent from working_days.
+    IF p_calendar = 'site' AND NOT (6 = ANY(v_days)) THEN
+        v_days := v_days || 6;
+    END IF;
+
+    IF v_to <= v_from THEN RETURN 0; END IF;
+
+    v_cur := v_from;
+    WHILE v_cur < v_to LOOP
+        v_cur := v_cur + 1;
+        IF extract(isodow from v_cur)::int = ANY(v_days)
+           AND NOT EXISTS (SELECT 1 FROM projects.public_holidays ph WHERE ph.d = v_cur)
+           AND NOT (v_cur = ANY(v_extra))
+        THEN
+            v_count := v_count + 1;
+        END IF;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$;
+
+REVOKE ALL     ON FUNCTION projects.working_days_between(timestamptz,timestamptz,uuid,text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.working_days_between(timestamptz,timestamptz,uuid,text) FROM anon;
+GRANT  EXECUTE ON FUNCTION projects.working_days_between(timestamptz,timestamptz,uuid,text) TO authenticated, service_role;

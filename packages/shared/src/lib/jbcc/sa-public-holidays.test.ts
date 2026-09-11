@@ -1,6 +1,6 @@
 // packages/shared/src/lib/jbcc/sa-public-holidays.test.ts
 import { describe, it, expect } from 'vitest'
-import { isPublicHoliday, listHolidays } from './sa-public-holidays'
+import { isPublicHoliday, listHolidays, listHolidaysNamed } from './sa-public-holidays'
 
 describe('SA public holidays', () => {
   it('flags fixed-date holidays', () => {
@@ -34,8 +34,6 @@ describe('SA public holidays', () => {
     expect(listHolidays(2026).length).toBeGreaterThanOrEqual(12)
   })
 })
-
-import { listHolidaysNamed } from './sa-public-holidays'
 
 const iso = (d: Date) => d.toISOString().slice(0, 10)
 

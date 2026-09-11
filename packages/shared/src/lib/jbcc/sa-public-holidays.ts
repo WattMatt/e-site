@@ -66,7 +66,12 @@ export function listHolidaysNamed(year: number): NamedHoliday[] {
   // PRIMARY KEY) can hold one row per date, so this source of truth must yield
   // one entry per date. Only 2033 collides in 2024-2035: Christmas Day falls on
   // a Sunday, so its observed Monday (26 Dec) would duplicate the already-fixed
-  // Day of Goodwill; the fixed holiday's name wins.
+  // Day of Goodwill; the fixed holiday's name wins. That is the statute, not a
+  // key-collision workaround: Public Holidays Act 36 of 1994 s2(1) makes only
+  // the following Monday a public holiday and declares no further day when
+  // that Monday already is one — 2016 and 2022 (Christmas on a Sunday, 26 Dec
+  // already Day of Goodwill) set the precedent that 27 Dec is NOT added. Do
+  // not "fix" this by pushing the observance to the Tuesday.
   for (const h of [...out]) {
     if (h.date.getUTCDay() === 0) {
       const mon = new Date(h.date); mon.setUTCDate(h.date.getUTCDate() + 1)
