@@ -47,11 +47,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many requests. Please try again shortly.' }, { status: 429 })
   }
 
-  // Step 1 — record disclaimer acceptance + a pending row. Service role: RLS
-  // blocks the user from writing their own subscription row. Idempotent on
-  // user_id; re-pressing subscribe refreshes the acceptance timestamp without
-  // disturbing an already-active subscription's period/status… so only set
-  // status='pending' when there is no row yet — never downgrade an active one.
+  // Step 1 — record disclaimer acceptance. Service role: RLS blocks the user
+  // from writing their own subscription row. Idempotent on user_id.
+  //
+  // ⚠ `status` is deliberately NOT in this payload, and removing it was a bug
+  // fix, not a tidy-up. PostgREST's merge-duplicates upsert writes EVERY
+  // supplied column in its ON CONFLICT DO UPDATE SET list, so sending
+  // `status: 'pending'` here rewrote an existing subscriber's stored status
+  // from 'active' back to 'pending' the moment they pressed Subscribe a second
+  // time. `current_period_end` was left untouched, so nothing ever repaired it,
+  // and Paystack carried on billing the plan: access revoked, money still
+  // taken. The comment that used to sit here already claimed this was avoided;
+  // the code did the opposite.
+  //
+  // Omitting the column is what makes both cases correct:
+  //   * new row      → billing.user_mv_subscriptions.status is
+  //                    NOT NULL DEFAULT 'pending', so the insert still lands
+  //                    as 'pending' from the column default.
+  //   * existing row → status is not in the SET list, so the webhook stays the
+  //                    single writer of subscription state.
   const service = createServiceClient()
   const { error: upsertErr } = await (service as any)
     .schema('billing')
@@ -59,7 +73,6 @@ export async function POST(req: NextRequest) {
     .upsert(
       {
         user_id: user.id,
-        status: 'pending',
         disclaimer_accepted_at: new Date().toISOString(),
       },
       { onConflict: 'user_id', ignoreDuplicates: false },

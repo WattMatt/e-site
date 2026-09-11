@@ -192,12 +192,21 @@ Deno.serve(async (req) => {
           })
 
         // Send push notifications (best-effort)
+        //
+        // ⚠ Forward the CALLER's Authorization header. Rebuilding it from
+        // `Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')` does not work and never
+        // did: the edge runtime injects that variable in the new `sb_secret_…`
+        // format, which is not a JWT at all, so send-notification's role check
+        // could never read a role out of it and rejected the call every time.
+        // This push has therefore never been delivered, and the surrounding
+        // best-effort handling meant the failure was silent. Same defect and
+        // same fix as the cloud-sync cron, first observed 2026-07-23.
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!
         await fetch(`${supabaseUrl}/functions/v1/send-notification`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+            Authorization: req.headers.get('Authorization')!,
           },
           body: JSON.stringify({
             userIds,
