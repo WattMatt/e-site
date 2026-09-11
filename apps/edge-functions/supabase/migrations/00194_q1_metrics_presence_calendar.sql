@@ -71,6 +71,8 @@
 -- constraint: platform_metrics_weekly_measured_has_value ON public.platform_metrics_weekly
 -- constraint: platform_metrics_weekly_iso_matches_window ON public.platform_metrics_weekly
 -- constraint: platform_metrics_weekly_weekly_window ON public.platform_metrics_weekly
+-- constraint: user_presence_platform_check ON public.user_presence
+-- constraint: user_sessions_platform_check ON public.user_sessions
 -- index: platform_metrics_weekly_week_uk ON public.platform_metrics_weekly
 -- index: platform_metrics_weekly_baseline_uk ON public.platform_metrics_weekly
 -- index: product_events_org_time_idx ON public.product_events
@@ -632,10 +634,14 @@ REVOKE ALL ON public.platform_metrics_weekly FROM anon;
 -- items invent three spellings. Item 10's success criterion is contractor use
 -- on a 375px Android screen, which can only be evidenced by splitting sessions
 -- by platform; a vocabulary that drifts is unrecoverable for that quarter.
+-- platform is NOT NULL as well as CHECKed: `NULL IN (…)` is NULL, so a bare
+-- CHECK passes NULL — an implicit fourth vocabulary value. The RPC always
+-- writes a non-null platform; service-role writes and future migrations do
+-- not go through it, so the column must refuse NULL on its own.
 CREATE TABLE public.user_presence (
     user_id        uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
     last_active_at timestamptz NOT NULL DEFAULT now(),
-    platform       text CHECK (platform IN ('web','mobile_web','mobile_app'))
+    platform       text NOT NULL CHECK (platform IN ('web','mobile_web','mobile_app'))
 );
 
 CREATE TABLE public.user_sessions (
@@ -644,7 +650,7 @@ CREATE TABLE public.user_sessions (
     started_at   timestamptz NOT NULL DEFAULT now(),
     last_seen_at timestamptz NOT NULL DEFAULT now(),
     user_agent   text,
-    platform     text CHECK (platform IN ('web','mobile_web','mobile_app'))
+    platform     text NOT NULL CHECK (platform IN ('web','mobile_web','mobile_app'))
 );
 
 CREATE INDEX user_sessions_user_last_seen_idx ON public.user_sessions (user_id, last_seen_at DESC);
@@ -693,6 +699,8 @@ BEGIN
     -- Extend the most recent session, or open a new one. The 30-minute gap is
     -- ALSO applied at read time over last_seen_at (§15 §(b)); this write-time
     -- split is a convenience for the dispatcher, not the metric's authority.
+    -- The presence upsert above row-locks this user, so concurrent calls
+    -- serialise here and cannot open two sessions — do not reorder.
     SELECT s.id INTO v_session
       FROM public.user_sessions s
      WHERE s.user_id = v_uid
@@ -701,8 +709,10 @@ BEGIN
      LIMIT 1;
 
     IF v_session IS NULL THEN
+        -- Bounded and blank-collapsed: the RPC is authenticated-executable over
+        -- PostgREST and the column is otherwise unbounded caller-supplied text.
         INSERT INTO public.user_sessions (user_id, user_agent, platform)
-        VALUES (v_uid, p_user_agent, v_plat);
+        VALUES (v_uid, NULLIF(left(p_user_agent, 512), ''), v_plat);
     ELSE
         UPDATE public.user_sessions SET last_seen_at = now() WHERE id = v_session;
     END IF;

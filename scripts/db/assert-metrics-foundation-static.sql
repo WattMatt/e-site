@@ -172,6 +172,7 @@ UNION ALL
 SELECT 'the platform vocabulary is fixed by a CHECK on both tables',
        (SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
          WHERE t.relname IN ('user_presence','user_sessions')
+           AND t.relnamespace = 'public'::regnamespace
            AND c.contype = 'c'
            AND pg_get_constraintdef(c.oid) LIKE '%mobile_app%') = 2
 UNION ALL
