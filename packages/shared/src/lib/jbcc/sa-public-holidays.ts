@@ -39,25 +39,52 @@ const sameYmd = (a: Date, b: Date) =>
   && a.getUTCMonth() === b.getUTCMonth()
   && a.getUTCDate()  === b.getUTCDate()
 
-/** All SA public holidays for a year, with Sunday-rule observances appended. */
-export function listHolidays(year: number): Date[] {
-  const out: Date[] = []
+export interface NamedHoliday {
+  date: Date
+  name: string
+}
 
-  for (const [m, d] of FIXED_DATES) out.push(utc(year, m, d))
+/**
+ * All SA public holidays for a year, named, with Sunday-rule observances
+ * appended. This is the single statutory source; projects.public_holidays is
+ * a materialisation of it (Appendix A(h)), seeded by
+ * scripts/db/gen-public-holidays-seed.ts and asserted equal by
+ * public-holidays.contract.test.ts.
+ */
+export function listHolidaysNamed(year: number): NamedHoliday[] {
+  const out: NamedHoliday[] = []
+
+  for (const [m, d, label] of FIXED_DATES) out.push({ date: utc(year, m, d), name: label })
 
   const easter = easterSunday(year)
   const goodFriday = new Date(easter); goodFriday.setUTCDate(easter.getUTCDate() - 2)
   const familyDay  = new Date(easter); familyDay.setUTCDate(easter.getUTCDate() + 1)
-  out.push(goodFriday, familyDay)
+  out.push({ date: goodFriday, name: 'Good Friday' }, { date: familyDay, name: 'Family Day' })
 
-  // Sunday rule: any holiday on Sunday is also observed on the following Monday.
+  // Sunday rule: any holiday on Sunday is also observed on the following Monday
+  // — unless that Monday is already a holiday. projects.public_holidays(d date
+  // PRIMARY KEY) can hold one row per date, so this source of truth must yield
+  // one entry per date. Only 2033 collides in 2024-2035: Christmas Day falls on
+  // a Sunday, so its observed Monday (26 Dec) would duplicate the already-fixed
+  // Day of Goodwill; the fixed holiday's name wins. That is the statute, not a
+  // key-collision workaround: Public Holidays Act 36 of 1994 s2(1) makes only
+  // the following Monday a public holiday and declares no further day when
+  // that Monday already is one — 2016 and 2022 (Christmas on a Sunday, 26 Dec
+  // already Day of Goodwill) set the precedent that 27 Dec is NOT added. Do
+  // not "fix" this by pushing the observance to the Tuesday.
   for (const h of [...out]) {
-    if (h.getUTCDay() === 0) {
-      const mon = new Date(h); mon.setUTCDate(h.getUTCDate() + 1)
-      out.push(mon)
+    if (h.date.getUTCDay() === 0) {
+      const mon = new Date(h.date); mon.setUTCDate(h.date.getUTCDate() + 1)
+      if (out.some((o) => sameYmd(o.date, mon))) continue
+      out.push({ date: mon, name: `${h.name} (observed)` })
     }
   }
   return out
+}
+
+/** All SA public holidays for a year, with Sunday-rule observances appended. */
+export function listHolidays(year: number): Date[] {
+  return listHolidaysNamed(year).map((h) => h.date)
 }
 
 export function isPublicHoliday(date: Date): boolean {

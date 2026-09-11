@@ -7,7 +7,7 @@ Approved product-model exception (STANDARD §1, 2026-08-05): **ESITE keeps harde
 Status legend: ✓ conformant · **partial** · **—** gap · **n.a.** not applicable.
 Rule (STANDARD §4, generalizing ESITE's rbac-matrix rule): **update this file in the same PR as any auth change.**
 
-Last updated: 2026-08-05 (Phase 2 standardization pass, branch `fix/membership-write-authz-rls`).
+Last updated: 2026-09-11 (Q1 item 1 — metrics, presence and the working-day calendar).
 
 ## A. Entry & authentication
 
@@ -58,7 +58,7 @@ ESITE deleted the invite subsystem in migration `00079_admin_managed_users.sql` 
 | C8 | Honest deletion; self-service where required | MUST | ✓ | `(admin)/settings/account/DeleteAccountForm.tsx` + `actions/account.actions.ts` + `/account-deleted`; ESITE guards are the standard's cited reference |
 | C9 | Onboarding completion flag + backfill | MUST | ✓ (documented variant) | Completion derived live from active org membership (`middleware.ts hasOrg`) — no flag to drift, no backfill needed |
 | C10 | No privileged credentials in client artifacts; native = Keychain | MUST | ✓ | Service-role confined to server (middleware/actions/edge fns); mobile sessions in `expo-secure-store` (`apps/mobile/src/lib/supabase.ts`) |
-| C11 | RLS default-deny; no `USING (true)` writes; anon via narrow RPCs | MUST (S) | ✓ (this branch) | Migration `00177` (this branch / PR #157) adds RESTRICTIVE write policies on `user_organisations` + `project_members`; anon SELECT revoked (`00168`) — pending merge/apply |
+| C11 | RLS default-deny; no `USING (true)` writes; anon via narrow RPCs | MUST (S) | ✓ (this branch) | Migration `00177` (this branch / PR #157) adds RESTRICTIVE write policies on `user_organisations` + `project_members`; anon SELECT revoked (`00168`) — pending merge/apply; migration 00194 adds public.product_events, platform_metrics_weekly and metric_cohorts with a PERMISSIVE SELECT plus a RESTRICTIVE admin gate — org-scoped via user_is_org_admin(organisation_id) on the two tables carrying per-org rows, platform-wide via user_is_org_admin() only on platform_metrics_weekly — no UPDATE/DELETE policy on either store, and REVOKE ALL … FROM anon on all three plus user_presence, user_sessions, projects.public_holidays and projects.calendar_years, and the `metric_accounts` view; the seven new functions each carry REVOKE … FROM PUBLIC and an explicit REVOKE … FROM anon, verified with has_function_privilege |
 
 ## D. First-run experience
 

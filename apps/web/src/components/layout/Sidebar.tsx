@@ -9,7 +9,7 @@ import {
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
   Cable, BookMarked, HardHat, Package, Store, Lock, ScrollText, Zap,
-  ShieldCheck, FileText,
+  ShieldCheck, FileText, BarChart3,
 } from 'lucide-react'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
@@ -90,9 +90,10 @@ function projectNav(id: string) {
 }
 
 const FOOTER_ITEMS = [
-  { href: '/site',                   label: 'Site capture', Icon: HardHat },
-  { href: '/cable-schedule/sans',    label: 'SANS ref',     Icon: BookMarked },
-  { href: '/settings',               label: 'Settings',     Icon: Settings },
+  { href: '/site',                label: 'Site capture', Icon: HardHat,   adminOnly: false },
+  { href: '/cable-schedule/sans', label: 'SANS ref',     Icon: BookMarked, adminOnly: false },
+  { href: '/metrics',             label: 'Adoption',     Icon: BarChart3, adminOnly: true },
+  { href: '/settings',            label: 'Settings',     Icon: Settings,  adminOnly: true },
 ] as const
 
 function extractProjectId(pathname: string): string | null {
@@ -124,9 +125,7 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
   const globalNav = isAdmin
     ? GLOBAL_NAV
     : GLOBAL_NAV.filter(item => item.href !== '/inspections/templates')
-  const footerItems = isAdmin
-    ? FOOTER_ITEMS
-    : FOOTER_ITEMS.filter(item => item.href !== '/settings')
+  const footerItems = isAdmin ? FOOTER_ITEMS : FOOTER_ITEMS.filter(item => !item.adminOnly)
 
   return (
     <>

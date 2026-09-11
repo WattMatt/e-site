@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { emitProductEvent } from '@/lib/analytics/product-events'
 import { z } from 'zod'
 
 const SA_PROVINCES = [
@@ -468,6 +469,27 @@ export async function placeOrderAction(formData: FormData): Promise<{ error?: st
     item_count: items.length,
     total_amount_zar: totalAmount,
     project_id: projectId,
+  })
+  // projectId is `string | undefined` (optional zod field) — coerce to null so
+  // the key is never dropped from the RPC body. The buyer's organisation goes
+  // ONLY when there is no project: with one, emit_product_event resolves the
+  // organisation from the project and RAISES if a supplied org disagrees, and
+  // an order against a project owned by another org would be lost, not logged.
+  await emitProductEvent({
+    actorId: user.id,
+    projectId: projectId ?? null,
+    organisationId: projectId ? undefined : mem.organisation_id,
+    event: 'marketplace_order_placed',
+    // contractor_org_id keeps the BUYER attributable when the order is placed
+    // against a project another org owns — the row's organisation_id will be
+    // the project's, not the buyer's.
+    properties: {
+      order_id: order.id,
+      supplier_id: supplierId,
+      contractor_org_id: mem.organisation_id,
+      item_count: items.length,
+      total_amount_zar: totalAmount,
+    },
   })
 
   // Notify supplier (best-effort)

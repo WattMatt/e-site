@@ -18,6 +18,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { emitProductEvent } from '@/lib/analytics/product-events'
 import {
   createRfiSchema,
   respondToRfiSchema,
@@ -75,6 +76,20 @@ export async function createRfiAction(
     has_assignee: !!rfi.assigned_to,
     assignee_source: assigneeSource,
     priority: i.priority,
+  })
+  // First-party copy of the moment above, including the assignee_source
+  // diagnostic §15 names: PostHog goes silent when its key is unset, and a
+  // quiet quarter and a missing env var are then indistinguishable.
+  await emitProductEvent({
+    actorId: user.id,
+    projectId: i.projectId,
+    event: 'rfi_created',
+    properties: {
+      rfi_id: rfi.id,
+      has_assignee: !!rfi.assigned_to,
+      assignee_source: assigneeSource,
+      priority: i.priority,
+    },
   })
 
   // Bell to the whole project team minus the raiser (every active member +
@@ -145,6 +160,12 @@ export async function respondToRfiAction(
     project_id: rfi.project_id,
     org_id: rfi.organisation_id,
   })
+  await emitProductEvent({
+    actorId: user.id,
+    projectId: rfi.project_id,
+    event: 'rfi_responded',
+    properties: { rfi_id: rfi.id, response_id: response.id },
+  })
 
   // The contractually significant half. This used to be a bell to raiser +
   // assignee only — and every responded RFI in production has assigned_to
@@ -200,6 +221,12 @@ export async function closeRfiAction(rfiId: string): Promise<{ error?: string }>
     rfi_id: rfi.id,
     project_id: rfi.project_id,
     org_id: rfi.organisation_id,
+  })
+  await emitProductEvent({
+    actorId: user.id,
+    projectId: rfi.project_id,
+    event: 'rfi_closed',
+    properties: { rfi_id: rfi.id },
   })
 
   // Bell always; the email is withheld when a response landed moments ago, so

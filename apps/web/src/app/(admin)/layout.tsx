@@ -5,6 +5,7 @@ import { getOrgContext } from '@/lib/auth-org'
 import { hasFeature } from '@/lib/features'
 import { hasMvAccess } from '@/lib/mv-access'
 import { listMyOrganisations } from '@/actions/active-organisation.actions'
+import { touchPresence } from '@/lib/presence'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { OrgSwitcher } from '@/components/layout/OrgSwitcher'
 import { NotificationCentre } from '@/components/ui/NotificationCentre'
@@ -48,6 +49,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     // MV is a per-USER subscription (lib/mv-access), not an org feature unlock.
     hasMvAccess(user.id, supabase),
     listMyOrganisations(),
+    // Presence: one upsert + one indexed lookup, run alongside the four reads
+    // this layout already awaits, so it adds no wall-clock time. Never throws.
+    touchPresence('web'),
   ])
   const orgMemberships = orgsResult.ok ? orgsResult.memberships : []
   // Dark-launch switch: surface the Medium Voltage tab only for entitled users,

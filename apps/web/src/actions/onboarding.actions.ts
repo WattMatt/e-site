@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { trackServer, ANALYTICS_EVENTS } from '@/lib/analytics'
+import { emitProductEvent } from '@/lib/analytics/product-events'
 import { z } from 'zod'
 
 const createOrgSchema = z.object({
@@ -87,6 +88,13 @@ export async function createOrganisationAction(formData: FormData) {
     org_id: org.id,
     org_type: orgType,
   })
+  await emitProductEvent({
+    actorId: user.id,
+    projectId: null,
+    organisationId: org.id,
+    event: 'onboarding_started',
+    properties: { org_type: orgType },
+  })
 
   return { organisationId: org.id }
 }
@@ -133,6 +141,12 @@ export async function createFirstProjectAction(orgId: string, formData: FormData
     project_id: project.id,
     org_id: orgId,
     source: 'onboarding',
+  })
+  await emitProductEvent({
+    actorId: user.id,
+    projectId: project.id,
+    event: 'project_created',
+    properties: { source: 'onboarding' },
   })
 
   return { projectId: project.id }

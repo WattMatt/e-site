@@ -24,30 +24,56 @@
  * that now throws 42501 in production and would have shipped as "quoting is
  * broken". So the payload itself is captured and asserted on: the key must be
  * absent.
+ *
+ * placeOrderAction's product-event attribution is covered at the bottom.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const ORDER_ID = 'eeeeeeee-0000-4000-8000-000000000005'
+const SUPPLIER_ID = 'eeeeeeee-0000-4000-8000-000000000011'
+const PROJECT_ID = 'eeeeeeee-0000-4000-8000-000000000022'
+const ITEM_ID = 'eeeeeeee-0000-4000-8000-000000000033'
+const BUYER_ORG = 'eeeeeeee-0000-4000-8000-000000000044'
 
-const { authUser, updatePayloads, rpcCalls, rpcResult, updateResult } = vi.hoisted(() => ({
+const { authUser, updatePayloads, insertPayloads, rpcCalls, rpcResult, updateResult, emitProductEventMock } = vi.hoisted(() => ({
   authUser: { value: { id: 'u-supplier' } as { id: string } | null },
   updatePayloads: [] as any[],
+  insertPayloads: [] as Array<{ table: string; payload: any }>,
   rpcCalls: [] as Array<{ fn: string; args: any }>,
   rpcResult: { value: { error: null as any } },
   updateResult: { value: { error: null as any } },
+  emitProductEventMock: vi.fn(),
 }))
+
+// Isolate the event writer: the real emitProductEvent would construct a
+// service client. These tests are about the action, not the metric row —
+// but its ARGUMENTS are asserted below, because attribution is the action's.
+vi.mock('@/lib/analytics/product-events', () => ({ emitProductEvent: emitProductEventMock }))
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({
     auth: { getUser: async () => ({ data: { user: authUser.value }, error: null }) },
+    // placeOrderAction's buyer-membership lookup (public schema, no .schema()).
+    from: (_t: string) => {
+      const b: any = {}
+      b.select = () => b
+      b.eq = () => b
+      b.limit = () => b
+      b.single = async () => ({ data: { organisation_id: BUYER_ORG }, error: null })
+      return b
+    },
     schema: (_s: string) => ({
       rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); return rpcResult.value },
-      from: (_t: string) => {
+      from: (t: string) => {
         const b: any = {}
         b.select = () => b
+        b.insert = (p: any) => { insertPayloads.push({ table: t, payload: p }); b._i = true; return b }
         b.update = (p: any) => { updatePayloads.push(p); b._u = true; return b }
         b.eq = () => (b._u ? Promise.resolve(updateResult.value) : b)
-        b.single = async () => ({ data: { created_by: 'u-buyer' }, error: null })
+        b.single = async () =>
+          b._i ? { data: { id: ORDER_ID }, error: null } : { data: { created_by: 'u-buyer' }, error: null }
+        // An insert awaited with no .select() (order_items) resolves to a bare result.
+        b.then = (onFulfilled: (v: any) => unknown) => Promise.resolve({ error: null }).then(onFulfilled)
         return b
       },
     }),
@@ -58,14 +84,16 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 vi.mock('next/navigation', () => ({ redirect: vi.fn() }))
 vi.mock('@/lib/analytics', () => ({ trackServer: vi.fn(), ANALYTICS_EVENTS: {} }))
 
-import { updateOrderStatusAction } from './supplier.actions'
+import { updateOrderStatusAction, placeOrderAction } from './supplier.actions'
 
 beforeEach(() => {
   authUser.value = { id: 'u-supplier' }
   updatePayloads.length = 0
+  insertPayloads.length = 0
   rpcCalls.length = 0
   rpcResult.value = { error: null }
   updateResult.value = { error: null }
+  emitProductEventMock.mockReset()
   delete (process.env as any).NEXT_PUBLIC_SUPABASE_URL
   delete (process.env as any).SUPABASE_SERVICE_ROLE_KEY
 })
@@ -112,5 +140,47 @@ describe('updateOrderStatusAction — the quote goes through the authorised RPC'
     expect(res.error).toMatch(/Not authenticated/i)
     expect(rpcCalls).toHaveLength(0)
     expect(updatePayloads).toHaveLength(0)
+  })
+})
+
+/**
+ * emit_product_event resolves the row's organisation from the PROJECT when one
+ * is given and RAISES if a supplied p_organisation_id disagrees — so an order
+ * placed against a project another org owns must NOT carry the buyer's org as
+ * organisationId (it would be swallowed-and-logged, not recorded). Without a
+ * project there is nothing to resolve from, and the buyer's org is required.
+ */
+function orderForm(projectId?: string): FormData {
+  const fd = new FormData()
+  fd.set('supplier_id', SUPPLIER_ID)
+  if (projectId) fd.set('project_id', projectId)
+  fd.append('item_id', ITEM_ID)
+  fd.append('item_qty', '2')
+  fd.append('item_price', '150')
+  return fd
+}
+
+describe('placeOrderAction — marketplace_order_placed attribution', () => {
+  it('with a project: passes projectId and NO organisationId, and keeps the buyer in contractor_org_id', async () => {
+    await placeOrderAction(orderForm(PROJECT_ID))
+    expect(emitProductEventMock).toHaveBeenCalledTimes(1)
+    const args = emitProductEventMock.mock.calls[0][0]
+    expect(args).toMatchObject({ event: 'marketplace_order_placed', actorId: 'u-supplier', projectId: PROJECT_ID })
+    expect(args.organisationId).toBeUndefined()
+    expect(args.properties).toMatchObject({
+      order_id: ORDER_ID,
+      supplier_id: SUPPLIER_ID,
+      contractor_org_id: BUYER_ORG,
+      item_count: 1,
+      total_amount_zar: 300,
+    })
+  })
+
+  it('without a project: passes projectId null and organisationId = the buyer org', async () => {
+    await placeOrderAction(orderForm())
+    expect(emitProductEventMock).toHaveBeenCalledTimes(1)
+    const args = emitProductEventMock.mock.calls[0][0]
+    expect(args).toMatchObject({ event: 'marketplace_order_placed', projectId: null, organisationId: BUYER_ORG })
+    expect(args.properties).toMatchObject({ order_id: ORDER_ID, contractor_org_id: BUYER_ORG })
   })
 })

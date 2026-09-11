@@ -44,7 +44,21 @@ export * from './lib/jbcc/working-days'
 // letter-values is pure (no zip/mammoth) — safe to re-export from the barrel.
 export * from './lib/jbcc/letter-values'
 
+// The A(h) working-day calendar. NOT the JBCC statutory helper — see the
+// module header for why the two must not be merged.
+export {
+  buildCalendar,
+  sastDate,
+  workingDaysBetween,
+  addWorkingDays as addProjectWorkingDays,
+  type CalendarInput,
+  type ProjectCalendar,
+} from './lib/calendar/working-days'
+
 // Migrations — the `-- @verify:` block grammar and its predicate builder.
 // Pure: no I/O and no node built-ins, so it is safe in this barrel (the CLI
 // that opens a database connection lives outside @esite/shared).
 export * from './lib/migrations/verify-header'
+
+// Product-event and metric-key registries (§15 §(a), §12 §(i)).
+export * from './lib/analytics/product-events'

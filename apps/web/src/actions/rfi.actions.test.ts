@@ -26,6 +26,9 @@ vi.mock('@/lib/analytics', async () => {
   const actual = await vi.importActual<any>('@/lib/analytics')
   return { ...actual, trackServer: trackServerMock }
 })
+// Isolate the event writer: the real emitProductEvent would construct a
+// service client. These tests are about the action, not the metric row.
+vi.mock('@/lib/analytics/product-events', () => ({ emitProductEvent: vi.fn() }))
 vi.mock('@esite/shared', async () => {
   const actual = await vi.importActual<any>('@esite/shared')
   return { ...actual, rfiService: { ...actual.rfiService, create: rfiServiceCreateMock } }
