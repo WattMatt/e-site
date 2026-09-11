@@ -480,7 +480,16 @@ export async function placeOrderAction(formData: FormData): Promise<{ error?: st
     projectId: projectId ?? null,
     organisationId: projectId ? undefined : mem.organisation_id,
     event: 'marketplace_order_placed',
-    properties: { order_id: order.id, supplier_id: supplierId, item_count: items.length, total_amount_zar: totalAmount },
+    // contractor_org_id keeps the BUYER attributable when the order is placed
+    // against a project another org owns — the row's organisation_id will be
+    // the project's, not the buyer's.
+    properties: {
+      order_id: order.id,
+      supplier_id: supplierId,
+      contractor_org_id: mem.organisation_id,
+      item_count: items.length,
+      total_amount_zar: totalAmount,
+    },
   })
 
   // Notify supplier (best-effort)

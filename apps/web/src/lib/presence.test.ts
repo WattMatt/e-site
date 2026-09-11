@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // `server-only` throws outside the react-server condition (see
-// analytics/product-events.test.ts; under vitest it resolves to
-// src/test/server-only-stub.ts); the mock must sit above the import.
+// analytics/product-events.test.ts). Under vitest it resolves to
+// src/test/server-only-stub.ts, so this mock is belt-and-braces rather than
+// required; it stays above the import so the intent survives a config change.
 vi.mock('server-only', () => ({}))
 
 const h = vi.hoisted(() => ({

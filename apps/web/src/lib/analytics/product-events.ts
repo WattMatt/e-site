@@ -1,4 +1,5 @@
 import 'server-only'
+import { after } from 'next/server'
 import { PRODUCT_EVENTS, type ProductEvent } from '@esite/shared'
 import { createServiceClient } from '@/lib/supabase/server'
 
@@ -11,12 +12,22 @@ import { createServiceClient } from '@/lib/supabase/server'
  * dispatchNotification (lib/notifications.ts:26): verify the user with your own
  * client FIRST, then call this.
  *
- * Never throws and is never awaited on a path the user is waiting on. A metric
- * that can fail a write is worse than no metric.
+ * Off the user-visible path. Inside a request scope the RPC is handed to
+ * next/server's after(), so the row lands AFTER the response is sent and the
+ * caller never waits on it. Call sites still register it only once their own
+ * write has succeeded, so a failed write never emits. after() rather than a
+ * bare `void promise`: on Vercel the function may be frozen the moment the
+ * response is flushed, and a dangling promise is a row that never lands.
+ * Outside a request scope (scripts, vitest) after() throws and the RPC runs
+ * inline instead.
  *
- * ⚠ Any test importing this module must `vi.mock('server-only', () => ({}))`
- * ABOVE the import — the real package throws outside the react-server
- * condition, which is the condition vitest runs in.
+ * Never throws. A metric that can fail a write is worse than no metric.
+ *
+ * ⚠ Tests: `server-only` throws outside the react-server condition, which is
+ * the condition vitest runs in. Under vitest the specifier resolves to
+ * src/test/server-only-stub.ts (vitest.config.ts), so the
+ * `vi.mock('server-only', () => ({}))` in the tests is belt-and-braces, not
+ * required — kept so the intent survives a config change.
  */
 export interface ProductEventArgs {
   actorId: string | null
@@ -39,25 +50,34 @@ type RpcClient = {
 }
 
 export async function emitProductEvent(args: ProductEventArgs): Promise<void> {
-  try {
-    if (!(PRODUCT_EVENTS as readonly string[]).includes(args.event)) {
-      console.error('[product-events] unregistered event key, refusing to write', { event: args.event })
-      return
+  const run = async () => {
+    try {
+      if (!(PRODUCT_EVENTS as readonly string[]).includes(args.event)) {
+        console.error('[product-events] unregistered event key, refusing to write', { event: args.event })
+        return
+      }
+      const supabase = createServiceClient() as unknown as RpcClient
+      const { error } = await supabase.rpc('emit_product_event', {
+        p_actor_id: args.actorId ?? null,
+        // ?? null on every optional: JSON.stringify DROPS an undefined value, and
+        // PostgREST answers 404 for a missing argument, which this function then
+        // swallows — losing the event with no signal anywhere.
+        p_project_id: args.projectId ?? null,
+        p_event: args.event,
+        p_properties: args.properties ?? {},
+        p_session_id: args.sessionId ?? null,
+        p_organisation_id: args.organisationId ?? null,
+      })
+      if (error) console.error('[product-events] rpc failed', { event: args.event, err: error.message })
+    } catch (e) {
+      console.error('[product-events] threw', { event: args.event, err: String(e) })
     }
-    const supabase = createServiceClient() as unknown as RpcClient
-    const { error } = await supabase.rpc('emit_product_event', {
-      p_actor_id: args.actorId ?? null,
-      // ?? null on every optional: JSON.stringify DROPS an undefined value, and
-      // PostgREST answers 404 for a missing argument, which this function then
-      // swallows — losing the event with no signal anywhere.
-      p_project_id: args.projectId ?? null,
-      p_event: args.event,
-      p_properties: args.properties ?? {},
-      p_session_id: args.sessionId ?? null,
-      p_organisation_id: args.organisationId ?? null,
-    })
-    if (error) console.error('[product-events] rpc failed', { event: args.event, err: error.message })
-  } catch (e) {
-    console.error('[product-events] threw', { event: args.event, err: String(e) })
+  }
+
+  try {
+    after(run)
+  } catch {
+    // after() throws outside a request scope (scripts, vitest): run inline.
+    await run()
   }
 }

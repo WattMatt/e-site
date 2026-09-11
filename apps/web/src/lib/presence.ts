@@ -19,7 +19,15 @@ import { createClient } from '@/lib/supabase/server'
  *
  * Never throws: presence must not be able to fail a page render.
  */
-export type PresencePlatform = 'web' | 'mobile_web' | 'mobile_app'
+
+/**
+ * The presence vocabulary. Spelled here, in both table CHECKs
+ * (public.user_presence.platform, public.user_sessions.platform) and in
+ * touch_presence()'s own guard; presence.contract.test.ts asserts set
+ * equality with the migration so the four cannot drift apart silently.
+ */
+export const PRESENCE_PLATFORMS = ['web', 'mobile_web', 'mobile_app'] as const
+export type PresencePlatform = (typeof PRESENCE_PLATFORMS)[number]
 
 // public.touch_presence is not in the generated Database types
 // (packages/db/src/types.ts predates migration 00194), so the call is typed
