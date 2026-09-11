@@ -12,6 +12,7 @@
 --   • public.user_presence / user_sessions / touch_presence()
 --   • public.user_is_org_admin()     — the zero-arg SQL counterpart of OWNER_ADMIN
 --   • projects.public_holidays / calendar_years / working_days_between()
+--   • projects.project_had_activity() — the cohorts' human-activity predicate
 --   • the pg_cron job `platform-metrics-weekly`
 --
 -- The calendar is here, not in the spine's migration, because work_items.due_date
@@ -54,6 +55,7 @@
 -- function: public.touch_presence(text,text)
 -- function: public.compute_platform_metrics_weekly(date,date,boolean)
 -- function: projects.working_days_between(timestamp with time zone,timestamp with time zone,uuid,text)
+-- function: projects.project_had_activity(uuid,timestamp with time zone,timestamp with time zone)
 -- policy: product_events_read ON public.product_events PERMISSIVE
 -- policy: product_events_admin_only ON public.product_events RESTRICTIVE
 -- policy: platform_metrics_weekly_read ON public.platform_metrics_weekly PERMISSIVE
@@ -67,6 +69,8 @@
 -- constraint: platform_metrics_weekly_window ON public.platform_metrics_weekly
 -- constraint: platform_metrics_weekly_baseline_week ON public.platform_metrics_weekly
 -- constraint: platform_metrics_weekly_measured_has_value ON public.platform_metrics_weekly
+-- constraint: platform_metrics_weekly_iso_matches_window ON public.platform_metrics_weekly
+-- constraint: platform_metrics_weekly_weekly_window ON public.platform_metrics_weekly
 -- index: platform_metrics_weekly_week_uk ON public.platform_metrics_weekly
 -- index: platform_metrics_weekly_baseline_uk ON public.platform_metrics_weekly
 -- index: product_events_org_time_idx ON public.product_events
@@ -89,12 +93,15 @@
 -- grant_absent: anon EXECUTE ON public.touch_presence(text,text)
 -- grant_absent: anon EXECUTE ON public.compute_platform_metrics_weekly(date,date,boolean)
 -- grant_absent: anon EXECUTE ON projects.working_days_between(timestamp with time zone,timestamp with time zone,uuid,text)
+-- grant_absent: anon EXECUTE ON projects.project_had_activity(uuid,timestamp with time zone,timestamp with time zone)
 -- sql: SELECT bool_and(EXISTS (SELECT 1 FROM projects.public_holidays ph WHERE extract(year from ph.d)::int = cy.year)) FROM projects.calendar_years cy
 -- sql: SELECT count(*) >= 3 FROM projects.calendar_years WHERE year BETWEEN extract(year from CURRENT_DATE)::int AND extract(year from CURRENT_DATE)::int + 2
 -- sql: SELECT count(*) BETWEEN 10 AND 35 FROM public.metric_cohorts WHERE cohort_key = 'weekly_active_denominator' AND as_of = DATE '2026-09-09'
+-- sql: SELECT count(*) = 12 FROM public.metric_cohorts WHERE cohort_key = 'contractor_frozen' AND as_of = DATE '2026-09-09'
+-- sql: SELECT count(*) = 4 FROM public.metric_cohorts WHERE cohort_key = 'client_viewer_frozen' AND as_of = DATE '2026-09-09'
 -- @verify:end
 --
--- ⚠ ON THE THREE `sql:` DIRECTIVES. The two calendar ones assert an INVARIANT,
+-- ⚠ ON THE FIVE `sql:` DIRECTIVES. The two calendar ones assert an INVARIANT,
 -- never a row count. `SELECT count(*) = 8 FROM projects.calendar_years` would be
 -- false the day §15 §(b2)'s scheduled re-seed adds a year, the CLI would exit 1,
 -- and `Deploy DB Migrations` would fail for EVERY subsequent migration — a hard
@@ -107,6 +114,15 @@
 -- what makes it safe: metric_cohorts' PK is (cohort_key, user_id, as_of), so a
 -- second freeze is legal. Without the pin that second freeze doubles the count
 -- past 35 and blocks every later deploy exactly as the calendar case would.
+--
+-- The FOURTH and FIFTH are EXACT (= 12, = 4) where the third is a band, and
+-- that is safe because two things hold together: the set is FROZEN (dated
+-- as_of, never recomputed) AND the seed is PINNED — section 3b's activity
+-- window and membership cut-off are literal timestamps, so the same rows come
+-- out on any apply date — and user_id carries no ON DELETE CASCADE, which
+-- removes the only thing that could shrink the count after the apply. The DO
+-- block in 3b raises on the same two numbers, so a drift is caught at apply
+-- time rather than by the verifier afterwards.
 
 -- ---------------------------------------------------------------------------
 -- 1a. public.user_is_org_admin() — the zero-argument overload
@@ -353,6 +369,12 @@ GRANT  EXECUTE ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,u
 -- public.metric_account_excluded (section 1b) so a future exclusion is one
 -- CREATE OR REPLACE rather than a second WHERE clause somewhere else.
 -- security_invoker so the view cannot become a way round profiles' own RLS.
+--
+-- ⚠ The corollary: under a USER session the view is scoped by profiles' RLS
+-- and returns only the rows that caller may see — a count taken that way is a
+-- count of the caller's visibility, not of the estate. Every denominator (the
+-- cohort seeds below, compute_platform_metrics_weekly) reads this view ONLY
+-- with row_security off or as service_role, never through a user session.
 CREATE VIEW public.metric_accounts
     WITH (security_invoker = true, security_barrier = true) AS
 SELECT p.id AS user_id, p.email, p.full_name
@@ -376,7 +398,11 @@ REVOKE ALL ON public.metric_accounts FROM anon;
 CREATE TABLE public.metric_cohorts (
     cohort_key      text NOT NULL CHECK (cohort_key IN (
                       'weekly_active_denominator', 'contractor_frozen', 'client_viewer_frozen')),
-    user_id         uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    -- NO FK to profiles, deliberately. ON DELETE CASCADE would silently shrink
+    -- a FROZEN denominator the day a profile is deleted, and the numerator
+    -- already excludes deleted users because it counts through metric_accounts.
+    -- The organisation FK stays: it is what the org-scoped read gate keys on.
+    user_id         uuid NOT NULL,
     organisation_id uuid NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
     as_of           date NOT NULL,
     PRIMARY KEY (cohort_key, user_id, as_of)
@@ -390,20 +416,73 @@ CREATE POLICY metric_cohorts_admin_only ON public.metric_cohorts
 -- INSERT/UPDATE/DELETE grants are still grants until revoked.
 REVOKE ALL ON public.metric_cohorts FROM anon;
 
--- Cohort 1: accounts holding >= 1 membership on a project that had a row
--- written in the trailing 90 days. Measured 2026-09-10: 23 accounts.
+-- ---------------------------------------------------------------------------
+-- projects.project_had_activity — "did a human write to this project?"
+-- ---------------------------------------------------------------------------
+-- The activity predicate both cohort seeds share, over the half-open window
+-- [p_since, p_until). Five HUMAN-write arms only: an RFI, a diary entry, a QC
+-- entry, a snag or a report created inside the window.
+--
+-- ⚠ Deliberately NOT projects.updated_at. Measured: cloud-sync-project writes
+-- cloud_storage_last_sync_at every 15 minutes (the cloud-sync-poll cron, PR
+-- #152) and the set_updated_at trigger bumps updated_at with it, so under an
+-- updated_at test every Dropbox-mapped project reads "active" forever —
+-- machine activity, not use. An updated_at arm would have enrolled the members
+-- of projects nobody has touched since May into a frozen denominator.
+--
+-- SECURITY DEFINER with row_security off because the seeds run at apply time
+-- as the migration role and the rollup (compute_platform_metrics_weekly) calls
+-- it from cron; neither has a user session. service_role only: no user path
+-- needs it, and a definer function callable by authenticated is a cross-org
+-- "is this project busy?" oracle.
+CREATE OR REPLACE FUNCTION projects.project_had_activity(
+    p_project_id uuid,
+    p_since      timestamptz,
+    p_until      timestamptz
+) RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path TO 'projects', 'field', 'public'
+SET row_security TO 'off'
+AS $$
+  SELECT EXISTS (SELECT 1 FROM projects.rfis r
+                  WHERE r.project_id = p_project_id AND r.created_at >= p_since AND r.created_at < p_until)
+      OR EXISTS (SELECT 1 FROM projects.site_diary_entries d
+                  WHERE d.project_id = p_project_id AND d.created_at >= p_since AND d.created_at < p_until)
+      OR EXISTS (SELECT 1 FROM projects.qc_entries q
+                  WHERE q.project_id = p_project_id AND q.created_at >= p_since AND q.created_at < p_until)
+      OR EXISTS (SELECT 1 FROM field.snags s
+                  WHERE s.project_id = p_project_id AND s.created_at >= p_since AND s.created_at < p_until)
+      OR EXISTS (SELECT 1 FROM projects.reports rp
+                  WHERE rp.project_id = p_project_id AND rp.created_at >= p_since AND rp.created_at < p_until);
+$$;
+
+REVOKE ALL     ON FUNCTION projects.project_had_activity(uuid,timestamptz,timestamptz) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.project_had_activity(uuid,timestamptz,timestamptz) FROM anon;
+REVOKE EXECUTE ON FUNCTION projects.project_had_activity(uuid,timestamptz,timestamptz) FROM authenticated;
+GRANT  EXECUTE ON FUNCTION projects.project_had_activity(uuid,timestamptz,timestamptz) TO service_role;
+
+-- Cohort 1: accounts holding >= 1 ACTIVE membership, granted before the
+-- cut-off, on a project a human wrote to inside the window. Measured
+-- 2026-09-10: 23 accounts.
+--
+-- ⚠ The window and the cut-off are PINNED literals, never now()-relative.
+-- The seed must reproduce 23 / 12 / 4 on whatever day the migration actually
+-- applies (a merge slips; a deploy is re-run), and a trailing-90-days
+-- predicate would enumerate a different set on each of those days while still
+-- passing the band — a "frozen" cohort whose membership depends on the apply
+-- date. [2026-06-12, 2026-09-10) is the 90 days ending on the measurement
+-- date; the membership cut-off is the same instant.
 INSERT INTO public.metric_cohorts (cohort_key, user_id, organisation_id, as_of)
 SELECT DISTINCT ON (ma.user_id)
        'weekly_active_denominator', ma.user_id, pr.organisation_id, DATE '2026-09-09'
   FROM public.metric_accounts ma
-  JOIN projects.project_members pm ON pm.user_id = ma.user_id
+  JOIN projects.project_members pm
+    ON pm.user_id = ma.user_id
+   AND pm.is_active
+   AND pm.created_at < TIMESTAMPTZ '2026-09-10'
   JOIN projects.projects pr ON pr.id = pm.project_id
- WHERE pr.updated_at > now() - interval '90 days'
-    OR EXISTS (SELECT 1 FROM projects.rfis r WHERE r.project_id = pr.id AND r.created_at > now() - interval '90 days')
-    OR EXISTS (SELECT 1 FROM projects.site_diary_entries d WHERE d.project_id = pr.id AND d.created_at > now() - interval '90 days')
-    OR EXISTS (SELECT 1 FROM projects.qc_entries q WHERE q.project_id = pr.id AND q.created_at > now() - interval '90 days')
-    OR EXISTS (SELECT 1 FROM field.snags s WHERE s.project_id = pr.id AND s.created_at > now() - interval '90 days')
-    OR EXISTS (SELECT 1 FROM projects.reports rp WHERE rp.project_id = pr.id AND rp.created_at > now() - interval '90 days')
+ WHERE projects.project_had_activity(pr.id, TIMESTAMPTZ '2026-06-12', TIMESTAMPTZ '2026-09-10')
  ORDER BY ma.user_id, pr.organisation_id
 ON CONFLICT DO NOTHING;
 
@@ -411,7 +490,8 @@ ON CONFLICT DO NOTHING;
 -- EFFECTIVE PROJECT ROLE — §15 §(a) metric 2b defines the set as "every account
 -- whose effective role on any active project is contractor", and role in this
 -- system is per project (00107), which is the whole reason product_events
--- stamps effective_role at write time. Measured 2026-09-10 inside
+-- stamps effective_role at write time. "Active project" is the SAME pinned
+-- window and predicate as cohort 1. Measured 2026-09-10 inside
 -- metric_accounts: 12 contractors, 4 client viewers.
 --
 -- 13 accounts hold a contractor role; one of them is rbac-test@e-site.live,
@@ -423,18 +503,24 @@ SELECT DISTINCT ON (cohort_key, ma.user_id)
        CASE eff.role WHEN 'contractor' THEN 'contractor_frozen' ELSE 'client_viewer_frozen' END AS cohort_key,
        ma.user_id, pr.organisation_id, DATE '2026-09-09'
   FROM public.metric_accounts ma
-  JOIN projects.project_members pm ON pm.user_id = ma.user_id
+  JOIN projects.project_members pm
+    ON pm.user_id = ma.user_id
+   AND pm.is_active
+   AND pm.created_at < TIMESTAMPTZ '2026-09-10'
   JOIN projects.projects pr ON pr.id = pm.project_id
  CROSS JOIN LATERAL (SELECT public.user_effective_project_role(pm.project_id, ma.user_id) AS role) eff
- WHERE pr.updated_at > now() - interval '90 days'
+ WHERE projects.project_had_activity(pr.id, TIMESTAMPTZ '2026-06-12', TIMESTAMPTZ '2026-09-10')
    AND eff.role IN ('contractor', 'client_viewer')
  ORDER BY cohort_key, ma.user_id, pr.organisation_id
 ON CONFLICT DO NOTHING;
 
 -- The migration FAILS rather than publishing a wrong denominator for twelve
--- months. 35 is 36 accounts minus the fixture; 10 is below any plausible
--- membership count for the live projects, given the notification roster
--- resolves 12-13 WM people for a single WM project (00146:32-55).
+-- months. Cohort 1 is a BAND: 35 is 36 accounts minus the fixture; 10 is below
+-- any plausible membership count for the live projects, given the notification
+-- roster resolves 12-13 WM people for a single WM project (00146:32-55).
+-- Cohorts 2 and 3 are EXACT: the seed is pinned (above), so any other number
+-- means the membership estate changed after the 2026-09-10 measurement — read
+-- the live count and report it; do not widen the guard.
 DO $$
 DECLARE n int;
 BEGIN
@@ -442,6 +528,18 @@ BEGIN
      WHERE cohort_key = 'weekly_active_denominator' AND as_of = DATE '2026-09-09';
     IF n NOT BETWEEN 10 AND 35 THEN
         RAISE EXCEPTION 'metric cohort out of band: % (expected 10..35)', n;
+    END IF;
+
+    SELECT count(*) INTO n FROM public.metric_cohorts
+     WHERE cohort_key = 'contractor_frozen' AND as_of = DATE '2026-09-09';
+    IF n <> 12 THEN
+        RAISE EXCEPTION 'contractor_frozen cohort is % (expected exactly 12, measured 2026-09-10)', n;
+    END IF;
+
+    SELECT count(*) INTO n FROM public.metric_cohorts
+     WHERE cohort_key = 'client_viewer_frozen' AND as_of = DATE '2026-09-09';
+    IF n <> 4 THEN
+        RAISE EXCEPTION 'client_viewer_frozen cohort is % (expected exactly 4, measured 2026-09-10)', n;
     END IF;
 END $$;
 
@@ -488,7 +586,16 @@ CREATE TABLE public.platform_metrics_weekly (
     -- a NULL value, and 'measured' + NULL aborts the whole INSERT, so the job
     -- writes ZERO rows and "no row" is read as "the job did not run".
     CONSTRAINT platform_metrics_weekly_measured_has_value
-      CHECK (status <> 'measured' OR value IS NOT NULL)
+      CHECK (status <> 'measured' OR value IS NOT NULL),
+    -- A weekly row's (iso_year, iso_week) must be the ISO week its window
+    -- starts in, and the window must be exactly seven days — otherwise the
+    -- unique index below dedupes on a label that does not describe the data.
+    -- Baseline rows carry no ISO week and a four-week window, so both skip.
+    CONSTRAINT platform_metrics_weekly_iso_matches_window
+      CHECK (is_baseline OR (iso_year = extract(isoyear from window_start)::int
+                         AND iso_week = extract(week from window_start)::int)),
+    CONSTRAINT platform_metrics_weekly_weekly_window
+      CHECK (is_baseline OR window_end = window_start + 7)
 );
 
 CREATE UNIQUE INDEX platform_metrics_weekly_week_uk

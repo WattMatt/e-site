@@ -131,6 +131,26 @@ SELECT 'the measured-has-value constraint exists',
                   WHERE t.relname = 'platform_metrics_weekly'
                     AND c.conname = 'platform_metrics_weekly_measured_has_value'), false)
 UNION ALL
+SELECT 'the iso-matches-window constraint exists',
+       COALESCE((SELECT true FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+                  WHERE t.relname = 'platform_metrics_weekly'
+                    AND c.conname = 'platform_metrics_weekly_iso_matches_window'), false)
+UNION ALL
+SELECT 'the weekly-window constraint exists',
+       COALESCE((SELECT true FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+                  WHERE t.relname = 'platform_metrics_weekly'
+                    AND c.conname = 'platform_metrics_weekly_weekly_window'), false)
+UNION ALL
+-- CASE-guarded like every other privilege arm. service_role only: the seeds
+-- and the rollup call it without a user session, and nothing else should.
+SELECT 'anon cannot EXECUTE project_had_activity',
+       CASE WHEN to_regprocedure('projects.project_had_activity(uuid,timestamptz,timestamptz)') IS NULL THEN false
+            ELSE NOT has_function_privilege('anon', 'projects.project_had_activity(uuid,timestamptz,timestamptz)', 'EXECUTE') END
+UNION ALL
+SELECT 'authenticated cannot EXECUTE project_had_activity',
+       CASE WHEN to_regprocedure('projects.project_had_activity(uuid,timestamptz,timestamptz)') IS NULL THEN false
+            ELSE NOT has_function_privilege('authenticated', 'projects.project_had_activity(uuid,timestamptz,timestamptz)', 'EXECUTE') END
+UNION ALL
 -- CASE-guarded like every other privilege arm: has_table_privilege RAISES on
 -- an absent relation, which would abort the statement and hide every other arm.
 SELECT 'anon cannot SELECT platform_metrics_weekly',

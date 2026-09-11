@@ -17,17 +17,30 @@ import {
 const REPO_ROOT = resolve(__dirname, '../../../../..')
 const MIGRATIONS = join(REPO_ROOT, 'apps/edge-functions/supabase/migrations')
 
+/** `--` line comments blanked, so a key mentioned in prose never reads as a CHECK value. */
+function stripLineComments(sql: string): string {
+  return sql.replace(/--[^\n]*/g, '')
+}
+
+/**
+ * Returns the FIRST migration (sorted by filename) whose comment-stripped
+ * SQL contains `needle` — i.e. the one that CREATEs the table. A later
+ * `ALTER TABLE … DROP CONSTRAINT / ADD CONSTRAINT` that widens or narrows
+ * the CHECK is invisible to this lookup, so such a migration MUST also update
+ * this test to read the constraint from the file that now defines it.
+ */
 function migrationContaining(needle: string): string {
-  const file = readdirSync(MIGRATIONS)
+  const sources = readdirSync(MIGRATIONS)
     .filter((f) => f.endsWith('.sql'))
     .sort()
-    .find((f) => readFileSync(join(MIGRATIONS, f), 'utf8').includes(needle))
-  if (!file) throw new Error(`No migration contains ${needle}`)
-  return readFileSync(join(MIGRATIONS, file), 'utf8')
+    .map((f) => stripLineComments(readFileSync(join(MIGRATIONS, f), 'utf8')))
+  const sql = sources.find((s) => s.includes(needle))
+  if (!sql) throw new Error(`No migration contains ${needle}`)
+  return sql
 }
 
 function checkValues(sql: string, column: string): string[] {
-  const m = sql.match(new RegExp(`${column}\\s+text\\s+NOT NULL[\\s\\S]{0,400}?CHECK\\s*\\(\\s*${column}\\s+IN\\s*\\(([^)]*)\\)`, 'i'))
+  const m = stripLineComments(sql).match(new RegExp(`${column}\\s+text\\s+NOT NULL[\\s\\S]{0,400}?CHECK\\s*\\(\\s*${column}\\s+IN\\s*\\(([^)]*)\\)`, 'i'))
   if (!m) throw new Error(`Could not locate the ${column} CHECK constraint`)
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort()
 }
@@ -53,10 +66,9 @@ describe('metric-key registry', () => {
     }
   })
 
-  it('every ratio key is a real metric key — a stale entry would render a ratio as a raw number', () => {
-    for (const k of RATIO_METRIC_KEYS) {
-      expect(METRIC_KEYS as readonly string[]).toContain(k)
-    }
+  it('RATIO_METRIC_KEYS is exactly the set of keys whose unit is "%" — the two registries would drift silently otherwise', () => {
+    const percentKeys = METRIC_KEYS.filter((k) => METRIC_UNITS[k] === '%').sort()
+    expect([...RATIO_METRIC_KEYS].sort()).toEqual(percentKeys)
   })
 
   it('the contractor target is stated on the measured denominator of 12, not §15’s 13', () => {
