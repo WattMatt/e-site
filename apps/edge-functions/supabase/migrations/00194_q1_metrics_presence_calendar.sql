@@ -194,3 +194,124 @@ $$;
 REVOKE ALL     ON FUNCTION public.metric_account_excluded(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.metric_account_excluded(text) FROM anon;
 GRANT  EXECUTE ON FUNCTION public.metric_account_excluded(text) TO authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- 2. public.product_events — the append-only first-party event stream
+-- ---------------------------------------------------------------------------
+-- §12 §(i): two stores, and they are not the same thing. product_events is the
+-- STREAM (what happened, at full granularity); platform_metrics_weekly is the
+-- immutable weekly SNAPSHOT (what you quote). public.audit_log stays the
+-- compliance record and is not the analytics store.
+CREATE TABLE public.product_events (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    occurred_at     timestamptz NOT NULL DEFAULT now(),
+    actor_id        uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+    project_id      uuid REFERENCES projects.projects(id) ON DELETE SET NULL,  -- nullable: org-level events
+    organisation_id uuid NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
+    event           text NOT NULL CHECK (event IN (
+                      'rfi_created', 'rfi_responded', 'rfi_closed',
+                      'snag_resolved',
+                      'project_created', 'project_deleted',
+                      'marketplace_order_placed',
+                      'onboarding_started',
+                      'backfill_completed'
+                    )),
+    effective_role  text,   -- stamped at write time; NEVER re-resolved later
+    session_id      uuid,
+    properties      jsonb NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX product_events_org_time_idx ON public.product_events (organisation_id, occurred_at DESC);
+CREATE INDEX product_events_actor_time_idx ON public.product_events (actor_id, occurred_at DESC);
+CREATE INDEX product_events_event_time_idx ON public.product_events (event, occurred_at DESC);
+
+ALTER TABLE public.product_events ENABLE ROW LEVEL SECURITY;
+
+-- A RESTRICTIVE policy alone grants NOTHING — RLS is default-deny and a
+-- restrictive policy only intersects. Both halves are required (00183 shape).
+--
+-- ⚠ The RESTRICTIVE gate calls the ONE-ARGUMENT user_is_org_admin(uuid), which
+-- already exists (00177:256) and is already the gate on 00177's membership
+-- write policies — nothing new is introduced. The zero-arg overload is true for
+-- an owner/admin of ANY org, and this table carries organisation_id NOT NULL,
+-- so using it here would expose every organisation's event stream to every
+-- other organisation's admins through PostgREST. Invisible today because
+-- WM-Consulting is effectively the only real org; a cross-tenant leak the
+-- moment metric 8 succeeds.
+CREATE POLICY product_events_read ON public.product_events
+    FOR SELECT USING (true);
+CREATE POLICY product_events_admin_only ON public.product_events
+    AS RESTRICTIVE FOR SELECT USING (public.user_is_org_admin(organisation_id));
+
+-- No INSERT / UPDATE / DELETE policy at all. Writes arrive only through
+-- emit_product_event() below, and only a service_role holder can call it.
+
+REVOKE SELECT ON public.product_events FROM anon;
+
+-- ---------------------------------------------------------------------------
+-- public.emit_product_event — the ONLY writer
+-- ---------------------------------------------------------------------------
+-- The role stamp and the organisation are resolved SERVER-SIDE so a caller
+-- cannot invent either. Granted to service_role alone: the web app verifies the
+-- user with its own client first and then calls this with the service client,
+-- the same shape dispatchNotification already uses (lib/notifications.ts:26).
+--
+-- ⚠ effective_role is stamped HERE, at write time, through
+-- user_effective_project_role(project_id, actor_id) and is never re-resolved.
+-- Role in this system is per project (00107) and memberships change; a role
+-- re-derived later is the role the person holds NOW, which is the one thing a
+-- role-split metric must not use.
+--
+-- ⚠ p_project_id carries DEFAULT NULL. JSON.stringify drops an `undefined`
+-- value from the RPC body, and a parameter with NO default makes PostgREST
+-- answer 404 "could not find the function" — which emitProductEvent swallows
+-- and logs, silently losing every event from that call site. The default turns
+-- a dropped key into a null project instead of a lost event.
+CREATE OR REPLACE FUNCTION public.emit_product_event(
+    p_actor_id        uuid,
+    p_project_id      uuid  DEFAULT NULL,
+    p_event           text  DEFAULT NULL,
+    p_properties      jsonb DEFAULT '{}'::jsonb,
+    p_session_id      uuid  DEFAULT NULL,
+    p_organisation_id uuid  DEFAULT NULL
+) RETURNS uuid
+LANGUAGE plpgsql
+VOLATILE SECURITY DEFINER
+SET search_path TO 'public', 'projects'
+SET row_security TO 'off'
+AS $$
+DECLARE
+    v_org  uuid;
+    v_role text;
+    v_id   uuid;
+BEGIN
+    IF p_event IS NULL THEN
+        RAISE EXCEPTION 'emit_product_event: p_event is required';
+    END IF;
+
+    v_org := COALESCE(
+        p_organisation_id,
+        (SELECT p.organisation_id FROM projects.projects p WHERE p.id = p_project_id));
+    IF v_org IS NULL THEN
+        RAISE EXCEPTION 'emit_product_event: organisation_id could not be resolved (project_id=%)', p_project_id;
+    END IF;
+
+    -- Per project, at event time. NULL when there is no project to stamp against.
+    IF p_project_id IS NOT NULL AND p_actor_id IS NOT NULL THEN
+        v_role := public.user_effective_project_role(p_project_id, p_actor_id);
+    END IF;
+
+    INSERT INTO public.product_events
+        (actor_id, project_id, organisation_id, event, effective_role, session_id, properties)
+    VALUES
+        (p_actor_id, p_project_id, v_org, p_event, v_role, p_session_id, COALESCE(p_properties, '{}'::jsonb))
+    RETURNING id INTO v_id;
+
+    RETURN v_id;
+END;
+$$;
+
+REVOKE ALL     ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid) FROM authenticated;
+GRANT  EXECUTE ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid) TO service_role;

@@ -47,4 +47,30 @@ UNION ALL
 SELECT 'anon has no EXECUTE on metric_account_excluded(text)',
        CASE WHEN to_regprocedure('public.metric_account_excluded(text)') IS NULL THEN false
             ELSE NOT has_function_privilege('anon', 'public.metric_account_excluded(text)', 'EXECUTE') END
+UNION ALL
+-- Section 2: public.product_events + emit_product_event().
+SELECT 'product_events exists', to_regclass('public.product_events') IS NOT NULL
+UNION ALL
+SELECT 'product_events has RLS on',
+       COALESCE((SELECT rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename='product_events'), false)
+UNION ALL
+SELECT 'product_events is append-only (no UPDATE/DELETE policy)',
+       NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='product_events'
+                     AND cmd IN ('UPDATE','DELETE'))
+UNION ALL
+-- The gate must be ORG-SCOPED, not the zero-arg overload: product_events
+-- carries organisation_id NOT NULL and a zero-arg check is true for an
+-- owner/admin of ANY org, which is a cross-tenant read.
+SELECT 'product_events read gate is org-scoped, not platform-wide',
+       COALESCE((SELECT qual LIKE '%user_is_org_admin(organisation_id)%'
+                   FROM pg_policies WHERE schemaname='public' AND tablename='product_events'
+                    AND policyname='product_events_admin_only'), false)
+UNION ALL
+SELECT 'anon cannot SELECT product_events', NOT has_table_privilege('anon','public.product_events','SELECT')
+UNION ALL
+-- CASE-guarded for the same reason as the two arms above: an absent function
+-- must print a red line, not abort the statement.
+SELECT 'authenticated cannot EXECUTE emit_product_event',
+       CASE WHEN to_regprocedure('public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)') IS NULL THEN false
+            ELSE NOT has_function_privilege('authenticated', 'public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)', 'EXECUTE') END
 ;
