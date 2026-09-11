@@ -20,8 +20,28 @@ interface SnapshotRow {
   value: number | null
   status: 'measured' | 'censored' | 'unmeasurable' | 'not_yet_instrumented'
   is_baseline: boolean
+  method_version: number
   note: string | null
   detail: Record<string, unknown>
+}
+
+interface ReadError {
+  message: string
+}
+
+/**
+ * `platform_metrics_weekly` is absent from the generated Database types until
+ * the migration is applied and `pnpm gen-types` re-run, so the client is cast
+ * to the narrow shape this page uses. `PromiseLike`, not `Promise`: a PostgREST
+ * filter builder is a thenable.
+ */
+type SnapshotQuery = PromiseLike<{ data: SnapshotRow[] | null; error: ReadError | null }> & {
+  eq: (column: string, value: boolean) => SnapshotQuery
+  order: (column: string, opts: { ascending: boolean }) => SnapshotQuery
+  limit: (n: number) => SnapshotQuery
+}
+interface SnapshotClient {
+  from: (table: string) => { select: (columns: string) => SnapshotQuery }
 }
 
 function present(row: SnapshotRow | undefined): string {
@@ -53,6 +73,21 @@ function daysBetween(a: string, b: Date): number {
   return Math.floor((b.getTime() - new Date(`${a}T00:00:00Z`).getTime()) / 86_400_000)
 }
 
+/**
+ * One row per metric key — the HIGHEST `method_version` wins, whatever order
+ * the rows arrived in. A definition change writes new rows under a new version
+ * beside the old ones (snapshots are never rewritten), and the page must show
+ * the current definition without relying on the query's sort surviving a
+ * refactor.
+ */
+function highestVersionByKey(rs: SnapshotRow[]): Map<MetricKey, SnapshotRow> {
+  return rs.reduce((m, r) => {
+    const cur = m.get(r.metric_key)
+    if (!cur || r.method_version > cur.method_version) m.set(r.metric_key, r)
+    return m
+  }, new Map<MetricKey, SnapshotRow>())
+}
+
 export default async function MetricsPage() {
   // Gate one: the page does not render for anyone else.
   await requireRolePage(OWNER_ADMIN)
@@ -61,34 +96,46 @@ export default async function MetricsPage() {
   // calling public.user_is_org_admin() is exercised on every render. Never the
   // service client here — that would bypass the backstop this page exists to
   // demonstrate.
-  const supabase = await createClient()
-  const { data } = await (supabase as unknown as {
-    from: (t: string) => {
-      select: (c: string) => { order: (c: string, o: { ascending: boolean }) => { limit: (n: number) => Promise<{ data: SnapshotRow[] | null }> } }
-    }
-  })
-    .from('platform_metrics_weekly')
-    .select('*')
-    .order('window_start', { ascending: false })
-    .limit(200)
+  const supabase = (await createClient()) as unknown as SnapshotClient
+  const snapshots = () => supabase.from('platform_metrics_weekly').select('*')
 
-  const rows: SnapshotRow[] = data ?? []
-  const baseline = new Map(rows.filter((r) => r.is_baseline).map((r) => [r.metric_key, r]))
-  const weekly = rows.filter((r) => !r.is_baseline)
+  // Two reads, not one ordered `limit(200)`. Every Monday tick appends one row
+  // per metric key (11) per method version, every one with a window_start later
+  // than the baseline's 2026-09-03. Ordered newest-first under a single cap, the
+  // baseline rows sit at the very END of the result and fall off it once ~17
+  // ticks have landed (17 × 11 = 187 rows, sooner with a second method version)
+  // — the "Sept-2026 baseline" column would then silently read "—" for the rest
+  // of the quarter. So the baseline is read whole, and the weekly read caps at
+  // two windows × 11 keys × up to two method versions = 44.
+  const [baselineRead, weeklyRead] = await Promise.all([
+    snapshots().eq('is_baseline', true),
+    snapshots()
+      .eq('is_baseline', false)
+      .order('window_start', { ascending: false })
+      .order('method_version', { ascending: true })
+      .limit(44),
+  ])
+  const readError = baselineRead.error ?? weeklyRead.error
+
+  const baseline = highestVersionByKey(baselineRead.data ?? [])
+  const weekly: SnapshotRow[] = weeklyRead.data ?? []
   const windows = [...new Set(weekly.map((r) => r.window_start))].sort().reverse()
   const latestWindow = windows[0] ?? null
   const priorWindow = windows[1] ?? null
-  const latest = new Map(weekly.filter((r) => r.window_start === latestWindow).map((r) => [r.metric_key, r]))
-  const prior = new Map(weekly.filter((r) => r.window_start === priorWindow).map((r) => [r.metric_key, r]))
+  const latest = highestVersionByKey(weekly.filter((r) => r.window_start === latestWindow))
+  const prior = highestVersionByKey(weekly.filter((r) => r.window_start === priorWindow))
 
   // Staleness is measured from window_end — the day the data closed — not from
   // window_start. The Monday tick writes the week just CLOSED, so window_start
   // is already 7 days old on tick day; measured from there the banner read
   // "9 days old" on every healthy Wednesday. From window_end it is 0 on tick
   // day, and a missed Monday tick shows "9 days old" from the following
-  // Wednesday.
-  const latestRow = latestWindow ? weekly.find((r) => r.window_start === latestWindow) : undefined
-  const staleDays = latestRow ? daysBetween(latestRow.window_end, new Date()) : null
+  // Wednesday. The baseline counts as a snapshot too: once it is captured and
+  // the cron never fires, the page must not read "awaiting the first weekly
+  // snapshot" forever — that state is exactly the one this banner exists for.
+  const latestRow: SnapshotRow | undefined = [...latest.values()][0]
+  const newest: SnapshotRow | undefined = latestRow ?? [...baseline.values()][0]
+  const staleDays = newest ? daysBetween(newest.window_end, new Date()) : null
   const isStale = staleDays !== null && staleDays > 8
 
   return (
@@ -102,6 +149,20 @@ export default async function MetricsPage() {
         </p>
       </div>
 
+      {readError ? (
+        <Card>
+          <CardBody>
+            <strong>Could not read platform_metrics_weekly: {readError.message}</strong>
+            <p style={{ color: 'var(--c-text-dim)', marginTop: 6 }}>
+              This is a read failure, not a missing tick — the job may well have run. The table is gated
+              by a RESTRICTIVE SELECT policy calling <code>public.user_is_org_admin()</code>; if an org
+              owner or admin sees this, that policy or the <code>authenticated</code> grant is wrong, or
+              the migration has not applied.
+            </p>
+          </CardBody>
+        </Card>
+      ) : null}
+
       {isStale ? (
         <Card>
           <CardBody>
@@ -114,7 +175,7 @@ export default async function MetricsPage() {
         </Card>
       ) : null}
 
-      {weekly.length === 0 && baseline.size === 0 ? (
+      {!readError && weekly.length === 0 && baseline.size === 0 ? (
         <Card>
           <CardBody>
             <strong>No snapshot yet.</strong>
@@ -141,12 +202,12 @@ export default async function MetricsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ textAlign: 'left', color: 'var(--c-text-dim)' }}>
-                  <th style={{ padding: '6px 8px' }}>Metric</th>
-                  <th style={{ padding: '6px 8px' }}>Sept-2026 baseline</th>
-                  <th style={{ padding: '6px 8px' }}>Previous week</th>
-                  <th style={{ padding: '6px 8px' }}>Latest week</th>
-                  <th style={{ padding: '6px 8px' }}>Q1 target</th>
-                  <th style={{ padding: '6px 8px' }}>Status</th>
+                  <th scope="col" style={{ padding: '6px 8px' }}>Metric</th>
+                  <th scope="col" style={{ padding: '6px 8px' }}>Sept-2026 baseline</th>
+                  <th scope="col" style={{ padding: '6px 8px' }}>Previous week</th>
+                  <th scope="col" style={{ padding: '6px 8px' }}>Latest week</th>
+                  <th scope="col" style={{ padding: '6px 8px' }}>Q1 target</th>
+                  <th scope="col" style={{ padding: '6px 8px' }}>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -156,10 +217,16 @@ export default async function MetricsPage() {
                   const base = baseline.get(k)
                   const status = now?.status ?? base?.status
                   const phrase = status ? statusPhrase(status) : null
+                  // A direction arrow only between two MEASURED numbers. An
+                  // unmeasured week beside a measured one is not a fall.
                   const delta =
-                    now?.value != null && was?.value != null
+                    now?.status === 'measured' && was?.status === 'measured' && now.value != null && was.value != null
                       ? Number(now.value) - Number(was.value)
                       : null
+                  const direction = delta !== null && delta !== 0 ? (delta > 0 ? 'up' : 'down') : null
+                  // The baseline is a four-week window, not a seven-day one, and
+                  // the two are not directly comparable; say so beside the number.
+                  const windowDays = base?.detail?.window_days
                   return (
                     <tr key={k} style={{ borderTop: '1px solid var(--c-border)' }}>
                       <td style={{ padding: '8px' }}>
@@ -170,13 +237,22 @@ export default async function MetricsPage() {
                           </div>
                         ) : null}
                       </td>
-                      <td style={{ padding: '8px' }}>{present(base)}</td>
+                      <td style={{ padding: '8px' }}>
+                        {present(base)}
+                        {typeof windowDays === 'number' && windowDays !== 7 ? (
+                          <abbr title={base?.note ?? ''} style={{ marginLeft: 6, color: 'var(--c-text-dim)', fontSize: 12 }}>{windowDays}d</abbr>
+                        ) : null}
+                      </td>
                       <td style={{ padding: '8px', color: 'var(--c-text-dim)' }}>{present(was)}</td>
                       <td style={{ padding: '8px' }}>
                         {present(now)}
-                        {delta !== null && delta !== 0 ? (
-                          <span style={{ marginLeft: 6, color: 'var(--c-text-dim)', fontSize: 12 }}>
-                            {delta > 0 ? '▲' : '▼'}
+                        {direction ? (
+                          <span
+                            style={{ marginLeft: 6, color: 'var(--c-text-dim)', fontSize: 12 }}
+                            title={`${direction} from ${present(was)}`}
+                            aria-label={`${direction} from ${present(was)}`}
+                          >
+                            {direction === 'up' ? '▲' : '▼'}
                           </span>
                         ) : null}
                       </td>

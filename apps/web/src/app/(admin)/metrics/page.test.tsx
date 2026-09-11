@@ -5,12 +5,37 @@ import { OWNER_ADMIN } from '@esite/shared'
 const requireRolePage = vi.fn()
 vi.mock('@/lib/auth/require-role', () => ({ requireRolePage: (...a: unknown[]) => requireRolePage(...a) }))
 
-const rows: unknown[] = []
+type Row = Record<string, unknown>
+type ReadResult = { data: Row[] | null; error: { message: string } | null }
+interface QueryBuilder {
+  eq: (column: string, value: unknown) => QueryBuilder
+  order: (column: string, opts: { ascending: boolean }) => QueryBuilder
+  limit: (n: number) => QueryBuilder
+  then: PromiseLike<ReadResult>['then']
+}
+
+const rows: Row[] = []
+let readError: { message: string } | null = null
+
+// A thenable filter builder, the shape supabase-js hands back: `eq` narrows
+// the row set, `order`/`limit` are accepted and ignored, and awaiting it yields
+// `{ data, error }`. The page's two reads (is_baseline true / false) both go
+// through it, so a row is only ever visible to the read whose filter it passes.
+function query(filtered: Row[]): QueryBuilder {
+  const result = (): Promise<ReadResult> =>
+    Promise.resolve(readError ? { data: null, error: readError } : { data: filtered, error: null })
+  const builder: QueryBuilder = {
+    eq: (column, value) => query(filtered.filter((r) => r[column] === value)),
+    order: () => builder,
+    limit: () => builder,
+    then: (onFulfilled, onRejected) => result().then(onFulfilled, onRejected),
+  }
+  return builder
+}
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({
-    from: () => ({
-      select: () => ({ order: () => ({ limit: async () => ({ data: rows, error: null }) }) }),
-    }),
+    from: () => ({ select: () => query(rows) }),
   }),
 }))
 
@@ -21,13 +46,28 @@ import MetricsPage from './page'
 // exist. Same convention as TenantsPanel.test.tsx:129.
 beforeEach(() => {
   rows.length = 0
+  readError = null
   requireRolePage.mockReset()
   requireRolePage.mockResolvedValue({ userId: 'u1', organisationId: 'o1', role: 'owner' })
 })
 
-const recentWindow = () => {
-  const d = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
-  return d.toISOString().slice(0, 10)
+const isoDate = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10)
+
+/**
+ * A row that could exist in the database: a seven-day window that CLOSED
+ * `endDaysAgo` days ago. `window_end` is exclusive — it is the Monday of the
+ * tick that wrote the row — so `window_start` is seven days before it. This is
+ * exactly what the cron writes; a fixture with window_start === window_end
+ * cannot tell a start-based staleness check from an end-based one.
+ */
+function weekRow(endDaysAgo: number, overrides: Row = {}): Row {
+  return {
+    metric_key: 'weekly_active', iso_year: 2026, iso_week: 40,
+    window_start: isoDate(endDaysAgo + 7), window_end: isoDate(endDaysAgo),
+    numerator: 3, denominator: 23, value: 0.1304,
+    status: 'measured', is_baseline: false, method_version: 1, note: null, detail: {},
+    ...overrides,
+  }
 }
 
 describe('/metrics', () => {
@@ -50,12 +90,7 @@ describe('/metrics', () => {
   })
 
   it('renders every metric with its Q1 target once a snapshot exists', async () => {
-    rows.push({
-      metric_key: 'weekly_active', iso_year: 2026, iso_week: 40,
-      window_start: recentWindow(), window_end: recentWindow(),
-      numerator: 3, denominator: 23, value: 0.1304,
-      status: 'measured', is_baseline: false, note: null, detail: {},
-    })
+    rows.push(weekRow(3))
     render(await MetricsPage())
     expect(screen.queryByText(/Weekly active users/i)).not.toBeNull()
     expect(screen.queryByText('35% of the frozen cohort')).not.toBeNull()
@@ -63,13 +98,11 @@ describe('/metrics', () => {
   })
 
   it('shows an unmeasurable metric as "no honest number yet", never as zero', async () => {
-    rows.push({
-      metric_key: 'inbox_engagement', iso_year: 2026, iso_week: 40,
-      window_start: recentWindow(), window_end: recentWindow(),
+    rows.push(weekRow(3, {
+      metric_key: 'inbox_engagement',
       numerator: null, denominator: null, value: null,
-      status: 'unmeasurable', is_baseline: false,
-      note: 'read_at has never been written', detail: {},
-    })
+      status: 'unmeasurable', note: 'read_at has never been written',
+    }))
     render(await MetricsPage())
     expect(screen.queryByText(/no honest number yet/i)).not.toBeNull()
     expect(screen.queryByText('read_at has never been written')).not.toBeNull()
@@ -80,13 +113,11 @@ describe('/metrics', () => {
   // must not depend on that: a 0 that reached this cell would render "0.0%"
   // beside "no honest number yet" — the number nobody can read.
   it('never renders an unmeasured ratio as a number, even when value is 0', async () => {
-    rows.push({
-      metric_key: 'inbox_engagement', iso_year: 2026, iso_week: 40,
-      window_start: recentWindow(), window_end: recentWindow(),
+    rows.push(weekRow(3, {
+      metric_key: 'inbox_engagement',
       numerator: 0, denominator: 0, value: 0,
-      status: 'unmeasurable', is_baseline: false,
-      note: 'read_at has never been written', detail: {},
-    })
+      status: 'unmeasurable', note: 'read_at has never been written',
+    }))
     render(await MetricsPage())
     expect(screen.queryByText('0.0%')).toBeNull()
     const row = screen.getByText(/Inbox engagement/i).closest('tr')
@@ -99,29 +130,83 @@ describe('/metrics', () => {
   // specified, merged, never scheduled, ran 11 times manually, and surfaced two
   // months later as a user complaint about stale floor plans. A dashboard that
   // renders three-week-old numbers with no signal is how that happens again.
+  //
+  // Staleness is measured from window_end (the day the data closed). This row
+  // closed 20 days ago and STARTED 27 days ago — a regression to the
+  // start-based check would read "27 days old" and fail here.
   it('warns when the newest snapshot is more than a week old', async () => {
-    const stale = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    rows.push({
-      metric_key: 'weekly_active', iso_year: 2026, iso_week: 37,
-      window_start: stale, window_end: stale,
-      numerator: 3, denominator: 23, value: 0.1304,
-      status: 'measured', is_baseline: false, note: null, detail: {},
-    })
+    rows.push(weekRow(20, { iso_week: 37 }))
     render(await MetricsPage())
     expect(screen.queryByText(/snapshot is 20 days old/i)).not.toBeNull()
   })
 
+  // Task 17's first state: the baseline is captured, the cron has never fired.
+  // Measured from the weekly rows alone this page read "awaiting the first
+  // weekly snapshot" forever, which is the silence the banner exists to break.
+  it('warns from the baseline alone when no weekly snapshot has ever landed', async () => {
+    rows.push(weekRow(20, {
+      is_baseline: true, iso_week: null, window_start: isoDate(48),
+      detail: { window_days: 28 }, note: 'four-week window, not seven',
+    }))
+    render(await MetricsPage())
+    expect(screen.queryByText(/snapshot is 20 days old/i)).not.toBeNull()
+    expect(screen.queryByText(/no snapshot yet/i)).toBeNull()
+    expect(screen.queryByText(/awaiting the first weekly snapshot/i)).not.toBeNull()
+    // The baseline window is not a week; the cell says so, and the note is the tooltip.
+    expect(screen.getByText('28d').getAttribute('title')).toBe('four-week window, not seven')
+  })
+
+  // A read error is not "the job did not run". Rendering the empty-state card
+  // over a permission failure would send an owner off to inspect pg_cron for a
+  // problem that lives in the RLS policy.
+  it('surfaces a read error instead of the empty state', async () => {
+    readError = { message: 'permission denied for table platform_metrics_weekly' }
+    render(await MetricsPage())
+    expect(screen.queryByText(/Could not read platform_metrics_weekly/i)).not.toBeNull()
+    expect(screen.queryByText(/permission denied for table platform_metrics_weekly/)).not.toBeNull()
+    expect(screen.queryByText(/no snapshot yet/i)).toBeNull()
+  })
+
   it('shows the previous week beside the latest one, so the reader can see direction', async () => {
-    const thisWeek = recentWindow()
-    const lastWeek = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
     rows.push(
-      { metric_key: 'weekly_active', iso_year: 2026, iso_week: 40, window_start: thisWeek, window_end: thisWeek,
-        numerator: 3, denominator: 23, value: 0.1304, status: 'measured', is_baseline: false, note: null, detail: {} },
-      { metric_key: 'weekly_active', iso_year: 2026, iso_week: 39, window_start: lastWeek, window_end: lastWeek,
-        numerator: 2, denominator: 23, value: 0.0870, status: 'measured', is_baseline: false, note: null, detail: {} },
+      weekRow(3, { iso_week: 40 }),
+      weekRow(10, { iso_week: 39, numerator: 2, value: 0.0870 }),
     )
     render(await MetricsPage())
     expect(screen.queryByText('13.0%')).not.toBeNull()
+    expect(screen.queryByText('8.7%')).not.toBeNull()
+  })
+
+  // Snapshots are never rewritten: a definition change writes new rows under a
+  // new method_version beside the old ones. The page shows the current
+  // definition. v2 is pushed FIRST so a last-write-wins map would show v1.
+  it('renders the highest method_version when a week carries two', async () => {
+    rows.push(
+      weekRow(3, { method_version: 2, numerator: 5, value: 0.2174 }),
+      weekRow(3, { method_version: 1 }),
+    )
+    render(await MetricsPage())
+    expect(screen.queryByText('21.7%')).not.toBeNull()
+    expect(screen.queryByText('13.0%')).toBeNull()
+  })
+
+  // An unmeasured week beside a measured one is not a fall. The arrow renders
+  // only between two measured numbers, and says what it is relative to.
+  it('omits the direction arrow when the latest row is not measured', async () => {
+    rows.push(
+      weekRow(3, { status: 'unmeasurable', numerator: null, denominator: null, value: null, note: 'user_sessions has no writer yet' }),
+      weekRow(10, { iso_week: 39, numerator: 2, value: 0.0870 }),
+      weekRow(3, { metric_key: 'contractor_active_all', numerator: 5, denominator: 12, value: 0.4167 }),
+      weekRow(10, { metric_key: 'contractor_active_all', iso_week: 39, numerator: 2, denominator: 12, value: 0.1667 }),
+    )
+    render(await MetricsPage())
+    // Positive control: the measured pair carries the arrow, labelled for a screen reader.
+    expect(screen.getByLabelText('up from 16.7%').textContent).toBe('▲')
+    // The unmeasured pair does not, even though its previous week has a number.
+    const row = screen.getByText(/Weekly active users/i).closest('tr')
+    expect(row).not.toBeNull()
+    expect(row!.querySelector('[aria-label]')).toBeNull()
+    expect(row!.textContent).not.toMatch(/[▲▼]/)
     expect(screen.queryByText('8.7%')).not.toBeNull()
   })
 
