@@ -11,6 +11,9 @@ const bodySchema = z.object({
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 
+/** Subscription buyers are OWNER_ADMIN by the gate below, so billing is reachable. */
+const CHECKOUT_RETURN_TO = '/settings/billing'
+
 export async function POST(req: NextRequest) {
   if (!PAYSTACK_SECRET) {
     return NextResponse.json({ error: 'Paystack not configured' }, { status: 503 })
@@ -59,13 +62,19 @@ export async function POST(req: NextRequest) {
     currency: 'ZAR',
     callback_url: callbackUrl,
     metadata: {
+      // Explicit, so the callback's metadata.type switch has a value for the
+      // one flow that already worked. The callback still falls through on
+      // (org_id && tier) rather than on this key, so transactions initialised
+      // before this shipped keep working.
+      type: 'subscription' as const,
       org_id: organisationId,
       tier,
       period,
       amount_kobo: amountKobo,
       plan_code: planCode ?? null, // captured so the callback knows which mode it was
       mode: isRecurring ? 'recurring' : 'one_off',
-      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}/settings/billing`,
+      return_to: CHECKOUT_RETURN_TO,
+      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}${CHECKOUT_RETURN_TO}`,
     },
   }
   if (isRecurring) {

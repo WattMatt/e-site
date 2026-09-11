@@ -2,14 +2,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { billingService, OWNER_ADMIN } from '@esite/shared'
 import { requireRole } from '@/lib/auth/require-role'
+import { safeReturnTo, DEFAULT_RETURN_TO } from '@/lib/paystack/return-to'
+import { addBillingPeriod } from '@/lib/paystack/billing-period'
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
+
+/** Append query params to a path that may already carry a query string. */
+function withParams(path: string, params: Record<string, string>): string {
+  const query = new URLSearchParams(params).toString()
+  return `${path}${path.includes('?') ? '&' : '?'}${query}`
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const reference = searchParams.get('reference')
   if (!reference || !PAYSTACK_SECRET) {
-    return NextResponse.redirect(new URL('/settings/billing?error=invalid', req.url))
+    return NextResponse.redirect(new URL(`${DEFAULT_RETURN_TO}?error=invalid`, req.url))
   }
 
   // Verify the transaction with Paystack
@@ -18,14 +26,48 @@ export async function GET(req: NextRequest) {
   })
   const body = await res.json()
 
-  if (!body.status || body.data?.status !== 'success') {
-    return NextResponse.redirect(new URL('/settings/billing?error=failed', req.url))
+  const data = body?.data ?? {}
+  // Paystack sends a literal `"metadata": 0` on some payloads; normalise before
+  // any property read.
+  const metadata: Record<string, any> =
+    data.metadata && typeof data.metadata === 'object' ? data.metadata : {}
+
+  // ⚠ `return_to` arrives inside Paystack's verify response and is fed to
+  // `new URL(x, req.url)`, which happily resolves an absolute or
+  // protocol-relative value off-site. Validated on the way out (at initialize
+  // time) AND here on the way back.
+  const returnTo = safeReturnTo(metadata.return_to)
+
+  if (!body?.status || data.status !== 'success') {
+    return NextResponse.redirect(new URL(withParams(returnTo, { error: 'failed' }), req.url))
   }
 
-  const data = body.data
-  const { org_id, tier, period, amount_kobo, plan_code, mode } = data.metadata ?? {}
+  // ── Non-subscription purchases ───────────────────────────────────────────
+  // Branch on metadata.type BEFORE the org_id/tier gate below. feature_unlock,
+  // feature_seat and mv_subscription carry no `tier` (mv carries no `org_id`
+  // either), so every one of them used to fall into ?error=meta — a customer
+  // who had just paid R250, R1,999 or R2,000 landed on an unrelated page with
+  // no confirmation, which is the realistic path into paying twice.
+  //
+  // The webhook remains the SOLE writer of these entitlements: a single writer
+  // keeps the duplicate-purchase (23505) handling in one place. The buyer may
+  // therefore arrive a second or two before the grant lands, so the
+  // destination is told `payment=received` rather than being asserted as
+  // already unlocked.
+  const purchaseType = metadata.type
+  if (
+    purchaseType === 'feature_unlock' ||
+    purchaseType === 'feature_seat' ||
+    purchaseType === 'mv_subscription'
+  ) {
+    return NextResponse.redirect(
+      new URL(withParams(returnTo, { payment: 'received', ref: reference }), req.url),
+    )
+  }
+
+  const { org_id, tier, period, amount_kobo, plan_code, mode } = metadata
   if (!org_id || !tier) {
-    return NextResponse.redirect(new URL('/settings/billing?error=meta', req.url))
+    return NextResponse.redirect(new URL(withParams(returnTo, { error: 'meta' }), req.url))
   }
 
   // ── Authorisation ────────────────────────────────────────────────────────
@@ -89,6 +131,12 @@ export async function GET(req: NextRequest) {
     paystackPlanCode: plan_code ?? data.plan_object?.plan_code ?? data.plan ?? undefined,
     // paystackSubscriptionCode intentionally omitted — webhook will fill it.
     amountKobo: amount_kobo ?? data.amount,
+    // Finding #19: nothing wrote next_billing_date in one-off mode, so it
+    // stayed NULL, `NULL < today` is NULL, and downgradeExpiredCancellations
+    // could never select the row — a cancelled customer kept their tier
+    // forever. `subscription.create` overwrites this with Paystack's own
+    // next_payment_date when the transaction was recurring.
+    nextBillingDate: addBillingPeriod(data.paid_at as string | undefined, period ?? 'monthly'),
   })
 
   await billingService.recordInvoice(supabase as any, org_id, {

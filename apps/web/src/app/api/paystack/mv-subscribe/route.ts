@@ -21,6 +21,9 @@ import { rateLimit } from '@/lib/rate-limit'
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 
+/** Reachable by every role — see the note at the initialize call below. */
+const MV_RETURN_TO = '/dashboard'
+
 export async function POST(req: NextRequest) {
   if (!PAYSTACK_SECRET) {
     return NextResponse.json({ error: 'Paystack not configured' }, { status: 503 })
@@ -68,6 +71,11 @@ export async function POST(req: NextRequest) {
 
   // Step 2 — Paystack hosted-page redirect for the recurring plan.
   const callbackUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/api/paystack/callback`
+  // This route applies NO role gate, so the buyer may be a contractor or
+  // inspector. `/settings/billing` is requireRolePage(OWNER_ADMIN) and would
+  // bounce them to /dashboard with no evidence the payment succeeded, so the
+  // return path is the dashboard, which every role can reach.
+  const returnTo = MV_RETURN_TO
   const initBody = {
     email: user.email,
     currency: 'ZAR',
@@ -76,7 +84,11 @@ export async function POST(req: NextRequest) {
     metadata: {
       type: 'mv_subscription' as const,
       user_id: user.id,
-      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}/dashboard`,
+      // Without this the callback bailed to /settings/billing?error=meta —
+      // mv_subscription metadata carries no org_id and no tier, so it could
+      // never satisfy that gate.
+      return_to: returnTo,
+      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}${returnTo}`,
     },
   }
 

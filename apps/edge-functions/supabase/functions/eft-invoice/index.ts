@@ -21,13 +21,30 @@ import { requireServiceRole } from '../_shared/auth.ts'
 const PAYSTACK_SECRET = Deno.env.get('PAYSTACK_SECRET_KEY') ?? ''
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize'
 
+/**
+ * Amounts are in KOBO (cents). The `1499_00` form is the house convention:
+ * the numeric separator sits between rands and cents, so `1499_00` === 149 900
+ * cents === R1 499.00.
+ *
+ * ⚠ The enterprise row shipped as `{ monthly: 500000_00, annual: 5000000_00 }`
+ * with the comment below it. Read under the same convention that is
+ * R500 000.00 / R5 000 000.00 — one hundred times the commented intent — and
+ * the value flowed unchecked to Paystack's `amount`, into
+ * billing.invoices.amount_kobo and onto the customer's own
+ * /settings/billing Invoice History. Any change to these numbers must keep
+ * eft-invoice-pricing.test.ts green; it asserts the kobo figure on the wire,
+ * not the constant.
+ */
 const PLAN_AMOUNTS: Record<string, Record<string, number>> = {
-  enterprise: { monthly: 500000_00, annual: 5000000_00 }, // R5,000/mo or R50,000/yr (custom)
+  enterprise: { monthly: 5000_00, annual: 50000_00 }, // R5,000/mo or R50,000/yr (custom)
   professional: { monthly: 1499_00, annual: 14990_00 },
   starter: { monthly: 499_00, annual: 4990_00 },
 }
 
-Deno.serve(async (req) => {
+/** Highest amount this endpoint will ever invoice, as a sanity ceiling (R1m). */
+const MAX_AMOUNT_KOBO = 100_000_000
+
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
       headers: {
@@ -112,10 +129,11 @@ Deno.serve(async (req) => {
     }
 
     // --- GENERATE EFT INVOICE ---
-    const { organisationId, tier, billingPeriod } = body as {
+    const { organisationId, tier, billingPeriod, amountKobo: amountOverride } = body as {
       organisationId: string
       tier: string
       billingPeriod: 'monthly' | 'annual'
+      amountKobo?: number
     }
 
     if (!organisationId || !tier) {
@@ -125,7 +143,42 @@ Deno.serve(async (req) => {
     }
 
     const period = billingPeriod === 'annual' ? 'annual' : 'monthly'
-    const amountKobo = PLAN_AMOUNTS[tier]?.[period] ?? PLAN_AMOUNTS.enterprise[period]
+
+    // An unrecognised tier must FAIL. It used to fall through to
+    // `?? PLAN_AMOUNTS.enterprise[period]`, so a typo — or the literal string
+    // 'free' — invoiced the most expensive plan in the table under a
+    // description built from the same unrecognised word ("E-Site Free Plan").
+    const planRow = Object.prototype.hasOwnProperty.call(PLAN_AMOUNTS, tier)
+      ? PLAN_AMOUNTS[tier]
+      : undefined
+    if (!planRow) {
+      return new Response(
+        JSON.stringify({
+          error: `Unknown tier '${tier}'. Expected one of: ${Object.keys(PLAN_AMOUNTS).join(', ')}`,
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+
+    // Enterprise is custom-priced everywhere else in the system, so it (and
+    // only it) accepts an explicit amount. Validated hard: a positive integer
+    // under the ceiling, never a default.
+    let amountKobo = planRow[period]
+    if (amountOverride !== undefined) {
+      if (tier !== 'enterprise') {
+        return new Response(
+          JSON.stringify({ error: 'amountKobo may only be supplied for the enterprise tier' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (!Number.isInteger(amountOverride) || amountOverride <= 0 || amountOverride > MAX_AMOUNT_KOBO) {
+        return new Response(
+          JSON.stringify({ error: `amountKobo must be a positive integer of at most ${MAX_AMOUNT_KOBO}` }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      amountKobo = amountOverride
+    }
 
     // Get organisation + admin email
     const { data: org } = await supabase
@@ -235,4 +288,6 @@ Deno.serve(async (req) => {
       status: 500, headers: { 'Content-Type': 'application/json' },
     })
   }
-})
+}
+
+Deno.serve(handler)

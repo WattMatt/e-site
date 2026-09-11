@@ -7,7 +7,8 @@
  *
  * Body: { revisionId }
  * Flow:
- *   1. Resolve the revision's org + status, gate with requireRoleAPI(ORG_WRITE_ROLES).
+ *   1. Resolve the revision's org + status, gate with requireRoleAPI(ORG_WRITE_ROLES),
+ *      then enforce the per-USER MV subscription (402). Role is not enough.
  *   2. Refuse non-DRAFT (this WRITES fault_results — an ISSUED snapshot is frozen).
  *   3. loadStudyGraph → buildMvNetwork → faultsForNetwork + earthFaultForNetwork.
  *   4. Merge per node (ik3 max/min + xr + ip from faults; ik1 max/min + ic_amps
@@ -24,6 +25,7 @@ import { revalidatePath } from 'next/cache'
 
 import { createClient } from '@/lib/supabase/server'
 import { requireRoleAPI } from '@/lib/auth/require-role'
+import { hasMvAccess } from '@/lib/mv-access'
 import {
   mvProtectionService,
   buildMvNetwork,
@@ -62,6 +64,23 @@ export async function POST(req: Request) {
 
   const guard = await requireRoleAPI(ORG_WRITE_ROLES, rev.organisation_id as string)
   if (!guard.ok) return guard.response
+
+  // The R2 000/user/yr MV entitlement. Role is NOT enough: this route is the
+  // paid deliverable — the full Z-bus three-phase + zero-sequence solve — and
+  // it caches its output where PostgREST can read it. It sits outside the
+  // (admin) layout and is directly invocable, so the paywall in the five
+  // page.tsx files never applied to it; before this check any owner/admin/PM
+  // could obtain the whole study by POSTing a revisionId.
+  //
+  // hasMvAccess, not requireMvAccess: the latter calls next/navigation
+  // redirect(), which throws NEXT_REDIRECT — wrong semantics in a route
+  // handler. hasMvAccess fails closed on any lookup error.
+  if (!(await hasMvAccess(guard.user.id, supabase as any))) {
+    return NextResponse.json(
+      { error: 'Medium-Voltage subscription required' },
+      { status: 402 },
+    )
+  }
 
   // Load the graph + settings and solve.
   const graph = await mvProtectionService.loadStudyGraph(supabase as any, revisionId)

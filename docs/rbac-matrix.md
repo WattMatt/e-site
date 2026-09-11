@@ -49,7 +49,7 @@ membership.
 | `/projects/[id]/forms/new` | W | W | W | W | W | W | — |
 | `/projects/[id]/forms/[formId]` (capture / view) | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | R¹⁰ |
 | `/projects/[id]/cables` | W | W | W | R⁷ | — | — | R¹ |
-| `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W | W | W | — | — | — | — |
+| `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
 | `/projects/[id]/equipment-materials` | W | W | W | W | — | — | R¹ |
 | `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
 | `/projects/[id]/materials` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
@@ -171,7 +171,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/paystack/checkout` | W | W | — | — | — | — | — |
 | `POST /api/projects/[id]/boq/import`    | W | W | W | — | — | — | — |
 | `GET /api/paystack/callback` | W | W | — | — | — | — | — |¹¹
-| `POST /api/paystack/subaccount` | W | W | W | W | W | W | W |¹²
+| `POST /api/paystack/subaccount` | W¹² | W¹² | — | — | — | — | — |¹²
 | `POST /api/paystack/feature-seat` | W | W | — | — | — | — | — |¹³
 | `POST /api/paystack/mv-subscribe` | W | W | W | W | W | W | W |¹⁴
 | `POST /api/webhooks/resend` | n/a — public webhook, Svix/standardwebhooks HMAC-SHA256 over the raw body; writes only as service_role; bypassed in `middleware.ts` by exact path |
@@ -184,7 +184,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `GET /api/projects/[id]/quality-control/[reportId]/report` | R | R | R | R | R | — | R⁹ |
 | `GET /api/projects/[id]/equipment-materials/report-preview` | R | R | R | — | — | — | — |
 | `POST /api/projects/[id]/equipment-materials/reports` | W | W | W | — | — | — | — |
-| `POST /api/medium-voltage/study` | W | W | W | — | — | — | — |
+| `POST /api/medium-voltage/study` | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
 | `POST /api/tenant-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/tenant-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `GET /api/tenant-schedule/legend-card/pdf` | R | R | R | R | R | — | R⁸ |
@@ -220,7 +220,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 >
 > **⚠ DO NOT add `/api/paystack/callback` to any middleware exemption list.** `apps/web/src/middleware.ts` has six — `PUBLIC_PATHS`, `PUBLIC_EXACT_PATHS`, `PUBLIC_CONTENT_PREFIXES`, `SELF_AUTH_PATHS`, `SIGNED_WEBHOOK_PATHS`, `PUBLIC_API_PATHS` — and this route belongs in none of them. This warning is here because the false "public webhook, signature-validated" description above is exactly the kind of claim that invites someone to "fix" a redirect by exempting the path, and those lists are where they would do it (`SIGNED_WEBHOOK_PATHS` first, since the description named a signature). The route **needs** the session: its authorisation is `requireRole(userClient, metadata.org_id, OWNER_ADMIN)`, which reads the caller's identity from the Supabase auth **cookie**. Exempt it from the middleware and every request arrives anonymous. Today that fails closed (`requireRole` returns `Not authenticated` → redirect to `?error=forbidden`), so the immediate damage is that paying customers stop being activated — but the same edit read together with the old description ("it's signature-validated, the role gate is redundant") is one step from deleting the gate, and what sits behind it is an unauthenticated `GET` that writes `billing.subscriptions` and `billing.invoices` with the **service client** from attacker-supplied `reference`. There is no signature to fall back on. Paystack's *server-to-server* events go to `/api/paystack/webhook`, which is signature-verified and correctly exempted; this route is the *browser* coming back from hosted checkout, and browsers carry cookies. It is currently in none of them — verified in production: `GET https://www.e-site.live/api/paystack/callback?reference=x` → `307 → /login?...&next=%2Fapi%2Fpaystack%2Fcallback` (2026-09-10).
 >
-> **¹² `POST /api/paystack/subaccount` — authenticated, org-scoped, and NO role predicate at all.** Every column above is `W` and that is not a typo. The route (`subaccount/route.ts`) checks exactly three things: a session (`401` without one); that the caller has **some** active `user_organisations` row; and that the `supplierId` in the body belongs to that org. The membership lookup is `.eq('is_active', true).limit(1).single()` with **no `.order()`**, so for a multi-org user the org it scopes to is arbitrary. No role is ever consulted — a `contractor`, `inspector`, `supplier` or `client_viewer` who shares an org with the supplier passes. What the route then does is create a Paystack subaccount from a body-supplied **bank account number** + settlement bank and upsert it into `marketplace.paystack_subaccounts` (`onConflict: 'supplier_id'`), i.e. it sets **where that supplier's marketplace payouts land**, and overwrites any existing binding. The 94 % split (E-Site keeps 6 %) is hardcoded at `route.ts:53`. This row had never been written down, which is the likeliest reason nobody was ever prompted to gate it. Tracked in Known gaps; adding a gate is a code change, not a doc change.
+> **¹² `POST /api/paystack/subaccount` — owner/admin of the SUPPLIER's organisation, rate-limited, insert-only.** Fixed 2026-09-11 (payments pre-go-live audit, finding #7). Until then every column in this row was `W` and that was not a typo: the route checked a session, that the caller had **some** active `user_organisations` row (`.limit(1).single()` with no `.order()`, so an **arbitrary** org for a multi-org user), and that the `supplierId` belonged to that org. No role was ever consulted, so a `contractor`, `inspector`, `supplier` or `client_viewer` sharing an org with the supplier could set **where that supplier's marketplace payouts land** — and the upsert was `onConflict: 'supplier_id'`, i.e. it replaced any existing binding. Now: `401` unauthenticated; `429` past `rateLimit('subaccount:<user id>', 5, 60_000)`; `400` on a malformed body; the supplier is resolved **by id alone on the service client**; `409` when `supplier.organisation_id IS NULL` (all 7 production suppliers are in that state today) — ⚠ **never** `?? undefined` into `requireRoleAPI`, which falls back to the *caller's* primary org and would let any org admin bank an org-less supplier; then `requireRole(supabase, supplier.organisation_id, OWNER_ADMIN)` → `403`. Only after all of that is a Paystack subaccount minted. An existing binding is **never replaced**: a second attempt returns `409` with the existing `subaccount_code`, and changing bank details is a deliberate support action. The row is written with the **service client** — migration `00191` REVOKEs INSERT/UPDATE/DELETE on `marketplace.paystack_subaccounts` from `authenticated` entirely, so no user session can write payout bindings over PostgREST under any policy. A failed write logs `PAYSTACK_SUBACCOUNT_ORPHAN` **and returns the `subaccount_code` in the 500 body**, because the previous code lost a live bank-bound subaccount to a `console.error`. The 94 % split (E-Site keeps 6 %) is still hardcoded in the route; the `percentage_charge` column disagreement is tracked separately.
 >
 > **¹³ `POST /api/paystack/feature-seat` — owner/admin, rate-limited.** `503` if `PAYSTACK_SECRET_KEY` is unset; `401` unauthenticated; `429` past `rateLimit('feature-seat:<user id>', 5, 60_000)` (5 per 60 s per user, in-process). The gate is a `user_organisations` lookup filtered `.in('role', ['owner', 'admin'])` (oldest such membership by `created_at`) → `403` for every other role, matching the paywall CTA. The **target** user must be an active member of that same org (`400`) and must not already hold the seat (`409`, `alreadyUnlocked: true`). The route only initialises the hosted-page charge — the seat row in `billing.org_feature_seats` is written by `/api/paystack/webhook` on `metadata.type === 'feature_seat'`.
 >
@@ -228,7 +228,13 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 >
 > **Billing reads (migration `00187`).** `billing.invoices`' SELECT policy was named `"Org admins can view invoices"` and qualified on `organisation_id = ANY (get_user_org_ids())`, which is bare `is_active` membership — no role predicate. `billing` is PostgREST-exposed and `authenticated` holds table SELECT, so all 27 WM members (12 contractors, 3 `client_viewer`s, most of them staff at other firms) could `GET /rest/v1/invoices` with `Accept-Profile: billing` and read every amount paid and every Paystack reference — the reads that turned the callback replay into a one-click attack. `00187` replaces it with an owner/admin qual plus a **RESTRICTIVE** gate on `public.user_is_org_admin()` so a future permissive policy cannot reopen it, and revokes `anon`'s pointless grant. Verified on prod in a rolled-back transaction: org admin 3 rows, contractor/`client_viewer`/non-member 0, `anon` `permission denied`. **`billing.subscriptions` is deliberately left at org-member read** and merely renamed to `subscriptions_select_org_member` so the name stops lying: `PaymentStatusBanner` and `checkProjectQuota` read `status`/`tier` from it on the **user client at every role**, so an admin-only qual would delete the "account paused" warning for the 12 contractors and impose a false 1-project cap. See the Known gaps entry.
 
-> `POST /api/medium-voltage/study` runs the heavy MV Z-bus + earth-fault solve and caches per-node `fault_results` for a revision. Gated to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org; refused on non-DRAFT revisions (an ISSUED snapshot is frozen). Discrimination/coordination compute is deferred to Phase 4b (device-pairing design).
+> **²⁰ Medium-Voltage — TWO conditions, and role is the weaker one.** Every MV surface requires (a) `ORG_WRITE_ROLES` (owner/admin/project_manager) **and** (b) the per-USER R2 000/yr entitlement, `public.user_has_mv_access(auth.uid())`. `POST /api/medium-voltage/study` runs the heavy Z-bus + earth-fault solve and caches per-node `fault_results`; it is gated with `requireRoleAPI(ORG_WRITE_ROLES, orgId)` against the *revision's* org, refused on non-DRAFT revisions, and then returns **`402`** without a subscription. Discrimination/coordination compute is deferred to Phase 4b.
+>
+> Until 2026-09-11 condition (b) existed **only in five `page.tsx` files** (finding #20 of the payments audit): `grep -r 'requireMvAccess\|hasMvAccess' apps/web/src/actions apps/web/src/app/api` returned nothing, so the compute route and all the MV server actions were role-gated and nothing more. Route handlers and server actions are directly invocable and sit outside `(admin)/layout.tsx`; this repo has shipped that exact class twice before (PR #135, PR #162).
+>
+> **The read side needed the database, because no page gate can reach it.** `cable_schedule` is PostgREST-exposed, `authenticated` holds SELECT on `fault_results` and `discrimination_checks`, and their cross-org SELECT policy qualifies on `user_has_project_access()` — true for any `project_members` row at **any** role. Migration `00191` adds a RESTRICTIVE `FOR ALL` policy on both tables calling `user_has_mv_access`. Demonstrated on production in a rolled-back transaction: a DEMO-org **`client_viewer`** added to the WM project read all **131** rows of the paid solve before the policy and **0** after, while a WM member still read 131.
+>
+> ⚠ `public.user_has_mv_access` opens with an unconditional **WM-Consulting bypass** — every active member of `dddddddd-0000-0000-0000-000000000001` passes with no subscription and no accepted disclaimer. That is why production shows 0 MV subscriptions alongside 131 cached results, and why a "works for me" report from a WM account proves nothing about the paywall. `lib/mv-access.ts` used to claim "no owner bypass"; corrected.
 
 ## Server actions (`apps/web/src/actions/*`)
 
@@ -255,9 +261,9 @@ Read-only actions require project access (any project member). Write/export acti
 
 > **This is the only cancellation surface — there is no `POST /api/paystack/cancel-subscription`.** A row for that endpoint stood in the API table above from the day this file was created (`fcbb9f3`, 2026-05-25) until 2026-09-10; no such route has ever existed anywhere in the repo's history. It is deleted rather than corrected. Cancellation is the server action, surfaced as `CancelSubscriptionButton` on `/settings/billing`, rendered whenever the subscription is not already `cancelled`.
 >
-> The gate is inline, not a `requireRole` call (this file predates the helpers): session required, then the caller's active `user_organisations` row is read and `['owner', 'admin'].includes(mem.role)` must hold — every other role gets `{ ok: false, error: 'Only an owner or admin can cancel the subscription.' }`. It then disables the subscription at Paystack via `paystack_subscription_code` (a one-off charge has none — nothing to disable) and writes `status='cancelled'` + `cancelled_at` with the **service client**, so the app gate is load-bearing. Idempotent with the `subscription.disable` webhook, which applies the same flip. Refuses when there is no paid subscription or it is already cancelled; a Paystack failure returns an error **without** the local write, so the app never shows cancelled while the customer is still being billed.
+> The gate resolves the caller's org through **`getOrgContext()`** — the identical resolver `/settings/billing` uses via `requireRolePage(OWNER_ADMIN)` — and requires `OWNER_ADMIN`; every other role gets `{ ok: false, error: 'Only an owner or admin can cancel the subscription.' }`. It then disables the subscription at Paystack via `paystack_subscription_code` (a one-off charge has none — nothing to disable) and writes `status='cancelled'` + `cancelled_at` with the **service client**, so the app gate is load-bearing. Idempotent with the `subscription.disable` webhook, which applies the same flip. Refuses when there is no paid subscription or it is already cancelled; a Paystack failure returns an error **without** the local write, so the app never shows cancelled while the customer is still being billed.
 >
-> ⚠ As of `8dbe166` the membership lookup is `.eq('is_active', true).limit(1).single()` with **no `.order()`** — for a user who is an owner/admin of more than one org, *which* organisation gets cancelled is whichever row Postgres returns. Flagged by the 2026-09 payments audit; see Known gaps.
+> ⚠ **Fixed 2026-09-11 (payments audit, finding #29b).** The membership lookup was `.eq('is_active', true).limit(1).single()` with **no `.order()`**, so for an owner/admin of more than one org *which* organisation got cancelled was whichever row Postgres returned — and because `disableSubscription` runs at Paystack **before** the local write, the wrong org's recurring billing was genuinely stopped. Adding `.order('created_at')` was rejected as the fix: it deterministically targets the OLDEST org and still ignores the OrgSwitcher's `profiles.active_organisation_id`. The regression test uses a two-org owner whose active org is the NEWER one — a single-org fixture cannot express this property, because every resolution strategy agrees when there is only one membership.
 
 ### Project membership (`project-members.actions.ts`, `project-members-bulk.actions.ts`, `project-members-from-sub-org.actions.ts`)
 
@@ -400,12 +406,48 @@ Read-only actions require project access (any project member). Write/export acti
 
 | Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
 |---|---|---|---|---|---|---|---|
-| `upsertMvStudySettings` | W | W | W | — | — | — | — |
-| `upsertFaultSource` | W | W | W | — | — | — | — |
-| `upsertProtectionDevice` | W | W | W | — | — | — | — |
-| `overrideFaultLevel` | W | W | W | — | — | — | — |
+| `upsertMvStudySettings` | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
+| `upsertFaultSource` | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
+| `upsertProtectionDevice` | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
+| `upsertMvStudySignoff` | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
+| `overrideFaultLevel` (free — LV short-circuit input) | W | W | W | — | — | — | — |
 
-> All four resolve revision → project → org and gate to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireEffectiveRole`, on top of the cable_schedule org RLS (`get_user_org_ids` + `user_is_client_viewer`). Each **refuses writes on a non-DRAFT revision** (ISSUED / SUPERSEDED are frozen — start a new revision). `overrideFaultLevel` writes `revisions.fault_level_ka` (the source prospective value `shortCircuitCheck` consumes) and records provenance in `change_log`. `issueMvStudy` (the gated DRAFT→ISSUED transition) is Phase 6.
+> All resolve revision → project → org and gate to `ORG_WRITE_ROLES` (owner/admin/project_manager) via `requireEffectiveRole`, on top of the cable_schedule org RLS (`get_user_org_ids` + `user_is_client_viewer`). Each **refuses writes on a non-DRAFT revision** (ISSUED / SUPERSEDED are frozen — start a new revision). `issueMvStudy` (the gated DRAFT→ISSUED transition) is Phase 6.
+>
+> **Since 2026-09-11 the four paid actions also require the MV subscription** (`{ error: 'Medium-Voltage subscription required' }`) — see footnote ²⁰. ⚠ **`overrideFaultLevel` is deliberately excluded.** It shares `resolveWritableRevision` with the other four but is called from `FaultLevelEditor` in the **free** cable-schedule workspace on every DRAFT revision, and it is the only writer of `revisions.fault_level_ka`, the source value the LV schedule's `shortCircuitCheck` consumes. Putting the entitlement check inside the shared helper — the obvious one-line implementation — would silently break short-circuit checking for every LV cable-schedule user, with no error anywhere. A test drives it with MV access OFF and asserts the write still lands. It records provenance in `change_log`.
+
+### Marketplace orders (`supplier.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `updateOrderStatusAction` (status/notes) | W | W | W | W | W | W | — |
+| `updateOrderStatusAction` (`quotedAmount`) | supplier org only — enforced in the DB | | | | | | |
+
+> ⚠ **The buyer used to set the price they were charged.** Production grants gave `authenticated` a TABLE-level UPDATE on `marketplace.orders`, so
+> `has_column_privilege` was true for `total_amount`, `commission_rate`, `commission_amount`, `payment_status`, `paid_at`, `paystack_reference` and
+> `paystack_split_code`; the only UPDATE policy is PERMISSIVE with `USING (contractor_org_id = ANY get_user_org_ids() OR supplier_org_id = ANY …)`,
+> `with_check` NULL, and `get_user_org_ids()` is role-blind. `marketplace-payment` charges `order.total_amount`. Reproduced on production in a
+> rolled-back transaction as the **rbac-test contractor**: an R18 750 order rewritten to `total_amount = 0.01` with `payment_status = 'paid'`.
+> `updateOrderStatusAction` was the shorter path to the same thing — gated on `if (!user)` alone and writing `total_amount = extras.quotedAmount`
+> through the RLS client.
+>
+> Closed by migration `00191` in two layers that fail **independently**, both verified on production:
+> 1. **Grant layer** — `REVOKE UPDATE ON TABLE … FROM authenticated` then `GRANT UPDATE (status, notes)`. The direct PATCH now returns
+>    `42501 permission denied for table orders`. ⚠ The table-level REVOKE must come first: a column-level REVOKE cannot subtract from a table-level
+>    grant (proven on this database for `billing.subscriptions`).
+> 2. **Policy layer** — `orders_money_columns_immutable`, RESTRICTIVE FOR UPDATE TO authenticated, whose WITH CHECK pins 15 money and identity
+>    columns to their stored values via `marketplace.order_protected_columns_unchanged(to_jsonb(orders))`. With the table grant handed back in full,
+>    the same attack returns `new row violates row-level security policy "orders_money_columns_immutable"`.
+>
+> The one legitimate money write from a session — the supplier's quote — goes through `marketplace.set_order_quote(uuid, numeric)`, SECURITY DEFINER,
+> which asserts the caller is in the order's `supplier_org_id`, is not a `client_viewer`, and that `payment_status` is still `'pending'`. Verified on
+> production: the buyer gets `42501 Only the supplier organisation may quote on this order`, a supplier-org member's quote applies, and a quote on a
+> paid order is refused. `anon` holds no EXECUTE on either new function (checked with `has_function_privilege`, never `proacl` — a NULL `proacl`
+> looks empty but **is** the PUBLIC grant).
+>
+> ⚠ Do **not** "fix" pricing by deriving the charge from `marketplace.order_items` instead. `total_amount` is deliberately not the item sum — it is
+> the supplier's quote (production order …0002: total 18 750.00 vs `sum(line_total)` 18 525.00) — and `order_items` is not authoritative either:
+> `authenticated` holds INSERT on it under a policy that lets the buyer choose `unit_price`, and `line_total` is GENERATED from it.
 
 ### Inspection reports (`inspection-report.actions.ts`)
 
@@ -501,9 +543,9 @@ Rules, each of which was violated in production until 2026-09-10:
 
 These are tracked outside this doc:
 
-- **`POST /api/paystack/subaccount` has no role gate.** Authentication plus *any* active org membership is the whole check; the caller's role is never read (footnote ¹²). The route writes a supplier's settlement bank + account number into `marketplace.paystack_subaccounts` on `onConflict: 'supplier_id'`, so it decides where that supplier's payouts land and silently replaces an existing binding. A `client_viewer` — an external client, by definition not staff — passes. Adding `requireRole(..., ORG_WRITE_ROLES)` (or `OWNER_ADMIN`, given it is bank details) is a code change; raised by the 2026-09 payments audit, not fixed in the documentation pass that added this row.
+- ~~**`POST /api/paystack/subaccount` has no role gate.**~~ **Closed 2026-09-11** — `requireRole(…, OWNER_ADMIN)` against the *supplier's* organisation, plus a rate limit, insert-only semantics, and migration `00191` removing the table's write grants from `authenticated`. See footnote ¹².
 - **`PAYSTACK_WEBHOOK_SECRET` is required by no code and exists as a live secret.** Two runbooks listed it as a required environment variable and one instructed pasting it into a Paystack "Signature field" that does not exist. Every occurrence of the name in this repo is markdown — both handlers verify `HMAC-SHA512` of the raw body against **`PAYSTACK_SECRET_KEY`** (`apps/web/src/app/api/paystack/webhook/route.ts:52-70`; the edge `paystack-webhook` reads the same key). The docs were corrected 2026-09-10 ([`launch-checklist.md`](launch-checklist.md), [`staging-deployment-checklist.md`](staging-deployment-checklist.md)); the **secret itself is still set in the Supabase Edge secret store** and should be removed under its own reviewed change — deleting a production secret is not a documentation edit.
-- **Multi-org callers resolve to an arbitrary organisation in three billing surfaces.** `cancelSubscriptionAction`, `POST /api/paystack/subaccount` and (via `getOrgContext`) `requireRoleAPI`'s default all pick a membership row with `.limit(1)`; only `feature-seat` orders by `created_at`. For the single-org users that make up production today this is invisible; for a multi-org owner it decides *which org gets cancelled*. Same class as the `getOrgContext` primary-org limitation already tracked below.
+- **Multi-org callers resolve to an arbitrary organisation in one remaining billing surface.** `requireRoleAPI`'s default (via `getOrgContext`) is the general primary-org limitation tracked below. The two acute cases are **closed 2026-09-11**: `cancelSubscriptionAction` now resolves through `getOrgContext()` — the same resolver `/settings/billing` uses via `requireRolePage(OWNER_ADMIN)`, so it honours the OrgSwitcher's `profiles.active_organisation_id` and cancels the org the user was looking at (adding `.order('created_at')` was rejected as a fix: it deterministically targets the OLDEST org and still ignores the switcher); and `POST /api/paystack/subaccount` no longer resolves a caller org at all, gating on the supplier's own organisation instead.
 - **Supplier portal isolation.** No `(supplier)` route group exists; suppliers reach `(admin)/*` and rely on per-page gates. Audit whether every page either redirects suppliers or semantically tolerates supplier access.
 - **`/api/notifications/dispatch` bearer auth.** Confirm the bearer secret is required, rate-limited, and the dispatch payload can't leak cross-org notifications.
 - **Cable-schedule RLS.** App-layer gates are present ([`require-role.ts`](../apps/web/src/lib/cable-schedule/require-role.ts)); verify RLS denies cross-org access independently.

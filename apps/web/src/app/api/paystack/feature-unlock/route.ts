@@ -4,15 +4,23 @@ import { createClient } from '@/lib/supabase/server'
 import { FEATURE_PRICES, type FeatureKey } from '@esite/shared'
 import { hasFeature } from '@/lib/features'
 import { rateLimit } from '@/lib/rate-limit'
+import { safeReturnTo, returnToForFeature } from '@/lib/paystack/return-to'
 
 // Initialises a one-time Paystack charge to unlock a paid add-on feature for
 // the caller's organisation. The webhook handler at /api/paystack/webhook
 // (matched on metadata.type === 'feature_unlock') is what actually writes
 // the unlock row into billing.org_feature_unlocks — this route only kicks
 // off the hosted-page redirect.
+//
+// `return_to` (optional) is where the payer lands once Paystack hands them
+// back, and where "cancel" sends them. JBCC and generator cost-recovery are
+// project-scoped, so only the calling paywall knows the right path; when it
+// does not pass one, returnToForFeature supplies a sane default. It is
+// validated here as well as in the callback — see lib/paystack/return-to.ts.
 
 const bodySchema = z.object({
   feature_key: z.enum(Object.keys(FEATURE_PRICES) as [FeatureKey, ...FeatureKey[]]),
+  return_to: z.string().optional(),
 })
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
@@ -35,6 +43,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
   const { feature_key } = parsed.data
+  // Reject anything that is not a same-origin absolute path BEFORE it reaches
+  // Paystack — it comes back inside the verify response and is resolved with
+  // `new URL(value, req.url)`, which would follow an absolute URL off-site.
+  const returnTo = safeReturnTo(parsed.data.return_to, returnToForFeature(feature_key))
 
   // Resolve caller's org — owner/admin only, to match the paywall CTA gating.
   const { data: membership } = await supabase
@@ -76,7 +88,10 @@ export async function POST(req: NextRequest) {
       feature_key,
       org_id: mem.organisation_id,
       amount_kobo: price.amountKobo,
-      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}/inspections/unlock`,
+      return_to: returnTo,
+      // Was hardcoded to /inspections/unlock for EVERY feature, so a JBCC
+      // buyer who cancelled landed on the Inspections paywall.
+      cancel_action: `${process.env.NEXT_PUBLIC_SITE_URL}${returnTo}`,
     },
   }
 
