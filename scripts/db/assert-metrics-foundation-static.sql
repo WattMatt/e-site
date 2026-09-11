@@ -81,4 +81,63 @@ UNION ALL
 SELECT 'authenticated cannot EXECUTE emit_product_event',
        CASE WHEN to_regprocedure('public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)') IS NULL THEN false
             ELSE NOT has_function_privilege('authenticated', 'public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid)', 'EXECUTE') END
+UNION ALL
+-- Section 3: metric_accounts (view), metric_cohorts, platform_metrics_weekly.
+SELECT 'metric_accounts excludes the rbac-test fixture',
+       NOT EXISTS (SELECT 1 FROM public.metric_accounts WHERE email = 'rbac-test@e-site.live')
+UNION ALL
+SELECT 'metric_accounts excludes %probe% accounts',
+       NOT EXISTS (SELECT 1 FROM public.metric_accounts WHERE email LIKE '%probe%')
+UNION ALL
+-- Measured 2026-09-10: 35 of 36 profiles survive the exclusion rule.
+SELECT 'metric_accounts still holds the real estate (>= 30 of 36)',
+       (SELECT count(*) FROM public.metric_accounts) >= 30
+UNION ALL
+SELECT 'weekly_active cohort is inside the 10..35 band',
+       (SELECT count(*) FROM public.metric_cohorts
+         WHERE cohort_key = 'weekly_active_denominator' AND as_of = DATE '2026-09-09') BETWEEN 10 AND 35
+UNION ALL
+SELECT 'contractor cohort is frozen at 12 (13 minus the fixture), by EFFECTIVE role',
+       (SELECT count(*) FROM public.metric_cohorts
+         WHERE cohort_key = 'contractor_frozen' AND as_of = DATE '2026-09-09') = 12
+UNION ALL
+SELECT 'client-viewer cohort is frozen at 4',
+       (SELECT count(*) FROM public.metric_cohorts
+         WHERE cohort_key = 'client_viewer_frozen' AND as_of = DATE '2026-09-09') = 4
+UNION ALL
+SELECT 'every cohort row carries an organisation, so its read gate can be org-scoped',
+       NOT EXISTS (SELECT 1 FROM public.metric_cohorts WHERE organisation_id IS NULL)
+UNION ALL
+SELECT 'metric_cohorts read gate is org-scoped, not platform-wide',
+       COALESCE((SELECT qual LIKE '%user_is_org_admin(organisation_id)%'
+                   FROM pg_policies WHERE schemaname='public' AND tablename='metric_cohorts'
+                    AND policyname='metric_cohorts_admin_only'), false)
+UNION ALL
+SELECT 'platform_metrics_weekly exists with RLS on',
+       COALESCE((SELECT rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename='platform_metrics_weekly'), false)
+UNION ALL
+-- COALESCE to false, so an ABSENT constraint fails. Without it the subquery
+-- returns NULL for a missing constraint and NULL is not true — but a NOT
+-- EXISTS phrasing would have passed vacuously, which is the pathology this
+-- whole file exists to avoid.
+SELECT 'the baseline/iso_week constraint exists and references iso_week',
+       COALESCE((SELECT pg_get_constraintdef(c.oid) LIKE '%iso_week%'
+                   FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+                  WHERE t.relname = 'platform_metrics_weekly'
+                    AND c.conname = 'platform_metrics_weekly_baseline_week'), false)
+UNION ALL
+SELECT 'the measured-has-value constraint exists',
+       COALESCE((SELECT true FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+                  WHERE t.relname = 'platform_metrics_weekly'
+                    AND c.conname = 'platform_metrics_weekly_measured_has_value'), false)
+UNION ALL
+-- CASE-guarded like every other privilege arm: has_table_privilege RAISES on
+-- an absent relation, which would abort the statement and hide every other arm.
+SELECT 'anon cannot SELECT platform_metrics_weekly',
+       CASE WHEN to_regclass('public.platform_metrics_weekly') IS NULL THEN false
+            ELSE NOT has_table_privilege('anon', 'public.platform_metrics_weekly', 'SELECT') END
+UNION ALL
+SELECT 'anon cannot SELECT metric_cohorts',
+       CASE WHEN to_regclass('public.metric_cohorts') IS NULL THEN false
+            ELSE NOT has_table_privilege('anon', 'public.metric_cohorts', 'SELECT') END
 ;

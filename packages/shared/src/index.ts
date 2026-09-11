@@ -48,3 +48,6 @@ export * from './lib/jbcc/letter-values'
 // Pure: no I/O and no node built-ins, so it is safe in this barrel (the CLI
 // that opens a database connection lives outside @esite/shared).
 export * from './lib/migrations/verify-header'
+
+// Product-event and metric-key registries (§15 §(a), §12 §(i)).
+export * from './lib/analytics/product-events'

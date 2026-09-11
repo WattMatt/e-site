@@ -345,3 +345,168 @@ REVOKE ALL     ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,u
 REVOKE EXECUTE ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid) FROM anon;
 REVOKE EXECUTE ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid) FROM authenticated;
 GRANT  EXECUTE ON FUNCTION public.emit_product_event(uuid,uuid,text,jsonb,uuid,uuid) TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- 3a. public.metric_accounts — fixture exclusion, stated once
+-- ---------------------------------------------------------------------------
+-- Every denominator selects from here, and the RULE lives in
+-- public.metric_account_excluded (section 1b) so a future exclusion is one
+-- CREATE OR REPLACE rather than a second WHERE clause somewhere else.
+-- security_invoker so the view cannot become a way round profiles' own RLS.
+CREATE VIEW public.metric_accounts
+    WITH (security_invoker = true, security_barrier = true) AS
+SELECT p.id AS user_id, p.email, p.full_name
+  FROM public.profiles p
+ WHERE NOT public.metric_account_excluded(p.email);
+
+-- ALL, not just SELECT: pg_default_acl hands anon every privilege on a new
+-- relation at creation, and a view is a relation.
+REVOKE ALL ON public.metric_accounts FROM anon;
+
+-- ---------------------------------------------------------------------------
+-- 3b. public.metric_cohorts — the FROZEN September-2026 denominators
+-- ---------------------------------------------------------------------------
+-- Enumerated ONCE, here, and never recomputed. Growth is tracked by metric 2b
+-- and by the raw account count reported beside it, not by moving this floor.
+--
+-- organisation_id is NOT decoration: a cohort row names a PERSON, so a
+-- platform-wide read gate would expose the identity of every cohort member to
+-- an admin of any organisation. Resolved deterministically with DISTINCT ON so
+-- a user in two orgs always lands in the same one.
+CREATE TABLE public.metric_cohorts (
+    cohort_key      text NOT NULL CHECK (cohort_key IN (
+                      'weekly_active_denominator', 'contractor_frozen', 'client_viewer_frozen')),
+    user_id         uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    organisation_id uuid NOT NULL REFERENCES public.organisations(id) ON DELETE CASCADE,
+    as_of           date NOT NULL,
+    PRIMARY KEY (cohort_key, user_id, as_of)
+);
+
+ALTER TABLE public.metric_cohorts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY metric_cohorts_read ON public.metric_cohorts FOR SELECT USING (true);
+CREATE POLICY metric_cohorts_admin_only ON public.metric_cohorts
+    AS RESTRICTIVE FOR SELECT USING (public.user_is_org_admin(organisation_id));
+-- ALL, not just SELECT: no write policy exists, but anon's default-ACL
+-- INSERT/UPDATE/DELETE grants are still grants until revoked.
+REVOKE ALL ON public.metric_cohorts FROM anon;
+
+-- Cohort 1: accounts holding >= 1 membership on a project that had a row
+-- written in the trailing 90 days. Measured 2026-09-10: 23 accounts.
+INSERT INTO public.metric_cohorts (cohort_key, user_id, organisation_id, as_of)
+SELECT DISTINCT ON (ma.user_id)
+       'weekly_active_denominator', ma.user_id, pr.organisation_id, DATE '2026-09-09'
+  FROM public.metric_accounts ma
+  JOIN projects.project_members pm ON pm.user_id = ma.user_id
+  JOIN projects.projects pr ON pr.id = pm.project_id
+ WHERE pr.updated_at > now() - interval '90 days'
+    OR EXISTS (SELECT 1 FROM projects.rfis r WHERE r.project_id = pr.id AND r.created_at > now() - interval '90 days')
+    OR EXISTS (SELECT 1 FROM projects.site_diary_entries d WHERE d.project_id = pr.id AND d.created_at > now() - interval '90 days')
+    OR EXISTS (SELECT 1 FROM projects.qc_entries q WHERE q.project_id = pr.id AND q.created_at > now() - interval '90 days')
+    OR EXISTS (SELECT 1 FROM field.snags s WHERE s.project_id = pr.id AND s.created_at > now() - interval '90 days')
+    OR EXISTS (SELECT 1 FROM projects.reports rp WHERE rp.project_id = pr.id AND rp.created_at > now() - interval '90 days')
+ ORDER BY ma.user_id, pr.organisation_id
+ON CONFLICT DO NOTHING;
+
+-- Cohorts 2 and 3: contractors and client viewers, frozen, resolved by
+-- EFFECTIVE PROJECT ROLE — §15 §(a) metric 2b defines the set as "every account
+-- whose effective role on any active project is contractor", and role in this
+-- system is per project (00107), which is the whole reason product_events
+-- stamps effective_role at write time. Measured 2026-09-10 inside
+-- metric_accounts: 12 contractors, 4 client viewers.
+--
+-- 13 accounts hold a contractor role; one of them is rbac-test@e-site.live,
+-- which metric_accounts excludes by rule. §15 says "13"; 12 is the measured
+-- number under §15's own exclusion rule, and the difference is recorded in
+-- docs/metrics-baseline-2026-10.md rather than hidden.
+INSERT INTO public.metric_cohorts (cohort_key, user_id, organisation_id, as_of)
+SELECT DISTINCT ON (cohort_key, ma.user_id)
+       CASE eff.role WHEN 'contractor' THEN 'contractor_frozen' ELSE 'client_viewer_frozen' END AS cohort_key,
+       ma.user_id, pr.organisation_id, DATE '2026-09-09'
+  FROM public.metric_accounts ma
+  JOIN projects.project_members pm ON pm.user_id = ma.user_id
+  JOIN projects.projects pr ON pr.id = pm.project_id
+ CROSS JOIN LATERAL (SELECT public.user_effective_project_role(pm.project_id, ma.user_id) AS role) eff
+ WHERE pr.updated_at > now() - interval '90 days'
+   AND eff.role IN ('contractor', 'client_viewer')
+ ORDER BY cohort_key, ma.user_id, pr.organisation_id
+ON CONFLICT DO NOTHING;
+
+-- The migration FAILS rather than publishing a wrong denominator for twelve
+-- months. 35 is 36 accounts minus the fixture; 10 is below any plausible
+-- membership count for the live projects, given the notification roster
+-- resolves 12-13 WM people for a single WM project (00146:32-55).
+DO $$
+DECLARE n int;
+BEGIN
+    SELECT count(*) INTO n FROM public.metric_cohorts
+     WHERE cohort_key = 'weekly_active_denominator' AND as_of = DATE '2026-09-09';
+    IF n NOT BETWEEN 10 AND 35 THEN
+        RAISE EXCEPTION 'metric cohort out of band: % (expected 10..35)', n;
+    END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 3c. public.platform_metrics_weekly — the immutable weekly snapshot store
+-- ---------------------------------------------------------------------------
+-- A materialised weekly FACT TABLE, not a view over the event log: a target
+-- must be readable without re-scanning the stream. Append-only and carrying
+-- method_version, so changing a definition writes NEW rows rather than
+-- rewriting history — the same discipline as read_at_estimated.
+CREATE TABLE public.platform_metrics_weekly (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    metric_key     text NOT NULL CHECK (metric_key IN (
+                     'weekly_active',
+                     'contractor_active_frozen',
+                     'contractor_active_all',
+                     'client_active',
+                     'diary_same_day',
+                     'rfi_response_median_wd',
+                     'inbox_engagement',
+                     'report_schedules_per_project',
+                     'activation_first_session',
+                     'paying_organisations',
+                     'notifications_created'
+                   )),
+    iso_year       int  NOT NULL,
+    iso_week       int  CHECK (iso_week BETWEEN 1 AND 53),
+    window_start   date NOT NULL,
+    window_end     date NOT NULL,     -- exclusive
+    numerator      numeric,
+    denominator    numeric,
+    value          numeric,           -- weekly rate or ratio
+    status         text NOT NULL CHECK (status IN ('measured','censored','unmeasurable','not_yet_instrumented')),
+    method_version int  NOT NULL DEFAULT 1,
+    is_baseline    boolean NOT NULL DEFAULT false,
+    note           text,
+    detail         jsonb NOT NULL DEFAULT '{}',
+    captured_at    timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT platform_metrics_weekly_window CHECK (window_end > window_start),
+    CONSTRAINT platform_metrics_weekly_baseline_week
+      CHECK ((is_baseline AND iso_week IS NULL) OR (NOT is_baseline AND iso_week IS NOT NULL)),
+    -- ⚠ This CHECK is why every ratio arm of the rollup declares its OWN status
+    -- rather than hard-coding 'measured': a week with a zero denominator yields
+    -- a NULL value, and 'measured' + NULL aborts the whole INSERT, so the job
+    -- writes ZERO rows and "no row" is read as "the job did not run".
+    CONSTRAINT platform_metrics_weekly_measured_has_value
+      CHECK (status <> 'measured' OR value IS NOT NULL)
+);
+
+CREATE UNIQUE INDEX platform_metrics_weekly_week_uk
+    ON public.platform_metrics_weekly (metric_key, iso_year, iso_week, method_version)
+    WHERE NOT is_baseline;
+CREATE UNIQUE INDEX platform_metrics_weekly_baseline_uk
+    ON public.platform_metrics_weekly (metric_key, method_version)
+    WHERE is_baseline;
+
+ALTER TABLE public.platform_metrics_weekly ENABLE ROW LEVEL SECURITY;
+CREATE POLICY platform_metrics_weekly_read ON public.platform_metrics_weekly
+    FOR SELECT USING (true);
+-- The ZERO-ARG overload, deliberately: this table holds platform-wide
+-- aggregates and carries no per-org row, so there is nothing to scope to. The
+-- two tables that DO carry per-org rows use the one-arg form.
+CREATE POLICY platform_metrics_weekly_admin_only ON public.platform_metrics_weekly
+    AS RESTRICTIVE FOR SELECT USING (public.user_is_org_admin());
+-- No UPDATE or DELETE policy: the snapshot is never rewritten.
+-- ALL, not just SELECT: the snapshot is append-only by the rollup alone, and
+-- anon's default-ACL write grants are still grants until revoked.
+REVOKE ALL ON public.platform_metrics_weekly FROM anon;
