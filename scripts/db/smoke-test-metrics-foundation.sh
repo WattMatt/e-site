@@ -191,11 +191,34 @@ section "6. product_events is ORG-SCOPED, not merely admin-gated"
 # An owner of org A must NOT read a row belonging to org B. The zero-arg admin
 # check would pass this row to them; the one-arg check does not. Both counts
 # come from the same transaction, so a zero cannot be an empty table.
-if capture XORG_JSON mgmt_query "
+#
+# x.other_org must be an organisation the sampled owner holds NO active
+# membership in — an org they also administer would legitimately return 2 and
+# read as "the gate is not org-scoped". If no such org exists the DO block
+# RAISES before anything is inserted, and the section says so instead of
+# reporting a misleading 0/2.
+XORG_RC=0
+XORG_OUT="$(mgmt_query "
 BEGIN;
 SELECT set_config('x.owner', (SELECT user_id::text FROM public.user_organisations WHERE role='owner' AND is_active ORDER BY user_id LIMIT 1), true);
 SELECT set_config('x.own_org', (SELECT organisation_id::text FROM public.user_organisations WHERE user_id = current_setting('x.owner')::uuid AND is_active LIMIT 1), true);
-SELECT set_config('x.other_org', (SELECT id::text FROM public.organisations WHERE id <> current_setting('x.own_org')::uuid ORDER BY id LIMIT 1), true);
+DO \$\$
+DECLARE v_other text;
+BEGIN
+  SELECT o.id::text INTO v_other
+    FROM public.organisations o
+   WHERE o.id <> current_setting('x.own_org')::uuid
+     AND NOT EXISTS (SELECT 1 FROM public.user_organisations uo
+                      WHERE uo.user_id = current_setting('x.owner')::uuid
+                        AND uo.organisation_id = o.id
+                        AND uo.is_active)
+   ORDER BY o.id LIMIT 1;
+  IF v_other IS NULL THEN
+    RAISE EXCEPTION 'no foreign organisation available for the cross-org proof: owner % holds an active membership in every other organisation',
+      current_setting('x.owner');
+  END IF;
+  PERFORM set_config('x.other_org', v_other, true);
+END \$\$;
 INSERT INTO public.product_events (actor_id, project_id, organisation_id, event)
 VALUES (NULL, NULL, current_setting('x.own_org')::uuid, 'backfill_completed'),
        (NULL, NULL, current_setting('x.other_org')::uuid, 'backfill_completed');
@@ -203,11 +226,17 @@ SELECT set_config('request.jwt.claims',
   json_build_object('sub', current_setting('x.owner'), 'role','authenticated')::text, true);
 SET LOCAL ROLE authenticated;
 SELECT count(*)::int AS n FROM public.product_events;
-ROLLBACK;"; then
-  XORG=$(printf '%s' "$XORG_JSON" | jq -r '.[0].n')
+ROLLBACK;" 2>&1)" || XORG_RC=$?
+if [[ $XORG_RC -eq 0 ]]; then
+  XORG=$(printf '%s' "$XORG_OUT" | jq -r '.[0].n')
   [[ "$XORG" == "1" ]] \
     && pass "org owner sees their OWN org's event and not the other org's (1 of 2)" \
     || fail "expected 1 of 2 rows visible, got $XORG — the read gate is not org-scoped"
+elif printf '%s' "$XORG_OUT" | grep -q 'no foreign organisation available for the cross-org proof'; then
+  fail "no foreign organisation available for the cross-org proof — the sampled owner holds an active membership in every other organisation; nothing was compared"
+else
+  fail "Management API call failed (exit $XORG_RC) — section aborted:"
+  printf '%s\n' "${XORG_OUT:-(no output)}" | sed 's/^/      /' >&2
 fi
 
 section "7. The cron job is scheduled and active"
