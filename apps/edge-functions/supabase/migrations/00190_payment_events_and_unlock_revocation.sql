@@ -30,6 +30,51 @@
 --  Additive and idempotent. No schema is created, so no PostgREST config
 --  PATCH is required (the CLAUDE.md PGRST002 condition applies only to
 --  CREATE/DROP SCHEMA); a plain NOTIFY is enough for the new table.
+--
+-- Two things here CANNOT be proved by existence alone and carry sql: predicates
+-- instead. public.has_feature ALREADY EXISTED before this migration, so
+-- `function: public.has_feature(uuid,text)` is true whether or not the CREATE OR
+-- REPLACE ran — the body must be read back for `revoked_at IS NULL`, or the
+-- revoke path is unproven while the block looks full. Likewise
+-- notifications_type_check existed since 00173; the constraint directive proves
+-- a constraint of that name is attached, the sql: predicate proves it is THIS
+-- version of it (three new values present, and site_form_distributed still
+-- there, so a re-declaration that dropped an old value is caught too).
+-- billing.payment_events is deny-by-default rather than policy-gated, which is
+-- a property of relrowsecurity + relforcerowsecurity + the ABSENCE of any
+-- policy; all three are asserted, because the table holds raw Paystack payloads
+-- carrying customer PII.
+--
+-- @verify:begin
+-- table: billing.payment_events
+-- index: uq_payment_events_type_reference ON billing.payment_events
+-- index: idx_payment_events_reference ON billing.payment_events
+-- index: idx_payment_events_org ON billing.payment_events
+-- sql: EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'billing' AND c.relname = 'payment_events' AND c.relrowsecurity AND c.relforcerowsecurity)
+-- sql: NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'billing' AND tablename = 'payment_events')
+-- grant_absent: anon SELECT ON billing.payment_events
+-- grant_absent: anon INSERT ON billing.payment_events
+-- grant_absent: anon UPDATE ON billing.payment_events
+-- grant_absent: anon DELETE ON billing.payment_events
+-- grant_absent: authenticated SELECT ON billing.payment_events
+-- grant_absent: authenticated INSERT ON billing.payment_events
+-- grant_absent: authenticated UPDATE ON billing.payment_events
+-- grant_absent: authenticated DELETE ON billing.payment_events
+-- grant_present: service_role SELECT ON billing.payment_events
+-- grant_present: service_role INSERT ON billing.payment_events
+-- column: billing.org_feature_unlocks.revoked_at
+-- column: billing.org_feature_unlocks.revoked_reason
+-- index: idx_org_feature_unlocks_active ON billing.org_feature_unlocks
+-- function: public.has_feature(uuid, text)
+-- sql: pg_get_functiondef('public.has_feature(uuid,text)'::regprocedure) LIKE '%revoked_at IS NULL%'
+-- constraint: notifications_type_check ON public.notifications
+-- sql: EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.notifications'::regclass AND conname = 'notifications_type_check' AND pg_get_constraintdef(oid) LIKE '%billing_duplicate_charge%' AND pg_get_constraintdef(oid) LIKE '%billing_refund_processed%' AND pg_get_constraintdef(oid) LIKE '%billing_dispute_opened%' AND pg_get_constraintdef(oid) LIKE '%site_form_distributed%')
+-- behaviour: refund webhook -> payment_events row + org_feature_unlocks.revoked_at set,
+--            and public.has_feature(org, 'jbcc') flips to false for that org
+-- behaviour: a re-delivered Paystack event for the same (event_type, reference) ->
+--            payload UPDATEd, no duplicate row, no 500
+-- behaviour: WM-Consulting still passes has_feature unconditionally, revoked or not
+-- @verify:end
 -- =============================================================================
 
 BEGIN;

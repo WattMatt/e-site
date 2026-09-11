@@ -35,6 +35,33 @@
 -- Additive/idempotent, no schema created, no new function. `billing` is already
 -- in the PostgREST db_schema list, so no config PATCH is needed (a policy change
 -- does not touch the schema cache at all; the trailing NOTIFY is belt-and-braces).
+--
+-- This migration creates no table, view or function, so the block below is
+-- built entirely out of what it DOES create — three policies, two revoked
+-- grants — plus four sql: predicates. Existence of a policy NAME is the weak
+-- half of what this file claims: 00007 shipped a name that promised a role
+-- check and a qual that had none, which is the whole bug. So the two sql:
+-- predicates on `qual` assert the PREDICATE, not just the name, and the other
+-- two assert that 00007's misnamed policies are actually GONE rather than
+-- sitting alongside the new ones still granting the old read.
+--
+-- @verify:begin
+-- policy: invoices_select_org_admin ON billing.invoices  -- PERMISSIVE
+-- policy: invoices_admin_read_gate ON billing.invoices  -- RESTRICTIVE
+-- policy: subscriptions_select_org_member ON billing.subscriptions  -- PERMISSIVE
+-- sql: EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'billing' AND tablename = 'invoices' AND policyname = 'invoices_select_org_admin' AND qual LIKE '%user_is_org_admin%')
+-- sql: EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'billing' AND tablename = 'invoices' AND policyname = 'invoices_admin_read_gate' AND qual LIKE '%user_is_org_admin%')
+-- sql: NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'billing' AND tablename = 'invoices' AND policyname = 'Org admins can view invoices')
+-- sql: NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'billing' AND tablename = 'subscriptions' AND policyname = 'Org admins can view subscription')
+-- grant_absent: anon SELECT ON billing.invoices
+-- grant_absent: anon SELECT ON billing.subscriptions
+-- grant_present: authenticated SELECT ON billing.invoices
+-- grant_present: authenticated SELECT ON billing.subscriptions
+-- behaviour: rbac-test CONTRACTOR SELECT billing.invoices -> 0 rows (was 3 with the Paystack references)
+-- behaviour: owner/admin SELECT billing.invoices -> own org's rows only
+-- behaviour: any active org member at any role SELECT billing.subscriptions -> 1 row
+--            (deliberately unchanged; PaymentStatusBanner + checkProjectQuota depend on it)
+-- @verify:end
 -- =============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────

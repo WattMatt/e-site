@@ -595,3 +595,39 @@ describe('runDirectives', () => {
     expect(r.passed).toBe(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The absent-object fixture the CLI proof runs against.
+//
+// It lives under packages/shared, NOT under the real migrations folder, so
+// `supabase db push` and the migration-hygiene scanner never see it: on a
+// shared checkout a stray .sql in that folder whose number collides with a real
+// migration is precisely the numbering race this programme exists to prevent.
+//
+// This is the fixture-rule question answered out loud — what would it have to
+// look like for the assertion to be able to fail? It names an object that does
+// not and will not exist, so a run over it MUST go red. If it ever goes green,
+// the tool is broken, not the database.
+// ---------------------------------------------------------------------------
+
+const ABSENT_OBJECT_FIXTURE = new URL(
+  './__fixtures__/00999_fixture_absent_object.sql',
+  import.meta.url,
+)
+
+describe('the absent-object fixture', () => {
+  it('parses, and its single directive fails against a database that answers honestly', async () => {
+    const sql = readFileSync(ABSENT_OBJECT_FIXTURE, 'utf8')
+    const directives = parseVerifyBlock(sql)
+    expect(directives).not.toBeNull()
+    expect(directives!).toHaveLength(1)
+    expect(directives![0].line).toBe(5)
+
+    // Stub the database the way a real one would answer for an absent table.
+    const r = await runDirectives(directives!, async (s) => [
+      { ok: !s.includes('this_table_does_not_exist_and_never_will') },
+    ])
+    expect(r.failures).toHaveLength(1)
+    expect(r.failures[0].directive.raw).toContain('this_table_does_not_exist_and_never_will')
+  })
+})

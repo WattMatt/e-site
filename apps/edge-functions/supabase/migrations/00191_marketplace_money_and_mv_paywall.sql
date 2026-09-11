@@ -13,6 +13,51 @@
 -- applying, READ THE EFFECTS BACK (the verification queries at the foot of this
 -- file) — a green Deploy DB Migrations run is not evidence the file ran.
 --
+-- The block below mechanises the verification queries at the foot of this file.
+-- Three of its claims are not expressible as existence checks:
+--   · Part A's grant layer is a COLUMN-level grant sitting where a table-level
+--     one used to be. has_table_privilege ignores column grants — which is
+--     exactly what makes `grant_absent: authenticated UPDATE ON
+--     marketplace.orders` the right assertion for the table level — so the
+--     column level needs has_column_privilege, asserted positively for
+--     status/notes and negatively for every money column.
+--   · Both RESTRICTIVE MV policies are FOR ALL, not FOR SELECT. A policy
+--     directive proves the name and the RESTRICTIVE kind but not the command,
+--     and the write half of the paywall lives in the command.
+--   · Both new functions are SECURITY DEFINER. order_protected_columns_unchanged
+--     reads the stored row from inside the very policy it is called by; without
+--     prosecdef it recurses or reads nothing and the RESTRICTIVE check silently
+--     stops being a check.
+--
+-- @verify:begin
+-- function: marketplace.order_protected_columns_unchanged(jsonb)
+-- function: marketplace.set_order_quote(uuid, numeric)
+-- sql: (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'marketplace' AND p.proname IN ('set_order_quote', 'order_protected_columns_unchanged') AND p.prosecdef) = 2
+-- grant_present: authenticated EXECUTE ON marketplace.order_protected_columns_unchanged(jsonb)
+-- grant_present: authenticated EXECUTE ON marketplace.set_order_quote(uuid, numeric)
+-- grant_absent: anon EXECUTE ON marketplace.order_protected_columns_unchanged(jsonb)
+-- grant_absent: anon EXECUTE ON marketplace.set_order_quote(uuid, numeric)
+-- policy: orders_money_columns_immutable ON marketplace.orders  -- RESTRICTIVE
+-- grant_absent: authenticated UPDATE ON marketplace.orders
+-- sql: has_column_privilege('authenticated', 'marketplace.orders', 'status', 'UPDATE') AND has_column_privilege('authenticated', 'marketplace.orders', 'notes', 'UPDATE') AND NOT has_column_privilege('authenticated', 'marketplace.orders', 'total_amount', 'UPDATE') AND NOT has_column_privilege('authenticated', 'marketplace.orders', 'commission_rate', 'UPDATE') AND NOT has_column_privilege('authenticated', 'marketplace.orders', 'commission_amount', 'UPDATE') AND NOT has_column_privilege('authenticated', 'marketplace.orders', 'payment_status', 'UPDATE') AND NOT has_column_privilege('authenticated', 'marketplace.orders', 'paystack_reference', 'UPDATE') AND NOT has_column_privilege('authenticated', 'marketplace.orders', 'paystack_split_code', 'UPDATE')
+-- grant_present: authenticated SELECT ON marketplace.paystack_subaccounts
+-- grant_absent: authenticated INSERT ON marketplace.paystack_subaccounts
+-- grant_absent: authenticated UPDATE ON marketplace.paystack_subaccounts
+-- grant_absent: authenticated DELETE ON marketplace.paystack_subaccounts
+-- grant_absent: anon INSERT ON marketplace.paystack_subaccounts
+-- grant_absent: anon UPDATE ON marketplace.paystack_subaccounts
+-- grant_absent: anon DELETE ON marketplace.paystack_subaccounts
+-- policy: fault_results_require_mv_access ON cable_schedule.fault_results  -- RESTRICTIVE
+-- policy: discrimination_checks_require_mv_access ON cable_schedule.discrimination_checks  -- RESTRICTIVE
+-- sql: (SELECT count(*) FROM pg_policies WHERE schemaname = 'cable_schedule' AND policyname IN ('fault_results_require_mv_access', 'discrimination_checks_require_mv_access') AND permissive = 'RESTRICTIVE' AND cmd = 'ALL') = 2
+-- behaviour: buyer PATCHes their own marketplace.orders row with total_amount = 0.01
+--            over PostgREST -> refused at the grant layer AND at the policy layer
+-- behaviour: contractor (payer) calls marketplace.set_order_quote -> 42501
+-- behaviour: supplier calls set_order_quote on a non-pending order -> 42501
+-- behaviour: a non-WM member without an MV seat SELECTs cable_schedule.fault_results
+--            -> 0 rows; all 27 WM members are unaffected (WM-org bypass inside
+--            public.user_has_mv_access)
+-- @verify:end
 -- ═══════════════════════════════════════════════════════════════════════════
 -- A. marketplace.orders — the buyer must not be able to set the price they pay
 -- ═══════════════════════════════════════════════════════════════════════════
