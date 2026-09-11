@@ -184,7 +184,7 @@
 --   (all three via has_function_privilege('anon', oid, 'EXECUTE') = false,
 --    never by reading proacl — a NULL proacl looks empty but IS the PUBLIC
 --    grant; this keeps 00186's anon-EXECUTE sweep true for cable_schedule)
--- unchanged: SELECT policies on all 8 tables (count and definition)
+-- behaviour: unchanged — SELECT policies on all 8 tables (count and definition)
 -- behaviour: contractor INSERT/UPDATE/DELETE on any of the 8 tables -> denied
 -- behaviour: org admin INSERT/UPDATE/DELETE on the same rows -> still allowed
 -- behaviour: contractor SELECT on cables/supplies -> still allowed (unchanged)
