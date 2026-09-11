@@ -248,6 +248,7 @@ export default async function MetricsPage() {
                         {present(now)}
                         {direction ? (
                           <span
+                            role="img"
                             style={{ marginLeft: 6, color: 'var(--c-text-dim)', fontSize: 12 }}
                             title={`${direction} from ${present(was)}`}
                             aria-label={`${direction} from ${present(was)}`}

@@ -70,7 +70,7 @@ membership.
 | `/settings/branding` | W | W | — | — | — | — | — |
 | `/settings/organisation` | W | W | ? | — | — | — | — |
 | `/settings/integrations` | W | W | ? | — | — | — | — |
-| `/metrics` | W | W | — | — | — | — | — |
+| `/metrics` | R | R | — | — | — | — | — |
 | `/projects/[id]/jbcc/unlock` | R⁴ | R⁴ | R⁴ | R⁴ | R⁴ | — | — |
 | `/projects/[id]/jbcc` (library landing) | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |
 | `/projects/[id]/jbcc/notice/[code]` | W⁵ | W⁵ | W⁵ | W⁵ | — | — | — |

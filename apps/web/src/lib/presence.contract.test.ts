@@ -48,7 +48,7 @@ function migrationContaining(needle: string): string {
 function tableBody(sql: string, table: string): string {
   const start = sql.indexOf(`CREATE TABLE ${table} (`)
   if (start < 0) throw new Error(`No CREATE TABLE ${table}`)
-  const end = sql.indexOf(');', start)
+  const end = sql.indexOf('\n);', start)
   return sql.slice(start, end)
 }
 
