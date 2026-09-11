@@ -110,6 +110,39 @@ describe('edge functions: decode-only auth requires a verifying gateway', () => 
     ).toEqual([])
   })
 
+  it('lists EVERY function directory, not just the guarded ones', () => {
+    // The test above only covers functions that import the service-role guard.
+    // That left a blind spot which was live for months: `notify-entity` and
+    // `validate-coc` were deployed to production with NO source in this repo at
+    // all. No assertion in this file could fail on them, because every check
+    // here derives its subject by scanning `functions/` — a function with no
+    // directory is a function no test can hold an opinion about.
+    //
+    // This asserts the half that is checkable without the network: nothing sits
+    // in `functions/` without a deploy line, so source and deployment cannot
+    // drift apart through simple omission. The other half — a slug deployed
+    // with no directory — is visible only from
+    // `GET /v1/projects/{ref}/functions`, and is called out in deploy.sh.
+    const listed = new Set(deployTable().map((c) => c.slug))
+    const dirs = readdirSync(FUNCTIONS_DIR)
+      .filter((n) => !n.startsWith('_'))
+      .filter((n) => existsSync(join(FUNCTIONS_DIR, n, 'index.ts')))
+      .sort()
+
+    // Guard the scanner: if this found nothing, the assertion below would pass
+    // vacuously and be decoration — the failure mode this whole file exists for.
+    expect(dirs.length).toBeGreaterThan(10)
+
+    const missing = dirs.filter((slug) => !listed.has(slug))
+    expect(
+      missing,
+      `These functions have source in apps/edge-functions but no line in ` +
+      `deploy.sh: ${missing.join(', ')}. Nobody deploys them from the checked-in ` +
+      `flags, so whatever is running in production is unreviewable — add them ` +
+      `to the FUNCTIONS table, or delete them from the project.`,
+    ).toEqual([])
+  })
+
   it('no function decodes a role claim inline instead of using the shared guard', () => {
     const offenders: string[] = []
     for (const name of readdirSync(FUNCTIONS_DIR).filter((n) => !n.startsWith('_'))) {

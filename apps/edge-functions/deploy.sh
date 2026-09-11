@@ -82,6 +82,18 @@ FUNCTIONS=(
   "auth-email-hook:"
   "marketplace-payment:"
   "validate-inspection:"
+
+  # notify-entity authorises by PROVING possession: it calls auth.getUser(),
+  # which validates the token against GoTrue over the network, then checks that
+  # the caller created the row it names. Under the rule above it is therefore
+  # one of the few functions ALLOWED to carry --no-verify-jwt — and it was
+  # deployed that way on 2026-06-24. It is still listed here without the flag,
+  # for the send-email reason directly above: being allowed to carry it is not
+  # a reason to. Its only caller is mobile, which holds a real user JWT, so the
+  # gateway is satisfied either way; leaving verification ON means a garbage
+  # token is refused at the edge instead of costing a GoTrue round-trip.
+  # Production was flipped to verify_jwt=true on 2026-09-11 to match this line.
+  "notify-entity:"
 )
 
 : "${SUPABASE_ACCESS_TOKEN:?SUPABASE_ACCESS_TOKEN must be set}"
@@ -107,7 +119,31 @@ done
 
 echo "done: ${deployed} function(s) deployed"
 
-# NOTE: `notify-entity` and `validate-coc` are deployed on this project but have
-# NO SOURCE IN THIS REPOSITORY, so they cannot be deployed from here and cannot
-# be reviewed. They are deliberately absent from the list above rather than
-# quietly omitted. Either commit their source or delete them from the project.
+# RESOLVED 2026-09-11 — the note that used to sit here said `notify-entity` and
+# `validate-coc` were deployed on this project with no source in this repository,
+# so neither could be reviewed. Both were pulled out of their deployed bundles
+# (`GET /v1/projects/{ref}/functions/{slug}/body`, ESZIP2.3) and read:
+#
+#   * notify-entity — guard is sound. It does NOT use the decode-only helper; it
+#     calls auth.getUser() (a GoTrue round-trip, so the signature is really
+#     checked) and then authorises per-entity. Not forgeable despite having run
+#     with --no-verify-jwt. Source is now committed and it is listed above.
+#
+#   * validate-coc — DELETED from the project. It was the pre-rename version of
+#     validate-inspection (da5741e, 2026-05-18) and was simply never removed
+#     after the rename: zero callers in the monorepo, zero references in
+#     cron.job. It had NO application-layer authorisation whatsoever, and ran
+#     every request under the service role, so the public anon key was enough to
+#     reach it — proven non-destructively with a nonexistent certificate_id,
+#     which returned the handler's own 404 rather than the gateway's 401. With a
+#     real id it would have DELETE-then-INSERTed that certificate's rows in
+#     inspections.coc_validations and returned the inspection's rule results.
+#     That is a bypass of the capability gate validate-inspection added — same
+#     table, no check. Its source remains in git history at f54b2e0.
+#
+# The lesson worth keeping: BOTH were invisible to every test in this repo,
+# because a test can only see the functions that HAVE a directory here. Nothing
+# reconciles this list against what is actually deployed. `pnpm --filter web
+# test edge-function-jwt` now asserts the direction it can check — every
+# directory appears above — but the other direction still needs an eye on
+# `GET /v1/projects/{ref}/functions` when something feels unaccounted for.
