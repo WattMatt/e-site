@@ -628,3 +628,93 @@ DROP TRIGGER IF EXISTS work_items_set_due_date_trg ON projects.work_items;
 CREATE TRIGGER work_items_set_due_date_trg
   BEFORE INSERT ON projects.work_items
   FOR EACH ROW EXECUTE FUNCTION projects.work_items_set_due_date();
+
+-- ─── 6. The ref allocator ────────────────────────────────────────────────────
+-- '<PREFIX>-<n>', n per project per type, allocated at insert, never reused.
+-- This is the qc_reports_ensure_no pattern (00172:91-105) with
+-- UNIQUE (project_id, ref) above it, plus two things it does not have.
+--
+-- (1) THE PREFIX IS AN EXPLICIT CASE, not upper(item_type). `ref` is immutable
+--     (the transition guard, §12) because it is a permanent identifier in
+--     emails, PDFs and other people's notes, and §15 §(e) lists work-item ids in
+--     client deep links as a one-way door. upper(item_type) yields QC_DEFECT-7
+--     and ORDER_FOLLOWUP-3, permanently, from the first row. This CASE adds no
+--     COLUMN, so A(b)'s set-equality test is untouched — which was the only
+--     reason a ref_prefix column was rejected. Mirrored by REF_PREFIXES in
+--     packages/shared/src/work-items/types.ts, and the contract test asserts
+--     the two agree, arm for arm.
+--
+-- (2) The advisory lock. Item 3's backfill inserts ~50 rows in one statement and
+--     future mirrors fire concurrently; without it two concurrent inserts read
+--     the same MAX and the second dies on work_items_ref_unique.
+--     Transaction-scoped, so it releases on commit or rollback with no cleanup.
+--
+-- MAX + 1 is monotonic here because work_items are NEVER DELETED — there is no
+-- DELETE policy for authenticated and the DELETE grant is revoked in §10, so a
+-- row leaves the inbox by becoming 'void', never by disappearing.
+--
+-- row_security is OFF, as in §5: the MAX must range over EVERY row on the
+-- project, not the caller's visible subset — a contractor who can read only the
+-- items they hold would otherwise compute a MAX that misses rows and collide on
+-- work_items_ref_unique. It authorises nothing and never reads current_user.
+--
+-- COALESCE and NULLIF are grammar constructs, not pg_catalog functions:
+-- `pg_catalog.coalesce(...)` is a 42883 on PG 17.6 (measured). They resolve
+-- without a search_path; max/regexp_replace/upper are schema-qualified because
+-- search_path is ''.
+--
+-- BEFORE ROW triggers fire in NAME order and before referential integrity, so
+-- on this table the sequence is work_items_assert_membership_trg (§7) ->
+-- work_items_ensure_ref_trg -> work_items_set_due_date_trg. An unregistered
+-- item_type therefore reaches this function before the FK to work_item_types
+-- fires: it falls through to the ELSE and gets a ref, and the due-date trigger
+-- — next in name order — refuses it with a sentence that names the type
+-- (asserted by work-item-due-date.sql assertion 12). Nothing here raises for it.
+--
+-- The anon/PUBLIC revokes for this function land in §10 (Task 9) with the rest
+-- of the grant block, in the section order the preamble fixes — declared as
+-- grant_absent: in the @verify block above. There are no revokes in this section.
+CREATE OR REPLACE FUNCTION projects.work_items_ensure_ref() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+SET row_security TO 'off'
+AS $fn$
+DECLARE v_n int; v_prefix text;
+BEGIN
+  IF NEW.ref IS NOT NULL AND NEW.ref <> '' THEN RETURN NEW; END IF;
+
+  v_prefix := CASE NEW.item_type
+                WHEN 'rfi'            THEN 'RFI'
+                WHEN 'snag'           THEN 'SNAG'
+                WHEN 'qc_defect'      THEN 'QC'
+                WHEN 'inspection'     THEN 'INSP'
+                WHEN 'diary_action'   THEN 'DIARY'
+                WHEN 'form_action'    THEN 'FORM'
+                WHEN 'order_followup' THEN 'ORD'
+                WHEN 'task'           THEN 'TASK'
+                -- A type registered in a later quarter without an arm here still
+                -- gets a working ref rather than a failed insert. Add the arm in
+                -- the same migration that registers the type: the contract test
+                -- fails the build until you do.
+                ELSE pg_catalog.upper(NEW.item_type)
+              END;
+
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(NEW.project_id::text || ':' || NEW.item_type, 0));
+
+  SELECT COALESCE(
+           pg_catalog.max(NULLIF(
+             pg_catalog.regexp_replace(wi.ref, '^.*-', ''), '')::int), 0) + 1
+    INTO v_n
+    FROM projects.work_items wi
+   WHERE wi.project_id = NEW.project_id AND wi.item_type = NEW.item_type;
+
+  NEW.ref := v_prefix || '-' || v_n::text;
+  RETURN NEW;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS work_items_ensure_ref_trg ON projects.work_items;
+CREATE TRIGGER work_items_ensure_ref_trg
+  BEFORE INSERT ON projects.work_items
+  FOR EACH ROW EXECUTE FUNCTION projects.work_items_ensure_ref();
