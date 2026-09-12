@@ -97,9 +97,34 @@ describe('addWorkingDays', () => {
     expect(addWorkingDays(new Date('2026-06-15T08:00:00Z'), 1, cal()).toISOString().slice(0, 10)).toBe('2026-06-17')
   })
 
-  it('pushes a due date landing inside the builders shutdown to the new year', () => {
+  it('pushes a due date landing inside the builders shutdown to the first SITE working day after it', () => {
+    // Parity with projects.push_past_builders_shutdown() (00196 §5). Thu 10 Dec
+    // 2026 + 10 site working days, the window IGNORED while counting (as
+    // add_working_days counts): Fri 11, Sat 12, Mon 14, Tue 15, Thu 17 (Wed 16
+    // is Day of Reconciliation), Fri 18, Sat 19, Mon 21, Tue 22, Wed 23 → lands
+    // Wed 2026-12-23, inside 15 Dec–15 Jan. The push is
+    // add_working_days(Fri 2027-01-15, 1, 'site') = SAT 2027-01-16 — the site
+    // calendar works Saturdays. Not Mon 18 Jan (the office answer), and not
+    // Sat 23 Jan, which "skip the window and keep counting" gave before this
+    // was aligned with the SQL.
     const c = cal({ shutdown: { from: '2026-12-15', to: '2027-01-15' }, calendar: 'site' })
-    const due = addWorkingDays(new Date('2026-12-10T08:00:00Z'), 10, c)
-    expect(due.toISOString().slice(0, 10) > '2027-01-15').toBe(true)
+    expect(addWorkingDays(new Date('2026-12-10T08:00:00Z'), 10, c).toISOString().slice(0, 10)).toBe('2027-01-16')
+  })
+
+  it('pushes on the SITE calendar even when the item itself is on the office calendar', () => {
+    // A site-calendar fixture cannot tell "first site working day" from "first
+    // working day on this calendar" — they coincide. An office fixture can.
+    // Office walk from Thu 10 Dec 2026 + 10: Fri 11, Mon 14, Tue 15, Thu 17,
+    // Fri 18, Mon 21, Tue 22, Wed 23, Thu 24, Mon 28 (Fri 25 Christmas; Sat 26
+    // Day of Goodwill) → lands Mon 2026-12-28, inside the window. The SQL pushes
+    // with 'site' regardless of the type's calendar: Sat 16 Jan, not Mon 18 Jan.
+    const c = cal({ shutdown: { from: '2026-12-15', to: '2027-01-15' }, calendar: 'office' })
+    expect(addWorkingDays(new Date('2026-12-10T08:00:00Z'), 10, c).toISOString().slice(0, 10)).toBe('2027-01-16')
+  })
+
+  it('leaves a landing date outside the window unchanged', () => {
+    // Mon 1 Jun 2026 + 3 site working days = Thu 4 Jun; the window is months away.
+    const c = cal({ shutdown: { from: '2026-12-15', to: '2027-01-15' }, calendar: 'site' })
+    expect(addWorkingDays(new Date('2026-06-01T08:00:00Z'), 3, c).toISOString().slice(0, 10)).toBe('2026-06-04')
   })
 })

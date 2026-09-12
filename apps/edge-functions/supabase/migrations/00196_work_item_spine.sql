@@ -410,3 +410,191 @@ CREATE TABLE IF NOT EXISTS projects.work_item_watchers (
 ALTER TABLE projects.work_items         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects.work_item_events   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects.work_item_watchers ENABLE ROW LEVEL SECURITY;
+
+-- ─── 5. The working-day arithmetic and the due-date trigger ──────────────────
+-- A(h) supplies projects.public_holidays, projects.calendar_years and
+-- working_days_between() (item 1's migration). add_working_days is the INVERSE
+-- and lives here, because the due-date trigger needs to ADD days, not count them.
+--
+-- STABLE, never IMMUTABLE: it reads two tables, and marking it immutable would
+-- let the planner fold a result across an October calendar refresh (A(h)).
+-- working_days is read as ISO day-of-week (Mon=1 .. Sun=7), matching
+-- 00101_project_settings.sql:20's ARRAY[1,2,3,4,5] default; `site` adds 6.
+--
+-- The anon/PUBLIC revokes for the three functions below land in §10 with the
+-- rest of the grant block, in the section order the preamble fixes — they are
+-- declared as grant_absent: in the @verify block above.
+CREATE OR REPLACE FUNCTION projects.add_working_days(
+  p_from date, p_days int, p_project uuid, p_calendar text
+) RETURNS date
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  v_days int[]; v_extra date[]; v_cursor date := p_from; v_left int := p_days;
+  v_limit date; y int;
+BEGIN
+  -- IS NULL first (as working_days_between does): `NULL NOT IN (...)` is NULL,
+  -- which an IF treats as false, so a NULL calendar would slip past this guard
+  -- and then walk as `office` — the silent default A(h) forbids.
+  IF p_calendar IS NULL OR p_calendar NOT IN ('office','site') THEN
+    RAISE EXCEPTION 'add_working_days: unknown calendar %; A(h) defines exactly office and site', COALESCE(p_calendar, '<null>')
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  -- p_days = 0 is refused rather than defined. "Return p_from unchanged" would
+  -- hand back a Sunday or a public holiday with no error; "return the first
+  -- working day on or after p_from" is a different function and nothing calls it.
+  IF p_days IS NULL OR p_days < 1 THEN
+    RAISE EXCEPTION 'add_working_days: p_days must be >= 1, got %', p_days
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  SELECT ps.working_days, ps.extra_holidays INTO v_days, v_extra
+    FROM projects.project_settings ps WHERE ps.project_id = p_project;
+  IF v_days IS NULL THEN                       -- no settings row yet
+    v_days := ARRAY[1,2,3,4,5]; v_extra := ARRAY[]::date[];
+  END IF;
+
+  -- The empty-array check comes BEFORE the Saturday append. After it, an empty
+  -- working_days array would silently become a Saturday-only calendar on the
+  -- site path — a wrong answer instead of an error.
+  IF cardinality(v_days) = 0 THEN
+    RAISE EXCEPTION 'add_working_days: project % has an empty working_days array; no date can ever be reached', p_project
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF p_calendar = 'site' AND NOT (6 = ANY (v_days)) THEN
+    v_days := v_days || 6;                     -- A(h): site = office + Saturday
+  END IF;
+
+  -- Generous upper bound: at most ~2.4 calendar days per working day, plus a
+  -- month of shutdown. Used both to bound the loop and to fix the year range.
+  v_limit := p_from + (p_days * 3 + 45);
+
+  -- Every year the walk can touch must be seeded. An unseeded year RAISES —
+  -- there is no fallback to calendar days (A(h)), because a silent one-day
+  -- drift changes whether an item escalates. The HINT names the re-seed,
+  -- because this error surfaces to an operator through a failed source write.
+  FOR y IN EXTRACT(YEAR FROM p_from)::int .. EXTRACT(YEAR FROM v_limit)::int LOOP
+    IF NOT EXISTS (SELECT 1 FROM projects.calendar_years cy WHERE cy.year = y) THEN
+      RAISE EXCEPTION USING ERRCODE = 'no_data_found',
+        MESSAGE = format('add_working_days: calendar year %s is not seeded in projects.calendar_years', y),
+        HINT    = format('Seed it: INSERT INTO projects.calendar_years (year) VALUES (%s) ON CONFLICT DO NOTHING; then load that year''s public holidays from listHolidays(%s). A(h) forbids falling back to calendar days.', y, y);
+    END IF;
+  END LOOP;
+
+  WHILE v_left > 0 LOOP
+    v_cursor := v_cursor + 1;
+    IF v_cursor > v_limit THEN
+      RAISE EXCEPTION 'add_working_days: no working day found within % days of %', v_limit - p_from, p_from
+        USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF EXTRACT(ISODOW FROM v_cursor)::int = ANY (v_days)
+       AND NOT EXISTS (SELECT 1 FROM projects.public_holidays h WHERE h.d = v_cursor)
+       AND NOT (v_cursor = ANY (COALESCE(v_extra, ARRAY[]::date[])))
+    THEN
+      v_left := v_left - 1;
+    END IF;
+  END LOOP;
+  RETURN v_cursor;
+END;
+$fn$;
+
+-- A(h): "A due date landing inside the December builders' shutdown is pushed to
+-- the first site working day of the new year; the shutdown window is a
+-- per-project setting." Gated by the EXISTING builders_holiday boolean
+-- (00101:23), so a project that does not shut down is untouched.
+CREATE OR REPLACE FUNCTION projects.push_past_builders_shutdown(p_date date, p_project uuid)
+RETURNS date
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE v_on boolean; v_start text; v_end text; y int; band_start date; band_end date;
+BEGIN
+  SELECT ps.builders_holiday, ps.builders_shutdown_start_md, ps.builders_shutdown_end_md
+    INTO v_on, v_start, v_end
+    FROM projects.project_settings ps WHERE ps.project_id = p_project;
+  IF NOT COALESCE(v_on, false) THEN RETURN p_date; END IF;
+
+  -- Two bands, because the window wraps the year end: a January date belongs to
+  -- the PREVIOUS December's band, a December date to its own.
+  FOR y IN EXTRACT(YEAR FROM p_date)::int - 1 .. EXTRACT(YEAR FROM p_date)::int LOOP
+    band_start := to_date(y::text       || '-' || v_start, 'YYYY-MM-DD');
+    band_end   := to_date((y + 1)::text || '-' || v_end,   'YYYY-MM-DD');
+    IF p_date BETWEEN band_start AND band_end THEN
+      RETURN projects.add_working_days(band_end, 1, p_project, 'site');
+    END IF;
+  END LOOP;
+  RETURN p_date;
+END;
+$fn$;
+
+-- BEFORE INSERT due-date trigger.
+--
+-- SECURITY DEFINER with row_security off, and that is deliberate: it computes a
+-- value, it authorises nothing, and it must produce the same date whether the
+-- caller is a contractor who cannot read project_settings under their own RLS or
+-- the service client. It never reads current_user. Contrast the transition guard
+-- (§12), which IS an authorisation decision.
+--
+-- There is no calendar-day fallback. §03 §1.5's "calendar-day fallback" sentence
+-- is about a path that supplies no date getting one computed rather than failing;
+-- A(h) [R24] governs the unseeded-year case and forbids the fallback outright.
+CREATE OR REPLACE FUNCTION projects.work_items_set_due_date() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  v_days int; v_cal text; v_defaults jsonb; v_rfi_default int; v_override int;
+BEGIN
+  SELECT t.default_days, t.calendar INTO v_days, v_cal
+    FROM projects.work_item_types t WHERE t.key = NEW.item_type;
+  IF v_days IS NULL THEN
+    RAISE EXCEPTION 'There is no work-item type called "%". Pick one of the registered types.', NEW.item_type
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  SELECT ps.work_item_defaults, ps.default_rfi_due_days
+    INTO v_defaults, v_rfi_default
+    FROM projects.project_settings ps WHERE ps.project_id = NEW.project_id;
+
+  v_override := NULLIF(v_defaults -> NEW.item_type ->> 'days_to_respond', '')::int;
+
+  -- The rfi arm reads project_settings.default_rfi_due_days LIVE (00101:30),
+  -- never a copy taken at migration time. The settings surface writes that
+  -- column and does not touch work_item_defaults, so a copy would be correct
+  -- only until the first PM edited it — and §13 requires rfi to read the
+  -- existing default, not a snapshot of it. work_item_defaults.rfi is therefore
+  -- seeded with a NULL days_to_respond (§13), and a per-project OVERRIDE typed
+  -- into that key still wins, which is the whole point of the key existing.
+  v_days := COALESCE(
+    v_override,
+    CASE WHEN NEW.item_type = 'rfi' THEN v_rfi_default END,
+    v_days);
+
+  IF NEW.due_date IS NULL THEN
+    BEGIN
+      NEW.due_date := projects.add_working_days(
+        (now() AT TIME ZONE 'Africa/Johannesburg')::date, v_days, NEW.project_id, v_cal);
+    EXCEPTION WHEN no_data_found THEN
+      -- Re-raise with copy an operator can act on. The original message names
+      -- the year; this one names the consequence, because this error reaches a
+      -- foreman trying to log a snag.
+      RAISE EXCEPTION 'The working-day calendar has not been set up far enough ahead, so a due date cannot be worked out. Ask an administrator to load the public holidays for this year and the next two.'
+        USING ERRCODE = 'no_data_found', HINT = SQLERRM;
+    END;
+  END IF;
+
+  -- Applied to a supplied date as well as a computed one: the point of the push
+  -- is that nobody is on site to do the work, which is true however the date arrived.
+  NEW.due_date := projects.push_past_builders_shutdown(NEW.due_date, NEW.project_id);
+  RETURN NEW;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS work_items_set_due_date_trg ON projects.work_items;
+CREATE TRIGGER work_items_set_due_date_trg
+  BEFORE INSERT ON projects.work_items
+  FOR EACH ROW EXECUTE FUNCTION projects.work_items_set_due_date();
