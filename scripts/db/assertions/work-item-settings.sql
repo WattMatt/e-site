@@ -2,6 +2,7 @@
 -- Run inside the rolled-back transaction opened by try-work-item-spine.sh.
 DO $$
 DECLARE n int; v_pm uuid; v_proj uuid; v_owner uuid;
+        v_pmless uuid; v_total int; v_list text;
 BEGIN
   -- 1. The four columns exist with the shapes the spine depends on.
   SELECT count(*) INTO n FROM information_schema.columns
@@ -24,7 +25,9 @@ BEGIN
   THEN RAISE EXCEPTION 'work_item_defaults must be NOT NULL DEFAULT ''{}'''; END IF;
 
   -- 4. EVERY live settings row now names a triage owner. Zero exceptions:
-  --    the backfill terminates at the org owner, so no project can be missed.
+  --    the backfill terminates at the project's creator (created_by is NOT NULL
+  --    on every projects.projects row), so no project can be missed. The org
+  --    owner is NOT the guarantee: the demo org has no active owner at all.
   SELECT count(*) INTO n FROM projects.project_settings WHERE triage_owner_id IS NULL;
   IF n <> 0 THEN RAISE EXCEPTION 'backfill left % project_settings rows with a NULL triage_owner_id', n; END IF;
 
@@ -45,6 +48,7 @@ BEGIN
   IF v_proj IS NULL THEN
     RAISE EXCEPTION 'no PM-less project found — the created_by/org-owner fallback is untested. Create one in this transaction rather than skipping the assertion.';
   END IF;
+  v_pmless := v_proj;  -- kept for assertion 10; assertion 7 reassigns v_proj
   SELECT ps.triage_owner_id INTO v_pm FROM projects.project_settings ps WHERE ps.project_id = v_proj;
   SELECT p.created_by INTO v_owner FROM projects.projects p WHERE p.id = v_proj;
   IF v_pm IS NULL THEN RAISE EXCEPTION 'PM-less project % resolved a NULL triage owner', v_proj; END IF;
@@ -74,5 +78,25 @@ BEGIN
    WHERE has_function_privilege('anon', f.sig, 'EXECUTE');
   IF n <> 0 THEN RAISE EXCEPTION '% new function(s) still executable by anon', n; END IF;
 
-  RAISE NOTICE 'work-item-settings: 9/9 assertions passed';
+  -- 10. resolve_project_pm() — the GATEKEEPER default for every 'project_pm'
+  --     type — resolves for EVERY project (the count includes the project
+  --     assertion 7 just created). The org-owner arm is NOT a guarantee: the
+  --     demo org e51ede00-…-0000-000000000001 has no active owner, admin or
+  --     project_manager. created_by (NOT NULL on every projects.projects row)
+  --     is the terminal arm, and for the PM-less project it is the arm that
+  --     actually answers — so that project must resolve to its own created_by.
+  SELECT count(*) INTO v_total FROM projects.projects;
+  SELECT count(*), string_agg(p.name || ' [' || p.id || ']', '; ') INTO n, v_list
+    FROM projects.projects p
+   WHERE projects.resolve_project_pm(p.id) IS NULL;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'resolve_project_pm() returned NULL for % of % projects: %', n, v_total, v_list;
+  END IF;
+  SELECT p.created_by INTO v_owner FROM projects.projects p WHERE p.id = v_pmless;
+  IF projects.resolve_project_pm(v_pmless) IS DISTINCT FROM v_owner THEN
+    RAISE EXCEPTION 'PM-less project % resolve_project_pm() returned % rather than its created_by %',
+      v_pmless, projects.resolve_project_pm(v_pmless), v_owner;
+  END IF;
+
+  RAISE NOTICE 'work-item-settings: 10/10 assertions passed (resolve_project_pm non-NULL on all % projects)', v_total;
 END $$;

@@ -91,14 +91,22 @@ AS $fn$
 $fn$;
 
 -- §03 §1.5's "project PM" chain, in 00107's order: oldest active project_members
--- PM row → oldest active org PM → org admin → org owner. Used as the GATEKEEPER
--- default for every type whose gatekeeper_rule is 'project_pm'. Terminates at
--- the owner so it can never return NULL for a project that exists.
+-- PM row → oldest active org PM → org admin → org owner → the project's
+-- created_by. Used as the GATEKEEPER default for every type whose
+-- gatekeeper_rule is 'project_pm'.
+--
+-- The org-owner arm is NOT a guarantee. Measured on production 2026-09-12: the
+-- demo org e51ede00-0000-0000-0000-000000000001 has no active owner, admin or
+-- project_manager at all (one client_viewer, one contractor), so a chain that
+-- ended at the owner returned NULL for its project. projects.projects.created_by
+-- is NOT NULL on every row, so created_by is the TERMINAL arm: this function
+-- cannot return NULL for a project that exists. Item 3's mirror triggers and
+-- every later default must end the same way — COALESCE(…, org_owner, created_by).
 CREATE OR REPLACE FUNCTION projects.resolve_project_pm(p_project_id uuid)
 RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path TO 'public' SET row_security TO 'off'
 AS $fn$
-  WITH proj AS (SELECT id, organisation_id FROM projects.projects WHERE id = p_project_id)
+  WITH proj AS (SELECT id, organisation_id, created_by FROM projects.projects WHERE id = p_project_id)
   SELECT COALESCE(
     (SELECT pm.user_id FROM projects.project_members pm
       WHERE pm.project_id = p_project_id AND pm.is_active AND pm.role = 'project_manager'
@@ -109,14 +117,18 @@ AS $fn$
     (SELECT uo.user_id FROM public.user_organisations uo JOIN proj ON TRUE
       WHERE uo.organisation_id = proj.organisation_id AND uo.is_active AND uo.role = 'admin'
       ORDER BY uo.created_at ASC LIMIT 1),
-    (SELECT projects.org_owner(proj.organisation_id) FROM proj));
+    (SELECT projects.org_owner(proj.organisation_id) FROM proj),
+    (SELECT proj.created_by FROM proj));
 $fn$;
 
 -- The TRIAGE-OWNER chain is deliberately different from the PM chain and shorter:
 -- oldest active project_manager on the project → the project's created_by → the
--- org owner. created_by sits ABOVE the org owner, which is why this cannot reuse
--- resolve_project_pm (that one already terminates at the owner, so created_by
--- would never be reached).
+-- org owner. created_by sits ABOVE the org owner here and BELOW it in the PM
+-- chain (which also carries the org-PM and org-admin arms), which is why this
+-- cannot reuse resolve_project_pm. It terminates at the project's creator:
+-- created_by is NOT NULL on every projects.projects row, so this cannot return
+-- NULL for a project that exists, and the org-owner arm is unreachable in
+-- practice — kept as the plan wrote it, not as the guarantee.
 CREATE OR REPLACE FUNCTION projects.resolve_triage_owner(p_project_id uuid)
 RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path TO 'public' SET row_security TO 'off'
