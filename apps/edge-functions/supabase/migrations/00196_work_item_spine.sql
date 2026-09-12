@@ -129,6 +129,42 @@
 -- must edit this directive in the SAME migration that retires it — otherwise
 -- that migration's own post-push verify goes red on this file's line.
 
+-- ─── 0. Preconditions ────────────────────────────────────────────────────────
+-- This migration REFUSES TO APPLY against an under-seeded calendar, and that is
+-- the point of it.
+--
+-- add_working_days() raises no_data_found on an unseeded year (A(h) [R24], which
+-- forbids a calendar-day fallback outright). It runs inside a BEFORE INSERT
+-- trigger on the spine, and from item 3 onward every mirrored source writes
+-- through that trigger — so a missed October re-seed does not merely break
+-- escalation, it makes raising an RFI, logging a snag or submitting a form fail
+-- outright, with an error no support person can act on. The re-seed is a manual
+-- annual task (§15 §(b2)) and this programme's own history is cloud-sync-poll:
+-- specified, merged, never scheduled, found two months later by users.
+--
+-- ASSERT, never seed as a side effect: the annual seed is item 1's operational
+-- task, and a migration that quietly repaired it would hide the miss.
+DO $pre$
+DECLARE
+  y int := EXTRACT(YEAR FROM (now() AT TIME ZONE 'Africa/Johannesburg'))::int;
+  missing int;
+BEGIN
+  IF to_regclass('projects.calendar_years') IS NULL THEN
+    RAISE EXCEPTION 'work-item spine: projects.calendar_years does not exist. Apply the Q1 metrics/calendar migration (A(f) ordinal 1) first.'
+      USING ERRCODE = 'undefined_table';
+  END IF;
+
+  SELECT count(*) INTO missing
+    FROM generate_series(y, y + 2) AS g(yr)
+   WHERE NOT EXISTS (SELECT 1 FROM projects.calendar_years cy WHERE cy.year = g.yr);
+
+  IF missing > 0 THEN
+    RAISE EXCEPTION 'work-item spine: % of the calendar years %..% are not seeded in projects.calendar_years', missing, y, y + 2
+      USING ERRCODE = 'no_data_found',
+            HINT = 'Seed them first, then re-apply: INSERT INTO projects.calendar_years (year) SELECT g FROM generate_series(<y>, <y+2>) g ON CONFLICT DO NOTHING; and run item 1''s listHolidays() seeder for each of those years into projects.public_holidays.';
+  END IF;
+END $pre$;
+
 -- ─── 1. projects.work_item_types — the registry ──────────────────────────────
 -- Columns are Appendix A(b)'s, exactly. A ref_prefix column was rejected: §12
 -- §(h) test 1 asserts this column set, and the prefix lives as a CASE inside
@@ -188,3 +224,167 @@ ALTER TABLE projects.work_item_types ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS work_item_types_select ON projects.work_item_types;
 CREATE POLICY work_item_types_select ON projects.work_item_types
   FOR SELECT TO authenticated USING (true);
+
+-- ─── 2. projects.work_items — Appendix A(a), reproduced ──────────────────────
+-- Three properties are load-bearing and every dependent section is written
+-- against them (A(a)):
+--   1. assignee_id is NOT NULL. An item that belongs to nobody cannot exist, so
+--      there is no unassigned arm anywhere in the data model.
+--   2. due_date is NOT NULL, computed in working days by the BEFORE INSERT
+--      trigger against A(h)'s calendar.
+--   3. ball_in_court_id is a STORED GENERATED column, null only for closed and
+--      void. It is a CASE over three columns OF THE SAME ROW and calls nothing,
+--      which is exactly what Postgres permits. It has NO write path at all.
+--
+-- status DEFAULTS to 'triage'. §03 §1.6's "an item created WITH an explicit
+-- assignee is born open" is enforced by the two writers that know whether the
+-- assignee was chosen or resolved — createWorkItemTaskAction and item 3's mirror
+-- triggers — because the database cannot tell the difference from the row alone.
+--
+-- instruction_recipient_id (Q2) is deliberately absent, and both source CHECKs
+-- omit its term. Q2 re-declares BOTH wholesale in one statement, because
+-- DROP CONSTRAINT discards the other one silently.
+CREATE TABLE IF NOT EXISTS projects.work_items (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organisation_id  uuid NOT NULL REFERENCES public.organisations(id),
+  project_id       uuid NOT NULL REFERENCES projects.projects(id) ON DELETE CASCADE,
+  item_type        text NOT NULL REFERENCES projects.work_item_types(key),
+  origin           text NOT NULL DEFAULT 'mirror'
+                   CHECK (origin IN ('mirror','split','manual')),
+  ref              text NOT NULL,                -- 'RFI-12', per project, per type
+  title            text NOT NULL,
+  priority         text NOT NULL DEFAULT 'medium'
+                   CHECK (priority IN ('low','medium','high','critical')),
+  status           text NOT NULL DEFAULT 'triage'
+                   CHECK (status IN ('triage','open','answered','closed','void')),
+  source_status    text,                         -- display-only mirror of the module's vocabulary
+  void_reason      text,
+  assignee_id      uuid NOT NULL REFERENCES public.profiles(id),
+  gatekeeper_id    uuid NOT NULL REFERENCES public.profiles(id),
+  ball_in_court_id uuid GENERATED ALWAYS AS (
+                     CASE status
+                       WHEN 'triage'   THEN assignee_id
+                       WHEN 'open'     THEN assignee_id
+                       WHEN 'answered' THEN gatekeeper_id
+                       ELSE NULL END) STORED,
+  due_date         date NOT NULL,
+  opened_at        timestamptz NOT NULL DEFAULT now(),
+  closed_at        timestamptz, closed_by uuid REFERENCES public.profiles(id),
+  last_activity_at timestamptz NOT NULL DEFAULT now(),
+  created_by       uuid NOT NULL REFERENCES public.profiles(id),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+
+  -- Q1 sources. Typed nullable FKs, one per source — never a polymorphic
+  -- (schema, table, id) triple: a polymorphic key cannot be enforced, and an
+  -- orphaned row in a personal inbox is the worst failure this primitive can
+  -- have. ON DELETE SET NULL, never CASCADE: deleting a diary entry is a live
+  -- gated action, and a cascade would destroy the events behind metric 4.
+  rfi_id        uuid REFERENCES projects.rfis(id)               ON DELETE SET NULL,
+  snag_id       uuid REFERENCES field.snags(id)                 ON DELETE SET NULL,
+  qc_entry_id   uuid REFERENCES projects.qc_entries(id)         ON DELETE SET NULL,
+  diary_id      uuid REFERENCES projects.site_diary_entries(id) ON DELETE SET NULL,
+  site_form_id  uuid REFERENCES field.site_forms(id)            ON DELETE SET NULL,
+  node_order_id uuid REFERENCES structure.node_orders(id)       ON DELETE SET NULL,
+  inspection_id uuid REFERENCES inspections.inspections(id)     ON DELETE SET NULL,
+
+  CONSTRAINT work_items_one_source CHECK (
+    (rfi_id IS NOT NULL)::int + (snag_id IS NOT NULL)::int + (qc_entry_id IS NOT NULL)::int
+  + (diary_id IS NOT NULL)::int + (site_form_id IS NOT NULL)::int
+  + (node_order_id IS NOT NULL)::int + (inspection_id IS NOT NULL)::int <= 1),
+
+  -- 'approval' is named here in Q1 deliberately (§03 §1.2). Relaxing this later
+  -- would mean an ALTER on the hottest table on the platform; Q3 should cost a
+  -- registry row, not a constraint rewrite.
+  CONSTRAINT work_items_source_required CHECK (
+    item_type IN ('task','approval') OR status = 'void'
+    OR (rfi_id IS NOT NULL)::int + (snag_id IS NOT NULL)::int + (qc_entry_id IS NOT NULL)::int
+     + (diary_id IS NOT NULL)::int + (site_form_id IS NOT NULL)::int
+     + (node_order_id IS NOT NULL)::int + (inspection_id IS NOT NULL)::int = 1),
+
+  CONSTRAINT work_items_bic_present CHECK (
+    status IN ('closed','void') OR ball_in_court_id IS NOT NULL),
+  CONSTRAINT work_items_ref_unique UNIQUE (project_id, ref)
+);
+
+-- Appendix A(a)'s index set, and nothing else. Keyset pagination is
+-- ORDER BY due_date ASC, id ASC with a two-part cursor — there is no NULLS
+-- ordering because due_date is NOT NULL and there are no nulls to order.
+CREATE INDEX IF NOT EXISTS work_items_my_work_idx
+  ON projects.work_items (assignee_id, status, due_date) WHERE status <> 'closed';
+CREATE INDEX IF NOT EXISTS work_items_inbox_idx
+  ON projects.work_items (ball_in_court_id, due_date) WHERE status IN ('triage','open','answered');
+CREATE INDEX IF NOT EXISTS work_items_project_module_idx
+  ON projects.work_items (project_id, item_type, status);
+CREATE INDEX IF NOT EXISTS work_items_org_idx
+  ON projects.work_items (organisation_id);
+
+-- One partial UNIQUE per source column, predicated on origin = 'mirror'. This
+-- makes the projection idempotent on retry while leaving a deliberate 'split'
+-- row legal and untouched by source-status pushback (§03 §1.2, §1.3).
+CREATE UNIQUE INDEX IF NOT EXISTS work_items_src_rfi_uidx        ON projects.work_items (rfi_id)        WHERE rfi_id        IS NOT NULL AND origin = 'mirror';
+CREATE UNIQUE INDEX IF NOT EXISTS work_items_src_snag_uidx       ON projects.work_items (snag_id)       WHERE snag_id       IS NOT NULL AND origin = 'mirror';
+CREATE UNIQUE INDEX IF NOT EXISTS work_items_src_qc_uidx         ON projects.work_items (qc_entry_id)   WHERE qc_entry_id   IS NOT NULL AND origin = 'mirror';
+CREATE UNIQUE INDEX IF NOT EXISTS work_items_src_diary_uidx      ON projects.work_items (diary_id)      WHERE diary_id      IS NOT NULL AND origin = 'mirror';
+CREATE UNIQUE INDEX IF NOT EXISTS work_items_src_form_uidx       ON projects.work_items (site_form_id)  WHERE site_form_id  IS NOT NULL AND origin = 'mirror';
+CREATE UNIQUE INDEX IF NOT EXISTS work_items_src_order_uidx      ON projects.work_items (node_order_id) WHERE node_order_id IS NOT NULL AND origin = 'mirror';
+CREATE UNIQUE INDEX IF NOT EXISTS work_items_src_inspection_uidx ON projects.work_items (inspection_id) WHERE inspection_id IS NOT NULL AND origin = 'mirror';
+
+-- ─── 3. projects.work_item_events — append-only ──────────────────────────────
+-- Feeds ball-in-court history, the activity feed and three of the eight metrics:
+-- metric 4 (first open -> answered transition), the ball-in-court-arrivals half
+-- of metric 5's denominator, and metric 7. NEVER purged (§12 §(f)) — it dies
+-- only with its project, by cascade.
+CREATE TABLE IF NOT EXISTS projects.work_item_events (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  work_item_id    uuid NOT NULL REFERENCES projects.work_items(id) ON DELETE CASCADE,
+  project_id      uuid NOT NULL REFERENCES projects.projects(id)   ON DELETE CASCADE,
+  organisation_id uuid NOT NULL REFERENCES public.organisations(id),
+  verb            text NOT NULL CHECK (verb IN
+                    ('created','assigned','reassigned','status_changed','due_changed','closed','voided')),
+  from_status     text, to_status   text,
+  from_user_id    uuid REFERENCES public.profiles(id),
+  to_user_id      uuid REFERENCES public.profiles(id),
+  from_due_date   date, to_due_date date,
+
+  -- Metric 5's denominator is "work items that entered the caller's ball-in-court
+  -- that week, counted off projects.work_item_events" (§15 metric 5). Without
+  -- these two columns that number can only be reconstructed from the row's
+  -- CURRENT gatekeeper_id — which is precisely the error §15 §(b) forbids, and
+  -- it is wrong for every item whose gatekeeper was ever corrected.
+  from_ball_in_court_id uuid REFERENCES public.profiles(id),
+  to_ball_in_court_id   uuid REFERENCES public.profiles(id),
+
+  -- The actor, from auth.uid() inside the definer trigger — NEVER current_user,
+  -- which resolves to the function owner. NULL for a service-role path.
+  actor_id        uuid REFERENCES public.profiles(id),
+  -- §15 §(b): "the effective role stamped AT EVENT TIME, not re-resolved later".
+  -- Metric 2a's diagnostic — the share of contractor-held items that moved —
+  -- is the only first-party evidence the spine reached the 13 contractor
+  -- accounts, because email engagement is unmeasurable: 246 automated emails
+  -- have been sent and email_sequences.opened_at/clicked_at are NULL on every
+  -- row, the Resend webhook of 00030:24-25 having never been built.
+  actor_role      text,
+
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS work_item_events_item_idx
+  ON projects.work_item_events (work_item_id, created_at);
+
+-- ─── 4. projects.work_item_watchers — notification-only, never blocking ──────
+-- Replaces two fan-outs: createRfiAction bells every active project member
+-- (rfi.actions.ts:84-95) and emails the same roster (:98-105). Together with the
+-- diary path those produce the 964 notifications of which 57 have ever been read.
+-- Auto-populated by projects.append_work_item_event() (§11) on create and on
+-- every reassignment — §03 §1.8's "auto-populated on create, assign and
+-- @mention", minus the @mention half, which arrives with threads.
+CREATE TABLE IF NOT EXISTS projects.work_item_watchers (
+  work_item_id uuid NOT NULL REFERENCES projects.work_items(id) ON DELETE CASCADE,
+  user_id      uuid NOT NULL REFERENCES public.profiles(id)     ON DELETE CASCADE,
+  reason       text NOT NULL CHECK (reason IN ('creator','raiser','assignee','gatekeeper','mention','manual')),
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (work_item_id, user_id)
+);
+
+ALTER TABLE projects.work_items         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects.work_item_events   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects.work_item_watchers ENABLE ROW LEVEL SECURITY;
