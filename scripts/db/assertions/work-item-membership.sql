@@ -174,12 +174,38 @@ BEGIN
   --    skipped and the chain must reach resolve_project_pm(), whose answer it
   --    returns — asserted by IDENTITY, so a reordered or short-circuited chain
   --    reads red rather than "someone with a role".
+  --
+  --    THE FIXTURE WRITE BYPASSES §13's VALIDATOR. validate_work_item_defaults
+  --    NULLs a per-type id with no effective role AT WRITE TIME, so through it
+  --    the dead uuid never reaches the jsonb and the chain sees NULL — this
+  --    arm then exercises nothing (proven: deleting §7's per-type role check
+  --    left this file green). The chain's own check still matters, because
+  --    membership can lapse AFTER the settings write — the departed-employee
+  --    case no write-time validator can see — so the fixture is written with
+  --    session_replication_role = replica for this ONE statement: every
+  --    non-ALWAYS trigger on project_settings is skipped (the validator, the
+  --    updated_at touch, the 00102 audit row), no ALTER TABLE lock is taken on
+  --    a hot table, and the setting is transaction-local and reset at once.
+  --    The pin below proves the bypass took, so the arm cannot go vacuous
+  --    again silently. The settings-slot value (a real profile) is a legal
+  --    write on either path.
+  --    SET LOCAL, not set_config(): postgres is not a superuser here, and the
+  --    parameter is SUSET. Supabase's supautils hook escalates the SET
+  --    utility statement for the privileged role (session_replication_role is
+  --    in supautils.privileged_role_allowed_configs, read 2026-09-12) but a
+  --    set_config() call never reaches that hook — 42501 (measured).
+  SET LOCAL session_replication_role = replica;
   UPDATE projects.project_settings
      SET work_item_defaults = jsonb_build_object('rfi', jsonb_build_object(
            'days_to_respond', NULL,
            'triage_owner_id', '00000000-0000-0000-0000-0000deadbeef'::uuid, 'gatekeeper_id', NULL)),
          triage_owner_id = v_outsider
    WHERE project_id = v_proj;
+  SET LOCAL session_replication_role = origin;
+  IF (SELECT ps.work_item_defaults -> 'rfi' ->> 'triage_owner_id' FROM projects.project_settings ps WHERE ps.project_id = v_proj)
+     IS DISTINCT FROM '00000000-0000-0000-0000-0000deadbeef' THEN
+    RAISE EXCEPTION 'the validator bypass did not take: §13 nulled the fixture''s dead uuid, so 5''s per-type arm no longer exercises the chain''s own check';
+  END IF;
   v_res := projects.resolve_work_item_assignee(v_proj, 'rfi', NULL);
   IF v_res IS NULL THEN RAISE EXCEPTION 'the resolution chain returned NULL — assignee_id NOT NULL would abort the source write'; END IF;
   IF public.user_effective_project_role(v_proj, v_res) IS NULL

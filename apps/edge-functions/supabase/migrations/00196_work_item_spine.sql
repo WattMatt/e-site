@@ -860,9 +860,13 @@ BEGIN
 
   -- A jsonb null or an absent key both read as SQL NULL here. The ::uuid cast
   -- is safe because validate_work_item_defaults() (§13) guarantees the value's
-  -- shape at write time — a uuid string or null — so it is deliberate, not
-  -- defensive: a malformed value is §13's error, raised at the settings write,
-  -- never here at the source write.
+  -- shape at write time — pg_input_is_valid(…, 'uuid') or null, every other
+  -- sub-key refused — so it is deliberate, not defensive: a malformed value is
+  -- §13's error, raised at the settings write with a sentence, never a 22P02
+  -- here at the source write. §13 also NULLS an id that has no effective role
+  -- at write time; the role check below is still needed because membership
+  -- can lapse AFTER the settings write (a departed employee), which no write-
+  -- time validator can see.
   v_candidate := NULLIF(v_defaults -> p_item_type ->> 'triage_owner_id', '')::uuid;
   IF v_candidate IS NOT NULL
      AND public.user_effective_project_role(p_project_id, v_candidate) IS NOT NULL THEN
@@ -1292,8 +1296,8 @@ REVOKE USAGE ON SEQUENCE projects.work_item_events_seq_seq FROM authenticated;
 -- nothing. SELECT is the whole of anon's default there (anon=r), so SELECT is
 -- what is revoked; work-item-rls.sql assertion 1 reads pg_default_acl back.
 ALTER DEFAULT PRIVILEGES IN SCHEMA projects REVOKE SELECT ON TABLES FROM anon;
-
-NOTIFY pgrst, 'reload schema';
+-- The NOTIFY pgrst sits at the very END of the file (after §13), so PostgREST
+-- reloads once, over the finished schema.
 
 -- ─── 11. The append trigger — the only writer of events, and of watchers ─────
 -- SECURITY DEFINER, exactly as field.append_form_response_history() is
@@ -1753,3 +1757,184 @@ CREATE TRIGGER work_items_transition_guard_trg
 -- deploy is blocked. A trigger function needs no GRANT (§8, §11).
 REVOKE ALL ON FUNCTION projects.work_items_transition_guard() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION projects.work_items_transition_guard() FROM anon;
+
+-- ─── 13. work_item_defaults: validation and seeding ──────────────────────────
+-- The per-type settings are DATA, held as jsonb keyed by item_type, with keys
+-- validated against projects.work_item_types by trigger — a CHECK cannot
+-- reference another table. Typed columns were rejected: eight types in Q1, each
+-- new one forcing a migration on a hot 1:1 table carrying an audit trigger.
+-- The column itself was added by 00195; the validator lives HERE because it
+-- reads the registry, which does not exist until §1 of this file.
+--
+-- Shape: { "<type>": { days_to_respond, triage_owner_id, gatekeeper_id } }.
+-- VALUES are validated, not just keys. §5 casts days_to_respond with ::int and
+-- §7 casts triage_owner_id with ::uuid at SOURCE-WRITE time, so a bad value
+-- accepted here would surface as a 22P02 to a foreman logging a snag, not to
+-- the person who typed it. days_to_respond is JSON null or a JSON number that
+-- is a positive integer (1.0 is refused: jsonb keeps the ".0" and ::int
+-- refuses it — measured); the two person slots are JSON null, '' (normalised
+-- to null: a cleared picker) or a uuid, checked with pg_input_is_valid so junk
+-- RAISES a sentence rather than 22P02. Each type's value must be an object
+-- and every sub-key must be one of the three: the plan's own "a typo'd key
+-- would sit in the jsonb forever, silently doing nothing" holds one level
+-- down — `day_to_respond` would quietly leave the registry default in force.
+--
+-- A STALE id is NULLED rather than rejected. There is no foreign key (jsonb)
+-- and public.profiles cascades from auth.users (00001:62), so a departed
+-- employee's id survives here; rejecting the write would make every settings
+-- save on that project fail, and keeping it would hand a dead uuid to
+-- assignee_id NOT NULL. §7 re-validates at source-write time regardless —
+-- membership can lapse after this write, which no write-time check can see.
+--
+-- THE NO-OP GUARD IS IN THE FUNCTION BODY, NOT IN A TRIGGER `WHEN` CLAUSE.
+-- A WHEN clause cannot reference TG_OP (ERROR 42703: column "tg_op" does not
+-- exist — a CREATE-time error, so this migration would fail to apply) and
+-- cannot reference OLD on a trigger that also covers INSERT.
+--
+-- SECURITY DEFINER with row_security off: it reads the registry and calls
+-- user_effective_project_role() (itself DEFINER), and its answer must not
+-- depend on who saved the settings. It never reads current_user. Every RAISE
+-- is a sentence, because the settings surface will show error.message.
+CREATE OR REPLACE FUNCTION projects.validate_work_item_defaults() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  k text; v jsonb; sk text; cleaned jsonb := '{}'::jsonb;
+  v_txt text; v_who uuid;
+BEGIN
+  -- Nothing to validate when this UPDATE did not touch the column. This is the
+  -- guard a WHEN clause cannot express.
+  IF TG_OP = 'UPDATE' AND NEW.work_item_defaults IS NOT DISTINCT FROM OLD.work_item_defaults THEN
+    RETURN NEW;
+  END IF;
+
+  -- A cleared column means "no overrides", not an error: BEFORE ROW triggers
+  -- run ahead of the NOT NULL constraint, so this is what a NULL write lands
+  -- as. Explicit for the reader — the rebuild below lands a NULL as '{}' on
+  -- its own (jsonb_typeof(NULL) is NULL, jsonb_each(NULL) yields no rows), so
+  -- deleting this branch changes nothing; work-item-defaults.sql 13 pins the
+  -- BEHAVIOUR, which both paths deliver.
+  IF NEW.work_item_defaults IS NULL THEN
+    NEW.work_item_defaults := '{}'::jsonb; RETURN NEW;
+  END IF;
+
+  -- jsonb_each on a non-object is a 22023, not a sentence.
+  IF jsonb_typeof(NEW.work_item_defaults) <> 'object' THEN
+    RAISE EXCEPTION 'Work-item defaults must be a set of per-type settings keyed by work-item type, not a JSON %.', jsonb_typeof(NEW.work_item_defaults)
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  FOR k, v IN SELECT key, value FROM jsonb_each(NEW.work_item_defaults) LOOP
+    IF NOT EXISTS (SELECT 1 FROM projects.work_item_types t WHERE t.key = k) THEN
+      RAISE EXCEPTION '"%" is not a registered work-item type, so it cannot have project defaults.', k
+        USING ERRCODE = 'raise_exception';
+    END IF;
+
+    -- ->> on a scalar is NULL, so without this a bare `"rfi": 5` would be
+    -- accepted and silently ignored by every reader.
+    IF jsonb_typeof(v) <> 'object' THEN
+      RAISE EXCEPTION 'The defaults for "%" must be a set of named settings (days_to_respond, triage_owner_id, gatekeeper_id), not a bare value.', k
+        USING ERRCODE = 'raise_exception';
+    END IF;
+
+    FOR sk IN SELECT jsonb_object_keys(v) LOOP
+      IF sk NOT IN ('days_to_respond', 'triage_owner_id', 'gatekeeper_id') THEN
+        RAISE EXCEPTION '"%" is not a setting a work-item type has, so it cannot be set for "%". The settings are days_to_respond, triage_owner_id and gatekeeper_id.', sk, k
+          USING ERRCODE = 'raise_exception';
+      END IF;
+    END LOOP;
+
+    -- days_to_respond: absent and JSON null both read as SQL NULL here and are
+    -- "use the registry default" (for rfi, the live default_rfi_due_days —
+    -- §5). Otherwise a JSON NUMBER whose text is a positive integer that fits
+    -- an int: the type test refuses "5" (a string), the regex refuses 0, -1,
+    -- 1.5 and 1.0, and pg_input_is_valid refuses an overflow — each a sentence
+    -- here, never a 22P02 / 22003 at §5's cast. Three booleans OR-ed, no cast,
+    -- so evaluation order cannot matter.
+    v_txt := v ->> 'days_to_respond';
+    IF v_txt IS NOT NULL THEN
+      IF jsonb_typeof(v -> 'days_to_respond') <> 'number'
+         OR v_txt !~ '^[1-9][0-9]*$'
+         OR NOT pg_input_is_valid(v_txt, 'integer') THEN
+        RAISE EXCEPTION 'The days to respond for "%" must be a whole number of working days, at least 1 — "%" is not.', k, v_txt
+          USING ERRCODE = 'raise_exception';
+      END IF;
+    END IF;
+
+    -- The two person slots. '' is a cleared picker and is normalised to null
+    -- (§7's NULLIF reads both the same way); anything else must be a uuid
+    -- STRING that pg_input_is_valid accepts, cast only after that check. A
+    -- valid id with no effective role on the project is NULLED, per the
+    -- header.
+    FOREACH sk IN ARRAY ARRAY['triage_owner_id', 'gatekeeper_id'] LOOP
+      v_txt := NULLIF(v ->> sk, '');
+      IF v_txt IS NULL THEN
+        IF v ? sk THEN v := jsonb_set(v, ARRAY[sk], 'null'::jsonb); END IF;
+        CONTINUE;
+      END IF;
+      IF jsonb_typeof(v -> sk) <> 'string' OR NOT pg_input_is_valid(v_txt, 'uuid') THEN
+        RAISE EXCEPTION 'The default % for "%" must be a person''s id or empty — "%" is not one.',
+          CASE sk WHEN 'triage_owner_id' THEN 'triage owner' ELSE 'gatekeeper' END, k, v_txt
+          USING ERRCODE = 'raise_exception';
+      END IF;
+      v_who := v_txt::uuid;
+      IF public.user_effective_project_role(NEW.project_id, v_who) IS NULL THEN
+        v := jsonb_set(v, ARRAY[sk], 'null'::jsonb);
+      END IF;
+    END LOOP;
+
+    cleaned := cleaned || jsonb_build_object(k, v);
+  END LOOP;
+
+  NEW.work_item_defaults := cleaned;
+  RETURN NEW;
+END;
+$fn$;
+
+-- Declared as grant_absent: in the @verify block. A trigger function needs no
+-- GRANT (§8, §11, §12).
+REVOKE ALL ON FUNCTION projects.validate_work_item_defaults() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.validate_work_item_defaults() FROM anon;
+
+-- Restore: this trigger sits on project_settings, which the spine's DROP TABLE
+-- … CASCADE never touches — drop it by name (header).
+DROP TRIGGER IF EXISTS validate_work_item_defaults_trg ON projects.project_settings;
+CREATE TRIGGER validate_work_item_defaults_trg
+  BEFORE INSERT OR UPDATE ON projects.project_settings
+  FOR EACH ROW EXECUTE FUNCTION projects.validate_work_item_defaults();
+
+-- Seed every LIVE project with every active type — a one-off. A project
+-- created after this apply gets '{}' from ensure_project_settings_row (00195
+-- §3) and stays at registry defaults until the settings surface writes keys;
+-- every reader (§5, §7) tolerates an absent key, so "every row carries every
+-- type" is an apply-time measurement (work-item-defaults.sql 1), NOT an
+-- invariant, and deliberately not a @verify directive.
+--
+-- rfi's days_to_respond is seeded NULL on purpose: work_items_set_due_date (§5)
+-- reads project_settings.default_rfi_due_days (00101:30) LIVE for that type, so
+-- editing the setting moves the next RFI instead of drifting from a copy taken
+-- here. A per-project OVERRIDE typed into this key still wins, which is what the
+-- key is for. Today the column's value is fetched by getRfiDefaults and thrown
+-- away by rfiService.create (rfi.service.ts:98).
+--
+-- This UPDATE fires, per row (14 on 2026-09-12): the validator above (every
+-- key registered, every value a registry number or null — a no-op clean),
+-- project_settings_set_updated_at (BEFORE UPDATE: updated_at is bumped, which
+-- is honest — the row changed) and project_settings_audit_trg (AFTER: one
+-- 00102 history row per project with changed_by = updated_by, NULL for a
+-- migration, exactly as 00195 §4's backfill did). Nothing else listens on
+-- project_settings (pg_trigger, read 2026-09-12).
+UPDATE projects.project_settings ps
+   SET work_item_defaults = (
+     SELECT jsonb_object_agg(t.key, jsonb_build_object(
+              'days_to_respond',
+                CASE WHEN t.key = 'rfi' THEN NULL ELSE to_jsonb(t.default_days) END,
+              'triage_owner_id', NULL,
+              'gatekeeper_id',   NULL))
+       FROM projects.work_item_types t WHERE t.is_active)
+ WHERE ps.work_item_defaults = '{}'::jsonb;
+
+-- Once, over the finished schema (§10 explains why it is not there).
+NOTIFY pgrst, 'reload schema';
