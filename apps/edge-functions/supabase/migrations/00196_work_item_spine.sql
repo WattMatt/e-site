@@ -36,6 +36,9 @@
 -- Restore:
 --   DROP TABLE projects.work_item_events, projects.work_item_watchers,
 --              projects.work_items, projects.work_item_types CASCADE;
+--   -- validate_work_item_defaults_trg lives on project_settings, a table the
+--   -- CASCADE above never touches, so it must be dropped by name first:
+--   DROP TRIGGER IF EXISTS validate_work_item_defaults_trg ON projects.project_settings;
 --   DROP FUNCTION projects.add_working_days(date,int,uuid,text),
 --     projects.push_past_builders_shutdown(date,uuid),
 --     projects.resolve_work_item_assignee(uuid,text,uuid),
@@ -82,6 +85,12 @@
 -- index: work_items_src_order_uidx ON projects.work_items
 -- index: work_items_src_inspection_uidx ON projects.work_items
 -- index: work_item_events_item_idx ON projects.work_item_events
+-- trigger: work_items_set_due_date_trg ON projects.work_items
+-- trigger: work_items_ensure_ref_trg ON projects.work_items
+-- trigger: work_items_assert_membership_trg ON projects.work_items
+-- trigger: append_work_item_event_trg ON projects.work_items
+-- trigger: work_items_transition_guard_trg ON projects.work_items
+-- trigger: validate_work_item_defaults_trg ON projects.project_settings
 -- policy: work_item_types_select ON projects.work_item_types PERMISSIVE
 -- policy: work_items_select ON projects.work_items PERMISSIVE
 -- policy: work_items_insert ON projects.work_items PERMISSIVE
@@ -89,6 +98,9 @@
 -- policy: work_items_update ON projects.work_items PERMISSIVE
 -- policy: work_items_update_gate ON projects.work_items RESTRICTIVE
 -- policy: work_item_events_select ON projects.work_item_events PERMISSIVE
+-- policy: work_item_watchers_select ON projects.work_item_watchers PERMISSIVE
+-- policy: work_item_watchers_insert ON projects.work_item_watchers PERMISSIVE
+-- policy: work_item_watchers_delete ON projects.work_item_watchers PERMISSIVE
 -- grant_absent: anon SELECT ON projects.work_items
 -- grant_absent: anon SELECT ON projects.work_item_types
 -- grant_absent: anon SELECT ON projects.work_item_events
@@ -112,7 +124,10 @@
 -- directive is re-evaluated against production on EVERY future deploy, and the
 -- day Q3 registers `approval` (§03 §1.7: a sourceless type costs one row) a
 -- count would go red and block every later migration for a reason unrelated
--- to this file.
+-- to this file. The other edge of the same blade: the invariant pins all eight
+-- Q1 keys `is_active`, so RETIRING a Q1 type (is_active = false, or a DELETE)
+-- must edit this directive in the SAME migration that retires it — otherwise
+-- that migration's own post-push verify goes red on this file's line.
 
 -- ─── 1. projects.work_item_types — the registry ──────────────────────────────
 -- Columns are Appendix A(b)'s, exactly. A ref_prefix column was rejected: §12
@@ -127,7 +142,10 @@ CREATE TABLE IF NOT EXISTS projects.work_item_types (
   default_days    int  NOT NULL CHECK (default_days > 0),
   calendar        text NOT NULL CHECK (calendar IN ('office','site')),
   gatekeeper_rule text NOT NULL CHECK (gatekeeper_rule IN ('project_pm','verifier_else_pm','creator')),
-  write_roles     text[] NOT NULL CHECK (cardinality(write_roles) > 0),
+  write_roles     text[] NOT NULL CHECK (cardinality(write_roles) > 0)
+                  -- ORG_ROLES (packages/shared/src/types/index.ts:7-15), so a typo in a future
+                  -- seed fails at CREATE instead of stranding a type nobody can write.
+                  CHECK (write_roles <@ ARRAY['owner','admin','project_manager','contractor','inspector','supplier','client_viewer']),
   sort_order      int  NOT NULL DEFAULT 0,
   is_active       boolean NOT NULL DEFAULT true
 );
@@ -165,5 +183,8 @@ ALTER TABLE projects.work_item_types ENABLE ROW LEVEL SECURITY;
 -- Read-only to every authenticated user: the registry is a vocabulary, not data,
 -- and the create forms need it. NO write policy — it is migration-managed, so a
 -- row insert can never grant a class of work a write set without a code review.
+-- DROP IF EXISTS before every CREATE POLICY in this file (00191–00193 style),
+-- so a partial re-apply does not stop on "policy already exists".
+DROP POLICY IF EXISTS work_item_types_select ON projects.work_item_types;
 CREATE POLICY work_item_types_select ON projects.work_item_types
   FOR SELECT TO authenticated USING (true);

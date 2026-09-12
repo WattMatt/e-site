@@ -31,13 +31,30 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION '% type(s) admit client_viewer in Q1', n; END IF;
 
   -- 4. order_followup has a source_table but NO projection trigger anywhere.
-  --    A(b): explicit chase only. A seventh trigger would project all 440 live
-  --    procurement rows into inboxes on day one.
+  --    A(b): explicit chase only. A seventh trigger would project all 448
+  --    (measured 2026-09-12) live procurement rows into inboxes on day one.
+  --    Two arms: the trigger's own definition AND the body of the function it
+  --    fires — a trigger named `touch_row` whose function writes work_items
+  --    would sail past a name-only test.
   SELECT count(*) INTO n FROM pg_trigger tg
     JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace nsp ON nsp.oid = c.relnamespace
+    JOIN pg_proc p ON p.oid = tg.tgfoid
    WHERE nsp.nspname='structure' AND c.relname='node_orders' AND NOT tg.tgisinternal
-     AND pg_get_triggerdef(tg.oid) ILIKE '%work_item%';
+     AND (p.prosrc ILIKE '%work_items%' OR pg_get_triggerdef(tg.oid) ILIKE '%work_item%');
   IF n <> 0 THEN RAISE EXCEPTION 'structure.node_orders carries % work-item trigger(s); A(b) forbids any', n; END IF;
+  --    And the baseline: the ONLY non-internal trigger on node_orders is its
+  --    updated_at touch (live set read 2026-09-12: {node_orders_updated_at}).
+  --    A new trigger of ANY name lands here even if its body dodges both
+  --    patterns above. IS DISTINCT FROM so an empty set (NULL) reads red too.
+  --    tgname is `name`, not text — cast, or name[] <> text[] has no operator.
+  IF (SELECT array_agg(tg.tgname::text ORDER BY tg.tgname) FROM pg_trigger tg
+        JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace nsp ON nsp.oid = c.relnamespace
+       WHERE nsp.nspname='structure' AND c.relname='node_orders' AND NOT tg.tgisinternal)
+     IS DISTINCT FROM ARRAY['node_orders_updated_at']::text[]
+  THEN RAISE EXCEPTION 'structure.node_orders trigger set is not exactly {node_orders_updated_at}: %',
+        (SELECT array_agg(tg.tgname::text ORDER BY tg.tgname) FROM pg_trigger tg
+           JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace nsp ON nsp.oid = c.relnamespace
+          WHERE nsp.nspname='structure' AND c.relname='node_orders' AND NOT tg.tgisinternal); END IF;
 
   -- 5. The registry is readable but not writable by a client, and not by anon.
   -- TODO(Task 9): anon revoke lands in §10. Until then this arm fails with
