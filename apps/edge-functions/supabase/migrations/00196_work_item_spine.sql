@@ -1779,6 +1779,13 @@ REVOKE EXECUTE ON FUNCTION projects.work_items_transition_guard() FROM anon;
 -- would sit in the jsonb forever, silently doing nothing" holds one level
 -- down — `day_to_respond` would quietly leave the registry default in force.
 --
+-- RETIRING A REGISTRY TYPE: neither this key check nor §5's registry read
+-- filters on is_active — deliberate, an inactive type keeps its defaults and
+-- its existing items keep computing — so retire a type with is_active = false,
+-- never by DELETE, unless the SAME migration strips its key from every
+-- work_item_defaults: with a dangling key, every settings save on every
+-- project would raise here.
+--
 -- A STALE id is NULLED rather than rejected. There is no foreign key (jsonb)
 -- and public.profiles cascades from auth.users (00001:62), so a departed
 -- employee's id survives here; rejecting the write would make every settings
@@ -1832,6 +1839,14 @@ BEGIN
         USING ERRCODE = 'raise_exception';
     END IF;
 
+    -- `"rfi": null` is refused too, with a sentence that says what to send
+    -- instead: an absent key and {} both mean "registry defaults"; a JSON
+    -- null is neither, and every reader would treat it as an absent key while
+    -- the settings surface showed a value.
+    IF jsonb_typeof(v) = 'null' THEN
+      RAISE EXCEPTION 'The defaults for "%" must be an object — send {} to clear them, not null.', k
+        USING ERRCODE = 'raise_exception';
+    END IF;
     -- ->> on a scalar is NULL, so without this a bare `"rfi": 5` would be
     -- accepted and silently ignored by every reader.
     IF jsonb_typeof(v) <> 'object' THEN
@@ -1848,13 +1863,17 @@ BEGIN
 
     -- days_to_respond: absent and JSON null both read as SQL NULL here and are
     -- "use the registry default" (for rfi, the live default_rfi_due_days —
-    -- §5). Otherwise a JSON NUMBER whose text is a positive integer that fits
-    -- an int: the type test refuses "5" (a string), the regex refuses 0, -1,
-    -- 1.5 and 1.0, and pg_input_is_valid refuses an overflow — each a sentence
+    -- §5); "" is a CLEARED numeric input and is normalised to JSON null, the
+    -- way the person slots treat '' (§5's NULLIF(…, '') reads both the same).
+    -- Otherwise a JSON NUMBER whose text is a positive integer that fits an
+    -- int: the type test refuses "5" (a string), the regex refuses 0, -1, 1.5
+    -- and 1.0, and pg_input_is_valid refuses an overflow — each a sentence
     -- here, never a 22P02 / 22003 at §5's cast. Three booleans OR-ed, no cast,
     -- so evaluation order cannot matter.
     v_txt := v ->> 'days_to_respond';
-    IF v_txt IS NOT NULL THEN
+    IF v_txt = '' THEN
+      v := jsonb_set(v, '{days_to_respond}', 'null'::jsonb);
+    ELSIF v_txt IS NOT NULL THEN
       IF jsonb_typeof(v -> 'days_to_respond') <> 'number'
          OR v_txt !~ '^[1-9][0-9]*$'
          OR NOT pg_input_is_valid(v_txt, 'integer') THEN
@@ -1921,11 +1940,12 @@ CREATE TRIGGER validate_work_item_defaults_trg
 --
 -- This UPDATE fires, per row (14 on 2026-09-12): the validator above (every
 -- key registered, every value a registry number or null — a no-op clean),
--- project_settings_set_updated_at (BEFORE UPDATE: updated_at is bumped, which
--- is honest — the row changed) and project_settings_audit_trg (AFTER: one
--- 00102 history row per project with changed_by = updated_by, NULL for a
--- migration, exactly as 00195 §4's backfill did). Nothing else listens on
--- project_settings (pg_trigger, read 2026-09-12).
+-- project_settings_set_updated_at (BEFORE UPDATE: updated_at is bumped on all
+-- 14 rows, which is honest — the row changed) and project_settings_audit_trg
+-- (AFTER: one projects.project_settings_history row per project, 00102, with
+-- changed_by = updated_by, NULL for a migration — 14 rows, on top of the 14
+-- that 00195 §4's backfill wrote: 28 history rows for the two-file apply).
+-- Nothing else listens on project_settings (pg_trigger, read 2026-09-12).
 UPDATE projects.project_settings ps
    SET work_item_defaults = (
      SELECT jsonb_object_agg(t.key, jsonb_build_object(

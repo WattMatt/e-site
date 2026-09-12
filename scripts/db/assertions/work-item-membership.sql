@@ -186,9 +186,12 @@ BEGIN
   --    non-ALWAYS trigger on project_settings is skipped (the validator, the
   --    updated_at touch, the 00102 audit row), no ALTER TABLE lock is taken on
   --    a hot table, and the setting is transaction-local and reset at once.
-  --    The pin below proves the bypass took, so the arm cannot go vacuous
-  --    again silently. The settings-slot value (a real profile) is a legal
-  --    write on either path.
+  --    replica ALSO skips the FK RI trigger on triage_owner_id for that one
+  --    UPDATE, so the fixture must keep pointing at a real public.profiles
+  --    row — v_outsider IS selected from profiles, so the FK would have
+  --    passed anyway; a made-up settings-slot id here would be a silent
+  --    FK violation, not a test. The pin below proves the bypass took, so
+  --    the arm cannot go vacuous again silently.
   --    SET LOCAL, not set_config(): postgres is not a superuser here, and the
   --    parameter is SUSET. Supabase's supautils hook escalates the SET
   --    utility statement for the privileged role (session_replication_role is

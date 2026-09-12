@@ -2,6 +2,10 @@
 -- work_item_defaults seed). Run inside the rolled-back transaction opened by
 -- try-work-item-spine.sh. Runs entirely as postgres — no impersonation, so
 -- set_config's transaction-local claim never leaks into §5's opened_at stamp.
+-- Assertion 8 plants a fixture PAST the validator with
+-- SET LOCAL session_replication_role = replica (the membership file's
+-- pattern; SET LOCAL, not set_config() — supautils escalates only the utility
+-- statement for the non-superuser postgres role).
 --
 -- Two kinds of check, and the distinction matters when one goes red:
 --   APPLY-TIME MEASUREMENT: 1 (every live settings row carries every active
@@ -20,7 +24,7 @@
 DO $$
 DECLARE
   v_proj uuid; v_org uuid; v_pm uuid; v_rfi uuid; v_id uuid; v_cal text; v_days int;
-  n int; v_dead uuid; d date; d_expected date; v_bad text; v_obj jsonb;
+  n int; v_dead uuid; d date; d_expected date; v_bad text; v_obj jsonb; v_got text;
   v_creator uuid; v_new uuid;
 BEGIN
   -- The fixture must be a project that HAS an rfi, because 3 and 4 insert
@@ -161,7 +165,29 @@ BEGIN
   --    validator entirely — that guard lives in the function body, because a
   --    trigger WHEN clause cannot reference TG_OP or OLD on an INSERT-covering
   --    trigger (proven on production: ERROR 42703 column "tg_op" does not exist).
+  --    Made OBSERVABLE (review 12): "the unrelated update took" was green with
+  --    the guard deleted. So plant a dead uuid PAST the validator with the
+  --    membership file's replica bypass (every non-ALWAYS trigger on
+  --    project_settings is skipped for that one statement, the FK RI trigger
+  --    included — nothing here relies on it), pin that it landed, run the
+  --    unrelated UPDATE, and assert the dead uuid SURVIVED: a validator
+  --    without the guard re-validates on every save and nulls it.
+  SET LOCAL session_replication_role = replica;
+  UPDATE projects.project_settings
+     SET work_item_defaults = jsonb_set(work_item_defaults, '{task,triage_owner_id}', to_jsonb(v_dead))
+   WHERE project_id = v_proj;
+  SET LOCAL session_replication_role = origin;
+  SELECT work_item_defaults -> 'task' ->> 'triage_owner_id' INTO v_got
+    FROM projects.project_settings WHERE project_id = v_proj;
+  IF v_got IS DISTINCT FROM v_dead::text THEN
+    RAISE EXCEPTION 'the bypass did not take (% planted, % read)', v_dead, v_got;
+  END IF;
   UPDATE projects.project_settings SET default_rfi_due_days = 9 WHERE project_id = v_proj;
+  SELECT work_item_defaults -> 'task' ->> 'triage_owner_id' INTO v_got
+    FROM projects.project_settings WHERE project_id = v_proj;
+  IF v_got IS DISTINCT FROM v_dead::text THEN
+    RAISE EXCEPTION 'the no-op guard is not honoured: an unrelated settings update re-validated work_item_defaults and nulled the planted id (read %)', v_got;
+  END IF;
   IF (SELECT default_rfi_due_days FROM projects.project_settings WHERE project_id = v_proj) <> 9
   THEN RAISE EXCEPTION 'an unrelated settings update did not take'; END IF;
 
@@ -187,6 +213,18 @@ BEGIN
         RAISE EXCEPTION 'days_to_respond = % died with SQLSTATE % rather than a sentence: %', v_bad, SQLSTATE, SQLERRM;
     END;
   END LOOP;
+  -- 9b. A CLEARED numeric input serialises as "" and is ACCEPTED, landing as
+  --     JSON null ("use the default") the way the person slots treat '' —
+  --     decided in review 12. The key must still be present, as null: an
+  --     absent key would read the same to §5 but is not what was written.
+  UPDATE projects.project_settings
+     SET work_item_defaults = jsonb_set(work_item_defaults, '{snag,days_to_respond}', '""'::jsonb)
+   WHERE project_id = v_proj;
+  IF (SELECT work_item_defaults -> 'snag' -> 'days_to_respond' FROM projects.project_settings WHERE project_id = v_proj)
+     IS DISTINCT FROM 'null'::jsonb THEN
+    RAISE EXCEPTION 'days_to_respond = "" did not normalise to JSON null: snag reads %',
+      (SELECT work_item_defaults -> 'snag' FROM projects.project_settings WHERE project_id = v_proj);
+  END IF;
 
   -- 10. A junk person id RAISES a sentence, never 22P02 — pg_input_is_valid
   --     before the cast. Both slots; a string and a number.
@@ -260,6 +298,23 @@ BEGIN
         RAISE EXCEPTION 'the non-object column failed for the wrong reason: %', SQLERRM; END IF;
     WHEN OTHERS THEN
       RAISE EXCEPTION 'a non-object column died with SQLSTATE % rather than a sentence: %', SQLSTATE, SQLERRM;
+  END;
+  -- 12c. `"rfi": null` is refused (decided in review 12: an absent key and {}
+  --      both mean "registry defaults"; a JSON null is neither) — and the
+  --      sentence must say what to send instead, pinned here: naming the
+  --      type and {}.
+  BEGIN
+    UPDATE projects.project_settings
+       SET work_item_defaults = jsonb_set(work_item_defaults, '{rfi}', 'null'::jsonb)
+     WHERE project_id = v_proj;
+    RAISE EXCEPTION 'SENTINEL: a null type value ("rfi": null) was accepted';
+  EXCEPTION
+    WHEN raise_exception THEN
+      IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      IF SQLERRM NOT LIKE '%"rfi"%send {} to clear%not null%' THEN
+        RAISE EXCEPTION 'the null type value failed for the wrong reason: %', SQLERRM; END IF;
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'a null type value died with SQLSTATE % rather than a sentence: %', SQLSTATE, SQLERRM;
   END;
 
   -- 13. A NULL write lands as '{}' — the BEFORE trigger normalises it before
