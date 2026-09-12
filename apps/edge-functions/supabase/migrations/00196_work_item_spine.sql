@@ -1425,3 +1425,254 @@ CREATE TRIGGER append_work_item_event_trg
 -- uncallable by anyone but the owner.
 REVOKE ALL ON FUNCTION projects.append_work_item_event() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION projects.append_work_item_event() FROM anon;
+
+-- ─── 12. The transition guard ────────────────────────────────────────────────
+-- Ends the current behaviour where ANY org member can close ANY RFI:
+-- closeRfiAction (apps/web/src/actions/rfi.actions.ts) checks authentication
+-- and nothing else, and 00027's UPDATE policy admits every active member of
+-- the owning org on every project, member or not.
+--
+-- SECURITY INVOKER (the default), because it needs no elevated rights: it reads
+-- OLD/NEW, calls auth.uid(), and calls user_can_write_work_item(), itself
+-- SECURITY DEFINER and granted to authenticated.
+--
+-- BE PRECISE ABOUT WHY. auth.uid() reads a GUC and is unaffected by the security
+-- context, so declaring this DEFINER would change nothing on its own. The defect
+-- 00179:341-346 documents is a CURRENT_USER role test inside a definer function,
+-- where current_user resolves to the function OWNER and the test is true for
+-- every caller. THE RULE THIS FUNCTION MUST NEVER BREAK IS: no current_user, in
+-- any security context. The house precedent, projects.qc_reports_status_guard
+-- (00172:249), is itself declared SECURITY DEFINER SET search_path = '' and is
+-- safe precisely because it tests auth.uid().
+--
+-- RLS can gate WHO may update a row but not WHICH transition they may make, and
+-- it cannot compare OLD with NEW — which is why this is a trigger. The
+-- auth.uid() IS NULL exemption matches qc_reports_status_guard: service-role
+-- and admin server paths run with no JWT and are gated by the action layer.
+-- The exemption skips the authority and machine checks; the stamp rules that
+-- precede it apply on both paths.
+--
+-- BEFORE UPDATE only. A client inserting status = 'closed' / 'void', or a
+-- pre-filled closed_at / void_reason, is refused by §9's RESTRICTIVE insert
+-- gate; extending this trigger to INSERT would fire on work-item-ref.sql 3a,
+-- which inserts as the table owner.
+--
+-- Fires AFTER work_items_assert_membership_trg (§7): BEFORE ROW triggers run
+-- in name order, 'a' < 't'. A project move to a project the people are not on
+-- therefore reports the MEMBERSHIP sentence, never clause (a)'s. Deliberate,
+-- and pinned by work-item-transition.sql 5b and work-item-membership.sql 3b:
+-- this name is declared in the @verify block, and a name that sorted first
+-- would turn 3b red.
+--
+-- Fires BEFORE append_work_item_event_trg (§11, AFTER ROW): whatever NEW this
+-- function returns — the stamped closed_at, the restored void_reason — is
+-- what the event records.
+--
+-- Every RAISE below is a SENTENCE naming the item's ref, because all five server
+-- actions end `return { error: error.message }` — these strings are user-facing
+-- copy, quoted in support conversations and screenshots the day they ship.
+CREATE OR REPLACE FUNCTION projects.work_items_transition_guard() RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path TO 'projects', 'public'
+AS $fn$
+DECLARE
+  v_actor      uuid := auth.uid();
+  v_may_write  boolean;
+  v_is_holder  boolean;
+  v_may_manage boolean;
+BEGIN
+  -- Stamped on every UPDATE, on both paths — including item 3's delete-to-void
+  -- RI ON DELETE SET NULL on a void row, which is acceptable: a source
+  -- deletion IS activity on the item.
+  NEW.last_activity_at := now();
+
+  -- THE STAMPS ARE THE GUARD'S, NEVER THE CALLER'S. closed_at / closed_by are
+  -- written only by a status change (below, on either path); on every other
+  -- UPDATE they are restored from OLD. void_reason may be written only while
+  -- the row IS void — set with the void, or edited afterwards; on any other
+  -- row it is restored. Restored, not refused: these are stamps, not
+  -- identity, and a refusal would turn an innocent full-row save into an
+  -- error. Asserted by work-item-transition.sql 7g and 16.
+  IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    NEW.closed_at := OLD.closed_at;
+    NEW.closed_by := OLD.closed_by;
+  END IF;
+  IF NEW.status <> 'void' THEN
+    NEW.void_reason := OLD.void_reason;
+  END IF;
+
+  IF v_actor IS NULL THEN
+    -- Service client / migration. The action layer is what gates these. A
+    -- close stamps the moment; closed_by stays whatever the caller supplied —
+    -- a backfill knows who closed the source, and there is no actor to invent.
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+      IF NEW.status = 'closed' THEN NEW.closed_at := now();
+      ELSE NEW.closed_at := NULL; NEW.closed_by := NULL; END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  -- Authority is resolved against the row AS IT IS (OLD): clause (a) makes
+  -- project_id and item_type immutable, so NEW carries the same values or is
+  -- a refused row.
+  v_may_write  := projects.user_can_write_work_item(OLD.project_id, OLD.item_type);
+  -- COALESCEd: ball_in_court_id is NULL on a closed or void row, `uuid = NULL`
+  -- is NULL, and NOT NULL is NULL — which never raises. Fail closed.
+  v_is_holder  := COALESCE(v_actor = OLD.ball_in_court_id, FALSE);
+  v_may_manage := v_may_write OR v_is_holder;
+
+  -- (a) Immutable columns. ref is immutable because it is a permanent identifier
+  --     in emails, PDFs and other people's notes (§15 §(e)) — which is exactly
+  --     why §6's suffix parse tolerates a junk ref: there is no repair path.
+  IF NEW.project_id      IS DISTINCT FROM OLD.project_id
+  OR NEW.organisation_id IS DISTINCT FROM OLD.organisation_id
+  OR NEW.item_type       IS DISTINCT FROM OLD.item_type
+  OR NEW.ref             IS DISTINCT FROM OLD.ref
+  OR NEW.origin          IS DISTINCT FROM OLD.origin
+  OR NEW.created_by      IS DISTINCT FROM OLD.created_by THEN
+    RAISE EXCEPTION '% cannot be renumbered, retyped or moved to another project — those details are fixed when the item is created.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  -- (a2) A MIRRORED item's title belongs to its source row. Item 3's mirror
+  --      trigger rewrites it on every source change, so a hand edit here would
+  --      silently vanish — or, if item 3 deferred to the edit, the mirror would
+  --      stop tracking. Decided here so both lanes cannot assume opposites.
+  IF OLD.origin = 'mirror' AND NEW.title IS DISTINCT FROM OLD.title THEN
+    RAISE EXCEPTION '% is mirrored from its source record, so its title is edited there and updates here automatically.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  -- (a3) A source FK may change ONLY to NULL — item 3's delete-to-void RI path
+  --      (ON DELETE SET NULL on a void row). Anything else re-points a mirrored
+  --      item at a different source: the partial UNIQUEs stop two items per
+  --      source, not one item per two sources, and the PERMISSIVE UPDATE
+  --      policy would otherwise admit it for an assignee. On a LIVE row a
+  --      NULL-ing already fails work_items_source_required, so "only to NULL"
+  --      is the whole rule. The RI UPDATE on a void row passes every clause
+  --      here (status, people and immutables unchanged) and is stamped only
+  --      at last_activity_at.
+  IF (NEW.rfi_id        IS DISTINCT FROM OLD.rfi_id        AND NEW.rfi_id        IS NOT NULL)
+  OR (NEW.snag_id       IS DISTINCT FROM OLD.snag_id       AND NEW.snag_id       IS NOT NULL)
+  OR (NEW.qc_entry_id   IS DISTINCT FROM OLD.qc_entry_id   AND NEW.qc_entry_id   IS NOT NULL)
+  OR (NEW.diary_id      IS DISTINCT FROM OLD.diary_id      AND NEW.diary_id      IS NOT NULL)
+  OR (NEW.site_form_id  IS DISTINCT FROM OLD.site_form_id  AND NEW.site_form_id  IS NOT NULL)
+  OR (NEW.node_order_id IS DISTINCT FROM OLD.node_order_id AND NEW.node_order_id IS NOT NULL)
+  OR (NEW.inspection_id IS DISTINCT FROM OLD.inspection_id AND NEW.inspection_id IS NOT NULL) THEN
+    RAISE EXCEPTION '% is linked to its source record and cannot be re-linked.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  -- (a4) The due date is the REVIEWER's. The project team, or whoever signs the
+  --      item off, sets the deadline; the person doing the work cannot extend
+  --      their own (an assignee extended theirs by 365 days in a probe).
+  --      Compared against OLD.gatekeeper_id — the gatekeeper as they are, not
+  --      as the same statement might try to make them.
+  IF NEW.due_date IS DISTINCT FROM OLD.due_date
+     AND NOT (v_may_write OR COALESCE(v_actor = OLD.gatekeeper_id, FALSE)) THEN
+    RAISE EXCEPTION 'Only the project team, or whoever signs % off, can change when it is due.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  -- (b) The person columns.
+  --     * A closed or void item's people are part of the record.
+  --     * The BALL-IN-COURT HOLDER may only shift the column the CURRENT status
+  --       selects (§03 §1.4): assignee while triage/open, gatekeeper while
+  --       answered. Writing the other one regenerates an unchanged
+  --       ball-in-court and looks like a broken control.
+  --     * A WRITE-ROLE HOLDER may CORRECT either column in any live state.
+  --       §1.4's restriction is about which column MOVES THE BALL; correcting a
+  --       gatekeeper while the item is open moves nothing. A(b) makes task's
+  --       gatekeeper the creator, so without this a contractor-raised task on a
+  --       WM engineer has the contractor as its only possible closer for the
+  --       whole of its open life.
+  --     * The gatekeeper arm's first check is also what closes the
+  --       ONE-STATEMENT SELF-APPOINTMENT (proven on production): an assignee
+  --       holding an open item writes gatekeeper_id = auth.uid() together with
+  --       a new assignee and passes §9's WITH CHECK. The assignee arm admits
+  --       the hand-off (they hold the ball); this arm refuses the gatekeeper
+  --       change, because a non-write-role holder may change the gatekeeper
+  --       only while the item is answered.
+  IF (NEW.assignee_id IS DISTINCT FROM OLD.assignee_id
+   OR NEW.gatekeeper_id IS DISTINCT FROM OLD.gatekeeper_id)
+   AND OLD.status IN ('closed','void') THEN
+    RAISE EXCEPTION '% is %. Reopen it before changing who it belongs to.', OLD.ref, OLD.status
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  IF NEW.assignee_id IS DISTINCT FROM OLD.assignee_id THEN
+    IF NOT v_may_write AND OLD.status NOT IN ('triage','open') THEN
+      RAISE EXCEPTION '% is with the reviewer. Change the reviewer, not the person who did the work.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+    IF NOT v_may_manage THEN
+      RAISE EXCEPTION 'Only the project team, or whoever is holding %, can hand it to someone else.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+  END IF;
+
+  IF NEW.gatekeeper_id IS DISTINCT FROM OLD.gatekeeper_id THEN
+    IF NOT v_may_write AND OLD.status <> 'answered' THEN
+      RAISE EXCEPTION '% is still being worked on. Change who it is assigned to, not who signs it off.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+    IF NOT v_may_manage THEN
+      RAISE EXCEPTION 'Only the project team, or whoever is holding %, can change who signs it off.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+  END IF;
+
+  -- (c) The status machine. void is terminal; closed reopens only to open.
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    IF NOT ( (OLD.status = 'triage'   AND NEW.status IN ('open','void'))
+          OR (OLD.status = 'open'     AND NEW.status IN ('answered','closed','void'))
+          OR (OLD.status = 'answered' AND NEW.status IN ('open','closed','void'))
+          OR (OLD.status = 'closed'   AND NEW.status = 'open') ) THEN
+      RAISE EXCEPTION '% cannot move from "%" to "%".', OLD.ref, OLD.status, NEW.status
+        USING ERRCODE = 'raise_exception';
+    END IF;
+
+    -- (d) ONLY THE GATEKEEPER CLOSES. Compared against auth.uid(), never
+    --     current_user. An org admin who needs to close makes themselves the
+    --     gatekeeper first — which is itself gated by (b) and recorded as an
+    --     event.
+    IF NEW.status = 'closed' AND v_actor IS DISTINCT FROM NEW.gatekeeper_id THEN
+      RAISE EXCEPTION 'Only the person who signs % off can close it. Take it over first, or ask them to close it.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+
+    IF NEW.status = 'void' THEN
+      IF NOT v_may_manage THEN
+        RAISE EXCEPTION 'Only the project team, or whoever is holding %, can drop it.', OLD.ref
+          USING ERRCODE = 'raise_exception';
+      END IF;
+      -- Enforced here rather than as a sixth CHECK, so A(a)'s constraint set
+      -- stays reproduced exactly and §12 §(h)'s DDL diff keeps working.
+      IF COALESCE(btrim(NEW.void_reason), '') = '' THEN
+        RAISE EXCEPTION 'Dropping % needs a short reason. Say why it is no longer needed.', OLD.ref
+          USING ERRCODE = 'raise_exception';
+      END IF;
+    END IF;
+
+    IF NEW.status = 'closed' THEN
+      NEW.closed_at := now(); NEW.closed_by := v_actor;
+    ELSE
+      NEW.closed_at := NULL;  NEW.closed_by := NULL;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS work_items_transition_guard_trg ON projects.work_items;
+CREATE TRIGGER work_items_transition_guard_trg
+  BEFORE UPDATE ON projects.work_items
+  FOR EACH ROW EXECUTE FUNCTION projects.work_items_transition_guard();
+
+-- Declared as grant_absent: in the @verify block, which the post-push verifier
+-- evaluates against production — without these two lines a new projects
+-- function inherits PUBLIC EXECUTE, the directive reads false, and every later
+-- deploy is blocked. A trigger function needs no GRANT (§8, §11).
+REVOKE ALL ON FUNCTION projects.work_items_transition_guard() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.work_items_transition_guard() FROM anon;

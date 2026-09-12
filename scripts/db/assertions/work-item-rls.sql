@@ -546,18 +546,25 @@ BEGIN
   -- 9b. ...nor re-bind it by UPDATE. The PERMISSIVE work_items_update WITH
   --     CHECK is the binding layer on UPDATE (the RESTRICTIVE gate's WITH
   --     CHECK does not repeat it — RESTRICTIVE and PERMISSIVE checks are ANDed,
-  --     so one clause suffices). Once §12's guard (Task 11) makes
-  --     organisation_id immutable it fires BEFORE this WITH CHECK and refuses
-  --     the same update with a sentence; either refusal is the right refusal,
-  --     so a non-SENTINEL raise_exception is accepted here too.
+  --     so one clause suffices). §12's guard makes organisation_id immutable
+  --     and, as a BEFORE trigger, fires BEFORE this WITH CHECK — so the refusal
+  --     a user sees is the guard's sentence, and that sentence is pinned here.
+  --     A guard that lost clause (a) would fall through to the WITH CHECK
+  --     (42501); that is the layer beneath, and it reads as a wrong reason
+  --     rather than as "either refusal", so the guard cannot go missing
+  --     unnoticed. (Before Task 11 this branch accepted any non-SENTINEL
+  --     raise_exception and tolerated 42501 — dead code then, live now.)
   BEGIN
     UPDATE projects.work_items SET organisation_id = f.foreign_org_id WHERE id = v_id;
     IF FOUND THEN RAISE EXCEPTION 'SENTINEL: organisation_id was re-bound to a foreign org by UPDATE'; END IF;
     RAISE EXCEPTION 'SENTINEL: the org re-bind UPDATE matched no row — the item the contractor holds is not updatable by them';
   EXCEPTION
-    WHEN insufficient_privilege THEN NULL;
+    WHEN insufficient_privilege THEN
+      RAISE EXCEPTION 'the org re-bind UPDATE was refused by the WITH CHECK (42501) rather than by §12''s immutability clause, which should fire first';
     WHEN raise_exception THEN
       IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      IF SQLERRM NOT LIKE '%cannot be renumbered, retyped or moved%' THEN
+        RAISE EXCEPTION 'the org re-bind UPDATE failed for the wrong reason: %', SQLERRM; END IF;
   END;
 
   -- 9c. The POSITIVE update paths. The assignee moves their own TASK...
