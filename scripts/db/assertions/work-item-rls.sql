@@ -4,8 +4,8 @@
 --
 -- Three roles act, and every role-scoped block acts as a REAL user — the only
 -- way a role assertion can fail:
---   * postgres — the structural checks (0-4), the seed rows, and the watcher
---     and event rows that §11's append trigger will one day write itself;
+--   * postgres — the structural checks (0-4), the seed rows, and the extra
+--     watcher and event rows beside what §11's append trigger writes itself;
 --   * the rbac-test contractor — 018f2d31-bbe8-4cc1-bbdd-63af0187081e,
 --     contractor on WM-Consulting and (643) KINGSWALK, the permanent prod RBAC
 --     fixture (CLAUDE.md "Key gotchas": never invite it, never email it) —
@@ -253,8 +253,8 @@ END $$;
 -- gatekeeper (born answered, ball with them). On the client viewer's project:
 -- one they hold, and two they do not — one of which they will WATCH (20-21)
 -- and one they never touch (13, 22). Plus one event per client-viewer item,
--- standing in for what §11's trigger will write, so work_item_events_select
--- has rows to be right and wrong about.
+-- beside the 'created' event §11's trigger writes for each, so
+-- work_item_events_select has rows to be right and wrong about.
 DO $$
 DECLARE f record; c record; v uuid;
 BEGIN
@@ -630,7 +630,13 @@ BEGIN
   -- 11b. Watchers, the positive paths: they can follow an item they can read
   --      (the self arm of work_item_watchers_insert)...
   INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_pm_item, f.contractor_id, 'manual');
-  -- 11c. ...a holder of the type's write role can add someone else...
+  -- 11c. ...a holder of the type's write role can add someone else. §11
+  --      already subscribed the PM to v_id as its gatekeeper at creation, so
+  --      the write-role arm of work_item_watchers_delete removes that row
+  --      first — a bare insert hits the primary key, and ON CONFLICT would
+  --      prove nothing about the insert policy.
+  DELETE FROM projects.work_item_watchers WHERE work_item_id = v_id AND user_id = f.pm_id;
+  IF NOT FOUND THEN RAISE EXCEPTION '§11 did not subscribe the gatekeeper to the seeded item, or the write-role arm of work_item_watchers_delete is gone'; END IF;
   INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_id, f.pm_id, 'manual');
   -- 11d. ...and both arms of work_item_watchers_delete answer: their own row,
   --      and — with the write role — another person's.
@@ -731,7 +737,12 @@ BEGIN
   SELECT count(*) INTO n FROM projects.work_item_events e WHERE e.work_item_id <> v_mine;
   IF n <> 0 THEN RAISE EXCEPTION 'a client_viewer can read % event(s) of items they do not hold — work_item_events_select is wider than work_items_select', n; END IF;
 
-  -- 17. They can follow the item they hold (the self arm)...
+  -- 17. They can follow the item they hold (the self arm). §11 already
+  --     subscribed them to it as its assignee at creation, so they unfollow
+  --     first (the self arm of work_item_watchers_delete, for a client viewer)
+  --     and follow again — a bare insert hits the primary key.
+  DELETE FROM projects.work_item_watchers WHERE work_item_id = v_mine AND user_id = c.user_id;
+  IF NOT FOUND THEN RAISE EXCEPTION '§11 did not subscribe the assignee to the item they hold, or the self arm of work_item_watchers_delete is gone for a client viewer'; END IF;
   INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_mine, c.user_id, 'manual');
   -- 18. ...but cannot add anyone else: no write role.
   BEGIN
@@ -759,8 +770,9 @@ END $$;
 
 RESET ROLE;
 
--- §11 will add the incoming holder as a watcher on reassign; until then the
--- watcher arm of work_items_select is exercised with a row written here.
+-- §11 subscribes the incoming holder on reassign; this file never reassigns
+-- the client viewer, so the watcher arm of work_items_select is exercised
+-- with a row written here.
 INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason)
 SELECT s.id, c.user_id, 'manual' FROM _seed s, _cv c WHERE s.label = 'theirs';
 
