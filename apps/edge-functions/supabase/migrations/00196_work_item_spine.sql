@@ -58,6 +58,7 @@
 -- column: projects.work_item_events.from_ball_in_court_id
 -- column: projects.work_item_events.to_ball_in_court_id
 -- column: projects.work_item_events.actor_role
+-- column: projects.work_item_events.seq
 -- function: projects.add_working_days(date,int,uuid,text)
 -- function: projects.push_past_builders_shutdown(date,uuid)
 -- function: projects.resolve_work_item_assignee(uuid,text,uuid)
@@ -372,8 +373,12 @@ CREATE TABLE IF NOT EXISTS projects.work_item_events (
   work_item_id    uuid NOT NULL REFERENCES projects.work_items(id) ON DELETE CASCADE,
   project_id      uuid NOT NULL REFERENCES projects.projects(id)   ON DELETE CASCADE,
   organisation_id uuid NOT NULL REFERENCES public.organisations(id),
+  -- 'reassigned' is a change of who does the work; 'gatekeeper_changed' a
+  -- change of who signs it off. One verb for both would make the two
+  -- indistinguishable in the feed and in metric 5's arrivals.
   verb            text NOT NULL CHECK (verb IN
-                    ('created','assigned','reassigned','status_changed','due_changed','closed','voided')),
+                    ('created','assigned','reassigned','gatekeeper_changed',
+                     'status_changed','due_changed','closed','voided')),
   from_status     text, to_status   text,
   from_user_id    uuid REFERENCES public.profiles(id),
   to_user_id      uuid REFERENCES public.profiles(id),
@@ -399,7 +404,14 @@ CREATE TABLE IF NOT EXISTS projects.work_item_events (
   -- remains unmeasurable and actor_role is the first-party signal.
   actor_role      text,
 
-  created_at      timestamptz NOT NULL DEFAULT now()
+  -- The 'created' event is dated at the row's opened_at (§11), every other at
+  -- now(). created_at is transaction-constant (now() does not advance inside
+  -- a transaction) and id is random, so two events one statement apart are
+  -- unordered by either; seq is the total order. Order the feed by
+  -- (created_at, seq). Only the definer trigger inserts, so the identity
+  -- sequence needs no grant.
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  seq             bigint GENERATED ALWAYS AS IDENTITY NOT NULL
 );
 CREATE INDEX IF NOT EXISTS work_item_events_item_idx
   ON projects.work_item_events (work_item_id, created_at);
@@ -1276,7 +1288,9 @@ NOTIFY pgrst, 'reload schema';
 --     projects.work_item_events" (§15 metric 5). Reconstructing that from the
 --     row's CURRENT gatekeeper_id is the error §15 §(b) forbids. Every arm
 --     writes the pair, because a people change moves the ball as surely as a
---     status change does (ball_in_court_id is generated over both).
+--     status change does (ball_in_court_id is generated over both). The
+--     trigger is AFTER ROW for this reason too: NEW.ball_in_court_id is
+--     populated only once the row is written — a BEFORE trigger reads NULL.
 --   * actor_role — §15 §(b)'s "effective role stamped AT EVENT TIME, not
 --     re-resolved later". Metric 2a's contractor diagnostic depends on it, and
 --     it is the only first-party signal available: public.email_events
@@ -1306,12 +1320,17 @@ DECLARE
   v_role  text := public.user_effective_project_role(NEW.project_id, auth.uid());
 BEGIN
   IF TG_OP = 'INSERT' THEN
+    -- Dated at the row's opened_at, never at now(). On the client path §5 has
+    -- just stamped opened_at := now(), so nothing changes; on the service
+    -- path a historical opened_at (item 3's backfilled mirrors) dates the
+    -- arrival truthfully instead of piling every backfilled item into the
+    -- backfill week of metric 5's denominator.
     INSERT INTO projects.work_item_events
       (work_item_id, project_id, organisation_id, verb, to_status, to_user_id, to_due_date,
-       from_ball_in_court_id, to_ball_in_court_id, actor_id, actor_role)
+       from_ball_in_court_id, to_ball_in_court_id, actor_id, actor_role, created_at)
     VALUES (NEW.id, NEW.project_id, NEW.organisation_id, 'created',
             NEW.status, NEW.assignee_id, NEW.due_date,
-            NULL, NEW.ball_in_court_id, v_actor, v_role);
+            NULL, NEW.ball_in_court_id, v_actor, v_role, NEW.opened_at);
 
     -- DISTINCT ON, not three VALUES rows: the creator is frequently also the
     -- assignee or the gatekeeper, and one person must produce one row.
@@ -1354,10 +1373,11 @@ BEGIN
   END IF;
 
   IF NEW.gatekeeper_id IS DISTINCT FROM OLD.gatekeeper_id THEN
+    -- Its own verb: who signs off changed, not who does the work.
     INSERT INTO projects.work_item_events
       (work_item_id, project_id, organisation_id, verb, from_user_id, to_user_id,
        from_ball_in_court_id, to_ball_in_court_id, actor_id, actor_role)
-    VALUES (NEW.id, NEW.project_id, NEW.organisation_id, 'reassigned',
+    VALUES (NEW.id, NEW.project_id, NEW.organisation_id, 'gatekeeper_changed',
             OLD.gatekeeper_id, NEW.gatekeeper_id,
             OLD.ball_in_court_id, NEW.ball_in_court_id, v_actor, v_role);
 

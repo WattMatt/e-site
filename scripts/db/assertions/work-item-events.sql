@@ -88,11 +88,14 @@ BEGIN
   -- ON DELETE SET NULL as an UPDATE of the void row that changes ONLY a source
   -- FK. §11 must fire no arm for it and return cleanly, or every such delete
   -- writes a phantom event (Task 11's guard must admit the same update).
+  -- opened_at is a historical date, kept by §5 on the service path (its stamp
+  -- keys on auth.uid() IS NOT NULL) — 13c pins that the created event is
+  -- dated there, not at the moment the backfill ran.
   INSERT INTO projects.work_items
     (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by,
-     rfi_id, status, void_reason, origin)
+     rfi_id, status, void_reason, origin, opened_at)
   VALUES (e.organisation_id, e.project_id, 'rfi', 'void rfi subject', e.actor_id, e.pm_id, e.pm_id,
-          e.rfi_id, 'void', 'assertion', 'mirror')
+          e.rfi_id, 'void', 'assertion', 'mirror', now() - interval '30 days')
   RETURNING id INTO v_void;
   UPDATE projects.work_items SET rfi_id = NULL WHERE id = v_void;
   IF (SELECT rfi_id FROM projects.work_items WHERE id = v_void) IS NOT NULL THEN
@@ -145,7 +148,7 @@ BEGIN
   -- A gatekeeper correction while answered: the ball moves with the column
   -- (ball_in_court_id = gatekeeper_id in 'answered'), and a write-role holder
   -- may correct either person column in any live state (improvement 10).
-  UPDATE projects.work_items SET gatekeeper_id = e.other_id WHERE id = v_id;    -- answered -> 'reassigned'
+  UPDATE projects.work_items SET gatekeeper_id = e.other_id WHERE id = v_id;    -- answered -> 'gatekeeper_changed'
   IF NOT FOUND THEN RAISE EXCEPTION 'the gatekeeper-correction UPDATE matched no row under RLS'; END IF;
 END $$;
 
@@ -178,6 +181,16 @@ BEGIN
                   WHERE ev.work_item_id = v_id AND ev.verb = 'created'
                     AND ev.created_at = wi.opened_at)
   THEN RAISE EXCEPTION 'the created event is not dated at the row''s stamped opened_at'; END IF;
+  -- 1c. Total order. now() is transaction-constant, so every event this
+  --     transaction wrote carries the SAME created_at and id is random; only
+  --     seq (identity) orders them. By (created_at, seq) the first event is
+  --     the creation and the last is the gatekeeper correction.
+  SELECT count(DISTINCT created_at) INTO n FROM projects.work_item_events WHERE work_item_id = v_id;
+  IF n <> 1 THEN RAISE EXCEPTION 'one transaction wrote this history but % distinct created_at values appear; the (created_at, seq) ordering premise is wrong', n; END IF;
+  IF (SELECT verb FROM projects.work_item_events WHERE work_item_id = v_id ORDER BY created_at, seq LIMIT 1) <> 'created'
+     OR (SELECT from_user_id = e.pm_id AND to_user_id = e.other_id FROM projects.work_item_events
+          WHERE work_item_id = v_id ORDER BY created_at DESC, seq DESC LIMIT 1) IS NOT TRUE
+  THEN RAISE EXCEPTION 'ordering the history by (created_at, seq) does not replay the writes in order'; END IF;
 
   -- 2. Triage assignment writes 'assigned'; a later change writes 'reassigned'.
   --    Both verbs must be reachable or one of them is decorative.
@@ -189,14 +202,26 @@ BEGIN
                   WHERE work_item_id = v_id AND verb = 'reassigned'
                     AND from_user_id = e.other_id AND to_user_id = e.actor_id)
   THEN RAISE EXCEPTION 'a post-triage reassignment wrote no reassigned event with both endpoints'; END IF;
-  -- 2b. The gatekeeper arm answers on its own: a gatekeeper correction on an
-  --     answered item writes 'reassigned' with both people AND the ball-in-
-  --     court move it caused (the ball sits with the gatekeeper in 'answered').
+  -- 2b. The gatekeeper arm answers on its own, under its OWN verb: a
+  --     gatekeeper correction on an answered item writes 'gatekeeper_changed'
+  --     with both people AND the ball-in-court move it caused (the ball sits
+  --     with the gatekeeper in 'answered'). 'reassigned' would make a change
+  --     of who signs off indistinguishable from a change of who does the work.
   IF NOT EXISTS (SELECT 1 FROM projects.work_item_events
-                  WHERE work_item_id = v_id AND verb = 'reassigned'
+                  WHERE work_item_id = v_id AND verb = 'gatekeeper_changed'
                     AND from_user_id = e.pm_id AND to_user_id = e.other_id
                     AND from_ball_in_court_id = e.pm_id AND to_ball_in_court_id = e.other_id)
-  THEN RAISE EXCEPTION 'a gatekeeper correction wrote no reassigned event carrying both people and the ball-in-court move'; END IF;
+  THEN RAISE EXCEPTION 'a gatekeeper correction wrote no gatekeeper_changed event carrying both people and the ball-in-court move'; END IF;
+  -- 2c. The open-state reassignment moved the ball WITH the assignee: from the
+  --     old assignee to the new one. This is the row that tells the assignee
+  --     arm reading the GENERATED column apart from one writing a person
+  --     column — NEW.gatekeeper_id would put the PM here, and nothing above
+  --     would notice.
+  IF NOT EXISTS (SELECT 1 FROM projects.work_item_events
+                  WHERE work_item_id = v_id AND verb = 'reassigned'
+                    AND from_user_id = e.other_id AND to_user_id = e.actor_id
+                    AND from_ball_in_court_id = e.other_id AND to_ball_in_court_id = e.actor_id)
+  THEN RAISE EXCEPTION 'the open-state reassignment does not carry the ball-in-court move from the old to the new assignee'; END IF;
 
   -- 3. A due-date change is recorded with both endpoints...
   IF NOT EXISTS (SELECT 1 FROM projects.work_item_events
@@ -226,6 +251,15 @@ BEGIN
                     AND from_ball_in_court_id = e.actor_id
                     AND to_ball_in_court_id   = e.pm_id)
   THEN RAISE EXCEPTION 'the open -> answered event does not carry the ball-in-court handover; metric 5 has no denominator'; END IF;
+  -- 5b. The triage -> open move did NOT move the ball: it stayed with the
+  --     assignee (other_id at that moment), who is NOT the gatekeeper. On the
+  --     open -> answered row the ball lands on the gatekeeper either way, so
+  --     only THIS row tells the status arm reading the GENERATED column apart
+  --     from one writing NEW.gatekeeper_id.
+  IF NOT EXISTS (SELECT 1 FROM projects.work_item_events
+                  WHERE work_item_id = v_id AND from_status = 'triage' AND to_status = 'open'
+                    AND from_ball_in_court_id = e.other_id AND to_ball_in_court_id = e.other_id)
+  THEN RAISE EXCEPTION 'the triage -> open event does not carry the (unchanged) assignee ball-in-court on both sides'; END IF;
 
   -- 6. ATTRIBUTION. Every event names the real actor, from auth.uid().
   SELECT count(*) INTO n FROM projects.work_item_events
@@ -310,6 +344,17 @@ BEGIN
   IF EXISTS (SELECT 1 FROM projects.work_item_events
               WHERE work_item_id = v_void AND (actor_id IS NOT NULL OR actor_role IS NOT NULL))
   THEN RAISE EXCEPTION 'the service-path created event on the void item names an actor or a role; auth.uid() was NULL when it was written'; END IF;
+  -- 13c. ...and it is dated at the row's HISTORICAL opened_at (30 days ago,
+  --      supplied by the seed and kept by §5 on the service path), not at the
+  --      moment the insert ran. A backfilled arrival dated at backfill time
+  --      would pile every historical item into one week of metric 5's
+  --      denominator.
+  IF NOT EXISTS (SELECT 1 FROM projects.work_item_events ev
+                  JOIN projects.work_items wi ON wi.id = ev.work_item_id
+                  WHERE ev.work_item_id = v_void AND ev.verb = 'created'
+                    AND wi.opened_at < now() - interval '29 days'
+                    AND ev.created_at = wi.opened_at)
+  THEN RAISE EXCEPTION 'the service-path created event is not dated at the row''s historical opened_at'; END IF;
 
   RAISE NOTICE 'work-item-events: 13/13 assertions passed';
 END $$;

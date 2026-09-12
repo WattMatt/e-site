@@ -4,8 +4,8 @@
 --
 -- Three roles act, and every role-scoped block acts as a REAL user — the only
 -- way a role assertion can fail:
---   * postgres — the structural checks (0-4), the seed rows, and the extra
---     watcher and event rows beside what §11's append trigger writes itself;
+--   * postgres — the structural checks (0-4), the seed rows, and one extra
+--     watcher row (20-21) beside what §11's append trigger writes itself;
 --   * the rbac-test contractor — 018f2d31-bbe8-4cc1-bbdd-63af0187081e,
 --     contractor on WM-Consulting and (643) KINGSWALK, the permanent prod RBAC
 --     fixture (CLAUDE.md "Key gotchas": never invite it, never email it) —
@@ -252,9 +252,9 @@ END $$;
 -- are the assignee (born open, ball with them) and one where they are the
 -- gatekeeper (born answered, ball with them). On the client viewer's project:
 -- one they hold, and two they do not — one of which they will WATCH (20-21)
--- and one they never touch (13, 22). Plus one event per client-viewer item,
--- beside the 'created' event §11's trigger writes for each, so
--- work_item_events_select has rows to be right and wrong about.
+-- and one they never touch (13, 22). §11's trigger writes a 'created' event
+-- for each, which is what work_item_events_select has to be right and wrong
+-- about (15, 16, 21, 22c).
 DO $$
 DECLARE f record; c record; v uuid;
 BEGIN
@@ -286,27 +286,18 @@ BEGIN
   VALUES (c.organisation_id, c.project_id, 'task', 'client viewer holds this', c.user_id, c.pm_id, c.pm_id)
   RETURNING id INTO v;
   INSERT INTO _seed VALUES ('cv_mine', v);
-  INSERT INTO projects.work_item_events
-    (work_item_id, project_id, organisation_id, verb, to_status, actor_id, to_ball_in_court_id)
-  VALUES (v, c.project_id, c.organisation_id, 'created', 'triage', c.pm_id, c.user_id);
 
   INSERT INTO projects.work_items
     (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
   VALUES (c.organisation_id, c.project_id, 'task', 'not the client viewers', c.pm_id, c.pm_id, c.pm_id)
   RETURNING id INTO v;
   INSERT INTO _seed VALUES ('theirs', v);
-  INSERT INTO projects.work_item_events
-    (work_item_id, project_id, organisation_id, verb, to_status, actor_id, to_ball_in_court_id)
-  VALUES (v, c.project_id, c.organisation_id, 'created', 'triage', c.pm_id, c.pm_id);
 
   INSERT INTO projects.work_items
     (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
   VALUES (c.organisation_id, c.project_id, 'task', 'not the client viewers either', c.pm_id, c.pm_id, c.pm_id)
   RETURNING id INTO v;
   INSERT INTO _seed VALUES ('theirs2', v);
-  INSERT INTO projects.work_item_events
-    (work_item_id, project_id, organisation_id, verb, to_status, actor_id, to_ball_in_court_id)
-  VALUES (v, c.project_id, c.organisation_id, 'created', 'triage', c.pm_id, c.pm_id);
 END $$;
 
 -- ── The contractor ──────────────────────────────────────────────────────────
@@ -633,8 +624,10 @@ BEGIN
   -- 11c. ...a holder of the type's write role can add someone else. §11
   --      already subscribed the PM to v_id as its gatekeeper at creation, so
   --      the write-role arm of work_item_watchers_delete removes that row
-  --      first — a bare insert hits the primary key, and ON CONFLICT would
-  --      prove nothing about the insert policy.
+  --      first — a bare insert hits the primary key. (ON CONFLICT DO NOTHING
+  --      would also pass the policy — Postgres evaluates the INSERT WITH
+  --      CHECK before conflict detection, probed in review — but it would
+  --      insert nothing and leave the delete arm unexercised.)
   DELETE FROM projects.work_item_watchers WHERE work_item_id = v_id AND user_id = f.pm_id;
   IF NOT FOUND THEN RAISE EXCEPTION '§11 did not subscribe the gatekeeper to the seeded item, or the write-role arm of work_item_watchers_delete is gone'; END IF;
   INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_id, f.pm_id, 'manual');
@@ -695,9 +688,19 @@ BEGIN
   SELECT id INTO v_theirs FROM _seed WHERE label = 'theirs';
 
   -- 12. They CAN see an item they hold. The landlord is frequently the
-  --     ball-in-court, and an inbox they cannot read is not an inbox.
-  SELECT id INTO v_mine FROM projects.work_items WHERE title='client viewer holds this';
-  IF v_mine IS NULL THEN RAISE EXCEPTION 'a client_viewer cannot see the item they are assigned'; END IF;
+  --     ball-in-court, and an inbox they cannot read is not an inbox. The id
+  --     comes from _seed, and they UNFOLLOW the item first (the self arm of
+  --     work_item_watchers_delete, for a client viewer): §11 subscribed them
+  --     to it as its assignee, and through that row the WATCHER arm would
+  --     answer 12-16 even with the holder arm deleted from both the policy
+  --     and user_can_read_work_item() — proven in review; the file then died
+  --     at 17's re-INSERT with a raw 42501 instead of 12's sentence.
+  SELECT id INTO v_mine FROM _seed WHERE label = 'cv_mine';
+  DELETE FROM projects.work_item_watchers WHERE work_item_id = v_mine AND user_id = c.user_id;
+  IF NOT FOUND THEN RAISE EXCEPTION '§11 did not subscribe the assignee to the item they hold, or the self arm of work_item_watchers_delete is gone for a client viewer'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_mine) THEN
+    RAISE EXCEPTION 'a client_viewer cannot see the item they are assigned';
+  END IF;
 
   -- 13. They CANNOT see a project-wide item they do not hold or watch. This is
   --     PR #162's defect in a new place: user_has_project_access() is TRUE for
@@ -737,12 +740,8 @@ BEGIN
   SELECT count(*) INTO n FROM projects.work_item_events e WHERE e.work_item_id <> v_mine;
   IF n <> 0 THEN RAISE EXCEPTION 'a client_viewer can read % event(s) of items they do not hold — work_item_events_select is wider than work_items_select', n; END IF;
 
-  -- 17. They can follow the item they hold (the self arm). §11 already
-  --     subscribed them to it as its assignee at creation, so they unfollow
-  --     first (the self arm of work_item_watchers_delete, for a client viewer)
-  --     and follow again — a bare insert hits the primary key.
-  DELETE FROM projects.work_item_watchers WHERE work_item_id = v_mine AND user_id = c.user_id;
-  IF NOT FOUND THEN RAISE EXCEPTION '§11 did not subscribe the assignee to the item they hold, or the self arm of work_item_watchers_delete is gone for a client viewer'; END IF;
+  -- 17. They can follow the item they hold (the self arm) — they unfollowed
+  --     it at 12, so this is a real insert, not a primary-key collision.
   INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_mine, c.user_id, 'manual');
   -- 18. ...but cannot add anyone else: no write role.
   BEGIN
