@@ -4,7 +4,17 @@
 # Then call:         mgmt_query "SELECT 1;"
 #                    mgmt_apply_sql_file path/to/migration.sql
 
-set -euo pipefail
+# Strict mode only when this file is EXECUTED directly. When it is SOURCED —
+# the documented use — the caller keeps its own shell options: an ad-hoc
+# `bash -c '. scripts/db/mgmt-api.sh; mgmt_query A; mgmt_query B'` must reach
+# B and print A's error rather than die silently after it. Every script under
+# scripts/db that sources this sets `set -euo pipefail` itself, before the
+# source line. So that nothing here depends on errexit or pipefail in the
+# caller, every function below returns an explicit non-zero code on failure:
+# mgmt_query and mgmt_apply_sql_file return 5 (jq's error() code) on an API
+# error object, another non-zero code on a transport or local failure, and 0
+# only with a result set.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then set -euo pipefail; fi
 
 # Hard-require jq. Compatible with both `source`d and `bash`-executed use.
 if ! command -v jq > /dev/null 2>&1; then
@@ -24,7 +34,10 @@ _get_pat() {
     return 0
   fi
   local raw
-  raw=$(security find-generic-password -s "Supabase CLI" -w)
+  raw=$(security find-generic-password -s "Supabase CLI" -w) || {
+    echo "ERROR: SUPABASE_ACCESS_TOKEN is unset and the 'Supabase CLI' keychain item could not be read" >&2
+    return 1
+  }
   if [[ "$raw" == go-keyring-base64:* ]]; then
     echo "${raw#go-keyring-base64:}" | base64 -d
   else
@@ -45,24 +58,34 @@ _get_pat() {
 # where the caller is checking the result, e.g. `mgmt_query ... || rc=$?`)
 # without touching any EXIT trap a caller script has already installed.
 mgmt_query() {
-  local sql="$1"
+  local sql="${1-}"
+  if [[ -z "$sql" ]]; then
+    echo "usage: mgmt_query <sql>" >&2
+    return 2
+  fi
   local pat
-  pat=$(_get_pat)
+  pat=$(_get_pat) || return 1
 
   local sql_tmp json_tmp
-  sql_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")"
-  json_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")"
+  sql_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")" || return 1
+  json_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")" || { rm -f "$sql_tmp"; return 1; }
   chmod 600 "$sql_tmp" "$json_tmp"
   trap 'rm -f "$sql_tmp" "$json_tmp"' RETURN
 
   printf '%s' "$sql" > "$sql_tmp"
-  jq -n --rawfile q "$sql_tmp" '{query: $q}' > "$json_tmp"
+  jq -n --rawfile q "$sql_tmp" '{query: $q}' > "$json_tmp" || return 1
 
+  # The pipeline's status is returned explicitly so it holds without errexit
+  # or pipefail in the caller: 5 when jq's error() fires on an API error
+  # object, another non-zero code when curl produced no parseable JSON, 0
+  # only with a result set.
+  local rc=0
   curl -s -X POST "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/query" \
     -H "Authorization: Bearer ${pat}" \
     -H "Content-Type: application/json" \
     --data-binary @"$json_tmp" \
-    | jq -e 'if type == "object" and has("message") then error("Supabase API error: " + (.message // "unknown")) else . end'
+    | jq -e 'if type == "object" and has("message") then error("Supabase API error: " + (.message // "unknown")) else . end' || rc=$?
+  return "$rc"
 }
 
 # Apply an entire .sql file by reading it and POSTing as one query.
@@ -79,18 +102,21 @@ mgmt_apply_sql_file() {
     return 1
   fi
   local pat
-  pat=$(_get_pat)
+  pat=$(_get_pat) || return 1
 
   local json_tmp
-  json_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")"
+  json_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")" || return 1
   chmod 600 "$json_tmp"
   trap 'rm -f "$json_tmp"' RETURN
 
-  jq -n --rawfile q "$file" '{query: $q}' > "$json_tmp"
+  jq -n --rawfile q "$file" '{query: $q}' > "$json_tmp" || return 1
 
+  # Same explicit-status contract as mgmt_query (5 on an API error object).
+  local rc=0
   curl -s -X POST "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/query" \
     -H "Authorization: Bearer ${pat}" \
     -H "Content-Type: application/json" \
     --data-binary @"$json_tmp" \
-    | jq -e 'if type == "object" and has("message") then error("Supabase API error: " + (.message // "unknown")) else . end'
+    | jq -e 'if type == "object" and has("message") then error("Supabase API error: " + (.message // "unknown")) else . end' || rc=$?
+  return "$rc"
 }

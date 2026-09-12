@@ -108,8 +108,10 @@ export const isWorkItemTypeKey = (k: string): k is WorkItemTypeKey =>
  * asserts the two agree. `upper(item_type)` would have shipped QC_DEFECT-7 and
  * ORDER_FOLLOWUP-3 to a foreman on WhatsApp, permanently.
  *
- * This is NOT a column on work_item_types: A(b) fixes that table's column set
- * and §12 §(h) test 1 asserts it.
+ * This is NOT a column on work_item_types: A(b) fixes that table's column set,
+ * and §12 §(h) test 1 (work-item-types.contract.test.ts, "the
+ * projects.work_item_types column set is exactly A(b)'s") asserts the CREATE
+ * TABLE's column names equal A(b)'s list.
  */
 export const REF_PREFIXES: Readonly<Record<WorkItemTypeKey, string>> = {
   rfi: 'RFI',
@@ -167,7 +169,10 @@ export function stateLabel(key: string, status: WorkItemStatus): string {
  * The database column is authoritative and unwritable by anyone. Use this only
  * to render the next holder before a mutation returns.
  */
-// Exhaustiveness is enforced by the `string | null` return type, not by a `default`: a sixth status added to WORK_ITEM_STATUSES without a new arm here fails to compile with TS2366 (not all code paths return a value) — so do not add one.
+// Exhaustiveness is enforced by the `string | null` return type, not by a
+// `default`: a sixth status added to WORK_ITEM_STATUSES without a new arm here
+// fails to compile with TS2366 (not all code paths return a value) — so do not
+// add one.
 export function ballInCourt(
   status: WorkItemStatus,
   assigneeId: string,

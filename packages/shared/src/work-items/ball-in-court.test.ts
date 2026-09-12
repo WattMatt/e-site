@@ -72,8 +72,9 @@ describe('STATE_LABELS — the reader-facing word for a universal status', () =>
     expect(Object.keys(STATE_LABELS).sort()).toEqual([...WORK_ITEM_TYPE_KEYS].sort())
     for (const key of WORK_ITEM_TYPE_KEYS) {
       for (const s of WORK_ITEM_STATUSES) {
-        // Assert the map directly — stateLabel()'s `?? status` fallback is
-        // always truthy, so it can't tell a real label from a missing one.
+        // Assert the map directly — stateLabel() is a guard ternary that
+        // returns the raw `status` for a key it does not recognise, a truthy
+        // string either way, so only the map itself can show a missing label.
         expect(STATE_LABELS[key]?.[s], `${key}/${s}`).toBeTruthy()
       }
     }

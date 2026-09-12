@@ -188,9 +188,10 @@ END $pre$;
 
 -- ─── 1. projects.work_item_types — the registry ──────────────────────────────
 -- Columns are Appendix A(b)'s, exactly. A ref_prefix column was rejected: §12
--- §(h) test 1 asserts this column set, and the prefix lives as a CASE inside
--- projects.work_items_ensure_ref() (§6) instead, mirrored by REF_PREFIXES in
--- packages/shared/src/work-items/types.ts.
+-- §(h) test 1 (packages/shared/src/work-items/work-item-types.contract.test.ts)
+-- asserts this CREATE TABLE's column names equal A(b)'s list, so the prefix
+-- lives as a CASE inside projects.work_items_ensure_ref() (§6) instead,
+-- mirrored by REF_PREFIXES in packages/shared/src/work-items/types.ts.
 CREATE TABLE IF NOT EXISTS projects.work_item_types (
   key             text PRIMARY KEY,
   label           text NOT NULL,
@@ -596,11 +597,18 @@ $fn$;
 
 -- BEFORE INSERT due-date trigger.
 --
--- SECURITY DEFINER with row_security off, and that is deliberate: it computes a
--- value, it authorises nothing, and it must produce the same date whether the
--- caller is a contractor who cannot read project_settings under their own RLS or
--- the service client. It never reads current_user. Contrast the transition guard
--- (§12), which IS an authorisation decision.
+-- SECURITY DEFINER, and that is deliberate: it computes a value, it authorises
+-- nothing, and it must produce the same date whether the caller is a contractor
+-- who cannot read project_settings under their own RLS or the service client.
+-- What makes its reads of work_item_types and project_settings range over every
+-- row is the DEFINER: postgres, which owns both tables and carries BYPASSRLS on
+-- this project (measured 2026-09-12) — either alone bypasses their policies.
+-- `row_security = off` is not the mechanism; it is the fail-loud guard for the
+-- day neither holds (a definer re-owned to a plain role, FORCE ROW LEVEL
+-- SECURITY on a table it no longer owns): a read a policy would narrow then
+-- raises 42501 instead of silently returning the caller's subset. It never
+-- reads current_user. Contrast the transition guard (§12), which IS an
+-- authorisation decision.
 --
 -- There is no calendar-day fallback. §03 §1.5's "calendar-day fallback" sentence
 -- is about a path that supplies no date getting one computed rather than failing;
@@ -716,10 +724,14 @@ CREATE TRIGGER work_items_set_due_date_trg
 -- DELETE policy for authenticated and the DELETE grant is revoked in §10, so a
 -- row leaves the inbox by becoming 'void', never by disappearing.
 --
--- row_security is OFF, as in §5: the MAX must range over EVERY row on the
--- project, not the caller's visible subset — a contractor who can read only the
--- items they hold would otherwise compute a MAX that misses rows and collide on
--- work_items_ref_unique. It authorises nothing and never reads current_user.
+-- The MAX must range over EVERY row on the project, not the caller's visible
+-- subset — a contractor who can read only the items they hold would otherwise
+-- compute a MAX that misses rows and collide on work_items_ref_unique. As in
+-- §5, SECURITY DEFINER delivers that: the definer, postgres, owns work_items
+-- and carries BYPASSRLS, so no policy applies to its read. row_security = off
+-- is the fail-loud guard rather than the mechanism — should the definer ever
+-- lose both, a policy-narrowed MAX raises 42501 instead of silently missing
+-- rows. It authorises nothing and never reads current_user.
 --
 -- COALESCE and NULLIF are grammar constructs, not pg_catalog functions:
 -- `pg_catalog.coalesce(...)` is a 42883 on PG 17.6 (measured). They resolve

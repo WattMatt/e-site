@@ -230,12 +230,14 @@ BEGIN
   --    terminated at projects.org_owner() returned NULL here (deviations #9).
   -- 8a. The MECHANISM, on the throwaway: its org has no owner at all, its
   --     settings row was written before the creator's membership existed
-  --     (AFTER INSERT ordering, 00195 §3), and its creator is an active
+  --     (AFTER INSERT ordering, 00195 §3 — so triage_owner_id resolved NULL;
+  --     pinned below rather than reasoned), and its creator is an active
   --     contractor through project_members — so the only arm that can answer
   --     is resolve_project_pm()'s validated created_by. Asserted by identity.
   IF projects.org_owner(v_tw_org) IS NOT NULL THEN
     RAISE EXCEPTION 'the throwaway org has an owner (%) — 8a is not exercising the owner-less path', projects.org_owner(v_tw_org);
   END IF;
+  IF (SELECT ps.triage_owner_id IS NOT NULL FROM projects.project_settings ps WHERE ps.project_id = v_tw_proj) IS DISTINCT FROM false THEN RAISE EXCEPTION 'the throwaway''s project_settings row is missing or its triage_owner_id is set (%) — 00195 §3 did not leave it NULL, so 8a is not exercising the validated-creator arm', (SELECT ps.triage_owner_id FROM projects.project_settings ps WHERE ps.project_id = v_tw_proj); END IF;
   v_res := projects.resolve_work_item_assignee(v_tw_proj, 'rfi', NULL);
   IF v_res IS DISTINCT FROM v_fixture THEN
     RAISE EXCEPTION 'owner-less org: the chain answered % rather than the validated creator %', v_res, v_fixture;
