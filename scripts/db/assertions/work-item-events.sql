@@ -22,6 +22,12 @@
 --
 -- ⚠ Every id the role-scoped block needs is captured HERE, as postgres. Under
 -- the contractor's role projects.rfis and project_members are RLS-filtered.
+--
+-- TWO signed-in actors. The contractor does everything a write-role holder
+-- may (§12: the triage/open hand-off, status moves, the due date); the PM does
+-- the two GOVERNING acts §12 reserves for owner/admin/PM — the gatekeeper
+-- correction in 'answered' (2b) and the one-statement takeover + close (14).
+-- set_config(…, true) is transaction-local, so the claim is re-set per actor.
 CREATE TEMP TABLE _e AS
 SELECT pm.project_id, p.organisation_id,
        '018f2d31-bbe8-4cc1-bbdd-63af0187081e'::uuid AS actor_id,
@@ -68,6 +74,13 @@ BEGIN
   END IF;
   IF e.rfi_id IS NULL THEN
     RAISE EXCEPTION 'no RFI on the fixture project % — assertion 13 needs a real rfi_id captured as postgres', e.project_id;
+  END IF;
+  -- The PM must GOVERN (owner/admin/PM), or 2b's correction and 14's takeover
+  -- are refused by §12 for a fixture reason: resolve_project_pm() can end at
+  -- a validated created_by.
+  IF NOT COALESCE(public.user_effective_project_role(e.project_id, e.pm_id) IN ('owner','admin','project_manager'), FALSE) THEN
+    RAISE EXCEPTION 'the fixture PM''s effective role on % is %, not a governing role',
+      e.project_id, public.user_effective_project_role(e.project_id, e.pm_id);
   END IF;
   -- Pinned, so a fixture elevation fails with the cause named rather than as
   -- a wrong-role assertion 7.
@@ -145,17 +158,57 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'the due-date UPDATE matched no row under RLS'; END IF;
   UPDATE projects.work_items SET status = 'answered'        WHERE id = v_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'the open -> answered UPDATE matched no row under RLS'; END IF;
-  -- A gatekeeper correction while answered: the ball moves with the column
-  -- (ball_in_court_id = gatekeeper_id in 'answered'), and a write-role holder
-  -- may correct either person column in any live state (improvement 10).
+  -- The gatekeeper correction while answered is NOT the contractor's to make:
+  -- who signs off is governance (§12 HIGH-1), and a write role on the type is
+  -- not that. It is the PM's, in the next block.
+END $$;
+
+RESET ROLE;
+
+-- The PM: the two governing acts. The claim is re-set — set_config(…, true)
+-- is transaction-local and still names the contractor.
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', (SELECT pm_id FROM _e), 'role','authenticated')::text, true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE e record; v_id uuid; v_take uuid;
+BEGIN
+  SELECT * INTO e FROM _e;
+  IF auth.uid() IS DISTINCT FROM e.pm_id THEN
+    RAISE EXCEPTION 'PM impersonation did not take: auth.uid() is %', auth.uid();
+  END IF;
+  SELECT id INTO v_id FROM projects.work_items WHERE title = 'event subject';
+  IF v_id IS NULL THEN RAISE EXCEPTION 'the PM cannot see the event subject; the RLS SELECT policy is wrong'; END IF;
+
+  -- 2b's write. A gatekeeper correction while answered: the ball moves with
+  -- the column (ball_in_court_id = gatekeeper_id in 'answered'), and a
+  -- governing actor may correct either person column in any live state
+  -- (improvement 10, as narrowed by HIGH-1). This must stay the LAST write on
+  -- the event subject: 1c reads it back as the final event.
   UPDATE projects.work_items SET gatekeeper_id = e.other_id WHERE id = v_id;    -- answered -> 'gatekeeper_changed'
   IF NOT FOUND THEN RAISE EXCEPTION 'the gatekeeper-correction UPDATE matched no row under RLS'; END IF;
+
+  -- 14's write. A FRESH item the PM neither holds nor gatekeeps (assignee =
+  -- the third member, gatekeeper = the contractor), born open, then taken
+  -- over AND closed in ONE statement — the path (d) leaves a governing actor
+  -- who needs to close. §11 must record gatekeeper_changed before closed.
+  INSERT INTO projects.work_items
+    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status)
+  VALUES (e.organisation_id, e.project_id, 'task', 'takeover subject', e.other_id, e.actor_id, e.pm_id, 'manual', 'open')
+  RETURNING id INTO v_take;
+  UPDATE projects.work_items SET gatekeeper_id = auth.uid(), status = 'closed' WHERE id = v_take;
+  IF NOT FOUND THEN RAISE EXCEPTION 'the one-statement takeover + close matched no row under RLS'; END IF;
+  IF (SELECT status FROM projects.work_items WHERE id = v_take) <> 'closed'
+     OR (SELECT gatekeeper_id FROM projects.work_items WHERE id = v_take) <> e.pm_id THEN
+    RAISE EXCEPTION 'the one-statement takeover + close did not take';
+  END IF;
 END $$;
 
 RESET ROLE;
 
 DO $$
-DECLARE v_id uuid; v_void uuid; n int; e record;
+DECLARE v_id uuid; v_void uuid; v_take uuid; n int; e record;
 BEGIN
   SELECT * INTO e FROM _e;
   SELECT id INTO v_id FROM projects.work_items WHERE title = 'event subject';
@@ -261,28 +314,40 @@ BEGIN
                     AND from_ball_in_court_id = e.other_id AND to_ball_in_court_id = e.other_id)
   THEN RAISE EXCEPTION 'the triage -> open event does not carry the (unchanged) assignee ball-in-court on both sides'; END IF;
 
-  -- 6. ATTRIBUTION. Every event names the real actor, from auth.uid().
+  -- 6. ATTRIBUTION. Every event names the real actor, from auth.uid(): the
+  --    contractor for everything they did, the PM for the one act that was
+  --    theirs. Two actors on one history is the stronger test — a trigger
+  --    that stamped the row's creator, or the last person named on it, would
+  --    get one of the two wrong.
   SELECT count(*) INTO n FROM projects.work_item_events
-   WHERE work_item_id = v_id AND actor_id IS DISTINCT FROM e.actor_id;
-  IF n <> 0 THEN RAISE EXCEPTION '% event(s) name the wrong actor (or none)', n; END IF;
+   WHERE work_item_id = v_id AND verb <> 'gatekeeper_changed' AND actor_id IS DISTINCT FROM e.actor_id;
+  IF n <> 0 THEN RAISE EXCEPTION '% of the contractor''s event(s) name the wrong actor (or none)', n; END IF;
+  IF NOT EXISTS (SELECT 1 FROM projects.work_item_events
+                  WHERE work_item_id = v_id AND verb = 'gatekeeper_changed' AND actor_id = e.pm_id)
+  THEN RAISE EXCEPTION 'the gatekeeper correction is not attributed to the PM who made it'; END IF;
 
-  -- 7. METRIC 2a's ROLE. actor_role is stamped AT EVENT TIME. Contractor
-  --    activity on work items is the only first-party evidence the spine
-  --    reached the contractor accounts (13 on 2026-09-10): public.email_events
-  --    (00185, the Resend webhook) records opens and bounces per message, but
-  --    nothing joins an open to a work item, so per-item email engagement is
-  --    unmeasurable and this column is the signal.
+  -- 7. METRIC 2a's ROLE. actor_role is stamped AT EVENT TIME, per actor.
+  --    Contractor activity on work items is the only first-party evidence the
+  --    spine reached the contractor accounts (13 on 2026-09-10):
+  --    public.email_events (00185, the Resend webhook) records opens and
+  --    bounces per message, but nothing joins an open to a work item, so
+  --    per-item email engagement is unmeasurable and this column is the signal.
   SELECT count(*) INTO n FROM projects.work_item_events
    WHERE work_item_id = v_id AND actor_role IS NULL;
   IF n <> 0 THEN RAISE EXCEPTION '% event(s) have no actor_role stamped', n; END IF;
-  -- One actor acted, so one role must appear; guarded before the scalar
+  -- The contractor's events carry one role; guarded before the scalar
   -- comparison so a two-role history fails with a sentence rather than
   -- "more than one row returned by a subquery".
-  SELECT count(DISTINCT actor_role) INTO n FROM projects.work_item_events WHERE work_item_id = v_id;
-  IF n <> 1 THEN RAISE EXCEPTION 'one actor wrote this history but % distinct actor_role values appear', n; END IF;
-  IF (SELECT DISTINCT actor_role FROM projects.work_item_events WHERE work_item_id = v_id)
+  SELECT count(DISTINCT actor_role) INTO n FROM projects.work_item_events
+   WHERE work_item_id = v_id AND actor_id = e.actor_id;
+  IF n <> 1 THEN RAISE EXCEPTION 'one contractor wrote these events but % distinct actor_role values appear', n; END IF;
+  IF (SELECT DISTINCT actor_role FROM projects.work_item_events WHERE work_item_id = v_id AND actor_id = e.actor_id)
      <> public.user_effective_project_role(e.project_id, e.actor_id)
-  THEN RAISE EXCEPTION 'actor_role does not match the actor''s effective role on the project'; END IF;
+  THEN RAISE EXCEPTION 'actor_role does not match the contractor''s effective role on the project'; END IF;
+  -- ...and the PM's event carries the PM's role, not the contractor's.
+  IF (SELECT actor_role FROM projects.work_item_events WHERE work_item_id = v_id AND verb = 'gatekeeper_changed')
+     IS DISTINCT FROM public.user_effective_project_role(e.project_id, e.pm_id)
+  THEN RAISE EXCEPTION 'the gatekeeper correction''s actor_role is not the PM''s effective role'; END IF;
 
   -- 8. WATCHERS ARE POPULATED. Nothing else in Q1 writes this table, so without
   --    the seeding arm the SELECT policy's watcher clause is dead code and item
@@ -356,5 +421,30 @@ BEGIN
                     AND ev.created_at = wi.opened_at)
   THEN RAISE EXCEPTION 'the service-path created event is not dated at the row''s historical opened_at'; END IF;
 
-  RAISE NOTICE 'work-item-events: 13/13 assertions passed';
+  -- 14. ARM ORDER. The PM's one-statement takeover + close writes TWO events
+  --     with the same created_at (transaction-constant); only seq orders
+  --     them, and gatekeeper_changed must come first: the feed reads "took it
+  --     over, then closed it", and metric 7's closed row is the last word.
+  --     Both rows carry the same OLD -> NEW ball-in-court pair (the assignee
+  --     held it in 'open'; nobody holds a closed item).
+  SELECT id INTO v_take FROM projects.work_items WHERE title = 'takeover subject';
+  IF v_take IS NULL THEN RAISE EXCEPTION 'the takeover subject was not written; assertion 14 has nothing to read'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM projects.work_item_events
+                  WHERE work_item_id = v_take AND verb = 'gatekeeper_changed'
+                    AND from_user_id = e.actor_id AND to_user_id = e.pm_id AND actor_id = e.pm_id
+                    AND from_ball_in_court_id = e.other_id AND to_ball_in_court_id IS NULL)
+  THEN RAISE EXCEPTION 'the takeover wrote no gatekeeper_changed event with both people, the PM as actor and the open -> closed ball pair'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM projects.work_item_events
+                  WHERE work_item_id = v_take AND verb = 'closed'
+                    AND from_status = 'open' AND to_status = 'closed' AND actor_id = e.pm_id
+                    AND from_ball_in_court_id = e.other_id AND to_ball_in_court_id IS NULL)
+  THEN RAISE EXCEPTION 'the takeover + close wrote no closed event with the open -> closed ball pair'; END IF;
+  IF (SELECT count(DISTINCT created_at) FROM projects.work_item_events
+       WHERE work_item_id = v_take AND verb IN ('gatekeeper_changed','closed')) <> 1
+  THEN RAISE EXCEPTION 'the two takeover events do not share a created_at; the seq-order premise is wrong'; END IF;
+  IF ( (SELECT seq FROM projects.work_item_events WHERE work_item_id = v_take AND verb = 'gatekeeper_changed')
+       < (SELECT seq FROM projects.work_item_events WHERE work_item_id = v_take AND verb = 'closed') ) IS NOT TRUE
+  THEN RAISE EXCEPTION 'a one-statement takeover + close recorded closed before gatekeeper_changed; the feed would read "closed, then took it over"'; END IF;
+
+  RAISE NOTICE 'work-item-events: 14/14 assertions passed';
 END $$;

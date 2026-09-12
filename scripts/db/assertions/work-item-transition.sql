@@ -7,25 +7,32 @@
 -- auth.uid() is NULL, the service-path exemption fires, and the guard passes
 -- everything — the definition of a test that cannot fail.
 --
--- ⚠ The assignee fixture must NOT hold a write role, or half of this file
--- cannot fail. Measured 2026-09-10 (and again 2026-09-12): every active
--- project_members row in production is contractor, project_manager or
--- client_viewer, and contractor IS in task's and rfi's write sets. The file
--- therefore DEMOTES the rbac-test fixture (018f2d31-bbe8-4cc1-bbdd-63af0187081e,
--- contractor on WM-Consulting and (643) KINGSWALK; never invite it, never
--- email it) to `inspector` for the duration of the transaction —
--- user_effective_project_role falls through to project_members.role for
--- anyone whose ORG role is not owner/admin/project_manager (00107:59-66) —
--- and asserts the demotion took.
+-- The rbac-test fixture (018f2d31-bbe8-4cc1-bbdd-63af0187081e, contractor on
+-- WM-Consulting and (643) KINGSWALK; never invite it, never email it) plays
+-- TWO parts, in this order:
+--   * UNDEMOTED, a write-role holder for rfi and task (G1-G3): the type's
+--     write set must NOT be enough to take the gatekeeper seat, close, or
+--     pull an answered item back — governance is owner/admin/PM.
+--   * DEMOTED to `inspector` (1 onward): a holder with NO write role, or half
+--     of this file cannot fail. Measured 2026-09-10 (and again 2026-09-12):
+--     every active project_members row in production is contractor,
+--     project_manager or client_viewer, and contractor IS in task's and
+--     rfi's write sets. user_effective_project_role falls through to
+--     project_members.role for anyone whose ORG role is not
+--     owner/admin/project_manager (00107:59-66); the demotion is asserted.
 --
 -- ⚠ set_config(…, true) is TRANSACTION-local: after RESET ROLE, auth.uid()
--- still returns the last impersonated user. Every row a postgres block seeds
--- is therefore seeded BEFORE the first SET LOCAL ROLE, and the one postgres
--- block that must travel the SERVICE PATH (auth.uid() NULL — the guard's
--- exemption) clears the claim first and proves auth.uid() reads NULL:
--- auth.uid() is nullif(current_setting('request.jwt.claims', true), '')::jsonb
--- ->> 'sub', so an empty string parses to NULL (read back from production,
--- 2026-09-12).
+-- still returns the last impersonated user, and the claim is re-set for each
+-- actor. Every work_items row a postgres block seeds is therefore seeded
+-- BEFORE the first SET LOCAL ROLE, and the one postgres block that must
+-- travel the SERVICE PATH (auth.uid() NULL — the guard's exemption) clears
+-- the claim first and proves auth.uid() reads NULL. Production's auth.uid()
+-- (read back 2026-09-12) is coalesce(nullif(current_setting(
+-- 'request.jwt.claim.sub', true), ''), (nullif(current_setting(
+-- 'request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid — the legacy
+-- per-claim GUC first, then the JSON claims. This file never sets the first
+-- (missing_ok reads NULL) and clears the second to '', and nullif('', '')
+-- is NULL, so BOTH arms read NULL.
 --
 -- ⚠ Every id a role-scoped block needs is captured HERE, as postgres. Under
 -- the demoted role projects.rfis, projects.projects and project_members are
@@ -96,23 +103,44 @@ BEGIN
   VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
   ON CONFLICT DO NOTHING;
 
-  -- Demote the actor to a NON-write role for the duration of this transaction.
-  -- Every live project_members row in production is contractor /
-  -- project_manager / client_viewer, and contractor IS in task's and rfi's
-  -- write sets — so without this the "only the holder may shift the selected
-  -- column" assertions pass vacuously.
-  UPDATE projects.project_members SET role = 'inspector'
-   WHERE project_id = t.project_id AND user_id = t.actor_id;
-  IF public.user_effective_project_role(t.project_id, t.actor_id) IS DISTINCT FROM 'inspector' THEN
-    RAISE EXCEPTION 'the demotion did not take (org-level role wins: effective role is %); pick a fixture whose org role is not owner/admin/project_manager',
-      public.user_effective_project_role(t.project_id, t.actor_id);
+  -- The PM must GOVERN (owner/admin/PM), or the gatekeeper block's
+  -- corrections (11) pass for the wrong reason: resolve_project_pm() can end
+  -- at a validated created_by.
+  IF NOT COALESCE(public.user_effective_project_role(t.project_id, t.pm_id) IN ('owner','admin','project_manager'), FALSE) THEN
+    RAISE EXCEPTION 'the fixture PM''s effective role on % is %, not a governing role',
+      t.project_id, public.user_effective_project_role(t.project_id, t.pm_id);
   END IF;
-  -- user_can_write_work_item() reads auth.uid(), which is NULL here; the
-  -- registry is what is being checked, so read it directly.
+  -- The undemoted actor must be a contractor holding the rfi AND task write
+  -- roles, or G1-G3 cannot fail for the right reason: they exist to prove the
+  -- type's write set is not governance. The registry is read directly —
+  -- user_can_write_work_item() reads auth.uid(), which is NULL here.
+  IF public.user_effective_project_role(t.project_id, t.actor_id) IS DISTINCT FROM 'contractor' THEN
+    RAISE EXCEPTION 'the rbac-test fixture''s effective role on % is % rather than contractor',
+      t.project_id, public.user_effective_project_role(t.project_id, t.actor_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM projects.work_item_types wt WHERE wt.key = 'rfi'  AND 'contractor' = ANY (wt.write_roles))
+  OR NOT EXISTS (SELECT 1 FROM projects.work_item_types wt WHERE wt.key = 'task' AND 'contractor' = ANY (wt.write_roles)) THEN
+    RAISE EXCEPTION 'contractor is not in the rfi and task write sets; G1-G3 would pass for the wrong reason';
+  END IF;
+  -- ...and inspector (the demoted role) must hold neither.
   IF EXISTS (SELECT 1 FROM projects.work_item_types wt
               WHERE wt.key IN ('task','rfi') AND 'inspector' = ANY (wt.write_roles)) THEN
     RAISE EXCEPTION 'inspector holds a write role for task or rfi in the registry; the demoted actor would pass v_may_write and half this file cannot fail';
   END IF;
+
+  -- Governance subjects (G1-G3), for the UNDEMOTED contractor: an OPEN rfi and
+  -- an ANSWERED task they neither hold nor gatekeep — the reviewer's probe,
+  -- reproduced. The rfi is a deliberate 'split' row on rfi #2, so the partial
+  -- UNIQUE (origin = 'mirror') leaves rfi #2 free as 7b's re-link target.
+  INSERT INTO projects.work_items (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, rfi_id, origin, status)
+  VALUES (t.organisation_id, t.project_id, 'rfi', 'governance rfi subject', t.other_id, t.pm_id, t.pm_id, t.rfi_id_2, 'split', 'open');
+  INSERT INTO projects.work_items (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status)
+  VALUES (t.organisation_id, t.project_id, 'task', 'governance task subject', t.other_id, t.pm_id, t.pm_id, 'manual', 'answered');
+
+  -- 18's subject: assignee = the (later demoted) actor, gatekeeper = the PM.
+  -- Closed by the PM in the gatekeeper block; the assignee's reopen is refused.
+  INSERT INTO projects.work_items (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin)
+  VALUES (t.organisation_id, t.project_id, 'task', 'reopen subject', t.actor_id, t.pm_id, t.pm_id, 'manual');
 
   -- Subject: assignee = the demoted actor, gatekeeper = the PM.
   -- origin = 'manual' EXPLICITLY. The column default is 'mirror', and clause
@@ -153,6 +181,95 @@ BEGIN
      rfi_id, status, void_reason, origin)
   VALUES (t.organisation_id, t.project_id, 'rfi', 'void mirror subject', t.actor_id, t.pm_id, t.pm_id,
           t.rfi_id_3, 'void', 'assertion', 'mirror');
+END $$;
+
+-- Act as the UNDEMOTED contractor: a write-role holder for rfi and task who
+-- neither holds nor gatekeeps the governance subjects. Everything below is
+-- what the reviewer proved a write-role holder could do before HIGH-1.
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', (SELECT actor_id FROM _t), 'role','authenticated')::text, true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE t record; v_grfi uuid; v_gtask uuid;
+BEGIN
+  BEGIN
+    PERFORM 1 FROM _t;
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE EXCEPTION 'fixture _t is unreadable as authenticated — add GRANT SELECT ON _t TO authenticated';
+  END;
+  SELECT * INTO t FROM _t;
+  IF auth.uid() IS DISTINCT FROM t.actor_id THEN
+    RAISE EXCEPTION 'impersonation did not take: auth.uid() is %', auth.uid();
+  END IF;
+  -- As seen by the helper the policies and the guard call, this actor holds
+  -- BOTH write roles — the premise of G1-G3.
+  IF NOT projects.user_can_write_work_item(t.project_id, 'rfi')
+  OR NOT projects.user_can_write_work_item(t.project_id, 'task') THEN
+    RAISE EXCEPTION 'the undemoted contractor holds no write role for rfi or task as seen by user_can_write_work_item(); G1-G3 cannot fail for the right reason';
+  END IF;
+  SELECT id INTO v_grfi  FROM projects.work_items WHERE title = 'governance rfi subject';
+  SELECT id INTO v_gtask FROM projects.work_items WHERE title = 'governance task subject';
+  IF v_grfi IS NULL OR v_gtask IS NULL THEN
+    RAISE EXCEPTION 'the contractor cannot see the governance subjects; the RLS SELECT policy is wrong';
+  END IF;
+
+  -- G1. A write-role holder who neither holds nor gatekeeps an OPEN rfi cannot
+  --     take the gatekeeper seat. §9 admits the UPDATE (write role on the
+  --     type, and NEW.gatekeeper_id = auth.uid() passes the WITH CHECK); only
+  --     the guard's governance check refuses it.
+  BEGIN
+    UPDATE projects.work_items SET gatekeeper_id = auth.uid() WHERE id = v_grfi;
+    RAISE EXCEPTION 'SENTINEL: a contractor took over the gatekeeper seat of an rfi they neither hold nor gatekeep';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%owners, admins or project managers can change who signs%' THEN
+      RAISE EXCEPTION 'the seat takeover failed for the wrong reason: %', SQLERRM; END IF;
+  END;
+
+  -- G2. ...nor take it over AND close in one statement (the reviewer's Q1).
+  --     The gatekeeper arm (b) runs before the status machine (c), so the
+  --     GOVERNANCE sentence is the one that fires — pinned, so a reordering
+  --     that let (d)'s "signs it off" sentence win reads as a wrong reason.
+  BEGIN
+    UPDATE projects.work_items SET gatekeeper_id = auth.uid(), status = 'closed' WHERE id = v_grfi;
+    RAISE EXCEPTION 'SENTINEL: a contractor took over and closed an rfi in one statement';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%owners, admins or project managers can change who signs%' THEN
+      RAISE EXCEPTION 'the takeover-and-close failed for the wrong reason: %', SQLERRM; END IF;
+  END;
+
+  -- G3. ...nor pull an ANSWERED task back to themselves (the reviewer's Q3).
+  --     While answered the ball is with the reviewer; an assignee change is
+  --     governance, and a write role on the type is not that.
+  BEGIN
+    UPDATE projects.work_items SET assignee_id = auth.uid() WHERE id = v_gtask;
+    RAISE EXCEPTION 'SENTINEL: a contractor reassigned an answered task to themselves';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%with the reviewer%' THEN
+      RAISE EXCEPTION 'the answered self-assignment failed for the wrong reason: %', SQLERRM; END IF;
+  END;
+
+  RAISE NOTICE 'work-item-transition (undemoted contractor): G1-G3 passed';
+END $$;
+
+RESET ROLE;
+
+-- Demote the actor to a NON-write role for the rest of the transaction.
+-- Runs as postgres; auth.uid() still names the actor (transaction-local
+-- claim), which is harmless here — no work_items row is written.
+DO $$
+DECLARE t record;
+BEGIN
+  SELECT * INTO t FROM _t;
+  UPDATE projects.project_members SET role = 'inspector'
+   WHERE project_id = t.project_id AND user_id = t.actor_id;
+  IF public.user_effective_project_role(t.project_id, t.actor_id) IS DISTINCT FROM 'inspector' THEN
+    RAISE EXCEPTION 'the demotion did not take (org-level role wins: effective role is %); pick a fixture whose org role is not owner/admin/project_manager',
+      public.user_effective_project_role(t.project_id, t.actor_id);
+  END IF;
 END $$;
 
 -- Act as the ASSIGNEE, who is neither the gatekeeper nor a write-role holder.
@@ -223,9 +340,10 @@ BEGIN
 
   -- 4. While ANSWERED the shift writes gatekeeper_id, never assignee_id —
   --    writing the unselected column would regenerate an unchanged
-  --    ball-in-court and look like a broken control (§03 §1.4). This binds only
-  --    to someone who is NOT a write-role holder; a PM correcting the same
-  --    column is assertion 11.
+  --    ball-in-court and look like a broken control (§03 §1.4). This binds to
+  --    anyone who is not GOVERNING (owner/admin/PM) — G3 proves a write-role
+  --    holder gets the same refusal; a PM correcting the same column is
+  --    assertion 11.
   BEGIN
     UPDATE projects.work_items SET assignee_id = gatekeeper_id WHERE id = v_id;
     RAISE EXCEPTION 'SENTINEL: assignee_id was writable by a non-write-role holder while the item was answered';
@@ -265,8 +383,31 @@ BEGIN
       RAISE EXCEPTION 'the project move failed for the wrong reason (the membership trigger should fire first): %', SQLERRM; END IF;
   END;
 
+  -- 5c. opened_at and created_at are part of the record too: opened_at
+  --     pre-ages every escalation, created_at is when the item was raised.
+  --     §5 stamps opened_at for a client INSERT; without this a client UPDATE
+  --     backdated it by 400 days (proven in review). The service path skips
+  --     clause (a) — item 3's backfill keeps historical values.
+  BEGIN
+    UPDATE projects.work_items SET opened_at = opened_at - interval '400 days' WHERE id = v_id;
+    RAISE EXCEPTION 'SENTINEL: opened_at was mutable by the assignee';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%cannot be renumbered%' THEN
+      RAISE EXCEPTION 'the opened_at backdate failed for the wrong reason: %', SQLERRM; END IF;
+  END;
+  BEGIN
+    UPDATE projects.work_items SET created_at = created_at - interval '400 days' WHERE id = v_id;
+    RAISE EXCEPTION 'SENTINEL: created_at was mutable by the assignee';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%cannot be renumbered%' THEN
+      RAISE EXCEPTION 'the created_at backdate failed for the wrong reason: %', SQLERRM; END IF;
+  END;
+
   -- 6. A MIRRORED item's title belongs to its source. Without this rule, item
-  --    3's mirror trigger and a PM's clarification silently overwrite each other.
+  --    3's projection and a PM's clarification silently overwrite each other
+  --    (item 3's own rewrite needs the pg_trigger_depth() bypass §12 names).
   BEGIN
     UPDATE projects.work_items SET title = 'edited by hand' WHERE id = v_mirror;
     RAISE EXCEPTION 'SENTINEL: a mirrored item''s title was editable';
@@ -312,8 +453,8 @@ BEGIN
   --     assignee arm admits the hand-off (they hold the ball in 'open'); the
   --     gatekeeper arm refuses it, because a non-write-role holder may change
   --     the gatekeeper only while the item is 'answered'. Pull the item back
-  --     to open first — the assignee may (answered -> open is a legal move
-  --     and the machine gates only close and void by authority).
+  --     to open first — the assignee may (answered -> open is a legal move;
+  --     the machine gates close, reopen-from-closed and void by authority).
   UPDATE projects.work_items SET status = 'open' WHERE id = v_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'the answered -> open UPDATE matched no row under RLS'; END IF;
   BEGIN
@@ -395,7 +536,7 @@ SELECT set_config('request.jwt.claims',
 SET LOCAL ROLE authenticated;
 
 DO $$
-DECLARE t record; v_id uuid; v_mirror uuid; v_at timestamptz; v_by uuid; v_bic uuid;
+DECLARE t record; v_id uuid; v_mirror uuid; v_reopen uuid; v_at timestamptz; v_by uuid; v_bic uuid;
         v_status text; v_assignee uuid; v_gate uuid; v_reason text;
 BEGIN
   SELECT * INTO t FROM _t;
@@ -404,7 +545,8 @@ BEGIN
   END IF;
   SELECT id INTO v_id     FROM projects.work_items WHERE title = 'transition subject';
   SELECT id INTO v_mirror FROM projects.work_items WHERE title = 'mirrored subject';
-  IF v_id IS NULL OR v_mirror IS NULL THEN
+  SELECT id INTO v_reopen FROM projects.work_items WHERE title = 'reopen subject';
+  IF v_id IS NULL OR v_mirror IS NULL OR v_reopen IS NULL THEN
     RAISE EXCEPTION 'the gatekeeper cannot see the subjects; the RLS SELECT policy is wrong';
   END IF;
 
@@ -436,15 +578,17 @@ BEGIN
   SELECT closed_at, closed_by INTO v_at, v_by FROM projects.work_items WHERE id = v_id;
   IF v_at IS NOT NULL OR v_by IS NOT NULL THEN RAISE EXCEPTION 'reopen left closed_at/closed_by set'; END IF;
 
-  -- 11. A WRITE-ROLE HOLDER MAY CORRECT THE GATEKEEPER WHILE THE ITEM IS OPEN.
-  --     A(b) makes task's gatekeeper the CREATOR, so without this a contractor
-  --     who raises a task for a WM engineer is the only person who may ever
-  --     close it, and the PM cannot fix that until the work is already done.
-  --     Correcting a gatekeeper while the item is open moves no ball.
+  -- 11. A GOVERNING ACTOR (owner/admin/PM) MAY CORRECT THE GATEKEEPER WHILE
+  --     THE ITEM IS OPEN. A(b) makes task's gatekeeper the CREATOR, so without
+  --     this a contractor who raises a task for a WM engineer is the only
+  --     person who may ever close it, and the PM cannot fix that until the
+  --     work is already done. Correcting a gatekeeper while the item is open
+  --     moves no ball. (A write-role holder who is not governing gets G1's
+  --     refusal; the fixture PM's governing role is pinned in the setup.)
   UPDATE projects.work_items SET gatekeeper_id = t.actor_id WHERE id = v_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'the gatekeeper correction matched no row under RLS'; END IF;
   IF (SELECT gatekeeper_id FROM projects.work_items WHERE id = v_id) <> t.actor_id
-  THEN RAISE EXCEPTION 'a write-role holder could not correct the gatekeeper on an open item'; END IF;
+  THEN RAISE EXCEPTION 'a governing actor could not correct the gatekeeper on an open item'; END IF;
   UPDATE projects.work_items SET gatekeeper_id = t.pm_id WHERE id = v_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'the gatekeeper restore matched no row under RLS'; END IF;
 
@@ -469,6 +613,22 @@ BEGIN
   IF (SELECT ball_in_court_id FROM projects.work_items WHERE id = v_id) IS NOT NULL
   THEN RAISE EXCEPTION 'a void item still holds a ball_in_court'; END IF;
 
+  -- 13b. ...and the reason cannot be blanked afterwards. void_reason is
+  --      editable while void (the restore rule leaves it alone), so an empty
+  --      edit reaches the non-blank check — which applies to every void row,
+  --      not only to the transition that voided it.
+  BEGIN
+    UPDATE projects.work_items SET void_reason = '' WHERE id = v_id;
+    RAISE EXCEPTION 'SENTINEL: a void item''s reason was blanked';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%needs a short reason%' THEN
+      RAISE EXCEPTION 'the reason-blanking failed for the wrong reason: %', SQLERRM; END IF;
+  END;
+  IF (SELECT void_reason FROM projects.work_items WHERE id = v_id) <> 'assertion' THEN
+    RAISE EXCEPTION 'the refused blanking still changed void_reason';
+  END IF;
+
   -- 14. A VOID item's source FK may be nulled by a signed-in write-role
   --     holder — the gatekeeper here — with NO other clause raising: status
   --     stays void (no machine check), the people are unchanged (clause (b)
@@ -489,14 +649,62 @@ BEGIN
       v_status, v_assignee, v_gate, v_reason;
   END IF;
 
+  -- 18's setup: the PM, who gatekeeps the reopen subject, opens and closes it.
+  UPDATE projects.work_items SET status = 'open'   WHERE id = v_reopen;
+  IF NOT FOUND THEN RAISE EXCEPTION 'opening the reopen subject matched no row under RLS'; END IF;
+  UPDATE projects.work_items SET status = 'closed' WHERE id = v_reopen;
+  IF NOT FOUND THEN RAISE EXCEPTION 'closing the reopen subject matched no row under RLS'; END IF;
+  IF (SELECT status FROM projects.work_items WHERE id = v_reopen) <> 'closed' THEN
+    RAISE EXCEPTION 'the reopen subject is not closed; 18 has nothing to refuse';
+  END IF;
+
   RAISE NOTICE 'work-item-transition (gatekeeper): 8-14 passed';
 END $$;
 
 RESET ROLE;
 
+-- Back to the (demoted) ASSIGNEE for the reopen rule. The claim is re-set:
+-- set_config(…, true) is transaction-local and still names the PM.
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', (SELECT actor_id FROM _t), 'role','authenticated')::text, true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE t record; v_reopen uuid;
+BEGIN
+  SELECT * INTO t FROM _t;
+  IF auth.uid() IS DISTINCT FROM t.actor_id THEN
+    RAISE EXCEPTION 'impersonation did not take: auth.uid() is %', auth.uid();
+  END IF;
+  SELECT id INTO v_reopen FROM projects.work_items WHERE title = 'reopen subject';
+  IF v_reopen IS NULL THEN
+    RAISE EXCEPTION 'the assignee cannot see the reopen subject; the RLS SELECT policy is wrong';
+  END IF;
+
+  -- 18. REOPENING IS THE REVIEWER'S. The assignee may not reopen what the
+  --     gatekeeper closed: a nuisance to the reviewer, and every re-close
+  --     counts towards metric 7. §9 admits the UPDATE (they are the assignee);
+  --     only the guard refuses it. The gatekeeper's own reopen is assertion 10.
+  BEGIN
+    UPDATE projects.work_items SET status = 'open' WHERE id = v_reopen;
+    RAISE EXCEPTION 'SENTINEL: the assignee reopened an item the gatekeeper closed';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%can reopen it%' THEN
+      RAISE EXCEPTION 'the assignee reopen failed for the wrong reason: %', SQLERRM; END IF;
+  END;
+  IF (SELECT status FROM projects.work_items WHERE id = v_reopen) <> 'closed' THEN
+    RAISE EXCEPTION 'the refused reopen still changed the status';
+  END IF;
+
+  RAISE NOTICE 'work-item-transition (assignee, reopen): 18 passed';
+END $$;
+
+RESET ROLE;
+
 -- The SERVICE PATH. set_config(…, true) is transaction-local, so auth.uid()
--- still names the PM here; clear the claim and PROVE it reads NULL before
--- relying on the guard's exemption.
+-- still names the assignee here; clear the claim and PROVE it reads NULL
+-- before relying on the guard's exemption.
 SELECT set_config('request.jwt.claims', '', true);
 
 DO $$
@@ -553,7 +761,7 @@ END $$;
 DO $$
 DECLARE v_tgtype smallint;
 BEGIN
-  -- 17. The guard exists, anon cannot call it (CASE-guarded on
+  -- 19. The guard exists, anon cannot call it (CASE-guarded on
   --     to_regprocedure so an absent function reads red instead of aborting
   --     inside has_function_privilege), it never reads current_user, and its
   --     trigger is BEFORE UPDATE FOR EACH ROW and nothing else — an INSERT arm
@@ -583,5 +791,5 @@ BEGIN
     RAISE EXCEPTION 'work_items_transition_guard_trg is not BEFORE UPDATE FOR EACH ROW only (tgtype = %)', v_tgtype;
   END IF;
 
-  RAISE NOTICE 'work-item-transition: 17 passed (static shape)';
+  RAISE NOTICE 'work-item-transition: 19 passed (static shape)';
 END $$;
