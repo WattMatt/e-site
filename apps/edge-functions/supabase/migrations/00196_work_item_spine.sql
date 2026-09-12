@@ -735,3 +735,151 @@ DROP TRIGGER IF EXISTS work_items_ensure_ref_trg ON projects.work_items;
 CREATE TRIGGER work_items_ensure_ref_trg
   BEFORE INSERT ON projects.work_items
   FOR EACH ROW EXECUTE FUNCTION projects.work_items_ensure_ref();
+
+-- ─── 7. Assignment: the resolution chain and the membership assertion ────────
+-- §03 §1.6's chain, in order:
+--   explicit assignee
+--     -> work_item_defaults.<type>.triage_owner_id
+--     -> project_settings.triage_owner_id
+--     -> projects.resolve_project_pm()   (00195 §2: project PM -> org PM ->
+--        org admin -> org owner -> created_by, every arm membership-validated)
+-- Every candidate is validated with public.user_effective_project_role() before
+-- it is returned, and one that fails validation is SKIPPED, never raised on.
+-- It has to be: work_item_defaults holds ids in jsonb with no foreign key,
+-- public.profiles cascades from auth.users (00001:62), and a departed
+-- employee's id surviving there would otherwise abort the transaction and make
+-- it impossible for anyone to raise an RFI on that project. The same holds for
+-- project_settings.triage_owner_id, whose FK is to profiles, not to a
+-- membership — a person who has left the project is still a legal value.
+--
+-- THE CONTRACT (00195 §2, decided 2026-09-12): the chain never raises for a
+-- dead or departed id. It raises exactly once, with one actionable sentence,
+-- for an ORPHANED project — one on which no PM, org PM, org admin, org owner
+-- or creator still holds an effective role — because the only alternative
+-- there is to return someone who cannot open the item, and the membership
+-- trigger below would then refuse the row with a message that blames the
+-- wrong thing ("that person is not on this project"). There is deliberately
+-- NO separate org-owner arm: projects.org_owner() is NULL for the demo org
+-- (measured 2026-09-12) and has no project context to validate against, while
+-- resolve_project_pm() already carries the validated owner AND the validated
+-- created_by. The plan's "terminates at the org owner and never raises" is
+-- therefore replaced by this contract.
+--
+-- STABLE SECURITY DEFINER with row_security off, as 00195's resolvers: it
+-- reads project_settings, which a contractor's own RLS may hide, and the
+-- answer must not depend on who asked. It never reads current_user.
+--
+-- The anon/PUBLIC revokes for both functions in this section land in §10
+-- (Task 9) with the rest of the grant block, in the section order the preamble
+-- fixes — declared as grant_absent: in the @verify block above. There are no
+-- revokes in this section.
+CREATE OR REPLACE FUNCTION projects.resolve_work_item_assignee(
+  p_project_id uuid, p_item_type text, p_explicit uuid
+) RETURNS uuid
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE v_candidate uuid; v_defaults jsonb; v_settings_owner uuid;
+BEGIN
+  IF p_explicit IS NOT NULL
+     AND public.user_effective_project_role(p_project_id, p_explicit) IS NOT NULL THEN
+    RETURN p_explicit;
+  END IF;
+
+  SELECT ps.work_item_defaults, ps.triage_owner_id INTO v_defaults, v_settings_owner
+    FROM projects.project_settings ps WHERE ps.project_id = p_project_id;
+
+  -- A jsonb null or an absent key both read as SQL NULL here. The value is a
+  -- uuid or NULL by §13's validator; the cast is deliberate, not defensive.
+  v_candidate := NULLIF(v_defaults -> p_item_type ->> 'triage_owner_id', '')::uuid;
+  IF v_candidate IS NOT NULL
+     AND public.user_effective_project_role(p_project_id, v_candidate) IS NOT NULL THEN
+    RETURN v_candidate;
+  END IF;
+
+  IF v_settings_owner IS NOT NULL
+     AND public.user_effective_project_role(p_project_id, v_settings_owner) IS NOT NULL THEN
+    RETURN v_settings_owner;
+  END IF;
+
+  -- Validated end to end inside 00195; NULL only for an orphaned project.
+  v_candidate := projects.resolve_project_pm(p_project_id);
+  IF v_candidate IS NOT NULL THEN
+    RETURN v_candidate;
+  END IF;
+
+  -- The one raise. Written for the PM who will read it in a server action's
+  -- error.message; the fix it names is the only fix there is.
+  RAISE EXCEPTION 'This project has nobody who can own work — add a project manager to it first.'
+    USING ERRCODE = 'raise_exception';
+END;
+$fn$;
+
+-- An item can never be assigned to someone who cannot open it. assignee_id is an
+-- FK to public.profiles with NO membership predicate, so any profile in the
+-- database — including one in another organisation — is nominally assignable.
+-- The assign UI's people-picker reads the same set (§03 §1.9).
+--
+-- client_viewer is NOT excluded: in a shopping-centre fit-out the landlord is
+-- frequently the ball-in-court, and an item that cannot point at them is a worse
+-- bug than one they cannot yet clear. Their write carve-out lands in Q3.
+--
+-- Fires on UPDATE as well as INSERT, because RLS cannot compare OLD and NEW and
+-- reassignment would otherwise be the hole the INSERT check closes. It is
+-- declared UPDATE OF project_id too, and the body HONOURS that: the same
+-- assignee on a different project is a different membership question, so a
+-- project move re-checks both people (§12 also makes project_id immutable;
+-- this is the layer beneath it).
+--
+-- A NULL person column, or a NULL project, is passed through untouched: BEFORE
+-- ROW triggers run before the column constraints, and
+-- user_effective_project_role(project, NULL) is NULL (measured), so checking it
+-- would refuse the row as "not on this project" — sending a PM to look for a
+-- person who was never named — instead of letting the NOT NULL constraint
+-- report the column that is actually missing.
+--
+-- item_type is never touched here: an unregistered type passes through so the
+-- due-date trigger, next in name order, refuses it with a sentence that names
+-- it (work-item-due-date.sql assertion 12).
+--
+-- The message names COALESCE(ref, title), not ref: BEFORE ROW triggers fire in
+-- NAME order, so work_items_assert_membership_trg runs before
+-- work_items_ensure_ref_trg and NEW.ref is still NULL on INSERT. It is written
+-- as a sentence because every server action returns error.message straight to
+-- the user — this string is what a PM sees for picking the wrong person from a
+-- list.
+CREATE OR REPLACE FUNCTION projects.work_items_assert_membership() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  v_label text := COALESCE(NEW.ref, NEW.title, 'this item');
+  -- On INSERT, and on a move to another project, BOTH people are re-checked
+  -- whether or not they changed. OLD is NULL on INSERT; the OR short-circuits
+  -- before it is read.
+  v_recheck_all boolean := (TG_OP = 'INSERT' OR NEW.project_id IS DISTINCT FROM OLD.project_id);
+BEGIN
+  IF NEW.project_id IS NULL THEN RETURN NEW; END IF;   -- the NOT NULL constraint's to report
+
+  IF NEW.assignee_id IS NOT NULL
+     AND (v_recheck_all OR NEW.assignee_id IS DISTINCT FROM OLD.assignee_id)
+     AND public.user_effective_project_role(NEW.project_id, NEW.assignee_id) IS NULL THEN
+    RAISE EXCEPTION 'That person is not on this project, so % cannot be given to them. Add them to the project first, or choose someone who is already on it.', v_label
+      USING ERRCODE = 'raise_exception';
+  END IF;
+  IF NEW.gatekeeper_id IS NOT NULL
+     AND (v_recheck_all OR NEW.gatekeeper_id IS DISTINCT FROM OLD.gatekeeper_id)
+     AND public.user_effective_project_role(NEW.project_id, NEW.gatekeeper_id) IS NULL THEN
+    RAISE EXCEPTION 'That person is not on this project, so they cannot sign % off. Add them to the project first, or choose someone who is already on it.', v_label
+      USING ERRCODE = 'raise_exception';
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS work_items_assert_membership_trg ON projects.work_items;
+CREATE TRIGGER work_items_assert_membership_trg
+  BEFORE INSERT OR UPDATE OF assignee_id, gatekeeper_id, project_id ON projects.work_items
+  FOR EACH ROW EXECUTE FUNCTION projects.work_items_assert_membership();
