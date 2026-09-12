@@ -118,18 +118,30 @@
 -- grant_absent: anon EXECUTE ON projects.validate_work_item_defaults()
 -- grant_absent: authenticated DELETE ON projects.work_items
 -- grant_absent: authenticated INSERT ON projects.work_item_events
+-- grant_absent: authenticated UPDATE ON projects.work_item_events
+-- grant_absent: authenticated DELETE ON projects.work_item_events
+-- grant_absent: authenticated INSERT ON projects.work_item_types
+-- grant_absent: authenticated UPDATE ON projects.work_item_types
+-- grant_absent: authenticated DELETE ON projects.work_item_types
+-- grant_absent: authenticated UPDATE ON projects.work_item_watchers
 -- sql: SELECT bool_and(EXISTS (SELECT 1 FROM projects.work_item_types t WHERE t.key = k.key AND t.is_active)) FROM (VALUES ('rfi'),('snag'),('qc_defect'),('inspection'),('diary_action'),('form_action'),('order_followup'),('task')) AS k(key)
+-- sql: SELECT NOT EXISTS (SELECT 1 FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace WHERE n.nspname = 'projects' AND d.defaclobjtype = 'r' AND array_to_string(d.defaclacl, ',') LIKE '%anon=%')
 -- @verify:end
 --
--- ⚠ ON THE `sql:` DIRECTIVE. It asserts that the eight Q1 keys exist and are
--- active — an invariant, not a row count. `count(*) = 8` was rejected: every
--- directive is re-evaluated against production on EVERY future deploy, and the
--- day Q3 registers `approval` (§03 §1.7: a sourceless type costs one row) a
--- count would go red and block every later migration for a reason unrelated
--- to this file. The other edge of the same blade: the invariant pins all eight
--- Q1 keys `is_active`, so RETIRING a Q1 type (is_active = false, or a DELETE)
--- must edit this directive in the SAME migration that retires it — otherwise
--- that migration's own post-push verify goes red on this file's line.
+-- ⚠ ON THE FIRST `sql:` DIRECTIVE. It asserts that the eight Q1 keys exist and
+-- are active — an invariant, not a row count. `count(*) = 8` was rejected:
+-- every directive is re-evaluated against production on EVERY future deploy,
+-- and the day Q3 registers `approval` (§03 §1.7: a sourceless type costs one
+-- row) a count would go red and block every later migration for a reason
+-- unrelated to this file. The other edge of the same blade: the invariant pins
+-- all eight Q1 keys `is_active`, so RETIRING a Q1 type (is_active = false, or
+-- a DELETE) must edit this directive in the SAME migration that retires it —
+-- otherwise that migration's own post-push verify goes red on this file's line.
+--
+-- The SECOND `sql:` directive pins §10's ALTER DEFAULT PRIVILEGES fix: no
+-- default ACL for role postgres in schema projects may name anon on tables. A
+-- later `ALTER DEFAULT PRIVILEGES … GRANT … TO anon` in this schema would go
+-- red here on its own deploy, which is the point.
 
 -- ─── 0. Preconditions ────────────────────────────────────────────────────────
 -- This migration REFUSES TO APPLY against an under-seeded calendar, and that is
@@ -574,6 +586,19 @@ DECLARE
   v_days int; v_cal text; v_defaults jsonb; v_rfi_default int; v_override int;
   v_msg text; v_hint text;
 BEGIN
+  -- A client session never dictates the opening moment. WITH CHECK cannot
+  -- pin a timestamp, so the trigger stamps both: a backdated opened_at would
+  -- pre-age every escalation and a future last_activity_at would hide the
+  -- item from every "stale" query (a 400-day backdate was accepted before
+  -- this, proven in review). auth.uid() is NULL on the service and backfill
+  -- paths — item 3's historical mirrors carry the source row's real
+  -- opened_at and keep it. Asserted by work-item-rls.sql 6c; the postgres-run
+  -- files (work-item-due-date.sql among them) are unaffected.
+  IF auth.uid() IS NOT NULL THEN
+    NEW.opened_at        := now();
+    NEW.last_activity_at := now();
+  END IF;
+
   SELECT t.default_days, t.calendar INTO v_days, v_cal
     FROM projects.work_item_types t WHERE t.key = NEW.item_type;
   IF v_days IS NULL THEN
@@ -784,6 +809,19 @@ SET row_security TO 'off'
 AS $fn$
 DECLARE v_candidate uuid; v_defaults jsonb; v_settings_owner uuid;
 BEGIN
+  -- Not an oracle. This is callable by authenticated (the people-picker and
+  -- Task 13's create action need it) and it reads with RLS off, so without
+  -- this check it answered ANY project id with that project's PM uuid — and
+  -- RAISED for an orphaned one, a yes/no about a project the caller cannot
+  -- see (proven in review from the KINGSWALK-only contractor against MAMAILA).
+  -- NULL for a project the caller is not on; the service, definer-trigger and
+  -- backfill paths have auth.uid() NULL and are unaffected, as is
+  -- work-item-membership.sql, which runs as postgres. Asserted by
+  -- work-item-rls.sql 11f.
+  IF auth.uid() IS NOT NULL AND NOT public.user_has_project_access(p_project_id) THEN
+    RETURN NULL;
+  END IF;
+
   IF p_explicit IS NOT NULL
      AND public.user_effective_project_role(p_project_id, p_explicit) IS NOT NULL THEN
     RETURN p_explicit;
@@ -903,11 +941,16 @@ CREATE TRIGGER work_items_assert_membership_trg
 
 -- ─── 8. Helpers ──────────────────────────────────────────────────────────────
 -- STABLE SECURITY DEFINER, search_path pinned, row_security off (§12 §(b) rule
--- 6). Neither reads current_user, and every role test is COALESCEd to FALSE:
--- user_effective_project_role() returns NULL for a non-member, and both
--- `NULL <> 'x'` and `NULL = ANY (…)` are NULL, not FALSE — a USING clause
--- happens to treat that as deny, but nothing else that calls these should have
--- to know that.
+-- 6). Neither reads current_user, and every role test FAILS CLOSED on NULL.
+-- user_effective_project_role() returns NULL for a non-member AND for a
+-- DEACTIVATED member, while user_has_project_access() (00106) has no
+-- pm.is_active predicate and stays TRUE for the latter. The project-access
+-- arm's role test therefore COALESCEs a NULL role to 'client_viewer' — the
+-- role it excludes — never to '': that read a deactivated client viewer as
+-- "not a client viewer" and admitted them to every item and event on the
+-- project (found in review; work-item-rls.sql 22 keeps it closed). Same shape
+-- in work_items_select and both halves of work_items_update_gate. The write
+-- helper COALESCEs `NULL = ANY (…)` to FALSE for the same reason.
 --
 -- These come BEFORE §9 because CREATE POLICY resolves function references at
 -- creation time: work_item_events_select calls user_can_read_work_item(), and
@@ -926,7 +969,7 @@ AS $fn$
     SELECT 1 FROM projects.work_items wi
      WHERE wi.id = p_work_item_id
        AND ( ( public.user_has_project_access(wi.project_id)
-               AND COALESCE(public.user_effective_project_role(wi.project_id, auth.uid()), '')
+               AND COALESCE(public.user_effective_project_role(wi.project_id, auth.uid()), 'client_viewer')
                    <> 'client_viewer' )
              OR wi.assignee_id   = auth.uid()
              OR wi.gatekeeper_id = auth.uid()
@@ -1021,7 +1064,7 @@ CREATE POLICY work_items_select ON projects.work_items
   FOR SELECT TO authenticated
   USING (
     ( public.user_has_project_access(project_id)
-      AND COALESCE(public.user_effective_project_role(project_id, auth.uid()), '')
+      AND COALESCE(public.user_effective_project_role(project_id, auth.uid()), 'client_viewer')
           <> 'client_viewer' )
     OR assignee_id   = auth.uid()
     OR gatekeeper_id = auth.uid()
@@ -1064,7 +1107,23 @@ CREATE POLICY work_items_insert ON projects.work_items
 --     void_reason nobody wrote. This is the INSERT half of what §12's guard
 --     does on UPDATE — the guard is BEFORE UPDATE only and must stay so
 --     (work-item-ref.sql 3a inserts as the table owner).
--- (c) The registry's write set. No registered type admits client_viewer, so
+-- (c) origin is 'manual', said explicitly. The column DEFAULTS to 'mirror'
+--     (the source-driven case), so a client insert that omitted it would be
+--     recorded as the mirror of a source it does not have; 'split' is item
+--     3's deliberate construction, never a client's. createWorkItemTaskAction
+--     inserts origin = 'manual'.
+-- (d) Born live, born unclosed. The status default is 'triage' and
+--     createWorkItemTaskAction inserts 'open' as a server-side literal (§03
+--     §1.6, a named assignee); nothing legitimate inserts 'answered', 'closed'
+--     or 'void'. A born-closed row has no events behind it (metrics 4, 7) and
+--     a born-void row carries a void_reason nobody wrote; closed_at, closed_by
+--     and void_reason are §12's to write on the UPDATE that closes or voids,
+--     so a client cannot pre-fill them either. This is the INSERT half of what
+--     §12's guard does on UPDATE — the guard is BEFORE UPDATE only and must
+--     stay so (work-item-ref.sql 3a inserts as the table owner). opened_at and
+--     last_activity_at cannot be pinned by a WITH CHECK; §5's trigger stamps
+--     them for any client session instead.
+-- (e) The registry's write set. No registered type admits client_viewer, so
 --     this arm is also what blocks a client viewer from INSERTING. 00161 does
 --     not cover this table.
 DROP POLICY IF EXISTS work_items_insert_gate ON projects.work_items;
@@ -1076,7 +1135,9 @@ CREATE POLICY work_items_insert_gate ON projects.work_items
     AND rfi_id IS NULL AND snag_id IS NULL AND qc_entry_id IS NULL
     AND diary_id IS NULL AND site_form_id IS NULL
     AND node_order_id IS NULL AND inspection_id IS NULL
+    AND origin = 'manual'
     AND status IN ('triage','open')
+    AND closed_at IS NULL AND closed_by IS NULL AND void_reason IS NULL
     AND projects.user_can_write_work_item(project_id, item_type)
   );
 
@@ -1113,12 +1174,12 @@ DROP POLICY IF EXISTS work_items_update_gate ON projects.work_items;
 CREATE POLICY work_items_update_gate ON projects.work_items
   AS RESTRICTIVE FOR UPDATE TO authenticated
   USING (
-    COALESCE(public.user_effective_project_role(project_id, auth.uid()), '') <> 'client_viewer'
+    COALESCE(public.user_effective_project_role(project_id, auth.uid()), 'client_viewer') <> 'client_viewer'
     AND ( projects.user_can_write_work_item(project_id, item_type)
           OR assignee_id = auth.uid() OR gatekeeper_id = auth.uid() )
   )
   WITH CHECK (
-    COALESCE(public.user_effective_project_role(project_id, auth.uid()), '') <> 'client_viewer'
+    COALESCE(public.user_effective_project_role(project_id, auth.uid()), 'client_viewer') <> 'client_viewer'
     AND ( projects.user_can_write_work_item(project_id, item_type)
           OR assignee_id = auth.uid() OR gatekeeper_id = auth.uid() )
   );
@@ -1179,6 +1240,10 @@ REVOKE ALL ON projects.work_items, projects.work_item_events,
 REVOKE DELETE ON projects.work_items, projects.work_item_events FROM authenticated;
 REVOKE INSERT, UPDATE ON projects.work_item_events FROM authenticated;
 REVOKE INSERT, UPDATE, DELETE ON projects.work_item_types FROM authenticated;
+-- A watcher row is added or removed, never edited: there is no UPDATE policy
+-- on work_item_watchers, and a standing grant with no policy is exactly the
+-- silent zero-row shape the revokes above exist to avoid.
+REVOKE UPDATE ON projects.work_item_watchers FROM authenticated;
 
 -- The durable one-line fix, so the NEXT table in this schema is not born
 -- anon-readable either. ALTER DEFAULT PRIVILEGES is per-role: this edits the

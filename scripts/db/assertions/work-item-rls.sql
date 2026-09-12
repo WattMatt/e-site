@@ -13,7 +13,8 @@
 --   * the oldest active client_viewer on the oldest ACTIVE project that HAS one
 --     — measured 2026-09-12: three on (657) MAMAILA PHASE 2; KINGSWALK, the
 --     oldest active project, has ten members and zero client viewers — the
---     read carve-out and the write block (12-21).
+--     read carve-out and the write block (12-21), then the same person with
+--     their membership DEACTIVATED (22).
 --
 -- ⚠ A temp table created as postgres is unreadable after SET LOCAL ROLE
 -- authenticated (42501 "permission denied for table _f", proven against
@@ -22,12 +23,18 @@
 -- its first statement and proves nothing.
 --
 -- ⚠ Every id a role-scoped block needs is captured HERE, as postgres — rfi_id
--- (7) and foreign_org_id (9, 9b) in particular. Under the contractor's role
--- projects.rfis and public.organisations are RLS-filtered (organisations is
--- members-only, and the fixture is in ONE of the 7 orgs), so an INSERT … SELECT
--- from either would select zero rows, insert nothing, and trip the SENTINEL —
--- a false red that reads like a policy failure. The prelude RAISEs if either
--- capture is NULL rather than letting that happen.
+-- (7), foreign_org_id (9, 9b) and the two inspection ids (9e, 9f) in
+-- particular. Under the contractor's role projects.rfis and
+-- public.organisations are RLS-filtered (organisations is members-only, and
+-- the fixture is in ONE of the 7 orgs), so an INSERT … SELECT from either
+-- would select zero rows, insert nothing, and trip the SENTINEL — a false red
+-- that reads like a policy failure. The prelude RAISEs if any capture is NULL
+-- rather than letting that happen.
+--
+-- ⚠ set_config(…, true) is TRANSACTION-local, so after the first
+-- impersonation auth.uid() stays set even under RESET ROLE. Every row the
+-- postgres blocks seed is therefore seeded BEFORE the first SET LOCAL ROLE —
+-- §5's opened_at stamp keys on auth.uid() IS NOT NULL.
 CREATE TEMP TABLE _f AS
 SELECT pm.project_id, p.organisation_id,
        '018f2d31-bbe8-4cc1-bbdd-63af0187081e'::uuid AS contractor_id,
@@ -35,7 +42,15 @@ SELECT pm.project_id, p.organisation_id,
        (SELECT r.id FROM projects.rfis r WHERE r.project_id = pm.project_id
          ORDER BY r.created_at, r.id LIMIT 1) AS rfi_id,
        (SELECT o.id FROM public.organisations o WHERE o.id <> p.organisation_id
-         ORDER BY o.created_at, o.id LIMIT 1) AS foreign_org_id
+         ORDER BY o.created_at, o.id LIMIT 1) AS foreign_org_id,
+       -- inspection.write_roles = owner/admin/project_manager: the contractor
+       -- holds NO write role for this type, so only an identity arm can admit
+       -- them to an UPDATE of an inspection item (9e, 9f). Two ids, because
+       -- work_items_src_inspection_uidx allows one mirror row per inspection.
+       (SELECT i.id FROM inspections.inspections i WHERE i.project_id = pm.project_id
+         ORDER BY i.created_at, i.id LIMIT 1) AS inspection_id,
+       (SELECT i.id FROM inspections.inspections i WHERE i.project_id = pm.project_id
+         ORDER BY i.created_at, i.id LIMIT 1 OFFSET 1) AS inspection_id_2
   FROM projects.project_members pm
   JOIN projects.projects p ON p.id = pm.project_id
  WHERE pm.user_id = '018f2d31-bbe8-4cc1-bbdd-63af0187081e' AND pm.is_active
@@ -66,8 +81,8 @@ SELECT pm.user_id, pm.project_id, p.organisation_id,
 GRANT SELECT ON _cv TO authenticated;
 
 -- Ids of the rows seeded as postgres, so a role-scoped block can name a row it
--- is NOT allowed to see (5d, 11e, 19) without a title lookup that RLS would
--- turn into NULL.
+-- is NOT allowed to see (5d, 11e, 19, 22) without a title lookup that RLS
+-- would turn into NULL.
 CREATE TEMP TABLE _seed (label text PRIMARY KEY, id uuid NOT NULL);
 GRANT SELECT ON _seed TO authenticated;
 
@@ -87,13 +102,22 @@ BEGIN
   IF f.foreign_org_id IS NULL THEN
     RAISE EXCEPTION 'no second organisation exists — assertions 9 and 9b need a real foreign org id captured as postgres';
   END IF;
+  IF f.inspection_id IS NULL OR f.inspection_id_2 IS NULL THEN
+    RAISE EXCEPTION 'fewer than two inspections on the fixture project % — 9e/9f (the UPDATE identity arms, exercised on a type the contractor cannot write) have no fixture', f.project_id;
+  END IF;
   -- The fixture's org role is contractor. Were it ever elevated to
   -- owner/admin/PM, user_has_project_access() clause (b) would admit it to
-  -- EVERY project in the org and 5d/11e would go red for a reason that is not
-  -- a policy defect. Pinned, so the failure names the cause.
+  -- EVERY project in the org and 5d/11e/11f would go red for a reason that is
+  -- not a policy defect. Pinned, so the failure names the cause.
   IF public.user_effective_project_role(f.project_id, f.contractor_id) IS DISTINCT FROM 'contractor' THEN
     RAISE EXCEPTION 'the rbac-test fixture''s effective role on % is % rather than contractor — the write-gate assertions assume a contractor',
       f.project_id, public.user_effective_project_role(f.project_id, f.contractor_id);
+  END IF;
+  -- 9e/9f rely on inspection.write_roles EXCLUDING contractor (§1 seed). If a
+  -- later migration widens it, those two stop exercising the identity arms.
+  IF EXISTS (SELECT 1 FROM projects.work_item_types t
+              WHERE t.key = 'inspection' AND 'contractor' = ANY (t.write_roles)) THEN
+    RAISE EXCEPTION 'inspection.write_roles now admits contractor — 9e/9f no longer isolate the UPDATE identity arms; pick a type that excludes contractor';
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM _cv) THEN
@@ -103,11 +127,12 @@ BEGIN
   IF c.pm_id IS NULL THEN
     RAISE EXCEPTION 'resolve_project_pm(%) is NULL — the client-viewer project has nobody to gatekeep', c.project_id;
   END IF;
-  -- 5d and 11e need the contractor to be a NON-member of the client-viewer
-  -- project (true today, measured). Pinned so it cannot weaken silently.
+  -- 5d, 11e and 11f need the contractor to be a NON-member of the
+  -- client-viewer project (true today, measured). Pinned so it cannot weaken
+  -- silently.
   IF EXISTS (SELECT 1 FROM projects.project_members pm
               WHERE pm.project_id = c.project_id AND pm.user_id = f.contractor_id AND pm.is_active) THEN
-    RAISE EXCEPTION 'the rbac-test fixture is now a member of the client-viewer project % — 5d/11e (a non-member sees nothing) would pass for the wrong reason; pick a different client-viewer project', c.project_id;
+    RAISE EXCEPTION 'the rbac-test fixture is now a member of the client-viewer project % — 5d/11e/11f (a non-member sees nothing) would pass for the wrong reason; pick a different client-viewer project', c.project_id;
   END IF;
 
   -- Every insert runs work_items_set_due_date -> add_working_days, which
@@ -132,14 +157,15 @@ BEGIN
    WHERE has_table_privilege('anon', t.rel, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER');
   IF n <> 0 THEN RAISE EXCEPTION 'anon still holds a privilege on % of the 4 new tables', n; END IF;
 
-  -- 0c. Every function §10 revokes must EXIST — has_function_privilege on a
+  -- 0c. Every function §8 revokes must EXIST — has_function_privilege on a
   --     missing one aborts the transaction with a message about the wrong
   --     thing — and anon must hold no EXECUTE on any of the eight. This
   --     includes the three trigger functions: has_function_privilege('anon',
-  --     …) was TRUE on all of them before §10 (measured), because a new
+  --     …) was TRUE on all of them before §8 (measured), because a new
   --     function in projects inherits Postgres's built-in PUBLIC EXECUTE.
-  -- (alias fn, not f: the record variable f above would shadow a table alias
-  -- of the same name inside plpgsql — 42703 `record "f" has no field "sig"`.)
+  --     (alias fn, not f: the record variable f above would shadow a table
+  --     alias of the same name inside plpgsql — 42703 `record "f" has no
+  --     field "sig"`.)
   SELECT string_agg(fn.sig, ', ') INTO v_missing FROM (VALUES
       ('projects.user_can_read_work_item(uuid)'),
       ('projects.user_can_write_work_item(uuid,text)'),
@@ -165,14 +191,16 @@ BEGIN
 
   -- 0d. The authenticated revokes of §10: DELETE on the two tables whose rows
   --     are never deleted (what keeps §6's MAX+1 monotonic), every write on
-  --     the append-only event log, every write on the registry.
+  --     the append-only event log, every write on the registry, and UPDATE on
+  --     watchers (no UPDATE policy exists, and a standing grant with no policy
+  --     is the silent zero-row shape §10 exists to avoid).
   SELECT count(*) INTO n FROM (VALUES
       ('projects.work_items','DELETE'),        ('projects.work_item_events','DELETE'),
       ('projects.work_item_events','INSERT'),  ('projects.work_item_events','UPDATE'),
       ('projects.work_item_types','INSERT'),   ('projects.work_item_types','UPDATE'),
-      ('projects.work_item_types','DELETE')) t(rel, priv)
+      ('projects.work_item_types','DELETE'),   ('projects.work_item_watchers','UPDATE')) t(rel, priv)
    WHERE has_table_privilege('authenticated', t.rel, t.priv);
-  IF n <> 0 THEN RAISE EXCEPTION 'authenticated still holds % of the 7 privileges §10 revokes', n; END IF;
+  IF n <> 0 THEN RAISE EXCEPTION 'authenticated still holds % of the 8 privileges §10 revokes', n; END IF;
   -- 0e. ...while keeping what the app needs. A revoke typo would otherwise
   --     surface as a dead feature rather than a red assertion.
   SELECT count(*) INTO n FROM (VALUES
@@ -218,11 +246,15 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'work_item_events has % write policy/policies; it is written only by the §11 definer trigger', n; END IF;
 END $$;
 
--- Seed rows while still postgres. On the contractor's project: one they hold,
--- one they do not (the PM holds it). On the client viewer's project: one they
--- hold, one they do not. Plus one event per client-viewer item, standing in
--- for what §11's trigger will write, so work_item_events_select has rows to
--- be right and wrong about.
+-- Seed rows while still postgres (and before any impersonation — see the
+-- header). On the contractor's project: one they hold, one the PM holds, and
+-- two INSPECTION items — a type they hold no write role for — one where they
+-- are the assignee (born open, ball with them) and one where they are the
+-- gatekeeper (born answered, ball with them). On the client viewer's project:
+-- one they hold, and two they do not — one of which they will WATCH (20-21)
+-- and one they never touch (13, 22). Plus one event per client-viewer item,
+-- standing in for what §11's trigger will write, so work_item_events_select
+-- has rows to be right and wrong about.
 DO $$
 DECLARE f record; c record; v uuid;
 BEGIN
@@ -237,6 +269,16 @@ BEGIN
   VALUES (f.organisation_id, f.project_id, 'task', 'pm holds this on the contractor project', f.pm_id, f.pm_id, f.pm_id)
   RETURNING id INTO v;
   INSERT INTO _seed VALUES ('pm_item', v);
+  INSERT INTO projects.work_items
+    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, inspection_id, status)
+  VALUES (f.organisation_id, f.project_id, 'inspection', 'inspection held by contractor', f.contractor_id, f.pm_id, f.pm_id, f.inspection_id, 'open')
+  RETURNING id INTO v;
+  INSERT INTO _seed VALUES ('insp_assignee', v);
+  INSERT INTO projects.work_items
+    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, inspection_id, status)
+  VALUES (f.organisation_id, f.project_id, 'inspection', 'inspection gatekept by contractor', f.pm_id, f.contractor_id, f.pm_id, f.inspection_id_2, 'answered')
+  RETURNING id INTO v;
+  INSERT INTO _seed VALUES ('insp_gatekeeper', v);
 
   SELECT * INTO c FROM _cv;
   INSERT INTO projects.work_items
@@ -256,6 +298,15 @@ BEGIN
   INSERT INTO projects.work_item_events
     (work_item_id, project_id, organisation_id, verb, to_status, actor_id, to_ball_in_court_id)
   VALUES (v, c.project_id, c.organisation_id, 'created', 'triage', c.pm_id, c.pm_id);
+
+  INSERT INTO projects.work_items
+    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
+  VALUES (c.organisation_id, c.project_id, 'task', 'not the client viewers either', c.pm_id, c.pm_id, c.pm_id)
+  RETURNING id INTO v;
+  INSERT INTO _seed VALUES ('theirs2', v);
+  INSERT INTO projects.work_item_events
+    (work_item_id, project_id, organisation_id, verb, to_status, actor_id, to_ball_in_court_id)
+  VALUES (v, c.project_id, c.organisation_id, 'created', 'triage', c.pm_id, c.pm_id);
 END $$;
 
 -- ── The contractor ──────────────────────────────────────────────────────────
@@ -264,7 +315,8 @@ SELECT set_config('request.jwt.claims',
 SET LOCAL ROLE authenticated;
 
 DO $$
-DECLARE f record; n int; v_id uuid; v_pm_item uuid; v_theirs uuid; v_new uuid; v_ref text;
+DECLARE f record; c record; n int; v_id uuid; v_pm_item uuid; v_theirs uuid; v_new uuid; v_ref text;
+        v_insp_a uuid; v_insp_g uuid; v_opened timestamptz; v_last timestamptz;
 BEGIN
   -- 5a. The fixture itself must be readable in this role, or every assertion
   --     below dies on its first statement and the file proves nothing. The
@@ -276,11 +328,14 @@ BEGIN
     RAISE EXCEPTION 'fixture _f is unreadable as authenticated — add GRANT SELECT ON _f TO authenticated';
   END;
   SELECT * INTO f FROM _f;
+  SELECT * INTO c FROM _cv;
   IF auth.uid() IS DISTINCT FROM f.contractor_id THEN
     RAISE EXCEPTION 'impersonation did not take: auth.uid() is %', auth.uid();
   END IF;
   SELECT id INTO v_pm_item FROM _seed WHERE label = 'pm_item';
   SELECT id INTO v_theirs  FROM _seed WHERE label = 'theirs';
+  SELECT id INTO v_insp_a  FROM _seed WHERE label = 'insp_assignee';
+  SELECT id INTO v_insp_g  FROM _seed WHERE label = 'insp_gatekeeper';
 
   -- 5b. The contractor can SEE the item they hold.
   SELECT id INTO v_id FROM projects.work_items WHERE title='contractor holds this';
@@ -299,10 +354,12 @@ BEGIN
 
   -- 6. They can create a TASK: the only client-insertable type in Q1, and
   --    task.write_roles admits contractor (§1 seed). Born 'triage' by default,
-  --    and the allocator, not the client, names it.
+  --    and the allocator, not the client, names it. origin = 'manual' is what
+  --    every client insert must say (gate arm (d)); createWorkItemTaskAction
+  --    (Task 13) does.
   INSERT INTO projects.work_items
-    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
-  VALUES (f.organisation_id, f.project_id, 'task', 'contractor task', f.contractor_id, f.pm_id, f.contractor_id)
+    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin)
+  VALUES (f.organisation_id, f.project_id, 'task', 'contractor task', f.contractor_id, f.pm_id, f.contractor_id, 'manual')
   RETURNING id INTO v_new;
   SELECT ref INTO v_ref FROM projects.work_items WHERE id = v_new;
   IF v_ref !~ '^TASK-[0-9]+$' THEN RAISE EXCEPTION 'a contractor task was allocated ref %', v_ref; END IF;
@@ -313,16 +370,34 @@ BEGIN
   --     (Task 13) inserts status = 'open' as a server-side literal — §03 §1.6,
   --     a named assignee — and the gate's status arm must admit it.
   INSERT INTO projects.work_items
-    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, status)
-  VALUES (f.organisation_id, f.project_id, 'task', 'contractor task born open', f.contractor_id, f.pm_id, f.contractor_id, 'open');
+    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status)
+  VALUES (f.organisation_id, f.project_id, 'task', 'contractor task born open', f.contractor_id, f.pm_id, f.contractor_id, 'manual', 'open');
+  -- 6c. opened_at and last_activity_at are STAMPED by §5's trigger for any
+  --     client session (auth.uid() IS NOT NULL): a client never dictates the
+  --     opening moment — a 400-day backdate would pre-age every escalation
+  --     and a future last_activity_at would hide the item from every "stale"
+  --     query. WITH CHECK cannot pin a timestamp, so the trigger does.
+  INSERT INTO projects.work_items
+    (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status,
+     opened_at, last_activity_at)
+  VALUES (f.organisation_id, f.project_id, 'task', 'backdated task', f.contractor_id, f.pm_id, f.contractor_id, 'manual', 'open',
+          now() - interval '400 days', now() + interval '400 days')
+  RETURNING id INTO v_new;
+  SELECT opened_at, last_activity_at INTO v_opened, v_last FROM projects.work_items WHERE id = v_new;
+  IF v_opened IS NULL OR abs(EXTRACT(EPOCH FROM (v_opened - now()))) > 60 THEN
+    RAISE EXCEPTION 'a client backdated opened_at by 400 days and it was accepted: % — §5 must stamp it for a client session', v_opened;
+  END IF;
+  IF v_last IS NULL OR abs(EXTRACT(EPOCH FROM (v_last - now()))) > 60 THEN
+    RAISE EXCEPTION 'a client set last_activity_at 400 days ahead and it was accepted: % — §5 must stamp it for a client session', v_last;
+  END IF;
 
   -- 7. They CANNOT create a mirrored type directly. The source row is the only
   --    entry point; a direct insert naming a mirrored key is refused by the
   --    RESTRICTIVE gate. The rfi_id is real and was captured as postgres.
   BEGIN
     INSERT INTO projects.work_items
-      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, rfi_id)
-    VALUES (f.organisation_id, f.project_id, 'rfi', 'forged rfi item', f.contractor_id, f.pm_id, f.contractor_id, f.rfi_id);
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, rfi_id)
+    VALUES (f.organisation_id, f.project_id, 'rfi', 'forged rfi item', f.contractor_id, f.pm_id, f.contractor_id, 'manual', f.rfi_id);
     RAISE EXCEPTION 'SENTINEL: a client inserted a MIRRORED work item directly';
   EXCEPTION
     WHEN insufficient_privilege THEN NULL;
@@ -338,8 +413,8 @@ BEGIN
   --     allocator's own output always passes this arm.
   BEGIN
     INSERT INTO projects.work_items
-      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, ref)
-    VALUES (f.organisation_id, f.project_id, 'task', 'junk ref', f.contractor_id, f.pm_id, f.contractor_id, 'JUNK');
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, ref)
+    VALUES (f.organisation_id, f.project_id, 'task', 'junk ref', f.contractor_id, f.pm_id, f.contractor_id, 'manual', 'JUNK');
     RAISE EXCEPTION 'SENTINEL: a client supplied the ref JUNK and it was accepted';
   EXCEPTION
     WHEN insufficient_privilege THEN NULL;
@@ -349,12 +424,13 @@ BEGIN
   END;
 
   -- 7c. Born VOID is refused by the gate: a client cannot manufacture a row
-  --     with no events behind it (metrics 4, 7) and a void_reason nobody wrote.
-  --     §12's guard is BEFORE UPDATE only; this arm is the INSERT half.
+  --     with no events behind it (metrics 4, 7). §12's guard is BEFORE UPDATE
+  --     only; this arm is the INSERT half. No void_reason is supplied here,
+  --     so the STATUS arm alone is what refuses it (7g covers void_reason).
   BEGIN
     INSERT INTO projects.work_items
-      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, status, void_reason)
-    VALUES (f.organisation_id, f.project_id, 'task', 'born void', f.contractor_id, f.pm_id, f.contractor_id, 'void', 'forged');
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status)
+    VALUES (f.organisation_id, f.project_id, 'task', 'born void', f.contractor_id, f.pm_id, f.contractor_id, 'manual', 'void');
     RAISE EXCEPTION 'SENTINEL: a client inserted a born-void work item';
   EXCEPTION
     WHEN insufficient_privilege THEN NULL;
@@ -365,8 +441,8 @@ BEGIN
   -- 7d. Born CLOSED likewise — metric 7 counts a user moving an item TO closed.
   BEGIN
     INSERT INTO projects.work_items
-      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, status)
-    VALUES (f.organisation_id, f.project_id, 'task', 'born closed', f.contractor_id, f.pm_id, f.contractor_id, 'closed');
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status)
+    VALUES (f.organisation_id, f.project_id, 'task', 'born closed', f.contractor_id, f.pm_id, f.contractor_id, 'manual', 'closed');
     RAISE EXCEPTION 'SENTINEL: a client inserted a born-closed work item';
   EXCEPTION
     WHEN insufficient_privilege THEN NULL;
@@ -374,12 +450,86 @@ BEGIN
       IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
       RAISE EXCEPTION 'the born-closed case failed for the wrong reason: %', SQLERRM;
   END;
+  -- 7e-7g. The closure columns are the transition guard's (§12) to write, on
+  --        the UPDATE that closes or voids — a client cannot pre-fill them on
+  --        a born-open row (each column alone, so each arm is what refuses).
+  BEGIN
+    INSERT INTO projects.work_items
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status, closed_at)
+    VALUES (f.organisation_id, f.project_id, 'task', 'pre-closed', f.contractor_id, f.pm_id, f.contractor_id, 'manual', 'open', now());
+    RAISE EXCEPTION 'SENTINEL: a client supplied closed_at on a born-open work item';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+    WHEN raise_exception THEN
+      IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      RAISE EXCEPTION 'the closed_at case failed for the wrong reason: %', SQLERRM;
+  END;
+  BEGIN
+    INSERT INTO projects.work_items
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status, closed_by)
+    VALUES (f.organisation_id, f.project_id, 'task', 'pre-closed by', f.contractor_id, f.pm_id, f.contractor_id, 'manual', 'open', f.pm_id);
+    RAISE EXCEPTION 'SENTINEL: a client supplied closed_by on a born-open work item';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+    WHEN raise_exception THEN
+      IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      RAISE EXCEPTION 'the closed_by case failed for the wrong reason: %', SQLERRM;
+  END;
+  BEGIN
+    INSERT INTO projects.work_items
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin, status, void_reason)
+    VALUES (f.organisation_id, f.project_id, 'task', 'pre-voided', f.contractor_id, f.pm_id, f.contractor_id, 'manual', 'open', 'forged');
+    RAISE EXCEPTION 'SENTINEL: a client supplied void_reason on a born-open work item';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+    WHEN raise_exception THEN
+      IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      RAISE EXCEPTION 'the void_reason case failed for the wrong reason: %', SQLERRM;
+  END;
+  -- 7h-7j. origin is gated: a client insert is 'manual' or nothing. The
+  --        column DEFAULTS to 'mirror' (the source-driven case), so an insert
+  --        that omits origin would otherwise be recorded as a mirror of a
+  --        source it does not have, and 'split' is item 3's deliberate
+  --        construction, never a client's.
+  BEGIN
+    INSERT INTO projects.work_items
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
+    VALUES (f.organisation_id, f.project_id, 'task', 'origin defaulted', f.contractor_id, f.pm_id, f.contractor_id);
+    RAISE EXCEPTION 'SENTINEL: a client insert with origin left to its default (mirror) was accepted';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+    WHEN raise_exception THEN
+      IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      RAISE EXCEPTION 'the origin-default case failed for the wrong reason: %', SQLERRM;
+  END;
+  BEGIN
+    INSERT INTO projects.work_items
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin)
+    VALUES (f.organisation_id, f.project_id, 'task', 'origin mirror', f.contractor_id, f.pm_id, f.contractor_id, 'mirror');
+    RAISE EXCEPTION 'SENTINEL: a client inserted a work item claiming origin = mirror';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+    WHEN raise_exception THEN
+      IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      RAISE EXCEPTION 'the origin-mirror case failed for the wrong reason: %', SQLERRM;
+  END;
+  BEGIN
+    INSERT INTO projects.work_items
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin)
+    VALUES (f.organisation_id, f.project_id, 'task', 'origin split', f.contractor_id, f.pm_id, f.contractor_id, 'split');
+    RAISE EXCEPTION 'SENTINEL: a client inserted a work item claiming origin = split';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+    WHEN raise_exception THEN
+      IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      RAISE EXCEPTION 'the origin-split case failed for the wrong reason: %', SQLERRM;
+  END;
 
   -- 8. They cannot forge created_by.
   BEGIN
     INSERT INTO projects.work_items
-      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
-    VALUES (f.organisation_id, f.project_id, 'task', 'forged author', f.contractor_id, f.pm_id, f.pm_id);
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin)
+    VALUES (f.organisation_id, f.project_id, 'task', 'forged author', f.contractor_id, f.pm_id, f.pm_id, 'manual');
     RAISE EXCEPTION 'SENTINEL: created_by was forgeable';
   EXCEPTION
     WHEN insufficient_privilege THEN NULL;
@@ -393,8 +543,8 @@ BEGIN
   --    and was captured as postgres; under this role the fixture sees one org.
   BEGIN
     INSERT INTO projects.work_items
-      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
-    VALUES (f.foreign_org_id, f.project_id, 'task', 'org hop', f.contractor_id, f.pm_id, f.contractor_id);
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin)
+    VALUES (f.foreign_org_id, f.project_id, 'task', 'org hop', f.contractor_id, f.pm_id, f.contractor_id, 'manual');
     RAISE EXCEPTION 'SENTINEL: organisation_id was not bound to the project''s own org';
   EXCEPTION
     WHEN insufficient_privilege THEN NULL;
@@ -419,18 +569,35 @@ BEGIN
       IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
   END;
 
-  -- 9c. The POSITIVE update paths. The assignee moves their own item (the
-  --     identity arm of both UPDATE policies; Task 10's event sequence and
-  --     every Task 13 verb depend on it)...
+  -- 9c. The POSITIVE update paths. The assignee moves their own TASK...
   UPDATE projects.work_items SET status = 'open' WHERE id = v_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'the assignee cannot update the item they hold'; END IF;
   IF (SELECT status FROM projects.work_items WHERE id = v_id) <> 'open' THEN
     RAISE EXCEPTION 'the assignee''s update matched a row but did not take';
   END IF;
-  -- 9d. ...and a holder of the type's write role edits a project item they do
-  --     not hold (the registry arm of work_items_update_gate).
+  -- 9d. ...a holder of the type's write role edits a project task they do
+  --     not hold (the registry arm of work_items_update_gate)...
   UPDATE projects.work_items SET priority = 'high' WHERE id = v_pm_item;
   IF NOT FOUND THEN RAISE EXCEPTION 'a task write-role holder cannot edit a project task they do not hold — the write-role arm of work_items_update_gate is gone'; END IF;
+  -- 9e. ...and the IDENTITY arms answer ON THEIR OWN. 9c cannot prove that:
+  --     the contractor is in task.write_roles, so the registry arm admits
+  --     them and the assignee arm could vanish unnoticed (reviewer's M6). An
+  --     INSPECTION item is a type they hold NO write role for — the assignee
+  --     moves it open -> answered (the transition §03 §1.4 gives the assignee;
+  --     Task 11's guard keeps it legal)...
+  UPDATE projects.work_items SET status = 'answered' WHERE id = v_insp_a;
+  IF NOT FOUND THEN RAISE EXCEPTION 'an assignee with no write role for the type cannot update the item they hold — the assignee arm of work_items_update_gate is gone'; END IF;
+  IF (SELECT status FROM projects.work_items WHERE id = v_insp_a) <> 'answered' THEN
+    RAISE EXCEPTION 'the assignee''s inspection update matched a row but did not take';
+  END IF;
+  -- 9f. ...and the gatekeeper edits the item whose ball they hold (priority,
+  --     not status: what a gatekeeper may do with status is §12's rule set,
+  --     and this assertion is about whether the row is theirs to touch at all).
+  UPDATE projects.work_items SET priority = 'high' WHERE id = v_insp_g;
+  IF NOT FOUND THEN RAISE EXCEPTION 'a gatekeeper with no write role for the type cannot update the item they gatekeep — the gatekeeper arm of work_items_update_gate is gone'; END IF;
+  IF (SELECT priority FROM projects.work_items WHERE id = v_insp_g) <> 'high' THEN
+    RAISE EXCEPTION 'the gatekeeper''s inspection update matched a row but did not take';
+  END IF;
 
   -- 10. They cannot DELETE, which is what keeps refs monotonic. No policy AND
   --     the grant is revoked, so this is a permission error, not a zero-row
@@ -481,6 +648,20 @@ BEGIN
       IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
       RAISE EXCEPTION 'the watch-unreadable case failed for the wrong reason: %', SQLERRM;
   END;
+
+  -- 11f. resolve_work_item_assignee() is not an oracle. It is callable by
+  --      authenticated (Task 13's people-picker needs it) and SECURITY DEFINER
+  --      with RLS off, so without its own access check it answered any project
+  --      id with that project's PM uuid — and RAISED for an orphaned one,
+  --      which is a yes/no about a project the caller cannot see. For a
+  --      project the caller is not on it now returns NULL; for their own it
+  --      still answers.
+  IF projects.resolve_work_item_assignee(c.project_id, 'task', NULL) IS NOT NULL THEN
+    RAISE EXCEPTION 'resolve_work_item_assignee() answered for project % — a project the caller is not on; it is an oracle', c.project_id;
+  END IF;
+  IF projects.resolve_work_item_assignee(f.project_id, 'task', NULL) IS NULL THEN
+    RAISE EXCEPTION 'resolve_work_item_assignee() returned NULL for the caller''s own project % — the access check is too tight', f.project_id;
+  END IF;
 
   RAISE NOTICE 'work-item-rls (contractor): 5-11 passed';
 END $$;
@@ -533,8 +714,8 @@ BEGIN
   --      them — the other half of the one-layer client-viewer write block.
   BEGIN
     INSERT INTO projects.work_items
-      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
-    VALUES (c.organisation_id, c.project_id, 'task', 'client viewer task', c.user_id, c.pm_id, c.user_id);
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, origin)
+    VALUES (c.organisation_id, c.project_id, 'task', 'client viewer task', c.user_id, c.pm_id, c.user_id, 'manual');
     RAISE EXCEPTION 'SENTINEL: a client_viewer inserted a work item in Q1';
   EXCEPTION
     WHEN insufficient_privilege THEN NULL;
@@ -600,6 +781,56 @@ BEGIN
   IF n = 0 THEN RAISE EXCEPTION 'a watcher cannot read the history of the item they watch'; END IF;
 
   RAISE NOTICE 'work-item-rls (watcher): 20-21 passed';
+END $$;
+
+RESET ROLE;
+
+-- ── The SAME client viewer, membership deactivated ──────────────────────────
+-- The platform's "remove from project" is a soft deactivate of the
+-- project_members row. public.user_has_project_access() (00106) has NO
+-- pm.is_active predicate; user_effective_project_role() requires it. A
+-- deactivated client viewer therefore has access TRUE and role NULL — and a
+-- `COALESCE(role, '') <> 'client_viewer'` reads NULL as "not a client viewer",
+-- admitting them to the project-wide arm of every read (proven on the MAMAILA
+-- fixture in review: every item and every event became visible). The four
+-- COALESCEs (helper, select, gate USING, gate WITH CHECK) default to
+-- 'client_viewer' instead, so an unknown role fails CLOSED.
+UPDATE projects.project_members pm SET is_active = false
+  FROM _cv c WHERE pm.user_id = c.user_id AND pm.project_id = c.project_id;
+
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', (SELECT user_id FROM _cv), 'role','authenticated')::text, true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE c record; v_theirs2 uuid; n int;
+BEGIN
+  SELECT * INTO c FROM _cv;
+  SELECT id INTO v_theirs2 FROM _seed WHERE label = 'theirs2';
+  -- 22a. The precondition that makes this assertion able to fail: access TRUE
+  --      and role NULL. The day 00106 checks is_active, access reads FALSE and
+  --      this block stops exercising the NULL-role path — drop it then, do not
+  --      leave it passing for a new reason.
+  IF NOT public.user_has_project_access(c.project_id) THEN
+    RAISE EXCEPTION 'user_has_project_access() is FALSE for a deactivated member — 00106 now checks is_active and 22 no longer exercises the NULL-role path; drop it';
+  END IF;
+  IF public.user_effective_project_role(c.project_id, auth.uid()) IS NOT NULL THEN
+    RAISE EXCEPTION 'a deactivated member still has effective role % — 22 no longer exercises the NULL-role path', public.user_effective_project_role(c.project_id, auth.uid());
+  END IF;
+  -- 22b. A project-wide item they neither hold nor watch is invisible...
+  IF EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_theirs2) THEN
+    RAISE EXCEPTION 'a DEACTIVATED client_viewer can see a project-wide work item — a NULL effective role is being read as "not a client viewer"';
+  END IF;
+  -- 22c. ...and so is its history, through the helper.
+  SELECT count(*) INTO n FROM projects.work_item_events e WHERE e.work_item_id = v_theirs2;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'a DEACTIVATED client_viewer can read % event(s) of a project-wide item — user_can_read_work_item() reads a NULL role as "not a client viewer"', n;
+  END IF;
+  IF projects.user_can_read_work_item(v_theirs2) THEN
+    RAISE EXCEPTION 'user_can_read_work_item() admits a DEACTIVATED client_viewer to a project-wide item';
+  END IF;
+
+  RAISE NOTICE 'work-item-rls (deactivated client_viewer): 22 passed';
 END $$;
 
 RESET ROLE;
