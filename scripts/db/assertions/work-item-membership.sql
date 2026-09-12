@@ -5,23 +5,34 @@
 -- Two guarantees, both about the person columns:
 --   * an item can never point at someone who cannot open it — on INSERT, on
 --     reassignment, and on a move to another project (1-4, 10);
---   * a stale settings value never blocks a source write, and the chain raises
---     exactly once, with one actionable sentence, for an ORPHANED project (5-9).
+--   * the chain answers from the RIGHT slot, a stale settings value never
+--     blocks a source write, and the chain raises exactly once, with one
+--     actionable sentence, for an ORPHANED project (5-9, 11-12).
 --
 -- LIVE-ESTATE fixtures (measured 2026-09-12): the oldest active project is
 -- (643) KINGSWALK — 3 active PMs, 17 of 36 profiles with no effective role
 -- there; 4 active client_viewer memberships, the oldest on (657) MAMAILA
--- PHASE 2; the Sandton demo project e51ede00-…-0002-000000000001 is active and
--- its creator is a contractor. Every fixture RAISES when it cannot be found: a
--- RAISE NOTICE skip is invisible through the Management API, which returns
--- rows only, and the harness would print a green tick over a no-op.
+-- PHASE 2; the Sandton demo project e51ede00-…-0002-000000000001 is active,
+-- its org has no active owner/admin/PM and its creator is a contractor. Every
+-- fixture RAISES when it cannot be found: a RAISE NOTICE skip is invisible
+-- through the Management API, which returns rows only, and the harness would
+-- print a green tick over a no-op.
+--
+-- The THROWAWAY fixture is built the way work-item-settings.sql builds its
+-- own: an org whose only member is the rbac-test contractor, and a project
+-- they created. It is ACTIVE from the prelude through 8a (an owner-less org
+-- with a validated creator — the mechanism the demo project happens to
+-- exhibit today) and ORPHANED at 9 (both memberships deactivated; the one
+-- case in which the chain raises). 3b uses it as a foreign project: KINGSWALK's
+-- PM has no membership in that org at all, whatever the fixture's own state.
 DO $$
 DECLARE
-  v_proj uuid; v_org uuid; v_pm uuid; v_outsider uuid;
+  v_proj uuid; v_org uuid; v_pm uuid; v_outsider uuid; v_second uuid;
   v_cv uuid; v_cv_proj uuid; v_cv_org uuid; v_cv_pm uuid; v_res uuid;
-  v_demo    uuid := 'e51ede00-0000-0000-0002-000000000001';  -- Sandton demo: org has no owner/admin/PM
+  v_demo    uuid := 'e51ede00-0000-0000-0002-000000000001';  -- Sandton demo
+  v_demo_org uuid;
   v_fixture uuid := '018f2d31-bbe8-4cc1-bbdd-63af0187081e';  -- rbac-test, the sanctioned prod fixture
-  v_tw_org uuid; v_tw_proj uuid;   -- the throwaway ORPHANED project (3b, 9)
+  v_tw_org uuid; v_tw_proj uuid;   -- the throwaway org + project (3b, 8a, 9)
   v_col text;                      -- COLUMN_NAME from GET STACKED DIAGNOSTICS (10)
 BEGIN
   SELECT p.id, p.organisation_id INTO v_proj, v_org
@@ -46,22 +57,29 @@ BEGIN
     RAISE EXCEPTION 'no profile without access to % exists; the membership assertion cannot fail and is decorative', v_proj;
   END IF;
 
-  -- The ORPHANED project, built the way work-item-settings.sql builds its
-  -- fixture: a throwaway org whose only member is the rbac-test contractor, a
-  -- project they created, then BOTH memberships deactivated. Nobody holds an
-  -- effective role there any more. Used by 3b (a move nobody can receive) and
-  -- by 9 (the one case in which the chain raises).
-  INSERT INTO public.organisations (name) VALUES ('_assert_membership_orphan_org') RETURNING id INTO v_tw_org;
+  -- A SECOND member of the project with an effective role, who is NOT the PM
+  -- resolver's answer. 11 and 12 assert the chain's answer by IDENTITY against
+  -- this person; if they were the same as resolve_project_pm(), deleting a
+  -- whole default arm would leave both green (reviewer mutations C and D).
+  SELECT pm.user_id INTO v_second
+    FROM projects.project_members pm
+   WHERE pm.project_id = v_proj AND pm.is_active
+     AND pm.user_id <> v_pm AND pm.user_id <> projects.resolve_project_pm(v_proj)
+     AND public.user_effective_project_role(v_proj, pm.user_id) IS NOT NULL
+   ORDER BY pm.created_at, pm.user_id LIMIT 1;
+  IF v_second IS NULL THEN
+    RAISE EXCEPTION 'no second active member with an effective role on % — assertions 11 and 12 could not distinguish a default arm from the PM resolver and would be decorative', v_proj;
+  END IF;
+
+  -- The throwaway org + project (see the header). Active for now.
+  INSERT INTO public.organisations (name) VALUES ('_assert_membership_throwaway_org') RETURNING id INTO v_tw_org;
   INSERT INTO public.user_organisations (user_id, organisation_id, role) VALUES (v_fixture, v_tw_org, 'contractor');
   INSERT INTO projects.projects (organisation_id, name, created_by)
-  VALUES (v_tw_org, '_assert_membership_orphan_project', v_fixture) RETURNING id INTO v_tw_proj;
+  VALUES (v_tw_org, '_assert_membership_throwaway_project', v_fixture) RETURNING id INTO v_tw_proj;
   INSERT INTO projects.project_members (project_id, user_id, organisation_id, role)
   VALUES (v_tw_proj, v_fixture, v_tw_org, 'contractor');
-  UPDATE projects.project_members    SET is_active = false WHERE project_id = v_tw_proj AND user_id = v_fixture;
-  UPDATE public.user_organisations   SET is_active = false WHERE organisation_id = v_tw_org AND user_id = v_fixture;
-  IF projects.resolve_project_pm(v_tw_proj) IS NOT NULL THEN
-    RAISE EXCEPTION 'the throwaway project is not orphaned: resolve_project_pm() still names % — the fixture for 3b and 9 is wrong',
-      projects.resolve_project_pm(v_tw_proj);
+  IF public.user_effective_project_role(v_tw_proj, v_pm) IS NOT NULL THEN
+    RAISE EXCEPTION 'the KINGSWALK PM % somehow holds a role on the throwaway project — 3b''s foreign project is not foreign', v_pm;
   END IF;
 
   -- 1. An outsider cannot be the assignee. Assert on the MESSAGE, not merely on
@@ -110,9 +128,10 @@ BEGIN
   --     honour that: the SAME assignee on a DIFFERENT project is a different
   --     membership question, and a body that re-checks only when a person
   --     column changed leaves the declared column decorative. The target is
-  --     the orphaned throwaway project, where nobody holds a role. (§12 also
-  --     makes project_id immutable; this is the layer beneath it, and it fires
-  --     first — BEFORE ROW triggers run in name order.)
+  --     the throwaway project — KINGSWALK's PM has no membership in that org.
+  --     §12's work_items_transition_guard_trg also makes project_id immutable;
+  --     this is the layer beneath it, and it fires FIRST because BEFORE ROW
+  --     triggers run in name order — Task 11 must keep that trigger name.
   BEGIN
     UPDATE projects.work_items SET project_id = v_tw_proj
      WHERE project_id = v_proj AND title = 'reassign subject';
@@ -178,25 +197,49 @@ BEGIN
   IF projects.resolve_work_item_assignee(v_proj, 'rfi', v_outsider) = v_outsider
   THEN RAISE EXCEPTION 'the chain returned an explicit assignee who has no access to the project'; END IF;
 
-  -- 8. THE LIVE DEMO PROJECT. Its org has no active owner, admin or PM
-  --    (deviations #9), so a chain that terminated at projects.org_owner()
-  --    returned NULL here and a chain that raised on it would have made the
-  --    demo unusable. Today it resolves to its creator, a contractor — legal.
-  --    RAISE if the project is gone rather than skip.
-  IF NOT EXISTS (SELECT 1 FROM projects.projects WHERE id = v_demo) THEN
-    RAISE EXCEPTION 'demo project % is missing — the owner-less-org path has no live fixture; create one in this transaction rather than skipping', v_demo;
+  -- 8. AN OWNER-LESS ORG RESOLVES TO THE VALIDATED CREATOR. A chain that
+  --    terminated at projects.org_owner() returned NULL here (deviations #9).
+  -- 8a. The MECHANISM, on the throwaway: its org has no owner at all, its
+  --     settings row was written before the creator's membership existed
+  --     (AFTER INSERT ordering, 00195 §3), and its creator is an active
+  --     contractor through project_members — so the only arm that can answer
+  --     is resolve_project_pm()'s validated created_by. Asserted by identity.
+  IF projects.org_owner(v_tw_org) IS NOT NULL THEN
+    RAISE EXCEPTION 'the throwaway org has an owner (%) — 8a is not exercising the owner-less path', projects.org_owner(v_tw_org);
+  END IF;
+  v_res := projects.resolve_work_item_assignee(v_tw_proj, 'rfi', NULL);
+  IF v_res IS DISTINCT FROM v_fixture THEN
+    RAISE EXCEPTION 'owner-less org: the chain answered % rather than the validated creator %', v_res, v_fixture;
+  END IF;
+  -- 8b. The LIVE demo project, the estate's own instance of 8a. Its
+  --     precondition is guarded so the arm cannot weaken silently: the day the
+  --     demo org gains an active owner/admin/PM this reads red and the check
+  --     should be dropped in favour of 8a, not left passing for a new reason.
+  SELECT p.organisation_id INTO v_demo_org FROM projects.projects p WHERE p.id = v_demo;
+  IF v_demo_org IS NULL THEN
+    RAISE EXCEPTION 'demo project % is missing — drop 8b (8a covers the mechanism) rather than skipping it', v_demo;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.user_organisations uo
+              WHERE uo.organisation_id = v_demo_org AND uo.is_active
+                AND uo.role IN ('owner','admin','project_manager')) THEN
+    RAISE EXCEPTION 'the demo org % now has an active owner/admin/PM — 8b no longer exercises the owner-less path; drop it (8a covers the mechanism)', v_demo_org;
   END IF;
   v_res := projects.resolve_work_item_assignee(v_demo, 'rfi', NULL);
   IF v_res IS NULL THEN RAISE EXCEPTION 'demo project (org without an owner): the chain returned NULL'; END IF;
   IF public.user_effective_project_role(v_demo, v_res) IS NULL
   THEN RAISE EXCEPTION 'demo project (org without an owner): the chain named % who has no effective role there', v_res; END IF;
 
-  -- 9. THE ORPHANED PROJECT RAISES — once, with the actionable sentence. Every
-  --    arm validates to nothing on the throwaway project, and returning NULL
-  --    would let assignee_id NOT NULL — or the membership trigger's "not on
-  --    this project" — report it as the wrong problem. Assert on the MESSAGE:
-  --    a bare "it raised" passes for any failure, and a SENTINEL catches a
-  --    chain that returns anything at all.
+  -- 9. THE ORPHANED PROJECT RAISES — once, with the actionable sentence.
+  --    Deactivate BOTH of the throwaway creator's memberships: every arm now
+  --    validates to nothing, and returning NULL would let assignee_id NOT NULL
+  --    — or the membership trigger's "not on this project" — report it as the
+  --    wrong problem. Assert on the MESSAGE: a bare "it raised" passes for any
+  --    failure, and a SENTINEL catches a chain that returns anything at all.
+  UPDATE projects.project_members  SET is_active = false WHERE project_id = v_tw_proj AND user_id = v_fixture;
+  UPDATE public.user_organisations SET is_active = false WHERE organisation_id = v_tw_org AND user_id = v_fixture;
+  IF projects.resolve_project_pm(v_tw_proj) IS NOT NULL THEN
+    RAISE EXCEPTION 'the throwaway project is not orphaned: resolve_project_pm() still names % — 9 is not exercising the raise', projects.resolve_project_pm(v_tw_proj);
+  END IF;
   BEGIN
     v_res := projects.resolve_work_item_assignee(v_tw_proj, 'task', NULL);
     RAISE EXCEPTION 'SENTINEL: the chain returned % for an orphaned project instead of raising', v_res;
@@ -239,5 +282,32 @@ BEGIN
       RAISE EXCEPTION 'wrong failure for the NULL-gatekeeper case (expected not_null_violation on gatekeeper_id): %', SQLERRM;
   END;
 
-  RAISE NOTICE 'work-item-membership: 10/10 assertions passed';
+  -- 11. THE PER-TYPE DEFAULT ARM ANSWERS, and outranks the settings owner.
+  --     5 and 7 only prove the arms are SKIPPED when stale; deleting either
+  --     default arm outright left every earlier assertion green (reviewer
+  --     mutations C and D). Both slots hold a valid person, different from
+  --     each other and from the PM resolver's answer, and the chain must
+  --     return the per-type one — by identity.
+  UPDATE projects.project_settings
+     SET work_item_defaults = jsonb_build_object('rfi', jsonb_build_object(
+           'days_to_respond', NULL, 'triage_owner_id', v_second, 'gatekeeper_id', NULL)),
+         triage_owner_id = v_pm
+   WHERE project_id = v_proj;
+  v_res := projects.resolve_work_item_assignee(v_proj, 'rfi', NULL);
+  IF v_res IS DISTINCT FROM v_second THEN
+    RAISE EXCEPTION 'per-type default: the chain answered % rather than work_item_defaults.rfi.triage_owner_id %', v_res, v_second;
+  END IF;
+
+  -- 12. THE SETTINGS-OWNER ARM ANSWERS, and outranks the PM resolver. No
+  --     per-type default at all; project_settings.triage_owner_id names the
+  --     second member, who is not the PM resolver's answer.
+  UPDATE projects.project_settings
+     SET work_item_defaults = '{}'::jsonb, triage_owner_id = v_second
+   WHERE project_id = v_proj;
+  v_res := projects.resolve_work_item_assignee(v_proj, 'rfi', NULL);
+  IF v_res IS DISTINCT FROM v_second THEN
+    RAISE EXCEPTION 'settings owner: the chain answered % rather than project_settings.triage_owner_id %', v_res, v_second;
+  END IF;
+
+  RAISE NOTICE 'work-item-membership: 12/12 assertions passed';
 END $$;

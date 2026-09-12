@@ -790,8 +790,11 @@ BEGIN
   SELECT ps.work_item_defaults, ps.triage_owner_id INTO v_defaults, v_settings_owner
     FROM projects.project_settings ps WHERE ps.project_id = p_project_id;
 
-  -- A jsonb null or an absent key both read as SQL NULL here. The value is a
-  -- uuid or NULL by §13's validator; the cast is deliberate, not defensive.
+  -- A jsonb null or an absent key both read as SQL NULL here. The ::uuid cast
+  -- is safe because validate_work_item_defaults() (§13) guarantees the value's
+  -- shape at write time — a uuid string or null — so it is deliberate, not
+  -- defensive: a malformed value is §13's error, raised at the settings write,
+  -- never here at the source write.
   v_candidate := NULLIF(v_defaults -> p_item_type ->> 'triage_owner_id', '')::uuid;
   IF v_candidate IS NOT NULL
      AND public.user_effective_project_role(p_project_id, v_candidate) IS NOT NULL THEN
@@ -829,8 +832,10 @@ $fn$;
 -- reassignment would otherwise be the hole the INSERT check closes. It is
 -- declared UPDATE OF project_id too, and the body HONOURS that: the same
 -- assignee on a different project is a different membership question, so a
--- project move re-checks both people (§12 also makes project_id immutable;
--- this is the layer beneath it).
+-- project move re-checks both people. §12's work_items_transition_guard_trg
+-- also makes project_id immutable; this is the layer beneath it, and it runs
+-- FIRST because BEFORE ROW triggers fire in name order ('a' < 't') — Task 11
+-- must keep that trigger name for the order to hold.
 --
 -- A NULL person column, or a NULL project, is passed through untouched: BEFORE
 -- ROW triggers run before the column constraints, and
@@ -840,7 +845,8 @@ $fn$;
 -- report the column that is actually missing.
 --
 -- item_type is never touched here: an unregistered type passes through so the
--- due-date trigger, next in name order, refuses it with a sentence that names
+-- due-date trigger, later in name order (work_items_ensure_ref_trg is next,
+-- work_items_set_due_date_trg third), refuses it with a sentence that names
 -- it (work-item-due-date.sql assertion 12).
 --
 -- The message names COALESCE(ref, title), not ref: BEFORE ROW triggers fire in
@@ -849,6 +855,13 @@ $fn$;
 -- as a sentence because every server action returns error.message straight to
 -- the user — this string is what a PM sees for picking the wrong person from a
 -- list.
+--
+-- SECURITY DEFINER with row_security off is consistency with 00195 and §5/§6,
+-- NOT load-bearing: this function reads no table itself — every read happens
+-- inside user_effective_project_role(), which is DEFINER with row_security off
+-- in its own right — and it authorises nothing by current_user. Kept so a
+-- future direct read (a richer message naming the project, say) cannot
+-- silently run under the caller's RLS.
 CREATE OR REPLACE FUNCTION projects.work_items_assert_membership() RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path TO 'projects', 'public'
@@ -857,8 +870,10 @@ AS $fn$
 DECLARE
   v_label text := COALESCE(NEW.ref, NEW.title, 'this item');
   -- On INSERT, and on a move to another project, BOTH people are re-checked
-  -- whether or not they changed. OLD is NULL on INSERT; the OR short-circuits
-  -- before it is read.
+  -- whether or not they changed. PostgreSQL promises no evaluation order for
+  -- OR, and none is needed: on PG >= 11 OLD reads as NULL inside an INSERT
+  -- trigger, so NEW.project_id IS DISTINCT FROM NULL is simply true there.
+  -- work-item-membership.sql assertion 1 exercises exactly that path.
   v_recheck_all boolean := (TG_OP = 'INSERT' OR NEW.project_id IS DISTINCT FROM OLD.project_id);
 BEGIN
   IF NEW.project_id IS NULL THEN RETURN NEW; END IF;   -- the NOT NULL constraint's to report
