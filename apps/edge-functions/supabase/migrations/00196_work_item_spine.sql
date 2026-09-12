@@ -127,6 +127,7 @@
 -- grant_absent: authenticated UPDATE ON projects.work_item_watchers
 -- sql: SELECT bool_and(EXISTS (SELECT 1 FROM projects.work_item_types t WHERE t.key = k.key AND t.is_active)) FROM (VALUES ('rfi'),('snag'),('qc_defect'),('inspection'),('diary_action'),('form_action'),('order_followup'),('task')) AS k(key)
 -- sql: SELECT NOT EXISTS (SELECT 1 FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace WHERE n.nspname = 'projects' AND d.defaclobjtype = 'r' AND array_to_string(d.defaclacl, ',') LIKE '%anon=%')
+-- sql: SELECT NOT has_sequence_privilege('authenticated', 'projects.work_item_events_seq_seq', 'USAGE')
 -- @verify:end
 --
 -- ⚠ ON THE FIRST `sql:` DIRECTIVE. It asserts that the eight Q1 keys exist and
@@ -409,12 +410,16 @@ CREATE TABLE IF NOT EXISTS projects.work_item_events (
   -- a transaction) and id is random, so two events one statement apart are
   -- unordered by either; seq is the total order. Order the feed by
   -- (created_at, seq). Only the definer trigger inserts, so the identity
-  -- sequence needs no grant.
+  -- sequence needs no grant — and §10 revokes the USAGE the schema's sequence
+  -- default ACL hands authenticated at creation.
   created_at      timestamptz NOT NULL DEFAULT now(),
   seq             bigint GENERATED ALWAYS AS IDENTITY NOT NULL
 );
+-- The documented feed order, (created_at, seq) per item, so a history read
+-- comes straight off the index with no sort. The @verify index: directive
+-- checks by name; the column list is deliberate.
 CREATE INDEX IF NOT EXISTS work_item_events_item_idx
-  ON projects.work_item_events (work_item_id, created_at);
+  ON projects.work_item_events (work_item_id, created_at, seq);
 
 -- ─── 4. projects.work_item_watchers — notification-only, never blocking ──────
 -- Replaces the roster fan-out: notifyRfiEvent (called from createRfiAction,
@@ -1256,6 +1261,17 @@ REVOKE INSERT, UPDATE, DELETE ON projects.work_item_types FROM authenticated;
 -- on work_item_watchers, and a standing grant with no policy is exactly the
 -- silent zero-row shape the revokes above exist to avoid.
 REVOKE UPDATE ON projects.work_item_watchers FROM authenticated;
+
+-- work_item_events.seq is GENERATED ALWAYS AS IDENTITY, backed by
+-- projects.work_item_events_seq_seq. The schema's sequence default ACL
+-- (pg_default_acl for projects, measured 2026-09-12:
+-- authenticated=U, service_role=rwU) hands authenticated USAGE at creation,
+-- and nothing needs it: the only inserter is the SECURITY DEFINER append
+-- trigger (§11), which advances the sequence as the table owner. USAGE is the
+-- whole of the grant (SELECT and UPDATE read false), so USAGE is what is
+-- revoked. Declared in the @verify block as a sql: directive, because
+-- grant_absent: can express only has_table_privilege / has_function_privilege.
+REVOKE USAGE ON SEQUENCE projects.work_item_events_seq_seq FROM authenticated;
 
 -- The durable one-line fix, so the NEXT table in this schema is not born
 -- anon-readable either. ALTER DEFAULT PRIVILEGES is per-role: this edits the
