@@ -648,6 +648,14 @@ CREATE TRIGGER work_items_set_due_date_trg
 --     future mirrors fire concurrently; without it two concurrent inserts read
 --     the same MAX and the second dies on work_items_ref_unique.
 --     Transaction-scoped, so it releases on commit or rollback with no cleanup.
+--     Two caveats, both fail-safe. (a) The locks are held to COMMIT, so a
+--     transaction inserting two or more TYPES on one project in a different
+--     order from a concurrent one can deadlock (40P01 — aborted cleanly, no
+--     corruption); a single-row insert cannot. (b) MAX-after-lock relies on
+--     READ COMMITTED, where each statement in a VOLATILE plpgsql function takes
+--     a fresh snapshot and so sees the row the lock's previous holder committed.
+--     Under REPEATABLE READ a waiter reads a stale MAX and falls to
+--     work_items_ref_unique — a clean 23505, still never a duplicate.
 --
 -- MAX + 1 is monotonic here because work_items are NEVER DELETED — there is no
 -- DELETE policy for authenticated and the DELETE grant is revoked in §10, so a
@@ -702,12 +710,21 @@ BEGIN
   PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(NEW.project_id::text || ':' || NEW.item_type, 0));
 
+  -- Count only tails the allocator can parse. An explicit ref with no numeric
+  -- tail ('JUNK') or a tail past int4 ('TASK-2147483647') is a legal row — and
+  -- a permanent one: ref is immutable from §12 and rows are never deleted, so
+  -- there is NO repair path. Casting it would raise 22P02 / 22003 on every
+  -- later auto insert of that type on that project, forever (measured, rolled
+  -- back). {1,9} keeps MAX + 1 inside int4. The predicate is deliberately NOT
+  -- prefix-anchored: the prefix implies the type, so anchoring on it would
+  -- silently paper over a lost item_type predicate.
   SELECT COALESCE(
            pg_catalog.max(NULLIF(
              pg_catalog.regexp_replace(wi.ref, '^.*-', ''), '')::int), 0) + 1
     INTO v_n
     FROM projects.work_items wi
-   WHERE wi.project_id = NEW.project_id AND wi.item_type = NEW.item_type;
+   WHERE wi.project_id = NEW.project_id AND wi.item_type = NEW.item_type
+     AND wi.ref ~ '-[0-9]{1,9}$';
 
   NEW.ref := v_prefix || '-' || v_n::text;
   RETURN NEW;
