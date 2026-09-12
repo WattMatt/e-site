@@ -50,20 +50,26 @@ function item(overrides: Record<string, unknown> = {}) {
 }
 
 /** `row` is whatever the single pre-read returns: the project row for create,
- *  the work-item row for every other verb. */
+ *  the work-item row for every other verb. `eqSpy` sees every `.eq` on the
+ *  UPDATE chain, in order. */
 function client(
   insertSpy = vi.fn(),
   updateSpy = vi.fn(),
   row: any = { organisation_id: 'org-1' },
-  results: { insert?: Result; update?: Result } = {},
+  opts: { insert?: Result; update?: Result; eqSpy?: ReturnType<typeof vi.fn> } = {},
 ) {
-  const insertResult = results.insert ?? { data: { id: 'wi-1', ref: 'TASK-1' }, error: null }
-  const updateResult = results.update ?? { data: { id: 'wi-1' }, error: null }
+  const insertResult = opts.insert ?? { data: { id: 'wi-1', ref: 'TASK-1' }, error: null }
+  const updateResult = opts.update ?? { data: { id: 'wi-1' }, error: null }
+  const eqSpy = opts.eqSpy ?? vi.fn()
   const builder: any = {
     insert: (v: any) => { insertSpy(v); return { select: () => ({ single: async () => insertResult }) } },
     update: (v: any) => {
       updateSpy(v)
-      return { eq: () => ({ select: () => ({ maybeSingle: async () => updateResult }) }) }
+      const chain: any = {
+        eq: (col: string, val: unknown) => { eqSpy(col, val); return chain },
+        select: () => ({ maybeSingle: async () => updateResult }),
+      }
+      return chain
     },
     select: () => ({ eq: () => ({ single: async () => ({ data: row, error: null }) }) }),
   }
@@ -142,6 +148,19 @@ describe('createWorkItemTaskAction', () => {
     expect(insertSpy.mock.calls[0][0].due_date).toBe('2026-10-02')
   })
 
+  it('accepts every registry priority and nothing else', async () => {
+    const insertSpy = vi.fn()
+    createClientMock.mockResolvedValue(client(insertSpy))
+    requireEffectiveRoleMock.mockResolvedValue(ALLOWED_PM)
+    for (const priority of ['low', 'medium', 'high', 'critical'] as const) {
+      await createWorkItemTaskAction({ projectId: PROJECT, title: 'x', assigneeId: USER, priority })
+    }
+    expect(insertSpy.mock.calls.map((c) => c[0].priority)).toEqual(['low', 'medium', 'high', 'critical'])
+    const r = await createWorkItemTaskAction({ projectId: PROJECT, title: 'x', assigneeId: USER, priority: 'urgent' as any })
+    expect(r.error).toBeTruthy()
+    expect(insertSpy).toHaveBeenCalledTimes(4)
+  })
+
   it('requires an assignee — a manual task is always born with a named person', async () => {
     const insertSpy = vi.fn()
     createClientMock.mockResolvedValue(client(insertSpy))
@@ -160,6 +179,63 @@ describe('createWorkItemTaskAction', () => {
     const r = await createWorkItemTaskAction({ projectId: PROJECT, title: 'x', assigneeId: OTHER })
     expect(r.error).toBe(sentence)
     expect(revalidatePathMock).not.toHaveBeenCalled()
+  })
+})
+
+// ─── the write set is the REGISTRY's, resolved by the row's item_type ────────
+// Replacing writeRolesFor(item.item_type) with ORG_WRITE_ROLES in any verb
+// would silently take "move" and "drop" away from a non-holder contractor on
+// every task (contractor ∈ MARKUP_WRITE_ROLES, ∉ ORG_WRITE_ROLES).
+
+const WRITE_SET_VERBS = [
+  ['reassignWorkItemAction',      () => reassignWorkItemAction({ workItemId: ITEM, userId: OTHER })],
+  ['advanceWorkItemStatusAction', () => advanceWorkItemStatusAction({ workItemId: ITEM, status: 'answered' })],
+  ['voidWorkItemAction',          () => voidWorkItemAction({ workItemId: ITEM, reason: 'duplicate' })],
+] as const
+
+describe.each(WRITE_SET_VERBS)('%s resolves the write set from the registry', (_name, call) => {
+  it('task → MARKUP_WRITE_ROLES', async () => {
+    requireEffectiveRoleMock.mockResolvedValue(ALLOWED_PM)
+    createClientMock.mockResolvedValue(client(vi.fn(), vi.fn(), item({ item_type: 'task' })))
+    await call()
+    expect(requireEffectiveRoleMock).toHaveBeenCalledWith(expect.anything(), PROJECT, MARKUP_WRITE_ROLES)
+  })
+
+  it('inspection → ORG_WRITE_ROLES', async () => {
+    requireEffectiveRoleMock.mockResolvedValue(ALLOWED_PM)
+    createClientMock.mockResolvedValue(client(vi.fn(), vi.fn(), item({ item_type: 'inspection' })))
+    await call()
+    expect(requireEffectiveRoleMock).toHaveBeenCalledWith(expect.anything(), PROJECT, ORG_WRITE_ROLES)
+  })
+
+  it('an unregistered item_type → [] (fails closed)', async () => {
+    requireEffectiveRoleMock.mockResolvedValue(ALLOWED_PM)
+    createClientMock.mockResolvedValue(client(vi.fn(), vi.fn(), item({ item_type: 'not_a_type' })))
+    await call()
+    expect(requireEffectiveRoleMock).toHaveBeenCalledWith(expect.anything(), PROJECT, [])
+  })
+})
+
+// ─── every UPDATE is conditioned on the status the decision was made from ────
+// Without the second .eq a governing actor whose row flipped open → answered
+// between the pre-read and the write would change the ASSIGNEE of an answered
+// item — ball-in-court unchanged, `reassigned` evented, reported ok.
+
+const UPDATE_VERBS = [
+  ['reassignWorkItemAction',      'triage',   () => reassignWorkItemAction({ workItemId: ITEM, userId: OTHER })],
+  ['advanceWorkItemStatusAction', 'open',     () => advanceWorkItemStatusAction({ workItemId: ITEM, status: 'answered' })],
+  ['setWorkItemDueDateAction',    'answered', () => setWorkItemDueDateAction({ workItemId: ITEM, dueDate: '2026-10-02' })],
+  ['voidWorkItemAction',          'open',     () => voidWorkItemAction({ workItemId: ITEM, reason: 'duplicate' })],
+] as const
+
+describe.each(UPDATE_VERBS)('%s filters the write on the pre-read status', (_name, status, call) => {
+  it(`writes only a row still in "${status}"`, async () => {
+    requireEffectiveRoleMock.mockResolvedValue(ALLOWED_PM)
+    const eqSpy = vi.fn()
+    createClientMock.mockResolvedValue(client(vi.fn(), vi.fn(), item({ status }), { eqSpy }))
+    const r = await call()
+    expect(r.error).toBeUndefined()
+    expect(eqSpy.mock.calls).toEqual([['id', ITEM], ['status', status]])
   })
 })
 
@@ -193,32 +269,18 @@ describe('reassignWorkItemAction', () => {
   })
 
   it('refuses a caller without the type write role — even the current holder — without touching the database', async () => {
-    // Not the plan's "admits the holder": §9's RESTRICTIVE update gate requires
-    // the actor to STILL be assignee or gatekeeper on the new row, so a holder
-    // without a write role cannot hand a row off (42501 before the guard runs).
-    // Admitting them here would only turn that into a silent zero-row update.
+    // Not the plan's "admits the holder". A bare holder's hand-off passes the
+    // BEFORE UPDATE guard (v_is_holder) and is THEN refused by §9's RESTRICTIVE
+    // update gate — RLS WITH CHECK runs after the row triggers — because the
+    // actor is no longer assignee or gatekeeper on the new row (42501).
+    // Admitting them here would only swap the role sentence for a raw
+    // "new row violates row-level security policy".
     requireEffectiveRoleMock.mockResolvedValue(DENIED)
     const updateSpy = vi.fn()
     createClientMock.mockResolvedValue(client(vi.fn(), updateSpy, item({ status: 'open', assignee_id: USER })))
     const r = await reassignWorkItemAction({ workItemId: ITEM, userId: OTHER })
     expect(r.error).toMatch(/not allowed/)
     expect(updateSpy).not.toHaveBeenCalled()
-  })
-
-  it('resolves the write set from the item\'s type in the registry, and fails closed on an unknown type', async () => {
-    requireEffectiveRoleMock.mockResolvedValue(ALLOWED_PM)
-
-    createClientMock.mockResolvedValue(client(vi.fn(), vi.fn(), item({ item_type: 'task' })))
-    await reassignWorkItemAction({ workItemId: ITEM, userId: OTHER })
-    expect(requireEffectiveRoleMock).toHaveBeenLastCalledWith(expect.anything(), PROJECT, MARKUP_WRITE_ROLES)
-
-    createClientMock.mockResolvedValue(client(vi.fn(), vi.fn(), item({ item_type: 'inspection' })))
-    await reassignWorkItemAction({ workItemId: ITEM, userId: OTHER })
-    expect(requireEffectiveRoleMock).toHaveBeenLastCalledWith(expect.anything(), PROJECT, ORG_WRITE_ROLES)
-
-    createClientMock.mockResolvedValue(client(vi.fn(), vi.fn(), item({ item_type: 'not_a_type' })))
-    await reassignWorkItemAction({ workItemId: ITEM, userId: OTHER })
-    expect(requireEffectiveRoleMock).toHaveBeenLastCalledWith(expect.anything(), PROJECT, [])
   })
 
   it('returns the transition guard\'s sentence verbatim — it is the copy the user sees', async () => {
@@ -258,6 +320,22 @@ describe('advanceWorkItemStatusAction', () => {
     expect(r.error).toBeTruthy()
   })
 
+  it('a move to the status the item already holds is a no-op — ok, no write, no revalidate', async () => {
+    // The guard's machine has no same-state arm; a write would only bump
+    // last_activity_at for nothing. Still gated: a bystander gets the sentence.
+    requireEffectiveRoleMock.mockResolvedValue(DENIED)
+    const updateSpy = vi.fn()
+    createClientMock.mockResolvedValue(client(vi.fn(), updateSpy, item({ status: 'open', assignee_id: USER })))
+    const r = await advanceWorkItemStatusAction({ workItemId: ITEM, status: 'open' })
+    expect(r).toEqual({ ok: true })
+    expect(updateSpy).not.toHaveBeenCalled()
+    expect(revalidatePathMock).not.toHaveBeenCalled()
+
+    createClientMock.mockResolvedValue(client(vi.fn(), updateSpy, item({ status: 'open' })))
+    const bystander = await advanceWorkItemStatusAction({ workItemId: ITEM, status: 'open' })
+    expect(bystander.error).toMatch(/not allowed/)
+  })
+
   it('reopen (closed → open): admits the closing gatekeeper without a write role, refuses anyone else without one', async () => {
     // §12 (c2): a closed row has no ball-in-court, so the holder arm can never
     // admit a reopen; the DB admits a write role OR the gatekeeper who closed.
@@ -290,15 +368,17 @@ describe('advanceWorkItemStatusAction', () => {
 
   it('reports a zero-row update as an error, never as success', async () => {
     // A client_viewer assignee passes the holder arm here and is refused
-    // silently by §9's RESTRICTIVE gate: PostgREST matches zero rows and
-    // raises nothing (the E8 failure class). The action asserts rows affected.
+    // silently by §9's RESTRICTIVE gate; a row that moved on between the
+    // pre-read and the write misses the status filter the same way. PostgREST
+    // matches zero rows and raises nothing (the E8 failure class). The action
+    // asserts rows affected.
     requireEffectiveRoleMock.mockResolvedValue(DENIED)
     createClientMock.mockResolvedValue(client(vi.fn(), vi.fn(), item({ status: 'open', assignee_id: USER }), {
       update: { data: null, error: null },
     }))
     const r = await advanceWorkItemStatusAction({ workItemId: ITEM, status: 'answered' })
     expect(r.ok).toBeUndefined()
-    expect(r.error).toBeTruthy()
+    expect(r.error).toMatch(/Nothing was changed/)
     expect(revalidatePathMock).not.toHaveBeenCalled()
   })
 })
