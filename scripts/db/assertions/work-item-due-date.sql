@@ -10,6 +10,7 @@ DO $$
 DECLARE v_proj uuid; v_org uuid; v_pm uuid; v_id uuid; n int; d_a date; d_b date;
         v_d date;  -- NOT `d`: a PL/pgSQL variable named d makes the prelude's
                    -- `ON CONFLICT (d)` ambiguous (42702) against public_holidays.d
+        v_msg text; v_hint text;  -- 8c reads the re-raised error's parts
 BEGIN
   -- 0. add_working_days must be OURS. If item 1's lane already shipped one,
   --    stop and reconcile rather than silently redefining it.
@@ -23,9 +24,10 @@ BEGIN
 
   -- Seed the years these assertions walk, so the test is about the ARITHMETIC
   -- and not about which years production happens to hold. Rolled back with
-  -- everything else. 2026/2027 are the fixed-date assertions; the CURRENT year
-  -- and the next are for the trigger assertions at the bottom.
-  INSERT INTO projects.calendar_years (year) VALUES (2026),(2027) ON CONFLICT DO NOTHING;
+  -- everything else. 2026/2027 are the fixed-date assertions; 2035 is the
+  -- horizon that 5b, 5c and 8c walk up to (2036 is DELETED in 5); the CURRENT
+  -- year and the next are for the trigger assertions at the bottom.
+  INSERT INTO projects.calendar_years (year) VALUES (2026),(2027),(2035) ON CONFLICT DO NOTHING;
   INSERT INTO projects.calendar_years (year)
   VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
   ON CONFLICT DO NOTHING;
@@ -53,11 +55,29 @@ BEGIN
 
   -- 5. AN UNSEEDED YEAR RAISES. A(h) forbids a calendar-day fallback outright,
   --    because a silent one-day drift changes whether an item escalates.
-  DELETE FROM projects.calendar_years WHERE year = 2031;
+  --    2036 is deleted here too: 5b, 5c and 8c need a horizon that ENDS at
+  --    2035 whatever production holds by the time this runs.
+  DELETE FROM projects.calendar_years WHERE year IN (2031, 2036);
   BEGIN
     PERFORM projects.add_working_days(DATE '2031-03-01', 5, v_proj, 'office');
     RAISE EXCEPTION 'add_working_days silently computed against an unseeded year';
   EXCEPTION WHEN no_data_found THEN NULL; END;
+
+  -- 5b. The year check is per year ENTERED, not only p_from's: a walk that
+  --     starts in seeded 2035 and crosses into unseeded 2036 raises at the
+  --     boundary. Fri 2035-12-28 + 5 office days cannot finish in December.
+  BEGIN
+    PERFORM projects.add_working_days(DATE '2035-12-28', 5, v_proj, 'office');
+    RAISE EXCEPTION 'a walk that crossed into an unseeded year did not raise';
+  EXCEPTION WHEN no_data_found THEN NULL; END;
+
+  -- 5c. ...and ONLY per year entered. Tue 2035-11-20 + 5 office days lands
+  --     Tue 2035-11-27; the loop bound reaches into 2036 but the walk never
+  --     does, so an eager check over p_from..v_limit would raise here for a
+  --     January nobody asked about. Seeded-through-2035 is the fixture, not
+  --     an assumption about production.
+  v_d := projects.add_working_days(DATE '2035-11-20', 5, v_proj, 'office');
+  IF v_d <> DATE '2035-11-27' THEN RAISE EXCEPTION 'lazy horizon: got %, expected 2035-11-27', v_d; END IF;
 
   -- 6. p_days = 0 is REFUSED. Accepting it would return p_from unchanged even
   --    when p_from is a Sunday or a public holiday — a non-working day handed
@@ -80,6 +100,15 @@ BEGIN
     PERFORM projects.add_working_days(DATE '2026-06-05', 1, v_proj, 'site');
     RAISE EXCEPTION 'an empty working_days array did not raise on the SITE calendar';
   EXCEPTION WHEN invalid_parameter_value THEN NULL; END;
+
+  -- 7b. The loop bound scales with the calendar. A Saturday-only project
+  --     asking for 30 working days needs ~30 weeks; a flat "3 calendar days
+  --     per working day" bound (135 days) raised the spurious "no working day
+  --     found" on a reachable date. From Fri 2026-06-05 the 30th working
+  --     Saturday is 2027-01-02 — Sat 26 Dec 2026 (Day of Goodwill) is skipped.
+  UPDATE projects.project_settings SET working_days = ARRAY[6] WHERE project_id = v_proj;
+  v_d := projects.add_working_days(DATE '2026-06-05', 30, v_proj, 'office');
+  IF v_d <> DATE '2027-01-02' THEN RAISE EXCEPTION 'Saturday-only +30wd from Fri 5 Jun 2026 = %, expected 2027-01-02', v_d; END IF;
   UPDATE projects.project_settings SET working_days = ARRAY[1,2,3,4,5] WHERE project_id = v_proj;
 
   -- 8. THE DECEMBER SHUTDOWN. A due date inside 15 Dec - 15 Jan is pushed to the
@@ -97,6 +126,42 @@ BEGIN
   -- A date outside the window is untouched.
   IF projects.push_past_builders_shutdown(DATE '2026-06-10', v_proj) <> DATE '2026-06-10'
   THEN RAISE EXCEPTION 'a June date was pushed'; END IF;
+
+  -- 8b. A NON-WRAPPING window (12-15..12-31) is a legal setting and ends in its
+  --     own year. Always adding a year made it a year-long band, so a June date
+  --     was pushed to the next January (probe: 2026-06-10 -> 2027-01-02).
+  UPDATE projects.project_settings SET builders_shutdown_end_md = '12-31' WHERE project_id = v_proj;
+  IF projects.push_past_builders_shutdown(DATE '2026-06-10', v_proj) <> DATE '2026-06-10'
+  THEN RAISE EXCEPTION 'non-wrapping window: a June date was pushed to %',
+       projects.push_past_builders_shutdown(DATE '2026-06-10', v_proj); END IF;
+  -- Thu 31 Dec + 1 site working day: Fri 1 Jan is New Year's Day, so Sat 2 Jan.
+  IF projects.push_past_builders_shutdown(DATE '2026-12-20', v_proj) <> DATE '2027-01-02'
+  THEN RAISE EXCEPTION 'non-wrapping window: 20 Dec was pushed to %, expected Sat 2027-01-02',
+       projects.push_past_builders_shutdown(DATE '2026-12-20', v_proj); END IF;
+  IF projects.push_past_builders_shutdown(DATE '2027-01-05', v_proj) <> DATE '2027-01-05'
+  THEN RAISE EXCEPTION 'non-wrapping window: 5 Jan was pushed'; END IF;
+  UPDATE projects.project_settings SET builders_shutdown_end_md = '01-15' WHERE project_id = v_proj;
+
+  -- 8c. A SUPPLIED date whose push walks past the seeded horizon gets the
+  --     foreman sentence too, with the year-naming message as DETAIL and the
+  --     re-seed command as HINT. builders_holiday is still true and the window
+  --     is back to 12-15..01-15, so 20 Dec 2035 pushes to Jan 2036 — deleted in
+  --     5. A BEFORE trigger raises before the ref NOT NULL, so this is legal
+  --     ahead of the ref wall.
+  BEGIN
+    INSERT INTO projects.work_items
+      (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by, due_date)
+    VALUES (v_org, v_proj, 'task', 'supplied date past the horizon', v_pm, v_pm, v_pm, DATE '2035-12-20');
+    RAISE EXCEPTION 'a supplied date pushed into an unseeded year did not raise';
+  EXCEPTION WHEN no_data_found THEN
+    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_hint = PG_EXCEPTION_HINT;
+    IF position('has not been set up far enough ahead' IN v_msg) = 0 THEN
+      RAISE EXCEPTION 'the trigger re-raised without the foreman sentence: %', v_msg;
+    END IF;
+    IF COALESCE(v_hint, '') = '' OR position('calendar_years' IN v_hint) = 0 THEN
+      RAISE EXCEPTION 'the re-seed HINT was lost on re-raise: %', COALESCE(v_hint, '<empty>');
+    END IF;
+  END;
   -- builders_holiday = false disables it entirely, and it STAYS false for the
   -- trigger assertions below. Leaving it on would make assertions 9 and 10
   -- season-dependent: run in December, a 5-working-day and a 1-working-day
@@ -168,5 +233,5 @@ BEGIN
     END IF;
   END;
 
-  RAISE NOTICE 'work-item-due-date: 14/14 assertions passed';
+  RAISE NOTICE 'work-item-due-date: 19/19 assertions passed';
 END $$;

@@ -433,7 +433,7 @@ SET row_security TO 'off'
 AS $fn$
 DECLARE
   v_days int[]; v_extra date[]; v_cursor date := p_from; v_left int := p_days;
-  v_limit date; y int;
+  v_limit date; v_year int;
 BEGIN
   -- IS NULL first (as working_days_between does): `NULL NOT IN (...)` is NULL,
   -- which an IF treats as false, so a NULL calendar would slip past this guard
@@ -467,33 +467,48 @@ BEGIN
     v_days := v_days || 6;                     -- A(h): site = office + Saturday
   END IF;
 
-  -- Generous upper bound: at most ~2.4 calendar days per working day, plus a
-  -- month of shutdown. Used both to bound the loop and to fix the year range.
-  v_limit := p_from + (p_days * 3 + 45);
+  -- Loop bound, computed AFTER the Saturday append so it reflects the calendar
+  -- actually walked: 14 calendar days per working day divided by the number of
+  -- working weekdays (one working weekday needs 7 calendar days per working
+  -- day, five need 1.4; the factor of two absorbs holiday runs), plus 45 days
+  -- for a year-end shutdown. Integer division. A Saturday-only project asking
+  -- for 30 days gets 465, not the 135 a flat "3 per day" gave, which raised
+  -- the "no working day found" error on a perfectly reachable date.
+  v_limit := p_from + ((p_days * 14) / GREATEST(cardinality(v_days), 1)) + 45;
 
-  -- Every year the walk can touch must be seeded. An unseeded year RAISES —
-  -- there is no fallback to calendar days (A(h)), because a silent one-day
-  -- drift changes whether an item escalates. The HINT names the re-seed,
-  -- because this error surfaces to an operator through a failed source write.
-  FOR y IN EXTRACT(YEAR FROM p_from)::int .. EXTRACT(YEAR FROM v_limit)::int LOOP
-    IF NOT EXISTS (SELECT 1 FROM projects.calendar_years cy WHERE cy.year = y) THEN
-      RAISE EXCEPTION USING ERRCODE = 'no_data_found',
-        MESSAGE = format('add_working_days: calendar year %s is not seeded in projects.calendar_years', y),
-        HINT    = format('Seed it: INSERT INTO projects.calendar_years (year) VALUES (%s) ON CONFLICT DO NOTHING; then load that year''s public holidays from listHolidays(%s). A(h) forbids falling back to calendar days.', y, y);
+  -- Every year the walk ENTERS must be seeded: p_from's own year before the
+  -- first step, then each year the cursor crosses into, checked ONCE per year
+  -- at the top of the loop and BEFORE that day is evaluated. Lazy, not eager
+  -- over p_from..v_limit — the bound is deliberately generous, and a walk that
+  -- lands in November must not raise for a January it never reaches (the TS
+  -- mirror's per-step assertSeeded has the same shape). An unseeded year
+  -- RAISES — there is no fallback to calendar days (A(h)), because a silent
+  -- one-day drift changes whether an item escalates. The HINT names the
+  -- re-seed, because this error surfaces to an operator through a failed
+  -- source write.
+  v_year := NULL;
+  LOOP
+    IF v_year IS DISTINCT FROM EXTRACT(YEAR FROM v_cursor)::int THEN
+      v_year := EXTRACT(YEAR FROM v_cursor)::int;
+      IF NOT EXISTS (SELECT 1 FROM projects.calendar_years cy WHERE cy.year = v_year) THEN
+        RAISE EXCEPTION USING ERRCODE = 'no_data_found',
+          MESSAGE = format('add_working_days: calendar year %s is not seeded in projects.calendar_years', v_year),
+          HINT    = format('Seed it: INSERT INTO projects.calendar_years (year) VALUES (%s) ON CONFLICT DO NOTHING; then load that year''s public holidays from listHolidays(%s). A(h) forbids falling back to calendar days.', v_year, v_year);
+      END IF;
     END IF;
-  END LOOP;
-
-  WHILE v_left > 0 LOOP
-    v_cursor := v_cursor + 1;
-    IF v_cursor > v_limit THEN
-      RAISE EXCEPTION 'add_working_days: no working day found within % days of %', v_limit - p_from, p_from
-        USING ERRCODE = 'invalid_parameter_value';
-    END IF;
-    IF EXTRACT(ISODOW FROM v_cursor)::int = ANY (v_days)
+    -- p_from itself is never a counted day: the first pass only checks its year.
+    IF v_cursor > p_from
+       AND EXTRACT(ISODOW FROM v_cursor)::int = ANY (v_days)
        AND NOT EXISTS (SELECT 1 FROM projects.public_holidays h WHERE h.d = v_cursor)
        AND NOT (v_cursor = ANY (COALESCE(v_extra, ARRAY[]::date[])))
     THEN
       v_left := v_left - 1;
+    END IF;
+    EXIT WHEN v_left = 0;
+    v_cursor := v_cursor + 1;
+    IF v_cursor > v_limit THEN
+      RAISE EXCEPTION 'add_working_days: no working day found within % days of %', v_limit - p_from, p_from
+        USING ERRCODE = 'invalid_parameter_value';
     END IF;
   END LOOP;
   RETURN v_cursor;
@@ -510,18 +525,25 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path TO 'projects', 'public'
 SET row_security TO 'off'
 AS $fn$
-DECLARE v_on boolean; v_start text; v_end text; y int; band_start date; band_end date;
+DECLARE v_on boolean; v_start text; v_end text; v_wrap boolean; y int; band_start date; band_end date;
 BEGIN
   SELECT ps.builders_holiday, ps.builders_shutdown_start_md, ps.builders_shutdown_end_md
     INTO v_on, v_start, v_end
     FROM projects.project_settings ps WHERE ps.project_id = p_project;
   IF NOT COALESCE(v_on, false) THEN RETURN p_date; END IF;
 
-  -- Two bands, because the window wraps the year end: a January date belongs to
-  -- the PREVIOUS December's band, a December date to its own.
+  -- A window that wraps the year end (12-15..01-15) ends in the NEXT year; a
+  -- mid-year or same-December window (12-15..12-31) is a legal setting too and
+  -- ends in its own. The text compare is safe because 00195's CHECK forces
+  -- zero-padded MM-DD. Always adding a year made 12-15..12-31 a YEAR-LONG band
+  -- (probe: 2026-06-10 was pushed to 2027-01-02).
+  v_wrap := (v_end < v_start);
+
+  -- Two bands: a January date belongs to the PREVIOUS December's band, a
+  -- December date to its own.
   FOR y IN EXTRACT(YEAR FROM p_date)::int - 1 .. EXTRACT(YEAR FROM p_date)::int LOOP
-    band_start := to_date(y::text       || '-' || v_start, 'YYYY-MM-DD');
-    band_end   := to_date((y + 1)::text || '-' || v_end,   'YYYY-MM-DD');
+    band_start := to_date(y::text || '-' || v_start, 'YYYY-MM-DD');
+    band_end   := to_date((y + CASE WHEN v_wrap THEN 1 ELSE 0 END)::text || '-' || v_end, 'YYYY-MM-DD');
     IF p_date BETWEEN band_start AND band_end THEN
       RETURN projects.add_working_days(band_end, 1, p_project, 'site');
     END IF;
@@ -548,6 +570,7 @@ SET row_security TO 'off'
 AS $fn$
 DECLARE
   v_days int; v_cal text; v_defaults jsonb; v_rfi_default int; v_override int;
+  v_msg text; v_hint text;
 BEGIN
   SELECT t.default_days, t.calendar INTO v_days, v_cal
     FROM projects.work_item_types t WHERE t.key = NEW.item_type;
@@ -574,22 +597,29 @@ BEGIN
     CASE WHEN NEW.item_type = 'rfi' THEN v_rfi_default END,
     v_days);
 
-  IF NEW.due_date IS NULL THEN
-    BEGIN
+  -- Both the computed date and the shutdown push walk the calendar, and the
+  -- push does so for a SUPPLIED date too (a 20 Dec date handed in by a PM is
+  -- pushed into January, which may be the unseeded year) — so both sit inside
+  -- the one handler.
+  BEGIN
+    IF NEW.due_date IS NULL THEN
       NEW.due_date := projects.add_working_days(
         (now() AT TIME ZONE 'Africa/Johannesburg')::date, v_days, NEW.project_id, v_cal);
-    EXCEPTION WHEN no_data_found THEN
-      -- Re-raise with copy an operator can act on. The original message names
-      -- the year; this one names the consequence, because this error reaches a
-      -- foreman trying to log a snag.
-      RAISE EXCEPTION 'The working-day calendar has not been set up far enough ahead, so a due date cannot be worked out. Ask an administrator to load the public holidays for this year and the next two.'
-        USING ERRCODE = 'no_data_found', HINT = SQLERRM;
-    END;
-  END IF;
-
-  -- Applied to a supplied date as well as a computed one: the point of the push
-  -- is that nobody is on site to do the work, which is true however the date arrived.
-  NEW.due_date := projects.push_past_builders_shutdown(NEW.due_date, NEW.project_id);
+    END IF;
+    -- Applied to a supplied date as well as a computed one: the point of the
+    -- push is that nobody is on site to do the work, which is true however the
+    -- date arrived.
+    NEW.due_date := projects.push_past_builders_shutdown(NEW.due_date, NEW.project_id);
+  EXCEPTION WHEN no_data_found THEN
+    -- Re-raise with copy an operator can act on: this error reaches a foreman
+    -- trying to log a snag, so the MESSAGE names the consequence. The original
+    -- message (which names the year) survives as DETAIL and the original HINT
+    -- (the re-seed command) as HINT — `HINT = SQLERRM` would have thrown the
+    -- command away.
+    GET STACKED DIAGNOSTICS v_msg = MESSAGE_TEXT, v_hint = PG_EXCEPTION_HINT;
+    RAISE EXCEPTION 'The working-day calendar has not been set up far enough ahead, so a due date cannot be worked out. Ask an administrator to load the public holidays for this year and the next two.'
+      USING ERRCODE = 'no_data_found', DETAIL = v_msg, HINT = v_hint;
+  END;
   RETURN NEW;
 END;
 $fn$;
