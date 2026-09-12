@@ -70,7 +70,7 @@ mgmt_query() {
   sql_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")" || return 1
   json_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")" || { rm -f "$sql_tmp"; return 1; }
   chmod 600 "$sql_tmp" "$json_tmp"
-  trap 'rm -f "$sql_tmp" "$json_tmp"' RETURN
+  trap 'rm -f "${sql_tmp:-}" "${json_tmp:-}"' RETURN
 
   printf '%s' "$sql" > "$sql_tmp"
   jq -n --rawfile q "$sql_tmp" '{query: $q}' > "$json_tmp" || return 1
@@ -107,7 +107,7 @@ mgmt_apply_sql_file() {
   local json_tmp
   json_tmp="$(mktemp "${TMPDIR:-/tmp}/mgmt.XXXXXX")" || return 1
   chmod 600 "$json_tmp"
-  trap 'rm -f "$json_tmp"' RETURN
+  trap 'rm -f "${json_tmp:-}"' RETURN
 
   jq -n --rawfile q "$file" '{query: $q}' > "$json_tmp" || return 1
 
