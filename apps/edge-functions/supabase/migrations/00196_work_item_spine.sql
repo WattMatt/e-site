@@ -1255,3 +1255,137 @@ REVOKE UPDATE ON projects.work_item_watchers FROM authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA projects REVOKE SELECT ON TABLES FROM anon;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ─── 11. The append trigger — the only writer of events, and of watchers ─────
+-- SECURITY DEFINER, exactly as field.append_form_response_history() is
+-- (00179:192-194), and for the same reason: work_item_events carries a SELECT
+-- policy and NO write policy (00179:504-506), and §10 additionally revoked
+-- INSERT from authenticated — so a SECURITY INVOKER trigger would fail on the
+-- very first event with a permission error. A definer function owned by the
+-- table owner bypasses both, which is what makes that shape possible.
+--
+-- Attribution is auth.uid(), NEVER current_user: under SECURITY DEFINER
+-- current_user is the function OWNER (00179:341-346), and an append-only history
+-- that records a forgery as fact is worse than no history. auth.uid() is NULL
+-- on the service and backfill paths, and the event then names nobody — never
+-- the owner, never a guessed person.
+--
+-- Three columns beyond the obvious, and none of them can be backfilled:
+--   * from_ball_in_court_id / to_ball_in_court_id — metric 5's denominator is
+--     "work items that entered the caller's ball-in-court that week, counted off
+--     projects.work_item_events" (§15 metric 5). Reconstructing that from the
+--     row's CURRENT gatekeeper_id is the error §15 §(b) forbids. Every arm
+--     writes the pair, because a people change moves the ball as surely as a
+--     status change does (ball_in_court_id is generated over both).
+--   * actor_role — §15 §(b)'s "effective role stamped AT EVENT TIME, not
+--     re-resolved later". Metric 2a's contractor diagnostic depends on it, and
+--     it is the only first-party signal available: public.email_events
+--     (00185, the Resend webhook) records opens and bounces per message, but
+--     nothing joins an open to a work item, so per-item email engagement
+--     stays unmeasurable — 246 automated emails to the estate and 13
+--     contractor accounts, measured 2026-09-10.
+--
+-- It also seeds work_item_watchers. Nothing else in Q1 writes that table, so
+-- without this the SELECT policy's watcher arm is dead code and item 4's
+-- notification engine inherits an empty subscription list (§03 §1.8).
+--
+-- An UPDATE that changes none of status / assignee / gatekeeper / due_date
+-- fires no arm and returns cleanly — that is item 3's delete-to-void shape
+-- (RI ON DELETE SET NULL on a void row changes only a source FK) and §12's
+-- own last_activity_at stamp. Asserted by work-item-events.sql 13.
+--
+-- Item 4 adds the notification emit and its
+-- current_setting('esite.suppress_notifications', true) guard to THIS function
+-- with CREATE OR REPLACE. Nothing here writes a bell.
+CREATE OR REPLACE FUNCTION projects.append_work_item_event() RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+AS $fn$
+DECLARE
+  v_actor uuid := auth.uid();
+  v_role  text := public.user_effective_project_role(NEW.project_id, auth.uid());
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO projects.work_item_events
+      (work_item_id, project_id, organisation_id, verb, to_status, to_user_id, to_due_date,
+       from_ball_in_court_id, to_ball_in_court_id, actor_id, actor_role)
+    VALUES (NEW.id, NEW.project_id, NEW.organisation_id, 'created',
+            NEW.status, NEW.assignee_id, NEW.due_date,
+            NULL, NEW.ball_in_court_id, v_actor, v_role);
+
+    -- DISTINCT ON, not three VALUES rows: the creator is frequently also the
+    -- assignee or the gatekeeper, and one person must produce one row.
+    -- Priority: creator > assignee > gatekeeper.
+    INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason)
+    SELECT DISTINCT ON (w.user_id) NEW.id, w.user_id, w.reason
+      FROM (VALUES (1, NEW.created_by,    'creator'),
+                   (2, NEW.assignee_id,   'assignee'),
+                   (3, NEW.gatekeeper_id, 'gatekeeper')) AS w(pri, user_id, reason)
+     ORDER BY w.user_id, w.pri
+    ON CONFLICT (work_item_id, user_id) DO NOTHING;
+
+    RETURN NULL;
+  END IF;
+
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    INSERT INTO projects.work_item_events
+      (work_item_id, project_id, organisation_id, verb, from_status, to_status,
+       from_ball_in_court_id, to_ball_in_court_id, actor_id, actor_role)
+    VALUES (NEW.id, NEW.project_id, NEW.organisation_id,
+            CASE NEW.status WHEN 'closed' THEN 'closed'
+                            WHEN 'void'   THEN 'voided'
+                            ELSE 'status_changed' END,
+            OLD.status, NEW.status,
+            OLD.ball_in_court_id, NEW.ball_in_court_id, v_actor, v_role);
+  END IF;
+
+  IF NEW.assignee_id IS DISTINCT FROM OLD.assignee_id THEN
+    INSERT INTO projects.work_item_events
+      (work_item_id, project_id, organisation_id, verb, from_user_id, to_user_id,
+       from_ball_in_court_id, to_ball_in_court_id, actor_id, actor_role)
+    VALUES (NEW.id, NEW.project_id, NEW.organisation_id,
+            -- The triage handoff is 'assigned'; every later move is 'reassigned'.
+            CASE WHEN OLD.status = 'triage' THEN 'assigned' ELSE 'reassigned' END,
+            OLD.assignee_id, NEW.assignee_id,
+            OLD.ball_in_court_id, NEW.ball_in_court_id, v_actor, v_role);
+
+    INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason)
+    VALUES (NEW.id, NEW.assignee_id, 'assignee') ON CONFLICT DO NOTHING;
+  END IF;
+
+  IF NEW.gatekeeper_id IS DISTINCT FROM OLD.gatekeeper_id THEN
+    INSERT INTO projects.work_item_events
+      (work_item_id, project_id, organisation_id, verb, from_user_id, to_user_id,
+       from_ball_in_court_id, to_ball_in_court_id, actor_id, actor_role)
+    VALUES (NEW.id, NEW.project_id, NEW.organisation_id, 'reassigned',
+            OLD.gatekeeper_id, NEW.gatekeeper_id,
+            OLD.ball_in_court_id, NEW.ball_in_court_id, v_actor, v_role);
+
+    INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason)
+    VALUES (NEW.id, NEW.gatekeeper_id, 'gatekeeper') ON CONFLICT DO NOTHING;
+  END IF;
+
+  IF NEW.due_date IS DISTINCT FROM OLD.due_date THEN
+    INSERT INTO projects.work_item_events
+      (work_item_id, project_id, organisation_id, verb, from_due_date, to_due_date,
+       from_ball_in_court_id, to_ball_in_court_id, actor_id, actor_role)
+    VALUES (NEW.id, NEW.project_id, NEW.organisation_id, 'due_changed',
+            OLD.due_date, NEW.due_date,
+            OLD.ball_in_court_id, NEW.ball_in_court_id, v_actor, v_role);
+  END IF;
+
+  RETURN NULL;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS append_work_item_event_trg ON projects.work_items;
+CREATE TRIGGER append_work_item_event_trg
+  AFTER INSERT OR UPDATE ON projects.work_items
+  FOR EACH ROW EXECUTE FUNCTION projects.append_work_item_event();
+
+-- Declared as grant_absent: in the @verify block. A trigger function needs no
+-- GRANT: EXECUTE is checked at CREATE TRIGGER time for the creator, never at
+-- fire time (§8), so it fires for a contractor's insert while staying
+-- uncallable by anyone but the owner.
+REVOKE ALL ON FUNCTION projects.append_work_item_event() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.append_work_item_event() FROM anon;
