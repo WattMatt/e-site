@@ -15,7 +15,12 @@
 // The shutdown push lives in the due-date rule (addWorkingDays), never in the
 // count: projects.working_days_between in migration 00194 has no shutdown arm,
 // by design (A(h)) — the count must not skip a window it never entered — and
-// the two must stay in step.
+// the two must stay in step. The push itself mirrors
+// projects.push_past_builders_shutdown() (00196 §5): the walk counts every
+// working day, window included, exactly as projects.add_working_days() does;
+// only a LANDING date inside the window moves, to the first SITE working day
+// strictly after it — site whatever the item's own calendar is, because the
+// push is about who is back on site, not about who is counting.
 
 const SAST_OFFSET_MS = 2 * 60 * 60 * 1000   // UTC+2, no DST
 const MS_PER_DAY = 24 * 60 * 60 * 1000
@@ -65,17 +70,39 @@ function assertSeeded(ymd: string, cal: ProjectCalendar): void {
   }
 }
 
-/** The base predicate — effective day-of-week, public holiday, extra holiday. Mirrors the SQL exactly. */
-function isWorkingDay(ymd: string, cal: ProjectCalendar): boolean {
-  if (!cal.effectiveDays.has(sastIsoDow(ymd))) return false
+/**
+ * The base predicate — day-of-week, public holiday, extra holiday. Mirrors the
+ * SQL exactly. `days` defaults to the calendar's own effective set; the
+ * shutdown push passes the SITE set instead.
+ */
+function isWorkingDay(ymd: string, cal: ProjectCalendar, days: ReadonlySet<number> = cal.effectiveDays): boolean {
+  if (!days.has(sastIsoDow(ymd))) return false
   if (cal.holidays.has(ymd)) return false
   if (cal.extraHolidays.includes(ymd)) return false
   return true
 }
 
-/** Inside the per-project shutdown window. Applied by the due-date rule ONLY, never by the count. */
+/** Inside the per-project shutdown window, inclusive at both ends (the SQL's BETWEEN). Read by the due-date rule ONLY, never by the count. */
 function inShutdown(ymd: string, cal: ProjectCalendar): boolean {
   return cal.shutdown !== undefined && ymd >= cal.shutdown.from && ymd <= cal.shutdown.to
+}
+
+/**
+ * Mirrors projects.push_past_builders_shutdown()'s return arm,
+ * `add_working_days(band_end, 1, 'site')`: the first working day STRICTLY after
+ * `to` on the SITE calendar — Saturday added whatever `cal.calendar` says, so an
+ * office-calendar RFI landing in the window is pushed to the Saturday the site
+ * reopens on, not the Monday after it.
+ */
+function firstSiteWorkingDayAfter(to: string, cal: ProjectCalendar): string {
+  const siteDays = new Set(cal.effectiveDays)
+  siteDays.add(6)
+  let cursor = to
+  do {
+    cursor = nextDay(cursor)
+    assertSeeded(cursor, cal)
+  } while (!isWorkingDay(cursor, cal, siteDays))
+  return cursor
 }
 
 function nextDay(ymd: string): string {
@@ -104,8 +131,13 @@ export function workingDaysBetween(from: Date, to: Date, cal: ProjectCalendar): 
 }
 
 /**
- * The instant `n` working days after `from`, skipping the shutdown window —
- * this is the due-date rule, and the only place the shutdown applies.
+ * The instant `n` working days after `from` — the due-date rule, and the only
+ * place the shutdown applies. The walk counts every working day INCLUDING
+ * those inside the shutdown window (parity with projects.add_working_days,
+ * which knows nothing about the window); only a LANDING date inside the window
+ * moves, to the first site working day after it (parity with
+ * projects.push_past_builders_shutdown). Skipping the window while counting
+ * would land a week or more later than the database does.
  *
  * Returns UTC midnight of the landing day (02:00 SAST, not local midnight).
  * Take the date with sastDate() or .toISOString().slice(0, 10); do not read
@@ -118,7 +150,10 @@ export function addWorkingDays(from: Date, n: number, cal: ProjectCalendar): Dat
   while (remaining > 0) {
     cursor = nextDay(cursor)
     assertSeeded(cursor, cal)
-    if (isWorkingDay(cursor, cal) && !inShutdown(cursor, cal)) remaining -= 1
+    if (isWorkingDay(cursor, cal)) remaining -= 1
+  }
+  if (cal.shutdown !== undefined && inShutdown(cursor, cal)) {
+    cursor = firstSiteWorkingDayAfter(cal.shutdown.to, cal)
   }
   return new Date(`${cursor}T00:00:00Z`)
 }

@@ -62,3 +62,8 @@ export * from './lib/migrations/verify-header'
 
 // Product-event and metric-key registries (§15 §(a), §12 §(i)).
 export * from './lib/analytics/product-events'
+
+// Work items — the Q1 spine's type registry, ref prefixes, state labels and
+// the ball-in-court mirror. Pure; safe from the barrel (no next/*, react-pdf,
+// pizzip or node:fs).
+export * from './work-items'
