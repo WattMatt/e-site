@@ -116,6 +116,8 @@
 -- grant_absent: anon EXECUTE ON projects.work_items_transition_guard()
 -- grant_absent: anon EXECUTE ON projects.append_work_item_event()
 -- grant_absent: anon EXECUTE ON projects.validate_work_item_defaults()
+-- grant_absent: authenticated DELETE ON projects.work_items
+-- grant_absent: authenticated INSERT ON projects.work_item_events
 -- sql: SELECT bool_and(EXISTS (SELECT 1 FROM projects.work_item_types t WHERE t.key = k.key AND t.is_active)) FROM (VALUES ('rfi'),('snag'),('qc_defect'),('inspection'),('diary_action'),('form_action'),('order_followup'),('task')) AS k(key)
 -- @verify:end
 --
@@ -898,3 +900,293 @@ DROP TRIGGER IF EXISTS work_items_assert_membership_trg ON projects.work_items;
 CREATE TRIGGER work_items_assert_membership_trg
   BEFORE INSERT OR UPDATE OF assignee_id, gatekeeper_id, project_id ON projects.work_items
   FOR EACH ROW EXECUTE FUNCTION projects.work_items_assert_membership();
+
+-- ─── 8. Helpers ──────────────────────────────────────────────────────────────
+-- STABLE SECURITY DEFINER, search_path pinned, row_security off (§12 §(b) rule
+-- 6). Neither reads current_user, and every role test is COALESCEd to FALSE:
+-- user_effective_project_role() returns NULL for a non-member, and both
+-- `NULL <> 'x'` and `NULL = ANY (…)` are NULL, not FALSE — a USING clause
+-- happens to treat that as deny, but nothing else that calls these should have
+-- to know that.
+--
+-- These come BEFORE §9 because CREATE POLICY resolves function references at
+-- creation time: work_item_events_select calls user_can_read_work_item(), and
+-- the helper's own body references work_items and work_item_watchers (§2, §4).
+--
+-- row_security off is also what keeps the policy set from recursing:
+-- work_items_select consults work_item_watchers, whose policy calls this
+-- helper, which reads work_items again. With RLS applied inside the helper
+-- that chain would re-enter work_items_select; with it off the helper reads
+-- the row itself and answers the access question once.
+CREATE OR REPLACE FUNCTION projects.user_can_read_work_item(p_work_item_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public' SET row_security TO 'off'
+AS $fn$
+  SELECT EXISTS (
+    SELECT 1 FROM projects.work_items wi
+     WHERE wi.id = p_work_item_id
+       AND ( ( public.user_has_project_access(wi.project_id)
+               AND COALESCE(public.user_effective_project_role(wi.project_id, auth.uid()), '')
+                   <> 'client_viewer' )
+             OR wi.assignee_id   = auth.uid()
+             OR wi.gatekeeper_id = auth.uid()
+             OR EXISTS (SELECT 1 FROM projects.work_item_watchers w
+                         WHERE w.work_item_id = wi.id AND w.user_id = auth.uid())));
+$fn$;
+
+-- Resolves the type's write_roles from the registry, so widening a type's write
+-- set is one UPDATE in one place and never a policy rewrite. An unregistered or
+-- inactive type yields no rows, and `x = ANY (<no rows>)` is FALSE; a
+-- non-member's NULL role is COALESCEd to FALSE.
+CREATE OR REPLACE FUNCTION projects.user_can_write_work_item(p_project_id uuid, p_item_type text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public' SET row_security TO 'off'
+AS $fn$
+  SELECT COALESCE(
+    public.user_effective_project_role(p_project_id, auth.uid()) = ANY (
+      SELECT unnest(t.write_roles) FROM projects.work_item_types t
+       WHERE t.key = p_item_type AND t.is_active),
+    FALSE);
+$fn$;
+
+-- Every function §5-§8 created, revoked here in one place (the preamble's
+-- section order; each is declared as grant_absent: in the @verify block).
+REVOKE ALL ON FUNCTION projects.user_can_read_work_item(uuid)              FROM PUBLIC;
+REVOKE ALL ON FUNCTION projects.user_can_write_work_item(uuid,text)        FROM PUBLIC;
+REVOKE ALL ON FUNCTION projects.add_working_days(date,int,uuid,text)       FROM PUBLIC;
+REVOKE ALL ON FUNCTION projects.push_past_builders_shutdown(date,uuid)     FROM PUBLIC;
+REVOKE ALL ON FUNCTION projects.resolve_work_item_assignee(uuid,text,uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION projects.work_items_set_due_date()                  FROM PUBLIC;
+REVOKE ALL ON FUNCTION projects.work_items_ensure_ref()                    FROM PUBLIC;
+REVOKE ALL ON FUNCTION projects.work_items_assert_membership()             FROM PUBLIC;
+-- FROM PUBLIC is NOT enough where anon holds a DIRECT grant: Supabase's
+-- ALTER DEFAULT PRIVILEGES grants anon EXECUTE at creation in public, a
+-- separate grant (00113:15-24). 00179:314-323 is not the precedent — it never
+-- names anon. In projects there is no function default ACL (pg_default_acl,
+-- measured 2026-09-12: tables and sequences only), so anon's EXECUTE here is
+-- the built-in PUBLIC grant and the FROM anon lines are belt-and-braces —
+-- kept, because has_function_privilege('anon', …) is the check, never proacl,
+-- and a future default ACL on this schema must not silently re-open it.
+REVOKE EXECUTE ON FUNCTION projects.user_can_read_work_item(uuid)              FROM anon;
+REVOKE EXECUTE ON FUNCTION projects.user_can_write_work_item(uuid,text)        FROM anon;
+REVOKE EXECUTE ON FUNCTION projects.add_working_days(date,int,uuid,text)       FROM anon;
+REVOKE EXECUTE ON FUNCTION projects.push_past_builders_shutdown(date,uuid)     FROM anon;
+REVOKE EXECUTE ON FUNCTION projects.resolve_work_item_assignee(uuid,text,uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION projects.work_items_set_due_date()                  FROM anon;
+REVOKE EXECUTE ON FUNCTION projects.work_items_ensure_ref()                    FROM anon;
+REVOKE EXECUTE ON FUNCTION projects.work_items_assert_membership()             FROM anon;
+
+-- The two policy helpers are evaluated AS THE CALLING ROLE inside every policy,
+-- so authenticated must hold EXECUTE on them or every SELECT on the four
+-- tables fails with "permission denied for function". The three calculators
+-- are callable by the app directly (client-side due-date prediction, the
+-- people-picker). The three TRIGGER functions get no grant at all: Postgres
+-- checks EXECUTE on a trigger function at CREATE TRIGGER time, for the
+-- creator, never at fire time — so the triggers fire for a contractor's
+-- insert while the functions stay uncallable by anyone but the owner.
+GRANT EXECUTE ON FUNCTION projects.user_can_read_work_item(uuid)              TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION projects.user_can_write_work_item(uuid,text)        TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION projects.add_working_days(date,int,uuid,text)       TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION projects.push_past_builders_shutdown(date,uuid)     TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION projects.resolve_work_item_assignee(uuid,text,uuid) TO authenticated, service_role;
+
+-- ─── 9. RLS ──────────────────────────────────────────────────────────────────
+-- ⚠ A RESTRICTIVE policy grants nothing. RLS needs at least one PERMISSIVE
+-- policy to pass before a RESTRICTIVE one is even consulted. 00171 added its
+-- RESTRICTIVE trio to a table that already had permissive policies; these
+-- tables are brand new, so BOTH are written here. A RESTRICTIVE-only table
+-- silently rejects every write and looks like a broken feature.
+--
+-- DROP IF EXISTS before every CREATE POLICY (the file's convention, §1), so a
+-- partial re-apply does not stop on "policy already exists".
+--
+-- SELECT is PERMISSIVE and deliberately WIDER than the write gate — for everyone
+-- except a client viewer. Gating on user_effective_project_role IS NOT NULL
+-- would be narrower than the source tables (rfis is org-wide for
+-- non-client-viewers, 00034:103-115) and narrower than the assignment rule,
+-- giving a user who sees the RFI in the module list but not its work item.
+-- 00107's own header says it "does NOT gate ACCESS".
+--
+-- The client_viewer exclusion on the project-access arm is PR #162's fix applied
+-- to a new table: public.user_has_project_access() is TRUE for ANY
+-- project_members row regardless of role (00106 clause (a)), which is precisely
+-- how a client viewer could list and download every saved report of every kind.
+-- Unqualified here it would expose mirrored order_followup and qc_defect titles
+-- the same landlord is deliberately gated out of on the Equipment & Materials
+-- report. They keep every item they hold, gatekeep or watch — §04 §(d)'s
+-- "filtered to items where they are ball-in-court", enforced in the database
+-- rather than left to the query.
+DROP POLICY IF EXISTS work_items_select ON projects.work_items;
+CREATE POLICY work_items_select ON projects.work_items
+  FOR SELECT TO authenticated
+  USING (
+    ( public.user_has_project_access(project_id)
+      AND COALESCE(public.user_effective_project_role(project_id, auth.uid()), '')
+          <> 'client_viewer' )
+    OR assignee_id   = auth.uid()
+    OR gatekeeper_id = auth.uid()
+    OR EXISTS (SELECT 1 FROM projects.work_item_watchers w
+                WHERE w.work_item_id = projects.work_items.id AND w.user_id = auth.uid())
+  );
+
+-- PERMISSIVE INSERT. Without this the RESTRICTIVE policy below grants nothing
+-- and every insert is silently rejected: RESTRICTIVE narrows, it never permits.
+-- Rule 3 (§12 §(b)): organisation_id is bound to the PROJECT's own org. The
+-- foreign-org walk this prevents is a real prior incident — a draft site form
+-- could be hopped into an org the author was not a member of (PR #160 defect 3).
+DROP POLICY IF EXISTS work_items_insert ON projects.work_items;
+CREATE POLICY work_items_insert ON projects.work_items
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.user_has_project_access(project_id)
+    AND created_by = auth.uid()
+    AND organisation_id = (SELECT p.organisation_id FROM projects.projects p WHERE p.id = project_id)
+  );
+
+-- RESTRICTIVE INSERT gate, 00171's construction (00171:115-146). A restrictive
+-- policy is the only construct that cannot be widened by a later permissive
+-- policy someone adds in a hurry. Its arms, in order:
+--
+-- (a) `task` is the ONLY client-insertable type in Q1, and it carries no
+--     source. Every mirrored type stays source-only: the source row is the only
+--     entry point (§03 §1.2). `order_followup` becomes client-insertable when
+--     the explicit chase control on the order line ships; that item adds an
+--     arm here requiring node_order_id and nothing else. Item 8 adds the
+--     project_module_enabled() arm. The ref shape is defence in depth: WITH
+--     CHECK is evaluated AFTER the BEFORE ROW triggers, so §6's own output
+--     always passes, and the arm only refuses a client-supplied ref — 'JUNK'
+--     would be a permanent row (ref immutable from §12, rows never deleted)
+--     that §6's suffix filter has to dodge forever.
+-- (b) Born live. The column default is 'triage' and createWorkItemTaskAction
+--     inserts 'open' as a server-side literal (§03 §1.6, a named assignee);
+--     nothing legitimate inserts 'answered', 'closed' or 'void'. A born-closed
+--     row has no events behind it (metrics 4, 7) and a born-void row carries a
+--     void_reason nobody wrote. This is the INSERT half of what §12's guard
+--     does on UPDATE — the guard is BEFORE UPDATE only and must stay so
+--     (work-item-ref.sql 3a inserts as the table owner).
+-- (c) The registry's write set. No registered type admits client_viewer, so
+--     this arm is also what blocks a client viewer from INSERTING. 00161 does
+--     not cover this table.
+DROP POLICY IF EXISTS work_items_insert_gate ON projects.work_items;
+CREATE POLICY work_items_insert_gate ON projects.work_items
+  AS RESTRICTIVE FOR INSERT TO authenticated
+  WITH CHECK (
+    item_type = 'task'
+    AND ref ~ '^TASK-[0-9]{1,9}$'
+    AND rfi_id IS NULL AND snag_id IS NULL AND qc_entry_id IS NULL
+    AND diary_id IS NULL AND site_form_id IS NULL
+    AND node_order_id IS NULL AND inspection_id IS NULL
+    AND status IN ('triage','open')
+    AND projects.user_can_write_work_item(project_id, item_type)
+  );
+
+-- PERMISSIVE UPDATE. The two identity clauses are how a contractor answers
+-- their own item without holding a project-wide write role. Its WITH CHECK is
+-- THE binding layer for organisation_id on UPDATE: the RESTRICTIVE gate below
+-- does not repeat the clause, because RESTRICTIVE and PERMISSIVE WITH CHECKs
+-- are ANDed and one is sufficient — and it lives on the permissive policy
+-- because that is the one every UPDATE must pass. §12's guard additionally
+-- makes organisation_id and project_id immutable outright; this clause is the
+-- layer beneath it. Asserted by work-item-rls.sql 9b.
+DROP POLICY IF EXISTS work_items_update ON projects.work_items;
+CREATE POLICY work_items_update ON projects.work_items
+  FOR UPDATE TO authenticated
+  USING (
+    public.user_has_project_access(project_id)
+    OR assignee_id = auth.uid() OR gatekeeper_id = auth.uid()
+  )
+  WITH CHECK (
+    organisation_id = (SELECT p.organisation_id FROM projects.projects p WHERE p.id = project_id)
+  );
+
+-- RESTRICTIVE UPDATE gate. client_viewer is blocked outright in Q1, and THIS IS
+-- THE ONLY LAYER doing it for work_items: 00161_client_viewer_readonly_write_block
+-- loops over a hard-coded list of 13 tables (00161:61-75) and a new table is not
+-- among them. An item pointed at a client viewer is moved to 'answered' by its
+-- gatekeeper on their behalf (§03 §1.9). Q3 replaces this arm with a WITH CHECK
+-- admitting client_viewer only when assignee_id = auth.uid() and the row
+-- difference is confined to status -> 'answered'.
+--
+-- The WITH CHECK deliberately does NOT re-bind organisation_id: the permissive
+-- work_items_update above is the binding layer on UPDATE (see its comment).
+DROP POLICY IF EXISTS work_items_update_gate ON projects.work_items;
+CREATE POLICY work_items_update_gate ON projects.work_items
+  AS RESTRICTIVE FOR UPDATE TO authenticated
+  USING (
+    COALESCE(public.user_effective_project_role(project_id, auth.uid()), '') <> 'client_viewer'
+    AND ( projects.user_can_write_work_item(project_id, item_type)
+          OR assignee_id = auth.uid() OR gatekeeper_id = auth.uid() )
+  )
+  WITH CHECK (
+    COALESCE(public.user_effective_project_role(project_id, auth.uid()), '') <> 'client_viewer'
+    AND ( projects.user_can_write_work_item(project_id, item_type)
+          OR assignee_id = auth.uid() OR gatekeeper_id = auth.uid() )
+  );
+
+-- NO DELETE policy, deliberately. An item leaves an inbox by becoming 'void',
+-- never by disappearing — which is also what keeps the ref counter monotonic
+-- and what stops a deletion destroying the events behind metrics 4, 5 and 7.
+
+-- Read the history if you can read the item. NO write policy, deliberately:
+-- the append trigger (§11) is SECURITY DEFINER and bypasses RLS by ownership,
+-- which is what makes that shape possible (00179:504-506). An INSERT policy
+-- here would let a client forge the audit trail — PR #160 defect 6.
+DROP POLICY IF EXISTS work_item_events_select ON projects.work_item_events;
+CREATE POLICY work_item_events_select ON projects.work_item_events
+  FOR SELECT TO authenticated USING (projects.user_can_read_work_item(work_item_id));
+
+DROP POLICY IF EXISTS work_item_watchers_select ON projects.work_item_watchers;
+CREATE POLICY work_item_watchers_select ON projects.work_item_watchers
+  FOR SELECT TO authenticated USING (projects.user_can_read_work_item(work_item_id));
+-- Follow anything you can read; add someone else only with the type's write
+-- role. No UPDATE policy: a watcher row is added or removed, never edited.
+DROP POLICY IF EXISTS work_item_watchers_insert ON projects.work_item_watchers;
+CREATE POLICY work_item_watchers_insert ON projects.work_item_watchers
+  FOR INSERT TO authenticated
+  WITH CHECK (projects.user_can_read_work_item(work_item_id)
+              AND (user_id = auth.uid() OR EXISTS (
+                SELECT 1 FROM projects.work_items wi
+                 WHERE wi.id = work_item_id
+                   AND projects.user_can_write_work_item(wi.project_id, wi.item_type))));
+DROP POLICY IF EXISTS work_item_watchers_delete ON projects.work_item_watchers;
+CREATE POLICY work_item_watchers_delete ON projects.work_item_watchers
+  FOR DELETE TO authenticated
+  USING (user_id = auth.uid() OR EXISTS (
+    SELECT 1 FROM projects.work_items wi
+     WHERE wi.id = work_item_id
+       AND projects.user_can_write_work_item(wi.project_id, wi.item_type)));
+
+-- ─── 10. Grants ──────────────────────────────────────────────────────────────
+-- 00025:26 sets ALTER DEFAULT PRIVILEGES … GRANT SELECT ON TABLES TO anon for
+-- this schema, and unlike cable_schedule and structure it was never revoked
+-- (00168:92-98 revoked only those two). All four tables are therefore born with
+-- a standing anon SELECT grant, leaving RLS as the only thing between an
+-- unauthenticated PostgREST caller and the inbox. ALL rather than SELECT — the
+-- convention for every new table in an exposed schema. anon holds only SELECT
+-- through that default today (pg_default_acl for projects, measured
+-- 2026-09-12: anon=r on tables, nothing on sequences, no function default), so
+-- the two are the same revoke; ALL stays correct if the default ever widens.
+REVOKE ALL ON projects.work_items, projects.work_item_events,
+                 projects.work_item_watchers, projects.work_item_types
+  FROM anon;
+
+-- No client ever deletes a work item or an event; revoking makes the refusal a
+-- clear permission error instead of a silent zero-row statement, and it is
+-- the other half of what makes §6's MAX+1 monotonic. Revoking INSERT/UPDATE on
+-- work_item_events is what turns a SECURITY INVOKER append trigger into a hard
+-- permission failure rather than a policy failure — see the mutation proof in
+-- Task 10. The registry is migration-managed (§1): no client writes it.
+REVOKE DELETE ON projects.work_items, projects.work_item_events FROM authenticated;
+REVOKE INSERT, UPDATE ON projects.work_item_events FROM authenticated;
+REVOKE INSERT, UPDATE, DELETE ON projects.work_item_types FROM authenticated;
+
+-- The durable one-line fix, so the NEXT table in this schema is not born
+-- anon-readable either. ALTER DEFAULT PRIVILEGES is per-role: this edits the
+-- entry owned by postgres, which is the role 00025 ran as and the role both
+-- db push and the Management API run as (measured 2026-09-12) — run as any
+-- other role it would silently touch a different, empty entry and change
+-- nothing. SELECT is the whole of anon's default there (anon=r), so SELECT is
+-- what is revoked; work-item-rls.sql assertion 1 reads pg_default_acl back.
+ALTER DEFAULT PRIVILEGES IN SCHEMA projects REVOKE SELECT ON TABLES FROM anon;
+
+NOTIFY pgrst, 'reload schema';

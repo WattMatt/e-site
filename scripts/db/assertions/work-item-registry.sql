@@ -57,16 +57,19 @@ BEGIN
           WHERE nsp.nspname='structure' AND c.relname='node_orders' AND NOT tg.tgisinternal); END IF;
 
   -- 5. The registry is readable but not writable by a client, and not by anon.
-  -- TODO(Task 9): anon revoke lands in §10. Until then this arm fails with
-  --   `anon can SELECT projects.work_item_types` — 00025_grant_schema_permissions.sql:26's
-  --   ALTER DEFAULT PRIVILEGES granting anon SELECT on every new projects table,
-  --   exactly what §12 §(a) warns about. Confirmed failing at Task 4 (Step 4);
-  --   Task 9 re-enables it after the §10 revoke.
-  -- IF has_table_privilege('anon','projects.work_item_types','SELECT')
-  -- THEN RAISE EXCEPTION 'anon can SELECT projects.work_item_types'; END IF;
-  -- SELECT count(*) INTO n FROM pg_policies
-  --  WHERE schemaname='projects' AND tablename='work_item_types' AND cmd <> 'SELECT';
-  -- IF n <> 0 THEN RAISE EXCEPTION 'work_item_types has % write policy/policies; the registry is migration-managed', n; END IF;
+  --    The anon revoke is §10's: before it this arm failed with
+  --    `anon can SELECT projects.work_item_types` (confirmed at Task 4, Step 4)
+  --    — 00025_grant_schema_permissions.sql:26's ALTER DEFAULT PRIVILEGES
+  --    granting anon SELECT on every new projects table, exactly what §12 §(a)
+  --    warns about. The write grants are revoked from authenticated in §10 too,
+  --    so a client insert is a permission error, not merely a policy one.
+  IF has_table_privilege('anon','projects.work_item_types','SELECT')
+  THEN RAISE EXCEPTION 'anon can SELECT projects.work_item_types'; END IF;
+  SELECT count(*) INTO n FROM pg_policies
+   WHERE schemaname='projects' AND tablename='work_item_types' AND cmd <> 'SELECT';
+  IF n <> 0 THEN RAISE EXCEPTION 'work_item_types has % write policy/policies; the registry is migration-managed', n; END IF;
+  IF has_table_privilege('authenticated','projects.work_item_types','INSERT, UPDATE, DELETE')
+  THEN RAISE EXCEPTION 'authenticated holds a write grant on projects.work_item_types; the registry is migration-managed'; END IF;
 
-  RAISE NOTICE 'work-item-registry: 4/5 assertions passed (5 deferred to Task 9)';
+  RAISE NOTICE 'work-item-registry: 5/5 assertions passed';
 END $$;
