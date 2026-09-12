@@ -191,5 +191,26 @@ BEGIN
       projects.resolve_triage_owner(v_tw_proj);
   END IF;
 
-  RAISE NOTICE 'work-item-settings: 11/11 assertions passed (resolve_project_pm non-NULL on all % live projects)', v_total;
+  -- 12. The MM-DD CHECK refuses an impossible day. make_date(2001, mm, dd) raises
+  --     datetime_field_overflow (22008) for '02-30' before the CHECK can return
+  --     false, so either that or check_violation naming the constraint is the
+  --     right refusal; acceptance is the failure.
+  BEGIN
+    UPDATE projects.project_settings SET builders_shutdown_start_md = '02-30'
+     WHERE project_id = (SELECT project_id FROM projects.project_settings ORDER BY project_id LIMIT 1);
+    RAISE EXCEPTION 'SENTINEL: builders_shutdown_start_md accepted the impossible day 02-30';
+  EXCEPTION
+    WHEN datetime_field_overflow THEN NULL;
+    WHEN check_violation THEN
+      DECLARE v_con text;
+      BEGIN
+        GET STACKED DIAGNOSTICS v_con = CONSTRAINT_NAME;
+        IF v_con <> 'project_settings_shutdown_md_format' THEN
+          RAISE EXCEPTION 'the impossible-day case failed on constraint %, expected project_settings_shutdown_md_format', v_con;
+        END IF;
+      END;
+    WHEN raise_exception THEN RAISE;
+  END;
+
+  RAISE NOTICE 'work-item-settings: 12/12 assertions passed (resolve_project_pm non-NULL on all % live projects)', v_total;
 END $$;

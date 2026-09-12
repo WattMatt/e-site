@@ -126,7 +126,7 @@
 -- grant_absent: authenticated UPDATE ON projects.work_item_types
 -- grant_absent: authenticated DELETE ON projects.work_item_types
 -- grant_absent: authenticated UPDATE ON projects.work_item_watchers
--- sql: SELECT bool_and(EXISTS (SELECT 1 FROM projects.work_item_types t WHERE t.key = k.key AND t.is_active)) FROM (VALUES ('rfi'),('snag'),('qc_defect'),('inspection'),('diary_action'),('form_action'),('order_followup'),('task')) AS k(key)
+-- sql: SELECT bool_and(EXISTS (SELECT 1 FROM projects.work_item_types t WHERE t.key = k.key)) FROM (VALUES ('rfi'),('snag'),('qc_defect'),('inspection'),('diary_action'),('form_action'),('order_followup'),('task')) AS k(key)
 -- sql: SELECT NOT EXISTS (SELECT 1 FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace WHERE n.nspname = 'projects' AND d.defaclobjtype = 'r' AND array_to_string(d.defaclacl, ',') LIKE '%anon=%')
 -- sql: SELECT NOT has_sequence_privilege('authenticated', 'projects.work_item_events_seq_seq', 'USAGE')
 -- @verify:end
@@ -251,7 +251,7 @@ ALTER TABLE projects.work_item_types ENABLE ROW LEVEL SECURITY;
 -- Read-only to every authenticated user: the registry is a vocabulary, not data,
 -- and the create forms need it. NO write policy — it is migration-managed, so a
 -- row insert can never grant a class of work a write set without a code review.
--- DROP IF EXISTS before every CREATE POLICY in this file (00191–00193 style),
+-- DROP IF EXISTS before every CREATE POLICY in this file (as the 00191–00193 migrations on main do),
 -- so a partial re-apply does not stop on "policy already exists".
 DROP POLICY IF EXISTS work_item_types_select ON projects.work_item_types;
 CREATE POLICY work_item_types_select ON projects.work_item_types
@@ -464,7 +464,7 @@ ALTER TABLE projects.work_item_watchers ENABLE ROW LEVEL SECURITY;
 -- working_days is read as ISO day-of-week (Mon=1 .. Sun=7), matching
 -- 00101_project_settings.sql:20's ARRAY[1,2,3,4,5] default; `site` adds 6.
 --
--- The anon/PUBLIC revokes for the three functions below land in §10 with the
+-- The anon/PUBLIC revokes for the three functions below land in §8 with the
 -- rest of the grant block, in the section order the preamble fixes — they are
 -- declared as grant_absent: in the @verify block above.
 CREATE OR REPLACE FUNCTION projects.add_working_days(
@@ -746,7 +746,7 @@ CREATE TRIGGER work_items_set_due_date_trg
 -- — next in name order — refuses it with a sentence that names the type
 -- (asserted by work-item-due-date.sql assertion 12). Nothing here raises for it.
 --
--- The anon/PUBLIC revokes for this function land in §10 (Task 9) with the rest
+-- The anon/PUBLIC revokes for this function land in §8 (Task 9) with the rest
 -- of the grant block, in the section order the preamble fixes — declared as
 -- grant_absent: in the @verify block above. There are no revokes in this section.
 CREATE OR REPLACE FUNCTION projects.work_items_ensure_ref() RETURNS TRIGGER
@@ -836,7 +836,7 @@ CREATE TRIGGER work_items_ensure_ref_trg
 -- reads project_settings, which a contractor's own RLS may hide, and the
 -- answer must not depend on who asked. It never reads current_user.
 --
--- The anon/PUBLIC revokes for both functions in this section land in §10
+-- The anon/PUBLIC revokes for both functions in this section land in §8
 -- (Task 9) with the rest of the grant block, in the section order the preamble
 -- fixes — declared as grant_absent: in the @verify block above. There are no
 -- revokes in this section.

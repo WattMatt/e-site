@@ -42,6 +42,7 @@
 -- grant_absent: anon EXECUTE ON projects.org_owner(uuid)
 -- grant_absent: anon EXECUTE ON projects.resolve_project_pm(uuid)
 -- grant_absent: anon EXECUTE ON projects.resolve_triage_owner(uuid)
+-- grant_absent: anon EXECUTE ON projects.ensure_project_settings_row()
 -- sql: SELECT p.prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'projects' AND p.proname = 'ensure_project_settings_row'
 -- @verify:end
 --
