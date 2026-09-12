@@ -75,7 +75,7 @@ export interface WorkItemTypeSpec {
  * `project_settings.default_rfi_due_days` default (00101_project_settings.sql:30),
  * and the due-date trigger reads that COLUMN live rather than a copy of it.
  */
-export const WORK_ITEM_TYPES: readonly WorkItemTypeSpec[] = [
+export const WORK_ITEM_TYPES = [
   { key: 'rfi',            label: 'RFI',              sourceTable: 'projects.rfis',                sourceColumn: 'assigned_to',     defaultDays: 7,  calendar: 'office', gatekeeperRule: 'project_pm',       writeRoles: MARKUP_WRITE_ROLES, sortOrder: 1 },
   { key: 'snag',           label: 'Snag',             sourceTable: 'field.snags',                  sourceColumn: 'assigned_to',     defaultDays: 5,  calendar: 'site',   gatekeeperRule: 'project_pm',       writeRoles: SNAG_FIELD_ROLES,   sortOrder: 2 },
   { key: 'qc_defect',      label: 'QC defect',        sourceTable: 'projects.qc_entries',          sourceColumn: null,              defaultDays: 5,  calendar: 'site',   gatekeeperRule: 'project_pm',       writeRoles: QC_WRITE_ROLES,     sortOrder: 3 },
@@ -84,10 +84,19 @@ export const WORK_ITEM_TYPES: readonly WorkItemTypeSpec[] = [
   { key: 'form_action',    label: 'Form action',      sourceTable: 'field.site_forms',             sourceColumn: null,              defaultDays: 3,  calendar: 'site',   gatekeeperRule: 'project_pm',       writeRoles: FORMS_FIELD_ROLES,  sortOrder: 6 },
   { key: 'order_followup', label: 'Order follow-up',  sourceTable: 'structure.node_orders',        sourceColumn: null,              defaultDays: 10, calendar: 'office', gatekeeperRule: 'project_pm',       writeRoles: ORG_WRITE_ROLES,    sortOrder: 7 },
   { key: 'task',           label: 'Task',             sourceTable: null,                           sourceColumn: null,              defaultDays: 5,  calendar: 'office', gatekeeperRule: 'creator',          writeRoles: MARKUP_WRITE_ROLES, sortOrder: 8 },
-] as const
+] as const satisfies readonly WorkItemTypeSpec[]
 
-export const WORK_ITEM_TYPE_KEYS = WORK_ITEM_TYPES.map((t) => t.key)
+/** The closed union of registered type keys — narrowed from WORK_ITEM_TYPES via
+ *  `as const satisfies`, not hand-written, so adding a row here is the only
+ *  way to grow it. */
 export type WorkItemTypeKey = (typeof WORK_ITEM_TYPES)[number]['key']
+export const WORK_ITEM_TYPE_KEYS: readonly WorkItemTypeKey[] = WORK_ITEM_TYPES.map((t) => t.key)
+
+/** Runtime guard mirroring the `WorkItemTypeKey` compile-time union — the gate
+ *  `refPrefix`/`stateLabel` use before indexing, since a DB row's `item_type`
+ *  arrives as untyped `string`. */
+export const isWorkItemTypeKey = (k: string): k is WorkItemTypeKey =>
+  (WORK_ITEM_TYPE_KEYS as readonly string[]).includes(k)
 
 /**
  * The human half of `work_items.ref`.
@@ -102,7 +111,7 @@ export type WorkItemTypeKey = (typeof WORK_ITEM_TYPES)[number]['key']
  * This is NOT a column on work_item_types: A(b) fixes that table's column set
  * and §12 §(h) test 1 asserts it.
  */
-export const REF_PREFIXES: Readonly<Record<string, string>> = {
+export const REF_PREFIXES: Readonly<Record<WorkItemTypeKey, string>> = {
   rfi: 'RFI',
   snag: 'SNAG',
   qc_defect: 'QC',
@@ -114,7 +123,7 @@ export const REF_PREFIXES: Readonly<Record<string, string>> = {
 }
 
 export function refPrefix(key: string): string {
-  return REF_PREFIXES[key] ?? key.toUpperCase()
+  return isWorkItemTypeKey(key) ? REF_PREFIXES[key] : key.toUpperCase()
 }
 
 /**
@@ -131,7 +140,7 @@ export function refPrefix(key: string): string {
  * copy of the wording rather than four.
  */
 export const STATE_LABELS: Readonly<
-  Record<string, Readonly<Record<WorkItemStatus, string>>>
+  Record<WorkItemTypeKey, Readonly<Record<WorkItemStatus, string>>>
 > = {
   rfi: {            triage: 'Needs an owner', open: 'Open',        answered: 'Answered',                  closed: 'Closed',   void: 'Withdrawn' },
   snag: {           triage: 'Needs an owner', open: 'To fix',      answered: 'Fixed — awaiting sign-off', closed: 'Signed off', void: 'Withdrawn' },
@@ -144,7 +153,7 @@ export const STATE_LABELS: Readonly<
 }
 
 export function stateLabel(key: string, status: WorkItemStatus): string {
-  return STATE_LABELS[key]?.[status] ?? status
+  return isWorkItemTypeKey(key) ? STATE_LABELS[key][status] : status
 }
 
 /**
@@ -158,6 +167,7 @@ export function stateLabel(key: string, status: WorkItemStatus): string {
  * The database column is authoritative and unwritable by anyone. Use this only
  * to render the next holder before a mutation returns.
  */
+// Exhaustiveness is enforced by the `string | null` return type, not by a `default`: a sixth status added to WORK_ITEM_STATUSES without a new arm here fails to compile with TS2366 (not all code paths return a value) — so do not add one.
 export function ballInCourt(
   status: WorkItemStatus,
   assigneeId: string,

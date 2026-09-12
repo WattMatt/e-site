@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ballInCourt, refPrefix, stateLabel,
+  ballInCourt, refPrefix, stateLabel, isWorkItemTypeKey,
   WORK_ITEM_STATUSES, WORK_ITEM_TYPE_KEYS, REF_PREFIXES, STATE_LABELS,
+  type WorkItemTypeKey,
 } from './types'
 
 const ASSIGNEE = '11111111-1111-1111-1111-111111111111'
@@ -26,7 +27,9 @@ describe('ballInCourt — the TypeScript mirror of work_items.ball_in_court_id',
 
   it('covers every status in the vocabulary — no unmapped arm', () => {
     for (const s of WORK_ITEM_STATUSES) {
-      expect(() => ballInCourt(s, ASSIGNEE, GATEKEEPER)).not.toThrow()
+      // A missing switch arm returns undefined, never throws — assert the
+      // return value directly rather than `not.toThrow()`.
+      expect(ballInCourt(s, ASSIGNEE, GATEKEEPER), s).not.toBeUndefined()
     }
     expect(WORK_ITEM_STATUSES).toHaveLength(5)
   })
@@ -51,12 +54,27 @@ describe('REF_PREFIXES — the permanent human half of every work-item reference
   })
 })
 
+describe('WorkItemTypeKey — the closed union narrowed off WORK_ITEM_TYPES', () => {
+  it('rejects an unregistered key at compile time', () => {
+    // @ts-expect-error — 'not_a_type' is not a registered work-item type key
+    const bad: WorkItemTypeKey = 'not_a_type'
+    expect(bad).toBe('not_a_type')
+  })
+
+  it('isWorkItemTypeKey mirrors the union at runtime', () => {
+    expect(isWorkItemTypeKey('rfi')).toBe(true)
+    expect(isWorkItemTypeKey('nope')).toBe(false)
+  })
+})
+
 describe('STATE_LABELS — the reader-facing word for a universal status', () => {
   it('covers every type × every status', () => {
     expect(Object.keys(STATE_LABELS).sort()).toEqual([...WORK_ITEM_TYPE_KEYS].sort())
     for (const key of WORK_ITEM_TYPE_KEYS) {
       for (const s of WORK_ITEM_STATUSES) {
-        expect(stateLabel(key, s), `${key}/${s}`).toBeTruthy()
+        // Assert the map directly — stateLabel()'s `?? status` fallback is
+        // always truthy, so it can't tell a real label from a missing one.
+        expect(STATE_LABELS[key]?.[s], `${key}/${s}`).toBeTruthy()
       }
     }
   })
