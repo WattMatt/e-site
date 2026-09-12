@@ -1,5 +1,5 @@
 DO $$
-DECLARE n int; r record;
+DECLARE n int; r record; v_con text;
 BEGIN
   -- 1. Exactly the eight Q1 keys from Appendix A(b). Not seven, not nine —
   --    `instruction` (Q2), `approval` (Q3) and `valuation` (Q4) are registered
@@ -71,5 +71,29 @@ BEGIN
   IF has_table_privilege('authenticated','projects.work_item_types','INSERT, UPDATE, DELETE')
   THEN RAISE EXCEPTION 'authenticated holds a write grant on projects.work_item_types; the registry is migration-managed'; END IF;
 
-  RAISE NOTICE 'work-item-registry: 5/5 assertions passed';
+  -- 6. A type can never exclude the GOVERNING roles from its write set. §12's
+  --    guard reaches owner/admin/PM for the triage/open hand-off, the due
+  --    date, the reopen and the void ONLY through the type's write_roles
+  --    (v_may_write, and v_may_manage through it) — so a future seed that
+  --    dropped admin would lock every admin out of managing that type, with
+  --    nothing at CREATE time to say so. The vocabulary CHECK alone admits
+  --    such a row (it only bounds the set from above). Pinned on the
+  --    constraint NAME: a row refused by some other CHECK would otherwise
+  --    pass for this one.
+  BEGIN
+    INSERT INTO projects.work_item_types (key, label, default_days, calendar, gatekeeper_rule, write_roles)
+    VALUES ('_assert_no_admin', 'no admin', 1, 'office', 'project_pm', ARRAY['owner','project_manager','contractor']);
+    RAISE EXCEPTION 'SENTINEL: a type whose write_roles omit admin was registered';
+  EXCEPTION
+    WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS v_con = CONSTRAINT_NAME;
+      IF v_con <> 'work_item_types_write_roles_govern' THEN
+        RAISE EXCEPTION 'a type omitting admin was refused by % rather than work_item_types_write_roles_govern', v_con;
+      END IF;
+    WHEN raise_exception THEN
+      IF SQLERRM LIKE 'SENTINEL:%' THEN RAISE; END IF;
+      RAISE EXCEPTION 'wrong failure for the admin-less write set: %', SQLERRM;
+  END;
+
+  RAISE NOTICE 'work-item-registry: 6/6 assertions passed';
 END $$;

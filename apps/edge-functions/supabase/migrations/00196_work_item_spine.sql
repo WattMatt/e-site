@@ -74,6 +74,7 @@
 -- constraint: work_items_source_required ON projects.work_items
 -- constraint: work_items_bic_present ON projects.work_items
 -- constraint: work_items_ref_unique ON projects.work_items
+-- constraint: work_item_types_write_roles_govern ON projects.work_item_types
 -- index: work_items_my_work_idx ON projects.work_items
 -- index: work_items_inbox_idx ON projects.work_items
 -- index: work_items_project_module_idx ON projects.work_items
@@ -203,7 +204,17 @@ CREATE TABLE IF NOT EXISTS projects.work_item_types (
                   -- seed fails at CREATE instead of stranding a type nobody can write.
                   CHECK (write_roles <@ ARRAY['owner','admin','project_manager','contractor','inspector','supplier','client_viewer']),
   sort_order      int  NOT NULL DEFAULT 0,
-  is_active       boolean NOT NULL DEFAULT true
+  is_active       boolean NOT NULL DEFAULT true,
+  -- The GOVERNING actors — owner, admin, project manager — can never be
+  -- excluded from a type's write set. §12's guard reaches governance for the
+  -- triage/open hand-off, the due date, the reopen and the void ONLY through
+  -- the type's write_roles (v_may_write, and v_may_manage through it); the
+  -- vocabulary CHECK above only bounds the set from ABOVE, so without this a
+  -- future seed that dropped admin would lock every admin out of managing that
+  -- type with nothing at CREATE time to say so. Named, so
+  -- work-item-registry.sql 6 can pin the refusal to THIS constraint.
+  CONSTRAINT work_item_types_write_roles_govern
+    CHECK (write_roles @> ARRAY['owner','admin','project_manager'])
 );
 
 COMMENT ON TABLE projects.work_item_types IS
@@ -1567,10 +1578,15 @@ BEGIN
   --      where auth.uid() is a person, so this clause refuses the projection's
   --      own title rewrite too. Item 3's migration must carry its bypass; the
   --      recommended one is `pg_trigger_depth() > 1` — a client statement is
-  --      always depth 1, a trigger-driven UPDATE never is — and source_status
-  --      (display-only, the module's vocabulary) joins the immutables under
-  --      that same bypass. Not `auth.uid() IS NULL`: that would need the
-  --      projection to run under a definer that clears the claim.
+  --      always depth 1, a trigger-driven UPDATE never is. Not
+  --      `auth.uid() IS NULL`: that would need the projection to run under a
+  --      definer that clears the claim.
+  --      source_status is NOT in clause (a) and is WRITABLE by a client
+  --      TODAY (display-only, the module's vocabulary, nothing reads it
+  --      yet). ITEM 3 ADDS IT to clause (a) in its own migration, under that
+  --      same bypass, at the moment the projection becomes its only writer.
+  --      Q1 leaves it open deliberately: freezing a column nobody writes
+  --      would only make item 3's first projection fail here.
   IF OLD.origin = 'mirror' AND NEW.title IS DISTINCT FROM OLD.title THEN
     RAISE EXCEPTION '% is mirrored from its source record, so its title is edited there and updates here automatically.', OLD.ref
       USING ERRCODE = 'raise_exception';
