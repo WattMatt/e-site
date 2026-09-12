@@ -146,7 +146,11 @@
 -- task, and a migration that quietly repaired it would hide the miss.
 DO $pre$
 DECLARE
-  y int := EXTRACT(YEAR FROM (now() AT TIME ZONE 'Africa/Johannesburg'))::int;
+  y    int := EXTRACT(YEAR FROM (now() AT TIME ZONE 'Africa/Johannesburg'))::int;
+  -- Three years out: this year and the next two. ONE binding, read by the
+  -- scan, the message and the HINT alike, so the range a deployer is told to
+  -- seed is the range that was actually checked.
+  y_to int := y + 2;
   missing int;
 BEGIN
   IF to_regclass('projects.calendar_years') IS NULL THEN
@@ -155,13 +159,13 @@ BEGIN
   END IF;
 
   SELECT count(*) INTO missing
-    FROM generate_series(y, y + 2) AS g(yr)
+    FROM generate_series(y, y_to) AS g(yr)
    WHERE NOT EXISTS (SELECT 1 FROM projects.calendar_years cy WHERE cy.year = g.yr);
 
   IF missing > 0 THEN
-    RAISE EXCEPTION 'work-item spine: % of the calendar years %..% are not seeded in projects.calendar_years', missing, y, y + 2
+    RAISE EXCEPTION 'work-item spine: % of the calendar years %..% are not seeded in projects.calendar_years', missing, y, y_to
       USING ERRCODE = 'no_data_found',
-            HINT = 'Seed them first, then re-apply: INSERT INTO projects.calendar_years (year) SELECT g FROM generate_series(<y>, <y+2>) g ON CONFLICT DO NOTHING; and run item 1''s listHolidays() seeder for each of those years into projects.public_holidays.';
+            HINT = format('Seed them first, then re-apply: INSERT INTO projects.calendar_years (year) SELECT g FROM generate_series(%s, %s) g ON CONFLICT DO NOTHING; and run item 1''s listHolidays() seeder for each of those years into projects.public_holidays.', y, y_to);
   END IF;
 END $pre$;
 
@@ -279,6 +283,19 @@ CREATE TABLE IF NOT EXISTS projects.work_items (
   -- orphaned row in a personal inbox is the worst failure this primitive can
   -- have. ON DELETE SET NULL, never CASCADE: deleting a diary entry is a live
   -- gated action, and a cascade would destroy the events behind metric 4.
+  --
+  -- ⚠ MEASURED DEPENDENCY on item 3. RI's SET NULL is an UPDATE of the
+  -- referencing row, and an UPDATE re-checks that row's CHECKs — so deleting a
+  -- source that still has a LIVE (non-void) mirrored item fails with
+  -- check_violation on work_items_source_required, until item 3's BEFORE DELETE
+  -- delete-to-void triggers on the six source tables land and void the item
+  -- first. In Q1 that window is empty: 'task' is the only client-insertable
+  -- type (Task 13), so no live mirror can exist before item 3 applies. Do NOT
+  -- relax the CHECK to close the window — that would legalise a sourceless
+  -- mirror, which is exactly the orphan this column set exists to forbid.
+  -- Once the item IS void, the same SET NULL is an UPDATE on a 'void' row that
+  -- changes only an FK column; it therefore fires work_items_transition_guard()
+  -- and append_work_item_event() like any other UPDATE, and Task 11 admits it.
   rfi_id        uuid REFERENCES projects.rfis(id)               ON DELETE SET NULL,
   snag_id       uuid REFERENCES field.snags(id)                 ON DELETE SET NULL,
   qc_entry_id   uuid REFERENCES projects.qc_entries(id)         ON DELETE SET NULL,
@@ -301,6 +318,8 @@ CREATE TABLE IF NOT EXISTS projects.work_items (
      + (diary_id IS NOT NULL)::int + (site_form_id IS NOT NULL)::int
      + (node_order_id IS NOT NULL)::int + (inspection_id IS NOT NULL)::int = 1),
 
+  -- Unviolatable today (assignee_id/gatekeeper_id are NOT NULL and the CASE is
+  -- total over the status CHECK); kept as the guard against a future NOT NULL drop.
   CONSTRAINT work_items_bic_present CHECK (
     status IN ('closed','void') OR ball_in_court_id IS NOT NULL),
   CONSTRAINT work_items_ref_unique UNIQUE (project_id, ref)
@@ -360,9 +379,10 @@ CREATE TABLE IF NOT EXISTS projects.work_item_events (
   -- §15 §(b): "the effective role stamped AT EVENT TIME, not re-resolved later".
   -- Metric 2a's diagnostic — the share of contractor-held items that moved —
   -- is the only first-party evidence the spine reached the 13 contractor
-  -- accounts, because email engagement is unmeasurable: 246 automated emails
-  -- have been sent and email_sequences.opened_at/clicked_at are NULL on every
-  -- row, the Resend webhook of 00030:24-25 having never been built.
+  -- accounts. Email engagement cannot stand in for it: opens and bounces ARE
+  -- recorded per message in public.email_events (00185, the Resend webhook),
+  -- but nothing joins them to a work item, so per-item email engagement
+  -- remains unmeasurable and actor_role is the first-party signal.
   actor_role      text,
 
   created_at      timestamptz NOT NULL DEFAULT now()
@@ -371,9 +391,11 @@ CREATE INDEX IF NOT EXISTS work_item_events_item_idx
   ON projects.work_item_events (work_item_id, created_at);
 
 -- ─── 4. projects.work_item_watchers — notification-only, never blocking ──────
--- Replaces two fan-outs: createRfiAction bells every active project member
--- (rfi.actions.ts:84-95) and emails the same roster (:98-105). Together with the
--- diary path those produce the 964 notifications of which 57 have ever been read.
+-- Replaces the roster fan-out: notifyRfiEvent (called from createRfiAction,
+-- respondToRfiAction and closeRfiAction in apps/web/src/actions/rfi.actions.ts,
+-- implemented in apps/web/src/lib/rfi-email.ts via notifyEntityEvent) bells
+-- every project member but the actor and emails the same roster. Together with
+-- the diary path those produce the 964 notifications of which 57 have ever been read.
 -- Auto-populated by projects.append_work_item_event() (§11) on create and on
 -- every reassignment — §03 §1.8's "auto-populated on create, assign and
 -- @mention", minus the @mention half, which arrives with threads.
