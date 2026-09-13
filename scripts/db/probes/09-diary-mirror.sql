@@ -55,7 +55,9 @@
 -- a projection that should not have fired would have stamped now() over it.
 -- (set_updated_at on site_diary_entries is BEFORE UPDATE only, 00002:160, so
 -- the INSERT keeps the supplied value.)
-
+--
+-- Expected: 23 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-three names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting

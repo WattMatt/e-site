@@ -50,7 +50,9 @@
 -- measured the way probes 06/07 measure it: one entry is inserted with a
 -- HISTORICAL updated_at, the INSERT path copies it into last_activity_at, and
 -- a projection that should not have fired would have stamped now() over it.
-
+--
+-- Expected: 35 rows. If the printed `assertions seen:` list is shorter than
+-- thirty-five names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting

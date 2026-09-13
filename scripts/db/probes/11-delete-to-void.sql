@@ -32,12 +32,19 @@
 --
 -- Two deletes run under IMPERSONATION (probe 05b's pattern; the rest run as
 -- postgres, the service path): rbac-test — a contractor, the only sanctioned
--- fixture — deletes two diary entries they authored, through the ONLY
--- permissive DELETE policy a person can satisfy on any of the six sources
--- ("Authors can delete their diary entries", 00149:30-37: author + org member
--- + not a client viewer; rfis and snags carry only the client-viewer
--- RESTRICTIVE policy and inspections none, so those are service-role deletes
--- in every path). That pins two things the service path cannot:
+-- fixture — deletes two diary entries they authored, through "Authors can
+-- delete their diary entries" (00149:30-37: author + org member + not a
+-- client viewer). Person-satisfiable DELETE policies exist on four sources:
+-- that one, qc_reports_delete / qc_entries_delete (00176:122-128 / 183-192,
+-- owner/admin/PM by effective project role; the entry path is frozen on a
+-- CLOSED report) and site_forms_delete (00179:483-485, drafts,
+-- owner/admin/PM); rfis/snags carry no permissive DELETE policy (00161's
+-- client-viewer RESTRICTIVE only) and inspections none — those are
+-- service-role deletes in every path. (The Task 12 review measured the qc
+-- path too: rbac-test as project_manager deleted a PASSED entry under
+-- impersonation → item void / 'source deleted', one voided event with
+-- actor_id = rbac-test, actor_role = 'project_manager', from_status =
+-- 'closed'.) That pins two things the service path cannot:
 --   (1) §11 writes the `voided` event with auth.uid() as the actor — the
 --       DELETER — and the void UPDATE runs at pg_trigger_depth() = 2 (DELETE
 --       → BEFORE trigger → work_items' BEFORE UPDATE guard), where section
@@ -380,13 +387,13 @@ UNION ALL
 SELECT 'closed_item_is_voided_on_source_delete',
        (SELECT d.pre_status = 'closed' AND w.status = 'void' AND w.void_reason = 'source deleted'
           FROM del_ctx d JOIN projects.work_items w ON w.id = d.item WHERE d.kind = 'diary_closed'),
-       'FORCED, not chosen: work_items_source_required admits a source-less mirror item only while void, so a closed item left closed with its FK nulled would abort the DELETE; closed → void is illegal on the machine at depth 1, so under impersonation this delete succeeds only through C''''s depth-2 exemption'
+       'FORCED, not chosen: work_items_source_required admits a source-less mirror item only while void, so a closed item left closed with its FK nulled would abort the DELETE; closed → void is illegal on the machine at depth 1, so under impersonation this delete succeeds only through C''s depth-2 exemption'
 UNION ALL
 SELECT 'closed_stamps_are_cleared_by_the_void',
        (SELECT d.pre_closed_at IS NOT NULL AND d.pre_closed_by IS NOT NULL
            AND w.closed_at IS NULL AND w.closed_by IS NULL
           FROM del_ctx d JOIN projects.work_items w ON w.id = d.item WHERE d.kind = 'diary_closed'),
-       'the negation of closed_stamps_survive_the_void, pinned honestly: C''''s exempt path clears closed_at / closed_by on every non-close transition (probe 10 distributed_then_void_is_void does the same), so the record of WHEN and BY WHOM the item was closed does not survive the source delete — only the closed and voided events do. Amending the CHECK to admit closed is an item-2 constraint change left for the owner (deviation 21)'
+       'the negation of closed_stamps_survive_the_void, pinned honestly: the VOID is a constraint necessity (work_items_source_required forces void for a source-less mirror item; no constraint names closed_at / closed_by), the STAMP LOSS is C''s exempt-path rule (IF NEW.status = ''closed'' THEN closed_at := now() ELSE closed_at := NULL; closed_by := NULL — inherited from 00196:1545-1546), which section F cannot preserve — so WHEN and BY WHOM the item was closed survive only in the closed and voided events. Kept as built: stamps ⇔ closed stays a simple invariant. Alternatives for the owner: keep the stamps on closed → void in C''s exempt path (one line, item 3''s migration — a void row would then carry close stamps), or admit closed in work_items_source_required (item 2) — deviation 21'
 UNION ALL
 SELECT 'void_item_keeps_its_reason',
        (SELECT d.pre_status = 'void' AND w.status = 'void'

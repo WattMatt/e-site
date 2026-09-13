@@ -34,8 +34,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 24 rows. If the printed `assertions seen:` list is shorter than
--- twenty-four names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 25 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-five names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -67,6 +67,8 @@ DECLARE
   v_proj3     uuid;   -- the live-move target (a moved item keeps its ref; two moves into one project collide on work_items_ref_unique)
   v_livemv    record; -- the client-viewer-named RFI's item, re-pointed at the viewer and then moved
   v_livemv_err text;  -- the move's error, if any: a dropped move arm leaves the raiser as gatekeeper on a project he is not on, and the membership trigger refuses the move
+  v_cl_ctid_before text;   -- the born-closed record's tuple identity before an unrelated watched edit (Task 10 review, rule 1)
+  v_cl_restamp     record; -- …and its ctid / last_activity_at / closed_by after a closed_by re-stamp on the source
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -266,6 +268,19 @@ BEGIN
   SELECT w.status, w.assignee_id, w.gatekeeper_id INTO v_closed_people
     FROM projects.work_items w WHERE w.rfi_id = v_closed_rfi AND w.origin = 'mirror';
 
+  -- Task 10 review, rule 1 (via Task 13): a closed_by RE-STAMP on the closed
+  -- source — watched, so the _upd trigger fires — changes nothing the closed
+  -- record projects (first closer wins: closed_by = COALESCE(the item's, the
+  -- source's)), so the UPDATE arm must return early and leave the tuple
+  -- alone. Measured by ctid AND by the historical last_activity_at the INSERT
+  -- path kept: without the rule the arm rewrote the tuple and stamped now()
+  -- over it — the same signal same_value_write_does_not_reproject reads.
+  SELECT w.ctid::text INTO v_cl_ctid_before
+    FROM projects.work_items w WHERE w.rfi_id = v_closed_rfi AND w.origin = 'mirror';
+  UPDATE projects.rfis SET closed_by = v_chain_pm WHERE id = v_closed_rfi;
+  SELECT w.ctid::text AS ctid_after, w.last_activity_at, w.closed_by, w.status INTO v_cl_restamp
+    FROM projects.work_items w WHERE w.rfi_id = v_closed_rfi AND w.origin = 'mirror';
+
   -- F2 (c): BORN with an ineligible explicit assignee. Nobody eligible was
   -- named, so §03 §1.6 says triage, on the chain's answer (arm 1b here).
   INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
@@ -344,7 +359,9 @@ BEGIN
     cv_status text, cv_assignee uuid,
     closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid,
     proj3 uuid, admin3 uuid,
-    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid, livemv_err text)
+    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid, livemv_err text,
+    cl_ctid_before text, cl_ctid_after text, cl_restamp_last_activity timestamptz,
+    cl_restamp_closed_by uuid, cl_restamp_status text)
     ON COMMIT DROP;
   INSERT INTO rfi_ctx VALUES (
     v_rfi, v_closed_rfi, v_proj, v_pm, v_other,
@@ -363,7 +380,9 @@ BEGIN
     v_cv_item.status, v_cv_item.assignee_id,
     v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id,
     v_proj3, v_admin3,
-    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id, v_livemv_err);
+    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id, v_livemv_err,
+    v_cl_ctid_before, v_cl_restamp.ctid_after, v_cl_restamp.last_activity_at,
+    v_cl_restamp.closed_by, v_cl_restamp.status);
 END $probe$;
 
 SELECT 'item_created' AS probe,
@@ -496,4 +515,14 @@ SELECT 'live_move_reruns_the_chain_through_the_rfi_key',
            AND c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
            AND c.livemv_assignee <> c.chain_pm AND c.livemv_assignee <> c.pm
            AND c.livemv_gate = c.chain_pm AND c.livemv_gate <> c.other FROM rfi_ctx c),
-       'improvement 8 on a LIVE item: the move re-runs BOTH people on the NEW project — arm 2 there (admin3) through the move arm''s ''rfi'' literal (a typo key falls to the owner), and the gatekeeper falls from the raiser (not a member of the new project) to the PM chain; a dropped ELSIF v_moved arm leaves the raiser as gatekeeper and item 2''s membership trigger refuses the whole move ("That person is not on this project…" — captured into livemv_err)';
+       'improvement 8 on a LIVE item: the move re-runs BOTH people on the NEW project — arm 2 there (admin3) through the move arm''s ''rfi'' literal (a typo key falls to the owner), and the gatekeeper falls from the raiser (not a member of the new project) to the PM chain; a dropped ELSIF v_moved arm leaves the raiser as gatekeeper and item 2''s membership trigger refuses the whole move ("That person is not on this project…" — captured into livemv_err)'
+UNION ALL
+-- Task 10 review, rule 1 (via Task 13): a closed record is not rewritten by a
+-- source edit that changes nothing it projects.
+SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
+       (SELECT c.cl_ctid_before = c.cl_ctid_after
+           AND c.cl_restamp_last_activity = c.hist_closed
+           AND c.cl_restamp_closed_by = c.pm AND c.cl_restamp_status = 'closed'
+           AND (SELECT r.closed_by FROM projects.rfis r WHERE r.id = c.closed_rfi) = c.chain_pm
+          FROM rfi_ctx c),
+       'a closed_by re-stamp on a CLOSED RFI fires the _upd trigger (the column is watched) but changes nothing the closed record projects — first closer wins — so the UPDATE arm returns early: same ctid, last_activity_at keeps its historical value instead of the guard''s now(), and the record still names the first closer while the source names the second';

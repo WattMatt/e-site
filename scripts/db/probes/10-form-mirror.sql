@@ -61,7 +61,9 @@
 -- the INSERT path copies it into last_activity_at, and a projection that
 -- should not have fired would have stamped now() over it (site_forms_updated_at
 -- is BEFORE UPDATE only, 00179:631, so the INSERT keeps the supplied value).
-
+--
+-- Expected: 26 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-six names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org      uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting

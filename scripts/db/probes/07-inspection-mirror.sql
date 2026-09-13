@@ -72,8 +72,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 35 rows. If the printed `assertions seen:` list is shorter than
--- thirty-five names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 39 rows. If the printed `assertions seen:` list is shorter than
+-- thirty-nine names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -134,6 +134,14 @@ DECLARE
   v_admin3        uuid;     -- arm 2 on the THIRD project: distinct from admin2, the verifier and the owner, so a live move must re-run the chain to be seen
   v_proj3         uuid;     -- the live-move target (a moved item keeps its ref; two moves into one project collide on work_items_ref_unique)
   v_livemv        record;   -- the client-named board's item after its move
+  -- Task 10 review, rules 1 and 2 (via Task 13).
+  v_hist_abandoned timestamptz := now() - interval '2 days';   -- the born-abandoned fixture's stamps; its last_activity_at on the INSERT path
+  v_cl_ctid_before text;    -- the born-certified record's tuple identity before an unrelated watched edit (rule 1)
+  v_cl_restamp     record;  -- …and after an assigned_to_id change on the certified source
+  v_vd_ctid_before text;    -- the born-abandoned (void) record's tuple identity before a label edit (rule 1, the void tightening)
+  v_vd_rename      record;  -- …after that label edit: title frozen, tuple untouched
+  v_vd_reason      record;  -- after an abandoned_reason edit on the void row: the source's words reach the record
+  v_vd_revive      record;  -- after a label edit COMBINED with a revival (the arm runs): title frozen (rule 2)
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -374,14 +382,41 @@ BEGIN
 
   -- A BORN-ABANDONED source with the module's reason column
   -- (abandoned_reason, 00072 — the one abandonInspectionAction writes; 00066's
-  -- abandon_reason is read as a fallback and never written by the app).
+  -- abandon_reason is read as a fallback and never written by the app). With
+  -- HISTORICAL stamps (created_at / updated_at), so the void record's
+  -- last_activity_at has a value a re-projection would visibly disturb.
   INSERT INTO inspections.inspections (organisation_id, project_id, template_id,
     target_node_type, target_label, assigned_to_id, verifier_id, status,
-    abandoned_at, abandoned_by, abandoned_reason, created_by)
+    abandoned_at, abandoned_by, abandoned_reason, created_at, updated_at, created_by)
   VALUES (v_org, v_proj, v_tpl, 'adhoc', 'Abandoned board', v_pm, v_v, 'abandoned',
-          now() - interval '2 days', v_pm, '  Site closed for the season  ', v_pm)
+          v_hist_abandoned, v_pm, '  Site closed for the season  ', v_hist_created, v_hist_abandoned, v_pm)
   RETURNING id INTO v_aband;
   SELECT w.status, w.void_reason, w.ball_in_court_id INTO v_ab
+    FROM projects.work_items w WHERE w.inspection_id = v_aband AND w.origin = 'mirror';
+
+  -- Task 10 review, rules 1 and 2 (via Task 13), on that VOID record.
+  -- (1) A label edit alone: watched, so the _upd trigger fires, but a void
+  -- row's title is frozen (rule 2) and never compared by rule 1's early return
+  -- (the Task 11 review's I2 tightening), so nothing projected changes and the
+  -- tuple is left alone — by ctid and by the historical last_activity_at.
+  -- (2) An abandoned_reason edit while still abandoned DOES project — on a void
+  -- mapping the source's words win — so the early return must compare the
+  -- projected void_reason and not swallow it. (3) A label edit COMBINED with a
+  -- revival (abandoned → re-inspect_required maps to open): source_status
+  -- differs, so the arm RUNS — void is terminal, the reason is kept, and the
+  -- title stays what the record was withdrawn with.
+  SELECT w.ctid::text INTO v_vd_ctid_before
+    FROM projects.work_items w WHERE w.inspection_id = v_aband AND w.origin = 'mirror';
+  UPDATE inspections.inspections SET target_label = 'Abandoned board (renamed)' WHERE id = v_aband;
+  SELECT w.ctid::text AS ctid_after, w.title, w.status, w.last_activity_at INTO v_vd_rename
+    FROM projects.work_items w WHERE w.inspection_id = v_aband AND w.origin = 'mirror';
+  UPDATE inspections.inspections SET abandoned_reason = 'Site closed — season over' WHERE id = v_aband;
+  SELECT w.status, w.void_reason, w.title INTO v_vd_reason
+    FROM projects.work_items w WHERE w.inspection_id = v_aband AND w.origin = 'mirror';
+  UPDATE inspections.inspections
+     SET target_label = 'Abandoned board (revived)', status = 're-inspect_required'
+   WHERE id = v_aband;
+  SELECT w.title, w.status, w.source_status, w.void_reason INTO v_vd_revive
     FROM projects.work_items w WHERE w.inspection_id = v_aband AND w.origin = 'mirror';
 
   -- Abandoned on the LIVE path with no reason at all (the CHECK admits it;
@@ -429,6 +464,20 @@ BEGIN
          abandon_reason = abandon_reason
    WHERE id = v_born;
   SELECT w.last_activity_at INTO v_same_last_activity
+    FROM projects.work_items w WHERE w.inspection_id = v_born AND w.origin = 'mirror';
+
+  -- Task 10 review, rule 1 (via Task 13): an assigned_to_id change on the
+  -- CERTIFIED source — watched, so the _upd trigger fires — changes nothing
+  -- the closed record projects (its people are kept, S1 below), so the UPDATE
+  -- arm must return early and leave the tuple alone: same ctid, and the
+  -- historical last_activity_at the INSERT path kept instead of now(). admin2
+  -- is eligible and different from what the item holds (the owner): without
+  -- S1's rule the forward read would move assignee_id, and without rule 1 the
+  -- tuple was rewritten even though nothing on it changed.
+  SELECT w.ctid::text INTO v_cl_ctid_before
+    FROM projects.work_items w WHERE w.inspection_id = v_born AND w.origin = 'mirror';
+  UPDATE inspections.inspections SET assigned_to_id = v_admin2 WHERE id = v_born;
+  SELECT w.ctid::text AS ctid_after, w.last_activity_at, w.assignee_id, w.status INTO v_cl_restamp
     FROM projects.work_items w WHERE w.inspection_id = v_born AND w.origin = 'mirror';
 
   -- Task 8 review S1: a CLOSED item's people and due date are part of the
@@ -539,7 +588,14 @@ BEGIN
     live_resched_due date, live_resched_status text, live_past_due date,
     rt_before_assignee uuid, rt_before_gate uuid, rt_after_assignee uuid, rt_after_gate uuid,
     proj3 uuid, admin3 uuid,
-    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid)
+    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid,
+    hist_abandoned timestamptz,
+    cl_ctid_before text, cl_ctid_after text, cl_restamp_last_activity timestamptz,
+    cl_restamp_assignee uuid, cl_restamp_status text,
+    vd_ctid_before text, vd_ctid_after text, vd_rename_title text, vd_rename_status text,
+    vd_rename_last_activity timestamptz,
+    vd_reason_status text, vd_reason_reason text, vd_reason_title text,
+    vd_revive_title text, vd_revive_status text, vd_revive_source_status text, vd_revive_reason text)
     ON COMMIT DROP;
   INSERT INTO in_ctx VALUES (
     v_insp, v_nowhere, v_past, v_sast, v_arm2, v_cvi, v_aband,
@@ -569,7 +625,14 @@ BEGIN
     v_live_resched.due_date, v_live_resched.status, v_live_past.due_date,
     v_rt_before.assignee_id, v_rt_before.gatekeeper_id, v_rt_after.assignee_id, v_rt_after.gatekeeper_id,
     v_proj3, v_admin3,
-    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id);
+    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id,
+    v_hist_abandoned,
+    v_cl_ctid_before, v_cl_restamp.ctid_after, v_cl_restamp.last_activity_at,
+    v_cl_restamp.assignee_id, v_cl_restamp.status,
+    v_vd_ctid_before, v_vd_rename.ctid_after, v_vd_rename.title, v_vd_rename.status,
+    v_vd_rename.last_activity_at,
+    v_vd_reason.status, v_vd_reason.void_reason, v_vd_reason.title,
+    v_vd_revive.title, v_vd_revive.status, v_vd_revive.source_status, v_vd_revive.void_reason);
 END $probe$;
 
 SELECT 'insp_item_created' AS probe,
@@ -745,4 +808,29 @@ UNION ALL
 SELECT 'live_move_reruns_the_chain_through_the_inspection_key',
        (SELECT c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
            AND c.livemv_assignee <> c.admin2 AND c.livemv_assignee <> c.pm AND c.livemv_gate = c.chain_pm FROM in_ctx c),
-       'improvement 8 on a LIVE item: the move re-runs the chain on the NEW project (arm 2 there = admin3) through the move arm''s ''inspection'' literal — a typo key falls to the owner, a dropped ELSIF v_moved arm leaves it on admin2; the ineligible verifier falls to the PM chain again';
+       'improvement 8 on a LIVE item: the move re-runs the chain on the NEW project (arm 2 there = admin3) through the move arm''s ''inspection'' literal — a typo key falls to the owner, a dropped ELSIF v_moved arm leaves it on admin2; the ineligible verifier falls to the PM chain again'
+UNION ALL
+-- Task 10 review, rule 1 (via Task 13): a closed record is not rewritten by a
+-- source edit that changes nothing it projects.
+SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
+       (SELECT c.cl_ctid_before = c.cl_ctid_after
+           AND c.cl_restamp_last_activity = c.hist_certified
+           AND c.cl_restamp_assignee = c.pm AND c.cl_restamp_status = 'closed' FROM in_ctx c),
+       'assigned_to_id → a second admin on a CERTIFIED source fires the _upd trigger (watched) but changes nothing the closed record projects (its people are kept), so the UPDATE arm returns early: same ctid, last_activity_at keeps its historical value instead of the guard''s now()'
+UNION ALL
+-- Task 10 review, rules 1 + 2 (via Task 13), on the born-abandoned void record.
+SELECT 'void_item_source_title_edit_leaves_the_record',
+       (SELECT c.vd_ctid_before = c.vd_ctid_after AND c.vd_rename_title = 'Abandoned board'
+           AND c.vd_rename_status = 'void' AND c.vd_rename_last_activity = c.hist_abandoned FROM in_ctx c),
+       'a target_label edit on a VOID (abandoned) inspection fires the _upd trigger (watched), but a void row''s title is frozen and never compared by rule 1''s early return (Task 11 review I2), so the tuple is not rewritten: same ctid, last_activity_at keeps its historical value'
+UNION ALL
+SELECT 'void_reason_edit_reaches_the_record',
+       (SELECT c.vd_reason_status = 'void' AND c.vd_reason_reason = 'Site closed — season over'
+           AND c.vd_reason_title = 'Abandoned board' FROM in_ctx c),
+       'an abandoned_reason edit while the source is still abandoned DOES project — on a void mapping the source''s words win — so rule 1''s early return must compare the projected void_reason and not swallow it (the title stays frozen)'
+UNION ALL
+SELECT 'void_item_title_is_frozen',
+       (SELECT c.vd_revive_title = 'Abandoned board' AND c.vd_revive_status = 'void'
+           AND c.vd_revive_source_status = 're-inspect_required'
+           AND c.vd_revive_reason = 'Site closed — season over' FROM in_ctx c),
+       'Task 10 review, rule 2: a label edit COMBINED with a revival runs the UPDATE arm (source_status changes — asserted, so the row is not vacuous) and the void record keeps the title it was withdrawn with; void is terminal and the reason is kept (a closed row''s title keeps following the source)';

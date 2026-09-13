@@ -56,8 +56,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 23 rows. If the printed `assertions seen:` list is shorter than
--- twenty-three names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 24 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-four names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -97,6 +97,8 @@ DECLARE
   v_closed_people record;   -- the signed-off item's people after a post-sign-off source reassignment (Task 8 review S1)
   v_proj3    uuid;   -- the live-move target: its arm 2 names admin3 (a moved item keeps its ref; two moves into one project collide on work_items_ref_unique)
   v_livemv   record; -- the client-viewer-raised snag's item after its move
+  v_bs_ctid_before text;   -- the born-signed-off record's tuple identity before an unrelated watched edit (Task 10 review, rule 1)
+  v_bs_restamp     record; -- …and its ctid / last_activity_at / closed_by after a signed_off_by re-stamp on the source
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -334,6 +336,19 @@ BEGIN
   SELECT w.last_activity_at INTO v_same_last_activity
     FROM projects.work_items w WHERE w.snag_id = v_born_so AND w.origin = 'mirror';
 
+  -- Task 10 review, rule 1 (via Task 13): a signed_off_by RE-STAMP on the
+  -- born-signed-off source — watched, so the _upd trigger fires — changes
+  -- nothing the closed record projects (first closer wins: closed_by =
+  -- COALESCE(the item's, the source's)), so the UPDATE arm must return early
+  -- and leave the tuple alone. Measured by ctid AND by the historical
+  -- last_activity_at the INSERT path kept: without the rule the arm rewrote
+  -- the tuple and stamped now() over it.
+  SELECT w.ctid::text INTO v_bs_ctid_before
+    FROM projects.work_items w WHERE w.snag_id = v_born_so AND w.origin = 'mirror';
+  UPDATE field.snags SET signed_off_by = v_admin2 WHERE id = v_born_so;
+  SELECT w.ctid::text AS ctid_after, w.last_activity_at, w.closed_by, w.status INTO v_bs_restamp
+    FROM projects.work_items w WHERE w.snag_id = v_born_so AND w.origin = 'mirror';
+
   -- ── Task 9 review I1 (via Task 12): a LIVE move re-runs the chain ─────────
   -- A THIRD project whose arm 2 (work_item_defaults.snag.triage_owner_id)
   -- names admin3 — the un-triage target above, never named on the moved
@@ -379,7 +394,9 @@ BEGIN
     hist_created timestamptz, hist_signed timestamptz,
     same_last_activity timestamptz,
     closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid,
-    proj3 uuid, livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid)
+    proj3 uuid, livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid,
+    bs_ctid_before text, bs_ctid_after text, bs_restamp_last_activity timestamptz,
+    bs_restamp_closed_by uuid, bs_restamp_status text)
     ON COMMIT DROP;
   INSERT INTO sn_ctx VALUES (
     v_snag, v_nowhere, v_cv_snag, v_hidden, v_born_so, v_proj,
@@ -399,7 +416,9 @@ BEGIN
     v_hist_created, v_hist_signed,
     v_same_last_activity,
     v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id,
-    v_proj3, v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id);
+    v_proj3, v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id,
+    v_bs_ctid_before, v_bs_restamp.ctid_after, v_bs_restamp.last_activity_at,
+    v_bs_restamp.closed_by, v_bs_restamp.status);
 END $probe$;
 
 SELECT 'snag_item_created' AS probe,
@@ -520,4 +539,14 @@ UNION ALL
 SELECT 'live_move_reruns_the_chain_through_the_snag_key',
        (SELECT c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
            AND c.livemv_assignee <> c.admin2 AND c.livemv_assignee <> c.pm AND c.livemv_gate = c.chain_pm FROM sn_ctx c),
-       'improvement 8 on a LIVE item: the move re-runs the chain on the NEW project (arm 2 there = admin3) through the move arm''s ''snag'' literal — a typo key falls to the owner, a dropped ELSIF v_moved arm leaves it on admin2; the gatekeeper is the PM chain again';
+       'improvement 8 on a LIVE item: the move re-runs the chain on the NEW project (arm 2 there = admin3) through the move arm''s ''snag'' literal — a typo key falls to the owner, a dropped ELSIF v_moved arm leaves it on admin2; the gatekeeper is the PM chain again'
+UNION ALL
+-- Task 10 review, rule 1 (via Task 13): a closed record is not rewritten by a
+-- source edit that changes nothing it projects.
+SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
+       (SELECT c.bs_ctid_before = c.bs_ctid_after
+           AND c.bs_restamp_last_activity = c.hist_signed
+           AND c.bs_restamp_closed_by = c.pm AND c.bs_restamp_status = 'closed'
+           AND (SELECT s.signed_off_by FROM field.snags s WHERE s.id = c.born_so) = c.admin2
+          FROM sn_ctx c),
+       'a signed_off_by re-stamp on a SIGNED-OFF snag fires the _upd trigger (the column is watched) but changes nothing the closed record projects — first closer wins — so the UPDATE arm returns early: same ctid, last_activity_at keeps its historical value instead of the guard''s now(), and the record still names the first closer while the source names the second';

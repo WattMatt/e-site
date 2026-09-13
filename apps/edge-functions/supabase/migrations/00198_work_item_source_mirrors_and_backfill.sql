@@ -993,6 +993,30 @@ BEGIN
     v_moved := v_item.project_id IS DISTINCT FROM r.project_id;
     v_live  := v_item.status NOT IN ('closed','void');
 
+    -- Rule 1 (Task 10 review; D.4-D.6's form, landed here by Task 13): a
+    -- closed or void record is not REWRITTEN by a source edit that changes
+    -- nothing it projects. Without this a closed_by re-stamp on a closed RFI
+    -- — watched, so the _upd trigger fires; first closer wins below, so
+    -- nothing projected changes — rewrote the tuple and stamped
+    -- last_activity_at = now() on a record nothing else changed: the very
+    -- signal probe 04 same_value_write_does_not_reproject treats as a failure
+    -- (measured by ctid on the diary arm). What a non-live row still projects
+    -- is its project / org (a move), its title (a closed row follows a
+    -- rename; a void row's is never compared — the Task 11 review's I2
+    -- tightening; an RFI record is void only through section F, which nulls
+    -- rfi_id, or through a spine-side void with the source still live), its
+    -- priority (SET from the source unconditionally here, unlike D.4's) and
+    -- source_status. People are re-derived on a live item only (below) and
+    -- the closed stamps keep the first closer, so neither is compared. Probe
+    -- 04 closed_item_unrelated_source_edit_leaves_the_record.
+    IF NOT v_live AND NOT v_moved
+       AND v_item.organisation_id IS NOT DISTINCT FROM r.organisation_id
+       AND (v_item.status = 'void' OR r.subject = v_item.title)
+       AND r.priority IS NOT DISTINCT FROM v_item.priority
+       AND r.status IS NOT DISTINCT FROM v_item.source_status THEN
+      RETURN;
+    END IF;
+
     -- A closed or void item's people are part of the record (the guard's
     -- clause (b) sentence — which this UPDATE never reaches, at depth 2 or on
     -- the service path). Re-deriving them here would silently rewrite who
@@ -1412,6 +1436,24 @@ BEGIN
     v_moved := v_item.project_id IS DISTINCT FROM s.project_id;
     v_live  := v_item.status NOT IN ('closed','void');
 
+    -- D.1's rule 1 (Task 10 review, via Task 13): a closed or void record is
+    -- not REWRITTEN by a source edit that changes nothing it projects — a
+    -- signed_off_by re-stamp on a signed-off snag is watched and fires the
+    -- _upd trigger, but first closer wins below, so the tuple must be left
+    -- alone rather than re-stamped last_activity_at = now(). What a non-live
+    -- row still projects: project / org (a move), title (a closed row follows
+    -- a rename; a void row's is never compared — a snag record is void only
+    -- through section F, which nulls snag_id, or through a spine-side void),
+    -- priority (SET from the source unconditionally) and source_status. Probe
+    -- 06 closed_item_unrelated_source_edit_leaves_the_record.
+    IF NOT v_live AND NOT v_moved
+       AND v_item.organisation_id IS NOT DISTINCT FROM s.organisation_id
+       AND (v_item.status = 'void' OR v_title = v_item.title)
+       AND s.priority IS NOT DISTINCT FROM v_item.priority
+       AND s.status IS NOT DISTINCT FROM v_item.source_status THEN
+      RETURN;
+    END IF;
+
     -- D.1's rule (Task 8 review S1): a closed item's people are part of the
     -- record — a snag reassigned after its sign-off must not rewrite who the
     -- record names (probe 06 closed_item_people_are_not_reprojected).
@@ -1613,7 +1655,19 @@ CREATE TRIGGER snags_mirror_work_item_upd
 --      certified_by; certifyInspectionAction is the verifier's act
 --      (inspections-certify.actions.ts:229-234), so the verifier is the
 --      truthful closer. On the live path the exempt guard stamps closed_at =
---      now() at the transition and keeps the supplied closed_by.
+--      now() at the transition and keeps the supplied closed_by;
+--   8. rule 1 (Task 10 review, via Task 13 — D.1 and D.2 carry it too): a
+--      closed or void record is not rewritten by a source edit that changes
+--      nothing it projects — the early return before the people arms. Here
+--      the projected void_reason is compared as well, because an
+--      abandoned_reason edit on a void row legitimately projects (the
+--      source's words win on a void mapping) and must not be swallowed;
+--   9. rule 2 (Task 10 review, via Task 13): a VOID row's title is frozen —
+--      the record of what was abandoned; a closed row's keeps following the
+--      source. D.1 and D.2 have no source void state, so the rule lands on
+--      the first projection that meets one. Probe 07 void_item_title_is_frozen,
+--      void_item_source_title_edit_leaves_the_record,
+--      void_reason_edit_reaches_the_record.
 --
 -- Born-closed / born-void on INSERT (Task 4 review): work_items_insert_gate
 -- limits an authenticated INSERT to item_type = 'task' in triage|open with no
@@ -1763,6 +1817,31 @@ BEGIN
     v_moved := v_item.project_id IS DISTINCT FROM i.project_id;
     v_live  := v_item.status NOT IN ('closed','void');
 
+    -- Difference 8 (Task 10 review, rule 1): a closed or void record is not
+    -- REWRITTEN by a source edit that changes nothing it projects — an
+    -- assigned_to_id change on a certified inspection, or a label edit on an
+    -- abandoned one, fires the _upd trigger but must leave the tuple alone
+    -- rather than re-stamp last_activity_at = now(). What a non-live row still
+    -- projects: project / org (a move), title (a closed row follows a rename;
+    -- a void row's is frozen — difference 9 — and never compared, the Task 11
+    -- review's I2 tightening), source_status, and the void_reason projection
+    -- exactly as the SET below computes it: on a void mapping the source's
+    -- words win, so an abandoned_reason edit on a void row DOES project and
+    -- is not swallowed (probe 07 void_reason_edit_reaches_the_record). due_date
+    -- and the people are gated on v_live below; the closed stamps keep the
+    -- first closer; neither is compared. Probe 07
+    -- closed_item_unrelated_source_edit_leaves_the_record,
+    -- void_item_source_title_edit_leaves_the_record.
+    IF NOT v_live AND NOT v_moved
+       AND v_item.organisation_id IS NOT DISTINCT FROM i.organisation_id
+       AND (v_item.status = 'void' OR v_title = v_item.title)
+       AND i.status IS NOT DISTINCT FROM v_item.source_status
+       AND (CASE WHEN v_mapped = 'void'
+                 THEN COALESCE(v_reason, v_item.void_reason, 'inspection abandoned at source')
+                 ELSE v_item.void_reason END) IS NOT DISTINCT FROM v_item.void_reason THEN
+      RETURN;
+    END IF;
+
     -- D.1's rule (Task 8 review S1): a closed or void item's people — and
     -- here its due date — are part of the record. Without this a departed
     -- verifier on a certified inspection would become "gatekeeper = PM" on
@@ -1815,7 +1894,10 @@ BEGIN
     UPDATE projects.work_items
        SET project_id       = i.project_id,
            organisation_id  = i.organisation_id,
-           title            = v_title,
+           -- Difference 9 (Task 10 review, rule 2): a void row's title is
+           -- frozen — the record of what was abandoned; a closed row keeps
+           -- following the source (a typo corrected on the board label).
+           title            = CASE WHEN v_item.status = 'void' THEN v_item.title ELSE v_title END,
            source_status    = i.status,
            -- Difference 5 on UPDATE (Task 8 review I1): a FUTURE scheduled_at
            -- re-dates a LIVE item — floored (v_sched), then pushed past the
@@ -3105,13 +3187,22 @@ CREATE TRIGGER site_forms_mirror_work_item_upd
 -- CHECK on the SET NULL and the DELETE aborts. closed → void is illegal on
 -- the machine at depth 1 (clause (c)), so a signed-in delete of a closed
 -- item's source succeeds only through the depth-2 exemption — probe 11 runs
--- exactly that under impersonation. The exempt path clears the closed stamps
--- (as on every non-close transition — probe 10 distributed_then_void_is_void);
--- probe 11 pins both (closed_item_is_voided_on_source_delete,
--- closed_stamps_are_cleared_by_the_void). The alternative — amending the
--- CHECK to admit 'closed' — is an item-2 constraint change left for the owner
--- (deviation 21). An already-void item is left alone (status <> 'void'): it
--- keeps its own reason and gains no `voided` event (void_item_keeps_its_reason).
+-- exactly that under impersonation. The VOID is the constraint's necessity
+-- (no constraint names closed_at or closed_by); the STAMP LOSS is a different
+-- thing — C''s exempt-path rule (IF NEW.status = 'closed' THEN closed_at :=
+-- now() ELSE closed_at := NULL; closed_by := NULL, inherited from
+-- 00196:1545-1546) clears closed_at / closed_by on this transition, and this
+-- trigger cannot preserve them. Kept as built (Task 12 review): the `closed`
+-- event (§11) preserves who closed it and when, and "stamps ⇔ closed" stays a
+-- simple invariant, so no future consumer filtering on closed_at IS NOT NULL
+-- reads a void row as closed. Probe 11 pins both
+-- (closed_item_is_voided_on_source_delete,
+-- closed_stamps_are_cleared_by_the_void). Alternatives for the owner: keep
+-- the stamps on closed → void in C''s exempt path (one line, item 3's
+-- migration — a void row would then carry close stamps), or admit 'closed' in
+-- work_items_source_required (item 2) — deviation 21. An already-void item is
+-- left alone (status <> 'void'): it keeps its own reason and gains no `voided`
+-- event (void_item_keeps_its_reason).
 --
 -- One function serves all six, keyed on TG_ARGV[0]. format('%I') quotes the
 -- identifier, and TG_ARGV is developer-supplied in this file, so there is no
@@ -3128,12 +3219,13 @@ AS $fn$
 BEGIN
   -- %I quotes the identifier; TG_ARGV[0] is set by the six CREATE TRIGGER
   -- statements below and is never user input.
+  -- origin = 'mirror' makes A(a)'s partial source index usable (measured: seq scan without it) and leaves a manual task that links a source alone.
   -- ball_in_court_id needs no clearing: it is a STORED generated column over
   -- status and goes NULL on 'void' by itself (A(a)).
   EXECUTE format(
     'UPDATE projects.work_items
         SET status = ''void'', void_reason = $1, last_activity_at = now()
-      WHERE %I = $2 AND status <> ''void''', TG_ARGV[0])
+      WHERE %I = $2 AND origin = ''mirror'' AND status <> ''void''', TG_ARGV[0])
     USING 'source deleted', OLD.id;
   RETURN OLD;   -- BEFORE trigger: returning OLD lets the DELETE proceed
 END $fn$;
@@ -3156,3 +3248,85 @@ CREATE TRIGGER site_diary_entries_void_work_item BEFORE DELETE ON projects.site_
 DROP TRIGGER IF EXISTS site_forms_void_work_item ON field.site_forms;
 CREATE TRIGGER site_forms_void_work_item BEFORE DELETE ON field.site_forms
   FOR EACH ROW EXECUTE FUNCTION projects.void_work_item_on_source_delete('site_form_id');
+
+-- ─── G. Grants ───────────────────────────────────────────────────────────────
+-- Two obligations, routinely confused (§12 §(b) rule 5), and this file has
+-- both: the twenty-two functions it creates — every function: line of the
+-- @verify block except the replaced guard, which section C' re-revokes — and
+-- the snapshot table, whose REVOKE lives with its CREATE in section H (Task
+-- 14). Only the functions are here.
+--
+-- In `projects` a new function's anon EXECUTE is Postgres's built-in PUBLIC
+-- grant — pg_default_acl carries NO function default for this schema (item 2
+-- measured it; re-read live 2026-09-13: one sequence (S) and one table (r)
+-- entry, both postgres's, nothing for functions), unlike `public`, where
+-- 00113's precedent pairs FROM PUBLIC with FROM anon because Supabase's
+-- bootstrap ALTER DEFAULT PRIVILEGES grants anon EXECUTE directly at creation
+-- (how field.allocate_form_no shipped executable by anon, 00179:317). Both
+-- revokes are issued anyway: belt and braces, and every grant_absent: line
+-- above then holds whichever convention a later migration copies. So the
+-- mutation that proves this block bites is dropping the FROM PUBLIC line
+-- (the assertion below names all twenty-two); dropping FROM anon alone leaves
+-- the block silent in this schema — there is no direct anon grant to remove —
+-- which is exactly why the 2026-09-10 mutation could not fail. Verified with
+-- has_function_privilege, never proacl: a NULL proacl looks empty but IS the
+-- PUBLIC grant.
+--
+-- No GRANT follows. Measured (F5): a trigger fires for a caller with no EXECUTE
+-- on its function (privileges are checked at CREATE TRIGGER time, not at fire
+-- time), and every function below is reached only from a trigger or from
+-- another SECURITY DEFINER function owned by the same role — the backfill
+-- (section H) calls the project_*() bodies as postgres, their owner. Granting
+-- EXECUTE would widen the surface for nothing. Item 2 follows the same posture
+-- (00196:1041-1064, 1461-1462, 1770-1771); its GRANT of
+-- resolve_work_item_assignee to authenticated (00196:1078, the people-picker)
+-- is not touched here and is not what the assertion tests.
+DO $grants$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT n.nspname || '.' || p.proname || '(' ||
+           pg_get_function_identity_arguments(p.oid) || ')' AS sig
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'projects'
+       AND p.proname IN ('resolve_mirror_assignee',
+                         'resolve_work_item_gatekeeper','work_item_person_eligible',
+                         'map_source_status','work_item_status_for_mirror',
+                         'work_item_mirror_due_date','diary_delay_text',
+                         'project_rfi','project_snag','project_inspection',
+                         'project_qc_entry','project_diary_action','project_form_action',
+                         'mirror_rfi_work_item','mirror_snag_work_item',
+                         'mirror_inspection_work_item','mirror_qc_defect_work_item',
+                         'mirror_qc_report_defects','mirror_diary_action_work_item',
+                         'mirror_form_action_work_item','work_item_assignment_writeback',
+                         'void_work_item_on_source_delete')
+  LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', r.sig);
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM anon', r.sig);
+  END LOOP;
+END $grants$;
+
+-- Assert the revoke actually took, in the same transaction that made it.
+-- The LIKE ANY pattern is deliberately BROADER than the explicit list above, so
+-- a function added to this migration later and forgotten in the DO block fails
+-- the apply rather than shipping open (Task 13 Step 5: a scratch
+-- projects.work_item_scratch() left out of the list is named here). It also
+-- sweeps the earlier functions of this schema that share these prefixes — read
+-- live 2026-09-13: project_had_activity, project_settings_audit,
+-- resolve_project_pm, resolve_triage_owner, resolve_work_item_assignee and
+-- work_items_transition_guard, every one already revoked — so the assertion is
+-- true today and stays a tripwire for every later migration in this schema.
+DO $assert_grants$
+DECLARE v_leak text;
+BEGIN
+  SELECT string_agg(n.nspname || '.' || p.proname, ', ' ORDER BY p.proname) INTO v_leak
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'projects'
+     AND p.proname LIKE ANY (ARRAY['mirror\_%','resolve\_%','project\_%','map\_source\_status',
+                                   'work\_item\_%','work\_items\_transition\_guard',
+                                   'void\_work\_item\_%','diary\_delay\_text'])
+     AND has_function_privilege('anon', p.oid, 'EXECUTE');
+  IF v_leak IS NOT NULL THEN
+    RAISE EXCEPTION 'anon retains EXECUTE on: %', v_leak;
+  END IF;
+END $assert_grants$;
