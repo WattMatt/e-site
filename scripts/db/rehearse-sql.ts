@@ -22,15 +22,25 @@
  *
  * SAFETY INTERLOCK — this harness must never be the thing that commits. Before
  * the token is read and before any request is made, the concatenated input is
- * refused if it contains:
- *   - the token COMMIT anywhere, case-insensitively, comments and string
- *     literals INCLUDED (deliberately conservative: a comment-stripping regex
- *     can be fooled by a `--` inside a string, so nothing is stripped first).
- *     The only exemption is the temp-table clause
- *     `ON COMMIT { DROP | DELETE ROWS | PRESERVE ROWS }`, which cannot commit
- *     anything and which the probe contract below requires;
- *   - a top-level END statement (outside dollar quotes, strings and comments):
- *     PostgreSQL treats a bare `END;` as a synonym for COMMIT;
+ * scanned ONCE, left to right, the way PostgreSQL's own lexer reads it: string
+ * literals, quoted identifiers, dollar-quoted bodies and comments (`--` line
+ * comments and nested block comments) are blanked to spaces, and what remains
+ * — the tokens that could actually execute — is refused if it contains:
+ *   - COMMIT, case-insensitively. The word is allowed inside a comment, a
+ *     string literal or a dollar-quoted body: none of those can end the
+ *     transaction (a COMMIT inside a DO or function body raises 2D000 "invalid
+ *     transaction termination" inside an explicit transaction block, which
+ *     aborts and rolls back). The temp-table clause
+ *     `ON COMMIT { DROP | DELETE ROWS | PRESERVE ROWS }`, which the probe
+ *     contract below requires, is allowed too. It is one lexer pass and not
+ *     "strip comments, then blank strings" or the reverse, because each of
+ *     those orderings has a hole the other closes: `SELECT '--'; COMMIT;`
+ *     fools comment-first stripping (the quote hides the COMMIT inside a
+ *     phantom comment) and `-- don't` followed by `SELECT 'x'; COMMIT;` fools
+ *     string-first blanking (the apostrophe in the comment opens a phantom
+ *     string that swallows the COMMIT);
+ *   - a top-level END statement: PostgreSQL treats a bare `END;` as a synonym
+ *     for COMMIT;
  *   - PREPARE TRANSACTION, the other way a transaction's writes can outlive the
  *     trailing ROLLBACK.
  *
@@ -156,26 +166,12 @@ function refuse(what: string, index: number): never {
   )
 }
 
-// 1. COMMIT anywhere — raw text, comments and strings included. Only the
-//    temp-table clause is blanked first; it is the one place the word is legal
-//    in a probe and it cannot commit anything.
-const ON_COMMIT_CLAUSE = /\bON\s+COMMIT\s+(?:DROP|DELETE\s+ROWS|PRESERVE\s+ROWS)\b/gi
-const rawMinusClause = body.replace(ON_COMMIT_CLAUSE, (m) => ' '.repeat(m.length))
-{
-  const m = /\bCOMMIT\b/i.exec(rawMinusClause)
-  if (m) refuse('COMMIT', m.index)
-}
-// 2. PREPARE TRANSACTION — also on the raw text.
-{
-  const m = /\bPREPARE\s+TRANSACTION\b/i.exec(body)
-  if (m) refuse('PREPARE TRANSACTION', m.index)
-}
-// 3. A top-level END statement. END is only findable by position — every DO
-//    block has one inside its dollar quotes — so comments, string literals,
-//    quoted identifiers and dollar-quoted bodies are blanked to spaces (length
-//    and newlines preserved, so indexes still map to lines) and what remains is
-//    split on ';'. The first keyword of a statement being END means COMMIT.
-function blankLiterals(src: string): string {
+// Everything the interlock inspects is the input with comments, string
+// literals, quoted identifiers and dollar-quoted bodies blanked to spaces in a
+// single left-to-right pass (length and newlines preserved, so an index still
+// maps to a file:line). One pass, not two — see the header for the hole each
+// two-phase ordering has.
+function blankLiteralsAndComments(src: string): string {
   const n = src.length
   let out = ''
   let i = 0
@@ -226,8 +222,26 @@ function blankLiterals(src: string): string {
   }
   return out
 }
+// The temp-table clause is the one place COMMIT is legal in a probe; it is
+// blanked before the check so it cannot trip it.
+const ON_COMMIT_CLAUSE = /\bON\s+COMMIT\s+(?:DROP|DELETE\s+ROWS|PRESERVE\s+ROWS)\b/gi
+const bare = blankLiteralsAndComments(body).replace(ON_COMMIT_CLAUSE, (m) => ' '.repeat(m.length))
+
+// 1. COMMIT as a token that could execute.
 {
-  const bare = blankLiterals(body)
+  const m = /\bCOMMIT\b/i.exec(bare)
+  if (m) refuse('COMMIT', m.index)
+}
+// 2. PREPARE TRANSACTION.
+{
+  const m = /\bPREPARE\s+TRANSACTION\b/i.exec(bare)
+  if (m) refuse('PREPARE TRANSACTION', m.index)
+}
+// 3. A top-level END statement. END is only findable by position — every DO
+//    block has one inside its dollar quotes, and those are blanked — so the
+//    remaining text is split on ';' and the first keyword of each statement is
+//    read. A statement that begins with END is a COMMIT.
+{
   let offset = 0
   for (const stmt of bare.split(';')) {
     const kw = /^\s*([A-Za-z_]+)/.exec(stmt)
