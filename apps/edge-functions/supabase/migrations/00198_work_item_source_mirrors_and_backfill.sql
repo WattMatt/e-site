@@ -1147,12 +1147,20 @@ CREATE TRIGGER rfis_mirror_work_item_upd
 -- task in this plan) pins. V is what stops write amplification; W is what
 -- stops firing at all.
 --
--- triage items ARE written back (the plan's rule (a): the RFI page renders the
--- resolved holder for the first time). The next unrelated source edit cannot
--- un-triage the item on the strength of that value: D.1's un-triage flag is
--- "eligible AND distinct from what the item holds", and after this write the
--- source names exactly what the item holds (probe 05
--- writeback_value_is_inert_on_reprojection).
+-- triage items ARE written back on the RFI arm (the plan's rule (a): the RFI
+-- page renders the resolved holder for the first time). The next unrelated
+-- source edit cannot un-triage the item on the strength of that value: D.1's
+-- un-triage flag is "eligible AND distinct from what the item holds", and
+-- after this write the source names exactly what the item holds (probe 05
+-- writeback_value_is_inert_on_reprojection). The SNAG arm SKIPS triage items
+-- (controller decision, Task 7 review): on snags assigned_to means "assigned
+-- to fix"; an unassigned snag is born triage on its RAISER as the spine's
+-- default holder (D.2), and writing the raiser to snags.assigned_to on the
+-- same request would make notifySnagCreatedAction's creation email
+-- (snag.actions.ts:36-46) render the raiser as the assignee. An open snag —
+-- assigned at creation, un-triaged on the snag page, or un-triaged on the
+-- spine — is written back as before (probe 05 snag_assignment_reaches_source,
+-- probe 06 assigned_snag_reaches_source).
 --
 -- Improvement 11 is spine → source only: a later edit of rfis.due_date is not in
 -- D.1's UPDATE OF list and moves nothing on the spine (probe 05
@@ -1185,6 +1193,12 @@ BEGIN
        AND (assigned_to IS DISTINCT FROM NEW.assignee_id
          OR due_date    IS DISTINCT FROM NEW.due_date);
   ELSIF NEW.snag_id IS NOT NULL THEN
+    -- A triage snag is held by its raiser as the spine's DEFAULT holder;
+    -- snags.assigned_to means "assigned to fix" and stays as the source left
+    -- it until the item leaves triage (see the section comment). Probe 06
+    -- unassigned_snag_source_stays_unassigned; probe 05
+    -- snag_triage_item_leaves_source_unassigned.
+    IF NEW.status = 'triage' THEN RETURN NULL; END IF;
     -- field.snags has no due_date column (00004:10-32), so assignment only.
     UPDATE field.snags
        SET assigned_to = NEW.assignee_id
@@ -1198,8 +1212,9 @@ END $fn$;
 
 COMMENT ON FUNCTION projects.work_item_assignment_writeback() IS
   'Writes work_items.assignee_id and due_date back to projects.rfis, and assignee_id to '
-  'field.snags (which has no due_date column). Skips closed and void records so a historical '
-  'row never acquires an assignee it never had. '
+  'field.snags (which has no due_date column; a TRIAGE snag item is skipped — its raiser is the '
+  'spine''s default holder, not the person assigned to fix). Skips closed and void records so a '
+  'historical row never acquires an assignee it never had. '
   'Known divergence: createRfiAction reads rfi.assigned_to from the INSERT''s RETURNING clause '
   '(rfi.actions.ts:104), which is computed before this AFTER trigger runs — so an RFI raised '
   'with no assignee still emails "unassigned" while the row already names the resolved holder. '
@@ -1253,10 +1268,18 @@ CREATE TRIGGER work_items_assignment_writeback_upd
 --
 -- Born-closed on INSERT (Task 4 review): work_items_insert_gate limits an
 -- authenticated INSERT to item_type = 'task' in triage|open, so a live-path
--- insert of an already-signed-off snag (createSnagAction never does; an import
+-- insert of an already-signed-off snag (neither create path does; an import
 -- might) relies on this function being SECURITY DEFINER and owned by postgres
 -- — the table owner, BYPASSRLS — which never evaluates that policy. The INSERT
 -- supplies the terminal state and its stamps in the same statement.
+--
+-- search_path (settled here for every projection, Task 7 review): 'projects',
+-- 'public', then the SOURCE's own schema only where the source lives outside
+-- those two — 'field' here and for site_forms (D.6), 'inspections' for D.3;
+-- rfis, qc_entries and site_diary_entries (D.1, D.4, D.5) add nothing. Every
+-- table reference in the body is schema-qualified regardless; the entry is so
+-- the %ROWTYPE and any unqualified call into that schema resolve, and so a
+-- copier does not inherit a schema its source does not use.
 CREATE OR REPLACE FUNCTION projects.project_snag(p_snag_id uuid)
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER
@@ -1299,10 +1322,16 @@ BEGIN
   -- an unassigned snag is born TRIAGE on its raiser (§03 §1.6: no explicit
   -- assignee ⇒ triage): the person who found the defect holds it until
   -- someone is assigned to fix it, on the snag page or on the spine.
-  -- createSnagAction leaves assigned_to null and emails raiser and assignee
-  -- as two different people (snag.actions.ts:46-47, :118), so the module
-  -- agrees. Both arms use v_explicit — as the assignee VALUE's condition and
-  -- as the un-triage FLAG. A NULL assigned_to is not eligible.
+  -- Both create paths offer an OPTIONAL assignee — the snag page's
+  -- client-side insert (app/(admin)/projects/[id]/snags/new/page.tsx:84,
+  -- `assigned_to: input.assignedTo || null`) and addSnagToVisitAction
+  -- (snag-visit.actions.ts:261, `snagFields.assignedTo ?? null`) — so a
+  -- raiser CAN name someone at creation (born open on that person) and
+  -- otherwise leaves the column NULL; notifySnagCreatedAction then emails
+  -- raiser and assignee as two different people (snag.actions.ts:36-46), so
+  -- the module agrees the raiser is not "assigned to fix". Both arms use
+  -- v_explicit — as the assignee VALUE's condition and as the un-triage
+  -- FLAG. A NULL assigned_to is not eligible.
   v_explicit := COALESCE(projects.work_item_person_eligible(s.project_id, s.assigned_to), FALSE);
 
   IF v_item.id IS NULL THEN
@@ -1310,10 +1339,15 @@ BEGIN
     -- (00004:23), so with an eligible raiser this resolves at the chain's
     -- explicit step; a client-viewer raiser (F2, improvement 7) is not
     -- eligible and falls to arm 2 (work_item_defaults.snag.triage_owner_id)
-    -- onwards. A non-null but ineligible assigned_to hides the raiser from
-    -- COALESCE and falls to arm 2 as well — 0 of 6 live snags are assigned.
+    -- onwards. The candidate is the first ELIGIBLE of the two, never
+    -- COALESCE(assigned_to, raised_by): a non-null but ineligible assigned_to
+    -- (a client viewer) would hide an eligible raiser and fall to arm 2
+    -- (Task 7 review, measured: assignee = the arm-2 admin). v_explicit IS
+    -- the eligibility test, so there is no second call. Template rule for
+    -- D.3 and later copies: two candidate holders → CASE WHEN v_explicit THEN
+    -- <explicit> ELSE <fallback> END. 0 of 6 live snags are assigned.
     v_assignee := projects.resolve_mirror_assignee(
-                    s.project_id, 'snag', COALESCE(s.assigned_to, s.raised_by));
+                    s.project_id, 'snag', CASE WHEN v_explicit THEN s.assigned_to ELSE s.raised_by END);
     -- §03 §1.5: the PM, never the raiser. NULL is deliberate, not an oversight;
     -- compare project_rfi, which passes r.raised_by for the opposite reason.
     -- signOffSnagAction today stamps whoever clicked, with no role gate beyond
@@ -1363,7 +1397,7 @@ BEGIN
 
     IF v_moved THEN
       v_assignee := projects.resolve_mirror_assignee(
-                      s.project_id, 'snag', COALESCE(s.assigned_to, s.raised_by));
+                      s.project_id, 'snag', CASE WHEN v_explicit THEN s.assigned_to ELSE s.raised_by END);
       v_gate     := projects.resolve_work_item_gatekeeper(s.project_id, NULL);
     ELSE
       -- An eligible explicit source assignee wins; otherwise the spine's
@@ -1377,9 +1411,11 @@ BEGIN
     -- reconciliation #3 — reachable for a snag only through section F) and a
     -- terminal mapping wins; void_reason is not in this SET list. The
     -- un-triage flag is D.1's: "the source names someone ELIGIBLE and
-    -- DIFFERENT from what the item holds" — so section E's write-back of the
-    -- born holder to snags.assigned_to cannot un-triage the item on the next
-    -- unrelated edit (probe 06 writeback_value_is_inert_on_reprojection),
+    -- DIFFERENT from what the item holds". Section E skips a TRIAGE snag
+    -- entirely (the raiser is the spine's default holder, not "assigned to
+    -- fix" — probe 06 unassigned_snag_source_stays_unassigned), and after a
+    -- spine un-triage the source names exactly what the item holds, so an
+    -- unrelated edit cannot move it (writeback_value_is_inert_on_reprojection),
     -- while the snag page's own assign control does
     -- (source_assignment_change_untriages_or_reassigns). At depth 2 the guard
     -- stamps closed_at = now() on the transition and keeps the supplied
@@ -1452,3 +1488,333 @@ CREATE TRIGGER snags_mirror_work_item_upd
      OR OLD.project_id      IS DISTINCT FROM NEW.project_id
      OR OLD.organisation_id IS DISTINCT FROM NEW.organisation_id)
   EXECUTE FUNCTION projects.mirror_snag_work_item();
+
+-- ── D.3 Inspection ───────────────────────────────────────────────────────────
+-- D.1's template, copied deliberately — D.2 is the closer sibling (a source the
+-- write-back does not touch), so this section reads like it. Columns read
+-- from inspections.inspections (00066:43-78 + 00072:16-17, re-read on
+-- production 2026-09-13 through information_schema): target_label (NOT
+-- NULL), target_location, status, assigned_to_id, verifier_id, scheduled_at,
+-- certified_at, abandoned_reason (00072 — the column abandonInspectionAction
+-- writes, inspections.actions.ts:616), abandon_reason (00066 — never written
+-- by the app; read as a fallback so a row carrying only it is not voided
+-- reasonless), created_by (NOT NULL), created_at, updated_at, project_id,
+-- organisation_id. NOT read: template_id, target_node_type, target_node_id,
+-- overall_result, started_at, completed_at (the moment the inspector
+-- submitted, not the close — the spine has no "answered at" stamp),
+-- abandoned_at, abandoned_by (the void actor; the spine has no voided_by),
+-- coc_number, parent_inspection_id, reinspection_notes. The table has NO
+-- priority column (so 'medium', A(a)'s default), NO closed_at/closed_by
+-- (certified_at and verifier_id stand in) and NO certified_by. Its status
+-- CHECK (00066:57-59, read live 2026-09-13) is assigned | in_progress |
+-- awaiting_verification | certified | re-inspect_required | abandoned —
+-- every value has an arm in section C's map, and abandoned is the first
+-- source VOID state a projection meets. The only other trigger on the table
+-- is trg_inspections_updated_at (BEFORE UPDATE); nothing gates a transition.
+--
+-- Measured 2026-09-13: 19 live inspections (the plan's 18), ALL 'assigned',
+-- ALL with an assigned_to_id and a verifier_id (8 self-verified), 16 with a
+-- scheduled_at and ALL 16 in the past by SAST day (the plan's 15 of 18), 4
+-- with a target_location, 0 in the demo org, 0 referencing a missing profile.
+--
+-- Differences from D.2, each named where it lands:
+--   1. NO write-back (section E, §03 §1.2): the inspections module's own
+--      assignment flow (00066) stays the system of record for assigned_to_id
+--      AND verifier_id — but both are READ FORWARD on every projection. The
+--      _upd trigger watches them, so a reassignment or a verifier change on
+--      the inspection page moves work_items.assignee_id / gatekeeper_id,
+--      ball_in_court_id, the Inbox and My Work with it. Without that line the
+--      spine points at the previous person forever. "System of record" is an
+--      argument for not writing back, not for not reading forward;
+--   2. the explicit assignee is assigned_to_id and nothing else — an
+--      inspection has no raiser-holds-it default (compare D.2's raised_by);
+--      an unassigned or client-viewer-assigned inspection falls to the chain
+--      (arm 2: work_item_defaults.inspection.triage_owner_id) and is born
+--      TRIAGE. 0 of 19 live rows are unassigned — the module's age, not its
+--      risk;
+--   3. the gatekeeper is A(b)'s verifier_else_pm (00196:242):
+--      resolve_work_item_gatekeeper(project, verifier_id) — the resolver's
+--      explicit arm skips an ineligible verifier (a client viewer, a departed
+--      user) and the PM chain answers. Re-evaluated on EVERY projection, not
+--      only on a move, because the module owns verifier_id (difference 1);
+--   4. the title carries target_location (improvement 5 again): the only
+--      locator an inspection has, with no dangling em-dash for a blank one;
+--   5. the due date comes from scheduled_at — through section C's floor, on
+--      the SAST calendar day. §12 §(d) line 136 says scheduled_at::date; 16 of
+--      19 live inspections are scheduled in the PAST, so passing it through
+--      births every one of them overdue (improvement 6). And the date must be
+--      the SAST day, (scheduled_at AT TIME ZONE 'Africa/Johannesburg')::date,
+--      never scheduled_at::date: that cast reads the SESSION time zone (UTC on
+--      the API and on Vercel), so an inspection scheduled for 01:30 SAST would
+--      be floored against the wrong day and §5's day zero (00196:670) would
+--      disagree with the floor (Task 4 review). Read on INSERT only — the
+--      spine owns the due date once the item exists (Task 5 review F1), and
+--      there is no due-date write-back for inspections at all — so
+--      scheduled_at is NOT in the _upd trigger's lists (the plan's D.3 text
+--      listed it; the template rule wins: UPDATE OF == WHEN == what the
+--      UPDATE arm reads);
+--   6. a VOID arm: abandoned maps to 'void' (section C), so a projection
+--      supplies void_reason on the same statement — the trimmed
+--      abandoned_reason, else 00066's abandon_reason, else a fixed sentence.
+--      The reason is never blanked afterwards and void is terminal (Task 4's
+--      work_item_status_for_mirror arm): abandoned → re-inspect_required maps
+--      to open and must NOT un-void the row (probe 07
+--      void_is_terminal_on_source_reactivation);
+--   7. closed stamps: closed_at = certified_at (else updated_at) and
+--      closed_by = verifier_id on the INSERT path — inspections has no
+--      certified_by; certifyInspectionAction is the verifier's act
+--      (inspections-certify.actions.ts:229-234), so the verifier is the
+--      truthful closer. On the live path the exempt guard stamps closed_at =
+--      now() at the transition and keeps the supplied closed_by.
+--
+-- Born-closed / born-void on INSERT (Task 4 review): work_items_insert_gate
+-- limits an authenticated INSERT to item_type = 'task' in triage|open with no
+-- closed_at/void_reason, so a live-path insert of an already-certified or
+-- already-abandoned inspection (no action does; an import might) relies on
+-- this function being SECURITY DEFINER and owned by postgres — the table
+-- owner, BYPASSRLS — which never evaluates that policy. The INSERT supplies
+-- the terminal state and its stamps in the same statement.
+--
+-- The profiles edge case. public.profiles.id is itself REFERENCES
+-- auth.users(id) (00001:62) and handle_new_user inserts a profiles row on
+-- every auth.users insert (00001:77-92), so assigned_to_id / verifier_id /
+-- created_by (00066:54-55,73 — REFERENCES auth.users) already hold the UUIDs
+-- work_items' profiles FKs need. Measured: 0 auth users without a profile, 0
+-- of 19 inspections referencing a missing profile — which measures the
+-- estate's age, not its risk, so the edge is handled anyway, on the way in:
+-- work_item_person_eligible covers the assignee (an existence test is its
+-- first clause) and the gatekeeper (through the resolver); created_by and
+-- closed_by are existence-tested inline. The backfill adds no second,
+-- contradictory guard (Task 14 Step 3, item 3).
+CREATE OR REPLACE FUNCTION projects.project_inspection(p_inspection_id uuid)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public', 'inspections'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  i          inspections.inspections%ROWTYPE;
+  v_item     projects.work_items%ROWTYPE;
+  v_assignee uuid;
+  v_gate     uuid;
+  v_mapped   text;
+  v_title    text;
+  v_moved    boolean;
+  v_explicit boolean;   -- an ELIGIBLE explicit source assignee (Task 5 review F2)
+  v_creator  uuid;
+  v_closer   uuid;      -- verifier_id when it names a profile (closed_by REFERENCES profiles)
+  v_reason   text;      -- the source's abandon reason, trimmed, or NULL
+BEGIN
+  SELECT * INTO i FROM inspections.inspections WHERE id = p_inspection_id;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  -- The existing MIRROR item, if any. origin = 'split' rows on the same source
+  -- are deliberately not this function's (§03 §1.3) and are never touched.
+  SELECT * INTO v_item FROM projects.work_items
+   WHERE inspection_id = i.id AND origin = 'mirror';
+
+  -- 'inspection' here, in the INSERT and in both resolve_mirror_assignee calls
+  -- must be exactly projects.work_item_types.key: an FK on the item row, but
+  -- plain text on the resolver side, where a typo silently skips arm 2. Probe
+  -- 07 pins it (item_type_is_registry_key,
+  -- arm_2_resolves_through_the_inspection_key).
+  v_mapped := projects.map_source_status('inspection', i.status);
+
+  -- Improvement 5. target_location (00066:47) is the only locator an
+  -- inspection carries (4 of 19 live rows have one), and the title is the
+  -- whole of what travels into the 07:00 recap email. A NULL or
+  -- whitespace-only location adds nothing, never a dangling em-dash.
+  v_title := i.target_label || COALESCE(' — ' || NULLIF(btrim(i.target_location), ''), '');
+
+  -- An ELIGIBLE explicit source assignee (D.1's line, F2). assigned_to_id is
+  -- the ONLY explicit candidate — an inspection has no raiser default. Both
+  -- arms use v_explicit — as the assignee VALUE's condition and as the
+  -- un-triage FLAG. A NULL assigned_to_id is not eligible.
+  v_explicit := COALESCE(projects.work_item_person_eligible(i.project_id, i.assigned_to_id), FALSE);
+
+  -- Difference 3: A(b) verifier_else_pm, re-evaluated on every projection.
+  -- The module owns verifier_id and there is no write-back to keep a
+  -- spine-side gatekeeper change in step with it, so the source's verifier
+  -- (or the PM chain, when that verifier is absent or ineligible) is the
+  -- gatekeeper each time the source is written. A spine-side gatekeeper
+  -- correction on an inspection item therefore lasts until the next
+  -- projection; the durable control is the inspection page's own verifier.
+  -- RAISES item 2's sentence for a PM-less project whose verifier is absent
+  -- or ineligible — on the source write, where the person who can fix it is.
+  v_gate := projects.resolve_work_item_gatekeeper(i.project_id, i.verifier_id);
+
+  -- Difference 7 and the profiles edge case: closed_by REFERENCES
+  -- public.profiles, so a verifier UUID with no profiles row is not copied
+  -- (closed_by is nullable; created_by, NOT NULL, falls back to the assignee
+  -- below).
+  v_closer := CASE WHEN EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = i.verifier_id)
+                   THEN i.verifier_id END;
+
+  -- Difference 6: the source's own words for the void, trimmed. 00072's
+  -- abandoned_reason is what the app writes; 00066's abandon_reason is read
+  -- in case a row carries only it.
+  v_reason := COALESCE(NULLIF(btrim(i.abandoned_reason), ''), NULLIF(btrim(i.abandon_reason), ''));
+
+  IF v_item.id IS NULL THEN
+    -- A(b): assigned_to_id, else the chain — arm 2 is
+    -- work_item_defaults.inspection.triage_owner_id (probe 07 pins the key).
+    -- An ineligible assigned_to_id (a client viewer, F2 / improvement 7) is
+    -- skipped by the resolver's own explicit arm, so the raw column is passed.
+    v_assignee := projects.resolve_mirror_assignee(i.project_id, 'inspection', i.assigned_to_id);
+    v_creator  := CASE WHEN EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = i.created_by)
+                       THEN i.created_by ELSE v_assignee END;
+
+    INSERT INTO projects.work_items (
+      organisation_id, project_id, item_type, origin, title, priority,
+      status, source_status, assignee_id, gatekeeper_id, due_date, created_by, inspection_id,
+      opened_at, last_activity_at, closed_at, closed_by, void_reason)
+    VALUES (
+      i.organisation_id, i.project_id, 'inspection', 'mirror', v_title, 'medium',
+      projects.work_item_status_for_mirror(NULL, v_mapped, v_explicit),
+      i.status, v_assignee, v_gate,
+      -- Difference 5. The SAST calendar day of scheduled_at, through section
+      -- C's floor: a past or same-day date becomes NULL and item 2's BEFORE
+      -- INSERT trigger computes A(b)'s +3 wd on the SITE calendar instead. A
+      -- future date passes through as THAT SAST date (§5 then only applies
+      -- the builders' shutdown push). NEVER scheduled_at::date — the session
+      -- time zone is UTC and 01:30 SAST is yesterday there.
+      projects.work_item_mirror_due_date((i.scheduled_at AT TIME ZONE 'Africa/Johannesburg')::date),
+      v_creator, i.id,
+      -- #4: historical stamps. §5 overwrites opened_at/last_activity_at for a
+      -- client session (same instant — harmless) and keeps them on the service
+      -- path, which is the backfill. Keyed on the MAPPED status (template
+      -- rule), never on a source-status literal: closed stamps when 'closed'
+      -- (certified — from certified_at, else the row's last write — and the
+      -- verifier), a void reason when 'void' (abandoned).
+      i.created_at, i.updated_at,
+      CASE WHEN v_mapped = 'closed' THEN COALESCE(i.certified_at, i.updated_at) END,
+      CASE WHEN v_mapped = 'closed' THEN v_closer END,
+      -- A born-void row MUST carry a reason: the guard's void-reason check
+      -- does not run on an INSERT (no guard) nor on the exempt UPDATE path,
+      -- and would bite on the first signed-in UPDATE of the row instead
+      -- (section C', "Dropping … needs a short reason") — a source delete or
+      -- a hand edit, failing for a reason nobody can see.
+      CASE WHEN v_mapped = 'void' THEN COALESCE(v_reason, 'inspection abandoned at source') END)
+    -- Explicit partial-index target, never a bare ON CONFLICT DO NOTHING (F6):
+    -- a duplicate projection is swallowed, an origin='split' row is untouched,
+    -- and a work_items_ref_unique collision still raises 23505. The predicate
+    -- is work_items_src_inspection_uidx's, verbatim (00196:377):
+    --   (inspection_id) WHERE inspection_id IS NOT NULL AND origin = 'mirror'
+    ON CONFLICT (inspection_id) WHERE inspection_id IS NOT NULL AND origin = 'mirror' DO NOTHING
+    RETURNING * INTO v_item;
+    -- No watcher seeding: §11 has already done it (see the section D comment).
+  ELSE
+    -- Improvement 8: a project move re-resolves the assignee through the
+    -- chain (the gatekeeper is re-resolved on every projection anyway,
+    -- difference 3). Runs at depth 2 under section C''s exemption (clause (a)
+    -- makes project_id immutable for a signed-in actor); the membership
+    -- trigger (00196:961-984) still re-validates both people first, by name
+    -- order. D.1 has the full reasoning; nothing about it is
+    -- inspection-specific.
+    v_moved := v_item.project_id IS DISTINCT FROM i.project_id;
+
+    IF v_moved THEN
+      v_assignee := projects.resolve_mirror_assignee(i.project_id, 'inspection', i.assigned_to_id);
+    ELSE
+      -- Difference 1, the forward read: an ELIGIBLE explicit source assignee
+      -- wins — 00066's flow owns inspections.assigned_to_id and this
+      -- migration never writes it back, but the spine must FOLLOW it, or
+      -- reassigning an inspection leaves work_items.assignee_id (and
+      -- therefore ball_in_court_id, the Inbox and My Work) on the previous
+      -- person forever. Otherwise the spine's current holder stays (an
+      -- ineligible name — a client viewer — never moves the ball, improvement
+      -- 7). With no write-back, a spine-side reassignment of an inspection
+      -- item lasts until the source next names someone eligible and
+      -- different; the durable control is the inspection page's own assign.
+      v_assignee := COALESCE(CASE WHEN v_explicit THEN i.assigned_to_id END, v_item.assignee_id);
+    END IF;
+
+    -- Status: the CURRENT status is passed in, so void stays void (terminal,
+    -- reconciliation #3 — abandoned → re-inspect_required maps to open and
+    -- must not un-void the row) and a terminal mapping wins. The un-triage
+    -- flag is D.1's: "the source names someone ELIGIBLE and DIFFERENT from
+    -- what the item holds". At depth 2 the guard stamps closed_at = now() on
+    -- the transition and keeps the supplied closed_by (probe 07
+    -- certified_carries_stamps); the certified_at fallback below therefore
+    -- decides the value only for a row that was ALREADY closed and is being
+    -- re-projected. void_reason is never blanked: on a void mapping the
+    -- source's words win, else what the row already carries, else the fixed
+    -- sentence; on any other mapping the row keeps its own (a revived
+    -- abandoned inspection stays void WITH its reason) — the exempt guard
+    -- skips its void-reason check here and the next signed-in UPDATE of a
+    -- reason-less void row would be refused instead.
+    UPDATE projects.work_items
+       SET project_id       = i.project_id,
+           organisation_id  = i.organisation_id,
+           title            = v_title,
+           source_status    = i.status,
+           status           = projects.work_item_status_for_mirror(
+                                v_item.status, v_mapped,
+                                v_explicit AND i.assigned_to_id IS DISTINCT FROM v_item.assignee_id),
+           assignee_id      = v_assignee,
+           gatekeeper_id    = v_gate,
+           -- Keyed on the MAPPED status (template rule).
+           closed_at        = CASE WHEN v_mapped = 'closed'
+                                   THEN COALESCE(v_item.closed_at, i.certified_at, now())
+                                   ELSE NULL END,
+           closed_by        = CASE WHEN v_mapped = 'closed'
+                                   THEN COALESCE(v_item.closed_by, v_closer) END,
+           void_reason      = CASE WHEN v_mapped = 'void'
+                                   THEN COALESCE(v_reason, v_item.void_reason, 'inspection abandoned at source')
+                                   ELSE v_item.void_reason END,
+           last_activity_at = now()
+     WHERE id = v_item.id;
+  END IF;
+END $fn$;
+
+-- The trigger wrapper: the same two lines as D.1's and D.2's. There is no
+-- write-back arm for inspections, so no mirror ⇄ write-back cycle to
+-- terminate today; the depth guard stays because §03 §1.2 mandates it on
+-- every wrapper, the mirror-triggers contract test (a later task) pins it,
+-- and it is what stops a future trigger on inspections.inspections that
+-- writes work_items from re-entering this projection.
+CREATE OR REPLACE FUNCTION projects.mirror_inspection_work_item()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public', 'inspections'
+SET row_security TO 'off'
+AS $fn$
+BEGIN
+  IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
+  PERFORM projects.project_inspection(NEW.id);
+  RETURN NULL;   -- AFTER trigger; the return value is ignored
+END $fn$;
+
+-- F7: two triggers (an INSERT trigger's WHEN cannot reference OLD).
+DROP TRIGGER IF EXISTS inspections_mirror_work_item_ins ON inspections.inspections;
+CREATE TRIGGER inspections_mirror_work_item_ins
+  AFTER INSERT ON inspections.inspections
+  FOR EACH ROW EXECUTE FUNCTION projects.mirror_inspection_work_item();
+
+-- The column list is every column the UPDATE arm reads that can change; the
+-- WHEN clause is the same list, so a full-row save that changes only
+-- reinspection_notes (or overall_result, a coc_number, started_at) fires
+-- nothing (probe 07 same_value_write_does_not_reproject). assigned_to_id and
+-- verifier_id are here BECAUSE they are read forward (difference 1).
+-- scheduled_at is NOT here: read on INSERT only (difference 5), so a
+-- re-schedule fires nothing (probe 07 source_reschedule_does_not_fire_a_projection)
+-- rather than a no-op projection whose only effect is last_activity_at =
+-- now() over a historical value. created_at and updated_at are read on
+-- INSERT only.
+DROP TRIGGER IF EXISTS inspections_mirror_work_item_upd ON inspections.inspections;
+CREATE TRIGGER inspections_mirror_work_item_upd
+  AFTER UPDATE OF target_label, target_location, status, assigned_to_id, verifier_id,
+                  certified_at, abandoned_reason, abandon_reason, project_id, organisation_id
+  ON inspections.inspections
+  FOR EACH ROW
+  WHEN (OLD.target_label     IS DISTINCT FROM NEW.target_label
+     OR OLD.target_location  IS DISTINCT FROM NEW.target_location
+     OR OLD.status           IS DISTINCT FROM NEW.status
+     OR OLD.assigned_to_id   IS DISTINCT FROM NEW.assigned_to_id
+     OR OLD.verifier_id      IS DISTINCT FROM NEW.verifier_id
+     OR OLD.certified_at     IS DISTINCT FROM NEW.certified_at
+     OR OLD.abandoned_reason IS DISTINCT FROM NEW.abandoned_reason
+     OR OLD.abandon_reason   IS DISTINCT FROM NEW.abandon_reason
+     OR OLD.project_id       IS DISTINCT FROM NEW.project_id
+     OR OLD.organisation_id  IS DISTINCT FROM NEW.organisation_id)
+  EXECUTE FUNCTION projects.mirror_inspection_work_item();

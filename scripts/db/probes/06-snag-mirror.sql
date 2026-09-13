@@ -4,8 +4,10 @@
 --   projects.project_snag(uuid)          — the projection body (no recursion guard)
 --   projects.mirror_snag_work_item()     — the trigger wrapper (depth guard, F2)
 --   snags_mirror_work_item_ins / _upd    — AFTER INSERT / AFTER UPDATE OF … WHEN (F7)
--- and, because the mirror's INSERT fires it, section E's snag arm: the born
--- assignee reaches field.snags.assigned_to (write_back_stamps_source_assigned_to).
+-- and section E's snag arm on both sides: a TRIAGE item leaves
+-- field.snags.assigned_to alone (unassigned_snag_source_stays_unassigned —
+-- the raiser is the spine's default holder, not "assigned to fix") and an
+-- OPEN one reaches it (assigned_snag_reaches_source, on a spine un-triage).
 --
 -- Run (00198 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/06-snag-mirror.sql \
@@ -43,14 +45,19 @@
 -- projection's INSERT flag reads assigned_to (as the plan text does), so an
 -- eligible raiser holds the item in triage until someone is assigned to fix
 -- it, on the snag page (source_assignment_change_untriages_or_reassigns) or on
--- the spine. The module agrees: createSnag leaves assigned_to null and emails
--- raiser and assignee as two different people (snag.actions.ts:46-47, :118).
+-- the spine. The module agrees: both create paths offer an OPTIONAL assignee
+-- (the snag page's client-side insert, snags/new/page.tsx:84,
+-- `assigned_to: input.assignedTo || null`; addSnagToVisitAction,
+-- snag-visit.actions.ts:261, `snagFields.assignedTo ?? null`) and
+-- notifySnagCreatedAction emails raiser and assignee as two different people
+-- (snag.actions.ts:36-46). Section E therefore SKIPS a triage snag: the raiser
+-- stays off snags.assigned_to until someone is assigned to fix.
 --
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 20 rows. If the printed `assertions seen:` list is shorter than
--- twenty names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 21 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-one names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -66,15 +73,23 @@ DECLARE
   v_snag     uuid;   -- contractor-raised, no assignee, a location: the live shape
   v_nowhere  uuid;   -- whitespace-only location
   v_cv_snag  uuid;   -- raised by the client viewer: the raiser is ineligible, so the chain answers
+  v_hidden   uuid;   -- raised by the contractor, assigned_to = the client viewer: an ineligible name must not hide the raiser
   v_born_so  uuid;   -- born signed_off with historical stamps: the backfill shape
+  -- What §5 computes for a snag born with no date: A(b)'s +5 site working
+  -- days from the SAST day (00196:670), then the builders' shutdown push —
+  -- the exact born date, not merely "after today".
+  v_default_due date;
   -- now() is fixed for the whole transaction, so these are exact targets.
   v_hist_created timestamptz := now() - interval '40 days';
   v_hist_signed  timestamptz := now() - interval '20 days';
   v_ins      record;
   v_assigned_after uuid;
   v_cv_item  record;
+  v_hidden_item record;
   v_assign   record;
-  v_cv_after record;
+  v_sp       record;   -- the item after the spine's un-triage of v_nowhere
+  v_sp_src   uuid;     -- field.snags.assigned_to after that un-triage
+  v_sp_after record;   -- the item after an unrelated source edit that follows it
   v_res      record;
   v_sof      record;
   v_born     record;
@@ -190,6 +205,15 @@ BEGIN
     RAISE EXCEPTION 'fixture: the client viewer (%) is eligible on the probe project', v_cv;
   END IF;
 
+  -- The registry's default for 'snag' is 5 site working days (00196:240); the
+  -- probe project carries no days_to_respond override (fresh settings row).
+  v_default_due := projects.push_past_builders_shutdown(
+    projects.add_working_days((now() AT TIME ZONE 'Africa/Johannesburg')::date, 5, v_proj, 'site'),
+    v_proj);
+  IF v_default_due IS NULL OR v_default_due <= (now() AT TIME ZONE 'Africa/Johannesburg')::date THEN
+    RAISE EXCEPTION 'fixture: add_working_days(SAST today, 5, proj, site) answered % — the site calendar is not usable', v_default_due;
+  END IF;
+
   -- Shaped like a live row: a contractor raises it, no assignee, a location.
   INSERT INTO field.snags (project_id, organisation_id, title, location,
                            priority, status, raised_by)
@@ -201,7 +225,8 @@ BEGIN
          w.ball_in_court_id, w.due_date
     INTO v_ins FROM projects.work_items w WHERE w.snag_id = v_snag AND w.origin = 'mirror';
 
-  -- Section E fired on that INSERT: the born assignee is now on the source row.
+  -- Section E fired on that INSERT and must have SKIPPED it: the item is
+  -- triage, so the raiser stays off the source's assigned_to.
   SELECT s.assigned_to INTO v_assigned_after FROM field.snags s WHERE s.id = v_snag;
 
   -- A snag with NO location must not gain a dangling em-dash.
@@ -219,18 +244,43 @@ BEGIN
   SELECT w.status, w.assignee_id INTO v_cv_item
     FROM projects.work_items w WHERE w.snag_id = v_cv_snag AND w.origin = 'mirror';
 
+  -- Raised by the contractor but assigned_to a CLIENT VIEWER (Task 7 review):
+  -- the ineligible name must not hide the eligible raiser from the chain.
+  -- COALESCE(assigned_to, raised_by) handed the client viewer in and fell to
+  -- arm 2 (measured: assignee = admin2); the first-ELIGIBLE form hands the
+  -- raiser in. Not an explicit assignment (the named person is ineligible),
+  -- so the item is born triage — and section E leaves the client viewer on
+  -- the source, since a triage snag is never written back.
+  INSERT INTO field.snags (project_id, organisation_id, title, location,
+                           priority, status, raised_by, assigned_to)
+  VALUES (v_proj, v_org, 'Client-assigned snag', 'Roof — PV inverter', 'medium', 'open',
+          v_ctr, v_cv)
+  RETURNING id INTO v_hidden;
+  SELECT w.status, w.assignee_id INTO v_hidden_item
+    FROM projects.work_items w WHERE w.snag_id = v_hidden AND w.origin = 'mirror';
+
   -- The snag page's own assign control: an ELIGIBLE person DIFFERENT from what
-  -- the item holds (the raiser, after the write-back) un-triages the item.
+  -- the item holds (the raiser) un-triages the item.
   UPDATE field.snags SET assigned_to = v_admin3 WHERE id = v_snag;
   SELECT w.status, w.assignee_id INTO v_assign
     FROM projects.work_items w WHERE w.snag_id = v_snag;
 
-  -- The write-back put arm 2's answer on the CV snag's assigned_to. An
-  -- unrelated edit re-projects: the source names EXACTLY what the item holds,
-  -- so the un-triage flag is false and the item stays in triage.
-  UPDATE field.snags SET priority = 'low' WHERE id = v_cv_snag;
-  SELECT w.status, w.assignee_id INTO v_cv_after
-    FROM projects.work_items w WHERE w.snag_id = v_cv_snag;
+  -- The SPINE's un-triage of the no-location snag (§03 §1.6: the triage
+  -- owner's explicit assign is status + assignee in one statement; service
+  -- path here, probe 05b is the signed-in evidence). The item is now OPEN, so
+  -- section E writes the assignee to field.snags.assigned_to.
+  UPDATE projects.work_items SET status = 'open', assignee_id = v_admin3
+   WHERE snag_id = v_nowhere AND origin = 'mirror';
+  SELECT w.status, w.assignee_id INTO v_sp
+    FROM projects.work_items w WHERE w.snag_id = v_nowhere AND w.origin = 'mirror';
+  SELECT s.assigned_to INTO v_sp_src FROM field.snags s WHERE s.id = v_nowhere;
+
+  -- An unrelated source edit re-projects: the source now names EXACTLY what
+  -- the item holds (the write-back's value), so the un-triage flag is false
+  -- and nothing moves — the round trip converges instead of ping-ponging.
+  UPDATE field.snags SET priority = 'medium' WHERE id = v_nowhere;
+  SELECT w.status, w.assignee_id INTO v_sp_after
+    FROM projects.work_items w WHERE w.snag_id = v_nowhere AND w.origin = 'mirror';
 
   -- Push-back from the source (service path — the guard is exempt as postgres
   -- AND at depth 2; probe 05b is the signed-in evidence).
@@ -273,14 +323,17 @@ BEGIN
     FROM projects.work_items w WHERE w.snag_id = v_born_so AND w.origin = 'mirror';
 
   CREATE TEMP TABLE sn_ctx(
-    snag uuid, nowhere uuid, cv_snag uuid, born_so uuid, proj uuid,
+    snag uuid, nowhere uuid, cv_snag uuid, hidden uuid, born_so uuid, proj uuid,
     pm uuid, ctr uuid, chain_pm uuid, admin2 uuid, admin3 uuid, cv uuid,
+    default_due date,
     ins_type text, ins_title text, ins_status text, ins_source_status text,
     ins_assignee uuid, ins_gate uuid, ins_bic uuid, ins_due date,
     assigned_after uuid,
     cv_status text, cv_assignee uuid,
+    hidden_status text, hidden_assignee uuid,
     assign_status text, assign_assignee uuid,
-    cv_after_status text, cv_after_assignee uuid,
+    sp_status text, sp_assignee uuid, sp_src uuid,
+    sp_after_status text, sp_after_assignee uuid,
     res_status text, res_bic uuid,
     sof_status text, sof_bic uuid, sof_closed timestamptz, sof_closed_by uuid,
     born_status text, born_opened_at timestamptz, born_closed_at timestamptz, born_closed_by uuid,
@@ -288,14 +341,17 @@ BEGIN
     same_last_activity timestamptz)
     ON COMMIT DROP;
   INSERT INTO sn_ctx VALUES (
-    v_snag, v_nowhere, v_cv_snag, v_born_so, v_proj,
+    v_snag, v_nowhere, v_cv_snag, v_hidden, v_born_so, v_proj,
     v_pm, v_ctr, v_chain_pm, v_admin2, v_admin3, v_cv,
+    v_default_due,
     v_ins.item_type, v_ins.title, v_ins.status, v_ins.source_status,
     v_ins.assignee_id, v_ins.gatekeeper_id, v_ins.ball_in_court_id, v_ins.due_date,
     v_assigned_after,
     v_cv_item.status, v_cv_item.assignee_id,
+    v_hidden_item.status, v_hidden_item.assignee_id,
     v_assign.status, v_assign.assignee_id,
-    v_cv_after.status, v_cv_after.assignee_id,
+    v_sp.status, v_sp.assignee_id, v_sp_src,
+    v_sp_after.status, v_sp_after.assignee_id,
     v_res.status, v_res.ball_in_court_id,
     v_sof.status, v_sof.ball_in_court_id, v_sof.closed_at, v_sof.closed_by,
     v_born.status, v_born.opened_at, v_born.closed_at, v_born.closed_by,
@@ -326,13 +382,14 @@ SELECT 'blank_location_adds_no_dash',
          = 'No location snag',
        'a whitespace-only location must not produce a trailing em-dash'
 UNION ALL
-SELECT 'snag_writeback',
-       (SELECT c.assigned_after IS NOT NULL FROM sn_ctx c),
-       'field.snags.assigned_to must be populated by the write-back'
+-- Section E's snag arm, both sides (controller decision, Task 7 review).
+SELECT 'unassigned_snag_source_stays_unassigned',
+       (SELECT c.ins_status = 'triage' AND c.ins_assignee = c.ctr AND c.assigned_after IS NULL FROM sn_ctx c),
+       'a raiser-held TRIAGE item is not written back: snags.assigned_to means "assigned to fix", and writing the raiser there on the same request would make notifySnagCreatedAction''s email render the raiser as the assignee'
 UNION ALL
-SELECT 'write_back_stamps_source_assigned_to',
-       (SELECT c.assigned_after = c.ins_assignee FROM sn_ctx c),
-       'the mirror''s INSERT fires section E''s snag arm: field.snags.assigned_to = the born assignee (assignment only — snags have no due_date)'
+SELECT 'assigned_snag_reaches_source',
+       (SELECT c.sp_status = 'open' AND c.sp_assignee = c.admin3 AND c.sp_src = c.admin3 FROM sn_ctx c),
+       'the spine''s un-triage (status → open with an assignee, one statement) leaves triage, so section E writes field.snags.assigned_to = that assignee (assignment only — snags have no due_date)'
 UNION ALL
 -- §12 §(d), ordering A: an eligible raiser precedes the chain — arm 2 points
 -- at a different person and must not answer.
@@ -348,6 +405,11 @@ SELECT 'client_viewer_raiser_falls_to_chain',
        (SELECT c.cv_assignee <> c.cv AND c.cv_status = 'triage' FROM sn_ctx c),
        'F2 / improvement 7: a client-viewer raiser is not eligible, so raised_by is skipped and the chain answers; born triage'
 UNION ALL
+-- Task 7 review: the first ELIGIBLE of (assigned_to, raised_by), never COALESCE.
+SELECT 'ineligible_assigned_to_does_not_hide_the_raiser',
+       (SELECT c.hidden_assignee = c.ctr AND c.hidden_status = 'triage' AND c.hidden_assignee <> c.admin2 FROM sn_ctx c),
+       'assigned_to = a client viewer, raised_by = an eligible contractor: the raiser is the candidate (COALESCE would hand the client viewer in and fall to arm 2''s admin); not an explicit assignment, so triage'
+UNION ALL
 -- §12 §(d), ordering B: an ineligible raiser falls to the chain, whose arm 2
 -- is reachable only through exactly 'snag'.
 SELECT 'arm_2_resolves_through_the_snag_key',
@@ -360,8 +422,8 @@ SELECT 'gatekeeper_is_pm_not_raiser',
        '§03 §1.5: a defect is not signed off by the person who reported it'
 UNION ALL
 SELECT 'due_computed_by_the_spine',
-       (SELECT c.ins_due > CURRENT_DATE FROM sn_ctx c),
-       'field.snags has no due_date column, so item 2''s trigger computes A(b)''s +5 wd on the site calendar'
+       (SELECT c.ins_due = c.default_due FROM sn_ctx c),
+       'field.snags has no due_date column, so item 2''s trigger computes exactly A(b)''s +5 site working days from the SAST day (then the shutdown push) — the exact born date, not merely "after today"'
 UNION ALL
 -- Task 4 review carry-forward 2, revised by the Task 5 review (F2): the UPDATE
 -- arm's un-triage flag is "an ELIGIBLE source assignee DIFFERENT from what the
@@ -371,8 +433,8 @@ SELECT 'source_assignment_change_untriages_or_reassigns',
        'snags.assigned_to → a third admin on the snag page (eligible, different from the raiser the item held): the item leaves triage and carries that assignee'
 UNION ALL
 SELECT 'writeback_value_is_inert_on_reprojection',
-       (SELECT c.cv_after_status = 'triage' AND c.cv_after_assignee = c.admin2 FROM sn_ctx c),
-       'after section E wrote arm 2''s answer to snags.assigned_to, an unrelated edit (priority) must not un-triage the item: the source names exactly what the item holds'
+       (SELECT c.sp_after_status = 'open' AND c.sp_after_assignee = c.admin3 FROM sn_ctx c),
+       'after section E wrote the spine''s un-triage assignee to snags.assigned_to, an unrelated edit (priority) re-projects with the source naming exactly what the item holds: nothing moves — the round trip converges'
 UNION ALL
 SELECT 'resolved_is_answered',
        (SELECT c.res_status = 'answered' AND c.res_bic = projects.resolve_project_pm(c.proj) AND c.res_bic <> c.ctr FROM sn_ctx c),

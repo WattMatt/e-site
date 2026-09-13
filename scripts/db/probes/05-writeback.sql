@@ -30,9 +30,11 @@
 -- updated → unrelated source edit → spine assignee unchanged), triage write-back
 -- + its inertness on re-projection, a spine re-date reaching the source while a
 -- later SOURCE re-date does not move the spine, the snag arm (assignment only —
--- the snag MIRROR, section D.2, projects the item on the source INSERT and the
--- write-back fires on that projection; before D.2 existed this probe inserted
--- the item directly, which now collides on work_items_src_snag_uidx), and a
+-- the snag MIRROR, section D.2, projects the item on the source INSERT, born
+-- triage on its raiser, and the write-back SKIPS a triage snag; it writes on
+-- the spine's un-triage and on a reassign of the open item; before D.2 existed
+-- this probe inserted the item directly, which now collides on
+-- work_items_src_snag_uidx), and a
 -- write-amplification measurement
 -- (value_predicate_stops_write_amplification) read from
 -- pg_stat_xact_user_tables, which counts tuple updates so far in THIS
@@ -52,8 +54,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 21 rows. If the printed `assertions seen:` list is shorter than
--- twenty-one names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 22 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-two names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -83,7 +85,8 @@ DECLARE
   -- the wrapper's depth guard, observed as work_items tuple updates per spine statement
   v_wi_upd_before bigint; v_wi_upd_after bigint;
   -- the snag arm
-  v_snag uuid; v_snag_item uuid; v_snag_item_assignee uuid; v_snag_a1 uuid; v_snag_a2 uuid;
+  v_snag uuid; v_snag_item uuid; v_snag_item_assignee uuid; v_snag_item_status text;
+  v_snag_a1 uuid; v_snag_a2 uuid; v_snag_a3 uuid;
   v_snag_so uuid; v_snag_so_item uuid; v_snag_so_status text; v_snag_so_a_insert uuid; v_snag_so_a_reassign uuid;
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
@@ -281,22 +284,31 @@ BEGIN
 
   -- ── The SNAG arm. field.snags has no due_date column (00004:10-31), so
   -- assignment only. Section D.2's snags_mirror_work_item_ins projects the
-  -- item on this INSERT (born triage on the raiser — the owner here, eligible
+  -- item on this INSERT (born TRIAGE on the raiser — the owner here, eligible
   -- with no assigned_to), and this write-back fires on that projection's
-  -- INSERT. The item is READ back, never inserted here: a direct insert would
-  -- collide with the mirror's on work_items_src_snag_uidx (23505).
+  -- INSERT and SKIPS it (controller decision, Task 7 review: a triage snag's
+  -- raiser is the spine's default holder, not "assigned to fix"). The item is
+  -- READ back, never inserted here: a direct insert would collide with the
+  -- mirror's on work_items_src_snag_uidx (23505).
   INSERT INTO field.snags (project_id, organisation_id, title, raised_by)
   VALUES (v_proj, v_org, 'Probe snag', v_pm)
   RETURNING id INTO v_snag;
-  SELECT w.id, w.assignee_id INTO v_snag_item, v_snag_item_assignee
+  SELECT w.id, w.assignee_id, w.status INTO v_snag_item, v_snag_item_assignee, v_snag_item_status
     FROM projects.work_items w WHERE w.snag_id = v_snag AND w.origin = 'mirror';
   IF v_snag_item IS NULL THEN
     RAISE EXCEPTION 'fixture: the open snag projected no mirror item (section D.2)';
   END IF;
   SELECT s.assigned_to INTO v_snag_a1 FROM field.snags s WHERE s.id = v_snag;
 
-  UPDATE projects.work_items SET assignee_id = v_other WHERE id = v_snag_item;
+  -- The spine's un-triage (§03 §1.6: the triage owner's explicit assign is
+  -- status + assignee in one statement): the item is now OPEN, so the arm
+  -- writes.
+  UPDATE projects.work_items SET status = 'open', assignee_id = v_other WHERE id = v_snag_item;
   SELECT s.assigned_to INTO v_snag_a2 FROM field.snags s WHERE s.id = v_snag;
+
+  -- A plain reassign of the now-open item.
+  UPDATE projects.work_items SET assignee_id = v_third WHERE id = v_snag_item;
+  SELECT s.assigned_to INTO v_snag_a3 FROM field.snags s WHERE s.id = v_snag;
 
   -- A signed-off snag: D.2 projects it born CLOSED (signed_off maps to closed,
   -- stamps from signed_off_at/_by), so the write-back is skipped on the closed
@@ -329,7 +341,8 @@ BEGIN
     reopen_item_status text, reopen_source_assignee uuid,
     sc_item_status text, sc_due_before date, sc_due_after date,
     wi_upd_delta bigint,
-    snag_item_assignee uuid, snag_a1 uuid, snag_a2 uuid, snag_so_a_insert uuid, snag_so_a_reassign uuid)
+    snag_item_assignee uuid, snag_item_status text, snag_a1 uuid, snag_a2 uuid, snag_a3 uuid,
+    snag_so_a_insert uuid, snag_so_a_reassign uuid)
     ON COMMIT DROP;
   INSERT INTO wb_ctx VALUES (
     v_rfi, v_closed, v_rt, v_reopen, v_snag, v_snag_so,
@@ -344,7 +357,8 @@ BEGIN
     v_reopen_item_status, v_reopen_source_assignee,
     v_sc_item_status, v_sc_due_before, v_sc_due_after,
     v_wi_upd_after - v_wi_upd_before,
-    v_snag_item_assignee, v_snag_a1, v_snag_a2, v_snag_so_a_insert, v_snag_so_a_reassign);
+    v_snag_item_assignee, v_snag_item_status, v_snag_a1, v_snag_a2, v_snag_a3,
+    v_snag_so_a_insert, v_snag_so_a_reassign);
 END $probe$;
 
 SELECT 'holder_reaches_source' AS probe,
@@ -424,14 +438,18 @@ SELECT 'depth_guard_stops_reprojection_of_spine_writes',
        (SELECT c.wi_upd_delta = 1 FROM wb_ctx c),
        'a spine reassign + re-date is exactly 1 tuple update on projects.work_items (pg_stat_xact_user_tables): the write-back reaches rfis, rfis_mirror_work_item_upd fires, and the wrapper returns at depth 2 instead of re-projecting the spine''s own write back over itself'
 UNION ALL
--- The snag arm (assignment only).
+-- The snag arm (assignment only; triage items skipped — Task 7 review).
+SELECT 'snag_triage_item_leaves_source_unassigned',
+       (SELECT c.snag_item_status = 'triage' AND c.snag_item_assignee = c.pm AND c.snag_a1 IS NULL FROM wb_ctx c),
+       'section D.2''s INSERT fires this write-back and it SKIPS the triage item: the raiser holds it as the spine''s default holder, and field.snags.assigned_to ("assigned to fix") stays NULL until someone is assigned'
+UNION ALL
 SELECT 'snag_assignment_reaches_source',
-       (SELECT c.snag_a1 IS NOT NULL AND c.snag_a1 = c.snag_item_assignee FROM wb_ctx c),
-       'section D.2''s INSERT fires this write-back: field.snags.assigned_to = the item''s born assignee (the raiser under the snag rule — compared to the item read back, not to a fixture guess at the chain)'
+       (SELECT c.snag_a2 = c.other FROM wb_ctx c),
+       'the spine''s un-triage (status → open with an assignee, one statement) leaves triage, so field.snags.assigned_to = that assignee'
 UNION ALL
 SELECT 'snag_reassign_flows_to_source',
-       (SELECT c.snag_a2 = c.other FROM wb_ctx c),
-       'a spine reassign of a snag item writes field.snags.assigned_to'
+       (SELECT c.snag_a3 = c.third FROM wb_ctx c),
+       'a spine reassign of an OPEN snag item writes field.snags.assigned_to'
 UNION ALL
 SELECT 'snag_signed_off_source_untouched',
        (SELECT c.snag_so_a_insert IS NULL AND c.snag_so_a_reassign IS NULL FROM wb_ctx c),
