@@ -1082,3 +1082,136 @@ CREATE TRIGGER rfis_mirror_work_item_upd
      OR OLD.project_id      IS DISTINCT FROM NEW.project_id
      OR OLD.organisation_id IS DISTINCT FROM NEW.organisation_id)
   EXECUTE FUNCTION projects.mirror_rfi_work_item();
+
+-- ─── E. Assignment and due-date write-back ───────────────────────────────────
+-- Two sources only. inspections.inspections.assigned_to_id is deliberately NOT
+-- written back (§03 §1.2): the inspection engine's own assignment flow (00066)
+-- stays the system of record for that column, and a third write-back is a third
+-- loop to reason about. (The inspection mirror still READS that column forward —
+-- see Task 8. "System of record" is an argument for not writing back, not for
+-- not reading forward.)
+--
+-- ⚠ NO pg_trigger_depth() guard here, and that asymmetry is load-bearing (F2).
+-- Measured: with a uniform guard, an RFI raised with no assignee ends up with
+-- work_items.assignee_id = the resolved holder and rfis.assigned_to = NULL — the
+-- write-back silently buys nothing. Termination is the WRAPPER's guard, not this
+-- one; the value-difference predicates below only stop write amplification and a
+-- spurious rfis_updated_at bump (00002:100-102).
+--
+-- The two cycles, with pg_trigger_depth() at each hop (probe 05):
+--   source-originated  INSERT/UPDATE projects.rfis (a client statement, depth 0)
+--     → rfis_mirror_work_item_ins/_upd → mirror_rfi_work_item() @1 → project_rfi()
+--     → INSERT/UPDATE work_items: §7/§6/§5 BEFORE, §12 guard (exempt @2), then the
+--       AFTER pair in name order — append_work_item_event_trg (§11: events and
+--       watchers; fires on EVERY work_items write, this one included, and writes
+--       nothing that fires anything) and work_items_assignment_writeback_* @2
+--     → UPDATE rfis (assigned_to / due_date, only when they differ)
+--     → rfis_updated_at (BEFORE) + rfis_mirror_work_item_upd (UPDATE OF assigned_to,
+--       WHEN true because the value moved) → mirror_rfi_work_item() @3
+--     → pg_trigger_depth() > 1 → RETURN.  Terminated.
+--   spine-originated   UPDATE work_items SET assignee_id / due_date (client, depth 0)
+--     → §12 guard @1 (a person's authority is checked HERE), §11 @1, this trigger @1
+--     → UPDATE rfis → rfis_mirror_work_item_upd → mirror_rfi_work_item() @2
+--     → pg_trigger_depth() > 1 → RETURN.  Terminated: the spine's own write is
+--       never re-projected back over itself.
+-- Termination matrix, MEASURED on scratch copies of this file (Task 6 Step 7,
+-- probe 05, 21 rows, rfi arm; G = the wrapper's depth guard, V = the value
+-- predicate below, W = the WHEN on both _upd triggers):
+--   G0 V0 W0  →  ERROR 54001 stack depth limit exceeded (the loop is real);
+--   G0 V0 W1  →  19/21 — the plan's own Step 7 mutation no longer overflows:
+--                F7's WHEN makes value-equality a FIRING condition, so the
+--                cycle dies on the first hop that changes nothing;
+--   G1 V0 W0  →  20/21, G1 V0 W1 → 20/21 — the guard terminates it; the
+--                red row is value_predicate_stops_write_amplification (2 rfis
+--                tuple updates for 1 statement — rfis_updated_at bumped for
+--                nothing);
+--   G0 V1 W0  →  20/21, G0 V1 W1 → 20/21 — equality terminates it; the red
+--                row is depth_guard_stops_reprojection_of_spine_writes (2
+--                work_items tuple updates for 1 spine statement: the spine's
+--                own reassign is re-projected back over itself at depth 2,
+--                §11 re-entered, last_activity_at re-stamped);
+--   G1 V1 W0  →  21/21 — nothing here sees the WHENs; their evidence is probe
+--                04 (same_value_write_does_not_reproject,
+--                source_redate_does_not_fire_a_projection).
+-- So ANY ONE of the three ends the cycle and all three must be gone for it to
+-- run away. The depth guard is kept as THE termination guard because it is
+-- the only one that does not depend on the values converging — a future arm
+-- that writes something the projection then rewrites differently (a
+-- normalised title, a floored date) would loop under V and W alone — and it
+-- is the one §03 §1.2 mandates and the mirror-triggers contract test (a later
+-- task in this plan) pins. V is what stops write amplification; W is what
+-- stops firing at all.
+--
+-- triage items ARE written back (the plan's rule (a): the RFI page renders the
+-- resolved holder for the first time). The next unrelated source edit cannot
+-- un-triage the item on the strength of that value: D.1's un-triage flag is
+-- "eligible AND distinct from what the item holds", and after this write the
+-- source names exactly what the item holds (probe 05
+-- writeback_value_is_inert_on_reprojection).
+--
+-- Improvement 11 is spine → source only: a later edit of rfis.due_date is not in
+-- D.1's UPDATE OF list and moves nothing on the spine (probe 05
+-- source_redate_does_not_move_the_spine); on projection a past or same-day
+-- source date is floored by section C and the spine's computed date is what
+-- comes back to rfis.due_date (due_date_reaches_source_on_insert).
+--
+-- Grants: none here — section G (Task 13) carries the REVOKE ALL … FROM PUBLIC /
+-- REVOKE EXECUTE … FROM anon, and the @verify block already declares the
+-- grant_absent: line. A trigger function gets NO GRANT (F5).
+CREATE OR REPLACE FUNCTION projects.work_item_assignment_writeback()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public', 'field'
+SET row_security TO 'off'
+AS $fn$
+BEGIN
+  IF NEW.origin <> 'mirror' THEN RETURN NULL; END IF;   -- splits own their own lifecycle
+
+  -- Improvement 9: never invent an assignee or a future deadline on a record
+  -- that is already finished. 6 of 15 live RFIs are closed.
+  IF NEW.status IN ('closed','void') THEN RETURN NULL; END IF;
+
+  IF NEW.rfi_id IS NOT NULL THEN
+    UPDATE projects.rfis
+       SET assigned_to = NEW.assignee_id,
+           due_date    = NEW.due_date
+     WHERE id = NEW.rfi_id
+       AND status NOT IN ('closed')
+       AND (assigned_to IS DISTINCT FROM NEW.assignee_id
+         OR due_date    IS DISTINCT FROM NEW.due_date);
+  ELSIF NEW.snag_id IS NOT NULL THEN
+    -- field.snags has no due_date column (00004:10-32), so assignment only.
+    UPDATE field.snags
+       SET assigned_to = NEW.assignee_id
+     WHERE id = NEW.snag_id
+       AND status NOT IN ('signed_off','closed')
+       AND assigned_to IS DISTINCT FROM NEW.assignee_id;
+  END IF;
+
+  RETURN NULL;
+END $fn$;
+
+COMMENT ON FUNCTION projects.work_item_assignment_writeback() IS
+  'Writes work_items.assignee_id and due_date back to projects.rfis, and assignee_id to '
+  'field.snags (which has no due_date column). Skips closed and void records so a historical '
+  'row never acquires an assignee it never had. '
+  'Known divergence: createRfiAction reads rfi.assigned_to from the INSERT''s RETURNING clause '
+  '(rfi.actions.ts:104), which is computed before this AFTER trigger runs — so an RFI raised '
+  'with no assignee still emails "unassigned" while the row already names the resolved holder. '
+  'OPEN; NOT closed by item 2, which shipped five server actions and no module UI '
+  '(createRfiAction is untouched). Candidates: re-read the row after insert in createRfiAction, '
+  'or make assignee required on the create form (§03 §1.10) — neither is in this migration.';
+
+-- F7 again: an INSERT arm cannot carry a WHEN referencing OLD.
+DROP TRIGGER IF EXISTS work_items_assignment_writeback_ins ON projects.work_items;
+CREATE TRIGGER work_items_assignment_writeback_ins
+  AFTER INSERT ON projects.work_items
+  FOR EACH ROW EXECUTE FUNCTION projects.work_item_assignment_writeback();
+
+DROP TRIGGER IF EXISTS work_items_assignment_writeback_upd ON projects.work_items;
+CREATE TRIGGER work_items_assignment_writeback_upd
+  AFTER UPDATE OF assignee_id, due_date ON projects.work_items
+  FOR EACH ROW
+  WHEN (OLD.assignee_id IS DISTINCT FROM NEW.assignee_id
+     OR OLD.due_date    IS DISTINCT FROM NEW.due_date)
+  EXECUTE FUNCTION projects.work_item_assignment_writeback();
