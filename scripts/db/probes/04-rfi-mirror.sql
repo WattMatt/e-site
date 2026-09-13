@@ -34,8 +34,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 22 rows. If the printed `assertions seen:` list is shorter than
--- twenty-two names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 23 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-three names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -62,6 +62,7 @@ DECLARE
   v_after_same record;
   v_cv_item    record;
   v_redate     record;
+  v_closed_people record;   -- the born-closed item's people after a post-close source reassignment (Task 8 review S1)
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -252,6 +253,15 @@ BEGIN
   SELECT w.due_date, w.last_activity_at INTO v_redate
     FROM projects.work_items w WHERE w.rfi_id = v_closed_rfi AND w.origin = 'mirror';
 
+  -- A source reassignment AFTER the close (the RFI page's assign control on
+  -- a closed RFI — nothing stops it): the closed item's people are part of
+  -- the record and must not follow (Task 8 review S1). v_admin2 is eligible
+  -- and different from what the item holds (arm 1b's answer), so without the
+  -- rule the forward read would move assignee_id here.
+  UPDATE projects.rfis SET assigned_to = v_admin2 WHERE id = v_closed_rfi;
+  SELECT w.status, w.assignee_id, w.gatekeeper_id INTO v_closed_people
+    FROM projects.work_items w WHERE w.rfi_id = v_closed_rfi AND w.origin = 'mirror';
+
   -- F2 (c): BORN with an ineligible explicit assignee. Nobody eligible was
   -- named, so §03 §1.6 says triage, on the chain's answer (arm 1b here).
   INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
@@ -274,7 +284,8 @@ BEGIN
     cv_assign_status text, cv_assign_assignee uuid,
     same_status text, same_assignee uuid,
     closed_due_before date, redate_due date, redate_last_activity timestamptz,
-    cv_status text, cv_assignee uuid)
+    cv_status text, cv_assignee uuid,
+    closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid)
     ON COMMIT DROP;
   INSERT INTO rfi_ctx VALUES (
     v_rfi, v_closed_rfi, v_proj, v_pm, v_other,
@@ -290,7 +301,8 @@ BEGIN
     v_after_cv.status, v_after_cv.assignee_id,
     v_after_same.status, v_after_same.assignee_id,
     v_closed_item.due_date, v_redate.due_date, v_redate.last_activity_at,
-    v_cv_item.status, v_cv_item.assignee_id);
+    v_cv_item.status, v_cv_item.assignee_id,
+    v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id);
 END $probe$;
 
 SELECT 'item_created' AS probe,
@@ -409,4 +421,10 @@ UNION ALL
 SELECT 'source_redate_does_not_fire_a_projection',
        (SELECT c.redate_due IS NOT DISTINCT FROM c.closed_due_before
            AND c.redate_last_activity = c.hist_closed FROM rfi_ctx c),
-       'rfis.due_date moved +40: the spine owns the due date once the item exists, so the re-date fires nothing — the item''s due_date and its historical last_activity_at are untouched (with due_date watched, a no-op projection stamped now() over the history)';
+       'rfis.due_date moved +40: the spine owns the due date once the item exists, so the re-date fires nothing — the item''s due_date and its historical last_activity_at are untouched (with due_date watched, a no-op projection stamped now() over the history)'
+UNION ALL
+-- Task 8 review S1: a closed item's people are part of the record.
+SELECT 'closed_item_people_are_not_reprojected',
+       (SELECT c.closed_people_status = 'closed' AND c.closed_people_assignee = c.chain_pm
+           AND c.closed_people_assignee <> c.admin2 AND c.closed_people_gate = c.other FROM rfi_ctx c),
+       'rfis.assigned_to → a second admin AFTER the close: the closed record keeps the people it was closed with (the guard''s clause (b) sentence, which the depth-2 path never reaches, so the projection holds the line itself) — without the rule the forward read would move assignee_id';

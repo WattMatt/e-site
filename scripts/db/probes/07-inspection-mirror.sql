@@ -8,8 +8,15 @@
 -- inspections module stays the system of record for assigned_to_id and
 -- verifier_id, and this probe asserts the source is never written
 -- (no_writeback_to_source) — but both columns are READ FORWARD on every
--- projection (forward_reassignment_moves_the_ball,
--- verifier_change_moves_the_gatekeeper).
+-- projection of a live item (forward_reassignment_moves_the_ball,
+-- verifier_change_moves_the_gatekeeper), and so is scheduled_at (Task 8
+-- review I1: source_reschedule_moves_the_spine_due). The honest consequence
+-- is pinned too: a SPINE-side reassignment or gatekeeper correction on an
+-- inspection item is transient — the next watched source write of any kind
+-- reverts it (spine_reassignment_is_reverted_by_the_next_source_write,
+-- spine_gatekeeper_correction_is_reverted_by_the_next_source_write). A
+-- CLOSED item's people and due date are part of the record and never
+-- re-derived (closed_item_people_are_not_reprojected, Task 8 review S1).
 --
 -- Run (00198 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/07-inspection-mirror.sql \
@@ -65,8 +72,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 29 rows. If the printed `assertions seen:` list is shorter than
--- twenty-nine names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 33 rows. If the printed `assertions seen:` list is shorter than
+-- thirty-three names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -116,7 +123,13 @@ DECLARE
   v_revive    record;
   v_bornrec   record;
   v_same_last_activity timestamptz;
-  v_resched   record;
+  -- Task 8 review: a re-schedule 40 days out, band-guarded on its SAST day.
+  v_resched_at    timestamptz := now() + interval '40 days';
+  v_closed_people record;   -- the certified item after a post-close reassign + verifier change + reschedule (S1)
+  v_live_resched  record;   -- the open item after a future reschedule (I1)
+  v_live_past     record;   -- …then after a reschedule into the past
+  v_rt_before     record;   -- the open item after the SPINE's reassign + gatekeeper correction
+  v_rt_after      record;   -- …after an unrelated watched source write (the honest rows)
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -242,6 +255,13 @@ BEGIN
      OR (v_sast_sched AT TIME ZONE 'UTC')::date <> v_utc_day THEN
     RAISE EXCEPTION 'fixture: the SAST fixture % does not straddle midnight (SAST day %, UTC day %)',
       v_sast_sched, (v_sast_sched AT TIME ZONE 'Africa/Johannesburg')::date, (v_sast_sched AT TIME ZONE 'UTC')::date;
+  END IF;
+  -- The reschedule day must sit outside the band too, or the push moves it
+  -- and source_reschedule_moves_the_spine_due compares against the wrong day.
+  IF projects.push_past_builders_shutdown((v_resched_at AT TIME ZONE 'Africa/Johannesburg')::date, v_proj)
+     <> (v_resched_at AT TIME ZONE 'Africa/Johannesburg')::date THEN
+    RAISE EXCEPTION 'fixture: the reschedule day % falls in the builders'' shutdown band; pick another offset',
+      (v_resched_at AT TIME ZONE 'Africa/Johannesburg')::date;
   END IF;
 
   -- The registry's default for 'inspection' is 3 site working days (00196:242);
@@ -407,13 +427,40 @@ BEGIN
   SELECT w.last_activity_at INTO v_same_last_activity
     FROM projects.work_items w WHERE w.inspection_id = v_born AND w.origin = 'mirror';
 
-  -- A source RE-SCHEDULE. scheduled_at is read on INSERT only — the spine owns
-  -- the due date once the item exists (improvement 11; there is no due-date
-  -- write-back for inspections at all) — so it must not fire a projection:
-  -- neither the item's due_date nor its historical last_activity_at moves.
-  UPDATE inspections.inspections SET scheduled_at = now() + interval '40 days' WHERE id = v_born;
-  SELECT w.due_date, w.last_activity_at INTO v_resched
+  -- Task 8 review S1: a CLOSED item's people and due date are part of the
+  -- record. Reassign, change the verifier AND reschedule the certified source
+  -- in one statement — every one is watched and every name is eligible, so
+  -- without the rule the forward read would move all three.
+  UPDATE inspections.inspections
+     SET assigned_to_id = v_third, verifier_id = v_admin2, scheduled_at = v_resched_at
+   WHERE id = v_born;
+  SELECT w.status, w.assignee_id, w.gatekeeper_id, w.due_date INTO v_closed_people
     FROM projects.work_items w WHERE w.inspection_id = v_born AND w.origin = 'mirror';
+
+  -- Task 8 review I1: a source RE-SCHEDULE on a LIVE item reaches the spine.
+  -- There is no write-back in either direction for inspections, so the
+  -- module's date must be read forward or the spine sits on the birth date
+  -- forever. Future → the SAST day (pushed past the band — identity here by
+  -- fixture); past → the floor hands NULL and the item keeps its current due.
+  UPDATE inspections.inspections SET scheduled_at = v_resched_at WHERE id = v_nowhere;
+  SELECT w.due_date, w.status INTO v_live_resched
+    FROM projects.work_items w WHERE w.inspection_id = v_nowhere AND w.origin = 'mirror';
+  UPDATE inspections.inspections SET scheduled_at = now() - interval '3 days' WHERE id = v_nowhere;
+  SELECT w.due_date INTO v_live_past
+    FROM projects.work_items w WHERE w.inspection_id = v_nowhere AND w.origin = 'mirror';
+
+  -- The honest rows (Task 8 review, controller decision): a SPINE-side
+  -- reassignment and gatekeeper correction on a live inspection item are
+  -- TRANSIENT. Service path here (the guard is exempt as postgres); then an
+  -- unrelated watched source write (the title) re-projects, and the forward
+  -- read puts both people back to the source's columns.
+  UPDATE projects.work_items SET assignee_id = v_admin2, gatekeeper_id = v_admin2
+   WHERE inspection_id = v_sast AND origin = 'mirror';
+  SELECT w.assignee_id, w.gatekeeper_id INTO v_rt_before
+    FROM projects.work_items w WHERE w.inspection_id = v_sast AND w.origin = 'mirror';
+  UPDATE inspections.inspections SET target_label = 'Late-night board (renamed)' WHERE id = v_sast;
+  SELECT w.assignee_id, w.gatekeeper_id INTO v_rt_after
+    FROM projects.work_items w WHERE w.inspection_id = v_sast AND w.origin = 'mirror';
 
   CREATE TEMP TABLE in_ctx(
     insp uuid, nowhere uuid, past uuid, sast uuid, arm2 uuid, cvi uuid, aband uuid,
@@ -437,7 +484,10 @@ BEGIN
     born_closed_by uuid, born_due date,
     hist_created timestamptz, hist_certified timestamptz,
     same_last_activity timestamptz,
-    resched_due date, resched_last_activity timestamptz)
+    resched_day date,
+    closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid, closed_people_due date,
+    live_resched_due date, live_resched_status text, live_past_due date,
+    rt_before_assignee uuid, rt_before_gate uuid, rt_after_assignee uuid, rt_after_gate uuid)
     ON COMMIT DROP;
   INSERT INTO in_ctx VALUES (
     v_insp, v_nowhere, v_past, v_sast, v_arm2, v_cvi, v_aband,
@@ -461,7 +511,10 @@ BEGIN
     v_bornrec.closed_by, v_bornrec.due_date,
     v_hist_created, v_hist_certified,
     v_same_last_activity,
-    v_resched.due_date, v_resched.last_activity_at);
+    (v_resched_at AT TIME ZONE 'Africa/Johannesburg')::date,
+    v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id, v_closed_people.due_date,
+    v_live_resched.due_date, v_live_resched.status, v_live_past.due_date,
+    v_rt_before.assignee_id, v_rt_before.gatekeeper_id, v_rt_after.assignee_id, v_rt_after.gatekeeper_id);
 END $probe$;
 
 SELECT 'insp_item_created' AS probe,
@@ -602,8 +655,28 @@ SELECT 'same_value_write_does_not_reproject',
        (SELECT c.same_last_activity = c.hist_certified FROM in_ctx c),
        'the _upd trigger''s WHEN clause: a full-row save that changes nothing it watches must not fire the projection (it would stamp last_activity_at = now() over the historical value)'
 UNION ALL
--- Task 5 review F1, applied to scheduled_at: read on INSERT only.
-SELECT 'source_reschedule_does_not_fire_a_projection',
-       (SELECT c.resched_due IS NOT DISTINCT FROM c.born_due
-           AND c.resched_last_activity = c.hist_certified FROM in_ctx c),
-       'scheduled_at moved +40 days: the spine owns the due date once the item exists and there is no due-date write-back for inspections, so the re-schedule fires nothing — the item''s due_date and its historical last_activity_at are untouched';
+-- Task 8 review I1: scheduled_at is read forward on a live item.
+SELECT 'source_reschedule_moves_the_spine_due',
+       (SELECT c.live_resched_status = 'open' AND c.live_resched_due = c.resched_day FROM in_ctx c),
+       'scheduled_at moved +40 days on an OPEN item: no write-back exists in either direction for inspections, so the module''s date is read forward — due_date = the SAST day of the new scheduled_at (pushed past the band; identity by fixture). Under 87acf65 the item stayed on its birth date forever'
+UNION ALL
+SELECT 'reschedule_to_the_past_keeps_the_current_due',
+       (SELECT c.live_past_due = c.live_resched_due FROM in_ctx c),
+       'scheduled_at moved into the past: the floor hands NULL and the UPDATE arm keeps what the item holds — an item is never made overdue by a re-projection (improvement 6 on the UPDATE arm)'
+UNION ALL
+-- Task 8 review S1: a closed item's people and due date are part of the record.
+SELECT 'closed_item_people_are_not_reprojected',
+       (SELECT c.closed_people_status = 'closed' AND c.closed_people_assignee = c.pm
+           AND c.closed_people_gate = c.verifier AND c.closed_people_due = c.born_due
+           AND c.closed_people_assignee <> c.third AND c.closed_people_gate <> c.admin2
+           AND c.closed_people_due <> c.resched_day FROM in_ctx c),
+       'assigned_to_id, verifier_id AND scheduled_at all changed on a CERTIFIED source: the closed record keeps the people it was closed with and its date — the guard''s clause (b) sentence, which the depth-2 path never reaches, so the projection holds the line itself'
+UNION ALL
+-- The honest rows (Task 8 review, controller decision): TRUE = transient.
+SELECT 'spine_reassignment_is_reverted_by_the_next_source_write',
+       (SELECT c.rt_before_assignee = c.admin2 AND c.rt_after_assignee = c.pm AND c.rt_after_assignee <> c.admin2 FROM in_ctx c),
+       'TRUE = transient, pinned honestly: a spine-side reassignment of an inspection item lasts until the next watched write of ANY kind on the source (a title edit here) — the forward read runs on every projection and no write-back keeps the source in step; the module is the durable control (Task 18: the spine''s reassign action refuses item_type = inspection)'
+UNION ALL
+SELECT 'spine_gatekeeper_correction_is_reverted_by_the_next_source_write',
+       (SELECT c.rt_before_gate = c.admin2 AND c.rt_after_gate = c.verifier AND c.rt_after_gate <> c.admin2 FROM in_ctx c),
+       'TRUE = transient, pinned honestly: the verifier is read forward on every projection of a live item, so a spine-side gatekeeper correction is undone by the next watched source write; the inspection page''s verifier is the durable control';

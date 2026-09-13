@@ -56,8 +56,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 21 rows. If the printed `assertions seen:` list is shorter than
--- twenty-one names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 22 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-two names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -94,6 +94,7 @@ DECLARE
   v_sof      record;
   v_born     record;
   v_same_last_activity timestamptz;
+  v_closed_people record;   -- the signed-off item's people after a post-sign-off source reassignment (Task 8 review S1)
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -297,6 +298,15 @@ BEGIN
   SELECT w.status, w.ball_in_court_id, w.closed_at, w.closed_by INTO v_sof
     FROM projects.work_items w WHERE w.snag_id = v_snag;
 
+  -- A source reassignment AFTER the sign-off (the snag page's assign control
+  -- on a signed-off snag): the closed item's people are part of the record
+  -- and must not follow (Task 8 review S1). v_admin2 is eligible and
+  -- different from what the item holds (admin3), so without the rule the
+  -- forward read would move assignee_id here.
+  UPDATE field.snags SET assigned_to = v_admin2 WHERE id = v_snag;
+  SELECT w.status, w.assignee_id, w.gatekeeper_id INTO v_closed_people
+    FROM projects.work_items w WHERE w.snag_id = v_snag AND w.origin = 'mirror';
+
   -- A BORN-SIGNED-OFF source with historical stamps — the backfill shape (#4;
   -- none live today, 0 of 6 are signed off). No guard runs on INSERT and §5
   -- keeps a supplied opened_at on the service path, so what the projection
@@ -338,7 +348,8 @@ BEGIN
     sof_status text, sof_bic uuid, sof_closed timestamptz, sof_closed_by uuid,
     born_status text, born_opened_at timestamptz, born_closed_at timestamptz, born_closed_by uuid,
     hist_created timestamptz, hist_signed timestamptz,
-    same_last_activity timestamptz)
+    same_last_activity timestamptz,
+    closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid)
     ON COMMIT DROP;
   INSERT INTO sn_ctx VALUES (
     v_snag, v_nowhere, v_cv_snag, v_hidden, v_born_so, v_proj,
@@ -356,7 +367,8 @@ BEGIN
     v_sof.status, v_sof.ball_in_court_id, v_sof.closed_at, v_sof.closed_by,
     v_born.status, v_born.opened_at, v_born.closed_at, v_born.closed_by,
     v_hist_created, v_hist_signed,
-    v_same_last_activity);
+    v_same_last_activity,
+    v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id);
 END $probe$;
 
 SELECT 'snag_item_created' AS probe,
@@ -465,4 +477,10 @@ SELECT 'same_value_write_does_not_reproject',
 UNION ALL
 SELECT 'closed_clears_bic',
        (SELECT c.sof_bic IS NULL FROM sn_ctx c),
-       'A(a): the generated column is NULL on closed, so the item leaves every inbox';
+       'A(a): the generated column is NULL on closed, so the item leaves every inbox'
+UNION ALL
+-- Task 8 review S1: a closed item's people are part of the record.
+SELECT 'closed_item_people_are_not_reprojected',
+       (SELECT c.closed_people_status = 'closed' AND c.closed_people_assignee = c.admin3
+           AND c.closed_people_assignee <> c.admin2 AND c.closed_people_gate = c.chain_pm FROM sn_ctx c),
+       'snags.assigned_to → a second admin AFTER the sign-off: the closed record keeps the people it was closed with (the guard''s clause (b) sentence, which the depth-2 path never reaches, so the projection holds the line itself) — without the rule the forward read would move assignee_id';
