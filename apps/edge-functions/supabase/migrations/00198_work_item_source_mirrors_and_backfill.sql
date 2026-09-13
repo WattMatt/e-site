@@ -187,3 +187,133 @@ BEGIN
     RAISE EXCEPTION 'public.product_events.event does not admit ''backfill_completed'' (F11)';
   END IF;
 END $preflight$;
+
+-- ─── B. The mirror's resolver ────────────────────────────────────────────────
+-- All three are SECURITY DEFINER with row_security off because they read
+-- membership tables the calling contractor cannot see, and none of them uses
+-- current_user: inside SECURITY DEFINER it is the function OWNER, which is what
+-- made the first site-form transition trigger silently inert (00179:341-346,
+-- function at :347). They take no caller identity at all — they answer
+-- "who owns this project", not "who is asking".
+--
+-- NOT here, deliberately: projects.resolve_project_pm (00195) and
+-- projects.resolve_work_item_assignee (00196) are item 2's and are READ, never
+-- redefined. The second carries a caller-access guard (00196:861-863) that
+-- returns NULL inside a source writer's session for an org member with no
+-- project_members row — and projects.rfis' write policies are org-wide
+-- (00027:44-50), so the RFI insert would abort on assignee_id NOT NULL. The
+-- mirror therefore has its own chain below, with no caller guard: it is only
+-- ever called from a trigger or the backfill, never by a client.
+--
+-- Grants: none. The REVOKE ALL … FROM PUBLIC / REVOKE EXECUTE … FROM anon for
+-- these three functions land in section G with every other revoke in this
+-- file, in one place (Task 13); the @verify block above already carries their
+-- grant_absent: lines. Nothing is GRANTed to authenticated: unlike 00196's
+-- resolve_work_item_assignee these are never called by a client.
+
+-- One place, and only one place, decides whether a person may hold an item.
+CREATE OR REPLACE FUNCTION projects.work_item_person_eligible(
+    p_project_id uuid, p_user_id uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+  SELECT p_user_id IS NOT NULL
+     AND EXISTS (SELECT 1 FROM public.profiles pr WHERE pr.id = p_user_id)
+     -- §03 §1.9 defers the client viewer's write set to Q3. Until then an item
+     -- that lands on one can never be cleared: 00161 blocks their writes and
+     -- work_items_bic_present keeps the row pointing at them. Delete this one
+     -- clause in Q3; it is one line, and stranded items are a data migration.
+     AND COALESCE(public.user_effective_project_role(p_project_id, p_user_id), 'none')
+           NOT IN ('none', 'client_viewer')
+$fn$;
+
+-- The mirror's chain. Same shape as 00196's resolve_work_item_assignee, three
+-- differences, all deliberate: (1) NO caller-access guard — this is called
+-- from triggers and the backfill only, never by a client, and inside a source
+-- writer's session the guard would return NULL for an org member with no
+-- project_members row; (2) every candidate goes through
+-- work_item_person_eligible, so client_viewer is excluded (improvement 7 —
+-- item 2's picker resolver admits them, by decision, 00196:911-913);
+-- (3) step 1b, default_rfi_assignee_id (§12 §(d) line 133, 00101:29).
+-- The PM step and the created_by terminus are 00195's resolve_project_pm,
+-- read as-is; when it returns NULL (an orphaned project) this raises the
+-- SAME sentence 00196:901 raises, so a PM sees one message whichever path
+-- produced it.
+CREATE OR REPLACE FUNCTION projects.resolve_mirror_assignee(
+    p_project_id uuid, p_item_type text, p_explicit uuid)
+RETURNS uuid
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE v_candidate uuid;
+BEGIN
+  -- 1. explicit
+  IF projects.work_item_person_eligible(p_project_id, p_explicit) THEN
+    RETURN p_explicit;
+  END IF;
+
+  -- 1b. RFI only: the per-project default (§12 §(d) line 133,
+  --     00101_project_settings.sql:29). rfiService.create applies this at the
+  --     application layer (rfi.service.ts:75-83) and no project sets it today,
+  --     but the backfill is exactly the path where that never ran.
+  IF p_item_type = 'rfi' THEN
+    SELECT s.default_rfi_assignee_id INTO v_candidate
+      FROM projects.project_settings s WHERE s.project_id = p_project_id;
+    IF projects.work_item_person_eligible(p_project_id, v_candidate) THEN
+      RETURN v_candidate;
+    END IF;
+  END IF;
+
+  -- 2. per-type work_item_defaults.<type>.triage_owner_id. No FK behind the
+  --    jsonb (§03 §1.5), so a stale id is discarded rather than raising.
+  SELECT NULLIF(s.work_item_defaults #>> ARRAY[p_item_type, 'triage_owner_id'], '')::uuid
+    INTO v_candidate
+    FROM projects.project_settings s WHERE s.project_id = p_project_id;
+  IF projects.work_item_person_eligible(p_project_id, v_candidate) THEN
+    RETURN v_candidate;
+  END IF;
+
+  -- 3. project triage_owner_id (nullable by decision, §03 §1.6)
+  SELECT s.triage_owner_id INTO v_candidate
+    FROM projects.project_settings s WHERE s.project_id = p_project_id;
+  IF projects.work_item_person_eligible(p_project_id, v_candidate) THEN
+    RETURN v_candidate;
+  END IF;
+
+  -- 4 + 5. 00195's PM chain, validated end to end, terminating at a validated
+  --        created_by. NULL only for an orphaned project (00195:118-129).
+  v_candidate := projects.resolve_project_pm(p_project_id);
+  IF v_candidate IS NOT NULL THEN
+    RETURN v_candidate;
+  END IF;
+
+  -- Item 2's sentence (00196:901), verbatim, so the PM reading a server
+  -- action's error.message sees one message whichever resolver produced it.
+  RAISE EXCEPTION 'This project has nobody who can own work — add a project manager to it first.'
+    USING ERRCODE = 'raise_exception';
+END $fn$;
+
+CREATE OR REPLACE FUNCTION projects.resolve_work_item_gatekeeper(
+    p_project_id uuid, p_explicit uuid)
+RETURNS uuid
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+BEGIN
+  -- A(b), as amended in this PR: the gatekeeper is the project PM for snag,
+  -- qc_defect, diary_action and form_action; verifier_id for inspection; and
+  -- THE RAISER for rfi (improvement 4 — an RFI is closed by the person who
+  -- asked, once they confirm the answer is usable; the registry row says
+  -- 'creator', section C'). The caller supplies the exception as p_explicit;
+  -- everyone else passes NULL. Delegates to 00195's resolve_project_pm; an
+  -- orphaned project returns NULL here and the mirror's assignee call raises
+  -- first, so no second sentence is needed.
+  IF projects.work_item_person_eligible(p_project_id, p_explicit) THEN
+    RETURN p_explicit;
+  END IF;
+  RETURN projects.resolve_project_pm(p_project_id);
+END $fn$;
