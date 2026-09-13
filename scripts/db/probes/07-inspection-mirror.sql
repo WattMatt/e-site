@@ -126,6 +126,7 @@ DECLARE
   -- Task 8 review: a re-schedule 40 days out, band-guarded on its SAST day.
   v_resched_at    timestamptz := now() + interval '40 days';
   v_closed_people record;   -- the certified item after a post-close reassign + verifier change + reschedule (S1)
+  v_spine_due     date;     -- a SPINE-side due edit on the open item, before the reschedule (Task 9 review S2)
   v_live_resched  record;   -- the open item after a future reschedule (I1)
   v_live_past     record;   -- …then after a reschedule into the past
   v_rt_before     record;   -- the open item after the SPINE's reassign + gatekeeper correction
@@ -437,6 +438,17 @@ BEGIN
   SELECT w.status, w.assignee_id, w.gatekeeper_id, w.due_date INTO v_closed_people
     FROM projects.work_items w WHERE w.inspection_id = v_born AND w.origin = 'mirror';
 
+  -- Task 9 review S2: a SPINE-side due edit first (service path — the guard
+  -- is exempt as postgres; a PM's edit through the action is the same
+  -- UPDATE), so the reschedule below measurably REVERTS it rather than
+  -- merely setting a date. Ten days short of the reschedule day: distinct
+  -- from it and from the born default.
+  UPDATE projects.work_items
+     SET due_date = (v_resched_at AT TIME ZONE 'Africa/Johannesburg')::date - 10
+   WHERE inspection_id = v_nowhere AND origin = 'mirror';
+  SELECT w.due_date INTO v_spine_due
+    FROM projects.work_items w WHERE w.inspection_id = v_nowhere AND w.origin = 'mirror';
+
   -- Task 8 review I1: a source RE-SCHEDULE on a LIVE item reaches the spine.
   -- There is no write-back in either direction for inspections, so the
   -- module's date must be read forward or the spine sits on the birth date
@@ -486,6 +498,7 @@ BEGIN
     same_last_activity timestamptz,
     resched_day date,
     closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid, closed_people_due date,
+    spine_due date,
     live_resched_due date, live_resched_status text, live_past_due date,
     rt_before_assignee uuid, rt_before_gate uuid, rt_after_assignee uuid, rt_after_gate uuid)
     ON COMMIT DROP;
@@ -513,6 +526,7 @@ BEGIN
     v_same_last_activity,
     (v_resched_at AT TIME ZONE 'Africa/Johannesburg')::date,
     v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id, v_closed_people.due_date,
+    v_spine_due,
     v_live_resched.due_date, v_live_resched.status, v_live_past.due_date,
     v_rt_before.assignee_id, v_rt_before.gatekeeper_id, v_rt_after.assignee_id, v_rt_after.gatekeeper_id);
 END $probe$;
@@ -659,6 +673,11 @@ UNION ALL
 SELECT 'source_reschedule_moves_the_spine_due',
        (SELECT c.live_resched_status = 'open' AND c.live_resched_due = c.resched_day FROM in_ctx c),
        'scheduled_at moved +40 days on an OPEN item: no write-back exists in either direction for inspections, so the module''s date is read forward — due_date = the SAST day of the new scheduled_at (pushed past the band; identity by fixture). Under 87acf65 the item stayed on its birth date forever'
+UNION ALL
+SELECT 'spine_due_edit_is_reverted_by_a_reschedule',
+       (SELECT c.spine_due = c.resched_day - 10 AND c.spine_due <> c.resched_day
+           AND c.live_resched_due = c.resched_day FROM in_ctx c),
+       'TRUE = transient, pinned honestly (Task 9 review S2): a spine-side due edit on a live inspection item holds until the module reschedules, and the reschedule''s SAST day replaces it — inspection due dates are module-owned while scheduled_at is in the future (Task 18: the Inbox''s due control refuses item_type = inspection)'
 UNION ALL
 SELECT 'reschedule_to_the_past_keeps_the_current_due',
        (SELECT c.live_past_due = c.live_resched_due FROM in_ctx c),

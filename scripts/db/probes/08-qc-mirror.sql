@@ -18,7 +18,8 @@
 -- Run (00198 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/08-qc-mirror.sql \
 --     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
--- Before section D.4 existed this reported 2/27: draft_report_projects_nothing
+-- Before section D.4 existed this reported 2/27 (27 rows then; the Task 9
+-- and Task 10 reviews added the rows past that count): draft_report_projects_nothing
 -- and issue_report_ignores_the_rest pass VACUOUSLY (nothing projects
 -- anything, so "no item" is trivially true — the fixture-quality question in
 -- miniature; the scope-predicate mutation below is what makes the first one
@@ -73,9 +74,18 @@ DECLARE
   v_pass  uuid;   -- pass on the draft report: never an obligation
   v_late  uuid;   -- fail/major INSERTed on the ISSUED report: the second path's insert half
   v_bf    uuid;   -- fail/critical on the closed report 2: projected by a DIRECT call, as the backfill would
+  v_ans   uuid;   -- fail/major, moved to 'answered' ON THE SPINE: survives an entry edit and a report rename (Task 9 review)
+  v_sc    uuid;   -- fail/major, CLOSED on the spine while the entry still reads fail: survives an unrelated edit
+  v_cl    uuid;   -- fail/major → pass (closed) on the re-issued report: the closed-record rows (Task 10 review rule 1, Task 9 review I3)
+  v_livecv uuid;  -- a client-viewer-authored LIVE fail on the re-issued report: moved to a project whose arm 2 differs (I1)
+  v_draftfail uuid; -- fail INSERTed during the withdrawn (draft) window: projects at re-issue, not before
+  v_admin3 uuid;  -- arm 2 on the THIRD project: distinct from admin2 and the owner, so a live move must re-run the chain to be seen
+  v_proj3 uuid;   -- the live-move target (a moved item keeps its ref; two moves into one project collide on work_items_ref_unique)
   -- now() is fixed for the whole transaction, so these are exact targets.
   v_hist_created timestamptz := now() - interval '40 days';
   v_hist_updated timestamptz := now() - interval '30 days';
+  v_hist_issued  timestamptz := now() - interval '20 days';   -- report 1's issued_at: LATER than v_nosev's stamps (I4)
+  v_bf_created   timestamptz := now() - interval '15 days';   -- report 2 keeps issued_at NULL: the entry's own stamp is the fallback (I4)
   -- What §5 computes for a qc_defect born with no usable date: A(b)'s +5
   -- site working days from the SAST day (00196:670), then the builders'
   -- shutdown push — the exact born date, not merely "after today".
@@ -99,12 +109,27 @@ DECLARE
   v_pass_na      record;
   v_na_void      record;
   v_na_refail    record;
-  v_refail       record;
+  v_refail       record;   -- the closed item after its entry crosses back INTO fail: reopened
+  v_refail_ev    int;      -- status_changed events to 'open' on it
+  v_ans_edit     text;     -- the answered item after an entry title edit
+  v_ans_rename   text;     -- … after the report rename
+  v_sc_after     text;     -- the spine-closed item after an entry title edit
+  v_prio_spine   text;     -- v_late's priority after a spine-side edit
+  v_prio_src     text;     -- … after an unrelated title edit on the entry
   v_wd_crit      record;
   v_wd_fail      record;
   v_wd_na        record;
   v_reissue_crit record;
+  v_reissue_new  int;      -- items for the fail added during the draft window, after re-issue
   v_moved        record;   -- the closed client-viewer-authored item after its entry moved projects
+  v_cl_ctid_before text;   -- the closed record's tuple identity before a severity-only edit
+  v_cl_ctid_after  text;
+  v_cl_prio_restamp text;
+  v_cl_refiled   record;   -- after a title + severity edit on the closed entry
+  v_rename2_na   text;     -- the void (N/A) item's title after a SECOND rename: frozen
+  v_rename2_minor text;    -- a live item's title after it: follows
+  v_livemv       record;   -- the client-viewer live item after its move
+  v_bf_opened    timestamptz;
   v_bf_at_insert int;
   v_bf_before    int;
   v_bf_updated_before timestamptz;
@@ -234,7 +259,9 @@ BEGIN
 
   -- The path a trigger on qc_entries alone can never see (F4): the REPORT is
   -- issued, and every failed entry crosses into scope in one statement.
-  UPDATE projects.qc_reports SET status = 'issued', issued_at = now(), issued_by = v_pm WHERE id = v_rep;
+  -- issued_at is HISTORICAL and later than v_nosev's own stamps (I4): an
+  -- item is born at issue, not pre-aged by the days the report sat in draft.
+  UPDATE projects.qc_reports SET status = 'issued', issued_at = v_hist_issued, issued_by = v_pm WHERE id = v_rep;
 
   SELECT count(*) INTO v_issued_fail FROM projects.work_items WHERE qc_entry_id = v_fail;
   SELECT count(*) INTO v_issued_rest FROM projects.work_items WHERE qc_entry_id IN (v_na, v_pass);
@@ -263,6 +290,34 @@ BEGIN
   VALUES (v_rep, v_org, v_proj, 'Late finding', 'fail', 'major', v_pm) RETURNING id INTO v_late;
   SELECT count(*) INTO v_late_count FROM projects.work_items WHERE qc_entry_id = v_late;
 
+  -- Task 9 review, decision 1's other half: an item a human moved to
+  -- 'answered' (service path here — the guard is exempt as postgres) must
+  -- survive an unrelated entry edit and a report rename; the review measured
+  -- the `fail → 'open'` map pulling every such item back to open on both.
+  INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
+  VALUES (v_rep, v_org, v_proj, 'Answered on the spine', 'fail', 'major', v_pm) RETURNING id INTO v_ans;
+  UPDATE projects.work_items SET status = 'answered' WHERE qc_entry_id = v_ans AND origin = 'mirror';
+  UPDATE projects.qc_entries SET title = 'Answered on the spine (rev)' WHERE id = v_ans;
+  SELECT w.status INTO v_ans_edit FROM projects.work_items w WHERE w.qc_entry_id = v_ans;
+
+  -- … and a defect CLOSED on the spine by its gatekeeper while the entry
+  -- still reads 'fail' (source_status = 'fail'): the reopen rule keys on a
+  -- CROSSING into fail, so an unrelated edit leaves it closed.
+  INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
+  VALUES (v_rep, v_org, v_proj, 'Closed on the spine', 'fail', 'major', v_pm) RETURNING id INTO v_sc;
+  UPDATE projects.work_items SET status = 'closed', closed_by = v_pm WHERE qc_entry_id = v_sc AND origin = 'mirror';
+  UPDATE projects.qc_entries SET title = 'Closed on the spine (rev)' WHERE id = v_sc;
+  SELECT w.status INTO v_sc_after FROM projects.work_items w WHERE w.qc_entry_id = v_sc;
+
+  -- Task 9 review I3, the honest row: a spine-side priority edit on a LIVE
+  -- item lasts until the next watched source write while severity is set
+  -- (the review's r1 L2 — its L3 measured that a signed-in owner CAN write
+  -- priority on a mirror item; the service path is the same UPDATE).
+  UPDATE projects.work_items SET priority = 'low' WHERE qc_entry_id = v_late AND origin = 'mirror';
+  SELECT w.priority INTO v_prio_spine FROM projects.work_items w WHERE w.qc_entry_id = v_late;
+  UPDATE projects.qc_entries SET title = 'Late finding (rev)' WHERE id = v_late;
+  SELECT w.priority INTO v_prio_src FROM projects.work_items w WHERE w.qc_entry_id = v_late;
+
   -- An unwatched column: description is not in the _upd trigger's lists, so
   -- the projection must not fire — it would stamp last_activity_at = now()
   -- over the historical value the INSERT path kept.
@@ -281,6 +336,7 @@ BEGIN
   -- A report rename re-projects every item's title (the title embeds it).
   UPDATE projects.qc_reports SET title = 'Level 3 handover QC (rev B)' WHERE id = v_rep;
   SELECT w.title INTO v_renamed FROM projects.work_items w WHERE w.qc_entry_id = v_minor;
+  SELECT w.status INTO v_ans_rename FROM projects.work_items w WHERE w.qc_entry_id = v_ans;
 
   -- fail → pass on the issued report: the defect was corrected. The app blanks
   -- severity with the pass (00176: "severity present iff conformance='fail'"),
@@ -309,27 +365,37 @@ BEGIN
   SELECT w.status, w.void_reason, w.source_status INTO v_na_refail
     FROM projects.work_items w WHERE w.qc_entry_id = v_na;
 
-  -- A CLOSED item re-marked 'fail': section C maps fail → NULL ("in scope; the
-  -- triage/open rules decide"), and work_item_status_for_mirror keeps the
-  -- current status on NULL — so a corrected defect that fails again stays
-  -- closed. Pinned so the consequence is visible, not discovered.
+  -- Task 9 review, decision 1: a CLOSED item whose entry CROSSES INTO 'fail'
+  -- (the previous verdict, source_status, was 'na') is REOPENED on its last
+  -- holder, with one status_changed event. Section C still maps fail → NULL;
+  -- the crossing rule in the projection decides. The priority it was
+  -- recorded at is kept (I3 reads v_live before the reopen).
   UPDATE projects.qc_entries SET conformance = 'fail', severity = 'major' WHERE id = v_fail;
-  SELECT w.status INTO v_refail FROM projects.work_items w WHERE w.qc_entry_id = v_fail;
+  SELECT w.status, w.assignee_id, w.ball_in_court_id, w.closed_at, w.priority INTO v_refail
+    FROM projects.work_items w WHERE w.qc_entry_id = v_fail;
+  SELECT count(*) INTO v_refail_ev FROM projects.work_item_events e
+    JOIN projects.work_items w ON w.id = e.work_item_id
+   WHERE w.qc_entry_id = v_fail AND e.verb = 'status_changed' AND e.to_status = 'open';
 
-  -- Withdrawal: issued → draft is legal at the DB (role-only guard) though no
-  -- app action writes it. The LIVE item is voided as 'report withdrawn'; the
-  -- closed record stays closed with its stamps and the N/A void keeps ITS
-  -- reason (a void row is never re-reasoned).
+  -- Withdrawal (Task 9 review, decision 2): issued → draft is legal at the DB
+  -- (role-only guard) though no app action writes it. The scope predicate
+  -- gates BIRTH only: every existing item keeps its status — the triage one,
+  -- the reopened one, and the N/A void with ITS reason (a void row is never
+  -- re-reasoned). Nothing is voided as withdrawn.
   UPDATE projects.qc_reports SET status = 'draft' WHERE id = v_rep;
   SELECT w.status, w.void_reason INTO v_wd_crit FROM projects.work_items w WHERE w.qc_entry_id = v_crit;
   SELECT w.status, w.closed_at   INTO v_wd_fail FROM projects.work_items w WHERE w.qc_entry_id = v_fail;
   SELECT w.status, w.void_reason INTO v_wd_na   FROM projects.work_items w WHERE w.qc_entry_id = v_na;
 
-  -- Re-issue after a withdrawal: void is terminal and work_items_src_qc_uidx
-  -- admits one mirror item per entry, so the withdrawn defects do NOT come
-  -- back. Pinned: this is the cost of the withdrawal rule.
+  -- A fail found during the draft window is not yet an obligation (the
+  -- report is out of scope) …
+  INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
+  VALUES (v_rep, v_org, v_proj, 'Found during the draft cycle', 'fail', 'major', v_pm) RETURNING id INTO v_draftfail;
+  -- … and the re-issue projects it, leaving the earlier items exactly as
+  -- they were: no revival is needed because nothing was withdrawn.
   UPDATE projects.qc_reports SET status = 'issued' WHERE id = v_rep;
   SELECT w.status, w.void_reason INTO v_reissue_crit FROM projects.work_items w WHERE w.qc_entry_id = v_crit;
+  SELECT count(*) INTO v_reissue_new FROM projects.work_items WHERE qc_entry_id = v_draftfail;
 
   -- Task 8 review S1: a CLOSED item's people are part of the record. The only
   -- projection that re-derives a qc_defect's people is a project MOVE, so a
@@ -348,16 +414,74 @@ BEGIN
   END IF;
   INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
   VALUES (v_rep, v_org, v_proj, 'CV-authored moved defect', 'fail', 'major', v_cv) RETURNING id INTO v_mv;
-  -- Only the item's existence is a fixture precondition; WHO holds it is the
-  -- arm-2 row's subject (a broken 'qc_defect' literal must read as that row
-  -- going red, never as a fixture abort that hides every row).
-  IF (SELECT w.status FROM projects.work_items w WHERE w.qc_entry_id = v_mv AND w.origin = 'mirror') IS DISTINCT FROM 'triage' THEN
-    RAISE EXCEPTION 'fixture: the move candidate (a fail on the re-issued report) was not born triage';
-  END IF;
+  -- No fixture RAISE on this item's birth (Task 9 review I2): a dropped _ins
+  -- trigger must read as new_fail_entry_on_issued_report_projects going red,
+  -- never as a fixture abort that hides every row.
   UPDATE projects.qc_entries SET conformance = 'pass', severity = NULL WHERE id = v_mv;
   UPDATE projects.qc_entries SET project_id = v_proj2 WHERE id = v_mv;
   SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_moved
     FROM projects.work_items w WHERE w.qc_entry_id = v_mv AND w.origin = 'mirror';
+
+  -- ── Task 10 review rule 1 / Task 9 review I3: the closed-record rows ───────
+  -- A corrected defect on the re-issued report: pass → closed. Then a
+  -- severity-only edit (watched, so the _upd trigger fires) changes nothing
+  -- the closed record projects — the priority SET is gated on v_live — so the
+  -- UPDATE arm returns early and the tuple is not rewritten (now() is fixed
+  -- for the transaction, so the ctid is the signal). Then a title AND
+  -- severity edit: the title changes, the UPDATE arm runs, and the closed
+  -- record's priority is still not re-filed.
+  INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
+  VALUES (v_rep, v_org, v_proj, 'Corrected defect', 'fail', 'major', v_pm) RETURNING id INTO v_cl;
+  UPDATE projects.qc_entries SET conformance = 'pass', severity = NULL WHERE id = v_cl;
+  SELECT w.ctid::text INTO v_cl_ctid_before
+    FROM projects.work_items w WHERE w.qc_entry_id = v_cl AND w.origin = 'mirror';
+  UPDATE projects.qc_entries SET severity = 'critical' WHERE id = v_cl;
+  SELECT w.ctid::text, w.priority INTO v_cl_ctid_after, v_cl_prio_restamp
+    FROM projects.work_items w WHERE w.qc_entry_id = v_cl AND w.origin = 'mirror';
+  UPDATE projects.qc_entries SET title = 'Corrected defect (rev)', severity = 'minor' WHERE id = v_cl;
+  SELECT w.status, w.title, w.priority INTO v_cl_refiled
+    FROM projects.work_items w WHERE w.qc_entry_id = v_cl AND w.origin = 'mirror';
+
+  -- ── Task 10 review rule 2: a void row's title is frozen on a rename ────────
+  -- v_na has been void since the N/A rule (its title carries the rev B name
+  -- from the first rename); v_minor is live. A second rename retitles the
+  -- live item and leaves the void one as the record of what was withdrawn.
+  UPDATE projects.qc_reports SET title = 'Level 3 handover QC (rev C)' WHERE id = v_rep;
+  SELECT w.title INTO v_rename2_na    FROM projects.work_items w WHERE w.qc_entry_id = v_na;
+  SELECT w.title INTO v_rename2_minor FROM projects.work_items w WHERE w.qc_entry_id = v_minor;
+
+  -- ── Task 9 review I1: a LIVE move re-runs the chain through the key ────────
+  -- A third project whose arm 2 names a THIRD admin (the review's r1 L1
+  -- shape): a client-viewer-authored live fail moved there resolves to
+  -- admin3 — a different answer from the first project's arm 2 AND from arm
+  -- 3 (the owner), so the move arm's resolver call and its literal are both
+  -- load-bearing. A third project, not the second: a moved item keeps its
+  -- ref and the allocator numbers per project, so a second move into proj2
+  -- would collide on work_items_ref_unique (measured on the form arm).
+  SELECT u.user_id INTO v_admin3 FROM public.user_organisations u
+   WHERE u.organisation_id = v_org AND u.role = 'admin' AND u.is_active
+     AND u.user_id NOT IN (v_pm, v_chain_pm, v_admin2)
+   ORDER BY u.created_at, u.user_id LIMIT 1;
+  IF v_admin3 IS NULL THEN
+    RAISE EXCEPTION 'fixture: WM-Consulting has no third active admin besides the owner, the PM-chain person and admin2 (11 admins on 2026-09-13)';
+  END IF;
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org, '_probe_qc_mirror_3', 'active', 'ZAR', v_pm) RETURNING id INTO v_proj3;
+  UPDATE projects.project_settings
+     SET work_item_defaults = jsonb_build_object('qc_defect', jsonb_build_object('triage_owner_id', v_admin3::text))
+   WHERE project_id = v_proj3;
+  IF projects.resolve_mirror_assignee(v_proj3, 'qc_defect', v_cv) IS DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: on the third project the chain answers % rather than arm 2''s admin3 % — the live-move row could not discriminate',
+      projects.resolve_mirror_assignee(v_proj3, 'qc_defect', v_cv), v_admin3;
+  END IF;
+  IF projects.resolve_mirror_assignee(v_proj3, 'qc_defct', v_cv) IS NOT DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: a typo key answers arm 2 on the third project too — the live-move row could not discriminate the literal';
+  END IF;
+  INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
+  VALUES (v_rep, v_org, v_proj, 'CV-authored live defect', 'fail', 'major', v_cv) RETURNING id INTO v_livecv;
+  UPDATE projects.qc_entries SET project_id = v_proj3 WHERE id = v_livecv;
+  SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
+    FROM projects.work_items w WHERE w.qc_entry_id = v_livecv AND w.origin = 'mirror';
 
   -- ── Report 2: the backfill shape ───────────────────────────────────────────
   -- A failed entry on a report that was CLOSED before the spine existed: the
@@ -368,8 +492,11 @@ BEGIN
   -- qc_report_children_frozen (BEFORE on qc_entries) is never entered.
   INSERT INTO projects.qc_reports (project_id, organisation_id, title, status, raised_by)
   VALUES (v_proj, v_org, 'Basement DB QC', 'draft', v_pm) RETURNING id INTO v_rep2;
-  INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
-  VALUES (v_rep2, v_org, v_proj, 'Bonding', 'fail', 'critical', v_pm) RETURNING id INTO v_bf;
+  -- Historical stamps and NO issued_at on the report (the app never stamped
+  -- it — the backfill shape): I4's GREATEST falls back to the entry's own.
+  INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by,
+                                   created_at, updated_at)
+  VALUES (v_rep2, v_org, v_proj, 'Bonding', 'fail', 'critical', v_pm, v_bf_created, v_bf_created) RETURNING id INTO v_bf;
   -- Counted twice: after the INSERT (a fail on a DRAFT report projects
   -- nothing — the scope predicate's report-status half, asserted in the
   -- backfill-shape row so a broken predicate reads as a FAIL there, not as a
@@ -389,13 +516,22 @@ BEGIN
   IF v_fn_exists THEN
     PERFORM projects.project_qc_entry(v_bf);
   END IF;
-  SELECT w.status, w.title, w.priority, w.source_status INTO v_bf_item
+  SELECT w.status, w.title, w.priority, w.source_status, w.opened_at INTO v_bf_item
     FROM projects.work_items w WHERE w.qc_entry_id = v_bf AND w.origin = 'mirror';
+  v_bf_opened := v_bf_item.opened_at;
   SELECT e.updated_at INTO v_bf_updated_after FROM projects.qc_entries e WHERE e.id = v_bf;
 
   CREATE TEMP TABLE qc_ctx(
-    pm uuid, chain_pm uuid, admin2 uuid, cv uuid,
-    default_due date, hist_created timestamptz, hist_updated timestamptz,
+    pm uuid, chain_pm uuid, admin2 uuid, admin3 uuid, cv uuid, proj3 uuid,
+    default_due date, hist_created timestamptz, hist_updated timestamptz, hist_issued timestamptz,
+    bf_created timestamptz, bf_opened timestamptz,
+    refail_assignee uuid, refail_bic uuid, refail_closed_at timestamptz, refail_prio text, refail_ev int,
+    ans_edit text, ans_rename text, sc_after text, prio_spine text, prio_src text,
+    reissue_new int,
+    cl_ctid_before text, cl_ctid_after text, cl_prio_restamp text,
+    cl_refiled_status text, cl_refiled_title text, cl_refiled_prio text,
+    rename2_na text, rename2_minor text,
+    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid,
     draft_items int, issued_fail int, issued_rest int,
     fi_priority text, fi_src text, fi_title text, fi_status text, fi_assignee uuid,
     fi_gate uuid, fi_created_by uuid, fi_type text, fi_due date, fi_origin text,
@@ -417,8 +553,16 @@ BEGIN
     bf_before int, bf_status text, bf_title text, bf_prio text, bf_src text,
     bf_updated_before timestamptz, bf_updated_after timestamptz) ON COMMIT DROP;
   INSERT INTO qc_ctx VALUES (
-    v_pm, v_chain_pm, v_admin2, v_cv,
-    v_default_due, v_hist_created, v_hist_updated,
+    v_pm, v_chain_pm, v_admin2, v_admin3, v_cv, v_proj3,
+    v_default_due, v_hist_created, v_hist_updated, v_hist_issued,
+    v_bf_created, v_bf_opened,
+    v_refail.assignee_id, v_refail.ball_in_court_id, v_refail.closed_at, v_refail.priority, v_refail_ev,
+    v_ans_edit, v_ans_rename, v_sc_after, v_prio_spine, v_prio_src,
+    v_reissue_new,
+    v_cl_ctid_before, v_cl_ctid_after, v_cl_prio_restamp,
+    v_cl_refiled.status, v_cl_refiled.title, v_cl_refiled.priority,
+    v_rename2_na, v_rename2_minor,
+    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id,
     v_draft_items, v_issued_fail, v_issued_rest,
     v_fi.priority, v_fi.source_status, v_fi.title, v_fi.status, v_fi.assignee_id,
     v_fi.gatekeeper_id, v_fi.created_by, v_fi.item_type, v_fi.due_date, v_fi.origin,
@@ -505,11 +649,11 @@ SELECT 'arm_2_resolves_through_the_qc_key',
        'the ''qc_defect'' literal passed to resolve_mirror_assignee reaches work_item_defaults.qc_defect.triage_owner_id: a client-viewer author is ineligible and the chain answers arm 2, born triage'
 UNION ALL
 SELECT 'same_value_write_does_not_reproject',
-       (SELECT c.same_last = c.hist_updated FROM qc_ctx c),
-       'the _upd trigger''s WHEN clause: an edit to an unwatched column (description) must not fire the projection (it would stamp last_activity_at = now() over the historical value)'
+       (SELECT c.same_last = c.hist_issued FROM qc_ctx c),
+       'the _upd trigger''s WHEN clause: an edit to an unwatched column (description) must not fire the projection (it would stamp last_activity_at = now() over the historical value — the issue stamp, I4)'
 UNION ALL
 SELECT 'report_close_does_not_reproject',
-       (SELECT c.close_last = c.hist_updated AND c.reopen_last = c.hist_updated FROM qc_ctx c),
+       (SELECT c.close_last = c.hist_issued AND c.reopen_last = c.hist_issued FROM qc_ctx c),
        'issued → closed → issued never crosses the scope boundary, so the report-level trigger''s WHEN fires nothing: closing a report is not activity on its defects'
 UNION ALL
 SELECT 'item_type_is_registry_key',
@@ -531,8 +675,14 @@ SELECT 'due_date_is_the_registry_default',
        'no due date on the source: NULL through the floor, and §5 births A(b)''s +5 site working days from the SAST day, shutdown-pushed'
 UNION ALL
 SELECT 'historical_stamps_kept_on_insert',
-       (SELECT c.nosev_opened = c.hist_created AND c.nosev_last = c.hist_updated FROM qc_ctx c),
-       '#4: opened_at = the entry''s created_at and last_activity_at = its updated_at on the INSERT path (§5 keeps them on the service path, which the backfill is)'
+       (SELECT c.nosev_opened = c.hist_issued AND c.nosev_last = c.hist_issued FROM qc_ctx c),
+       '#4 / I4: opened_at = GREATEST(the entry''s created_at, the report''s issued_at) and last_activity_at = GREATEST(its updated_at, issued_at) on the INSERT path — supplied stamps, which §5 keeps on the service path (the backfill AND the live issue, which uses the service client)'
+UNION ALL
+SELECT 'entry_older_than_issue_is_born_at_issue',
+       (SELECT c.hist_issued > c.hist_created AND c.hist_issued > c.hist_updated
+           AND c.nosev_opened = c.hist_issued
+           AND c.bf_opened = c.bf_created FROM qc_ctx c),
+       'Task 9 review I4: an entry drafted 20 days before the report was issued is NOT born 20 days old — the item dates from the issue; a report with no issued_at (the backfill shape, report 2) falls back to the entry''s own created_at'
 UNION ALL
 SELECT 'pass_keeps_recorded_priority',
        (SELECT c.passed_prio = 'high' FROM qc_ctx c),
@@ -543,19 +693,57 @@ SELECT 'pass_then_na_keeps_closed_stamps',
           FROM qc_ctx c),
        'na maps to NULL (leave unchanged): a closed item whose entry is later marked N/A stays closed with its stamps — the void rule applies to LIVE items only'
 UNION ALL
-SELECT 'closed_stays_closed_when_remarked_fail',
-       (SELECT c.refail_status = 'closed' FROM qc_ctx c),
-       'section C maps fail → NULL and the policy keeps the current status on NULL: a corrected defect that fails again stays closed (a re-failed check is a new entry — or a map change, not a projection change)'
+-- Task 9 review, decision 1: the crossing rule.
+SELECT 'refail_reopens_a_closed_defect',
+       (SELECT c.refail_status = 'open' AND c.refail_assignee = c.pm AND c.refail_bic = c.pm
+           AND c.refail_closed_at IS NULL AND c.refail_ev = 1 AND c.refail_prio = 'high' FROM qc_ctx c),
+       'a CLOSED defect whose entry crosses from na back INTO fail is reopened on its last holder (one status_changed event, closed_at cleared by the guard, the recorded priority kept); section C still maps fail → NULL — the projection''s crossing rule decides'
 UNION ALL
-SELECT 'report_withdrawal_voids_live_items',
-       (SELECT c.wd_crit_status = 'void' AND c.wd_crit_reason = 'report withdrawn'
-           AND c.wd_fail_status = 'closed' AND c.wd_fail_closed_at = c.passed_closed_at
+SELECT 'answered_survives_an_unrelated_edit_and_a_rename',
+       (SELECT c.ans_edit = 'answered' AND c.ans_rename = 'answered' FROM qc_ctx c),
+       'an item a human moved to answered keeps it through an entry title edit and a report rename — the `fail → open` map the review measured would have pulled it back to open on both; the crossing rule touches closed items only'
+UNION ALL
+SELECT 'spine_closed_defect_survives_an_unrelated_edit',
+       (SELECT c.sc_after = 'closed' FROM qc_ctx c),
+       'a defect CLOSED on the spine while its entry still reads fail (source_status = fail) survives an unrelated title edit: only a CROSSING into fail reopens — drop the source_status clause and every such record reopens on its next edit'
+UNION ALL
+-- Task 9 review, decision 2: the scope predicate gates birth only.
+SELECT 'report_withdrawal_keeps_live_items',
+       (SELECT c.wd_crit_status = 'triage' AND c.wd_crit_reason IS NULL
+           AND c.wd_fail_status = 'open'
            AND c.wd_na_status = 'void' AND c.wd_na_reason = 'marked N/A at source' FROM qc_ctx c),
-       'controller decision: issued → draft (legal at the DB, no app path) voids each LIVE item as ''report withdrawn''; a closed record stays closed with its stamps and an existing void keeps its own reason'
+       'issued → draft (legal at the DB, no app path) changes NOTHING on existing items: the triage defect stays triage, the reopened one stays open, the N/A void keeps its own reason — the first version voided them as ''report withdrawn'', which a re-issue could never undo'
 UNION ALL
-SELECT 'reissue_does_not_revive_withdrawn_items',
-       (SELECT c.reissue_crit_status = 'void' AND c.reissue_crit_reason = 'report withdrawn' FROM qc_ctx c),
-       'the cost of the withdrawal rule, pinned: void is terminal and work_items_src_qc_uidx admits one mirror item per entry, so a re-issued report does not bring its withdrawn defects back'
+SELECT 'reissue_keeps_the_items_and_projects_new_fails',
+       (SELECT c.reissue_crit_status = 'triage' AND c.reissue_crit_reason IS NULL AND c.reissue_new = 1 FROM qc_ctx c),
+       'the re-issue leaves the earlier items exactly as they were and projects the fail added during the draft cycle — no revival needed because nothing was withdrawn'
+UNION ALL
+-- Task 9 review I3: priority is module-owned while severity is set.
+SELECT 'spine_priority_edit_is_reverted_by_the_next_source_write',
+       (SELECT c.prio_spine = 'low' AND c.prio_src = 'high' FROM qc_ctx c),
+       'TRUE = transient, pinned honestly: a spine-side priority edit on a live qc_defect item lasts until the next watched source write of ANY kind while severity is non-NULL (a title edit here re-files major → high) — the module owns priority (Task 18: the Inbox''s priority control refuses item_type = qc_defect)'
+UNION ALL
+SELECT 'closed_item_priority_is_not_refiled',
+       (SELECT c.cl_refiled_status = 'closed' AND c.cl_refiled_prio = 'high'
+           AND c.cl_refiled_title = 'Corrected defect (rev) — Level 3 handover QC (rev B)' FROM qc_ctx c),
+       'a title AND severity edit on a passed (closed) entry runs the UPDATE arm — the title follows — but the closed record keeps the priority it was recorded at: the priority SET is gated on v_live (I3)'
+UNION ALL
+-- Task 10 review, rule 1: a closed record is not rewritten for nothing.
+SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
+       (SELECT c.cl_ctid_before = c.cl_ctid_after AND c.cl_prio_restamp = 'high' FROM qc_ctx c),
+       'a severity-only edit on a passed entry fires the _upd trigger (severity is watched) but changes nothing the closed record projects, so the UPDATE arm returns early and the tuple is not rewritten (same ctid) — before the early return the guard stamped last_activity_at = now() on it'
+UNION ALL
+-- Task 10 review, rule 2: a void row's title is frozen.
+SELECT 'void_item_title_is_frozen_on_rename',
+       (SELECT c.rename2_na = 'Untested check — Level 3 handover QC (rev B)'
+           AND c.rename2_minor = 'Label missing — Level 3 handover QC (rev C)' FROM qc_ctx c),
+       'a second report rename retitles the live items and leaves the void (N/A) item''s title as it was when the record was withdrawn'
+UNION ALL
+-- Task 9 review I1: the live-move arm.
+SELECT 'live_move_reruns_the_chain_through_the_qc_key',
+       (SELECT c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
+           AND c.livemv_assignee <> c.admin2 AND c.livemv_assignee <> c.pm AND c.livemv_gate = c.chain_pm FROM qc_ctx c),
+       'improvement 8 on a LIVE item: the move re-runs the chain on the NEW project (arm 2 there = admin3) through the move arm''s ''qc_defect'' literal — a typo key or a dropped v_live AND v_moved arm both leave it on admin2'
 UNION ALL
 -- Task 8 review S1: a closed item's people are part of the record.
 SELECT 'closed_item_people_are_not_reprojected',

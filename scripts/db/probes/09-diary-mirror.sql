@@ -77,6 +77,7 @@ DECLARE
   v_closed   uuid;   -- a real delay whose item is CLOSED, then withdrawn (closed stays)
   v_cvdelay  uuid;   -- a real delay authored by the client viewer: the chain answers arm 2
   v_mv       uuid;   -- a second client-viewer-authored delay: closed, then MOVED (S1)
+  v_eskom    uuid;   -- 'No power on site — issue with Eskom': a negation WORD before a real delay (Task 4's narrowed rule)
   -- now() is fixed for the whole transaction, so these are exact targets.
   v_hist_created timestamptz := now() - interval '40 days';
   v_hist_updated timestamptz := now() - interval '30 days';
@@ -94,9 +95,15 @@ DECLARE
   v_redated     text;
   v_wd_live     record;   -- the withdrawal candidate before the withdrawal
   v_wd_void     record;
+  v_wd_voided_n int;      -- the `voided` event §11 writes for the trigger-driven void (S4)
+  v_wd_voided_actor_null boolean;
   v_wd_return   record;
   v_cl_before   record;   -- the closed item right after the close
+  v_cl_ctid_before text;  -- its tuple identity — now() is fixed, so a bump is invisible; a rewrite is not (rule 1)
   v_cl_after    record;   -- … and after the withdrawal
+  v_cl_ctid_after  text;
+  v_eskom_title text;
+  v_eskom_n     int;
   v_cv_item     record;
   v_same_last   timestamptz;
   v_moved       record;
@@ -253,10 +260,16 @@ BEGIN
   UPDATE projects.site_diary_entries SET delays = 'None' WHERE id = v_wd;
   SELECT w.status, w.title, w.void_reason INTO v_wd_void
     FROM projects.work_items w WHERE w.diary_id = v_wd AND w.origin = 'mirror';
+  -- S4: the detail text claims a `voided` event — measure it (§11 at depth 2,
+  -- actor NULL on the service path).
+  SELECT count(*), bool_and(e.actor_id IS NULL) INTO v_wd_voided_n, v_wd_voided_actor_null
+    FROM projects.work_item_events e
+    JOIN projects.work_items w ON w.id = e.work_item_id
+   WHERE w.diary_id = v_wd AND w.origin = 'mirror' AND e.verb = 'voided';
   -- void is terminal (Task 4's arm of work_item_status_for_mirror): the delay
-  -- re-recorded afterwards does NOT revive the item; the title follows the
-  -- source (the item is a record of what the source now says) and the reason
-  -- is never rewritten. A genuinely new delay is a new entry.
+  -- re-recorded afterwards does NOT revive the item; the title is FROZEN
+  -- (Task 10 review, rule 2 — the record of what was withdrawn) and the
+  -- reason is never rewritten. A genuinely new delay is a new entry.
   UPDATE projects.site_diary_entries SET delays = 'Rain again, 2h lost' WHERE id = v_wd;
   SELECT w.status, w.title, w.void_reason INTO v_wd_return
     FROM projects.work_items w WHERE w.diary_id = v_wd AND w.origin = 'mirror';
@@ -270,11 +283,27 @@ BEGIN
   RETURNING id INTO v_closed;
   UPDATE projects.work_items SET status = 'closed', closed_by = v_pm
    WHERE diary_id = v_closed AND origin = 'mirror';
-  SELECT w.status, w.title, w.closed_at, w.closed_by INTO v_cl_before
+  SELECT w.status, w.title, w.closed_at, w.closed_by, w.ctid::text INTO v_cl_before
     FROM projects.work_items w WHERE w.diary_id = v_closed AND w.origin = 'mirror';
+  v_cl_ctid_before := v_cl_before.ctid;
+  -- Task 10 review, rule 1: the withdrawal must not REWRITE the closed
+  -- record either — now() is fixed for the transaction, so a bumped
+  -- last_activity_at cannot show here; a new tuple version (a changed ctid)
+  -- can, and did before the early return existed (measured by the review).
   UPDATE projects.site_diary_entries SET delays = 'None' WHERE id = v_closed;
-  SELECT w.status, w.title, w.closed_at, w.closed_by, w.void_reason INTO v_cl_after
+  SELECT w.status, w.title, w.closed_at, w.closed_by, w.void_reason, w.ctid::text INTO v_cl_after
     FROM projects.work_items w WHERE w.diary_id = v_closed AND w.origin = 'mirror';
+  v_cl_ctid_after := v_cl_after.ctid;
+
+  -- ── Task 4's narrowed sentence rule, the positive side (S5) ────────────────
+  -- A negation WORD followed by a real delay is a delay: the plan's
+  -- `[^.]{0,80}` rule swallowed four live-shaped delays of this form (Task 4
+  -- review). Measured 2026-09-13: projects verbatim.
+  INSERT INTO projects.site_diary_entries (project_id, organisation_id, entry_date, progress_notes, delays, created_by)
+  VALUES (v_proj, v_org, DATE '2026-09-12', 'Eskom', 'No power on site — issue with Eskom', v_pm)
+  RETURNING id INTO v_eskom;
+  SELECT count(*), min(w.title) INTO v_eskom_n, v_eskom_title
+    FROM projects.work_items w WHERE w.diary_id = v_eskom AND w.origin = 'mirror';
 
   -- ── arm 2 through the 'diary_action' key ───────────────────────────────────
   INSERT INTO projects.site_diary_entries (project_id, organisation_id, entry_date, progress_notes, delays, created_by)
@@ -330,9 +359,12 @@ BEGIN
     percol_title text, percol_status text, redated text,
     wd_live_status text, wd_live_title text, wd_live_reason text,
     wd_void_status text, wd_void_title text, wd_void_reason text,
+    wd_voided_n int, wd_voided_actor_null boolean,
     wd_return_status text, wd_return_title text, wd_return_reason text,
     cl_before_status text, cl_before_title text, cl_before_closed_at timestamptz, cl_before_closed_by uuid,
     cl_after_status text, cl_after_title text, cl_after_closed_at timestamptz, cl_after_closed_by uuid, cl_after_reason text,
+    cl_ctid_before text, cl_ctid_after text,
+    eskom_n int, eskom_title text,
     cv_assignee uuid, cv_status text,
     same_last timestamptz,
     proj2 uuid, moved_status text, moved_project uuid, moved_assignee uuid, moved_gate uuid) ON COMMIT DROP;
@@ -346,9 +378,12 @@ BEGIN
     v_percol_item.title, v_percol_item.status, v_redated,
     v_wd_live.status, v_wd_live.title, v_wd_live.void_reason,
     v_wd_void.status, v_wd_void.title, v_wd_void.void_reason,
+    v_wd_voided_n, v_wd_voided_actor_null,
     v_wd_return.status, v_wd_return.title, v_wd_return.void_reason,
     v_cl_before.status, v_cl_before.title, v_cl_before.closed_at, v_cl_before.closed_by,
     v_cl_after.status, v_cl_after.title, v_cl_after.closed_at, v_cl_after.closed_by, v_cl_after.void_reason,
+    v_cl_ctid_before, v_cl_ctid_after,
+    v_eskom_n, v_eskom_title,
     v_cv_item.assignee_id, v_cv_item.status,
     v_same_last,
     v_proj2, v_moved.status, v_moved.project_id, v_moved.assignee_id, v_moved.gatekeeper_id);
@@ -371,8 +406,12 @@ SELECT 'title_carries_the_delay',
        'the item must be readable in an inbox without opening the diary: Delay <entry_date>: <text>'
 UNION ALL
 SELECT 'source_status_is_null',
-       (SELECT c.di_src IS NULL FROM di_ctx c),
-       'the source has no status column, so there is nothing to mirror (NULL on both paths; map_source_status(''diary_action'', …) is always NULL)'
+       (SELECT c.delay_n = 1 AND c.di_src IS NULL FROM di_ctx c),
+       'the source has no status column, so there is nothing to mirror (NULL on both paths; map_source_status(''diary_action'', …) is always NULL) — on an item that EXISTS, so the row is not vacuous (S3)'
+UNION ALL
+SELECT 'negation_word_before_a_real_delay_projects',
+       (SELECT c.eskom_n = 1 AND c.eskom_title = 'Delay 2026-09-12: No power on site — issue with Eskom' FROM di_ctx c),
+       'Task 4''s narrowed sentence rule, the positive side: ''No power on site — issue with Eskom'' is a delay that begins with a negation word — the plan''s [^.]{0,80} rule swallowed it; it projects verbatim (S5)'
 UNION ALL
 SELECT 'edit_into_scope_mirrors',
        (SELECT c.upgraded = 1 FROM di_ctx c),
@@ -394,10 +433,20 @@ SELECT 'withdrawn_delay_voids_with_reason',
            AND c.wd_void_title = c.wd_live_title FROM di_ctx c),
        'a LIVE item whose delay text is edited to a negation is voided with a reason (a voided event and a reason, not a silent deletion); the title is kept — a NULL delay has nothing to say'
 UNION ALL
+SELECT 'withdrawal_writes_a_voided_event',
+       (SELECT c.wd_voided_n = 1 AND c.wd_voided_actor_null FROM di_ctx c),
+       '§11 records the trigger-driven void as one `voided` event (actor NULL on the service path; the PM on the live path) — the claim the row above makes, measured (S4)'
+UNION ALL
 SELECT 'void_is_terminal_when_delay_returns',
        (SELECT c.wd_return_status = 'void' AND c.wd_return_reason = 'delay withdrawn at source'
-           AND c.wd_return_title = 'Delay 2026-09-08: Rain again, 2h lost' FROM di_ctx c),
-       'Task 4''s rule: void has no exit; an entry re-edited back into scope leaves the item void with its reason (the title follows the source) — a genuinely new delay is a new entry'
+           AND c.wd_return_title = c.wd_void_title
+           AND c.wd_return_title <> 'Delay 2026-09-08: Rain again, 2h lost' FROM di_ctx c),
+       'Task 4''s rule: void has no exit; an entry re-edited back into scope leaves the item void with its reason AND its title (Task 10 review, rule 2: a void row''s title is frozen — the record of what was withdrawn) — a genuinely new delay is a new entry'
+UNION ALL
+-- Task 10 review, rule 1: a closed record is not rewritten for nothing.
+SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
+       (SELECT c.cl_ctid_before = c.cl_ctid_after AND c.cl_after_status = 'closed' FROM di_ctx c),
+       'a withdrawal on an entry whose item is CLOSED changes nothing the record projects, so the UPDATE arm returns early and the tuple is not rewritten (same ctid) — before the early return the guard stamped last_activity_at = now() on it (measured by the review by ctid; now() is fixed here, so the ctid is the signal)'
 UNION ALL
 SELECT 'closed_item_survives_withdrawal',
        (SELECT c.cl_before_status = 'closed' AND c.cl_before_closed_at IS NOT NULL AND c.cl_before_closed_by = c.pm

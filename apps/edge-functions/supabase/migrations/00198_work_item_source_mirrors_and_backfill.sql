@@ -1596,9 +1596,10 @@ CREATE TRIGGER snags_mirror_work_item_upd
 --      through push_past_builders_shutdown, because §5 is BEFORE INSERT only
 --      and would not push a date landing in the band — and keeps the item's
 --      current date for a past or absent one (never overdue by
---      re-projection). Consequence, pinned in probe 07: a spine-side due
---      edit on an inspection item is transient while scheduled_at is in the
---      future — the module's date wins on the next watched write;
+--      re-projection). Consequence, pinned in probe 07
+--      (spine_due_edit_is_reverted_by_a_reschedule): a spine-side due edit
+--      on an inspection item is transient while scheduled_at is in the
+--      future — the module's date wins on the next reschedule;
 --   6. a VOID arm: abandoned maps to 'void' (section C), so a projection
 --      supplies void_reason on the same statement — the trimmed
 --      abandoned_reason, else 00066's abandon_reason, else a fixed sentence.
@@ -1911,10 +1912,12 @@ CREATE TRIGGER inspections_mirror_work_item_upd
 -- (NOT NULL DEFAULT 'draft', qc_reports_status_check: draft | issued |
 -- closed). NOT read: description, location (a report-level locator; the
 -- entry's own title plus the report's title is what improvement 5 asks for),
--- inspection_date, report_no, raised_by, issued_at, issued_by. Neither table
--- has an assignee, a due date, a closed_at/closed_by, a void state or an
--- updater column: closed_by is NULL, priority comes from severity, and the
--- two void reasons below are the projection's own.
+-- inspection_date, report_no, raised_by, issued_by. issued_at IS read, on
+-- the INSERT arm only (difference 7: an item is born at issue, not
+-- pre-aged). Neither table has an assignee, a due date, a
+-- closed_at/closed_by, a void state or an updater column: closed_by is NULL,
+-- priority comes from severity, and the one void reason below is the
+-- projection's own.
 --
 -- Measured 2026-09-13: 11 live entries, ALL conformance = 'na', on ONE issued
 -- report; 2 draft reports, 0 closed; conformance = 'fail' has ZERO rows in
@@ -1961,7 +1964,15 @@ CREATE TRIGGER inspections_mirror_work_item_upd
 --      layer, so a fail with no severity is possible) but on UPDATE keeps
 --      the item's recorded priority: the app blanks severity WITH a pass,
 --      and a corrected 'major' defect must not be re-filed as 'medium'
---      (probe 08 pass_keeps_recorded_priority);
+--      (probe 08 pass_keeps_recorded_priority). The priority SET runs for a
+--      LIVE item only (Task 9 review I3 — the I2 class): a severity edit on
+--      a passed entry must not re-file the closed record (probe 08
+--      closed_item_priority_is_not_refiled). Consequence, pinned honestly: a
+--      spine-side priority edit on a qc_defect item lasts until the next
+--      watched source write while `severity` is non-NULL (probe 08
+--      spine_priority_edit_is_reverted_by_the_next_source_write) — the
+--      module owns priority the way inspections own their people (Task 18:
+--      the Inbox's priority control refuses item_type = 'qc_defect');
 --   4. the title carries the PARENT REPORT (improvement 5): qc_entries has
 --      no location column and its titles are checklist lines ("Earth
 --      continuity", "Failed check"), unreadable in an inbox without the
@@ -1971,39 +1982,82 @@ CREATE TRIGGER inspections_mirror_work_item_upd
 --      re-projects every item's title (entry point 2 watches title);
 --   5. no due date on either table: NULL through section C's floor, so
 --      item 2's §5 computes A(b)'s +5 wd on the SITE calendar;
---   6. TWO projection-level VOID rules, decided in Task 9 — section C maps
---      'na' to NULL (leave unchanged: it is the column DEFAULT and every
---      live entry carries it, so reading it as a close would mass-close on
---      a default value — probe 03 qc_na_null), which is right for an entry
---      that never projected but WRONG for a LIVE item whose entry is
---      re-marked N/A: it would leave an open obligation for a defect the
---      source no longer records. So, on the UPDATE arm only and only while
---      the item is live (not closed, not void):
---        · the report has left scope (status back to 'draft' — legal at
---          the DB: qc_reports_status_guard is role-only and never reads the
---          direction, 00172:249-263; no app action writes it, and
---          reopenQcReportAction goes closed → issued) → void, 'report
---          withdrawn';
---        · else conformance = 'na' → void, 'marked N/A at source'.
---      A terminal source mapping wins first (pass → closed is the map's);
---      void is terminal (Task 4's arm of work_item_status_for_mirror) and a
---      void row is never re-reasoned, so a later 'fail' leaves the item
---      void with its reason and a re-issued report does NOT revive its
---      withdrawn defects (work_items_src_qc_uidx admits one mirror item per
---      entry). Probe 08 pins both costs. The plan's D.4 text had no
---      un-project path at all;
---   7. closed stamps: closed_at = the entry's updated_at (the row's last
---      write — there is no dedicated close stamp) and closed_by NULL (no
---      updater column; §11's closed event reads the actor). On the live path
---      the exempt guard stamps closed_at = now() at the transition and keeps
---      the supplied closed_by. A qc_defect is never BORN closed or void: the
---      INSERT arm admits conformance = 'fail' only (a pass or na entry that
---      never projected is not an obligation and never was one on the spine),
---      so the INSERT supplies no terminal stamps — v_mapped is NULL there by
+--   6. ONE projection-level VOID rule and ONE REOPEN rule, decided in Task 9
+--      and revised by its review — section C maps 'na' to NULL (leave
+--      unchanged: it is the column DEFAULT and every live entry carries it,
+--      so reading it as a close would mass-close on a default value — probe
+--      03 qc_na_null), which is right for an entry that never projected but
+--      WRONG for a LIVE item whose entry is re-marked N/A: it would leave an
+--      open obligation for a defect the source no longer records. So, on the
+--      UPDATE arm only and only while the item is live (not closed, not
+--      void): conformance = 'na' → void, 'marked N/A at source'. A terminal
+--      source mapping wins first (pass → closed is the map's); void is
+--      terminal (Task 4's arm of work_item_status_for_mirror) and a void row
+--      is never re-reasoned, so a later 'fail' leaves the item void with its
+--      reason. THE SCOPE PREDICATE GATES BIRTH ONLY: an existing item follows
+--      the entry's own verdict regardless of the report's status — a report
+--      leaving scope (issued → draft: legal at the DB, qc_reports_status_guard
+--      is role-only and never reads the direction, 00172:249-263; no app
+--      action writes it) changes NOTHING on existing items (the loop
+--      re-projects them and, by difference 8, rewrites none), and a re-issue
+--      needs no revival: it projects the fails added during the draft cycle
+--      and leaves the rest as they were (probe 08
+--      report_withdrawal_keeps_live_items,
+--      reissue_keeps_the_items_and_projects_new_fails). The 'report
+--      withdrawn' void the first version carried is gone: issued → draft is
+--      unreachable from the app, void is irreversible on the spine and
+--      work_items_src_qc_uidx admits one item per entry, so that void would
+--      have silently and permanently emptied a re-issued report's failures
+--      from every inbox; leave-live is recoverable both ways (a human can
+--      void with a reason). THE REOPEN RULE: a CLOSED item whose entry
+--      CROSSES INTO 'fail' — source_status, the previous verdict, was not
+--      'fail' — is reopened (v_mapped := 'open'; the policy's mapped-open arm
+--      reopens a closed item) on its last holder (probe 08
+--      refail_reopens_a_closed_defect, one status_changed event). The map
+--      itself stays fail → NULL: a `fail → 'open'` map would pull every item
+--      a human moved to 'answered' back to 'open' on any unrelated entry edit
+--      or report rename (measured by the review), and a defect closed on the
+--      spine while its entry still reads 'fail' must survive an unrelated
+--      edit (probe 08 answered_survives_an_unrelated_edit_and_a_rename,
+--      spine_closed_defect_survives_an_unrelated_edit). The plan's D.4 text
+--      had no un-project path and no reopen path at all;
+--   7. closed stamps: closed_by NULL (no updater column; §11's closed event
+--      reads the actor); closed_at is the exempt guard's now() at the live
+--      transition. The UPDATE arm's COALESCE(v_item.closed_at, e.updated_at)
+--      is the template's shape and its updated_at fallback is UNREACHABLE
+--      (a qc_defect is never born closed; on the transition the guard's
+--      stamp wins; on a re-projection of an already-closed row
+--      v_item.closed_at is set) — kept so the arm reads like D.1–D.3's (Task
+--      9 review S1). A qc_defect is never BORN closed or void: the INSERT arm
+--      admits conformance = 'fail' only (a pass or na entry that never
+--      projected is not an obligation and never was one on the spine), so
+--      the INSERT supplies no terminal stamps — v_mapped is NULL there by
 --      construction, and work_items_insert_gate's triage|open limit is never
 --      in question (the function is SECURITY DEFINER and owned by postgres
 --      regardless, section D's preamble, which is what lets a contractor's
---      entry write project at all).
+--      entry write project at all). BORN AT ISSUE, NOT PRE-AGED (Task 9
+--      review I4): the INSERT's opened_at is GREATEST(entry created_at,
+--      report issued_at) and last_activity_at GREATEST(entry updated_at,
+--      report issued_at). The fail verdict is written days before the report
+--      is issued (the live authoring order above) and issueQcReportAction
+--      flips the report with the service client, so auth.uid() is NULL
+--      inside the mirror and §5 KEEPS the supplied stamps: an entry drafted
+--      14 days before issue was birthing a 14-day-old item with a `created`
+--      event dated before the report existed (measured by the review). A
+--      NULL issued_at (the backfill shape — a report closed before the
+--      spine, or one the app never stamped) falls back to the entry's own
+--      stamps (probe 08 entry_older_than_issue_is_born_at_issue, and the
+--      backfill-shape row);
+--   8. (Task 10 review, rule 1) a closed or void record is not REWRITTEN by
+--      a source edit that changes nothing it projects: the UPDATE arm returns
+--      early unless the move, the title (closed rows) or the verdict
+--      (source_status) would change. priority is NOT compared: its SET is
+--      gated on v_live (difference 3), so a severity edit on a passed entry
+--      projects nothing and leaves the tuple alone (probe 08
+--      closed_item_unrelated_source_edit_leaves_the_record, by ctid);
+--   9. (Task 10 review, rule 2) a VOID row's title is frozen — the record of
+--      what was withdrawn (probe 08 void_item_title_is_frozen_on_rename); a
+--      closed row's title keeps following a rename.
 --
 -- Entry point 1 fires for an INSERT and for an UPDATE of exactly the columns
 -- the body reads that can change — title, conformance, severity, report_id
@@ -2016,9 +2070,13 @@ CREATE TRIGGER inspections_mirror_work_item_upd
 -- item of a 40-line report on close (probe 08 report_close_does_not_reproject).
 -- Its loop takes the report's entries that are 'fail' OR already carry a
 -- mirror item, in checklist order, so the issue projects the failures, a
--- rename retitles every item (closed and void ones included — they are
--- records), and a withdrawal reaches the live ones; a pass or na entry with
--- no item is not visited. On a CLOSED report qc_report_children_frozen
+-- rename retitles every live and closed item (a void one keeps its frozen
+-- title, difference 9) and a re-issue projects the fails added during the
+-- draft cycle; a withdrawal visits the existing items and changes nothing on
+-- them (difference 6). A rename therefore re-stamps last_activity_at on the
+-- closed records it retitles — by design: they are retitled — and on
+-- nothing else (difference 8); a pass or na entry with no item is not
+-- visited. On a CLOSED report qc_report_children_frozen
 -- (00172:449-486) refuses entry writes from a signed-in actor, so on the live
 -- path entry point 1 is reached only while the report is draft or issued;
 -- entry point 2 and section H never UPDATE an entry and never enter that
@@ -2108,12 +2166,15 @@ BEGIN
       -- BEFORE INSERT trigger computes A(b)'s +5 wd on the SITE calendar.
       projects.work_item_mirror_due_date(NULL::date),
       e.created_by, e.id,
-      -- #4: historical stamps. §5 overwrites opened_at/last_activity_at for a
-      -- client session (same instant — harmless) and keeps them on the service
-      -- path, which is the backfill. No closed_* / void_reason: this arm is
-      -- reached on conformance = 'fail' only (difference 7), so v_mapped is
-      -- NULL here and there is no terminal stamp to supply.
-      e.created_at, e.updated_at)
+      -- #4 / difference 7: born at ISSUE, not pre-aged — the later of the
+      -- entry's own stamp and the report's issued_at (NULL → the entry's).
+      -- §5 overwrites both for a client session (same instant — harmless)
+      -- and keeps them on the service path: the backfill AND the live issue
+      -- path (issueQcReportAction uses the service client). No closed_* /
+      -- void_reason: this arm is reached on conformance = 'fail' only, so
+      -- v_mapped is NULL here and there is no terminal stamp to supply.
+      GREATEST(e.created_at, COALESCE(rep.issued_at, e.created_at)),
+      GREATEST(e.updated_at, COALESCE(rep.issued_at, e.updated_at)))
     -- Explicit partial-index target, never a bare ON CONFLICT DO NOTHING (F6):
     -- a duplicate projection is swallowed, an origin='split' row is untouched,
     -- and a work_items_ref_unique collision still raises 23505. The predicate
@@ -2134,6 +2195,21 @@ BEGIN
     v_moved := v_item.project_id IS DISTINCT FROM e.project_id;
     v_live  := v_item.status NOT IN ('closed','void');
 
+    -- Difference 8 (Task 10 review, rule 1): a closed or void record is not
+    -- rewritten by a source edit that changes nothing it projects — else the
+    -- guard stamps last_activity_at = now() on a record nothing else changed
+    -- (measured by ctid on the diary arm). What a non-live row still
+    -- projects is its project / org (a move), its title (a closed row
+    -- follows a rename; a void row is frozen — difference 9) and the verdict
+    -- (source_status — a crossing into 'fail' is the reopen rule below).
+    -- priority is not compared: its SET is gated on v_live.
+    IF NOT v_live AND NOT v_moved
+       AND v_item.organisation_id IS NOT DISTINCT FROM e.organisation_id
+       AND v_title = v_item.title
+       AND e.conformance IS NOT DISTINCT FROM v_item.source_status THEN
+      RETURN;
+    END IF;
+
     IF v_live AND v_moved THEN
       v_assignee := projects.resolve_mirror_assignee(e.project_id, 'qc_defect', e.created_by);
       v_gate     := projects.resolve_work_item_gatekeeper(e.project_id, NULL);
@@ -2145,22 +2221,34 @@ BEGIN
     END IF;
 
     -- Difference 6. Evaluated AFTER the map: a terminal mapping (pass →
-    -- closed) is the source's own word and wins; the void rules apply to a
+    -- closed) is the source's own word and wins; the N/A void applies to a
     -- LIVE item only, so a closed record re-marked N/A stays closed (probe
     -- 08 pass_then_na_keeps_closed_stamps) and a void one keeps its reason.
-    -- Overriding v_mapped, rather than the status directly, keeps every
-    -- stamp below keyed on the mapped status (the template rule).
+    -- The report's status is NOT consulted here: it gates birth only, and a
+    -- withdrawn report's items stay as they are. Overriding v_mapped, rather
+    -- than the status directly, keeps every stamp below keyed on the mapped
+    -- status (the template rule).
     v_reason := CASE
-                  WHEN NOT v_live OR v_mapped = 'closed'     THEN NULL
-                  WHEN rep.status NOT IN ('issued','closed') THEN 'report withdrawn'
-                  WHEN e.conformance = 'na'                  THEN 'marked N/A at source'
+                  WHEN NOT v_live OR v_mapped = 'closed' THEN NULL
+                  WHEN e.conformance = 'na'              THEN 'marked N/A at source'
                   ELSE NULL END;
     IF v_reason IS NOT NULL THEN v_mapped := 'void'; END IF;
 
+    -- The reopen rule (difference 6): a CLOSED item whose entry crosses INTO
+    -- 'fail' — the previous verdict, held in source_status, was something
+    -- else — is reopened. Only the crossing: a closed item whose entry still
+    -- reads 'fail' (closed on the spine by its gatekeeper) survives an
+    -- unrelated edit, and an 'answered' item is not closed, so this rule
+    -- never touches it and it survives too.
+    IF v_item.status = 'closed' AND e.conformance = 'fail'
+       AND v_item.source_status IS DISTINCT FROM 'fail' THEN v_mapped := 'open'; END IF;
+
     -- Status: the CURRENT status is passed in, so void stays void (terminal,
     -- reconciliation #3) and a terminal mapping wins; 'fail' maps to NULL,
-    -- which keeps the current status — a closed defect that fails again stays
-    -- closed (probe 08 closed_stays_closed_when_remarked_fail). The
+    -- which keeps the current status unless the crossing rule above turned
+    -- it into a reopen (probe 08 refail_reopens_a_closed_defect; an answered
+    -- item keeps its status through edits and renames —
+    -- answered_survives_an_unrelated_edit_and_a_rename). The
     -- explicit-assignee flag is false: nothing on the source can un-triage a
     -- qc_defect; only the triage owner's assign on the spine does. At depth 2
     -- the guard stamps closed_at = now() on the transition, keeps the
@@ -2173,9 +2261,14 @@ BEGIN
     UPDATE projects.work_items
        SET project_id       = e.project_id,
            organisation_id  = e.organisation_id,
-           title            = v_title,
-           -- Difference 3, the UPDATE half: a NULL severity says nothing.
-           priority         = CASE WHEN e.severity IS NULL THEN v_item.priority ELSE v_priority END,
+           -- Difference 9: a void row's title is frozen; a closed row follows.
+           title            = CASE WHEN v_item.status = 'void' THEN v_item.title ELSE v_title END,
+           -- Difference 3, the UPDATE half: a NULL severity says nothing, and
+           -- a closed or void record is never re-filed (I3) — v_live is read
+           -- BEFORE the reopen rule, so a reopened defect keeps the priority
+           -- it was recorded at.
+           priority         = CASE WHEN v_live AND e.severity IS NOT NULL THEN v_priority
+                                   ELSE v_item.priority END,
            source_status    = e.conformance,
            status           = projects.work_item_status_for_mirror(v_item.status, v_mapped, false),
            assignee_id      = v_assignee,
@@ -2366,10 +2459,10 @@ CREATE TRIGGER qc_reports_mirror_defects
 --      an open inbox item with a +2 wd due date for a delay the diarist
 --      withdrew is the worse outcome. void is terminal (Task 4's arm of
 --      work_item_status_for_mirror) and a void row is never re-reasoned, so
---      an entry re-edited back into scope does NOT revive the item (the title
---      follows the source; status and reason stay — probe 09
---      void_is_terminal_when_delay_returns); a genuinely new delay is a new
---      entry. A CLOSED item stays closed: the delay was acted on and signed
+--      an entry re-edited back into scope does NOT revive the item (status,
+--      reason AND title stay — the title of a void row is frozen, difference
+--      9; probe 09 void_is_terminal_when_delay_returns); a genuinely new
+--      delay is a new entry. A CLOSED item stays closed: the delay was acted on and signed
 --      off, and the diarist tidying the text afterwards must not rewrite
 --      that history (probe 09 closed_item_survives_withdrawal);
 --   5. no closed mapping exists, so NO closed stamp is written on either arm:
@@ -2388,7 +2481,16 @@ CREATE TRIGGER qc_reports_mirror_defects
 --      On the live path §5 overwrites both with the same instant; the
 --      historical values matter only to a direct call, which section H never
 --      makes for this type (probe 09 pins them on the INSERT path anyway,
---      the template rule).
+--      the template rule);
+--   8. (Task 10 review, rule 1) a closed or void record is not REWRITTEN by
+--      a source edit that changes nothing it projects: the UPDATE arm returns
+--      early unless the move or the projected title would change, so a
+--      withdrawal on a closed item leaves its tuple — and last_activity_at —
+--      alone (probe 09 closed_item_unrelated_source_edit_leaves_the_record);
+--   9. (Task 10 review, rule 2) a VOID row's title is frozen — the record of
+--      what was withdrawn (probe 09 void_is_terminal_when_delay_returns
+--      asserts the title is unchanged); a closed row's title keeps following
+--      a real delay's text.
 --
 -- The _upd trigger fires for an UPDATE of exactly the columns the body reads
 -- that can change — delays, delay_notes, entry_date, project_id,
@@ -2493,6 +2595,18 @@ BEGIN
     v_moved := v_item.project_id IS DISTINCT FROM d.project_id;
     v_live  := v_item.status NOT IN ('closed','void');
 
+    -- Difference 8 (Task 10 review, rule 1): a closed or void record is not
+    -- rewritten by a source edit that changes nothing it projects. Measured
+    -- by ctid: a withdrawal on an entry whose item is closed rewrote the
+    -- tuple, so the guard stamped last_activity_at = now() on a record
+    -- nothing else changed — the very signal probe 09
+    -- same_value_write_does_not_reproject treats as a failure. What a
+    -- non-live row still projects is its project / org (a move) and, while
+    -- the delay is real, its title (a void row's is frozen — difference 9).
+    IF NOT v_live AND NOT v_moved
+       AND v_item.organisation_id IS NOT DISTINCT FROM d.organisation_id
+       AND (v_delay IS NULL OR v_title = v_item.title) THEN RETURN; END IF;
+
     IF v_live AND v_moved THEN
       v_assignee := projects.resolve_mirror_assignee(d.project_id, 'diary_action', d.created_by);
       v_gate     := projects.resolve_work_item_gatekeeper(d.project_id, NULL);
@@ -2523,11 +2637,12 @@ BEGIN
     -- blanked: the projection's reason on a void mapping (reached from a live
     -- row only, so the row carries none yet), else what the row already
     -- carries. The title is re-projected from a real delay only; a withdrawn
-    -- delay leaves the title the item had (difference 2).
+    -- delay leaves the title the item had (difference 2), and a VOID row's
+    -- title is frozen whatever the source now says (difference 9).
     UPDATE projects.work_items
        SET project_id       = d.project_id,
            organisation_id  = d.organisation_id,
-           title            = CASE WHEN v_delay IS NULL THEN v_item.title ELSE v_title END,
+           title            = CASE WHEN v_delay IS NULL OR v_item.status = 'void' THEN v_item.title ELSE v_title END,
            source_status    = NULL,   -- difference 3: NULL on both paths
            status           = projects.work_item_status_for_mirror(v_item.status, v_mapped, false),
            assignee_id      = v_assignee,
@@ -2581,3 +2696,358 @@ CREATE TRIGGER site_diary_entries_mirror_work_item_upd
      OR OLD.project_id      IS DISTINCT FROM NEW.project_id
      OR OLD.organisation_id IS DISTINCT FROM NEW.organisation_id)
   EXECUTE FUNCTION projects.mirror_diary_action_work_item();
+
+-- ── D.6 Form action ──────────────────────────────────────────────────────────
+-- D.1's template, copied deliberately — D.2 is the closer sibling (a source
+-- in the field schema with a reason column and terminal stamps on both arms;
+-- here the explicit assignee is the AUTHOR, F10), so this section reads like
+-- it. Columns read from field.site_forms (00179:70-105, re-read on production
+-- 2026-09-13): form_no (TEXT — NULL on the INSERT and stamped by
+-- allocate_form_no with the service client on the same request,
+-- site-forms.actions.ts:405-432), board_ref, board_label, status (NOT NULL,
+-- CHECK draft | submitted | distributed | void, 00179:80-81), created_by
+-- (NOT NULL DEFAULT auth.uid() REFERENCES public.profiles, 00179:83 — no
+-- existence test needed), distributed_by, distributed_at, void_reason (TEXT;
+-- site_forms_void_reason_required, 00179:102-104, makes it non-blank on
+-- every void row), created_at, updated_at (NOT NULL DEFAULT now(), bumped by
+-- site_forms_updated_at BEFORE UPDATE, 00179:631), project_id,
+-- organisation_id. NOT read: node_id (board_ref / board_label carry the
+-- board's identity past a node delete, 00179:75-77), template_row_id,
+-- as_left_status, submitted_by / submitted_at (the spine has no "answered
+-- at" stamp), report_id.
+--
+-- Measured 2026-09-13: ONE live form (TMS-PNP2-2026-0001 on (649) PNP FAERIE
+-- GLEN, draft, board_ref 'EXISTING EXAMPLE', board_label NULL), authored by
+-- the org owner — eligible, so the backfill births it open on them (F10);
+-- 2 templates, 1 active.
+--
+-- ⚠ trg_site_forms_transition (00179:415; field.enforce_site_form_transition
+-- 00179:347, BEFORE UPDATE, SECURITY INVOKER by design — 00179:341-346: under
+-- SECURITY DEFINER its trusted-role exemption was true for every caller) runs
+-- BEFORE this mirror. The mirror is AFTER and STAYS AFTER: it only ever sees a
+-- transition the state machine admitted (draft → submitted by any form
+-- writer; submitted → distributed and anything → void by a manager; postgres
+-- / service_role / supabase_admin unrestricted, 00179:352-354 — the action
+-- layer gates those, site-forms-distribute.actions.ts:241-260). An illegal
+-- transition raises at depth 1 with the guard's own sentence and this trigger
+-- never fires (probe 10 illegal_transition_leaves_the_item). Never convert
+-- it to BEFORE, for any reason.
+--
+-- F10 — A SITE FORM IS BORN OPEN ON ITS AUTHOR, AND THAT IS A DECISION. The
+-- plan's original flag was `NEW.created_by IS NOT NULL`, which 00179:83 makes
+-- a tautology (NOT NULL DEFAULT auth.uid()), so the outcome was accidental.
+-- Decided: a site form IS the thing its author must finish — a Termination &
+-- Making Safe record that feeds a supplementary CoC under EIR reg 7(4) — so
+-- the author is an EXPLICIT owner, not the chain's candidate, and the item is
+-- born `open` on them rather than entering the triage queue. The flag is
+-- expressed through the template's eligibility test, v_explicit :=
+-- work_item_person_eligible(project, created_by), not the plan's literal
+-- `true`: identical for every real author — FORMS_FIELD_ROLES is owner /
+-- admin / project_manager / contractor / inspector / supplier (00196:244)
+-- and site_forms_insert refuses a client viewer (00179:452-458) — and it
+-- keeps improvement 7 for a row a trusted role inserts with an ineligible
+-- created_by (probe 10 ineligible_author_falls_to_triage: the chain answers,
+-- born triage). Probe 10 draft_is_open_on_its_author asserts = 'open', never
+-- IN ('triage','open'), so nobody flips this back to an accident without a
+-- failing probe (Task 11 Step 5's mutation is v_explicit := false).
+--
+-- Differences from D.2, each named where it lands:
+--   1. the explicit assignee IS created_by (F10 above): ONE candidate, so no
+--      CASE WHEN v_explicit THEN … ELSE … END (the Task 7 review's form is
+--      for two); the chain's candidate is the same column, so an ineligible
+--      author is skipped by the resolver's own explicit arm and falls to
+--      arm 2 (work_item_defaults.form_action.triage_owner_id — probe 10
+--      pins the key);
+--   2. the title is `<form_no, else 'Site form'> — <board_label, else
+--      board_ref, else 'board'>`: form_no is the statutory reference the
+--      record is cited by (00179:359) and is NULL for the first statement of
+--      its life — the app numbers it on the same request, so form_no is
+--      watched and the allocation retitles (probe 10
+--      form_no_allocation_retitles). board_label is the as-found nameplate
+--      (00179:107-108) and board_ref the schedule tag;
+--      site_forms_board_identified (00179:93-95) guarantees node_id or
+--      board_ref, not board_label, hence the third arm;
+--   3. the gatekeeper is A(b)'s project_pm (00196:244):
+--      resolve_work_item_gatekeeper(project, NULL), never the author — the
+--      author is the ASSIGNEE, and distributing (the close) is a management
+--      action on the source too (00179:404-407). Re-resolved only on a
+--      project move;
+--   4. no due date on the source: NULL through section C's floor, so item
+--      2's §5 computes A(b)'s +3 wd on the SITE calendar (00196:244) — set by
+--      what the record is FOR (a supplementary CoC, EIR reg 7(4)), not by how
+--      long a form takes to fill (§03 §1.5). Nothing to watch (Task 8 review
+--      I1 does not apply);
+--   5. closed stamps keyed on v_mapped (template rule): closed_at =
+--      COALESCE(distributed_at, updated_at), closed_by = distributed_by on
+--      INSERT (a born-distributed row — the backfill shape, or a trusted-role
+--      import); on UPDATE COALESCE(v_item.closed_at, distributed_at, now()) —
+--      the exempt guard stamps now() on the live transition, so the fallbacks
+--      decide only for a row already closed and re-projected. A DISTRIBUTED
+--      form can still be voided (00179:399-401; voidSiteFormAction's
+--      `.neq('status','void')`, site-forms.actions.ts:629-635): closed → void
+--      on the spine, and closed_at / closed_by are cleared — the guard's
+--      exempt path does the same on every non-close status change (probe 10
+--      distributed_then_void_is_void);
+--   6. void_reason = COALESCE(NULLIF(btrim(f.void_reason), ''), <the item's>,
+--      'form voided at source') on a void mapping: the source's CHECK makes
+--      the literal unreachable for a void form; kept as the template's shape
+--      (D.3 has the same). A void row is never re-reasoned to blank; void is
+--      terminal (probe 10 void_is_terminal: a trusted-role resurrection of the
+--      source — the only actor that can, 00179:352-354 — leaves the item void
+--      with its reason; source_status follows the source, the title is
+--      frozen — difference 10);
+--   7. created_by is NOT forward-read on the non-move arm: the transition
+--      guard refuses any change to it for a signed-in caller (00179:361-380,
+--      42501 "Identity and lifecycle columns on a site form are not
+--      editable"), no app path UPDATEs it, and only a trusted role could —
+--      it is immutable on the source for every real actor. The un-triage flag
+--      keeps D.1's shape (v_explicit AND created_by IS DISTINCT FROM the
+--      item's assignee) so the diff against D.1 is structural; it is moot for
+--      an item born open;
+--   8. people SETs on a move only, and only while the item is LIVE (Task 8
+--      review S1): a distributed form moved between projects keeps the people
+--      it was closed with (probe 10 closed_item_people_are_not_reprojected);
+--      a live one is re-resolved on the new project (probe 10
+--      live_move_reruns_the_chain_through_the_form_key);
+--   9. (Task 10 review, rule 1) a closed or void record is not REWRITTEN by
+--      a source edit that changes nothing it projects — the UPDATE arm
+--      returns early unless the move, the title (closed rows) or
+--      source_status would change, so a distributed_by re-stamp on a
+--      distributed form leaves last_activity_at alone (probe 10
+--      closed_item_unrelated_source_edit_leaves_the_record) while a board
+--      rename on one still retitles it (closed_item_title_follows_the_source);
+--  10. (Task 10 review, rule 2) a VOID row's title is frozen — the record of
+--      what was withdrawn (probe 10 void_item_title_is_frozen); a closed
+--      row's title keeps following the source (a typo correction).
+--
+-- Born-closed / born-void on INSERT (Task 4 review): work_items_insert_gate
+-- limits an authenticated INSERT to item_type = 'task' in triage|open, so a
+-- direct insert of an already-distributed or void form (the backfill; an
+-- import) relies on this function being SECURITY DEFINER and owned by
+-- postgres — the table owner, BYPASSRLS — which never evaluates that policy.
+-- The INSERT supplies the terminal state and its stamps in the same
+-- statement (probe 10 born_distributed_carries_source_stamps,
+-- born_void_carries_source_reason).
+--
+-- search_path: 'projects', 'public', 'field' — the source lives in field (the
+-- D.2 note); every reference in the body is schema-qualified regardless.
+CREATE OR REPLACE FUNCTION projects.project_form_action(p_form_id uuid)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public', 'field'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  f          field.site_forms%ROWTYPE;
+  v_item     projects.work_items%ROWTYPE;
+  v_assignee uuid;
+  v_gate     uuid;
+  v_mapped   text;
+  v_title    text;
+  v_moved    boolean;
+  v_live     boolean;   -- the item is neither closed nor void (Task 8 review S1)
+  v_explicit boolean;   -- F10: the author is an ELIGIBLE explicit owner
+BEGIN
+  SELECT * INTO f FROM field.site_forms WHERE id = p_form_id;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  -- The existing MIRROR item, if any. origin = 'split' rows on the same source
+  -- are deliberately not this function's (§03 §1.3) and are never touched.
+  SELECT * INTO v_item FROM projects.work_items
+   WHERE site_form_id = f.id AND origin = 'mirror';
+
+  -- 'form_action' here, in the INSERT and in both resolve_mirror_assignee
+  -- calls must be exactly projects.work_item_types.key: an FK on the item
+  -- row, but plain text on the resolver side, where a typo silently skips
+  -- arm 2. Probe 10 pins it (item_type_is_registry_key,
+  -- arm_2_resolves_through_the_form_key, live_move_reruns_the_chain_through_the_form_key).
+  v_mapped := projects.map_source_status('form_action', f.status);
+
+  -- Difference 2. board_label is the as-found nameplate and board_ref the
+  -- schedule tag; site_forms_board_identified (00179:93-95) guarantees a
+  -- node or a board_ref, so 'board' is reached only through a node-only form.
+  v_title := COALESCE(f.form_no, 'Site form') || ' — '
+             || COALESCE(NULLIF(TRIM(f.board_label), ''), f.board_ref, 'board');
+
+  -- F10 (difference 1). NOT `f.created_by IS NOT NULL` — 00179:83 makes that
+  -- a tautology and the outcome an accident. The author is an explicit owner
+  -- because a site form IS the thing its author must finish; the flag is the
+  -- template's eligibility test so an ineligible created_by (a trusted-role
+  -- insert naming a client viewer) still falls to the chain and triage
+  -- (improvement 7). Both arms use v_explicit — as the INSERT's status flag
+  -- and in the UPDATE's un-triage flag. A real author is always eligible.
+  v_explicit := COALESCE(projects.work_item_person_eligible(f.project_id, f.created_by), FALSE);
+
+  IF v_item.id IS NULL THEN
+    -- §12 §(d): created_by → the chain. With an eligible author this resolves
+    -- at the chain's explicit step and, with v_explicit true, the item is born
+    -- OPEN on them (F10); a client-viewer author is not eligible and falls to
+    -- arm 2 onwards, born triage.
+    v_assignee := projects.resolve_mirror_assignee(f.project_id, 'form_action', f.created_by);
+    -- Difference 3: the PM, never the author (A(b) gatekeeper_rule =
+    -- project_pm, 00196:244). NULL is deliberate, not an oversight.
+    v_gate     := projects.resolve_work_item_gatekeeper(f.project_id, NULL);
+
+    INSERT INTO projects.work_items (
+      organisation_id, project_id, item_type, origin, title, priority,
+      status, source_status, assignee_id, gatekeeper_id, due_date, created_by, site_form_id,
+      opened_at, last_activity_at, closed_at, closed_by, void_reason)
+    VALUES (
+      f.organisation_id, f.project_id, 'form_action', 'mirror', v_title, 'medium',
+      -- F10: born open on an eligible author (probe 10 asserts = 'open').
+      projects.work_item_status_for_mirror(NULL, v_mapped, v_explicit),
+      f.status, v_assignee, v_gate,
+      -- Difference 4. No due date on field.site_forms: NULL, through section
+      -- C's floor so a future column is floored by this same line, and item
+      -- 2's BEFORE INSERT trigger computes A(b)'s +3 wd on the SITE calendar.
+      projects.work_item_mirror_due_date(NULL::date),
+      f.created_by, f.id,
+      -- #4: historical stamps. §5 overwrites opened_at/last_activity_at for a
+      -- client session (same instant — harmless) and keeps them on the service
+      -- path, which is the backfill. The one live form may be distributed
+      -- (born closed) or void by then; both shapes carry their source stamps
+      -- (difference 5, difference 6), keyed on the MAPPED status.
+      f.created_at, f.updated_at,
+      CASE WHEN v_mapped = 'closed' THEN COALESCE(f.distributed_at, f.updated_at) END,
+      CASE WHEN v_mapped = 'closed' THEN f.distributed_by END,
+      CASE WHEN v_mapped = 'void'
+           THEN COALESCE(NULLIF(btrim(f.void_reason), ''), 'form voided at source') END)
+    -- Explicit partial-index target, never a bare ON CONFLICT DO NOTHING (F6):
+    -- a duplicate projection is swallowed, an origin='split' row is untouched,
+    -- and a work_items_ref_unique collision still raises 23505. The predicate
+    -- is work_items_src_form_uidx's, verbatim (00196:375):
+    --   (site_form_id) WHERE site_form_id IS NOT NULL AND origin = 'mirror'
+    ON CONFLICT (site_form_id) WHERE site_form_id IS NOT NULL AND origin = 'mirror' DO NOTHING
+    RETURNING * INTO v_item;
+    -- No watcher seeding: §11 has already done it (see the section D comment).
+  ELSE
+    -- Improvement 8: a project move re-resolves both people — of a LIVE item
+    -- (D.1's rule, Task 8 review S1: a closed or void item's people are part
+    -- of the record). Runs at depth 2 under section C''s exemption (clause
+    -- (a) makes project_id immutable for a signed-in actor); the membership
+    -- trigger (00196:961-984) still re-validates both people first, by name
+    -- order. D.1 has the full reasoning; nothing about it is form-specific.
+    v_moved := v_item.project_id IS DISTINCT FROM f.project_id;
+    v_live  := v_item.status NOT IN ('closed','void');
+
+    -- Difference 9 (Task 10 review, rule 1): a closed or void record is not
+    -- rewritten by a source edit that changes nothing it projects. Without
+    -- this a distributed_by re-stamp on a distributed form — watched, so the
+    -- _upd trigger fires — rewrites the tuple and the guard stamps
+    -- last_activity_at = now() on a record nothing else changed: the very
+    -- signal probe 10 same_value_write_does_not_reproject treats as a failure
+    -- (measured by ctid on the diary arm). What a non-live row still projects
+    -- is its project / org (a move), its title (a closed row follows a
+    -- rename; a void row is frozen — difference 10) and source_status.
+    IF NOT v_live AND NOT v_moved
+       AND v_item.organisation_id IS NOT DISTINCT FROM f.organisation_id
+       AND v_title = v_item.title
+       AND f.status IS NOT DISTINCT FROM v_item.source_status THEN
+      RETURN;
+    END IF;
+
+    IF NOT v_live THEN
+      v_assignee := v_item.assignee_id;
+      v_gate     := v_item.gatekeeper_id;
+    ELSIF v_moved THEN
+      v_assignee := projects.resolve_mirror_assignee(f.project_id, 'form_action', f.created_by);
+      v_gate     := projects.resolve_work_item_gatekeeper(f.project_id, NULL);
+    ELSE
+      -- Difference 7: no forward read of created_by (immutable on the source
+      -- for every real actor); the spine's current holder stays (the spine
+      -- owns assignment, §03 §1.2) and the PM chain is never re-run on an
+      -- existing item (a PM-less project must not raise on an unrelated
+      -- edit — Task 8 review).
+      v_assignee := v_item.assignee_id;
+      v_gate     := v_item.gatekeeper_id;
+    END IF;
+
+    -- Status: the CURRENT status is passed in, so void stays void (terminal,
+    -- reconciliation #3 — probe 10 void_is_terminal) and a terminal mapping
+    -- wins (submitted → answered, distributed → closed, void → void). The
+    -- un-triage flag is D.1's shape, "the source names someone ELIGIBLE and
+    -- DIFFERENT from what the item holds" — moot here (born open, created_by
+    -- immutable), kept so the diff against D.1 is structural. At depth 2 the
+    -- guard stamps closed_at = now() on the close transition, keeps the
+    -- supplied closed_by, clears both on any other status change, restores
+    -- both when the status does not change, and skips its void-reason check
+    -- — which is why the reason travels on this same statement (section C',
+    -- "Dropping … needs a short reason"). void_reason is never blanked: the
+    -- source's reason on a void mapping (non-blank by the source's CHECK),
+    -- else what the row already carries.
+    UPDATE projects.work_items
+       SET project_id       = f.project_id,
+           organisation_id  = f.organisation_id,
+           -- Difference 10 (Task 10 review, rule 2): a void row's title is
+           -- frozen — the record of what was withdrawn; a closed row keeps
+           -- following the source (a typo corrected on the board label).
+           title            = CASE WHEN v_item.status = 'void' THEN v_item.title ELSE v_title END,
+           source_status    = f.status,
+           status           = projects.work_item_status_for_mirror(
+                                v_item.status, v_mapped,
+                                v_explicit AND f.created_by IS DISTINCT FROM v_item.assignee_id),
+           assignee_id      = v_assignee,
+           gatekeeper_id    = v_gate,
+           -- Keyed on the MAPPED status (template rule).
+           closed_at        = CASE WHEN v_mapped = 'closed'
+                                   THEN COALESCE(v_item.closed_at, f.distributed_at, now())
+                                   ELSE NULL END,
+           closed_by        = CASE WHEN v_mapped = 'closed'
+                                   THEN COALESCE(v_item.closed_by, f.distributed_by) END,
+           void_reason      = CASE WHEN v_mapped = 'void'
+                                   THEN COALESCE(NULLIF(btrim(f.void_reason), ''), v_item.void_reason,
+                                                 'form voided at source')
+                                   ELSE v_item.void_reason END,
+           last_activity_at = now()
+     WHERE id = v_item.id;
+  END IF;
+END $fn$;
+
+-- The trigger wrapper: the same two lines as D.1-D.5's. There is no write-back
+-- arm for forms, so no mirror ⇄ write-back cycle to terminate today; the
+-- depth guard stays because §03 §1.2 mandates it on every wrapper, the
+-- mirror-triggers contract test (a later task) pins it, and it is what stops
+-- a future trigger on field.site_forms that writes work_items from
+-- re-entering this projection.
+CREATE OR REPLACE FUNCTION projects.mirror_form_action_work_item()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public', 'field'
+SET row_security TO 'off'
+AS $fn$
+BEGIN
+  IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
+  PERFORM projects.project_form_action(NEW.id);
+  RETURN NULL;   -- AFTER trigger; the return value is ignored
+END $fn$;
+
+-- F7: two triggers (an INSERT trigger's WHEN cannot reference OLD). Both are
+-- AFTER: trg_site_forms_transition (BEFORE) has already admitted the row.
+DROP TRIGGER IF EXISTS site_forms_mirror_work_item_ins ON field.site_forms;
+CREATE TRIGGER site_forms_mirror_work_item_ins
+  AFTER INSERT ON field.site_forms
+  FOR EACH ROW EXECUTE FUNCTION projects.mirror_form_action_work_item();
+
+-- The column list is every column the UPDATE arm reads that can change; the
+-- WHEN clause is the same list, so a full-row save that changes only
+-- as_left_status (or node_id, report_id, the submitted_* stamps) fires
+-- nothing (probe 10 same_value_write_does_not_reproject). form_no is here
+-- because the app allocates it AFTER the insert (difference 2); created_by is
+-- read on a move, which project_id already fires; created_at and updated_at
+-- are read on INSERT only; there is no due date to watch.
+DROP TRIGGER IF EXISTS site_forms_mirror_work_item_upd ON field.site_forms;
+CREATE TRIGGER site_forms_mirror_work_item_upd
+  AFTER UPDATE OF form_no, board_ref, board_label, status,
+                  distributed_at, distributed_by, void_reason, project_id, organisation_id
+  ON field.site_forms
+  FOR EACH ROW
+  WHEN (OLD.form_no         IS DISTINCT FROM NEW.form_no
+     OR OLD.board_ref       IS DISTINCT FROM NEW.board_ref
+     OR OLD.board_label     IS DISTINCT FROM NEW.board_label
+     OR OLD.status          IS DISTINCT FROM NEW.status
+     OR OLD.distributed_at  IS DISTINCT FROM NEW.distributed_at
+     OR OLD.distributed_by  IS DISTINCT FROM NEW.distributed_by
+     OR OLD.void_reason     IS DISTINCT FROM NEW.void_reason
+     OR OLD.project_id      IS DISTINCT FROM NEW.project_id
+     OR OLD.organisation_id IS DISTINCT FROM NEW.organisation_id)
+  EXECUTE FUNCTION projects.mirror_form_action_work_item();
