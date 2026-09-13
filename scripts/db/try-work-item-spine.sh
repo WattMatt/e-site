@@ -47,10 +47,23 @@ if [[ "${WITH_ITEM1:-0}" == "1" ]]; then
   PRELUDE=$(cat "$ITEM1")
 fi
 
-SQL=$(printf 'BEGIN;\n%s\n%s\n%s\n%s\nROLLBACK;\n' \
+# WITH_EXTRA=<file>[:<file>…]: later migrations stacked after 00196 and before
+# the assertion file, so this suite can run against item 3's 00198 (and later)
+# before they merge. Colon-separated, applied in order.
+EXTRA=""
+if [[ -n "${WITH_EXTRA:-}" ]]; then
+  IFS=':' read -r -a _extra_files <<< "$WITH_EXTRA"
+  for f in "${_extra_files[@]}"; do
+    [[ -f "$f" ]] || { echo "ERROR: WITH_EXTRA file not found: $f" >&2; exit 1; }
+    EXTRA+=$'\n'"$(cat "$f")"
+  done
+fi
+
+SQL=$(printf 'BEGIN;\n%s\n%s\n%s\n%s\n%s\nROLLBACK;\n' \
   "$PRELUDE" \
   "$(cat "$MIG1")" \
   "$(cat "$MIG2")" \
+  "$EXTRA" \
   "$(cat "$ASSERT")")
 
 rc=0

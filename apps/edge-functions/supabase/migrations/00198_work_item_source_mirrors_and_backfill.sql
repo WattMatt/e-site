@@ -74,7 +74,7 @@
 -- function: projects.work_item_assignment_writeback()
 -- function: projects.void_work_item_on_source_delete()
 -- function: projects.work_items_transition_guard()
--- sql: SELECT p.prosrc ~ 'pg_trigger_depth\(\)\s*>\s*1' AND p.prosrc ~ 'source_status\s+IS DISTINCT FROM' AND p.prosrc !~ 'pg_trigger_depth\(\)\s*>\s*0' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'projects' AND p.proname = 'work_items_transition_guard'
+-- sql: SELECT p.prosrc ~ 'v_actor IS NULL OR pg_trigger_depth\(\)\s*>\s*1' AND p.prosrc ~ 'source_status\s+IS DISTINCT FROM' AND p.prosrc !~ 'pg_trigger_depth\(\)\s*>\s*0' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'projects' AND p.proname = 'work_items_transition_guard'
 -- sql: SELECT gatekeeper_rule = 'creator' FROM projects.work_item_types WHERE key = 'rfi'
 -- trigger: rfis_mirror_work_item_ins ON projects.rfis
 -- trigger: rfis_mirror_work_item_upd ON projects.rfis
@@ -519,6 +519,303 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $fn$
    LIMIT 1
 $fn$;
 
+-- ─── C'. Amendments to item 2's objects ──────────────────────────────────────
+-- (1) The transition guard. 00196 §12 (lines 1509-1759) copied verbatim, then
+--     edited in three places — the first two booked by item 2's own comment at
+--     00196:1590-1605, the third that comment itself:
+--       (i)   the early return becomes
+--               IF v_actor IS NULL OR pg_trigger_depth() > 1 THEN
+--             A mirror UPDATE runs at depth 2 (source statement → AFTER trigger
+--             → this BEFORE UPDATE guard) and gets the service-path treatment:
+--             stamps kept, authority and the machine skipped. A client
+--             statement is always depth 1 and is unchanged. NOT `> 0` — that
+--             exempts every client write, i.e. disables the guard; probe 05b's
+--             direct_title_edit_refused is the assertion that catches it.
+--       (ii)  source_status joins clause (a)'s immutable list:
+--               OR NEW.source_status   IS DISTINCT FROM OLD.source_status
+--             because from this migration the projection is its only writer.
+--       (iii) the (a2) comment, which described (i) and (ii) as item 3's
+--             future work, now describes them as shipped.
+--     The @verify sql: line pins the CODE form (v_actor IS NULL OR
+--     pg_trigger_depth() > 1): item 2's body already mentioned the bare
+--     `pg_trigger_depth() > 1` in a comment, so the looser form could not
+--     tell the two bodies apart (Task 2 review). It also refuses a `> 0` body.
+--     CREATE OR REPLACE keeps the function's ACL; the revokes are re-issued so
+--     the @verify grant_absent: line is provably true of THIS file. The
+--     trigger work_items_transition_guard_trg (00196:1761-1764) is untouched:
+--     it already calls this function. Rollback: re-run 00196 §12's CREATE OR
+--     REPLACE (the header's ROLLBACK block).
+CREATE OR REPLACE FUNCTION projects.work_items_transition_guard() RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path TO 'projects', 'public'
+AS $fn$
+DECLARE
+  v_actor      uuid := auth.uid();
+  v_may_write  boolean;
+  v_may_govern boolean;
+  v_is_holder  boolean;
+  v_may_manage boolean;
+BEGIN
+  -- Stamped on every UPDATE, on both paths — including item 3's delete-to-void
+  -- RI ON DELETE SET NULL on a void row, which is acceptable: a source
+  -- deletion IS activity on the item.
+  NEW.last_activity_at := now();
+
+  -- THE STAMPS ARE THE GUARD'S, NEVER THE CALLER'S. closed_at / closed_by are
+  -- written only by a status change (below, on either path); on every other
+  -- UPDATE they are restored from OLD. void_reason may be written only while
+  -- the row IS void — set with the void, or edited afterwards; on any other
+  -- row it is restored. Restored, not refused: these are stamps, not
+  -- identity, and a refusal would turn an innocent full-row save into an
+  -- error. Asserted by work-item-transition.sql 7g and 16.
+  IF NEW.status IS NOT DISTINCT FROM OLD.status THEN
+    NEW.closed_at := OLD.closed_at;
+    NEW.closed_by := OLD.closed_by;
+  END IF;
+  IF NEW.status <> 'void' THEN
+    NEW.void_reason := OLD.void_reason;
+  END IF;
+
+  IF v_actor IS NULL OR pg_trigger_depth() > 1 THEN
+    -- Service client / migration, OR a trigger-driven write — item 3's mirror,
+    -- write-back and delete-to-void (00198). The action layer, or the source
+    -- module's own gates, are what authorised these. A client statement is
+    -- depth 1 and its guard call runs there, so a person's direct write is NOT
+    -- exempt; a mirror UPDATE (source statement → AFTER trigger → this guard)
+    -- runs at depth 2 and is. Proved under impersonation by probe 05b.
+    -- A close stamps the moment; closed_by stays whatever the caller supplied —
+    -- a backfill knows who closed the source, and there is no actor to invent.
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+      IF NEW.status = 'closed' THEN NEW.closed_at := now();
+      ELSE NEW.closed_at := NULL; NEW.closed_by := NULL; END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  -- Authority is resolved against the row AS IT IS (OLD): clause (a) makes
+  -- project_id and item_type immutable, so NEW carries the same values or is
+  -- a refused row.
+  v_may_write  := projects.user_can_write_work_item(OLD.project_id, OLD.item_type);
+  -- GOVERNANCE is owner / admin / project manager — §03 §1.4's "ORG_WRITE_ROLES
+  -- user" — and it is NOT the type's write set: write_roles includes contractor
+  -- for six of the eight Q1 types, and on the write set alone a contractor
+  -- took over the gatekeeper seat and closed an open rfi and an answered task
+  -- in one statement, and pulled an answered task back to themselves (proven
+  -- on production in review). Who signs off, and who is named on an answered
+  -- item, is governance; the triage/open hand-off and the void stay on the
+  -- write set or the holder. COALESCEd: a non-member's role is NULL.
+  v_may_govern := COALESCE(
+    public.user_effective_project_role(OLD.project_id, v_actor) IN ('owner','admin','project_manager'),
+    FALSE);
+  -- COALESCEd: ball_in_court_id is NULL on a closed or void row, `uuid = NULL`
+  -- is NULL, and NOT NULL is NULL — which never raises. Fail closed.
+  v_is_holder  := COALESCE(v_actor = OLD.ball_in_court_id, FALSE);
+  v_may_manage := v_may_write OR v_is_holder;
+
+  -- (a) Immutable columns. ref is immutable because it is a permanent identifier
+  --     in emails, PDFs and other people's notes (§15 §(e)) — which is exactly
+  --     why §6's suffix parse tolerates a junk ref: there is no repair path.
+  --     opened_at pre-ages every escalation and created_at is when the item
+  --     was raised: §5 stamps opened_at for a client INSERT, and without this
+  --     a client UPDATE could backdate it by 400 days (proven in review). The
+  --     service path skips (a) — item 3's backfill keeps historical values.
+  --     source_status is the projection's alone (item 3): the mirror rewrites
+  --     it at depth 2, under the exemption above; a client may not.
+  IF NEW.project_id      IS DISTINCT FROM OLD.project_id
+  OR NEW.organisation_id IS DISTINCT FROM OLD.organisation_id
+  OR NEW.item_type       IS DISTINCT FROM OLD.item_type
+  OR NEW.ref             IS DISTINCT FROM OLD.ref
+  OR NEW.origin          IS DISTINCT FROM OLD.origin
+  OR NEW.created_by      IS DISTINCT FROM OLD.created_by
+  OR NEW.opened_at       IS DISTINCT FROM OLD.opened_at
+  OR NEW.created_at      IS DISTINCT FROM OLD.created_at
+  OR NEW.source_status   IS DISTINCT FROM OLD.source_status THEN
+    RAISE EXCEPTION '% cannot be renumbered, retyped or moved to another project — those details are fixed when the item is created.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  -- (a2) A MIRRORED item's title belongs to its source row: a hand edit here
+  --      and the projection would otherwise silently overwrite each other.
+  --      A mirror trigger runs in the SOURCE WRITER's session, where
+  --      auth.uid() is a person, so the projection's own title rewrite reaches
+  --      this function too — at depth 2, where the exemption above returns
+  --      before this clause (item 3, 00198 section C'). A person's hand edit
+  --      is depth 1 and is refused here. source_status sits in clause (a) for
+  --      the same reason: from 00198 the projection is its only writer.
+  IF OLD.origin = 'mirror' AND NEW.title IS DISTINCT FROM OLD.title THEN
+    RAISE EXCEPTION '% is mirrored from its source record, so its title is edited there and updates here automatically.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  -- (a3) A source FK may change ONLY to NULL — item 3's delete-to-void RI path
+  --      (ON DELETE SET NULL on a void row). Anything else re-points a mirrored
+  --      item at a different source: the partial UNIQUEs stop two items per
+  --      source, not one item per two sources, and the PERMISSIVE UPDATE
+  --      policy would otherwise admit it for an assignee. On a LIVE row a
+  --      NULL-ing already fails work_items_source_required, so "only to NULL"
+  --      is the whole rule. The RI UPDATE on a void row passes every clause
+  --      here (status, people and immutables unchanged) and is stamped only
+  --      at last_activity_at.
+  IF (NEW.rfi_id        IS DISTINCT FROM OLD.rfi_id        AND NEW.rfi_id        IS NOT NULL)
+  OR (NEW.snag_id       IS DISTINCT FROM OLD.snag_id       AND NEW.snag_id       IS NOT NULL)
+  OR (NEW.qc_entry_id   IS DISTINCT FROM OLD.qc_entry_id   AND NEW.qc_entry_id   IS NOT NULL)
+  OR (NEW.diary_id      IS DISTINCT FROM OLD.diary_id      AND NEW.diary_id      IS NOT NULL)
+  OR (NEW.site_form_id  IS DISTINCT FROM OLD.site_form_id  AND NEW.site_form_id  IS NOT NULL)
+  OR (NEW.node_order_id IS DISTINCT FROM OLD.node_order_id AND NEW.node_order_id IS NOT NULL)
+  OR (NEW.inspection_id IS DISTINCT FROM OLD.inspection_id AND NEW.inspection_id IS NOT NULL) THEN
+    RAISE EXCEPTION '% is linked to its source record and cannot be re-linked.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  -- (a4) The due date is the REVIEWER's. The project team, or whoever signs the
+  --      item off, sets the deadline; the person doing the work cannot extend
+  --      their own (an assignee extended theirs by 365 days in a probe).
+  --      Compared against OLD.gatekeeper_id — the gatekeeper as they are, not
+  --      as the same statement might try to make them.
+  IF NEW.due_date IS DISTINCT FROM OLD.due_date
+     AND NOT (v_may_write OR COALESCE(v_actor = OLD.gatekeeper_id, FALSE)) THEN
+    RAISE EXCEPTION 'Only the project team, or whoever signs % off, can change when it is due.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  -- (b) The person columns.
+  --     * A closed or void item's people are part of the record.
+  --     * The BALL-IN-COURT HOLDER may only shift the column the CURRENT status
+  --       selects (§03 §1.4): assignee while triage/open, gatekeeper while
+  --       answered. Writing the other one regenerates an unchanged
+  --       ball-in-court and looks like a broken control.
+  --     * A GOVERNING actor — owner, admin or project manager (§03 §1.4's
+  --       "ORG_WRITE_ROLES user") — may CORRECT either column in any live
+  --       state. §1.4's restriction is about which column MOVES THE BALL;
+  --       correcting a gatekeeper while the item is open moves nothing. A(b)
+  --       makes task's gatekeeper the creator, so without this a
+  --       contractor-raised task on a WM engineer has the contractor as its
+  --       only possible closer for the whole of its open life.
+  --     * The TYPE's write set (v_may_write) still admits the triage/open
+  --       hand-off — the events file's contractor reassignments — and the
+  --       void. It does NOT admit a gatekeeper change, nor an assignee change
+  --       while answered: see v_may_govern above for what that let a
+  --       contractor do.
+  --     * The gatekeeper arm is two checks, IN THIS ORDER. First: only a
+  --       governing actor or the current holder may touch the column at all —
+  --       a write-role holder who is neither gets the governance sentence.
+  --       Second: a non-governing holder may do so only while the item is
+  --       answered (where the holder IS the gatekeeper, handing the review
+  --       on). The second check is what closes the ONE-STATEMENT
+  --       SELF-APPOINTMENT (proven on production): an assignee holding an open
+  --       item writes gatekeeper_id = auth.uid() together with a new assignee
+  --       and passes §9's WITH CHECK; the assignee arm admits the hand-off
+  --       (they hold the ball), and this check refuses the seat change with
+  --       "still being worked on". A governing actor passes both and may take
+  --       the seat and close in one statement — see (d).
+  IF (NEW.assignee_id IS DISTINCT FROM OLD.assignee_id
+   OR NEW.gatekeeper_id IS DISTINCT FROM OLD.gatekeeper_id)
+   AND OLD.status IN ('closed','void') THEN
+    RAISE EXCEPTION '% is %. Reopen it before changing who it belongs to.', OLD.ref, OLD.status
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  IF NEW.assignee_id IS DISTINCT FROM OLD.assignee_id THEN
+    IF NOT v_may_govern AND OLD.status NOT IN ('triage','open') THEN
+      RAISE EXCEPTION '% is with the reviewer. Change the reviewer, not the person who did the work.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+    IF NOT v_may_manage THEN
+      RAISE EXCEPTION 'Only the project team, or whoever is holding %, can hand it to someone else.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+  END IF;
+
+  IF NEW.gatekeeper_id IS DISTINCT FROM OLD.gatekeeper_id THEN
+    IF NOT (v_may_govern OR v_is_holder) THEN
+      RAISE EXCEPTION 'Only the project''s owners, admins or project managers can change who signs % off.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+    IF NOT v_may_govern AND OLD.status <> 'answered' THEN
+      RAISE EXCEPTION '% is still being worked on. Change who it is assigned to, not who signs it off.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+  END IF;
+
+  -- (c) The status machine. void is terminal; closed reopens only to open.
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    IF NOT ( (OLD.status = 'triage'   AND NEW.status IN ('open','void'))
+          OR (OLD.status = 'open'     AND NEW.status IN ('answered','closed','void'))
+          OR (OLD.status = 'answered' AND NEW.status IN ('open','closed','void'))
+          OR (OLD.status = 'closed'   AND NEW.status = 'open') ) THEN
+      RAISE EXCEPTION '% cannot move from "%" to "%".', OLD.ref, OLD.status, NEW.status
+        USING ERRCODE = 'raise_exception';
+    END IF;
+
+    -- (c2) REOPENING is the reviewer's, or the team's. The only legal move out
+    --      of closed is to open (above), and an assignee reopening what the
+    --      gatekeeper closed is a nuisance to the reviewer and inflates
+    --      metric 7 — every re-close counts as a close.
+    IF OLD.status = 'closed'
+       AND NOT (v_may_write OR COALESCE(v_actor = OLD.gatekeeper_id, FALSE)) THEN
+      RAISE EXCEPTION 'Only the project team, or whoever signed % off, can reopen it.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+
+    -- (d) ONLY THE GATEKEEPER CLOSES. Compared against auth.uid(), never
+    --     current_user, and against NEW.gatekeeper_id: a governing actor who
+    --     needs to close takes the seat and closes in ONE statement
+    --     (gatekeeper_id = auth.uid(), status = 'closed') — (b) admits the
+    --     seat change, this check sees the new seat, and §11 records
+    --     gatekeeper_changed (seq n) before closed (seq n + 1). Anyone else
+    --     gets this sentence.
+    IF NEW.status = 'closed' AND v_actor IS DISTINCT FROM NEW.gatekeeper_id THEN
+      RAISE EXCEPTION 'Only the person who signs % off can close it. Take it over first, or ask them to close it.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+
+    IF NEW.status = 'void' AND NOT v_may_manage THEN
+      RAISE EXCEPTION 'Only the project team, or whoever is holding %, can drop it.', OLD.ref
+        USING ERRCODE = 'raise_exception';
+    END IF;
+
+    IF NEW.status = 'closed' THEN
+      NEW.closed_at := now(); NEW.closed_by := v_actor;
+    ELSE
+      NEW.closed_at := NULL;  NEW.closed_by := NULL;
+    END IF;
+  END IF;
+
+  -- A VOID row always carries its reason: required with the void, and never
+  -- blanked afterwards. void_reason is editable while void (the restore rule
+  -- above leaves it alone), so an empty edit reaches this check rather than
+  -- being quietly restored — it applies to every void row, not only to the
+  -- transition. Enforced here rather than as a sixth CHECK, so A(a)'s
+  -- constraint set stays reproduced exactly and §12 §(h)'s DDL diff keeps
+  -- working.
+  IF NEW.status = 'void' AND COALESCE(btrim(NEW.void_reason), '') = '' THEN
+    RAISE EXCEPTION 'Dropping % needs a short reason. Say why it is no longer needed.', OLD.ref
+      USING ERRCODE = 'raise_exception';
+  END IF;
+
+  RETURN NEW;
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION projects.work_items_transition_guard() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.work_items_transition_guard() FROM anon;
+
+-- (2) The rfi registry row (improvement 4; ⚠ OWNER DECISION, default taken —
+--     recorded in the plan's Task 5½ and in the PR body). The mirror sets
+--     created_by = raised_by and the gatekeeper to the raiser, so 'creator' is
+--     the truthful rule for the readers in items 4-6; item 2 seeded
+--     'project_pm' (00196:239) before improvement 4 was measured (13 of 14
+--     projects resolve the PM and the triage owner to one person; 12 of 15
+--     RFIs were raised by contractors). The CHECK (00196:202) already admits
+--     it. The TS mirror (packages/shared/src/work-items/types.ts) changes in
+--     the same commit, and its contract test applies this UPDATE to the seed
+--     it parses, so the three registries stay in lockstep. If the owner
+--     declines: delete this statement and the `sql: SELECT gatekeeper_rule =
+--     'creator' …` directive, revert types.ts, and change project_rfi's
+--     gatekeeper call to resolve_work_item_gatekeeper(r.project_id, NULL) in
+--     both arms.
+UPDATE projects.work_item_types SET gatekeeper_rule = 'creator' WHERE key = 'rfi';
+
 -- ─── D. Projection ───────────────────────────────────────────────────────────
 -- Every function here is SECURITY DEFINER (§03 §1.2): it writes assignee_id,
 -- gatekeeper_id and due_date, which the contractor who raised the RFI must not
@@ -601,6 +898,7 @@ DECLARE
   v_gate     uuid;
   v_mapped   text;
   v_moved    boolean;
+  v_explicit boolean;   -- an ELIGIBLE explicit source assignee (Task 5 review F2)
 BEGIN
   SELECT * INTO r FROM projects.rfis WHERE id = p_rfi_id;
   IF NOT FOUND THEN RETURN; END IF;
@@ -615,6 +913,13 @@ BEGIN
   -- on the resolver side, where a typo silently skips arms 1b/2. Probe 04
   -- pins it (item_type_is_registry_key).
   v_mapped := projects.map_source_status('rfi', r.status);
+  -- An ELIGIBLE explicit source assignee (Task 5 review F2). The raw
+  -- `r.assigned_to IS NOT NULL` was eligibility-blind: a client viewer named
+  -- on the source was born open on the triage owner, or un-triaged the item.
+  -- Computed once; both arms use it — as the assignee VALUE's condition and as
+  -- the un-triage FLAG. A NULL assigned_to is not eligible. Tasks 7-11 copy
+  -- this line (false for sources with no assignee column).
+  v_explicit := COALESCE(projects.work_item_person_eligible(r.project_id, r.assigned_to), FALSE);
 
   IF v_item.id IS NULL THEN
     v_assignee := projects.resolve_mirror_assignee(r.project_id, 'rfi', r.assigned_to);
@@ -636,7 +941,7 @@ BEGIN
       opened_at, last_activity_at, closed_at, closed_by)
     VALUES (
       r.organisation_id, r.project_id, 'rfi', 'mirror', r.subject, r.priority,
-      projects.work_item_status_for_mirror(NULL, v_mapped, r.assigned_to IS NOT NULL),
+      projects.work_item_status_for_mirror(NULL, v_mapped, v_explicit),
       r.status, v_assignee, v_gate,
       -- Improvement 6: a past or same-day source date becomes NULL so item 2's
       -- BEFORE INSERT trigger computes A(b)'s +7 wd on the office calendar.
@@ -648,8 +953,11 @@ BEGIN
       -- a closed RFI with no closed_at (none live today) dates its close at
       -- the row's last write.
       r.created_at, r.updated_at,
-      CASE WHEN r.status = 'closed' THEN COALESCE(r.closed_at, r.updated_at) END,
-      CASE WHEN r.status = 'closed' THEN r.closed_by END)
+      -- Keyed on the MAPPED status, never on a source-status literal (template
+      -- rule, Task 5 review S2): identical for RFI, but snag has two closing
+      -- states and a copier of `r.status = 'closed'` would miss one.
+      CASE WHEN v_mapped = 'closed' THEN COALESCE(r.closed_at, r.updated_at) END,
+      CASE WHEN v_mapped = 'closed' THEN r.closed_by END)
     -- Explicit partial-index target, never a bare ON CONFLICT DO NOTHING (F6).
     -- Measured: this swallows a duplicate projection (a concurrent second
     -- projection of the same new RFI), leaves an origin='split' row on the
@@ -684,36 +992,42 @@ BEGIN
       -- An eligible explicit source assignee wins; otherwise the spine's
       -- current holder stays (the spine owns assignment, §03 §1.2). This is
       -- also what makes section E's write-back converge instead of ping-pong.
-      v_assignee := COALESCE(
-        CASE WHEN projects.work_item_person_eligible(r.project_id, r.assigned_to)
-             THEN r.assigned_to END,
-        v_item.assignee_id);
+      v_assignee := COALESCE(CASE WHEN v_explicit THEN r.assigned_to END, v_item.assignee_id);
       v_gate := v_item.gatekeeper_id;
     END IF;
 
     -- Status: the CURRENT status is passed in, so void stays void (terminal,
     -- reconciliation #3) and a terminal mapping wins; void_reason is not in
-    -- this SET list and is never blanked. The explicit-assignee flag is
-    -- passed on UPDATE as well as INSERT (decided 2026-09-13, Task 4 review
-    -- carry-forward 2): a source that names an assignee for the first time
-    -- UN-TRIAGES its item — Tasks 7-11 pass `<src>.assigned_to IS NOT NULL`
-    -- the same way (false for sources with no assignee column). On the
-    -- service path the guard keeps a supplied closed_by across a close and
-    -- stamps closed_at = now() on the transition (00196:1544-1547); the
-    -- values below are what it sees.
+    -- this SET list and is never blanked. The un-triage flag on UPDATE (Task
+    -- 5 review F2 + the controller's revised semantics) is "the source names
+    -- someone ELIGIBLE and DIFFERENT from what the item holds": an ineligible
+    -- name (a client viewer) never un-triages, and section E's write-back —
+    -- which writes the resolved triage owner back to rfis.assigned_to for a
+    -- triage item — cannot un-triage the item on the next unrelated edit,
+    -- because the source then names exactly what the item holds. Tasks 7-11
+    -- copy both v_explicit and this flag. On the service path, and at depth
+    -- 2 under section C''s exemption, the guard keeps a supplied closed_by
+    -- across a close and stamps closed_at = now() on the transition
+    -- (00196:1544-1547); the values below are what it sees.
     UPDATE projects.work_items
        SET project_id       = r.project_id,
            organisation_id  = r.organisation_id,
            title            = r.subject,
            priority         = r.priority,
            source_status    = r.status,
-           status           = projects.work_item_status_for_mirror(v_item.status, v_mapped, r.assigned_to IS NOT NULL),
+           status           = projects.work_item_status_for_mirror(
+                                v_item.status, v_mapped,
+                                v_explicit AND r.assigned_to IS DISTINCT FROM v_item.assignee_id),
            assignee_id      = v_assignee,
            gatekeeper_id    = v_gate,
-           closed_at        = CASE WHEN r.status = 'closed'
+           -- Closed stamps key on the MAPPED status, never on a source-status
+           -- literal (template rule, Task 5 review S2): identical for RFI, but
+           -- snag has two closing states and a copier of `r.status = 'closed'`
+           -- would miss one.
+           closed_at        = CASE WHEN v_mapped = 'closed'
                                    THEN COALESCE(v_item.closed_at, r.closed_at, now())
                                    ELSE NULL END,
-           closed_by        = CASE WHEN r.status = 'closed'
+           closed_by        = CASE WHEN v_mapped = 'closed'
                                    THEN COALESCE(v_item.closed_by, r.closed_by) END,
            last_activity_at = now()
      WHERE id = v_item.id;
@@ -745,20 +1059,23 @@ CREATE TRIGGER rfis_mirror_work_item_ins
   AFTER INSERT ON projects.rfis
   FOR EACH ROW EXECUTE FUNCTION projects.mirror_rfi_work_item();
 
--- The column list is every column the projection reads that can change; the
+-- The column list is every column the UPDATE arm reads that can change; the
 -- WHEN clause is the same list, so a full-row save that changes only
--- description (or category) fires nothing (probe 04). created_at and
--- updated_at are read on INSERT only.
+-- description (or category) fires nothing (probe 04). due_date, created_at
+-- and updated_at are read on INSERT only: the spine owns the due date once
+-- the item exists (improvement 11 is spine → source only), so a source
+-- re-date must not fire a no-op projection whose only effect is
+-- last_activity_at = now() over a historical value (Task 5 review F1; probe
+-- 04 source_redate_does_not_fire_a_projection).
 DROP TRIGGER IF EXISTS rfis_mirror_work_item_upd ON projects.rfis;
 CREATE TRIGGER rfis_mirror_work_item_upd
-  AFTER UPDATE OF subject, priority, status, due_date, assigned_to,
+  AFTER UPDATE OF subject, priority, status, assigned_to,
                   closed_at, closed_by, project_id, organisation_id
   ON projects.rfis
   FOR EACH ROW
   WHEN (OLD.subject         IS DISTINCT FROM NEW.subject
      OR OLD.priority        IS DISTINCT FROM NEW.priority
      OR OLD.status          IS DISTINCT FROM NEW.status
-     OR OLD.due_date        IS DISTINCT FROM NEW.due_date
      OR OLD.assigned_to     IS DISTINCT FROM NEW.assigned_to
      OR OLD.closed_at       IS DISTINCT FROM NEW.closed_at
      OR OLD.closed_by       IS DISTINCT FROM NEW.closed_by

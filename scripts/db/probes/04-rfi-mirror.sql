@@ -26,16 +26,16 @@
 -- guard's SERVICE path (00196:1540): its UPDATE-arm assertions pass whatever
 -- the guard says. F8's evidence is probe 05b (Task 5½), under impersonation.
 --
--- ⚠ The two RFI inserts consume two values of projects.rfis_rfi_number_seq,
--- which a rollback does not return (last_value was 16 on 2026-09-13). Two
+-- ⚠ The three RFI inserts consume three values of projects.rfis_rfi_number_seq,
+-- which a rollback does not return (last_value was 16 on 2026-09-13). Three
 -- numbers; the 50,000-row scale probe in Task 15 is the one that must restore
 -- the sequence.
 --
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 17 rows. If the printed `assertions seen:` list is shorter than
--- seventeen names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 22 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-two names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -53,6 +53,15 @@ DECLARE
   v_after_respond record;
   v_closed_item   record;
   v_closed_last_activity timestamptz;
+  v_cv        uuid;   -- an active WM client viewer: never eligible on the probe project (F2)
+  v_chain_pm  uuid;   -- resolve_project_pm(v_proj): the oldest active org admin (F3/F4)
+  v_admin2    uuid;   -- a second active org admin: the un-triage target, distinct from every chain answer
+  v_triage_owner uuid;
+  v_cv_rfi    uuid;
+  v_after_cv   record;
+  v_after_same record;
+  v_cv_item    record;
+  v_redate     record;
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -95,6 +104,62 @@ BEGIN
   IF projects.resolve_project_pm(v_proj) = v_other THEN
     RAISE EXCEPTION 'fixture: the PM chain resolved to the contractor (%), so assignee and gatekeeper would coincide for a fixture reason', v_other;
   END IF;
+  v_chain_pm := projects.resolve_project_pm(v_proj);
+
+  -- Task 5 review F3 + F4, one fixture. F4: resolver arm 1b
+  -- (project_settings.default_rfi_assignee_id) must DECIDE the born assignee,
+  -- so the 'rfi' literal project_rfi passes is load-bearing — a typo ('rfl')
+  -- skips arm 1b and falls to the triage owner, who must therefore be a
+  -- DIFFERENT person (ensure_project_settings_row seeds it as created_by, the
+  -- owner). F3: under the owner default the gatekeeper is the raiser; a
+  -- gatekeeper that fell back to the PM chain must COINCIDE with the assignee
+  -- so assignee_is_not_the_gatekeeper and bic_moves_to_gatekeeper can go red
+  -- — hence the default is exactly resolve_project_pm(v_proj). (The review's
+  -- own fixture set triage_owner_id to that person instead; with arm 1b also
+  -- pointing there the F4 row could never fail, so the two are reconciled
+  -- this way.)
+  IF v_chain_pm = v_pm THEN
+    RAISE EXCEPTION 'fixture: the PM chain resolved to the owner (%), who is also the triage owner — arm 1b and the triage-owner arm would answer alike', v_pm;
+  END IF;
+  SELECT s.triage_owner_id INTO v_triage_owner
+    FROM projects.project_settings s WHERE s.project_id = v_proj;
+  IF v_triage_owner IS DISTINCT FROM v_pm THEN
+    RAISE EXCEPTION 'fixture: ensure_project_settings_row seeded triage_owner_id = % (expected created_by = the owner %)', v_triage_owner, v_pm;
+  END IF;
+  UPDATE projects.project_settings SET default_rfi_assignee_id = v_chain_pm WHERE project_id = v_proj;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'fixture: ensure_project_settings_row did not seed a settings row for the probe project';
+  END IF;
+  IF NOT projects.work_item_person_eligible(v_proj, v_chain_pm) THEN
+    RAISE EXCEPTION 'fixture: the PM-chain person (%) is not eligible on the probe project', v_chain_pm;
+  END IF;
+
+  -- The un-triage target: eligible (an org admin always wins, 00107) and
+  -- DIFFERENT from both the arm-1b answer and the triage-owner fallback, so
+  -- source_assignment_untriages_item measures the flag whichever arm answered.
+  SELECT u.user_id INTO v_admin2 FROM public.user_organisations u
+   WHERE u.organisation_id = v_org AND u.role = 'admin' AND u.is_active
+     AND u.user_id NOT IN (v_pm, v_other, v_chain_pm)
+   ORDER BY u.created_at, u.user_id LIMIT 1;
+  IF v_admin2 IS NULL THEN
+    RAISE EXCEPTION 'fixture: WM-Consulting has no second active admin besides the PM-chain person (7 admins on 2026-09-13)';
+  END IF;
+  IF NOT projects.work_item_person_eligible(v_proj, v_admin2) THEN
+    RAISE EXCEPTION 'fixture: the second admin (%) is not eligible on the probe project', v_admin2;
+  END IF;
+
+  -- F2: an active WM client viewer — ineligible on the probe project whatever
+  -- their membership (client_viewer is excluded by the mirror's chain).
+  SELECT u.user_id INTO v_cv FROM public.user_organisations u
+   WHERE u.organisation_id = v_org AND u.role = 'client_viewer' AND u.is_active
+     AND u.user_id NOT IN (v_pm, v_other)
+   ORDER BY u.created_at, u.user_id LIMIT 1;
+  IF v_cv IS NULL THEN
+    RAISE EXCEPTION 'fixture: WM-Consulting has no active client_viewer in user_organisations (3 on 2026-09-13)';
+  END IF;
+  IF projects.work_item_person_eligible(v_proj, v_cv) THEN
+    RAISE EXCEPTION 'fixture: the client viewer (%) is eligible on the probe project', v_cv;
+  END IF;
 
   -- Raised by the contractor, with NO assignee and a due date of TODAY — the
   -- exact live shape of RFI "Drawings" (created and due 2026-07-23).
@@ -109,11 +174,26 @@ BEGIN
     INTO v_after_insert
     FROM projects.work_items w WHERE w.rfi_id = v_rfi AND w.origin = 'mirror';
 
-  -- A source-side assignment (the RFI page's own assign control) UN-TRIAGES
-  -- the item (decided 2026-09-13, Task 4 review carry-forward 2): the UPDATE
-  -- arm passes `r.assigned_to IS NOT NULL` as the explicit-assignee flag.
-  -- The owner is eligible (00107: org owner always wins).
-  UPDATE projects.rfis SET assigned_to = v_pm WHERE id = v_rfi;
+  -- F2 (a): assigned at the source to an INELIGIBLE person. The un-triage flag
+  -- is "eligible AND different from what the item holds"; a client viewer is
+  -- not eligible, so the item stays in triage on the chain's answer.
+  UPDATE projects.rfis SET assigned_to = v_cv WHERE id = v_rfi;
+  SELECT w.status, w.assignee_id INTO v_after_cv
+    FROM projects.work_items w WHERE w.rfi_id = v_rfi;
+
+  -- F2 (b): assigned at the source to EXACTLY what the item already holds —
+  -- the shape section E's write-back produces for a triage item. Eligible,
+  -- but not different: the item stays in triage. (The CURRENT holder, read
+  -- back, not a fixture guess at it — so this row measures the flag, not
+  -- which chain arm answered.)
+  UPDATE projects.rfis SET assigned_to = v_after_cv.assignee_id WHERE id = v_rfi;
+  SELECT w.status, w.assignee_id INTO v_after_same
+    FROM projects.work_items w WHERE w.rfi_id = v_rfi;
+
+  -- A source-side assignment to an ELIGIBLE, DIFFERENT person (the RFI page's
+  -- own assign control) UN-TRIAGES the item (decided 2026-09-13, Task 4
+  -- review carry-forward 2; flag revised by the Task 5 review, F2).
+  UPDATE projects.rfis SET assigned_to = v_admin2 WHERE id = v_rfi;
 
   SELECT w.status, w.assignee_id INTO v_after_assign
     FROM projects.work_items w WHERE w.rfi_id = v_rfi;
@@ -148,7 +228,7 @@ BEGIN
           v_hist_closed, v_pm, v_hist_created, v_hist_closed)
   RETURNING id INTO v_closed_rfi;
 
-  SELECT w.status, w.opened_at, w.closed_at, w.closed_by INTO v_closed_item
+  SELECT w.status, w.opened_at, w.closed_at, w.closed_by, w.due_date INTO v_closed_item
     FROM projects.work_items w WHERE w.rfi_id = v_closed_rfi AND w.origin = 'mirror';
 
   -- A full-row save that changes only the description: every watched column
@@ -163,6 +243,24 @@ BEGIN
   SELECT w.last_activity_at INTO v_closed_last_activity
     FROM projects.work_items w WHERE w.rfi_id = v_closed_rfi AND w.origin = 'mirror';
 
+  -- F1: a source RE-DATE. due_date is read on INSERT only — the spine owns the
+  -- due date once the item exists (improvement 11 is spine → source only) —
+  -- so it is no longer in the _upd trigger's lists and this must not fire a
+  -- projection at all: neither the item's due_date nor its historical
+  -- last_activity_at moves.
+  UPDATE projects.rfis SET due_date = CURRENT_DATE + 40 WHERE id = v_closed_rfi;
+  SELECT w.due_date, w.last_activity_at INTO v_redate
+    FROM projects.work_items w WHERE w.rfi_id = v_closed_rfi AND w.origin = 'mirror';
+
+  -- F2 (c): BORN with an ineligible explicit assignee. Nobody eligible was
+  -- named, so §03 §1.6 says triage, on the chain's answer (arm 1b here).
+  INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
+                             priority, status, raised_by, assigned_to)
+  VALUES (v_proj, v_org, 'Probe CV RFI', 'body', 'high', 'open', v_other, v_cv)
+  RETURNING id INTO v_cv_rfi;
+  SELECT w.status, w.assignee_id INTO v_cv_item
+    FROM projects.work_items w WHERE w.rfi_id = v_cv_rfi AND w.origin = 'mirror';
+
   CREATE TEMP TABLE rfi_ctx(
     rfi uuid, closed_rfi uuid, proj uuid, pm uuid, other uuid,
     ins_status text, ins_bic uuid, ins_assignee uuid, ins_gate uuid,
@@ -171,7 +269,12 @@ BEGIN
     assign_status text, assign_assignee uuid,
     resp_status text, resp_bic uuid,
     closed_status text, closed_opened_at timestamptz, closed_closed_at timestamptz, closed_closed_by uuid,
-    closed_last_activity timestamptz, hist_created timestamptz, hist_closed timestamptz)
+    closed_last_activity timestamptz, hist_created timestamptz, hist_closed timestamptz,
+    chain_pm uuid, admin2 uuid, cv uuid, cv_rfi uuid,
+    cv_assign_status text, cv_assign_assignee uuid,
+    same_status text, same_assignee uuid,
+    closed_due_before date, redate_due date, redate_last_activity timestamptz,
+    cv_status text, cv_assignee uuid)
     ON COMMIT DROP;
   INSERT INTO rfi_ctx VALUES (
     v_rfi, v_closed_rfi, v_proj, v_pm, v_other,
@@ -182,7 +285,12 @@ BEGIN
     v_after_assign.status, v_after_assign.assignee_id,
     v_after_respond.status, v_after_respond.ball_in_court_id,
     v_closed_item.status, v_closed_item.opened_at, v_closed_item.closed_at, v_closed_item.closed_by,
-    v_closed_last_activity, v_hist_created, v_hist_closed);
+    v_closed_last_activity, v_hist_created, v_hist_closed,
+    v_chain_pm, v_admin2, v_cv, v_cv_rfi,
+    v_after_cv.status, v_after_cv.assignee_id,
+    v_after_same.status, v_after_same.assignee_id,
+    v_closed_item.due_date, v_redate.due_date, v_redate.last_activity_at,
+    v_cv_item.status, v_cv_item.assignee_id);
 END $probe$;
 
 SELECT 'item_created' AS probe,
@@ -212,6 +320,13 @@ SELECT 'bic_is_the_assignee',
        (SELECT c.ins_bic = c.ins_assignee FROM rfi_ctx c),
        'A(a): non-null from the first millisecond, and on triage it is the assignee'
 UNION ALL
+-- Task 5 review F4: resolver arm 1b decides the born assignee, so the 'rfi'
+-- literal passed to resolve_mirror_assignee is load-bearing ('rfl' skips it
+-- and falls to the triage owner — a different person by fixture).
+SELECT 'default_rfi_assignee_resolves_through_arm_1b',
+       (SELECT c.ins_assignee = c.chain_pm AND c.ins_assignee <> c.pm FROM rfi_ctx c),
+       'project_settings.default_rfi_assignee_id is arm 1b of the mirror chain — reachable only when project_rfi passes exactly ''rfi''; the triage owner (the owner) is the fallback and must not be the answer'
+UNION ALL
 -- Improvement 4.
 SELECT 'gatekeeper_is_the_raiser',
        (SELECT c.ins_gate = c.other FROM rfi_ctx c),
@@ -230,14 +345,27 @@ SELECT 'raiser_is_watcher',
        EXISTS (SELECT 1 FROM projects.work_item_watchers ww
                  JOIN projects.work_items w ON w.id = ww.work_item_id
                  JOIN rfi_ctx c ON c.rfi = w.rfi_id
-                WHERE ww.user_id = c.other),
-       '§03 §1.5: the raiser is a watcher — seeded by item 2''s §11 from created_by (00196:1378-1387), which the mirror sets to raised_by; this migration seeds nothing'
+                WHERE ww.user_id = c.other AND ww.reason = 'creator'),
+       '§03 §1.5: the raiser is a watcher WITH reason = creator — seeded by item 2''s §11 from created_by (00196:1378-1387), which the mirror sets to raised_by; this migration seeds nothing (S1: the reason is asserted, not only the row)'
 UNION ALL
--- Task 4 review carry-forward 2: the UPDATE arm passes the explicit-assignee
--- flag too, so assigning at the source un-triages the item.
+-- Task 4 review carry-forward 2, revised by the Task 5 review (F2): the UPDATE
+-- arm's un-triage flag is "an ELIGIBLE source assignee DIFFERENT from what the
+-- item holds", so assigning an eligible newcomer at the source un-triages.
 SELECT 'source_assignment_untriages_item',
-       (SELECT c.assign_status = 'open' AND c.assign_assignee = c.pm FROM rfi_ctx c),
-       'rfis.assigned_to NULL → owner on the RFI page: the item leaves triage and carries that assignee (the UPDATE arm passes r.assigned_to IS NOT NULL)'
+       (SELECT c.assign_status = 'open' AND c.assign_assignee = c.admin2 FROM rfi_ctx c),
+       'rfis.assigned_to → a second admin on the RFI page (eligible, different from the item''s assignee): the item leaves triage and carries that assignee'
+UNION ALL
+SELECT 'ineligible_source_assignment_does_not_untriage',
+       (SELECT c.cv_assign_status = 'triage' AND c.cv_assign_assignee = c.ins_assignee FROM rfi_ctx c),
+       'F2: assigning a client viewer at the source must not un-triage the item, nor move it off the chain''s answer (the old flag, r.assigned_to IS NOT NULL, was eligibility-blind)'
+UNION ALL
+SELECT 'same_assignee_on_source_does_not_untriage',
+       (SELECT c.same_status = 'triage' AND c.same_assignee = c.ins_assignee FROM rfi_ctx c),
+       'F2: the source naming exactly what the item holds — section E''s write-back shape for a triage item — must not un-triage it on the next edit'
+UNION ALL
+SELECT 'ineligible_explicit_is_born_triage',
+       (SELECT c.cv_status = 'triage' AND c.cv_assignee <> c.cv AND c.cv_assignee = c.ins_assignee FROM rfi_ctx c),
+       'F2: born with a client viewer named — nobody eligible was named, so §03 §1.6 says triage on the chain''s answer, the same answer the first RFI was born with (improvement 7: the viewer never holds it)'
 UNION ALL
 -- Service-path push-back. NOT F8's evidence: as postgres the guard is exempt.
 SELECT 'status_pushback',
@@ -245,8 +373,8 @@ SELECT 'status_pushback',
        'responded ⇒ answered on the service path. The signed-in case is probe 05b (Task 5½)'
 UNION ALL
 SELECT 'bic_moves_to_gatekeeper',
-       (SELECT c.resp_bic = c.ins_gate FROM rfi_ctx c),
-       'answered ⇒ the ball is with the person who asked'
+       (SELECT c.resp_bic = c.other FROM rfi_ctx c),
+       'answered ⇒ the ball is with the person who ASKED — compared to the raiser directly, not to whatever the gatekeeper resolved to (F3: against ins_gate this row could not fail when the gatekeeper fell back to the PM)'
 UNION ALL
 SELECT 'idempotent_reprojection',
        (SELECT count(*) FROM projects.work_items w, rfi_ctx c WHERE w.rfi_id = c.rfi) = 1,
@@ -275,4 +403,10 @@ UNION ALL
 -- (a full-row save that changed only the description) must not re-project.
 SELECT 'same_value_write_does_not_reproject',
        (SELECT c.closed_last_activity = c.hist_closed FROM rfi_ctx c),
-       'the _upd trigger''s WHEN clause: a full-row save that changes nothing it watches must not fire the projection (it would stamp last_activity_at = now() over the historical value)';
+       'the _upd trigger''s WHEN clause: a full-row save that changes nothing it watches must not fire the projection (it would stamp last_activity_at = now() over the historical value)'
+UNION ALL
+-- Task 5 review F1: due_date left the _upd trigger's UPDATE OF and WHEN lists.
+SELECT 'source_redate_does_not_fire_a_projection',
+       (SELECT c.redate_due IS NOT DISTINCT FROM c.closed_due_before
+           AND c.redate_last_activity = c.hist_closed FROM rfi_ctx c),
+       'rfis.due_date moved +40: the spine owns the due date once the item exists, so the re-date fires nothing — the item''s due_date and its historical last_activity_at are untouched (with due_date watched, a no-op projection stamped now() over the history)';

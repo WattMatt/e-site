@@ -39,6 +39,14 @@ import {
  *   - The status CHECK is read from the `status text` column of
  *     projects.work_items, not from the first `status IN (…)` in the file —
  *     a partial index and a ball-in-court CHECK also carry that phrase.
+ *   - The seed is compared AS AMENDED: a later migration may UPDATE a seeded
+ *     row in place (00198 sets rfi.gatekeeper_rule = 'creator'), and the
+ *     registry production holds is the seed with those UPDATEs applied in
+ *     migration order — that, not the raw seed, is what WORK_ITEM_TYPES must
+ *     equal. Amendments are parsed with `--` comments blanked (00198's header
+ *     carries the rollback statement inside a comment) and only in the
+ *     single-column form; any other UPDATE of the registry throws rather than
+ *     being skipped.
  */
 
 // packages/shared/src/work-items -> repo root
@@ -108,6 +116,59 @@ function seededRows(sql: string): SeedRow[] {
     gatekeeperRule: m[4],
     roles: [...m[5].matchAll(/'([a-z_]+)'/g)].map((r) => r[1]).sort(),
   }))
+}
+
+interface RegistryAmendment {
+  file: string
+  key: string
+  column: 'gatekeeper_rule' | 'calendar' | 'default_days'
+  value: string | number
+}
+
+const AMENDABLE: readonly RegistryAmendment['column'][] = ['gatekeeper_rule', 'calendar', 'default_days']
+/** UPDATE projects.work_item_types SET <col> = '<text>' | <n> WHERE key = '<key>'; */
+const AMEND_RE = /UPDATE\s+projects\.work_item_types\s+SET\s+([a-z_]+)\s*=\s*(?:'([a-z_]+)'|(\d+))\s+WHERE\s+key\s*=\s*'([a-z_]+)'\s*;/g
+
+/** Every in-place amendment of a seeded row, from every migration that sorts at
+ *  or after the seed's, in file order. Comments are blanked FIRST (the same
+ *  rule the locator uses): 00198's header carries the rollback statement — the
+ *  same UPDATE with the old value — inside a comment. Every UPDATE of the
+ *  registry in CODE must match the single-column, single-key form, or this
+ *  throws: an amendment the test cannot model is a reason to extend it, never
+ *  to skip it silently. */
+function registryAmendments(seedPath: string): RegistryAmendment[] {
+  const seedName = seedPath.slice(seedPath.lastIndexOf('/') + 1)
+  const out: RegistryAmendment[] = []
+  for (const name of readdirSync(MIG_DIR).sort()) {
+    if (!name.endsWith('.sql') || name < seedName) continue
+    const code = stripSqlLineComments(readFileSync(join(MIG_DIR, name), 'utf8'))
+    const mentions = code.match(/UPDATE\s+projects\.work_item_types\b/g)?.length ?? 0
+    const parsed = [...code.matchAll(AMEND_RE)]
+    if (parsed.length !== mentions) {
+      throw new Error(
+        `${name}: ${mentions} UPDATE(s) of projects.work_item_types in code but ${parsed.length} in the single-column form this test models — extend registryAmendments()`,
+      )
+    }
+    for (const m of parsed) {
+      const column = m[1] as RegistryAmendment['column']
+      if (!AMENDABLE.includes(column)) throw new Error(`${name}: amends work_item_types.${m[1]}, which this test does not model`)
+      out.push({ file: name, key: m[4], column, value: m[3] !== undefined ? Number(m[3]) : m[2] })
+    }
+  }
+  return out
+}
+
+/** The seed with every amendment applied, in order — what the database holds. */
+function applyAmendments(rows: SeedRow[], amendments: RegistryAmendment[]): SeedRow[] {
+  const byKey = new Map(rows.map((r) => [r.key, { ...r }]))
+  for (const a of amendments) {
+    const row = byKey.get(a.key)
+    if (!row) throw new Error(`${a.file} amends '${a.key}', which the seed never registered`)
+    if (a.column === 'gatekeeper_rule') row.gatekeeperRule = String(a.value)
+    else if (a.column === 'calendar') row.calendar = String(a.value)
+    else row.days = Number(a.value)
+  }
+  return [...byKey.values()]
 }
 
 /** The column names of CREATE TABLE projects.work_item_types, in DDL order.
@@ -199,9 +260,12 @@ const LITERAL_PATTERNS = [
 
 describe('work-item type registry — A(b) <-> migration <-> TypeScript', () => {
   const { path, sql } = spineMigration()
-  const seeded = seededRows(sql)
+  const amendments = registryAmendments(path)
+  const seeded = applyAmendments(seededRows(sql), amendments)
   const seededKeys = seeded.map((r) => r.key)
   const rel = path.replace(ROOT + '/', '')
+  const amendedBy = (key: string, column: RegistryAmendment['column']) =>
+    amendments.filter((a) => a.key === key && a.column === column).map((a) => a.file).join(', ') || 'no later migration'
 
   it('parses a non-empty set from each source (a parser that matched nothing would make every assertion vacuous)', () => {
     expect(appendixQ1Keys().length).toBeGreaterThan(0)
@@ -210,6 +274,9 @@ describe('work-item type registry — A(b) <-> migration <-> TypeScript', () => 
     expect(Object.keys(sqlRefPrefixes(sql)).length).toBeGreaterThan(0)
     expect(ddlColumns(sql).length).toBeGreaterThan(0)
     expect(appendixColumns().length).toBeGreaterThan(0)
+    // 00198 amends rfi.gatekeeper_rule; a parser that matched nothing would let
+    // WORK_ITEM_TYPES drift from what the database holds while staying green.
+    expect(amendments.length, 'no registry amendment parsed from any migration at or after the seed').toBeGreaterThan(0)
   })
 
   it('Appendix A(b) Q1 == the migration seed, in both directions', () => {
@@ -224,9 +291,9 @@ describe('work-item type registry — A(b) <-> migration <-> TypeScript', () => 
     for (const row of seeded) {
       const ts = WORK_ITEM_TYPES.find((t) => t.key === row.key)
       expect(ts, `${row.key} is seeded in ${rel} but missing from WORK_ITEM_TYPES`).toBeDefined()
-      expect(ts!.defaultDays, `${row.key} default_days`).toBe(row.days)
-      expect(ts!.calendar, `${row.key} calendar`).toBe(row.calendar)
-      expect(ts!.gatekeeperRule, `${row.key} gatekeeper_rule`).toBe(row.gatekeeperRule)
+      expect(ts!.defaultDays, `${row.key} default_days (seed in ${rel}, amended by ${amendedBy(row.key, 'default_days')})`).toBe(row.days)
+      expect(ts!.calendar, `${row.key} calendar (seed in ${rel}, amended by ${amendedBy(row.key, 'calendar')})`).toBe(row.calendar)
+      expect(ts!.gatekeeperRule, `${row.key} gatekeeper_rule (seed in ${rel}, amended by ${amendedBy(row.key, 'gatekeeper_rule')})`).toBe(row.gatekeeperRule)
       expect([...ts!.writeRoles].sort(), `${row.key} write_roles`).toEqual(row.roles)
     }
   })
