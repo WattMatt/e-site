@@ -2279,3 +2279,305 @@ CREATE TRIGGER qc_reports_mirror_defects
   WHEN ((OLD.status IN ('issued','closed')) IS DISTINCT FROM (NEW.status IN ('issued','closed'))
      OR OLD.title IS DISTINCT FROM NEW.title)
   EXECUTE FUNCTION projects.mirror_qc_report_defects();
+
+-- ── D.5 Diary action ─────────────────────────────────────────────────────────
+-- D.1's template, copied deliberately — D.4 is the closer sibling (no explicit
+-- assignee, the PM as gatekeeper, a projection-level void rule), so this
+-- section reads like it. Columns read from projects.site_diary_entries
+-- (00002:146-158 + 00017:14-18, re-read on production 2026-09-13):
+-- entry_date (DATE NOT NULL), delays (TEXT), delay_notes (TEXT), created_by
+-- (NOT NULL, REFERENCES public.profiles — no existence test needed), created_at,
+-- updated_at (NOT NULL DEFAULT now(), bumped by site_diary_entries_updated_at
+-- BEFORE UPDATE, 00002:160), project_id, organisation_id. NOT read: weather,
+-- workers_on_site, progress_notes, entry_type, safety_notes, quality_notes.
+-- THE EMPTIEST ROW IN §03 §1.1's TABLE: no status, no owner, no due date, no
+-- close stamp, no void state, no reason column. Everything about a delay
+-- item's lifecycle is spine-side — which is why this type carries the
+-- shortest offset on the board, +2 working days on the SITE calendar (A(b),
+-- 00196:243): a delay recorded today is stale by Friday (§03 §1.5).
+--
+-- Measured 2026-09-13: 57 live entries; 6 carry a non-empty `delays` and ALL
+-- SIX are negations ('No delays or info required was noted in the site walk
+-- and or meeting', 'None,', 'None,', 'None', 'None', 'NO'); the two
+-- non-empty `delay_notes` are both 'None'. Zero of them is a delay — so the
+-- backfill has NO diary arm (section H, improvement 1) and probe 09 walks
+-- from an empty project.
+--
+-- THE SCOPE PREDICATE IS projects.diary_delay_text(delays, delay_notes) IS NOT
+-- NULL (section B), never "the text box is non-empty": a non-empty test
+-- measures whether the box was filled in, not whether a delay occurred, and
+-- shipped that way day one puts six items titled `Delay 2026-06-24: None,`
+-- with a +2 wd due date in the owner's own inbox. Contractors will keep
+-- typing "None" daily, so the stop-list lives HERE, on the live trigger, not
+-- only in a backfill that does not exist. It is applied PER COLUMN (Task 4
+-- review I2): 'None' typed into `delays` beside a real `delay_notes` projects
+-- the real one (probe 09 delay_notes_alone_projects).
+--
+-- Write paths: an entry is created by diaryService.create
+-- (packages/shared/src/services/diary.service.ts:183-198, from
+-- createDiaryEntryAction, apps/web/src/actions/diary.actions.ts:25), which
+-- writes both delays and delay_notes on the INSERT. NO app path UPDATEs a
+-- diary entry today — the shared service has create / getEntryForGate /
+-- hardDelete / deleteAttachment, and the mobile app writes attachments only —
+-- so the _upd arms below (edit into scope, withdrawal, re-date, move) are
+-- reachable only over direct PostgREST, through "Org members can update
+-- diary entries" (00145:39-50: org-wide, non-client-viewer, no WITH CHECK, no
+-- column restriction). They are built and pinned regardless: the first edit
+-- control the diary page grows lands on them, and the matrix (Task 18) lists
+-- the source's write gate beside the spine's, as for rfis.
+--
+-- Differences from D.4, each named where it lands:
+--   1. the scope predicate is one column-pair function, not a two-table
+--      predicate; out of scope and never projected → nothing to do; out of
+--      scope but already projected falls through to the UPDATE arm
+--      (difference 4). A NULL delay never births an item, so the INSERT arm
+--      supplies no terminal stamps (v_mapped is NULL there by construction
+--      and work_items_insert_gate's triage|open limit is never in question —
+--      the function is SECURITY DEFINER and owned by postgres regardless,
+--      section D's preamble, which is what lets a contractor's entry write
+--      project at all);
+--   2. the title is `Delay <entry_date YYYY-MM-DD>: <delay text, ≤120>` — the
+--      date IS the locator (the template's <thing> — <locator> shape: a diary
+--      is a dated record and the inbox reader needs the day, not a location).
+--      entry_date is therefore watched and a re-dated entry re-projects its
+--      title (probe 09 redate_retitles_the_item). On the withdrawal path the
+--      title is KEPT: a NULL delay has nothing to say, and title is NOT NULL;
+--   3. the chain's candidate is created_by (§12 §(d): created_by →
+--      triage_owner_id → org owner) and there is NO explicit assignee — the
+--      flag is false in both arms, so a delay is born TRIAGE on the diarist
+--      (§03 §1.6) until someone is assigned to act on it, on the spine. An
+--      ineligible author (a client viewer, improvement 7) falls to arm 2
+--      (work_item_defaults.diary_action.triage_owner_id — probe 09 pins the
+--      key). The gatekeeper is A(b)'s project_pm (00196:243):
+--      resolve_work_item_gatekeeper(project, NULL), never the author.
+--      Priority is the literal 'medium': the source has no severity.
+--      source_status is NULL on both paths (no source vocabulary at all —
+--      section C's map answers NULL for this type unconditionally), so the
+--      status is decided by the insert rule and by difference 4 only; nothing
+--      on the source can un-triage a diary_action;
+--   4. THE DOWNGRADE PATH (decided in Task 10, replacing the plan's "an entry
+--      edited to REMOVE its delay keeps its item" paragraph). On the UPDATE
+--      arm only, and only while the item is LIVE (not closed, not void): if
+--      diary_delay_text() now returns NULL — the diarist blanked the box or
+--      typed a negation over the delay — the item is VOIDED with
+--      void_reason = 'delay withdrawn at source', the projection-level rule
+--      D.4 applies to an N/A. The plan feared silent deletion; a void is not
+--      that — it carries a `voided` event (§11) and a reason on the row — and
+--      an open inbox item with a +2 wd due date for a delay the diarist
+--      withdrew is the worse outcome. void is terminal (Task 4's arm of
+--      work_item_status_for_mirror) and a void row is never re-reasoned, so
+--      an entry re-edited back into scope does NOT revive the item (the title
+--      follows the source; status and reason stay — probe 09
+--      void_is_terminal_when_delay_returns); a genuinely new delay is a new
+--      entry. A CLOSED item stays closed: the delay was acted on and signed
+--      off, and the diarist tidying the text afterwards must not rewrite
+--      that history (probe 09 closed_item_survives_withdrawal);
+--   5. no closed mapping exists, so NO closed stamp is written on either arm:
+--      a diary_action is never born closed (difference 1) and the UPDATE
+--      leaves closed_at / closed_by untouched — the guard would restore them
+--      from OLD anyway when the status does not change (section C'), but
+--      there is nothing to key them on and so nothing to SET. The only paths
+--      to closed are the spine's (the gatekeeper's close) and the service
+--      client's;
+--   6. no due date on the source: NULL through section C's floor, so item
+--      2's §5 computes A(b)'s +2 wd on the SITE calendar; there is no source
+--      date to watch (Task 8 review I1 does not apply);
+--   7. stamps: opened_at = the entry's created_at and last_activity_at = its
+--      updated_at — NOT NULL (00002:157), so the plan's
+--      COALESCE(updated_at, created_at) had no arm to reach and is not here.
+--      On the live path §5 overwrites both with the same instant; the
+--      historical values matter only to a direct call, which section H never
+--      makes for this type (probe 09 pins them on the INSERT path anyway,
+--      the template rule).
+--
+-- The _upd trigger fires for an UPDATE of exactly the columns the body reads
+-- that can change — delays, delay_notes, entry_date, project_id,
+-- organisation_id (template rule: UPDATE OF == WHEN == what the arm reads;
+-- progress_notes, weather and the rest fire nothing — probe 09
+-- same_value_write_does_not_reproject). created_by is read on a move, which
+-- project_id already fires; created_at and updated_at are read on INSERT
+-- only.
+--
+-- search_path: 'projects', 'public' — the table lives in projects (the
+-- section D.2 note); every reference is schema-qualified regardless.
+CREATE OR REPLACE FUNCTION projects.project_diary_action(p_entry_id uuid)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  d          projects.site_diary_entries%ROWTYPE;
+  v_item     projects.work_items%ROWTYPE;
+  v_assignee uuid;
+  v_gate     uuid;
+  v_delay    text;      -- the delay as the stop-list reads it, or NULL (improvement 1)
+  v_mapped   text;      -- NULL, or the projection-level 'void' (difference 4)
+  v_title    text;
+  v_moved    boolean;
+  v_live     boolean;   -- the item exists and is neither closed nor void
+BEGIN
+  SELECT * INTO d FROM projects.site_diary_entries WHERE id = p_entry_id;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  -- Improvement 1. NOT "the text box is non-empty": all 6 of 6 live values a
+  -- non-empty test would project are the word None. See projects.diary_delay_text.
+  v_delay := projects.diary_delay_text(d.delays, d.delay_notes);
+
+  -- The existing MIRROR item, if any. origin = 'split' rows on the same source
+  -- are deliberately not this function's (§03 §1.3) and are never touched.
+  SELECT * INTO v_item FROM projects.work_items
+   WHERE diary_id = d.id AND origin = 'mirror';
+
+  -- No delay and never projected: nothing to do. No delay but already
+  -- projected falls through to the UPDATE arm, which decides between "leave
+  -- it" (closed / void) and the withdrawal void (difference 4).
+  IF v_item.id IS NULL AND v_delay IS NULL THEN RETURN; END IF;
+
+  -- Difference 2. NULL when the delay is NULL — used only on the INSERT arm
+  -- (never reached with a NULL delay) and guarded on the UPDATE arm.
+  v_title := 'Delay ' || to_char(d.entry_date, 'YYYY-MM-DD') || ': ' || left(v_delay, 120);
+
+  IF v_item.id IS NULL THEN
+    -- Difference 3: created_by → the chain (§12 §(d)). The diarist is the
+    -- chain's CANDIDATE, not an explicit assignment, so the third argument of
+    -- work_item_status_for_mirror is false and the item is born triage on
+    -- whoever the chain answers. An ineligible author is skipped by the
+    -- resolver's own explicit arm, so the raw column is passed.
+    -- 'diary_action' here, in the INSERT and in the UPDATE arm's resolver
+    -- call must be exactly projects.work_item_types.key: an FK on the item
+    -- row, but plain text on the resolver side, where a typo silently skips
+    -- arm 2. Probe 09 pins it (item_type_is_registry_key,
+    -- arm_2_resolves_through_the_diary_key).
+    v_assignee := projects.resolve_mirror_assignee(d.project_id, 'diary_action', d.created_by);
+    -- The PM, never the author (A(b) gatekeeper_rule = project_pm,
+    -- 00196:243). NULL is deliberate, not an oversight.
+    v_gate     := projects.resolve_work_item_gatekeeper(d.project_id, NULL);
+
+    INSERT INTO projects.work_items (
+      organisation_id, project_id, item_type, origin, title, priority,
+      status, source_status, assignee_id, gatekeeper_id, due_date, created_by, diary_id,
+      opened_at, last_activity_at)
+    VALUES (
+      d.organisation_id, d.project_id, 'diary_action', 'mirror', v_title, 'medium',
+      projects.work_item_status_for_mirror(NULL, NULL, false),
+      NULL,                  -- the source has no status vocabulary at all (difference 3)
+      v_assignee, v_gate,
+      -- Difference 6. No due date on the source: NULL, through section C's
+      -- floor so a future column is floored by this same line, and item 2's
+      -- BEFORE INSERT trigger computes A(b)'s +2 wd on the SITE calendar.
+      projects.work_item_mirror_due_date(NULL::date),
+      d.created_by, d.id,
+      -- Difference 7 (#4): historical stamps. §5 overwrites both for a client
+      -- session (same instant — harmless) and keeps them on the service path.
+      -- No closed_* / void_reason: this arm is reached on a real delay only
+      -- (difference 1), so there is no terminal stamp to supply.
+      d.created_at, d.updated_at)
+    -- Explicit partial-index target, never a bare ON CONFLICT DO NOTHING (F6):
+    -- a duplicate projection is swallowed, an origin='split' row is untouched,
+    -- and a work_items_ref_unique collision still raises 23505. The predicate
+    -- is work_items_src_diary_uidx's, verbatim (00196:374):
+    --   (diary_id) WHERE diary_id IS NOT NULL AND origin = 'mirror'
+    ON CONFLICT (diary_id) WHERE diary_id IS NOT NULL AND origin = 'mirror' DO NOTHING
+    RETURNING * INTO v_item;
+    -- No watcher seeding: §11 has already done it (see the section D comment).
+  ELSE
+    -- Improvement 8: a project move re-resolves both people — of a LIVE item
+    -- (D.1's rule, Task 8 review S1: a closed or void item's people are part
+    -- of the record; probe 09 closed_item_people_are_not_reprojected moves a
+    -- closed delay and its people stay). Runs at depth 2 under section C''s
+    -- exemption (clause (a) makes project_id immutable for a signed-in
+    -- actor); the membership trigger (00196:961-984) still re-validates both
+    -- people first, by name order. D.1 has the full reasoning; nothing about
+    -- it is diary-specific.
+    v_moved := v_item.project_id IS DISTINCT FROM d.project_id;
+    v_live  := v_item.status NOT IN ('closed','void');
+
+    IF v_live AND v_moved THEN
+      v_assignee := projects.resolve_mirror_assignee(d.project_id, 'diary_action', d.created_by);
+      v_gate     := projects.resolve_work_item_gatekeeper(d.project_id, NULL);
+    ELSE
+      -- No source assignee to read forward (difference 3): the spine's
+      -- current holder stays (the spine owns assignment, §03 §1.2), and the
+      -- PM chain is never re-run on an existing item (a PM-less project must
+      -- not raise on an unrelated edit — Task 8 review).
+      v_assignee := v_item.assignee_id;
+      v_gate     := v_item.gatekeeper_id;
+    END IF;
+
+    -- Difference 4. The withdrawal applies to a LIVE item only: a closed
+    -- record whose entry is tidied to None stays closed with its stamps, and
+    -- a void one keeps its reason. Overriding v_mapped, rather than the
+    -- status directly, keeps the reason keyed on the mapped status (the
+    -- template rule).
+    v_mapped := CASE WHEN v_live AND v_delay IS NULL THEN 'void' ELSE NULL END;
+
+    -- Status: the CURRENT status is passed in, so void stays void (terminal,
+    -- reconciliation #3); a NULL mapping keeps the current status. The
+    -- explicit-assignee flag is false: nothing on the source can un-triage a
+    -- diary_action; only the triage owner's assign on the spine does. At
+    -- depth 2 the guard skips its void-reason check — which is why the reason
+    -- travels on this same statement (section C', "Dropping … needs a short
+    -- reason") — and restores closed_at / closed_by when the status does not
+    -- change (difference 5: neither is SET here). void_reason is never
+    -- blanked: the projection's reason on a void mapping (reached from a live
+    -- row only, so the row carries none yet), else what the row already
+    -- carries. The title is re-projected from a real delay only; a withdrawn
+    -- delay leaves the title the item had (difference 2).
+    UPDATE projects.work_items
+       SET project_id       = d.project_id,
+           organisation_id  = d.organisation_id,
+           title            = CASE WHEN v_delay IS NULL THEN v_item.title ELSE v_title END,
+           source_status    = NULL,   -- difference 3: NULL on both paths
+           status           = projects.work_item_status_for_mirror(v_item.status, v_mapped, false),
+           assignee_id      = v_assignee,
+           gatekeeper_id    = v_gate,
+           void_reason      = CASE WHEN v_mapped = 'void' THEN 'delay withdrawn at source'
+                                   ELSE v_item.void_reason END,
+           last_activity_at = now()
+     WHERE id = v_item.id;
+  END IF;
+END $fn$;
+
+-- The trigger wrapper: the same two lines as D.1-D.4's. There is no write-back
+-- arm for diaries, so no mirror ⇄ write-back cycle to terminate today; the
+-- depth guard stays because §03 §1.2 mandates it on every wrapper, the
+-- mirror-triggers contract test (a later task) pins it, and it is what stops
+-- a future trigger on projects.site_diary_entries that writes work_items
+-- from re-entering this projection.
+CREATE OR REPLACE FUNCTION projects.mirror_diary_action_work_item()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+BEGIN
+  IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
+  PERFORM projects.project_diary_action(NEW.id);
+  RETURN NULL;   -- AFTER trigger; the return value is ignored
+END $fn$;
+
+-- F7: two triggers (an INSERT trigger's WHEN cannot reference OLD).
+DROP TRIGGER IF EXISTS site_diary_entries_mirror_work_item_ins ON projects.site_diary_entries;
+CREATE TRIGGER site_diary_entries_mirror_work_item_ins
+  AFTER INSERT ON projects.site_diary_entries
+  FOR EACH ROW EXECUTE FUNCTION projects.mirror_diary_action_work_item();
+
+-- The column list is every column the UPDATE arm reads that can change; the
+-- WHEN clause is the same list, so a full-row save that changes only
+-- progress_notes (or weather, workers_on_site, the other note columns) fires
+-- nothing (probe 09 same_value_write_does_not_reproject). entry_date is here
+-- because the title embeds it (difference 2). created_by is read on a move,
+-- which project_id already fires; created_at and updated_at are read on
+-- INSERT only; there is no due date, no assignee and no status to watch.
+DROP TRIGGER IF EXISTS site_diary_entries_mirror_work_item_upd ON projects.site_diary_entries;
+CREATE TRIGGER site_diary_entries_mirror_work_item_upd
+  AFTER UPDATE OF delays, delay_notes, entry_date, project_id, organisation_id
+  ON projects.site_diary_entries
+  FOR EACH ROW
+  WHEN (OLD.delays          IS DISTINCT FROM NEW.delays
+     OR OLD.delay_notes     IS DISTINCT FROM NEW.delay_notes
+     OR OLD.entry_date      IS DISTINCT FROM NEW.entry_date
+     OR OLD.project_id      IS DISTINCT FROM NEW.project_id
+     OR OLD.organisation_id IS DISTINCT FROM NEW.organisation_id)
+  EXECUTE FUNCTION projects.mirror_diary_action_work_item();
