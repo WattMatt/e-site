@@ -107,6 +107,10 @@ DECLARE
   v_cv_item     record;
   v_same_last   timestamptz;
   v_moved       record;
+  v_wd_ctid_before text;  -- the void item's tuple identity before the delay returns (Task 11 review I2: not rewritten)
+  v_admin3      uuid;     -- arm 2 on the THIRD project: distinct from admin2, the PM chain and the owner, so a live move must re-run the chain to be seen
+  v_proj3       uuid;     -- the live-move target (a moved item keeps its ref; two moves into one project collide on work_item_ref_unique — deviation 20)
+  v_livemv      record;   -- the client-viewer-authored LIVE delay's item after its move
 BEGIN
   IF auth.uid() IS NOT NULL THEN
     RAISE EXCEPTION 'fixture: auth.uid() is % — this probe relies on the guard''s service path (no impersonation anywhere in it)', auth.uid();
@@ -270,8 +274,14 @@ BEGIN
   -- re-recorded afterwards does NOT revive the item; the title is FROZEN
   -- (Task 10 review, rule 2 — the record of what was withdrawn) and the
   -- reason is never rewritten. A genuinely new delay is a new entry.
+  -- Task 11 review I2: the void row is not REWRITTEN by the returning delay
+  -- either — a void row's title is never compared by rule 1's early return.
+  -- now() is fixed for the transaction, so the tuple identity (ctid) is the
+  -- signal, as in closed_item_unrelated_source_edit_leaves_the_record.
+  SELECT w.ctid::text INTO v_wd_ctid_before
+    FROM projects.work_items w WHERE w.diary_id = v_wd AND w.origin = 'mirror';
   UPDATE projects.site_diary_entries SET delays = 'Rain again, 2h lost' WHERE id = v_wd;
-  SELECT w.status, w.title, w.void_reason INTO v_wd_return
+  SELECT w.status, w.title, w.void_reason, w.ctid::text AS ctid INTO v_wd_return
     FROM projects.work_items w WHERE w.diary_id = v_wd AND w.origin = 'mirror';
 
   -- ── a CLOSED item survives a withdrawal ────────────────────────────────────
@@ -349,6 +359,41 @@ BEGIN
   SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_moved
     FROM projects.work_items w WHERE w.diary_id = v_mv AND w.origin = 'mirror';
 
+  -- ── Task 9 review I1 (via Task 12): a LIVE move re-runs the chain ─────────
+  -- A THIRD project whose arm 2 (work_item_defaults.diary_action.triage_owner_id)
+  -- names a THIRD admin — distinct from the first project's arm 2 (admin2),
+  -- the PM chain and the owner (arm 3) — so the move arm's resolver call and
+  -- its 'diary_action' literal are both load-bearing: a typo key falls to
+  -- the owner, a dropped `v_live AND v_moved` arm keeps admin2. The
+  -- client-viewer-authored LIVE delay (triage on admin2; its author is the
+  -- chain's ineligible candidate) moves there — an owner-authored one would
+  -- resolve to the author on the new project too (arm 1). A fresh third
+  -- project, not proj2: a moved item keeps its ref and the allocator numbers
+  -- per project, so a second move into proj2 could collide on
+  -- work_items_ref_unique (measured on the form arm, deviation 20).
+  SELECT u.user_id INTO v_admin3 FROM public.user_organisations u
+   WHERE u.organisation_id = v_org AND u.role = 'admin' AND u.is_active
+     AND u.user_id NOT IN (v_pm, v_chain_pm, v_admin2)
+   ORDER BY u.created_at, u.user_id LIMIT 1;
+  IF v_admin3 IS NULL THEN
+    RAISE EXCEPTION 'fixture: WM-Consulting has no third active admin besides the owner, the PM-chain person and admin2 (11 admins on 2026-09-13)';
+  END IF;
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org, '_probe_diary_3', 'active', 'ZAR', v_pm) RETURNING id INTO v_proj3;
+  UPDATE projects.project_settings
+     SET work_item_defaults = jsonb_build_object('diary_action', jsonb_build_object('triage_owner_id', v_admin3::text))
+   WHERE project_id = v_proj3;
+  IF projects.resolve_mirror_assignee(v_proj3, 'diary_action', v_cv) IS DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: on the third project the chain answers % rather than arm 2''s admin3 % — the live-move row could not discriminate',
+      projects.resolve_mirror_assignee(v_proj3, 'diary_action', v_cv), v_admin3;
+  END IF;
+  IF projects.resolve_mirror_assignee(v_proj3, 'diary_actoin', v_cv) IS NOT DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: a typo key answers arm 2 on the third project too — the live-move row could not discriminate the literal';
+  END IF;
+  UPDATE projects.site_diary_entries SET project_id = v_proj3 WHERE id = v_cvdelay;
+  SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
+    FROM projects.work_items w WHERE w.diary_id = v_cvdelay AND w.origin = 'mirror';
+
   CREATE TEMP TABLE di_ctx(
     pm uuid, chain_pm uuid, admin2 uuid, cv uuid,
     default_due date, hist_created timestamptz, hist_updated timestamptz,
@@ -361,13 +406,16 @@ BEGIN
     wd_void_status text, wd_void_title text, wd_void_reason text,
     wd_voided_n int, wd_voided_actor_null boolean,
     wd_return_status text, wd_return_title text, wd_return_reason text,
+    wd_ctid_before text, wd_ctid_after text,
     cl_before_status text, cl_before_title text, cl_before_closed_at timestamptz, cl_before_closed_by uuid,
     cl_after_status text, cl_after_title text, cl_after_closed_at timestamptz, cl_after_closed_by uuid, cl_after_reason text,
     cl_ctid_before text, cl_ctid_after text,
     eskom_n int, eskom_title text,
     cv_assignee uuid, cv_status text,
     same_last timestamptz,
-    proj2 uuid, moved_status text, moved_project uuid, moved_assignee uuid, moved_gate uuid) ON COMMIT DROP;
+    proj2 uuid, moved_status text, moved_project uuid, moved_assignee uuid, moved_gate uuid,
+    proj3 uuid, admin3 uuid,
+    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid) ON COMMIT DROP;
   INSERT INTO di_ctx VALUES (
     v_pm, v_chain_pm, v_admin2, v_cv,
     v_default_due, v_hist_created, v_hist_updated,
@@ -380,13 +428,16 @@ BEGIN
     v_wd_void.status, v_wd_void.title, v_wd_void.void_reason,
     v_wd_voided_n, v_wd_voided_actor_null,
     v_wd_return.status, v_wd_return.title, v_wd_return.void_reason,
+    v_wd_ctid_before, v_wd_return.ctid,
     v_cl_before.status, v_cl_before.title, v_cl_before.closed_at, v_cl_before.closed_by,
     v_cl_after.status, v_cl_after.title, v_cl_after.closed_at, v_cl_after.closed_by, v_cl_after.void_reason,
     v_cl_ctid_before, v_cl_ctid_after,
     v_eskom_n, v_eskom_title,
     v_cv_item.assignee_id, v_cv_item.status,
     v_same_last,
-    v_proj2, v_moved.status, v_moved.project_id, v_moved.assignee_id, v_moved.gatekeeper_id);
+    v_proj2, v_moved.status, v_moved.project_id, v_moved.assignee_id, v_moved.gatekeeper_id,
+    v_proj3, v_admin3,
+    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id);
 END $probe$;
 
 SELECT 'empty_entry_not_mirrored' AS probe,
@@ -440,8 +491,9 @@ UNION ALL
 SELECT 'void_is_terminal_when_delay_returns',
        (SELECT c.wd_return_status = 'void' AND c.wd_return_reason = 'delay withdrawn at source'
            AND c.wd_return_title = c.wd_void_title
-           AND c.wd_return_title <> 'Delay 2026-09-08: Rain again, 2h lost' FROM di_ctx c),
-       'Task 4''s rule: void has no exit; an entry re-edited back into scope leaves the item void with its reason AND its title (Task 10 review, rule 2: a void row''s title is frozen — the record of what was withdrawn) — a genuinely new delay is a new entry'
+           AND c.wd_return_title <> 'Delay 2026-09-08: Rain again, 2h lost'
+           AND c.wd_ctid_before = c.wd_ctid_after FROM di_ctx c),
+       'Task 4''s rule: void has no exit; an entry re-edited back into scope leaves the item void with its reason AND its title (Task 10 review, rule 2: a void row''s title is frozen — the record of what was withdrawn) and does not rewrite its tuple (same ctid — Task 11 review I2: rule 1''s early return never compares a void row''s title) — a genuinely new delay is a new entry'
 UNION ALL
 -- Task 10 review, rule 1: a closed record is not rewritten for nothing.
 SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
@@ -470,6 +522,12 @@ SELECT 'closed_item_people_are_not_reprojected',
            AND c.moved_assignee = c.admin2 AND c.moved_assignee <> c.pm
            AND c.moved_gate = c.chain_pm FROM di_ctx c),
        'a CLOSED delay moved to a project whose chain answers the owner: the item moves (improvement 8) but keeps the people it was closed with — the chain is re-run for a LIVE item only'
+UNION ALL
+-- Task 9 review I1 (via Task 12): the live-move arm.
+SELECT 'live_move_reruns_the_chain_through_the_diary_key',
+       (SELECT c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
+           AND c.livemv_assignee <> c.admin2 AND c.livemv_assignee <> c.pm AND c.livemv_gate = c.chain_pm FROM di_ctx c),
+       'improvement 8 on a LIVE item: the move re-runs the chain on the NEW project (arm 2 there = admin3) through the move arm''s ''diary_action'' literal — a typo key falls to the owner, a dropped v_live AND v_moved arm leaves it on admin2; the gatekeeper is the PM chain again'
 UNION ALL
 SELECT 'item_type_is_registry_key',
        EXISTS (SELECT 1 FROM projects.work_item_types t WHERE t.key = 'diary_action')

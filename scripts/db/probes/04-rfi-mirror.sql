@@ -34,8 +34,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 23 rows. If the printed `assertions seen:` list is shorter than
--- twenty-three names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 24 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-four names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -63,6 +63,10 @@ DECLARE
   v_cv_item    record;
   v_redate     record;
   v_closed_people record;   -- the born-closed item's people after a post-close source reassignment (Task 8 review S1)
+  v_admin3    uuid;   -- arm 2 on the THIRD project: distinct from arm 1b's chain_pm, admin2 and the owner, so a live move must re-run the chain to be seen
+  v_proj3     uuid;   -- the live-move target (a moved item keeps its ref; two moves into one project collide on work_items_ref_unique)
+  v_livemv    record; -- the client-viewer-named RFI's item, re-pointed at the viewer and then moved
+  v_livemv_err text;  -- the move's error, if any: a dropped move arm leaves the raiser as gatekeeper on a project he is not on, and the membership trigger refuses the move
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -271,6 +275,59 @@ BEGIN
   SELECT w.status, w.assignee_id INTO v_cv_item
     FROM projects.work_items w WHERE w.rfi_id = v_cv_rfi AND w.origin = 'mirror';
 
+  -- ── Task 9 review I1 (via Task 12): a LIVE move re-runs the chain ─────────
+  -- A THIRD project whose arm 2 (work_item_defaults.rfi.triage_owner_id)
+  -- names a THIRD admin — distinct from arm 1b's answer on the first project
+  -- (chain_pm), from admin2 and from the owner (arm 3) — so the move arm's
+  -- resolver call and its 'rfi' literal are both load-bearing: a typo key
+  -- falls to the owner (proj3's triage owner), a dropped `ELSIF v_moved` arm
+  -- keeps chain_pm. The moved RFI must name nobody ELIGIBLE at move time, or
+  -- arm 1 answers on the new project too: section E wrote arm 1b's answer
+  -- back to rfis.assigned_to at birth, so the source is re-pointed at the
+  -- client viewer first (a later source edit naming an ineligible person
+  -- stays on the source and moves nothing on the spine — improvement 7,
+  -- deviation 11; asserted so the row measures the move). A fresh third
+  -- project: a moved item keeps its ref and the allocator numbers per
+  -- project (deviation 20).
+  SELECT u.user_id INTO v_admin3 FROM public.user_organisations u
+   WHERE u.organisation_id = v_org AND u.role = 'admin' AND u.is_active
+     AND u.user_id NOT IN (v_pm, v_other, v_chain_pm, v_admin2)
+   ORDER BY u.created_at, u.user_id LIMIT 1;
+  IF v_admin3 IS NULL THEN
+    RAISE EXCEPTION 'fixture: WM-Consulting has no third active admin besides the PM-chain person and admin2 (11 admins on 2026-09-13)';
+  END IF;
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org, '_probe_rfi_mirror_3', 'active', 'ZAR', v_pm) RETURNING id INTO v_proj3;
+  UPDATE projects.project_settings
+     SET work_item_defaults = jsonb_build_object('rfi', jsonb_build_object('triage_owner_id', v_admin3::text))
+   WHERE project_id = v_proj3;
+  IF projects.resolve_mirror_assignee(v_proj3, 'rfi', v_cv) IS DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: on the third project the chain answers % rather than arm 2''s admin3 % — the live-move row could not discriminate',
+      projects.resolve_mirror_assignee(v_proj3, 'rfi', v_cv), v_admin3;
+  END IF;
+  IF projects.resolve_mirror_assignee(v_proj3, 'rfl', v_cv) IS NOT DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: a typo key answers arm 2 on the third project too — the live-move row could not discriminate the literal';
+  END IF;
+  UPDATE projects.rfis SET assigned_to = v_cv WHERE id = v_cv_rfi;
+  SELECT w.status, w.assignee_id INTO v_livemv
+    FROM projects.work_items w WHERE w.rfi_id = v_cv_rfi AND w.origin = 'mirror';
+  IF v_livemv.status <> 'triage' OR v_livemv.assignee_id IS DISTINCT FROM v_cv_item.assignee_id THEN
+    RAISE EXCEPTION 'fixture: re-pointing the source at the client viewer moved the item (% on %) — the live-move row would measure that, not the move',
+      v_livemv.status, v_livemv.assignee_id;
+  END IF;
+  -- The move itself, error captured: with the move arm dropped the gatekeeper
+  -- stays the raiser (a contractor who is NOT on proj3) and item 2's
+  -- membership trigger refuses the whole UPDATE with its sentence — captured
+  -- so that mutation reads as this row going red, not as the probe aborting.
+  BEGIN
+    UPDATE projects.rfis SET project_id = v_proj3 WHERE id = v_cv_rfi;
+    v_livemv_err := NULL;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS v_livemv_err = MESSAGE_TEXT;
+  END;
+  SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
+    FROM projects.work_items w WHERE w.rfi_id = v_cv_rfi AND w.origin = 'mirror';
+
   CREATE TEMP TABLE rfi_ctx(
     rfi uuid, closed_rfi uuid, proj uuid, pm uuid, other uuid,
     ins_status text, ins_bic uuid, ins_assignee uuid, ins_gate uuid,
@@ -285,7 +342,9 @@ BEGIN
     same_status text, same_assignee uuid,
     closed_due_before date, redate_due date, redate_last_activity timestamptz,
     cv_status text, cv_assignee uuid,
-    closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid)
+    closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid,
+    proj3 uuid, admin3 uuid,
+    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid, livemv_err text)
     ON COMMIT DROP;
   INSERT INTO rfi_ctx VALUES (
     v_rfi, v_closed_rfi, v_proj, v_pm, v_other,
@@ -302,7 +361,9 @@ BEGIN
     v_after_same.status, v_after_same.assignee_id,
     v_closed_item.due_date, v_redate.due_date, v_redate.last_activity_at,
     v_cv_item.status, v_cv_item.assignee_id,
-    v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id);
+    v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id,
+    v_proj3, v_admin3,
+    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id, v_livemv_err);
 END $probe$;
 
 SELECT 'item_created' AS probe,
@@ -427,4 +488,12 @@ UNION ALL
 SELECT 'closed_item_people_are_not_reprojected',
        (SELECT c.closed_people_status = 'closed' AND c.closed_people_assignee = c.chain_pm
            AND c.closed_people_assignee <> c.admin2 AND c.closed_people_gate = c.other FROM rfi_ctx c),
-       'rfis.assigned_to → a second admin AFTER the close: the closed record keeps the people it was closed with (the guard''s clause (b) sentence, which the depth-2 path never reaches, so the projection holds the line itself) — without the rule the forward read would move assignee_id';
+       'rfis.assigned_to → a second admin AFTER the close: the closed record keeps the people it was closed with (the guard''s clause (b) sentence, which the depth-2 path never reaches, so the projection holds the line itself) — without the rule the forward read would move assignee_id'
+UNION ALL
+-- Task 9 review I1 (via Task 12): the live-move arm.
+SELECT 'live_move_reruns_the_chain_through_the_rfi_key',
+       (SELECT c.livemv_err IS NULL
+           AND c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
+           AND c.livemv_assignee <> c.chain_pm AND c.livemv_assignee <> c.pm
+           AND c.livemv_gate = c.chain_pm AND c.livemv_gate <> c.other FROM rfi_ctx c),
+       'improvement 8 on a LIVE item: the move re-runs BOTH people on the NEW project — arm 2 there (admin3) through the move arm''s ''rfi'' literal (a typo key falls to the owner), and the gatekeeper falls from the raiser (not a member of the new project) to the PM chain; a dropped ELSIF v_moved arm leaves the raiser as gatekeeper and item 2''s membership trigger refuses the whole move ("That person is not on this project…" — captured into livemv_err)';

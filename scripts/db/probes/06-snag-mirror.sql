@@ -56,8 +56,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 22 rows. If the printed `assertions seen:` list is shorter than
--- twenty-two names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 23 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-three names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -95,6 +95,8 @@ DECLARE
   v_born     record;
   v_same_last_activity timestamptz;
   v_closed_people record;   -- the signed-off item's people after a post-sign-off source reassignment (Task 8 review S1)
+  v_proj3    uuid;   -- the live-move target: its arm 2 names admin3 (a moved item keeps its ref; two moves into one project collide on work_items_ref_unique)
+  v_livemv   record; -- the client-viewer-raised snag's item after its move
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -332,6 +334,33 @@ BEGIN
   SELECT w.last_activity_at INTO v_same_last_activity
     FROM projects.work_items w WHERE w.snag_id = v_born_so AND w.origin = 'mirror';
 
+  -- ── Task 9 review I1 (via Task 12): a LIVE move re-runs the chain ─────────
+  -- A THIRD project whose arm 2 (work_item_defaults.snag.triage_owner_id)
+  -- names admin3 — the un-triage target above, never named on the moved
+  -- snag, distinct from the first project's arm 2 (admin2) and from arm 3
+  -- (the owner) — so the move arm's resolver call and its 'snag' literal are
+  -- both load-bearing: a typo key falls to the owner, a dropped `ELSIF
+  -- v_moved` arm keeps admin2. The client-viewer-raised snag (triage on
+  -- admin2, assigned_to NULL — section E never writes a triage snag back, so
+  -- the move arm's candidate is the ineligible raiser) moves there. A fresh
+  -- third project: a moved item keeps its ref and the allocator numbers per
+  -- project (deviation 20).
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org, '_probe_snag_mirror_3', 'active', 'ZAR', v_pm) RETURNING id INTO v_proj3;
+  UPDATE projects.project_settings
+     SET work_item_defaults = jsonb_build_object('snag', jsonb_build_object('triage_owner_id', v_admin3::text))
+   WHERE project_id = v_proj3;
+  IF projects.resolve_mirror_assignee(v_proj3, 'snag', v_cv) IS DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: on the third project the chain answers % rather than arm 2''s admin3 % — the live-move row could not discriminate',
+      projects.resolve_mirror_assignee(v_proj3, 'snag', v_cv), v_admin3;
+  END IF;
+  IF projects.resolve_mirror_assignee(v_proj3, 'snaag', v_cv) IS NOT DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: a typo key answers arm 2 on the third project too — the live-move row could not discriminate the literal';
+  END IF;
+  UPDATE field.snags SET project_id = v_proj3 WHERE id = v_cv_snag;
+  SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
+    FROM projects.work_items w WHERE w.snag_id = v_cv_snag AND w.origin = 'mirror';
+
   CREATE TEMP TABLE sn_ctx(
     snag uuid, nowhere uuid, cv_snag uuid, hidden uuid, born_so uuid, proj uuid,
     pm uuid, ctr uuid, chain_pm uuid, admin2 uuid, admin3 uuid, cv uuid,
@@ -349,7 +378,8 @@ BEGIN
     born_status text, born_opened_at timestamptz, born_closed_at timestamptz, born_closed_by uuid,
     hist_created timestamptz, hist_signed timestamptz,
     same_last_activity timestamptz,
-    closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid)
+    closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid,
+    proj3 uuid, livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid)
     ON COMMIT DROP;
   INSERT INTO sn_ctx VALUES (
     v_snag, v_nowhere, v_cv_snag, v_hidden, v_born_so, v_proj,
@@ -368,7 +398,8 @@ BEGIN
     v_born.status, v_born.opened_at, v_born.closed_at, v_born.closed_by,
     v_hist_created, v_hist_signed,
     v_same_last_activity,
-    v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id);
+    v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id,
+    v_proj3, v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id);
 END $probe$;
 
 SELECT 'snag_item_created' AS probe,
@@ -483,4 +514,10 @@ UNION ALL
 SELECT 'closed_item_people_are_not_reprojected',
        (SELECT c.closed_people_status = 'closed' AND c.closed_people_assignee = c.admin3
            AND c.closed_people_assignee <> c.admin2 AND c.closed_people_gate = c.chain_pm FROM sn_ctx c),
-       'snags.assigned_to → a second admin AFTER the sign-off: the closed record keeps the people it was closed with (the guard''s clause (b) sentence, which the depth-2 path never reaches, so the projection holds the line itself) — without the rule the forward read would move assignee_id';
+       'snags.assigned_to → a second admin AFTER the sign-off: the closed record keeps the people it was closed with (the guard''s clause (b) sentence, which the depth-2 path never reaches, so the projection holds the line itself) — without the rule the forward read would move assignee_id'
+UNION ALL
+-- Task 9 review I1 (via Task 12): the live-move arm.
+SELECT 'live_move_reruns_the_chain_through_the_snag_key',
+       (SELECT c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
+           AND c.livemv_assignee <> c.admin2 AND c.livemv_assignee <> c.pm AND c.livemv_gate = c.chain_pm FROM sn_ctx c),
+       'improvement 8 on a LIVE item: the move re-runs the chain on the NEW project (arm 2 there = admin3) through the move arm''s ''snag'' literal — a typo key falls to the owner, a dropped ELSIF v_moved arm leaves it on admin2; the gatekeeper is the PM chain again';

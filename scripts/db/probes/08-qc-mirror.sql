@@ -127,7 +127,10 @@ DECLARE
   v_cl_prio_restamp text;
   v_cl_refiled   record;   -- after a title + severity edit on the closed entry
   v_rename2_na   text;     -- the void (N/A) item's title after a SECOND rename: frozen
+  v_na_ctid_before text;   -- … and its tuple identity around that rename: not rewritten (Task 11 review I2)
+  v_na_ctid_after  text;
   v_rename2_minor text;    -- a live item's title after it: follows
+  v_draftfail_before int;  -- items for the draft-window fail BEFORE the re-issue: 0 (Task 11 review S4)
   v_livemv       record;   -- the client-viewer live item after its move
   v_bf_opened    timestamptz;
   v_bf_at_insert int;
@@ -368,9 +371,13 @@ BEGIN
   -- Task 9 review, decision 1: a CLOSED item whose entry CROSSES INTO 'fail'
   -- (the previous verdict, source_status, was 'na') is REOPENED on its last
   -- holder, with one status_changed event. Section C still maps fail → NULL;
-  -- the crossing rule in the projection decides. The priority it was
-  -- recorded at is kept (I3 reads v_live before the reopen).
-  UPDATE projects.qc_entries SET conformance = 'fail', severity = 'major' WHERE id = v_fail;
+  -- the crossing rule in the projection decides. Re-failed at a DIFFERENT
+  -- severity than it was born with (major/high → critical): the reopen is
+  -- the module re-filing the defect, so the item is re-filed with it (Task
+  -- 11 review I1 — re-failed with the same 'major', the priority clause could
+  -- not fail either way, and on v_live alone the reopened item sat at its
+  -- old priority until the next unrelated edit re-filed it).
+  UPDATE projects.qc_entries SET conformance = 'fail', severity = 'critical' WHERE id = v_fail;
   SELECT w.status, w.assignee_id, w.ball_in_court_id, w.closed_at, w.priority INTO v_refail
     FROM projects.work_items w WHERE w.qc_entry_id = v_fail;
   SELECT count(*) INTO v_refail_ev FROM projects.work_item_events e
@@ -391,6 +398,7 @@ BEGIN
   -- report is out of scope) …
   INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
   VALUES (v_rep, v_org, v_proj, 'Found during the draft cycle', 'fail', 'major', v_pm) RETURNING id INTO v_draftfail;
+  SELECT count(*) INTO v_draftfail_before FROM projects.work_items WHERE qc_entry_id = v_draftfail;
   -- … and the re-issue projects it, leaving the earlier items exactly as
   -- they were: no revival is needed because nothing was withdrawn.
   UPDATE projects.qc_reports SET status = 'issued' WHERE id = v_rep;
@@ -446,8 +454,13 @@ BEGIN
   -- v_na has been void since the N/A rule (its title carries the rev B name
   -- from the first rename); v_minor is live. A second rename retitles the
   -- live item and leaves the void one as the record of what was withdrawn.
+  -- Task 11 review I2: the void row is not REWRITTEN either — a void row's
+  -- title is never compared by rule 1's early return. now() is fixed for the
+  -- transaction, so the tuple identity (ctid) is the signal, as in
+  -- closed_item_unrelated_source_edit_leaves_the_record.
+  SELECT w.ctid::text INTO v_na_ctid_before FROM projects.work_items w WHERE w.qc_entry_id = v_na;
   UPDATE projects.qc_reports SET title = 'Level 3 handover QC (rev C)' WHERE id = v_rep;
-  SELECT w.title INTO v_rename2_na    FROM projects.work_items w WHERE w.qc_entry_id = v_na;
+  SELECT w.title, w.ctid::text INTO v_rename2_na, v_na_ctid_after FROM projects.work_items w WHERE w.qc_entry_id = v_na;
   SELECT w.title INTO v_rename2_minor FROM projects.work_items w WHERE w.qc_entry_id = v_minor;
 
   -- ── Task 9 review I1: a LIVE move re-runs the chain through the key ────────
@@ -527,10 +540,10 @@ BEGIN
     bf_created timestamptz, bf_opened timestamptz,
     refail_assignee uuid, refail_bic uuid, refail_closed_at timestamptz, refail_prio text, refail_ev int,
     ans_edit text, ans_rename text, sc_after text, prio_spine text, prio_src text,
-    reissue_new int,
+    reissue_new int, draftfail_before int,
     cl_ctid_before text, cl_ctid_after text, cl_prio_restamp text,
     cl_refiled_status text, cl_refiled_title text, cl_refiled_prio text,
-    rename2_na text, rename2_minor text,
+    rename2_na text, rename2_minor text, na_ctid_before text, na_ctid_after text,
     livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid,
     draft_items int, issued_fail int, issued_rest int,
     fi_priority text, fi_src text, fi_title text, fi_status text, fi_assignee uuid,
@@ -558,10 +571,10 @@ BEGIN
     v_bf_created, v_bf_opened,
     v_refail.assignee_id, v_refail.ball_in_court_id, v_refail.closed_at, v_refail.priority, v_refail_ev,
     v_ans_edit, v_ans_rename, v_sc_after, v_prio_spine, v_prio_src,
-    v_reissue_new,
+    v_reissue_new, v_draftfail_before,
     v_cl_ctid_before, v_cl_ctid_after, v_cl_prio_restamp,
     v_cl_refiled.status, v_cl_refiled.title, v_cl_refiled.priority,
-    v_rename2_na, v_rename2_minor,
+    v_rename2_na, v_rename2_minor, v_na_ctid_before, v_na_ctid_after,
     v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id,
     v_draft_items, v_issued_fail, v_issued_rest,
     v_fi.priority, v_fi.source_status, v_fi.title, v_fi.status, v_fi.assignee_id,
@@ -696,8 +709,8 @@ UNION ALL
 -- Task 9 review, decision 1: the crossing rule.
 SELECT 'refail_reopens_a_closed_defect',
        (SELECT c.refail_status = 'open' AND c.refail_assignee = c.pm AND c.refail_bic = c.pm
-           AND c.refail_closed_at IS NULL AND c.refail_ev = 1 AND c.refail_prio = 'high' FROM qc_ctx c),
-       'a CLOSED defect whose entry crosses from na back INTO fail is reopened on its last holder (one status_changed event, closed_at cleared by the guard, the recorded priority kept); section C still maps fail → NULL — the projection''s crossing rule decides'
+           AND c.refail_closed_at IS NULL AND c.refail_ev = 1 AND c.refail_prio = 'critical' FROM qc_ctx c),
+       'a CLOSED defect whose entry crosses from na back INTO fail is reopened on its last holder (one status_changed event, closed_at cleared by the guard) and RE-FILED at the severity it was re-failed with — born major/high, re-failed critical (Task 11 review I1); section C still maps fail → NULL — the projection''s crossing rule decides'
 UNION ALL
 SELECT 'answered_survives_an_unrelated_edit_and_a_rename',
        (SELECT c.ans_edit = 'answered' AND c.ans_rename = 'answered' FROM qc_ctx c),
@@ -715,8 +728,9 @@ SELECT 'report_withdrawal_keeps_live_items',
        'issued → draft (legal at the DB, no app path) changes NOTHING on existing items: the triage defect stays triage, the reopened one stays open, the N/A void keeps its own reason — the first version voided them as ''report withdrawn'', which a re-issue could never undo'
 UNION ALL
 SELECT 'reissue_keeps_the_items_and_projects_new_fails',
-       (SELECT c.reissue_crit_status = 'triage' AND c.reissue_crit_reason IS NULL AND c.reissue_new = 1 FROM qc_ctx c),
-       'the re-issue leaves the earlier items exactly as they were and projects the fail added during the draft cycle — no revival needed because nothing was withdrawn'
+       (SELECT c.reissue_crit_status = 'triage' AND c.reissue_crit_reason IS NULL
+           AND c.draftfail_before = 0 AND c.reissue_new = 1 FROM qc_ctx c),
+       'the re-issue leaves the earlier items exactly as they were and projects the fail added during the draft cycle (0 items before the re-issue, 1 after — self-contained, Task 11 review S4) — no revival needed because nothing was withdrawn'
 UNION ALL
 -- Task 9 review I3: priority is module-owned while severity is set.
 SELECT 'spine_priority_edit_is_reverted_by_the_next_source_write',
@@ -736,8 +750,9 @@ UNION ALL
 -- Task 10 review, rule 2: a void row's title is frozen.
 SELECT 'void_item_title_is_frozen_on_rename',
        (SELECT c.rename2_na = 'Untested check — Level 3 handover QC (rev B)'
-           AND c.rename2_minor = 'Label missing — Level 3 handover QC (rev C)' FROM qc_ctx c),
-       'a second report rename retitles the live items and leaves the void (N/A) item''s title as it was when the record was withdrawn'
+           AND c.rename2_minor = 'Label missing — Level 3 handover QC (rev C)'
+           AND c.na_ctid_before = c.na_ctid_after FROM qc_ctx c),
+       'a second report rename retitles the live items and leaves the void (N/A) item''s title as it was when the record was withdrawn — and does not rewrite its tuple (same ctid): rule 1''s early return never compares a void row''s title (Task 11 review I2 — under the plain title comparison the frozen title still ran the arm and the guard re-stamped last_activity_at)'
 UNION ALL
 -- Task 9 review I1: the live-move arm.
 SELECT 'live_move_reruns_the_chain_through_the_qc_key',

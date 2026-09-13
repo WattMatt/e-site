@@ -72,8 +72,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 33 rows. If the printed `assertions seen:` list is shorter than
--- thirty-three names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 35 rows. If the printed `assertions seen:` list is shorter than
+-- thirty-five names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -131,6 +131,9 @@ DECLARE
   v_live_past     record;   -- …then after a reschedule into the past
   v_rt_before     record;   -- the open item after the SPINE's reassign + gatekeeper correction
   v_rt_after      record;   -- …after an unrelated watched source write (the honest rows)
+  v_admin3        uuid;     -- arm 2 on the THIRD project: distinct from admin2, the verifier and the owner, so a live move must re-run the chain to be seen
+  v_proj3         uuid;     -- the live-move target (a moved item keeps its ref; two moves into one project collide on work_items_ref_unique)
+  v_livemv        record;   -- the client-named board's item after its move
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -474,6 +477,40 @@ BEGIN
   SELECT w.assignee_id, w.gatekeeper_id INTO v_rt_after
     FROM projects.work_items w WHERE w.inspection_id = v_sast AND w.origin = 'mirror';
 
+  -- ── Task 9 review I1 (via Task 12): a LIVE move re-runs the chain ─────────
+  -- A THIRD project whose arm 2 (work_item_defaults.inspection.triage_owner_id)
+  -- names a THIRD admin — distinct from the first project's arm 2 (admin2),
+  -- the verifier and the owner (arm 3) — so the move arm's resolver call and
+  -- its 'inspection' literal are both load-bearing: a typo key falls to the
+  -- owner, a dropped `ELSIF v_moved` arm keeps admin2. The client-named
+  -- board (both people ineligible: triage on admin2, gatekeeper the PM
+  -- chain) moves there — a board whose inspector is eligible would resolve
+  -- to the inspector on the new project too (arm 1) and the row could not
+  -- see the literal. A fresh third project: a moved item keeps its ref and
+  -- the allocator numbers per project (deviation 20).
+  SELECT u.user_id INTO v_admin3 FROM public.user_organisations u
+   WHERE u.organisation_id = v_org AND u.role = 'admin' AND u.is_active
+     AND u.user_id NOT IN (v_pm, v_chain_pm, v_v, v_admin2)
+   ORDER BY u.created_at, u.user_id LIMIT 1;
+  IF v_admin3 IS NULL THEN
+    RAISE EXCEPTION 'fixture: WM-Consulting has no fourth active admin besides the PM-chain person, the verifier and admin2 (11 admins on 2026-09-13)';
+  END IF;
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org, '_probe_inspection_mirror_3', 'active', 'ZAR', v_pm) RETURNING id INTO v_proj3;
+  UPDATE projects.project_settings
+     SET work_item_defaults = jsonb_build_object('inspection', jsonb_build_object('triage_owner_id', v_admin3::text))
+   WHERE project_id = v_proj3;
+  IF projects.resolve_mirror_assignee(v_proj3, 'inspection', v_cv) IS DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: on the third project the chain answers % rather than arm 2''s admin3 % — the live-move row could not discriminate',
+      projects.resolve_mirror_assignee(v_proj3, 'inspection', v_cv), v_admin3;
+  END IF;
+  IF projects.resolve_mirror_assignee(v_proj3, 'inspectoin', v_cv) IS NOT DISTINCT FROM v_admin3 THEN
+    RAISE EXCEPTION 'fixture: a typo key answers arm 2 on the third project too — the live-move row could not discriminate the literal';
+  END IF;
+  UPDATE inspections.inspections SET project_id = v_proj3 WHERE id = v_cvi;
+  SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
+    FROM projects.work_items w WHERE w.inspection_id = v_cvi AND w.origin = 'mirror';
+
   CREATE TEMP TABLE in_ctx(
     insp uuid, nowhere uuid, past uuid, sast uuid, arm2 uuid, cvi uuid, aband uuid,
     live_ab uuid, born uuid, proj uuid,
@@ -500,7 +537,9 @@ BEGIN
     closed_people_status text, closed_people_assignee uuid, closed_people_gate uuid, closed_people_due date,
     spine_due date,
     live_resched_due date, live_resched_status text, live_past_due date,
-    rt_before_assignee uuid, rt_before_gate uuid, rt_after_assignee uuid, rt_after_gate uuid)
+    rt_before_assignee uuid, rt_before_gate uuid, rt_after_assignee uuid, rt_after_gate uuid,
+    proj3 uuid, admin3 uuid,
+    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid)
     ON COMMIT DROP;
   INSERT INTO in_ctx VALUES (
     v_insp, v_nowhere, v_past, v_sast, v_arm2, v_cvi, v_aband,
@@ -528,7 +567,9 @@ BEGIN
     v_closed_people.status, v_closed_people.assignee_id, v_closed_people.gatekeeper_id, v_closed_people.due_date,
     v_spine_due,
     v_live_resched.due_date, v_live_resched.status, v_live_past.due_date,
-    v_rt_before.assignee_id, v_rt_before.gatekeeper_id, v_rt_after.assignee_id, v_rt_after.gatekeeper_id);
+    v_rt_before.assignee_id, v_rt_before.gatekeeper_id, v_rt_after.assignee_id, v_rt_after.gatekeeper_id,
+    v_proj3, v_admin3,
+    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id);
 END $probe$;
 
 SELECT 'insp_item_created' AS probe,
@@ -698,4 +739,10 @@ SELECT 'spine_reassignment_is_reverted_by_the_next_source_write',
 UNION ALL
 SELECT 'spine_gatekeeper_correction_is_reverted_by_the_next_source_write',
        (SELECT c.rt_before_gate = c.admin2 AND c.rt_after_gate = c.verifier AND c.rt_after_gate <> c.admin2 FROM in_ctx c),
-       'TRUE = transient, pinned honestly: the verifier is read forward on every projection of a live item, so a spine-side gatekeeper correction is undone by the next watched source write; the inspection page''s verifier is the durable control';
+       'TRUE = transient, pinned honestly: the verifier is read forward on every projection of a live item, so a spine-side gatekeeper correction is undone by the next watched source write; the inspection page''s verifier is the durable control'
+UNION ALL
+-- Task 9 review I1 (via Task 12): the live-move arm.
+SELECT 'live_move_reruns_the_chain_through_the_inspection_key',
+       (SELECT c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
+           AND c.livemv_assignee <> c.admin2 AND c.livemv_assignee <> c.pm AND c.livemv_gate = c.chain_pm FROM in_ctx c),
+       'improvement 8 on a LIVE item: the move re-runs the chain on the NEW project (arm 2 there = admin3) through the move arm''s ''inspection'' literal — a typo key falls to the owner, a dropped ELSIF v_moved arm leaves it on admin2; the ineligible verifier falls to the PM chain again';

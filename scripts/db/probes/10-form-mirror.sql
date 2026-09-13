@@ -113,6 +113,8 @@ DECLARE
   v_void        record;   -- … after the void
   v_vback       record;   -- … after a trusted-role resurrection of the source
   v_dv          record;   -- the distributed-then-void item
+  v_dv_voided_n int;      -- the `voided` event §11 writes for that void (Task 11 review S2)
+  v_dv_voided_actor_null boolean;
   v_cvi         record;   -- the client-viewer-authored item as born
   v_cvmoved     record;   -- … after a LIVE move
   v_same_last   timestamptz;
@@ -298,17 +300,25 @@ BEGIN
   SELECT w.title, w.status, w.closed_by INTO v_cl_renamed
     FROM projects.work_items w WHERE w.site_form_id = v_fdist AND w.origin = 'mirror';
 
-  INSERT INTO field.site_forms (organisation_id, project_id, template_row_id, form_no, board_ref, board_label, status, created_by, void_reason)
-  VALUES (v_org, v_proj, v_tpl, 'TMS-PRB-2026-0004', 'DB-V', 'Void board', 'void', v_pm, 'Probe: created in error')
+  -- HISTORICAL stamps: the INSERT path copies updated_at into last_activity_at,
+  -- so a rename that REWROTE the void record would show as the guard's now()
+  -- over it (Task 11 review I2 — measured: the frozen title held but the
+  -- tuple was rewritten, last_activity_at 2026-08-14 → now()).
+  INSERT INTO field.site_forms (organisation_id, project_id, template_row_id, form_no, board_ref, board_label, status, created_by, void_reason,
+                                created_at, updated_at)
+  VALUES (v_org, v_proj, v_tpl, 'TMS-PRB-2026-0004', 'DB-V', 'Void board', 'void', v_pm, 'Probe: created in error',
+          v_hist_created, v_hist_updated)
   RETURNING id INTO v_fbvoid;
   SELECT w.status, w.void_reason, w.closed_at, w.title INTO v_bv
     FROM projects.work_items w WHERE w.site_form_id = v_fbvoid AND w.origin = 'mirror';
   -- Task 10 review, rule 2: a VOID row's title is frozen — the record of
   -- what was withdrawn. A trusted-role rename of the board on the void form
   -- (the guard refuses in-place edits of a non-draft for anyone else,
-  -- 00179:384-390) changes nothing on the item's title.
+  -- 00179:384-390) changes nothing on the item's title — and (Task 11 review
+  -- I2) does not rewrite the record either: rule 1's early return never
+  -- compares a void row's title.
   UPDATE field.site_forms SET board_label = 'Void board (renamed)' WHERE id = v_fbvoid;
-  SELECT w.title, w.status, w.void_reason INTO v_bv_renamed
+  SELECT w.title, w.status, w.void_reason, w.last_activity_at INTO v_bv_renamed
     FROM projects.work_items w WHERE w.site_form_id = v_fbvoid AND w.origin = 'mirror';
 
   -- ── live → void with a reason; void is terminal ───────────────────────────
@@ -326,9 +336,10 @@ BEGIN
     FROM projects.work_items w WHERE w.site_form_id = v_fvoid AND w.origin = 'mirror';
   -- Only a trusted role can move a void form anywhere (00179:352-354; the
   -- distribute action's `.in('status', [submitted, distributed])` exists so
-  -- the service client does not resurrect one by accident, :244-248). If one
+  -- the service client does not resurrect one by accident —
+  -- site-forms-distribute.actions.ts:259; 242-247 is its comment). If one
   -- does, the item stays void with its reason: void has no exit (Task 4's
-  -- arm of work_item_status_for_mirror); the title follows the source.
+  -- arm of work_item_status_for_mirror); the title is frozen (rule 2).
   UPDATE field.site_forms SET status = 'submitted', submitted_at = now(), submitted_by = created_by WHERE id = v_fvoid;
   SELECT w.status, w.void_reason, w.source_status INTO v_vback
     FROM projects.work_items w WHERE w.site_form_id = v_fvoid AND w.origin = 'mirror';
@@ -345,6 +356,12 @@ BEGIN
   UPDATE field.site_forms SET status = 'void', void_reason = 'Probe: issued against the wrong DB' WHERE id = v_fdv;
   SELECT w.status, w.void_reason, w.closed_at, w.closed_by, w.ball_in_court_id INTO v_dv
     FROM projects.work_items w WHERE w.site_form_id = v_fdv AND w.origin = 'mirror';
+  -- Task 11 review S2: §11 records the trigger-driven void as ONE `voided`
+  -- event (actor NULL on the service path — the shape probe 09 pins).
+  SELECT count(*), bool_and(e.actor_id IS NULL) INTO v_dv_voided_n, v_dv_voided_actor_null
+    FROM projects.work_item_events e
+    JOIN projects.work_items w ON w.id = e.work_item_id
+   WHERE w.site_form_id = v_fdv AND w.origin = 'mirror' AND e.verb = 'voided';
 
   -- ── an INELIGIBLE author: the flag is eligibility, not a tautology ────────
   -- Explicit created_by bypasses 00179:83's DEFAULT auth.uid(); the chain
@@ -449,11 +466,12 @@ BEGIN
     cl_restamp_last timestamptz, cl_restamp_closed_by uuid, cl_restamp_status text,
     cl_renamed_title text, cl_renamed_status text, cl_renamed_closed_by uuid,
     bv_status text, bv_reason text, bv_closed_at timestamptz, bv_title text,
-    bv_renamed_title text, bv_renamed_status text, bv_renamed_reason text,
+    bv_renamed_title text, bv_renamed_status text, bv_renamed_reason text, bv_renamed_last timestamptz,
     vlive_status text, vlive_reason text,
     void_status text, void_reason text, void_title text,
     vback_status text, vback_reason text, vback_src text,
     dv_status text, dv_reason text, dv_closed_at timestamptz, dv_closed_by uuid, dv_bic uuid,
+    dv_voided_n int, dv_voided_actor_null boolean,
     cv_status text, cv_assignee uuid, cv_bic uuid, cv_gate uuid, cv_created_by uuid,
     cvm_status text, cvm_project uuid, cvm_assignee uuid, cvm_gate uuid,
     same_last timestamptz,
@@ -476,11 +494,12 @@ BEGIN
     cl_restamp_last, cl_restamp_closed_by, cl_restamp_status,
     cl_renamed_title, cl_renamed_status, cl_renamed_closed_by,
     bv_status, bv_reason, bv_closed_at, bv_title,
-    bv_renamed_title, bv_renamed_status, bv_renamed_reason,
+    bv_renamed_title, bv_renamed_status, bv_renamed_reason, bv_renamed_last,
     vlive_status, vlive_reason,
     void_status, void_reason, void_title,
     vback_status, vback_reason, vback_src,
     dv_status, dv_reason, dv_closed_at, dv_closed_by, dv_bic,
+    dv_voided_n, dv_voided_actor_null,
     cv_status, cv_assignee, cv_bic, cv_gate, cv_created_by,
     cvm_status, cvm_project, cvm_assignee, cvm_gate,
     same_last,
@@ -501,11 +520,12 @@ BEGIN
     v_cl_restamp.last_activity_at, v_cl_restamp.closed_by, v_cl_restamp.status,
     v_cl_renamed.title, v_cl_renamed.status, v_cl_renamed.closed_by,
     v_bv.status, v_bv.void_reason, v_bv.closed_at, v_bv.title,
-    v_bv_renamed.title, v_bv_renamed.status, v_bv_renamed.void_reason,
+    v_bv_renamed.title, v_bv_renamed.status, v_bv_renamed.void_reason, v_bv_renamed.last_activity_at,
     v_vlive.status, v_vlive.void_reason,
     v_void.status, v_void.void_reason, v_void.title,
     v_vback.status, v_vback.void_reason, v_vback.source_status,
     v_dv.status, v_dv.void_reason, v_dv.closed_at, v_dv.closed_by, v_dv.ball_in_court_id,
+    v_dv_voided_n, v_dv_voided_actor_null,
     v_cvi.status, v_cvi.assignee_id, v_cvi.ball_in_court_id, v_cvi.gatekeeper_id, v_cvi.created_by,
     v_cvmoved.status, v_cvmoved.project_id, v_cvmoved.assignee_id, v_cvmoved.gatekeeper_id,
     v_same_last,
@@ -616,8 +636,8 @@ SELECT 'distributed_is_closed',
        'submitted → distributed → closed: the guard stamps closed_at on the transition at depth 2 and keeps the supplied closed_by = distributed_by'
 UNION ALL
 SELECT 'closed_clears_bic',
-       (SELECT c.dist_bic IS NULL FROM fm_ctx c),
-       'A(a): the item leaves every inbox on closed (vacuous before D.6 — there is no ball to clear)'
+       (SELECT c.dist_status = 'closed' AND c.dist_bic IS NULL FROM fm_ctx c),
+       'A(a): the item leaves every inbox on closed — anchored on the item being closed, so the row cannot pass on a missing item (Task 11 review S1)'
 UNION ALL
 SELECT 'born_distributed_carries_source_stamps',
        (SELECT c.bd_status = 'closed' AND c.bd_closed_at = c.hist_dist AND c.bd_closed_by = c.pm
@@ -642,8 +662,9 @@ UNION ALL
 -- Task 10 review, rule 2: a void row's title is frozen.
 SELECT 'void_item_title_is_frozen',
        (SELECT c.bv_title = 'TMS-PRB-2026-0004 — Void board' AND c.bv_renamed_title = c.bv_title
-           AND c.bv_renamed_status = 'void' AND c.bv_renamed_reason = 'Probe: created in error' FROM fm_ctx c),
-       'a board rename on a VOID form leaves the item''s title as it was when the record was withdrawn; status and reason untouched (a closed row''s title keeps following — closed_item_title_follows_the_source)'
+           AND c.bv_renamed_status = 'void' AND c.bv_renamed_reason = 'Probe: created in error'
+           AND c.bv_renamed_last = c.hist_updated FROM fm_ctx c),
+       'a board rename on a VOID form leaves the item''s title as it was when the record was withdrawn; status and reason untouched, and the record is NOT rewritten — last_activity_at keeps its historical value instead of the guard''s now() (Task 11 review I2: rule 1''s early return never compares a void row''s title; a closed row''s title keeps following — closed_item_title_follows_the_source)'
 UNION ALL
 SELECT 'void_carries_reason',
        (SELECT c.vlive_status IN ('triage','open') AND c.vlive_reason IS NULL
@@ -656,8 +677,9 @@ SELECT 'void_is_terminal',
 UNION ALL
 SELECT 'distributed_then_void_is_void',
        (SELECT c.dv_status = 'void' AND c.dv_reason = 'Probe: issued against the wrong DB'
-           AND c.dv_closed_at IS NULL AND c.dv_closed_by IS NULL AND c.dv_bic IS NULL FROM fm_ctx c),
-       'a manager may void a distributed form (00179:399-401; the void action admits it): closed → void on the spine with the reason, and the guard''s exempt path clears closed_at / closed_by on the non-close transition'
+           AND c.dv_closed_at IS NULL AND c.dv_closed_by IS NULL AND c.dv_bic IS NULL
+           AND c.dv_voided_n = 1 AND c.dv_voided_actor_null FROM fm_ctx c),
+       'a manager may void a distributed form (00179:399-401; the void action admits it): closed → void on the spine with the reason, the guard''s exempt path clears closed_at / closed_by on the non-close transition, and §11 records exactly one voided event (actor NULL on the service path — Task 11 review S2)'
 UNION ALL
 SELECT 'ineligible_author_falls_to_triage',
        (SELECT c.cv_status = 'triage' AND c.cv_bic = c.admin2 AND c.cv_created_by = c.cv AND c.cv_gate = c.chain_pm FROM fm_ctx c),

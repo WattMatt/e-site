@@ -89,6 +89,7 @@
 -- trigger: site_diary_entries_mirror_work_item_upd ON projects.site_diary_entries
 -- trigger: site_forms_mirror_work_item_ins ON field.site_forms
 -- trigger: site_forms_mirror_work_item_upd ON field.site_forms
+-- sql: SELECT bool_and((tgtype & 66) = 0) AND count(*) >= 13 FROM pg_trigger WHERE NOT tgisinternal AND tgname ~ '_mirror_(work_item|defects)'
 -- trigger: work_items_assignment_writeback_ins ON projects.work_items
 -- trigger: work_items_assignment_writeback_upd ON projects.work_items
 -- trigger: rfis_void_work_item ON projects.rfis
@@ -2200,12 +2201,15 @@ BEGIN
     -- guard stamps last_activity_at = now() on a record nothing else changed
     -- (measured by ctid on the diary arm). What a non-live row still
     -- projects is its project / org (a move), its title (a closed row
-    -- follows a rename; a void row is frozen — difference 9) and the verdict
-    -- (source_status — a crossing into 'fail' is the reopen rule below).
-    -- priority is not compared: its SET is gated on v_live.
+    -- follows a rename; a void row is frozen — difference 9 — so a void
+    -- row's title is never compared: under `v_title = v_item.title` alone a
+    -- rename on a void record ran the arm and rewrote the tuple for nothing,
+    -- Task 11 review I2) and the verdict (source_status — a crossing into
+    -- 'fail' is the reopen rule below). priority is not compared: its SET is
+    -- gated on v_live.
     IF NOT v_live AND NOT v_moved
        AND v_item.organisation_id IS NOT DISTINCT FROM e.organisation_id
-       AND v_title = v_item.title
+       AND (v_item.status = 'void' OR v_title = v_item.title)
        AND e.conformance IS NOT DISTINCT FROM v_item.source_status THEN
       RETURN;
     END IF;
@@ -2264,10 +2268,13 @@ BEGIN
            -- Difference 9: a void row's title is frozen; a closed row follows.
            title            = CASE WHEN v_item.status = 'void' THEN v_item.title ELSE v_title END,
            -- Difference 3, the UPDATE half: a NULL severity says nothing, and
-           -- a closed or void record is never re-filed (I3) — v_live is read
-           -- BEFORE the reopen rule, so a reopened defect keeps the priority
-           -- it was recorded at.
-           priority         = CASE WHEN v_live AND e.severity IS NOT NULL THEN v_priority
+           -- a closed or void record is never re-filed (I3). A REOPENED
+           -- defect is re-filed at the severity it was re-failed with — the
+           -- reopen IS the module re-filing it (Task 11 review I1: v_live is
+           -- read before the crossing rule, so on v_live alone a defect born
+           -- minor, passed and re-failed critical reopened at low until the
+           -- next unrelated edit re-filed it — a one-write artefact).
+           priority         = CASE WHEN (v_live OR v_mapped = 'open') AND e.severity IS NOT NULL THEN v_priority
                                    ELSE v_item.priority END,
            source_status    = e.conformance,
            status           = projects.work_item_status_for_mirror(v_item.status, v_mapped, false),
@@ -2602,10 +2609,12 @@ BEGIN
     -- nothing else changed — the very signal probe 09
     -- same_value_write_does_not_reproject treats as a failure. What a
     -- non-live row still projects is its project / org (a move) and, while
-    -- the delay is real, its title (a void row's is frozen — difference 9).
+    -- the delay is real, its title — a CLOSED row's; a void row's is frozen
+    -- (difference 9) and is never compared, so a returning delay on a void
+    -- record does not rewrite the tuple (Task 11 review I2).
     IF NOT v_live AND NOT v_moved
        AND v_item.organisation_id IS NOT DISTINCT FROM d.organisation_id
-       AND (v_delay IS NULL OR v_title = v_item.title) THEN RETURN; END IF;
+       AND (v_item.status = 'void' OR v_delay IS NULL OR v_title = v_item.title) THEN RETURN; END IF;
 
     IF v_live AND v_moved THEN
       v_assignee := projects.resolve_mirror_assignee(d.project_id, 'diary_action', d.created_by);
@@ -2938,10 +2947,13 @@ BEGIN
     -- signal probe 10 same_value_write_does_not_reproject treats as a failure
     -- (measured by ctid on the diary arm). What a non-live row still projects
     -- is its project / org (a move), its title (a closed row follows a
-    -- rename; a void row is frozen — difference 10) and source_status.
+    -- rename; a void row is frozen — difference 10 — and is never compared:
+    -- a board rename on a born-void form kept the frozen title but rewrote
+    -- the tuple, last_activity_at 2026-08-14 → now(), Task 11 review I2) and
+    -- source_status.
     IF NOT v_live AND NOT v_moved
        AND v_item.organisation_id IS NOT DISTINCT FROM f.organisation_id
-       AND v_title = v_item.title
+       AND (v_item.status = 'void' OR v_title = v_item.title)
        AND f.status IS NOT DISTINCT FROM v_item.source_status THEN
       RETURN;
     END IF;
@@ -3033,8 +3045,10 @@ CREATE TRIGGER site_forms_mirror_work_item_ins
 -- as_left_status (or node_id, report_id, the submitted_* stamps) fires
 -- nothing (probe 10 same_value_write_does_not_reproject). form_no is here
 -- because the app allocates it AFTER the insert (difference 2); created_by is
--- read on a move, which project_id already fires; created_at and updated_at
--- are read on INSERT only; there is no due date to watch.
+-- read on a move (which project_id already fires) and, in the un-triage flag,
+-- on every UPDATE-arm run — moot, since enforce_site_form_transition makes it
+-- immutable for every signed-in caller (difference 7); created_at and
+-- updated_at are read on INSERT only; there is no due date to watch.
 DROP TRIGGER IF EXISTS site_forms_mirror_work_item_upd ON field.site_forms;
 CREATE TRIGGER site_forms_mirror_work_item_upd
   AFTER UPDATE OF form_no, board_ref, board_label, status,
@@ -3051,3 +3065,94 @@ CREATE TRIGGER site_forms_mirror_work_item_upd
      OR OLD.project_id      IS DISTINCT FROM NEW.project_id
      OR OLD.organisation_id IS DISTINCT FROM NEW.organisation_id)
   EXECUTE FUNCTION projects.mirror_form_action_work_item();
+
+-- ─── F. Delete-to-void ───────────────────────────────────────────────────────
+-- ⚠ BEFORE DELETE, not AFTER. §03 §1.2 says AFTER; that is measurably wrong.
+-- The ON DELETE SET NULL referential action runs before a user AFTER DELETE
+-- trigger (RI's AFTER triggers fire first, by name), so the AFTER form's
+-- UPDATE matches nothing — and A(a)'s work_items_source_required is
+-- re-evaluated on that SET NULL while the item is still status = 'open' with
+-- zero sources, so the DELETE ABORTS with 23514. Measured against the real
+-- table (probe 11, Task 12 Steps 2 and 5 — the earlier synthetic-table probe
+-- that reported a silent orphan is withdrawn):
+--   ERROR:  23514: new row for relation "work_items" violates check constraint
+--           "work_items_source_required"
+--   CONTEXT: SQL statement "UPDATE ONLY "projects"."work_items" SET "rfi_id" = NULL …"
+--            SQL statement "DELETE FROM projects.rfis WHERE id = …"
+-- Deleting a diary entry (deleteDiaryEntryAction,
+-- apps/web/src/actions/diary.actions.ts:109 — a live, gated action), an RFI or
+-- a snag would simply stop working the moment a mirror item existed.
+-- BEFORE DELETE voids first, so both work_items_source_required and
+-- work_items_bic_present pass on their 'void' arms and the delete proceeds.
+--
+-- The trace, pinned by probe 11: the void UPDATE runs at depth 2 (DELETE →
+-- this BEFORE trigger → work_items' BEFORE UPDATE guard), so section C''s
+-- exemption applies whoever the actor is — the guard restores nothing (the
+-- status changes), skips its void-reason check (the reason travels on this
+-- statement), and clears closed_at / closed_by on the non-close transition;
+-- §11 writes one `voided` event with auth.uid() as the actor (the deleter on
+-- a signed-in path, NULL on the service path); section E does not fire
+-- (assignee_id and due_date are untouched); then the RI SET NULL lands on a
+-- void row (depth 2 again, exempt; clause (a3) admits a FK going to NULL) and
+-- both CHECKs pass. On a cascade (qc_reports → qc_entries ON DELETE CASCADE,
+-- 00172:112) this fires once per cascaded entry at depth 2 and the UPDATE
+-- runs at depth 3 — still exempt. qc_entries_frozen_guard (BEFORE, 00172:491)
+-- sorts before qc_entries_void_work_item and runs first, as it should.
+--
+-- A CLOSED item is voided too, and that is FORCED, not chosen:
+-- work_items_source_required admits a source-less mirror item only while
+-- status = 'void', so a closed item left closed with its FK nulled fails the
+-- CHECK on the SET NULL and the DELETE aborts. closed → void is illegal on
+-- the machine at depth 1 (clause (c)), so a signed-in delete of a closed
+-- item's source succeeds only through the depth-2 exemption — probe 11 runs
+-- exactly that under impersonation. The exempt path clears the closed stamps
+-- (as on every non-close transition — probe 10 distributed_then_void_is_void);
+-- probe 11 pins both (closed_item_is_voided_on_source_delete,
+-- closed_stamps_are_cleared_by_the_void). The alternative — amending the
+-- CHECK to admit 'closed' — is an item-2 constraint change left for the owner
+-- (deviation 21). An already-void item is left alone (status <> 'void'): it
+-- keeps its own reason and gains no `voided` event (void_item_keeps_its_reason).
+--
+-- One function serves all six, keyed on TG_ARGV[0]. format('%I') quotes the
+-- identifier, and TG_ARGV is developer-supplied in this file, so there is no
+-- injection surface. Grants: none here — section G (Task 13) carries the
+-- REVOKE ALL … FROM PUBLIC / REVOKE EXECUTE … FROM anon; the @verify block
+-- already carries the grant_absent: line. Trigger-function EXECUTE is checked
+-- at CREATE TRIGGER, not at fire time (F5), so nothing is GRANTed.
+CREATE OR REPLACE FUNCTION projects.void_work_item_on_source_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+BEGIN
+  -- %I quotes the identifier; TG_ARGV[0] is set by the six CREATE TRIGGER
+  -- statements below and is never user input.
+  -- ball_in_court_id needs no clearing: it is a STORED generated column over
+  -- status and goes NULL on 'void' by itself (A(a)).
+  EXECUTE format(
+    'UPDATE projects.work_items
+        SET status = ''void'', void_reason = $1, last_activity_at = now()
+      WHERE %I = $2 AND status <> ''void''', TG_ARGV[0])
+    USING 'source deleted', OLD.id;
+  RETURN OLD;   -- BEFORE trigger: returning OLD lets the DELETE proceed
+END $fn$;
+
+DROP TRIGGER IF EXISTS rfis_void_work_item ON projects.rfis;
+CREATE TRIGGER rfis_void_work_item BEFORE DELETE ON projects.rfis
+  FOR EACH ROW EXECUTE FUNCTION projects.void_work_item_on_source_delete('rfi_id');
+DROP TRIGGER IF EXISTS snags_void_work_item ON field.snags;
+CREATE TRIGGER snags_void_work_item BEFORE DELETE ON field.snags
+  FOR EACH ROW EXECUTE FUNCTION projects.void_work_item_on_source_delete('snag_id');
+DROP TRIGGER IF EXISTS inspections_void_work_item ON inspections.inspections;
+CREATE TRIGGER inspections_void_work_item BEFORE DELETE ON inspections.inspections
+  FOR EACH ROW EXECUTE FUNCTION projects.void_work_item_on_source_delete('inspection_id');
+DROP TRIGGER IF EXISTS qc_entries_void_work_item ON projects.qc_entries;
+CREATE TRIGGER qc_entries_void_work_item BEFORE DELETE ON projects.qc_entries
+  FOR EACH ROW EXECUTE FUNCTION projects.void_work_item_on_source_delete('qc_entry_id');
+DROP TRIGGER IF EXISTS site_diary_entries_void_work_item ON projects.site_diary_entries;
+CREATE TRIGGER site_diary_entries_void_work_item BEFORE DELETE ON projects.site_diary_entries
+  FOR EACH ROW EXECUTE FUNCTION projects.void_work_item_on_source_delete('diary_id');
+DROP TRIGGER IF EXISTS site_forms_void_work_item ON field.site_forms;
+CREATE TRIGGER site_forms_void_work_item BEFORE DELETE ON field.site_forms
+  FOR EACH ROW EXECUTE FUNCTION projects.void_work_item_on_source_delete('site_form_id');
