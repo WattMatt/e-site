@@ -839,10 +839,15 @@ UPDATE projects.work_item_types SET gatekeeper_rule = 'creator' WHERE key = 'rfi
 -- projects.project_<source>(uuid) is a plain function that does the whole
 -- projection and carries NO recursion guard — the trigger wrapper calls it,
 -- and section H's backfill calls it DIRECTLY, so 15 live RFIs are projected
--- without a single UPDATE on projects.rfis (every source table carries a
--- BEFORE UPDATE set_updated_at trigger — rfis_updated_at 00002:100 — and a
--- no-op UPDATE would rewrite updated_at on rows whose values span 24 Jun –
--- 2 Sep; with F7's WHEN predicates in place it would also fire nothing).
+-- without a single UPDATE on projects.rfis FROM THE PROJECTION ITSELF (every
+-- source table carries a BEFORE UPDATE set_updated_at trigger —
+-- rfis_updated_at 00002:100 — and a no-op UPDATE would rewrite updated_at on
+-- rows whose values span 24 Jun – 2 Sep; with F7's WHEN predicates in place
+-- it would also fire nothing). Section E's _ins write-back still fires on the
+-- backfill's INSERT and writes the resolved holder and the computed due date
+-- back to the 9 open RFIs (assigned_to, due_date, and updated_at through
+-- rfis_updated_at) — see the header's Restore note, which snapshots exactly
+-- those columns for that reason.
 -- projects.mirror_<source>_work_item() is the trigger wrapper: the depth
 -- guard, then one PERFORM.
 --
@@ -1215,3 +1220,235 @@ CREATE TRIGGER work_items_assignment_writeback_upd
   WHEN (OLD.assignee_id IS DISTINCT FROM NEW.assignee_id
      OR OLD.due_date    IS DISTINCT FROM NEW.due_date)
   EXECUTE FUNCTION projects.work_item_assignment_writeback();
+
+-- ── D.2 Snag ─────────────────────────────────────────────────────────────────
+-- The D sections continue here, AFTER section E: D.1 and the write-back were
+-- committed as one reviewable pair and the file is append-only from that
+-- point. The section letters are the plan's; the order is the history's.
+-- D.3-D.6 follow this one. Nothing here depends on E having run first — the
+-- triggers created below fire only on rows written after this file applies.
+--
+-- D.1's template, copied deliberately. Columns read from field.snags
+-- (00004:10-31 + 00120:61-62, re-read on production 2026-09-13 through
+-- information_schema): title, location, priority, status, assigned_to,
+-- raised_by (NOT NULL, 00004:23), signed_off_by, signed_off_at, created_at,
+-- updated_at, project_id, organisation_id. NOT read: description, category,
+-- floor_plan_pin (0 of 6 live snags carry one), signature_path, resolved_at
+-- (the spine has no "answered at" stamp), raised_on_visit_id and
+-- closed_on_visit_id. field.snags has NO closed_at, NO closed_by and NO
+-- due_date column, and its status CHECK has NO void state (open, in_progress,
+-- resolved, pending_sign_off, signed_off, closed) — so a snag item is never
+-- born void and carries no void_reason; the only path to void is section F's
+-- delete-to-void, which supplies its own reason. Both priority CHECKs are the
+-- same four values (snags 00004:19, work_items 00196:289): priority maps 1:1.
+--
+-- Four differences from D.1, each named where it lands:
+--   1. the default assignee falls to raised_by BEFORE the chain (§12 §(d));
+--   2. the gatekeeper is the project PM, never the raiser (§03 §1.5);
+--   3. the title carries the location (improvement 5);
+--   4. no due date: NULL, so item 2's §5 computes A(b)'s +5 wd on the site
+--      calendar; section E writes assignment only.
+-- TWO closing states — signed_off AND closed both map to 'closed' (section C)
+-- — which is why every stamp below keys on v_mapped, never on a literal.
+--
+-- Born-closed on INSERT (Task 4 review): work_items_insert_gate limits an
+-- authenticated INSERT to item_type = 'task' in triage|open, so a live-path
+-- insert of an already-signed-off snag (createSnagAction never does; an import
+-- might) relies on this function being SECURITY DEFINER and owned by postgres
+-- — the table owner, BYPASSRLS — which never evaluates that policy. The INSERT
+-- supplies the terminal state and its stamps in the same statement.
+CREATE OR REPLACE FUNCTION projects.project_snag(p_snag_id uuid)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public', 'field'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  s          field.snags%ROWTYPE;
+  v_item     projects.work_items%ROWTYPE;
+  v_assignee uuid;
+  v_gate     uuid;
+  v_mapped   text;
+  v_title    text;
+  v_moved    boolean;
+  v_explicit boolean;   -- an ELIGIBLE explicit source assignee (Task 5 review F2)
+BEGIN
+  SELECT * INTO s FROM field.snags WHERE id = p_snag_id;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  -- The existing MIRROR item, if any. origin = 'split' rows on the same source
+  -- are deliberately not this function's (§03 §1.3) and are never touched.
+  SELECT * INTO v_item FROM projects.work_items
+   WHERE snag_id = s.id AND origin = 'mirror';
+
+  -- 'snag' here, in the INSERT and in both resolve_mirror_assignee calls must
+  -- be exactly projects.work_item_types.key: an FK on the item row, but plain
+  -- text on the resolver side, where a typo silently skips arm 2. Probe 06
+  -- pins it (item_type_is_registry_key, arm_2_resolves_through_the_snag_key).
+  v_mapped := projects.map_source_status('snag', s.status);
+
+  -- Improvement 5. 6 of 6 live snags carry a location and 0 carry a
+  -- floor_plan_pin, so this text column is the only locator that exists — and
+  -- the title is the whole of what travels into the 07:00 recap email. A NULL
+  -- or whitespace-only location adds nothing, never a dangling em-dash.
+  v_title := s.title || COALESCE(' — ' || NULLIF(btrim(s.location), ''), '');
+
+  -- An ELIGIBLE explicit source assignee (D.1's line, F2) — and it reads
+  -- assigned_to ALONE, not the raiser. raised_by is §12 §(d)'s DEFAULT holder
+  -- (the candidate handed to the chain below), not an explicit assignment, so
+  -- an unassigned snag is born TRIAGE on its raiser (§03 §1.6: no explicit
+  -- assignee ⇒ triage): the person who found the defect holds it until
+  -- someone is assigned to fix it, on the snag page or on the spine.
+  -- createSnagAction leaves assigned_to null and emails raiser and assignee
+  -- as two different people (snag.actions.ts:46-47, :118), so the module
+  -- agrees. Both arms use v_explicit — as the assignee VALUE's condition and
+  -- as the un-triage FLAG. A NULL assigned_to is not eligible.
+  v_explicit := COALESCE(projects.work_item_person_eligible(s.project_id, s.assigned_to), FALSE);
+
+  IF v_item.id IS NULL THEN
+    -- §12 §(d): assigned_to → raised_by → the chain. raised_by is NOT NULL
+    -- (00004:23), so with an eligible raiser this resolves at the chain's
+    -- explicit step; a client-viewer raiser (F2, improvement 7) is not
+    -- eligible and falls to arm 2 (work_item_defaults.snag.triage_owner_id)
+    -- onwards. A non-null but ineligible assigned_to hides the raiser from
+    -- COALESCE and falls to arm 2 as well — 0 of 6 live snags are assigned.
+    v_assignee := projects.resolve_mirror_assignee(
+                    s.project_id, 'snag', COALESCE(s.assigned_to, s.raised_by));
+    -- §03 §1.5: the PM, never the raiser. NULL is deliberate, not an oversight;
+    -- compare project_rfi, which passes r.raised_by for the opposite reason.
+    -- signOffSnagAction today stamps whoever clicked, with no role gate beyond
+    -- authentication, so a raiser-closes default would hand close authority
+    -- to the contractor who reported the defect. The registry row agrees
+    -- (00196:240, gatekeeper_rule = 'project_pm').
+    v_gate     := projects.resolve_work_item_gatekeeper(s.project_id, NULL);
+
+    INSERT INTO projects.work_items (
+      organisation_id, project_id, item_type, origin, title, priority,
+      status, source_status, assignee_id, gatekeeper_id, due_date, created_by, snag_id,
+      opened_at, last_activity_at, closed_at, closed_by)
+    VALUES (
+      s.organisation_id, s.project_id, 'snag', 'mirror', v_title, s.priority,
+      projects.work_item_status_for_mirror(NULL, v_mapped, v_explicit),
+      s.status, v_assignee, v_gate,
+      -- No due_date column on field.snags: NULL, through section C's floor so
+      -- a future column is floored by this same line, and item 2's BEFORE
+      -- INSERT trigger computes A(b)'s +5 wd on the SITE calendar.
+      projects.work_item_mirror_due_date(NULL::date),
+      s.raised_by, s.id,
+      -- #4: historical stamps. §5 overwrites opened_at/last_activity_at for a
+      -- client session (same instant — harmless) and keeps them on the service
+      -- path, which is the backfill. closed_* only when the MAPPED status is
+      -- closed (signed_off and closed both are), from the sign-off stamps —
+      -- field.snags has no closed_at/closed_by. A snag set to 'closed' with no
+      -- sign-off dates its close at the row's last write and names no closer.
+      s.created_at, s.updated_at,
+      CASE WHEN v_mapped = 'closed' THEN COALESCE(s.signed_off_at, s.updated_at) END,
+      CASE WHEN v_mapped = 'closed' THEN s.signed_off_by END)
+    -- Explicit partial-index target, never a bare ON CONFLICT DO NOTHING (F6):
+    -- a duplicate projection is swallowed, an origin='split' row is untouched,
+    -- and a work_items_ref_unique collision still raises 23505. The predicate
+    -- is work_items_src_snag_uidx's, verbatim (00196:372):
+    --   (snag_id) WHERE snag_id IS NOT NULL AND origin = 'mirror'
+    ON CONFLICT (snag_id) WHERE snag_id IS NOT NULL AND origin = 'mirror' DO NOTHING
+    RETURNING * INTO v_item;
+    -- No watcher seeding: §11 has already done it (see the section D comment).
+  ELSE
+    -- Improvement 8: a project move re-resolves both people — §15's rollout
+    -- has already decided "snags move to KINGSWALK". Runs at depth 2 under
+    -- section C''s exemption (clause (a) makes project_id immutable for a
+    -- signed-in actor); the membership trigger (00196:961-984) still
+    -- re-validates both people first, by name order. D.1 has the full
+    -- reasoning; nothing about it is snag-specific.
+    v_moved := v_item.project_id IS DISTINCT FROM s.project_id;
+
+    IF v_moved THEN
+      v_assignee := projects.resolve_mirror_assignee(
+                      s.project_id, 'snag', COALESCE(s.assigned_to, s.raised_by));
+      v_gate     := projects.resolve_work_item_gatekeeper(s.project_id, NULL);
+    ELSE
+      -- An eligible explicit source assignee wins; otherwise the spine's
+      -- current holder stays (the spine owns assignment, §03 §1.2). This is
+      -- also what makes section E's write-back converge instead of ping-pong.
+      v_assignee := COALESCE(CASE WHEN v_explicit THEN s.assigned_to END, v_item.assignee_id);
+      v_gate := v_item.gatekeeper_id;
+    END IF;
+
+    -- Status: the CURRENT status is passed in, so void stays void (terminal,
+    -- reconciliation #3 — reachable for a snag only through section F) and a
+    -- terminal mapping wins; void_reason is not in this SET list. The
+    -- un-triage flag is D.1's: "the source names someone ELIGIBLE and
+    -- DIFFERENT from what the item holds" — so section E's write-back of the
+    -- born holder to snags.assigned_to cannot un-triage the item on the next
+    -- unrelated edit (probe 06 writeback_value_is_inert_on_reprojection),
+    -- while the snag page's own assign control does
+    -- (source_assignment_change_untriages_or_reassigns). At depth 2 the guard
+    -- stamps closed_at = now() on the transition and keeps the supplied
+    -- closed_by (probe 06 signed_off_carries_stamps); the signed_off_at
+    -- fallback below therefore decides the value only for a row that was
+    -- ALREADY closed and is being re-projected.
+    UPDATE projects.work_items
+       SET project_id       = s.project_id,
+           organisation_id  = s.organisation_id,
+           title            = v_title,
+           priority         = s.priority,
+           source_status    = s.status,
+           status           = projects.work_item_status_for_mirror(
+                                v_item.status, v_mapped,
+                                v_explicit AND s.assigned_to IS DISTINCT FROM v_item.assignee_id),
+           assignee_id      = v_assignee,
+           gatekeeper_id    = v_gate,
+           -- Keyed on the MAPPED status (template rule): signed_off and closed
+           -- both close, and a copier of `s.status = 'closed'` would miss one.
+           closed_at        = CASE WHEN v_mapped = 'closed'
+                                   THEN COALESCE(v_item.closed_at, s.signed_off_at, now())
+                                   ELSE NULL END,
+           closed_by        = CASE WHEN v_mapped = 'closed'
+                                   THEN COALESCE(v_item.closed_by, s.signed_off_by) END,
+           last_activity_at = now()
+     WHERE id = v_item.id;
+  END IF;
+END $fn$;
+
+-- The trigger wrapper: the depth guard that terminates the mirror ⇄ write-back
+-- cycle (section E's termination matrix, measured on the rfi arm — this
+-- wrapper is the same two lines), then the projection.
+CREATE OR REPLACE FUNCTION projects.mirror_snag_work_item()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public', 'field'
+SET row_security TO 'off'
+AS $fn$
+BEGIN
+  IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
+  PERFORM projects.project_snag(NEW.id);
+  RETURN NULL;   -- AFTER trigger; the return value is ignored
+END $fn$;
+
+-- F7: two triggers (an INSERT trigger's WHEN cannot reference OLD).
+DROP TRIGGER IF EXISTS snags_mirror_work_item_ins ON field.snags;
+CREATE TRIGGER snags_mirror_work_item_ins
+  AFTER INSERT ON field.snags
+  FOR EACH ROW EXECUTE FUNCTION projects.mirror_snag_work_item();
+
+-- The column list is every column the UPDATE arm reads that can change; the
+-- WHEN clause is the same list, so a full-row save that changes only
+-- description (or category, a photo path, a visit link) fires nothing (probe
+-- 06 same_value_write_does_not_reproject). raised_by is read only on a move,
+-- which project_id already fires; created_at and updated_at are read on
+-- INSERT only; there is no due_date to watch.
+DROP TRIGGER IF EXISTS snags_mirror_work_item_upd ON field.snags;
+CREATE TRIGGER snags_mirror_work_item_upd
+  AFTER UPDATE OF title, location, priority, status, assigned_to,
+                  signed_off_by, signed_off_at, project_id, organisation_id
+  ON field.snags
+  FOR EACH ROW
+  WHEN (OLD.title           IS DISTINCT FROM NEW.title
+     OR OLD.location        IS DISTINCT FROM NEW.location
+     OR OLD.priority        IS DISTINCT FROM NEW.priority
+     OR OLD.status          IS DISTINCT FROM NEW.status
+     OR OLD.assigned_to     IS DISTINCT FROM NEW.assigned_to
+     OR OLD.signed_off_by   IS DISTINCT FROM NEW.signed_off_by
+     OR OLD.signed_off_at   IS DISTINCT FROM NEW.signed_off_at
+     OR OLD.project_id      IS DISTINCT FROM NEW.project_id
+     OR OLD.organisation_id IS DISTINCT FROM NEW.organisation_id)
+  EXECUTE FUNCTION projects.mirror_snag_work_item();

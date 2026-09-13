@@ -30,9 +30,10 @@
 -- updated → unrelated source edit → spine assignee unchanged), triage write-back
 -- + its inertness on re-projection, a spine re-date reaching the source while a
 -- later SOURCE re-date does not move the spine, the snag arm (assignment only —
--- the snag MIRROR is Task 7's, so the item is inserted directly as postgres
--- with snag_id set; the write-back fires on that INSERT exactly as it will on
--- the mirror's), and a write-amplification measurement
+-- the snag MIRROR, section D.2, projects the item on the source INSERT and the
+-- write-back fires on that projection; before D.2 existed this probe inserted
+-- the item directly, which now collides on work_items_src_snag_uidx), and a
+-- write-amplification measurement
 -- (value_predicate_stops_write_amplification) read from
 -- pg_stat_xact_user_tables, which counts tuple updates so far in THIS
 -- transaction.
@@ -82,8 +83,8 @@ DECLARE
   -- the wrapper's depth guard, observed as work_items tuple updates per spine statement
   v_wi_upd_before bigint; v_wi_upd_after bigint;
   -- the snag arm
-  v_snag uuid; v_snag_item uuid; v_snag_a1 uuid; v_snag_a2 uuid;
-  v_snag_so uuid; v_snag_so_item uuid; v_snag_so_a_insert uuid; v_snag_so_a_reassign uuid;
+  v_snag uuid; v_snag_item uuid; v_snag_item_assignee uuid; v_snag_a1 uuid; v_snag_a2 uuid;
+  v_snag_so uuid; v_snag_so_item uuid; v_snag_so_status text; v_snag_so_a_insert uuid; v_snag_so_a_reassign uuid;
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -267,42 +268,49 @@ BEGIN
     RAISE EXCEPTION 'fixture: the open RFI projected no mirror item (section D)';
   END IF;
   SELECT r.due_date INTO v_sc_due_before FROM projects.rfis r WHERE r.id = v_sc;
+  -- A precondition, not the verdict: the write-back's INSERT arm has already
+  -- put the spine's computed date on the source. Raised here so the row below
+  -- is about the item-status rule alone.
+  IF v_sc_due_before IS NULL THEN
+    RAISE EXCEPTION 'fixture: the spine-closed RFI carries no due_date after projection — the write-back''s INSERT arm should have written the computed date';
+  END IF;
   UPDATE projects.work_items SET status = 'closed' WHERE id = v_sc_item;   -- service path: §12 stamps closed_at
   UPDATE projects.work_items SET due_date = CURRENT_DATE + 30 WHERE id = v_sc_item;
   SELECT w.status INTO v_sc_item_status FROM projects.work_items w WHERE w.id = v_sc_item;
   SELECT r.due_date INTO v_sc_due_after FROM projects.rfis r WHERE r.id = v_sc;
 
-  -- ── The SNAG arm. field.snags has no due_date column (00004:10-32), so
-  -- assignment only. The snag mirror is Task 7's; until it exists the only way
-  -- to put a mirrored snag item on the spine is to insert it directly, which
-  -- fires §5/§6/§7/§11 and this write-back exactly as the mirror's INSERT will.
+  -- ── The SNAG arm. field.snags has no due_date column (00004:10-31), so
+  -- assignment only. Section D.2's snags_mirror_work_item_ins projects the
+  -- item on this INSERT (born triage on the raiser — the owner here, eligible
+  -- with no assigned_to), and this write-back fires on that projection's
+  -- INSERT. The item is READ back, never inserted here: a direct insert would
+  -- collide with the mirror's on work_items_src_snag_uidx (23505).
   INSERT INTO field.snags (project_id, organisation_id, title, raised_by)
   VALUES (v_proj, v_org, 'Probe snag', v_pm)
   RETURNING id INTO v_snag;
-  INSERT INTO projects.work_items (
-    organisation_id, project_id, item_type, origin, title, priority,
-    status, source_status, assignee_id, gatekeeper_id, created_by, snag_id)
-  VALUES (v_org, v_proj, 'snag', 'mirror', 'Probe snag', 'medium',
-          'open', 'open', v_pm, v_pm, v_pm, v_snag)
-  RETURNING id INTO v_snag_item;
+  SELECT w.id, w.assignee_id INTO v_snag_item, v_snag_item_assignee
+    FROM projects.work_items w WHERE w.snag_id = v_snag AND w.origin = 'mirror';
+  IF v_snag_item IS NULL THEN
+    RAISE EXCEPTION 'fixture: the open snag projected no mirror item (section D.2)';
+  END IF;
   SELECT s.assigned_to INTO v_snag_a1 FROM field.snags s WHERE s.id = v_snag;
 
   UPDATE projects.work_items SET assignee_id = v_other WHERE id = v_snag_item;
   SELECT s.assigned_to INTO v_snag_a2 FROM field.snags s WHERE s.id = v_snag;
 
-  -- A signed-off snag: skipped on the closed item's INSERT (item-status rule),
-  -- and — in the reopen shape — skipped by the source-status rule alone.
+  -- A signed-off snag: D.2 projects it born CLOSED (signed_off maps to closed,
+  -- stamps from signed_off_at/_by), so the write-back is skipped on the closed
+  -- item's INSERT (item-status rule), and — in the reopen shape — skipped by
+  -- the source-status rule alone.
   INSERT INTO field.snags (project_id, organisation_id, title, raised_by,
                            status, signed_off_by, signed_off_at)
   VALUES (v_proj, v_org, 'Probe signed-off snag', v_pm, 'signed_off', v_pm, now())
   RETURNING id INTO v_snag_so;
-  INSERT INTO projects.work_items (
-    organisation_id, project_id, item_type, origin, title, priority,
-    status, source_status, assignee_id, gatekeeper_id, created_by, snag_id,
-    closed_at, closed_by)
-  VALUES (v_org, v_proj, 'snag', 'mirror', 'Probe signed-off snag', 'medium',
-          'closed', 'signed_off', v_pm, v_pm, v_pm, v_snag_so, now(), v_pm)
-  RETURNING id INTO v_snag_so_item;
+  SELECT w.id, w.status INTO v_snag_so_item, v_snag_so_status
+    FROM projects.work_items w WHERE w.snag_id = v_snag_so AND w.origin = 'mirror';
+  IF v_snag_so_item IS NULL OR v_snag_so_status IS DISTINCT FROM 'closed' THEN
+    RAISE EXCEPTION 'fixture: the signed-off snag was not projected as a closed mirror item (section D.2; got %)', v_snag_so_status;
+  END IF;
   SELECT s.assigned_to INTO v_snag_so_a_insert FROM field.snags s WHERE s.id = v_snag_so;
   UPDATE projects.work_items SET status = 'open' WHERE id = v_snag_so_item;
   UPDATE projects.work_items SET assignee_id = v_other WHERE id = v_snag_so_item;
@@ -321,7 +329,7 @@ BEGIN
     reopen_item_status text, reopen_source_assignee uuid,
     sc_item_status text, sc_due_before date, sc_due_after date,
     wi_upd_delta bigint,
-    snag_a1 uuid, snag_a2 uuid, snag_so_a_insert uuid, snag_so_a_reassign uuid)
+    snag_item_assignee uuid, snag_a1 uuid, snag_a2 uuid, snag_so_a_insert uuid, snag_so_a_reassign uuid)
     ON COMMIT DROP;
   INSERT INTO wb_ctx VALUES (
     v_rfi, v_closed, v_rt, v_reopen, v_snag, v_snag_so,
@@ -336,7 +344,7 @@ BEGIN
     v_reopen_item_status, v_reopen_source_assignee,
     v_sc_item_status, v_sc_due_before, v_sc_due_after,
     v_wi_upd_after - v_wi_upd_before,
-    v_snag_a1, v_snag_a2, v_snag_so_a_insert, v_snag_so_a_reassign);
+    v_snag_item_assignee, v_snag_a1, v_snag_a2, v_snag_so_a_insert, v_snag_so_a_reassign);
 END $probe$;
 
 SELECT 'holder_reaches_source' AS probe,
@@ -408,8 +416,7 @@ SELECT 'reopened_item_on_closed_source_untouched',
 UNION ALL
 -- Improvement 9, the item-status rule on its own.
 SELECT 'closed_item_does_not_write_to_open_source',
-       (SELECT c.sc_item_status = 'closed' AND c.sc_due_before IS NOT NULL
-           AND c.sc_due_after = c.sc_due_before FROM wb_ctx c),
+       (SELECT c.sc_item_status = 'closed' AND c.sc_due_after = c.sc_due_before FROM wb_ctx c),
        'an item closed on the spine over a still-open RFI, then re-dated: the source is open, so only `NEW.status IN (''closed'',''void'') → RETURN` stops the write — the RFI keeps the date it had'
 UNION ALL
 -- F2''s other half: the WRAPPER''s depth guard, observed.
@@ -419,8 +426,8 @@ SELECT 'depth_guard_stops_reprojection_of_spine_writes',
 UNION ALL
 -- The snag arm (assignment only).
 SELECT 'snag_assignment_reaches_source',
-       (SELECT c.snag_a1 = c.pm FROM wb_ctx c),
-       'a mirrored snag item''s assignee reaches field.snags.assigned_to on INSERT'
+       (SELECT c.snag_a1 IS NOT NULL AND c.snag_a1 = c.snag_item_assignee FROM wb_ctx c),
+       'section D.2''s INSERT fires this write-back: field.snags.assigned_to = the item''s born assignee (the raiser under the snag rule — compared to the item read back, not to a fixture guess at the chain)'
 UNION ALL
 SELECT 'snag_reassign_flows_to_source',
        (SELECT c.snag_a2 = c.other FROM wb_ctx c),
