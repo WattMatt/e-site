@@ -18,7 +18,11 @@
  * migration under development (00198) and any future dependency — stacked ahead
  * of the probe. Do NOT stack a migration that is already applied (00194, 00195,
  * 00196 are live on cbskbnvvgcybmfikxgky): its CREATE TABLEs fail on the
- * existing objects and abort the whole rehearsal.
+ * existing objects and abort the whole rehearsal. A --with file must not carry
+ * its own transaction wrapper either: a file with `BEGIN;` … `COMMIT;` around
+ * its body (29 of the older migrations do) is refused by the interlock below —
+ * correctly, since that COMMIT would end the rehearsal's transaction. 00198
+ * must not wrap itself; the harness supplies BEGIN and ROLLBACK.
  *
  * SAFETY INTERLOCK — this harness must never be the thing that commits. Before
  * the token is read and before any request is made, the concatenated input is
@@ -40,7 +44,9 @@
  *     string-first blanking (the apostrophe in the comment opens a phantom
  *     string that swallows the COMMIT);
  *   - a top-level END statement: PostgreSQL treats a bare `END;` as a synonym
- *     for COMMIT;
+ *     for COMMIT. This also refuses the SQL-standard function body form
+ *     `CREATE FUNCTION … BEGIN ATOMIC … END;`, whose END is a top-level token
+ *     — dollar-quote the body instead; no bypass is provided;
  *   - PREPARE TRANSACTION, the other way a transaction's writes can outlive the
  *     trailing ROLLBACK.
  *
@@ -61,6 +67,9 @@
  *      guard and the transition guard's service-path exemption for every later
  *      `postgres` block in the same transaction — the assertion SELECT included.
  *      Seed everything a `postgres` block needs BEFORE the first impersonation.
+ *      Clearing the claim to `''` works because production's `auth.uid()`
+ *      reads the legacy `request.jwt.claim.sub` first, then
+ *      `request.jwt.claims::jsonb ->> 'sub'`; both arms read NULL on `''`.
  * The harness enforces rule 2's observable consequence (see below); rules 1 and
  * 3 are the probe author's, checked in review.
  *
@@ -87,7 +96,7 @@
  * failure is a RAISE); this one expects (probe, ok, detail) rows. Do not merge
  * them.
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
 const PROJECT_REF = process.env.SUPABASE_PROJECT_REF ?? 'cbskbnvvgcybmfikxgky'
@@ -99,7 +108,9 @@ const USAGE =
   '  --with is repeatable; files apply first, in the order given, in the same rolled-back transaction.'
 
 function die(code: number, message: string): never {
-  console.error(message)
+  // Synchronous write: on macOS a piped stderr is asynchronous and process.exit
+  // would cut the message short.
+  writeSync(2, `${message}\n`)
   process.exit(code)
 }
 
@@ -198,13 +209,24 @@ function blankLiteralsAndComments(src: string): string {
       const escapes = q === "'" && /[eE]/.test(src[i - 1] ?? '') && !/[\w$]/.test(src[i - 2] ?? '')
       out += ' '; i++
       while (i < n) {
-        if (escapes && src[i] === '\\') { out += '  '; i += 2; continue }
+        // A backslash escape consumes two characters; keep a newline as a
+        // newline so `at file:line` does not drift after a `\` + newline.
+        if (escapes && src[i] === '\\') { out += ' ' + (i + 1 < n ? blank(src[i + 1]) : ''); i += 2; continue }
         if (src[i] === q) {
           if (src[i + 1] === q) { out += '  '; i += 2; continue }
           out += ' '; i++; break
         }
         out += blank(src[i]); i++
       }
+      continue
+    }
+    // Identifiers are consumed whole, ahead of the dollar-quote test:
+    // PostgreSQL's ident_cont includes `$`, so `foo$bar$` is ONE identifier and
+    // not the opening of a $bar$ quote (which would blank everything up to the
+    // next $bar$, COMMIT included). Keywords pass through verbatim, so the
+    // checks below still see COMMIT / END / PREPARE and the ON COMMIT clause.
+    if (/[A-Za-z_-￿]/.test(c)) {
+      while (i < n && /[A-Za-z0-9_$-￿]/.test(src[i])) { out += src[i]; i++ }
       continue
     }
     if (c === '$') {
@@ -354,4 +376,6 @@ for (const r of rows) {
 // output and not only in a total the reader has to remember.
 console.log(`\nassertions seen: ${rows.map((r) => r.probe).join(', ')}`)
 console.log(`${rows.length - failed}/${rows.length} assertions passed`)
-process.exit(failed === 0 ? EXIT.pass : EXIT.failed)
+// exitCode, not process.exit(): a piped stdout is asynchronous on macOS and an
+// immediate exit could cut the rows above short.
+process.exitCode = failed === 0 ? EXIT.pass : EXIT.failed
