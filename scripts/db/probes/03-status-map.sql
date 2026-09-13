@@ -24,9 +24,11 @@
 -- impersonation; every call runs as postgres (F9) — these functions read no
 -- identity, so the service path is the only path.
 --
--- Expected: 25 rows (eleven `cases` + fourteen UNION ALL arms). If the printed
--- `assertions seen:` list is shorter than twenty-five, an arm was dropped —
--- read the list, not the total.
+-- Expected: 36 rows (eleven `cases` + twenty-five UNION ALL arms). If the
+-- printed `assertions seen:` list is shorter than thirty-six, an arm was
+-- dropped — read the list, not the total. The eleven arms added on 2026-09-13
+-- (Task 4 review I1/I2/I3/S1 + the un-triage decision) were each watched red
+-- under their own mutation before the code changed.
 WITH cases(probe, got, want) AS (VALUES
   ('rfi_responded',     projects.map_source_status('rfi','responded'),        'answered'),
   ('rfi_closed',        projects.map_source_status('rfi','closed'),           'closed'),
@@ -64,11 +66,37 @@ SELECT 'unmapped_leaves_unchanged',
        projects.work_item_status_for_mirror('answered',NULL,false) = 'answered',
        '§03 §1.8: an unmapped source status changes nothing'
 UNION ALL
+-- Task 4 review I3: the reopen path was unpinned — deleting the
+-- `WHEN p_mapped = 'open' THEN 'open'` arm left this probe green.
+SELECT 'reopen_from_answered',
+       projects.work_item_status_for_mirror('answered','open',false) = 'open',
+       'an RFI pulled back from responded to open reopens its item (§03 §1.8)'
+UNION ALL
+SELECT 'reopen_from_closed',
+       projects.work_item_status_for_mirror('closed','open',false) = 'open',
+       'a closed source reopened at the source reopens its item — the only legal move out of closed (00196:1706)'
+UNION ALL
+SELECT 'born_closed_on_insert',
+       projects.work_item_status_for_mirror(NULL,'closed',false) = 'closed',
+       '#4: the 6 closed live RFIs are born closed on the backfill'
+UNION ALL
+SELECT 'unmapped_insert_is_triage',
+       projects.work_item_status_for_mirror(NULL,NULL,false) = 'triage',
+       'a draft RFI / na qc entry / diary entry with no mapping is born triage when nobody was named'
+UNION ALL
+-- Decided 2026-09-13 (Task 4 review carry-forward 2): a source-side
+-- assignment un-triages. Every projection's UPDATE arm passes
+-- `<src>.assigned_to IS NOT NULL` as the flag.
+SELECT 'source_assignment_untriages',
+       projects.work_item_status_for_mirror('triage','open',true) = 'open',
+       'a snag whose assigned_to goes NULL → person at the source leaves triage; before this an item sat in triage carrying an assignee_id'
+UNION ALL
 -- Reconciliation #3: void is terminal on the mirror side too.
 SELECT 'void_is_terminal',
        projects.work_item_status_for_mirror('void','open',false) = 'void'
-   AND projects.work_item_status_for_mirror('void','answered',false) = 'void',
-       'an inspection going abandoned → re-inspect_required must not un-void its item (00196:1701-1709 makes void terminal; the mirror bypasses (c))'
+   AND projects.work_item_status_for_mirror('void','answered',false) = 'void'
+   AND projects.work_item_status_for_mirror('void','closed',false) = 'void',
+       'an inspection going abandoned → re-inspect_required (or certified) must not un-void its item (00196:1701-1709 makes void terminal; the mirror bypasses (c))'
 UNION ALL
 -- Improvement 6. "Today" is the SAST date, the same day §5 starts counting from.
 SELECT 'past_due_becomes_null',
@@ -108,6 +136,44 @@ SELECT 'diary_real_delay_survives',
          = 'Crane stood down 4h awaiting sparks',
        'a real delay must still project, or the stop-list has eaten the feature'
 UNION ALL
+-- Task 4 review I1: the earlier sentence rule (a negation word, then a delay
+-- noun anywhere within 80 characters) swallowed real delays that START with a
+-- negation. The rule now requires the noun IMMEDIATELY after the word.
+SELECT 'diary_real_delay_starting_with_no_survives',
+       projects.diary_delay_text('No power on site — issue with Eskom', NULL)
+         = 'No power on site — issue with Eskom'
+   AND projects.diary_delay_text('No sparks on site so the electrical problem stays', NULL)
+         = 'No sparks on site so the electrical problem stays',
+       'a real delay that begins with "No" must survive — the old rule returned NULL for both (rehearsed 2026-09-13)'
+UNION ALL
+SELECT 'diary_real_delay_starting_with_none_survives',
+       projects.diary_delay_text('None of the DB-04 deliveries arrived, delay of 2 days', NULL)
+         = 'None of the DB-04 deliveries arrived, delay of 2 days'
+   AND projects.diary_delay_text('Nothing delivered; the info from the supplier was wrong', NULL)
+         = 'Nothing delivered; the info from the supplier was wrong',
+       'a real delay that begins with "None"/"Nothing" must survive — the old rule returned NULL for both (rehearsed 2026-09-13)'
+UNION ALL
+SELECT 'diary_no_issues_noted_is_negation',
+       projects.diary_delay_text('No issues noted', NULL) IS NULL
+   AND projects.diary_delay_text('None noted', NULL) IS NULL
+   AND projects.diary_delay_text('No delay', NULL) IS NULL,
+       'the narrow rule still catches the short negations a foreman types'
+UNION ALL
+SELECT 'diary_nothing_to_report_is_negation',
+       projects.diary_delay_text('Nothing to report', NULL) IS NULL,
+       '"to report" is the one non-noun completion the rule admits'
+UNION ALL
 SELECT 'diary_notes_fallback',
        projects.diary_delay_text(NULL, 'Late delivery of DB-04A') = 'Late delivery of DB-04A',
-       'delay_notes (00017:18) is the second source, added after the original column';
+       'delay_notes (00017:18) is the second source, added after the original column'
+UNION ALL
+-- Task 4 review I2: the stop-list is applied per column; a 'None' in `delays`
+-- must not silence a real `delay_notes`.
+SELECT 'diary_notes_survive_none_in_delays',
+       projects.diary_delay_text('None', 'Late delivery of DB-04A') = 'Late delivery of DB-04A',
+       'the first-non-empty COALESCE returned NULL here (rehearsed 2026-09-13): the negation in `delays` ate the real note'
+UNION ALL
+-- Task 4 review S1: TRIM strips spaces only.
+SELECT 'diary_leading_newline_none_is_negation',
+       projects.diary_delay_text(E'\nNone', NULL) IS NULL,
+       'E''\nNone'' survived TRIM as a delay; btrim with an explicit whitespace set catches it';

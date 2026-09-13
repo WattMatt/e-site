@@ -420,9 +420,16 @@ RETURNS text LANGUAGE sql IMMUTABLE AS $fn$
     -- Insert path (§03 §1.6).
     WHEN p_current IS NULL AND p_has_explicit_assignee THEN 'open'
     WHEN p_current IS NULL                             THEN 'triage'
-    -- A mapped 'open' must never un-triage: A(b) maps inspection.assigned →
-    -- open, and every unowned inbound item is born triage. Only the triage
-    -- owner's explicit assign moves it (§03 §1.6: assign, re-date, or void).
+    -- A source-side assignment UN-TRIAGES (decided 2026-09-13, Task 4 review
+    -- carry-forward 2): a snag whose assigned_to goes NULL → person, or an
+    -- RFI assigned on its own page, has been triaged at the source, and an
+    -- item left in triage with an assignee_id is a contradiction. Every
+    -- projection's UPDATE arm passes `<src>.assigned_to IS NOT NULL` here.
+    WHEN p_current = 'triage' AND p_mapped = 'open' AND p_has_explicit_assignee THEN 'open'
+    -- Otherwise a mapped 'open' must never un-triage: A(b) maps
+    -- inspection.assigned → open, and every unowned inbound item is born
+    -- triage. Only the triage owner's explicit assign moves it (§03 §1.6:
+    -- assign, re-date, or void).
     WHEN p_current = 'triage'  THEN 'triage'
     WHEN p_mapped  = 'open'    THEN 'open'
     ELSE p_current
@@ -467,30 +474,294 @@ $fn$;
 -- not only in the backfill. Two rules: an exact-token stop-list (case- and
 -- whitespace-insensitive, trailing punctuation ignored) and a sentence rule
 -- for the 2026-06-02 entry, which no token list can catch.
--- The candidate is the first NON-EMPTY of (delays, delay_notes); a 'None' in
--- `delays` therefore also silences `delay_notes` — no live row is shaped that
--- way today, and the entry's own free text is the diary's, not the spine's.
+--
+-- Both rules are applied PER COLUMN and the first survivor wins (Task 4
+-- review, I2): the earlier "first non-empty of (delays, delay_notes)" let a
+-- 'None' typed into `delays` silence a real `delay_notes` — rehearsed:
+-- ('None', 'Late delivery of DB-04A') → NULL.
+--
+-- The sentence rule is NARROW (Task 4 review, I1): the negation word must be
+-- IMMEDIATELY followed by the delay noun, or by "to report" / "noted". The
+-- earlier rule (`^(no|none|nil|nothing)\y[^.]{0,80}(delay|issue|problem|info)`)
+-- swallowed real delays — rehearsed → NULL: 'No power on site — issue with
+-- Eskom', 'None of the DB-04 deliveries arrived, delay of 2 days', 'Nothing
+-- delivered; the info from the supplier was wrong', 'No sparks on site so the
+-- electrical problem stays'. The narrow form was evaluated 10/10 on
+-- production: it matches the live 2026-06-02 sentence, 'No issues noted',
+-- 'Nothing to report', 'No delay', 'None noted', and none of those four real
+-- delays nor 'Crane stood down 4h awaiting sparks'.
+--
+-- Whitespace is btrim'd with an explicit set (Task 4 review, S1): TRIM strips
+-- spaces only, so E'\nNone' survived as a delay.
 CREATE OR REPLACE FUNCTION projects.diary_delay_text(p_delays text, p_delay_notes text)
 RETURNS text LANGUAGE sql IMMUTABLE AS $fn$
-  WITH candidate AS (
-    SELECT COALESCE(NULLIF(TRIM(p_delays), ''), NULLIF(TRIM(p_delay_notes), '')) AS t
+  WITH cols(ord, t) AS (
+    SELECT v.ord, NULLIF(btrim(v.t, E' \t\r\n'), '')
+      FROM (VALUES (1, p_delays), (2, p_delay_notes)) AS v(ord, t)
   ),
   norm AS (
-    SELECT c.t,
+    SELECT c.ord, c.t,
            -- 'None,' / 'none.' / 'no!' → the bare token. Only sentence
            -- punctuation is stripped, so '-' (itself a listed token) survives.
            lower(regexp_replace(c.t, '[.,;:!?[:space:]]+$', '')) AS token
-      FROM candidate c
+      FROM cols c
+     WHERE c.t IS NOT NULL
   )
-  SELECT CASE
-    WHEN n.t IS NULL THEN NULL
-    -- exact-token negations
-    WHEN n.token IN ('none','no','n/a','na','nil','nothing','-','0','none noted','no delays') THEN NULL
-    -- sentence negations: the 2026-06-02 entry is a full sentence, so a token
-    -- list alone would have let it through. A negation word at the start,
-    -- then a delay/issue/problem/info word within the same sentence.
-    WHEN lower(n.t) ~ '^(no|none|nil|nothing)\y[^.]{0,80}(delay|issue|problem|info)' THEN NULL
-    ELSE n.t
-  END
-  FROM norm n
+  SELECT n.t
+    FROM norm n
+   -- exact-token negations
+   WHERE n.token NOT IN ('none','no','n/a','na','nil','nothing','-','0','none noted','no delays')
+     -- sentence negations: the 2026-06-02 entry is a full sentence, so a token
+     -- list alone would have let it through. A negation word at the start,
+     -- IMMEDIATELY followed by the delay noun or by "to report" / "noted".
+     AND lower(n.t) !~ '^(no|none|nil|nothing)\y\s*(to report|noted|(significant |major |notable |other )?(delays?|issues?|problems?|info(rmation)?))\y'
+   ORDER BY n.ord
+   LIMIT 1
 $fn$;
+
+-- ─── D. Projection ───────────────────────────────────────────────────────────
+-- Every function here is SECURITY DEFINER (§03 §1.2): it writes assignee_id,
+-- gatekeeper_id and due_date, which the contractor who raised the RFI must not
+-- be able to forge, and without it item 2's RESTRICTIVE INSERT policy on
+-- work_items would be evaluated against that contractor and their perfectly
+-- legitimate RFI insert would fail. (Mechanism: the policies are TO
+-- authenticated, 00196:1107-1229; a SECURITY DEFINER function owned by
+-- postgres — table owner, BYPASSRLS — never evaluates them.) Attribution uses
+-- auth.uid(), never current_user, which resolves to the function OWNER.
+--
+-- ⚠ F8. Being SECURITY DEFINER does NOT change auth.uid(): inside these
+-- functions it is still the contractor who touched the source row, and item
+-- 2's transition guard exempts only auth.uid() IS NULL (00196:1540). Every
+-- UPDATE below would be refused in a signed-in session — clause (a) on a
+-- move, (a2) on a title re-projection, (b)/(c)/(d) on people and status —
+-- and the refusal would surface on the SOURCE edit. Section C' replaces the
+-- guard with the depth-scoped exemption its own comment names
+-- (pg_trigger_depth() > 1, 00196:1590-1605): these UPDATEs run at depth 2.
+--
+-- Two functions per source, and the split is load-bearing (improvement 10):
+-- projects.project_<source>(uuid) is a plain function that does the whole
+-- projection and carries NO recursion guard — the trigger wrapper calls it,
+-- and section H's backfill calls it DIRECTLY, so 15 live RFIs are projected
+-- without a single UPDATE on projects.rfis (every source table carries a
+-- BEFORE UPDATE set_updated_at trigger — rfis_updated_at 00002:100 — and a
+-- no-op UPDATE would rewrite updated_at on rows whose values span 24 Jun –
+-- 2 Sep; with F7's WHEN predicates in place it would also fire nothing).
+-- projects.mirror_<source>_work_item() is the trigger wrapper: the depth
+-- guard, then one PERFORM.
+--
+-- Three loop defences, doing three different jobs (§03 §1.2), never collapsed:
+--   1. the WHEN clause on the _upd trigger — the trigger does not fire at all
+--      on an unrelated UPDATE (probe 04, same_value_write_does_not_reproject);
+--   2. pg_trigger_depth() > 1 in the WRAPPER — this is what terminates the
+--      mirror ⇄ write-back cycle (F2, measured: mirror@1 → writeback@2 →
+--      mirror@3 → skipped; without it, 54001 stack depth exceeded);
+--   3. the value-difference check in the write-back (section E) — prevents
+--      write amplification and a spurious updated_at bump on the source, not
+--      recursion.
+--
+-- Watchers: NOT seeded here. §11 (00196:1378-1387) seeds created_by,
+-- assignee and gatekeeper on INSERT and on every people change, in an AFTER
+-- ROW trigger that fires before any statement here could — every row a
+-- seeder wrote would hit DO NOTHING. The mirror sets created_by = the raiser.
+--
+-- Historical stamps (#4): every INSERT supplies opened_at (= the source's
+-- created_at; §5 keeps it on the service path, 00196:629-636, and §11 dates
+-- the created event at it), last_activity_at, and for a terminal mapping the
+-- source's own closed_at / closed_by / void reason. On the live path §5
+-- overwrites the two timestamps with the same instant; on the backfill they
+-- are what stop 34 items dating their created event in the apply week.
+--
+-- Grants: none here. The REVOKE ALL … FROM PUBLIC / REVOKE EXECUTE … FROM anon
+-- for every function in this section land in section G with every other
+-- revoke in this file, in one place (Task 13); the @verify block above already
+-- carries their grant_absent: lines. Trigger functions get NO GRANT (F5).
+
+-- ── D.1 RFI ──────────────────────────────────────────────────────────────────
+-- The reference implementation; D.2-D.6 repeat it deliberately. Columns read
+-- from projects.rfis (00002:79-98, re-read on production 2026-09-13): subject,
+-- priority, status, due_date, raised_by, assigned_to, closed_at, closed_by,
+-- created_at, updated_at, project_id, organisation_id. Both priority CHECKs
+-- are the same four values (rfis 00002:87, work_items 00196:289), so priority
+-- maps 1:1. projects.rfis has no void state (00002:90) and no void reason
+-- column, so an RFI item is never born void — the only path to void is
+-- section F's delete-to-void, which supplies its own reason.
+--
+-- The projection body. Plain function, no recursion guard, callable directly —
+-- which is how the backfill projects 15 RFIs without touching a source row.
+CREATE OR REPLACE FUNCTION projects.project_rfi(p_rfi_id uuid)
+RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+DECLARE
+  r          projects.rfis%ROWTYPE;
+  v_item     projects.work_items%ROWTYPE;
+  v_assignee uuid;
+  v_gate     uuid;
+  v_mapped   text;
+  v_moved    boolean;
+BEGIN
+  SELECT * INTO r FROM projects.rfis WHERE id = p_rfi_id;
+  IF NOT FOUND THEN RETURN; END IF;
+
+  -- The existing MIRROR item, if any. origin = 'split' rows on the same source
+  -- are deliberately not this function's (§03 §1.3) and are never touched.
+  SELECT * INTO v_item FROM projects.work_items
+   WHERE rfi_id = r.id AND origin = 'mirror';
+
+  -- 'rfi' here and in the two resolver calls below must be exactly
+  -- projects.work_item_types.key: it is an FK on the item row, but plain text
+  -- on the resolver side, where a typo silently skips arms 1b/2. Probe 04
+  -- pins it (item_type_is_registry_key).
+  v_mapped := projects.map_source_status('rfi', r.status);
+
+  IF v_item.id IS NULL THEN
+    v_assignee := projects.resolve_mirror_assignee(r.project_id, 'rfi', r.assigned_to);
+    -- Improvement 4: the RFI gatekeeper is the RAISER, not the project PM.
+    -- Measured: triage_owner_id and the PM resolver both return the same person
+    -- on 13 of 14 projects, so a PM gatekeeper makes assignee and gatekeeper
+    -- identical on every live RFI and §03 §1.8's close gate vacuous. 12 of 15
+    -- live RFIs were raised by contractors, and this is the only mechanism in
+    -- Q1 that puts an item into a contractor's ball-in-court. If the raiser is
+    -- ineligible (departed, a client viewer, or an org-level contractor with no
+    -- project_members row — 00107 gives them no effective role) the resolver
+    -- falls back to the PM. The registry row agrees: section C' sets
+    -- rfi.gatekeeper_rule = 'creator'.
+    v_gate     := projects.resolve_work_item_gatekeeper(r.project_id, r.raised_by);
+
+    INSERT INTO projects.work_items (
+      organisation_id, project_id, item_type, origin, title, priority,
+      status, source_status, assignee_id, gatekeeper_id, due_date, created_by, rfi_id,
+      opened_at, last_activity_at, closed_at, closed_by)
+    VALUES (
+      r.organisation_id, r.project_id, 'rfi', 'mirror', r.subject, r.priority,
+      projects.work_item_status_for_mirror(NULL, v_mapped, r.assigned_to IS NOT NULL),
+      r.status, v_assignee, v_gate,
+      -- Improvement 6: a past or same-day source date becomes NULL so item 2's
+      -- BEFORE INSERT trigger computes A(b)'s +7 wd on the office calendar.
+      projects.work_item_mirror_due_date(r.due_date),
+      r.raised_by, r.id,
+      -- #4: historical stamps. §5 overwrites opened_at/last_activity_at for a
+      -- client session (same instant — harmless) and keeps them on the service
+      -- path, which is the backfill. closed_* only when the source is closed;
+      -- a closed RFI with no closed_at (none live today) dates its close at
+      -- the row's last write.
+      r.created_at, r.updated_at,
+      CASE WHEN r.status = 'closed' THEN COALESCE(r.closed_at, r.updated_at) END,
+      CASE WHEN r.status = 'closed' THEN r.closed_by END)
+    -- Explicit partial-index target, never a bare ON CONFLICT DO NOTHING (F6).
+    -- Measured: this swallows a duplicate projection (a concurrent second
+    -- projection of the same new RFI), leaves an origin='split' row on the
+    -- same source untouched, and STILL raises 23505 on a work_items_ref_unique
+    -- collision — which the bare form would have hidden, turning a ref
+    -- numbering race into a silently missing inbox item. The predicate is
+    -- work_items_src_rfi_uidx's, verbatim (00196:371):
+    --   (rfi_id) WHERE rfi_id IS NOT NULL AND origin = 'mirror'
+    ON CONFLICT (rfi_id) WHERE rfi_id IS NOT NULL AND origin = 'mirror' DO NOTHING
+    RETURNING * INTO v_item;
+    -- No watcher seeding: §11 has already done it (see the section comment).
+  ELSE
+    -- Improvement 8: a project move re-resolves both people. §15's rollout has
+    -- already decided "snags move to KINGSWALK", and correcting an RFI raised on
+    -- the wrong project is routine in a 14-project estate. Without this the item
+    -- keeps the old project's scope and counts and its assignee may not be a
+    -- member of the new project at all — which item 2's assignee-membership
+    -- trigger would have rejected had the row been inserted that way.
+    -- ⚠ Clause (a) of the guard makes project_id/organisation_id immutable for
+    -- a signed-in actor; this UPDATE runs at depth 2 and rides section C''s
+    -- exemption. The membership trigger (00196:961-984, UPDATE OF … project_id)
+    -- still re-validates both people and fires BEFORE the guard by name order,
+    -- so a move to a project the people are not on reports the MEMBERSHIP
+    -- sentence. §11 records NO event for a move — the feed shows it only through
+    -- the people/status events beside it.
+    v_moved := v_item.project_id IS DISTINCT FROM r.project_id;
+
+    IF v_moved THEN
+      v_assignee := projects.resolve_mirror_assignee(r.project_id, 'rfi', r.assigned_to);
+      v_gate     := projects.resolve_work_item_gatekeeper(r.project_id, r.raised_by);
+    ELSE
+      -- An eligible explicit source assignee wins; otherwise the spine's
+      -- current holder stays (the spine owns assignment, §03 §1.2). This is
+      -- also what makes section E's write-back converge instead of ping-pong.
+      v_assignee := COALESCE(
+        CASE WHEN projects.work_item_person_eligible(r.project_id, r.assigned_to)
+             THEN r.assigned_to END,
+        v_item.assignee_id);
+      v_gate := v_item.gatekeeper_id;
+    END IF;
+
+    -- Status: the CURRENT status is passed in, so void stays void (terminal,
+    -- reconciliation #3) and a terminal mapping wins; void_reason is not in
+    -- this SET list and is never blanked. The explicit-assignee flag is
+    -- passed on UPDATE as well as INSERT (decided 2026-09-13, Task 4 review
+    -- carry-forward 2): a source that names an assignee for the first time
+    -- UN-TRIAGES its item — Tasks 7-11 pass `<src>.assigned_to IS NOT NULL`
+    -- the same way (false for sources with no assignee column). On the
+    -- service path the guard keeps a supplied closed_by across a close and
+    -- stamps closed_at = now() on the transition (00196:1544-1547); the
+    -- values below are what it sees.
+    UPDATE projects.work_items
+       SET project_id       = r.project_id,
+           organisation_id  = r.organisation_id,
+           title            = r.subject,
+           priority         = r.priority,
+           source_status    = r.status,
+           status           = projects.work_item_status_for_mirror(v_item.status, v_mapped, r.assigned_to IS NOT NULL),
+           assignee_id      = v_assignee,
+           gatekeeper_id    = v_gate,
+           closed_at        = CASE WHEN r.status = 'closed'
+                                   THEN COALESCE(v_item.closed_at, r.closed_at, now())
+                                   ELSE NULL END,
+           closed_by        = CASE WHEN r.status = 'closed'
+                                   THEN COALESCE(v_item.closed_by, r.closed_by) END,
+           last_activity_at = now()
+     WHERE id = v_item.id;
+  END IF;
+END $fn$;
+
+-- The trigger wrapper. Two lines: the guard that terminates the mirror ⇄
+-- write-back cycle (measured trace mirror@1 → writeback@2 → mirror@3 → skipped;
+-- removing it and the write-back's value check produces
+-- "ERROR: 54001: stack depth limit exceeded" — Task 6 Step 7 runs that
+-- mutation once the write-back exists), then the projection.
+CREATE OR REPLACE FUNCTION projects.mirror_rfi_work_item()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'projects', 'public'
+SET row_security TO 'off'
+AS $fn$
+BEGIN
+  IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
+  PERFORM projects.project_rfi(NEW.id);
+  RETURN NULL;   -- AFTER trigger; the return value is ignored
+END $fn$;
+
+-- F7: two triggers, because PostgreSQL rejects a WHEN clause referencing OLD on
+-- a trigger whose event list includes INSERT ("INSERT trigger's WHEN condition
+-- cannot reference OLD values"). §03 §1.2's single declaration is not valid SQL.
+DROP TRIGGER IF EXISTS rfis_mirror_work_item_ins ON projects.rfis;
+CREATE TRIGGER rfis_mirror_work_item_ins
+  AFTER INSERT ON projects.rfis
+  FOR EACH ROW EXECUTE FUNCTION projects.mirror_rfi_work_item();
+
+-- The column list is every column the projection reads that can change; the
+-- WHEN clause is the same list, so a full-row save that changes only
+-- description (or category) fires nothing (probe 04). created_at and
+-- updated_at are read on INSERT only.
+DROP TRIGGER IF EXISTS rfis_mirror_work_item_upd ON projects.rfis;
+CREATE TRIGGER rfis_mirror_work_item_upd
+  AFTER UPDATE OF subject, priority, status, due_date, assigned_to,
+                  closed_at, closed_by, project_id, organisation_id
+  ON projects.rfis
+  FOR EACH ROW
+  WHEN (OLD.subject         IS DISTINCT FROM NEW.subject
+     OR OLD.priority        IS DISTINCT FROM NEW.priority
+     OR OLD.status          IS DISTINCT FROM NEW.status
+     OR OLD.due_date        IS DISTINCT FROM NEW.due_date
+     OR OLD.assigned_to     IS DISTINCT FROM NEW.assigned_to
+     OR OLD.closed_at       IS DISTINCT FROM NEW.closed_at
+     OR OLD.closed_by       IS DISTINCT FROM NEW.closed_by
+     OR OLD.project_id      IS DISTINCT FROM NEW.project_id
+     OR OLD.organisation_id IS DISTINCT FROM NEW.organisation_id)
+  EXECUTE FUNCTION projects.mirror_rfi_work_item();

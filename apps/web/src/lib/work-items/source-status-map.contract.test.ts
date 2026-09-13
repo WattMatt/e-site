@@ -19,20 +19,36 @@ import { join, resolve } from 'node:path'
 const REPO_ROOT = resolve(__dirname, '../../../../..')
 const MIG_DIR = join(REPO_ROOT, 'apps/edge-functions/supabase/migrations')
 
-/** Find a migration by a distinctive string in its BODY, never by filename. */
-function migrationContaining(needle: string): string {
+/**
+ * Find a migration by a distinctive string in its BODY, never by filename.
+ *
+ * `pick` decides what happens when MORE than one migration carries the
+ * needle. A table or constraint is created once, so the default `'only'`
+ * throws — a second hit means the anchor is no longer distinctive. A function
+ * is `CREATE OR REPLACE`d, and the database runs the LAST definition in
+ * ledger order, so a function needle uses `'last'` (Task 4 review, S2): with
+ * first-match, a later migration replacing map_source_status would have left
+ * this test reading the stale body forever.
+ */
+function migrationContaining(needle: string, pick: 'only' | 'last' = 'only'): string {
+  const hits: string[] = []
   for (const n of readdirSync(MIG_DIR).sort()) {
     const sql = readFileSync(join(MIG_DIR, n), 'utf8')
-    if (sql.includes(needle)) return sql
+    if (sql.includes(needle)) hits.push(sql)
   }
-  throw new Error(`no migration contains ${JSON.stringify(needle)}`)
+  if (hits.length === 0) throw new Error(`no migration contains ${JSON.stringify(needle)}`)
+  if (pick === 'only' && hits.length > 1) {
+    throw new Error(`${hits.length} migrations contain ${JSON.stringify(needle)} — the anchor is no longer distinctive`)
+  }
+  return hits[hits.length - 1]
 }
 
 const MAP_FN = 'CREATE OR REPLACE FUNCTION projects.map_source_status'
 const DIARY_FN = 'CREATE OR REPLACE FUNCTION projects.diary_delay_text'
 const SPINE_TABLE = 'CREATE TABLE IF NOT EXISTS projects.work_items ('
 
-const mirrorSql = () => migrationContaining(MAP_FN)
+// Function needles take the LAST definition in ledger order (see migrationContaining).
+const mirrorSql = () => migrationContaining(MAP_FN, 'last')
 const spineSql = () => migrationContaining(SPINE_TABLE)
 
 /**
@@ -174,7 +190,7 @@ describe('map_source_status covers every source vocabulary', () => {
   })
 
   it('the diary negation stop-list exists and covers every live value', () => {
-    const sql = mirrorSql()
+    const sql = migrationContaining(DIARY_FN, 'last')
     expect(sql).toMatch(/CREATE OR REPLACE FUNCTION projects\.diary_delay_text/)
     const body = functionBody(sql, DIARY_FN)
     for (const token of ['none', 'no', 'n/a', 'na', 'nil', 'nothing']) {
