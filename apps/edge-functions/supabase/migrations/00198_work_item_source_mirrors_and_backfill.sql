@@ -220,6 +220,9 @@ SET search_path TO 'projects', 'public'
 SET row_security TO 'off'
 AS $fn$
   SELECT p_user_id IS NOT NULL
+     -- Redundant by FK (user_organisations.user_id and project_members.user_id
+     -- both REFERENCE profiles ON DELETE CASCADE, so no role row can outlive
+     -- its profile); kept because it mirrors work_items.assignee_id → profiles.
      AND EXISTS (SELECT 1 FROM public.profiles pr WHERE pr.id = p_user_id)
      -- §03 §1.9 defers the client viewer's write set to Q3. Until then an item
      -- that lands on one can never be cleared: 00161 blocks their writes and
@@ -303,17 +306,191 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path TO 'projects', 'public'
 SET row_security TO 'off'
 AS $fn$
+DECLARE v_candidate uuid;
 BEGIN
   -- A(b), as amended in this PR: the gatekeeper is the project PM for snag,
   -- qc_defect, diary_action and form_action; verifier_id for inspection; and
   -- THE RAISER for rfi (improvement 4 — an RFI is closed by the person who
   -- asked, once they confirm the answer is usable; the registry row says
   -- 'creator', section C'). The caller supplies the exception as p_explicit;
-  -- everyone else passes NULL. Delegates to 00195's resolve_project_pm; an
-  -- orphaned project returns NULL here and the mirror's assignee call raises
-  -- first, so no second sentence is needed.
+  -- everyone else passes NULL. Delegates to 00195's resolve_project_pm.
+  --
+  -- When that chain is empty this RAISES item 2's sentence rather than
+  -- returning NULL: work_items.gatekeeper_id is NOT NULL, and a NULL here
+  -- would surface on the source insert as a generic 23502. The assignee
+  -- resolver does NOT always raise first — a project whose only member is a
+  -- contractor named as triage_owner_id resolves an assignee through arm 3
+  -- while the PM chain stays NULL (probe 02, the pmless fixture) — so this
+  -- function must carry the sentence itself. Byte-identical to the assignee
+  -- resolver's, so a PM sees one message whichever resolver produced it.
   IF projects.work_item_person_eligible(p_project_id, p_explicit) THEN
     RETURN p_explicit;
   END IF;
-  RETURN projects.resolve_project_pm(p_project_id);
+  v_candidate := projects.resolve_project_pm(p_project_id);
+  IF v_candidate IS NOT NULL THEN
+    RETURN v_candidate;
+  END IF;
+  RAISE EXCEPTION 'This project has nobody who can own work — add a project manager to it first.'
+    USING ERRCODE = 'raise_exception';
 END $fn$;
+
+-- ─── C. Status, due date, and what counts as a delay ─────────────────────────
+-- Four pure functions with clearly separated jobs so each is independently
+-- testable (probe scripts/db/probes/03-status-map.sql; contract test
+-- apps/web/src/lib/work-items/source-status-map.contract.test.ts). None of
+-- them reads a table or an identity; none is SECURITY DEFINER.
+--
+-- Grants: none here. The REVOKE ALL … FROM PUBLIC / REVOKE EXECUTE … FROM anon
+-- for these four functions land in section G with every other revoke in this
+-- file, in one place (Task 13); the @verify block above already carries their
+-- grant_absent: lines.
+
+-- Pure vocabulary. IMMUTABLE because it reads nothing. Every value in every
+-- source table's own status CHECK has an arm here — mapped, or explicitly NULL
+-- meaning "leaves the universal status unchanged" (§03 §1.8). A contract test
+-- parses both sides and fails on any value with no arm. Source CHECKs read on
+-- 2026-09-13: projects.rfis 00002:90, field.snags 00004:21,
+-- inspections.inspections 00066:57-59, projects.qc_entries
+-- qc_entries_conformance_check 00176:60-61 (the column was added by ALTER,
+-- not in 00172's CREATE TABLE), field.site_forms 00179:81.
+CREATE OR REPLACE FUNCTION projects.map_source_status(p_item_type text, p_source_status text)
+RETURNS text LANGUAGE sql IMMUTABLE AS $fn$
+  SELECT CASE p_item_type
+    WHEN 'rfi' THEN CASE p_source_status
+      -- No 'draft' arm with meaning: rfiService.create hardcodes status:'open'
+      -- (rfi.service.ts:100) and no code path writes 'draft'; it exists only
+      -- in the 00002:90 CHECK.
+      WHEN 'draft'     THEN NULL
+      WHEN 'open'      THEN 'open'
+      WHEN 'responded' THEN 'answered'
+      WHEN 'closed'    THEN 'closed'
+      ELSE NULL END
+    WHEN 'snag' THEN CASE p_source_status
+      WHEN 'open'             THEN 'open'
+      WHEN 'in_progress'      THEN 'open'
+      -- resolved/pending_sign_off both mean "the contractor says it is done and
+      -- the PM has the ball", which is exactly 'answered'. Sign-off is the PM's
+      -- act (§03 §1.5: the snag gatekeeper is the PM, not the raiser).
+      WHEN 'resolved'         THEN 'answered'
+      WHEN 'pending_sign_off' THEN 'answered'
+      WHEN 'signed_off'       THEN 'closed'
+      WHEN 'closed'           THEN 'closed'
+      ELSE NULL END
+    WHEN 'inspection' THEN CASE p_source_status   -- §03 §1.10, verbatim
+      WHEN 'assigned'              THEN 'open'
+      WHEN 'in_progress'           THEN 'open'
+      WHEN 'awaiting_verification' THEN 'answered'
+      WHEN 'certified'             THEN 'closed'
+      WHEN 're-inspect_required'   THEN 'open'
+      WHEN 'abandoned'             THEN 'void'
+      ELSE NULL END
+    WHEN 'qc_defect' THEN CASE p_source_status    -- source_status mirrors conformance
+      WHEN 'fail' THEN NULL                        -- in scope; triage/open rules decide
+      WHEN 'pass' THEN 'closed'                    -- the defect was corrected
+      -- 'na' is the column DEFAULT (00176:54) and all 11 live entries carry it.
+      -- Reading it as a close would mass-close items on a default value.
+      WHEN 'na'   THEN NULL
+      ELSE NULL END
+    WHEN 'form_action' THEN CASE p_source_status
+      WHEN 'draft'       THEN NULL
+      WHEN 'submitted'   THEN 'answered'
+      WHEN 'distributed' THEN 'closed'
+      WHEN 'void'        THEN 'void'
+      ELSE NULL END
+    -- projects.site_diary_entries has no status column at all (00002:146-158,
+    -- 00017:14-18). The delay item's lifecycle is entirely spine-side.
+    WHEN 'diary_action' THEN NULL
+    ELSE NULL END
+$fn$;
+
+-- Policy. Reconciles a mapping with §03 §1.6's triage rule.
+CREATE OR REPLACE FUNCTION projects.work_item_status_for_mirror(
+    p_current text, p_mapped text, p_has_explicit_assignee boolean)
+RETURNS text LANGUAGE sql IMMUTABLE AS $fn$
+  SELECT CASE
+    -- void is terminal (00196:1701-1709, and this plan's "no un-projection
+    -- path"). Under the depth-scoped exemption the mirror bypasses item 2's
+    -- machine, so this arm is the only thing stopping abandoned →
+    -- re-inspect_required from un-voiding a row that still carries its old
+    -- void_reason. A voided source that is genuinely revived is a new record.
+    WHEN p_current = 'void' THEN 'void'
+    -- Terminal states always win: a source that closed, was answered or was
+    -- voided says so regardless of where the item sat.
+    WHEN p_mapped IN ('answered','closed','void') THEN p_mapped
+    -- Insert path (§03 §1.6).
+    WHEN p_current IS NULL AND p_has_explicit_assignee THEN 'open'
+    WHEN p_current IS NULL                             THEN 'triage'
+    -- A mapped 'open' must never un-triage: A(b) maps inspection.assigned →
+    -- open, and every unowned inbound item is born triage. Only the triage
+    -- owner's explicit assign moves it (§03 §1.6: assign, re-date, or void).
+    WHEN p_current = 'triage'  THEN 'triage'
+    WHEN p_mapped  = 'open'    THEN 'open'
+    ELSE p_current
+  END
+$fn$;
+
+-- Improvement 6: a projected item may never arrive already overdue.
+-- Measured 2026-09-10: RFI "Drawings" was created AND due 2026-07-23; five
+-- August RFIs were created 08-17 and due 08-18 against A(b)'s +7 wd default;
+-- 15 of 18 inspections carry a scheduled_at in the past. Returning NULL hands
+-- the decision to item 2's BEFORE INSERT trigger, which computes the TYPE's
+-- offset on the TYPE's calendar (A(b), A(h)) — so no new calendar maths lives
+-- here and there is nothing to keep in sync.
+--
+-- "Today" is the SAST calendar date, (now() AT TIME ZONE 'Africa/Johannesburg')::date
+-- — the SAME expression §5 uses as day zero of its working-day arithmetic
+-- (00196:670), so the floor and the default it hands over agree on what day it
+-- is. CURRENT_DATE is the session-timezone (UTC) date, which is yesterday's
+-- SAST date for the first two hours of every SA morning: with it, a source
+-- dated "today" entered at 01:00 SAST would pass through as a future date and
+-- arrive as a same-day deadline. A date AT OR BEFORE today becomes NULL;
+-- strictly future passes through. STABLE, not IMMUTABLE: it reads now().
+CREATE OR REPLACE FUNCTION projects.work_item_mirror_due_date(p_source date)
+RETURNS date LANGUAGE sql STABLE AS $fn$
+  SELECT CASE
+    WHEN p_source IS NULL THEN NULL
+    WHEN p_source <= (now() AT TIME ZONE 'Africa/Johannesburg')::date THEN NULL
+    ELSE p_source
+  END
+$fn$;
+
+-- Improvement 1: what actually counts as a delay.
+-- projects.site_diary_entries has no "was there a delay" flag, only two free
+-- text columns (delays, 00002:154; delay_notes, 00017:18). Re-read 2026-09-13:
+-- 6 of 57 entries carry a non-empty `delays`, and ALL SIX are negations —
+--   'No delays or info required was noted in the site walk and or meeting'
+--   'None,'  'None,'  'None'  'None'  'NO'
+-- (the two non-empty `delay_notes` are both 'None', beside a 'None').
+-- A non-empty test measures whether the box was filled in, not whether a delay
+-- occurred — the same class of error as counting form_responses newlines.
+-- Contractors will keep typing "None" daily, so this lives on the LIVE path,
+-- not only in the backfill. Two rules: an exact-token stop-list (case- and
+-- whitespace-insensitive, trailing punctuation ignored) and a sentence rule
+-- for the 2026-06-02 entry, which no token list can catch.
+-- The candidate is the first NON-EMPTY of (delays, delay_notes); a 'None' in
+-- `delays` therefore also silences `delay_notes` — no live row is shaped that
+-- way today, and the entry's own free text is the diary's, not the spine's.
+CREATE OR REPLACE FUNCTION projects.diary_delay_text(p_delays text, p_delay_notes text)
+RETURNS text LANGUAGE sql IMMUTABLE AS $fn$
+  WITH candidate AS (
+    SELECT COALESCE(NULLIF(TRIM(p_delays), ''), NULLIF(TRIM(p_delay_notes), '')) AS t
+  ),
+  norm AS (
+    SELECT c.t,
+           -- 'None,' / 'none.' / 'no!' → the bare token. Only sentence
+           -- punctuation is stripped, so '-' (itself a listed token) survives.
+           lower(regexp_replace(c.t, '[.,;:!?[:space:]]+$', '')) AS token
+      FROM candidate c
+  )
+  SELECT CASE
+    WHEN n.t IS NULL THEN NULL
+    -- exact-token negations
+    WHEN n.token IN ('none','no','n/a','na','nil','nothing','-','0','none noted','no delays') THEN NULL
+    -- sentence negations: the 2026-06-02 entry is a full sentence, so a token
+    -- list alone would have let it through. A negation word at the start,
+    -- then a delay/issue/problem/info word within the same sentence.
+    WHEN lower(n.t) ~ '^(no|none|nil|nothing)\y[^.]{0,80}(delay|issue|problem|info)' THEN NULL
+    ELSE n.t
+  END
+  FROM norm n
+$fn$;

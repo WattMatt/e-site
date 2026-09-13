@@ -16,7 +16,15 @@
 --                  their effective role is client_viewer (3 such accounts on
 --                  2026-09-13, each holding exactly one such project).
 --   the orphan     a throwaway org with no members and a project created by
---                  v_cv, who holds no role there — 00195's chain returns NULL.
+--                  v_cv, who holds no role there — 00195's chain returns NULL,
+--                  and BOTH resolvers must raise item 2's sentence.
+--   the pmless     a throwaway org whose project has ONE member, a WM
+--                  contractor on project_members, named as triage_owner_id.
+--                  The assignee chain answers through arm 3 while 00195's PM
+--                  chain is still NULL — so the gatekeeper cannot rely on the
+--                  assignee call having raised first, and must raise itself
+--                  (Task 3 review, I1: before the fix it returned NULL and the
+--                  mirror died on gatekeeper_id NOT NULL with a generic 23502).
 --   X              the WM project with the most eligible members. Four
 --                  distinct eligible non-PM, non-client-viewer members A B C D:
 --                  per-type snag/rfi default = A, triage_owner_id = B,
@@ -72,7 +80,7 @@ BEGIN
   -- filled, type/subscription_tier default); projects.projects needs
   -- organisation_id, name, created_by (code is trigger-filled; status 'active'
   -- is in projects_status_check; currency has no CHECK) — measured 2026-09-13.
-  DECLARE v_orphan_org uuid; v_orphan uuid; v_err text;
+  DECLARE v_orphan_org uuid; v_orphan uuid; v_err text; v_gk_err text;
   BEGIN
     INSERT INTO public.organisations (name) VALUES ('_probe_orphan_org') RETURNING id INTO v_orphan_org;
     INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
@@ -86,8 +94,69 @@ BEGIN
     EXCEPTION WHEN raise_exception THEN
       v_err := SQLERRM;
     END;
-    CREATE TEMP TABLE res_orphan(proj uuid, err text) ON COMMIT DROP;
-    INSERT INTO res_orphan VALUES (v_orphan, v_err);
+    -- The gatekeeper call is caught here, not in the final SELECT: a RAISE
+    -- inside the assertion statement would be an API error, not a FAIL row.
+    BEGIN
+      PERFORM projects.resolve_work_item_gatekeeper(v_orphan, NULL);
+      v_gk_err := '<no error>';
+    EXCEPTION WHEN raise_exception THEN
+      v_gk_err := SQLERRM;
+    END;
+    CREATE TEMP TABLE res_orphan(proj uuid, err text, gk_err text) ON COMMIT DROP;
+    INSERT INTO res_orphan VALUES (v_orphan, v_err, v_gk_err);
+  END;
+
+  -- A PM-LESS project that is NOT orphaned for the assignee (Task 3 review,
+  -- I1): a throwaway org, project created by v_cv (no role there), ONE WM
+  -- contractor on project_members (organisation_id is NOT NULL there), and
+  -- project_settings.triage_owner_id = that contractor. The assignee chain
+  -- answers through arm 3; 00195's PM chain stays NULL; the gatekeeper must
+  -- raise the same sentence rather than return NULL into gatekeeper_id NOT NULL.
+  DECLARE v_other uuid; v_pmless_org uuid; v_pmless uuid;
+          v_asg uuid; v_asg_err text; v_gk uuid; v_gk_err text; v_read uuid;
+  BEGIN
+    SELECT u.user_id INTO v_other FROM public.user_organisations u
+     WHERE u.organisation_id = 'dddddddd-0000-0000-0000-000000000001'
+       AND u.role = 'contractor' AND u.is_active AND u.user_id <> v_cv
+     ORDER BY u.created_at, u.user_id LIMIT 1;
+    IF v_other IS NULL THEN
+      RAISE EXCEPTION 'fixture: WM-Consulting has no active contractor in user_organisations';
+    END IF;
+
+    INSERT INTO public.organisations (name) VALUES ('_probe_pmless_org') RETURNING id INTO v_pmless_org;
+    INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+    VALUES (v_pmless_org, '_probe_pmless', 'active', 'ZAR', v_cv) RETURNING id INTO v_pmless;
+    INSERT INTO projects.project_members (project_id, user_id, organisation_id, role, is_active)
+    VALUES (v_pmless, v_other, v_pmless_org, 'contractor', true);
+
+    IF public.user_effective_project_role(v_pmless, v_other) IS DISTINCT FROM 'contractor' THEN
+      RAISE EXCEPTION 'fixture: the contractor''s role is not effective on the pmless project (got %)',
+        public.user_effective_project_role(v_pmless, v_other);
+    END IF;
+    IF projects.resolve_project_pm(v_pmless) IS NOT NULL THEN
+      RAISE EXCEPTION 'fixture: the pmless project resolved a PM (%) — it is not PM-less', projects.resolve_project_pm(v_pmless);
+    END IF;
+
+    UPDATE projects.project_settings SET triage_owner_id = v_other WHERE project_id = v_pmless;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'fixture: project % has no project_settings row', v_pmless;
+    END IF;
+    SELECT s.triage_owner_id INTO v_read FROM projects.project_settings s WHERE s.project_id = v_pmless;
+    IF v_read IS DISTINCT FROM v_other THEN
+      RAISE EXCEPTION 'fixture: 00196 §13 nulled triage_owner_id on the pmless project (read back %)', v_read;
+    END IF;
+
+    BEGIN
+      v_asg := projects.resolve_mirror_assignee(v_pmless, 'snag', NULL); v_asg_err := '<no error>';
+    EXCEPTION WHEN raise_exception THEN v_asg_err := SQLERRM;
+    END;
+    BEGIN
+      v_gk := projects.resolve_work_item_gatekeeper(v_pmless, NULL); v_gk_err := '<no error>';
+    EXCEPTION WHEN raise_exception THEN v_gk_err := SQLERRM;
+    END;
+
+    CREATE TEMP TABLE res_pmless(proj uuid, other uuid, asg uuid, asg_err text, gk uuid, gk_err text) ON COMMIT DROP;
+    INSERT INTO res_pmless VALUES (v_pmless, v_other, v_asg, v_asg_err, v_gk, v_gk_err);
   END;
 
   -- X: the WM project with the most eligible members, so four distinct
@@ -196,11 +265,22 @@ SELECT 'orphan_raises_one_sentence',
        (SELECT err LIKE 'This project has nobody who can own work%' FROM res_orphan),
        'got: ' || (SELECT err FROM res_orphan)
 UNION ALL
--- The gatekeeper does not raise a second sentence: the assignee call already
--- did, and it runs first in every mirror body.
-SELECT 'orphan_gatekeeper_is_null',
-       projects.resolve_work_item_gatekeeper((SELECT proj FROM res_orphan), NULL) IS NULL,
-       'no second sentence — the assignee resolver raises first on an orphaned project'
+-- The gatekeeper raises the SAME sentence: it cannot rely on the assignee call
+-- having raised first (see the pmless fixture), and NULL here would surface as
+-- a generic 23502 on gatekeeper_id NOT NULL.
+SELECT 'orphan_gatekeeper_raises_one_sentence',
+       (SELECT gk_err LIKE 'This project has nobody who can own work%' FROM res_orphan),
+       'got: ' || (SELECT gk_err FROM res_orphan)
+UNION ALL
+-- Task 3 review, I1: PM-less but not orphaned for the assignee.
+SELECT 'assignee_resolves_via_triage_owner_without_pm',
+       (SELECT asg IS NOT DISTINCT FROM other FROM res_pmless),
+       'arm 3 answers the contractor triage owner while 00195''s PM chain is NULL: got '
+         || (SELECT COALESCE(asg::text, 'NULL') || ', err=' || asg_err FROM res_pmless)
+UNION ALL
+SELECT 'gatekeeper_raises_one_sentence_when_pm_chain_is_empty',
+       (SELECT gk_err LIKE 'This project has nobody who can own work%' FROM res_pmless),
+       'got: gatekeeper=' || (SELECT COALESCE(gk::text, 'NULL') || ', err=' || gk_err FROM res_pmless)
 UNION ALL
 SELECT 'resolved_people_are_members',
        count(*) FILTER (WHERE public.user_effective_project_role(
@@ -224,13 +304,15 @@ SELECT 'nobody_resolves_to_a_client_viewer',
        'no project''s default assignee may be a client viewer'
 FROM live p
 UNION ALL
--- Eligibility is one helper: a NULL, an id with no profile, and a member.
+-- Eligibility is one helper: a NULL, an id with no effective role, and a
+-- member. (The profile-exists clause is redundant by FK and cannot be
+-- isolated here — a random uuid fails on the ROLE test.)
 SELECT 'eligibility_needs_a_profile_with_a_role',
        (SELECT NOT projects.work_item_person_eligible(f.x, NULL)
            AND NOT projects.work_item_person_eligible(f.x, gen_random_uuid())
            AND     projects.work_item_person_eligible(f.x, f.d)
           FROM res_fix f),
-       'NULL and an unknown id are ineligible; an active non-client-viewer member is eligible'
+       'NULL and an id with no effective role are ineligible; an active non-client-viewer member is eligible'
 UNION ALL
 -- Positive paths, each answering a DIFFERENT person on X (fixture header).
 SELECT 'explicit_member_honoured',
@@ -239,7 +321,7 @@ SELECT 'explicit_member_honoured',
 UNION ALL
 SELECT 'explicit_unknown_id_is_discarded',
        (SELECT projects.resolve_mirror_assignee(f.x, 'snag', gen_random_uuid()) = f.a FROM res_fix f),
-       'arm 1 validates: an id with no profile (§03 §1.5, no FK behind the jsonb) falls through to the chain rather than raising'
+       'arm 1 validates: an id with no effective role (§03 §1.5, no FK behind the jsonb) falls through to the chain rather than raising'
 UNION ALL
 SELECT 'rfi_default_assignee_honoured',
        (SELECT projects.resolve_mirror_assignee(f.x, 'rfi', NULL) = f.c FROM res_fix f),
