@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
   computeCumulativeVdMap,
   voltDropPctForSupply,
@@ -958,6 +959,24 @@ export function CableScheduleGrid({
                     <span className={`badge ${LENGTH_STATUS_TONE[run.length_status]}`}>
                       {run.length_status}
                     </span>
+                    {canEdit && !locked && run.length_status === 'UNMEASURED' && (
+                      <Link
+                        href={`/projects/${projectId}/cables/${revisionId}/measure?supply=${run.supply_id}`}
+                        title="Trace this run's route on the drawings and assign its length"
+                        style={{
+                          display: 'block',
+                          marginTop: 3,
+                          fontSize: 10,
+                          fontFamily: 'var(--font-mono)',
+                          letterSpacing: '0.04em',
+                          color: 'var(--c-text-dim)',
+                          textDecoration: 'none',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        trace →
+                      </Link>
+                    )}
                   </Td>
                   <Td align="right" style={{ color: vdTone, fontWeight: run.vd_pct > 3 ? 700 : 400 }}>
                     {run.vd_pct > 0 ? fmt(run.vd_pct, 2) : '—'}

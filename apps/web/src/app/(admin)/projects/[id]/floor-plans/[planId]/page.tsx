@@ -252,7 +252,9 @@ async function loadRouteContext(
     runLabel,
     riseM: routeRow ? Number(routeRow.rise_m) : 0,
     dropM: routeRow ? Number(routeRow.drop_m) : 0,
-    doneHref: `/projects/${projectId}/cables/${supply.revision_id}/measure`,
+    // Carry the supply back so "Done" lands on the run just traced, with its
+    // legs and total in front of the user, rather than an unselected list.
+    doneHref: `/projects/${projectId}/cables/${supply.revision_id}/measure?supply=${supplyId}`,
     segments: ((segments ?? []) as any[]).map((g) => ({
       id: g.id,
       floorPlanId: g.floor_plan_id,

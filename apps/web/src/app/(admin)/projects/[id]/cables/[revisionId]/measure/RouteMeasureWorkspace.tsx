@@ -63,18 +63,31 @@ export function RouteMeasureWorkspace({
   revisionId,
   runs,
   plans,
+  initialSupplyId,
 }: {
   projectId: string
   revisionId: string
   runs: RunRow[]
   plans: PlanRow[]
+  /** Preselect this run — set when arriving from the grid's "trace →" link or
+   *  on returning from the drawing viewer. Already validated against `runs`. */
+  initialSupplyId?: string
 }) {
-  const [filter, setFilter] = useState<Filter>('outstanding')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const initialRun = initialSupplyId ? runs.find((r) => r.supplyId === initialSupplyId) : undefined
+  // A deep-linked run must be visible, or the page would open on a list that
+  // does not contain the thing the link named. An already-traced run is not on
+  // the outstanding list, so widen the filter rather than silently drop it.
+  const [filter, setFilter] = useState<Filter>(
+    initialRun?.route && initialRun.route.segments.length > 0 ? 'all' : 'outstanding',
+  )
+  const [selectedId, setSelectedId] = useState<string | null>(initialSupplyId ?? null)
   /** Which sheet "Trace on drawing" opens. Defaults to the last sheet used. */
-  const [tracePlanId, setTracePlanId] = useState<string>('')
-  const [riseM, setRiseM] = useState(0)
-  const [dropM, setDropM] = useState(0)
+  const [tracePlanId, setTracePlanId] = useState<string>(() => {
+    const legs = initialRun?.route?.segments ?? []
+    return legs.length ? (legs[legs.length - 1].floorPlanId ?? '') : ''
+  })
+  const [riseM, setRiseM] = useState(initialRun?.route?.riseM ?? 0)
+  const [dropM, setDropM] = useState(initialRun?.route?.dropM ?? 0)
   const [message, setMessage] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<{ existingM: number; proposedM: number } | null>(null)
   const [pending, startTransition] = useTransition()
