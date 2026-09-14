@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useState, useCallback } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import type { SceneGraph, RfiOption, ViewerMode } from './MarkupCanvas'
+import { saveSupplyRouteAction } from '@/actions/cable-route.actions'
 
 const MarkupCanvas = dynamic(
   () => import('./MarkupCanvas').then((m) => m.MarkupCanvas),
@@ -62,6 +63,30 @@ export type EditingAnnotation = {
   scene: SceneGraph
 }
 
+/**
+ * Everything route mode needs to append a leg without losing what is already
+ * traced. `saveSupplyRouteAction` REPLACES the whole segment list, so appending
+ * means resending the others — and resending them means carrying rise/drop
+ * through untouched, or the save would silently reset them to 0.
+ */
+export type RouteContext = {
+  supplyId: string
+  runLabel: string
+  riseM: number
+  dropM: number
+  /** Back to the measure worklist. */
+  doneHref: string
+  segments: Array<{
+    id: string
+    /** NULL when the drawing was deleted or de-activated after tracing. */
+    floorPlanId: string | null
+    floorPlanName: string
+    pageIndex: number
+    points: number[]
+    lengthM: number
+  }>
+}
+
 const MODES: ReadonlyArray<{ value: ViewerMode; label: string; hint: string }> = [
   { value: 'view', label: 'View', hint: 'Read-only preview — pan and zoom only' },
   { value: 'markup', label: 'Markup', hint: 'Full drawing tools; save attaches to an existing RFI' },
@@ -77,6 +102,7 @@ export function DrawingViewer({
   editing,
   initialMode,
   canWrite,
+  route,
 }: {
   plan: DrawingPlan
   projectId: string
@@ -88,9 +114,59 @@ export function DrawingViewer({
   /** Effective project role allows creating/editing markup. When false the
    *  viewer is pinned to read-only 'view' and the mode toggle is hidden. */
   canWrite: boolean
+  /** Present only when the page was opened as `?mode=route&supply=…`. */
+  route?: RouteContext
 }) {
   const router = useRouter()
   const pathname = usePathname()
+  const [routeError, setRouteError] = useState<string | null>(null)
+  const [committing, setCommitting] = useState(false)
+
+  /**
+   * Append one traced leg to this run's route.
+   *
+   * ⚠ The save action replaces the entire segment list, so a segment whose
+   * drawing has since been deleted (`floor_plan_id` is ON DELETE SET NULL)
+   * cannot be resent — the schema requires a uuid. Appending in that state
+   * would silently drop a leg and shorten the run. Refuse instead, and say so.
+   */
+  const onCommitLeg = useCallback(
+    async ({ points, pageIndex }: { points: number[]; pageIndex: number }) => {
+      if (!route) return {}
+      const orphaned = route.segments.filter((g) => !g.floorPlanId)
+      if (orphaned.length > 0) {
+        const msg = `This run has ${orphaned.length} leg${orphaned.length === 1 ? '' : 's'} traced on a drawing that is no longer available, so it cannot be added to safely. Re-measure the run from the worklist.`
+        setRouteError(msg)
+        return { error: msg }
+      }
+      setCommitting(true)
+      setRouteError(null)
+      try {
+        const res = await saveSupplyRouteAction({
+          supplyId: route.supplyId,
+          riseM: route.riseM,
+          dropM: route.dropM,
+          segments: [
+            ...route.segments.map((g) => ({
+              floorPlanId: g.floorPlanId as string,
+              pageIndex: g.pageIndex,
+              points: g.points,
+            })),
+            { floorPlanId: plan.id, pageIndex, points },
+          ],
+        })
+        if (res.error) {
+          setRouteError(res.error)
+          return { error: res.error }
+        }
+        router.refresh()
+        return {}
+      } finally {
+        setCommitting(false)
+      }
+    },
+    [route, plan.id, router],
+  )
 
   // Re-edit always lands in markup mode (the toolbar makes no sense in
   // view mode for an existing markup edit), regardless of initialMode.
@@ -136,7 +212,16 @@ export function DrawingViewer({
             Read-only — pan and zoom only. Markup requires write access.
           </div>
         )}
-        {canWrite && !editing && (
+        {routeError && (
+          <div
+            className="data-panel"
+            style={{ padding: '8px 12px', fontSize: 12, color: 'var(--c-danger, #b4413c)', borderColor: 'var(--c-danger, #b4413c)' }}
+            role="alert"
+          >
+            {routeError}
+          </div>
+        )}
+        {canWrite && !editing && !route && (
           <div className="data-panel" style={{ padding: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div
               role="tablist"
@@ -194,10 +279,71 @@ export function DrawingViewer({
           projectId={projectId}
           rfis={rfis}
           editing={editing}
-          mode={mode}
+          mode={route ? 'route' : mode}
+          routeMode={
+            route
+              ? {
+                  runLabel: route.runLabel,
+                  savedLegs: route.segments.map((g) => ({
+                    id: g.id,
+                    floorPlanName: g.floorPlanName,
+                    pageIndex: g.pageIndex,
+                    lengthM: g.lengthM,
+                  })),
+                  onCommitLeg,
+                  doneHref: route.doneHref,
+                }
+              : undefined
+          }
         />
       </div>
       <aside style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {route ? (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Legs traced</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                {committing ? 'saving…' : route.segments.length}
+              </span>
+            </div>
+            {route.segments.length === 0 ? (
+              <div className="data-panel-empty">
+                Nothing traced yet. Pick the polyline tool and click along the route.
+              </div>
+            ) : (
+              route.segments.map((g, i) => (
+                <div key={g.id} className="data-panel-row" style={{ gap: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {i + 1}. {g.floorPlanName}
+                      {!g.floorPlanId && ' (drawing removed)'}
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                      page {g.pageIndex}
+                    </div>
+                  </div>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-mid)' }}>
+                    {g.lengthM.toFixed(2)} m
+                  </span>
+                </div>
+              ))
+            )}
+            <div
+              className="data-panel-row"
+              style={{ gap: 10, borderTop: '1px solid var(--c-border)', fontWeight: 700 }}
+            >
+              <div style={{ flex: 1, fontSize: 12 }}>Traced</div>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                {route.segments.reduce((n, g) => n + g.lengthM, 0).toFixed(2)} m
+              </span>
+            </div>
+            <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--c-text-dim)', lineHeight: 1.5 }}>
+              Rise and drop are added back in the worklist, where the total is assigned to the
+              schedule. Tracing a route never changes a cable length on its own.
+            </div>
+          </div>
+        ) : (
+        <>
         <div className="data-panel">
           <div className="data-panel-header">
             <span className="data-panel-title">Markups on this drawing</span>
@@ -245,6 +391,8 @@ export function DrawingViewer({
             ))
           )}
         </div>
+        </>
+        )}
       </aside>
     </div>
   )

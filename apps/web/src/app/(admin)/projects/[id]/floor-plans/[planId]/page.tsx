@@ -1,14 +1,14 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, floorPlanService, rfiService, MARKUP_WRITE_ROLES } from '@esite/shared'
+import { projectService, floorPlanService, rfiService, MARKUP_WRITE_ROLES, ORG_WRITE_ROLES } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { DrawingViewer, type EditingAnnotation } from './DrawingViewer'
+import { DrawingViewer, type EditingAnnotation, type RouteContext } from './DrawingViewer'
 import type { ViewerMode } from './MarkupCanvas'
 
 interface Props {
   params: Promise<{ id: string; planId: string }>
-  searchParams: Promise<{ annotation?: string; mode?: string }>
+  searchParams: Promise<{ annotation?: string; mode?: string; supply?: string }>
 }
 
 type AnnotationRow = {
@@ -20,7 +20,7 @@ type AnnotationRow = {
 
 // Whitelist for the ?mode= querystring. Anything else (including absent)
 // falls back to 'view' so a stale or hand-typed URL doesn't 404.
-const VALID_MODES: ReadonlyArray<ViewerMode> = ['view', 'markup', 'rfi']
+const VALID_MODES: ReadonlyArray<ViewerMode> = ['view', 'markup', 'rfi', 'route']
 function parseMode(raw: string | undefined): ViewerMode {
   return (VALID_MODES as readonly string[]).includes(raw ?? '')
     ? (raw as ViewerMode)
@@ -29,7 +29,7 @@ function parseMode(raw: string | undefined): ViewerMode {
 
 export default async function DrawingViewerPage({ params, searchParams }: Props) {
   const { id: projectId, planId } = await params
-  const { annotation: editingId, mode: rawMode } = await searchParams
+  const { annotation: editingId, mode: rawMode, supply: supplyId } = await searchParams
   const initialMode = parseMode(rawMode)
   const supabase = await createClient()
 
@@ -53,7 +53,21 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
   // stops a hand-typed ?mode=markup from presenting tools that can't save.
   const gate = await requireEffectiveRole(supabase as any, projectId, MARKUP_WRITE_ROLES)
   const canWrite = gate.ok
-  const effectiveMode: ViewerMode = canWrite ? initialMode : 'view'
+
+  // ── Route mode ──────────────────────────────────────────────────────────
+  // Entered from the cable-schedule measure worklist as
+  // `?mode=route&supply=<id>`. It writes to the SCHEDULE, so it carries the
+  // schedule's write role and not this page's: MARKUP_WRITE_ROLES admits
+  // `contractor` (the primary markup author) while ORG_WRITE_ROLES does not.
+  // Without this second gate, moving tracing onto the drawing viewer would
+  // hand route-writing to every contractor. Anything that fails here falls
+  // back to a normal view of the drawing rather than an error.
+  const route = initialMode === 'route' && supplyId
+    ? await loadRouteContext(supabase, projectId, planId, supplyId)
+    : undefined
+
+  const effectiveMode: ViewerMode =
+    route ? 'route' : canWrite && initialMode !== 'route' ? initialMode : 'view'
 
   // RFIs eligible for attachment: not closed.
   const rfis = (rfisRaw as Array<{ id: string; subject: string; status: string }>)
@@ -174,8 +188,78 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
         editing={editing}
         initialMode={effectiveMode}
         canWrite={canWrite}
+        route={route}
       />
       )}
     </div>
   )
+}
+
+/**
+ * Load the run being measured, its route so far, and the label for the banner.
+ *
+ * Returns `undefined` — a plain drawing view, not an error — for every reason a
+ * route session cannot legitimately start: the caller lacks the schedule write
+ * role, the supply does not exist or belongs to another project, or its
+ * revision is no longer DRAFT. A drawing is a harmless thing to land on.
+ */
+async function loadRouteContext(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+  planId: string,
+  supplyId: string,
+): Promise<RouteContext | undefined> {
+  const scheduleGate = await requireEffectiveRole(supabase as any, projectId, ORG_WRITE_ROLES)
+  if (!scheduleGate.ok) return undefined
+
+  const { data: supply } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supplies')
+    .select('id, revision_id, from_node_id, to_node_id, revision:revisions(id, status, project_id)')
+    .eq('id', supplyId)
+    .maybeSingle()
+  if (!supply) return undefined
+  const rev = (supply as any).revision
+  if (!rev || rev.project_id !== projectId || rev.status !== 'DRAFT') return undefined
+
+  const nodeIds = [supply.from_node_id, supply.to_node_id].filter(Boolean) as string[]
+  const { data: nodes } = nodeIds.length
+    ? await (supabase as any).schema('structure').from('nodes').select('id, code').in('id', nodeIds)
+    : { data: [] }
+  const codeOf = new Map<string, string>(((nodes ?? []) as any[]).map((n) => [n.id, n.code as string]))
+  const runLabel = `${supply.from_node_id ? (codeOf.get(supply.from_node_id) ?? '—') : 'Source'} → ${
+    supply.to_node_id ? (codeOf.get(supply.to_node_id) ?? '—') : '—'
+  }`
+
+  const { data: routeRow } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supply_routes')
+    .select('id, rise_m, drop_m')
+    .eq('supply_id', supplyId)
+    .maybeSingle()
+
+  const { data: segments } = routeRow
+    ? await (supabase as any)
+        .schema('cable_schedule')
+        .from('route_segments')
+        .select('id, seq, floor_plan_id, floor_plan_name, page_index, points, length_m')
+        .eq('route_id', routeRow.id)
+        .order('seq')
+    : { data: [] }
+
+  return {
+    supplyId,
+    runLabel,
+    riseM: routeRow ? Number(routeRow.rise_m) : 0,
+    dropM: routeRow ? Number(routeRow.drop_m) : 0,
+    doneHref: `/projects/${projectId}/cables/${supply.revision_id}/measure`,
+    segments: ((segments ?? []) as any[]).map((g) => ({
+      id: g.id,
+      floorPlanId: g.floor_plan_id,
+      floorPlanName: g.floor_plan_name ?? 'Drawing',
+      pageIndex: g.page_index,
+      points: (g.points ?? []) as number[],
+      lengthM: Number(g.length_m),
+    })),
+  }
 }

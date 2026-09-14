@@ -1,13 +1,13 @@
 'use client'
 
 import { useCallback, useMemo, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { routeTotalM, isSegmentCalibrationStale } from '@esite/shared'
 import {
   saveSupplyRouteAction,
   applyRouteToScheduleAction,
   deleteSupplyRouteAction,
 } from '@/actions/cable-route.actions'
-import { RouteCanvas, type TracedSegment, type SheetLegendRow } from './RouteCanvas'
 
 export interface PlanRow {
   id: string
@@ -71,12 +71,14 @@ export function RouteMeasureWorkspace({
 }) {
   const [filter, setFilter] = useState<Filter>('outstanding')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [segments, setSegments] = useState<TracedSegment[]>([])
+  /** Which sheet "Trace on drawing" opens. Defaults to the last sheet used. */
+  const [tracePlanId, setTracePlanId] = useState<string>('')
   const [riseM, setRiseM] = useState(0)
   const [dropM, setDropM] = useState(0)
   const [message, setMessage] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<{ existingM: number; proposedM: number } | null>(null)
   const [pending, startTransition] = useTransition()
+  const router = useRouter()
 
   const planById = useMemo(() => new Map(plans.map((p) => [p.id, p])), [plans])
 
@@ -91,14 +93,25 @@ export function RouteMeasureWorkspace({
 
   const outstandingCount = runs.filter((r) => !r.route || r.route.segments.length === 0).length
 
-  /** Live total while tracing, from the same shared maths the server uses. */
+  /**
+   * The legs as PERSISTED. Tracing happens on the drawing viewer and saves as
+   * it goes, so the workspace never holds an unsaved copy of the geometry.
+   *
+   * That is deliberate: the shipped version enabled "Assign to schedule" from
+   * on-screen state while the action read the STORED route, so tracing and then
+   * assigning without saving returned "This run has no measured route yet."
+   * With one source of truth the two cannot disagree.
+   */
+  const savedSegments = selected?.route?.segments ?? []
+
+  /** Totals from the same shared maths the server uses. */
   const liveTotal = useMemo(
-    () => routeTotalM({ segments: segments.map((s) => ({ length_m: s.lengthM })), riseM, dropM }),
-    [segments, riseM, dropM],
+    () => routeTotalM({ segments: savedSegments.map((s) => ({ length_m: s.lengthM })), riseM, dropM }),
+    [savedSegments, riseM, dropM],
   )
   const liveTraced = useMemo(
-    () => routeTotalM({ segments: segments.map((s) => ({ length_m: s.lengthM })), riseM: 0, dropM: 0 }),
-    [segments],
+    () => routeTotalM({ segments: savedSegments.map((s) => ({ length_m: s.lengthM })), riseM: 0, dropM: 0 }),
+    [savedSegments],
   )
 
   const selectRun = useCallback(
@@ -108,21 +121,21 @@ export function RouteMeasureWorkspace({
       setConfirming(null)
       setRiseM(run.route?.riseM ?? 0)
       setDropM(run.route?.dropM ?? 0)
-      setSegments(
-        (run.route?.segments ?? [])
-          .filter((s) => s.floorPlanId)
-          .map((s) => ({
-            floorPlanId: s.floorPlanId!,
-            floorPlanName: s.floorPlanName,
-            pageIndex: s.pageIndex,
-            points: s.points,
-            pixelsPerMeter: s.pixelsPerMeter,
-            lengthM: s.lengthM,
-          })),
-      )
+      // Continue on the sheet this run was last traced on; otherwise leave the
+      // picker empty so choosing a sheet is a deliberate act.
+      const legs = run.route?.segments ?? []
+      setTracePlanId(legs.length ? (legs[legs.length - 1].floorPlanId ?? '') : '')
     },
     [],
   )
+
+  /** Hand off to the drawing viewer in route mode. */
+  const traceOnDrawing = useCallback(() => {
+    if (!selected || !tracePlanId) return
+    router.push(
+      `/projects/${projectId}/floor-plans/${tracePlanId}?mode=route&supply=${selected.supplyId}`,
+    )
+  }, [router, projectId, selected, tracePlanId])
 
   const save = useCallback(() => {
     if (!selected) return
@@ -132,11 +145,16 @@ export function RouteMeasureWorkspace({
         supplyId: selected.supplyId,
         riseM,
         dropM,
-        segments: segments.map((s) => ({
-          floorPlanId: s.floorPlanId,
-          pageIndex: s.pageIndex,
-          points: s.points,
-        })),
+        // Resent unchanged. A leg whose drawing was deleted has a null
+        // floor_plan_id and cannot be resent, so saving would silently shorten
+        // the run — `save` is disabled in that state rather than dropping it.
+        segments: savedSegments
+          .filter((s) => s.floorPlanId)
+          .map((s) => ({
+            floorPlanId: s.floorPlanId as string,
+            pageIndex: s.pageIndex,
+            points: s.points,
+          })),
       })
       if (res.error) {
         setMessage(res.error)
@@ -146,7 +164,7 @@ export function RouteMeasureWorkspace({
       // while tracing; it is not the number that was stored.
       setMessage(`Route saved — ${res.totalM?.toFixed(2)} m (traced ${res.tracedM?.toFixed(2)} m).`)
     })
-  }, [selected, riseM, dropM, segments])
+  }, [selected, riseM, dropM, savedSegments])
 
   const apply = useCallback(
     (confirmOverwrite: boolean) => {
@@ -175,44 +193,13 @@ export function RouteMeasureWorkspace({
     [selected],
   )
 
-  /**
-   * The condensed schedule for one sheet: every SAVED run with a leg on it.
-   *
-   * It reads saved routes, not the run being traced, so an exported sheet shows
-   * what the schedule actually holds. A half-traced route on screen is not yet
-   * a fact about the job and must not print as one.
-   *
-   * `continuesElsewhere` is the honest half: a run whose route crosses sheets
-   * shows both the metres traced here and the run total, so nobody reads the
-   * total as the length of the line drawn on the page in front of them.
-   */
-  const legendFor = useCallback(
-    (planId: string, pageIndex: number): SheetLegendRow[] =>
-      runs
-        .filter((r) => r.route && r.route.segments.length > 0)
-        .map((r) => {
-          const legs = r.route!.segments
-          const here = legs.filter((s) => s.floorPlanId === planId && s.pageIndex === pageIndex)
-          if (here.length === 0) return null
-          const onSheetM = here.reduce((a, s) => a + s.lengthM, 0)
-          return {
-            label: `${r.fromCode} → ${r.toCode}`,
-            totalM: r.route!.totalM,
-            onSheetM,
-            continuesElsewhere: here.length !== legs.length,
-          }
-        })
-        .filter((x): x is SheetLegendRow => x !== null)
-        .sort((a, b) => a.label.localeCompare(b.label)),
-    [runs],
-  )
 
   const removeRoute = useCallback(() => {
     if (!selected) return
     startTransition(async () => {
       const res = await deleteSupplyRouteAction({ supplyId: selected.supplyId })
       setMessage(res.error ?? 'Route removed. The run is back on the outstanding list.')
-      if (!res.error) setSegments([])
+      if (!res.error) router.refresh()
     })
   }, [selected])
 
@@ -323,14 +310,91 @@ export function RouteMeasureWorkspace({
 
         {selected && (
           <>
-            <RouteCanvas
-              projectId={projectId}
-              plans={plans}
-              segments={segments}
-              onSegmentsChange={setSegments}
-              runLabel={`${selected.fromCode} → ${selected.toCode}`}
-              legendFor={legendFor}
-            />
+            <div
+              style={{
+                padding: 14,
+                background: 'var(--c-surface)',
+                border: '1px solid var(--c-border)',
+                borderRadius: 10,
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>
+                {selected.fromCode} → {selected.toCode}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+                {savedSegments.length === 0
+                  ? 'Not traced yet. Pick the sheet this run starts on.'
+                  : `${savedSegments.length} leg${savedSegments.length === 1 ? '' : 's'} traced. Open a sheet to add another or retrace.`}
+              </div>
+
+              {savedSegments.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  {savedSegments.map((g, i) => {
+                    const plan = g.floorPlanId ? planById.get(g.floorPlanId) : undefined
+                    const stale = isSegmentCalibrationStale(
+                      { pixels_per_meter: g.pixelsPerMeter },
+                      plan?.pixelsPerMeter ?? null,
+                    )
+                    return (
+                      <div
+                        key={g.id}
+                        style={{
+                          display: 'flex',
+                          gap: 10,
+                          alignItems: 'baseline',
+                          padding: '5px 0',
+                          borderBottom: '1px solid var(--c-border)',
+                          fontSize: 12,
+                        }}
+                      >
+                        <span style={{ color: 'var(--c-text-dim)', minWidth: 16 }}>{i + 1}.</span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          {g.floorPlanName}
+                          <span style={{ color: 'var(--c-text-dim)' }}> · page {g.pageIndex}</span>
+                          {!g.floorPlanId && (
+                            <span style={{ color: 'var(--c-amber)' }}> · drawing no longer available</span>
+                          )}
+                          {stale && (
+                            <span style={{ color: 'var(--c-amber)' }}> · sheet re-scaled since tracing</span>
+                          )}
+                        </span>
+                        <span style={{ fontFamily: 'var(--font-mono)' }}>{g.lengthM.toFixed(2)} m</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {plans.length === 0 ? (
+                <p style={{ margin: 0, fontSize: 13, color: 'var(--c-text-dim)' }}>
+                  This project has no drawings loaded, so there is nothing to trace a route on.
+                  Upload the power layouts under Floor Plans first.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <select
+                    value={tracePlanId}
+                    onChange={(e) => setTracePlanId(e.target.value)}
+                    style={{ ...inputStyle, minWidth: 280, marginTop: 0 }}
+                    aria-label="Drawing to trace on"
+                  >
+                    <option value="">Choose a sheet…</option>
+                    {plans.map((pl) => (
+                      <option key={pl.id} value={pl.id}>
+                        {pl.name}
+                        {pl.pixelsPerMeter ? '' : ' (no scale yet)'}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={traceOnDrawing} disabled={!tracePlanId} style={btn('primary')}>
+                    Trace on drawing →
+                  </button>
+                  <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>
+                    Opens the drawing viewer. A sheet with no scale is calibrated there, once.
+                  </span>
+                </div>
+              )}
+            </div>
 
             <div
               style={{
@@ -376,13 +440,23 @@ export function RouteMeasureWorkspace({
               </div>
 
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                <button type="button" onClick={save} disabled={pending} style={btn('ghost')}>
-                  Save route
+                <button
+                  type="button"
+                  onClick={save}
+                  disabled={pending || savedSegments.some((g) => !g.floorPlanId)}
+                  style={btn('ghost')}
+                  title={
+                    savedSegments.some((g) => !g.floorPlanId)
+                      ? 'A leg was traced on a drawing that no longer exists — saving would drop it. Remove the route and retrace.'
+                      : 'Save the rise and drop against this route'
+                  }
+                >
+                  Save rise &amp; drop
                 </button>
                 <button
                   type="button"
                   onClick={() => apply(false)}
-                  disabled={pending || segments.length === 0}
+                  disabled={pending || savedSegments.length === 0}
                   style={btn('primary')}
                 >
                   Assign to schedule

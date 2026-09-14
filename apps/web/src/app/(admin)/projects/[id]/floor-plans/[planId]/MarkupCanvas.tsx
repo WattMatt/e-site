@@ -23,6 +23,7 @@ import {
   updateRfiAnnotationAction,
 } from '@/actions/rfi-annotation.actions'
 import { createRfiAction } from '@/actions/rfi.actions'
+import { calibrateFloorPlanAction } from '@/actions/cable-route.actions'
 import {
   type StrokeStyle,
   STROKE_STYLES,
@@ -199,6 +200,12 @@ const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean;
   { value: 'measure', label: '⤢', needsCalibration: true, title: 'Measure (requires calibration)' },
 ]
 
+/**
+ * The only tools route mode offers. Everything else on the palette writes to
+ * the markup scene, which a route deliberately does not use.
+ */
+const ROUTE_TOOLS: ReadonlyArray<ToolMode> = ['select', 'polyline']
+
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────
@@ -281,7 +288,39 @@ export type EditingAnnotation = {
   scene: SceneGraph
 }
 
-export type ViewerMode = 'view' | 'markup' | 'rfi'
+export type ViewerMode = 'view' | 'markup' | 'rfi' | 'route'
+
+/**
+ * Route mode — tracing a cable run's route for the cable schedule.
+ *
+ * The canvas is borrowed for its VIEWPORT (zoom, pan, fit, multi-page PDF
+ * rasterisation) and its polyline vertex collection. Nothing else is shared.
+ *
+ * ⚠ A committed leg does NOT become a shape in the scene graph. It is handed
+ * straight to the caller, which writes it to `cable_schedule.route_segments`.
+ * This is deliberate and load-bearing: a cable run crosses sheets, so totalling
+ * one run must not mean opening and parsing every drawing's scene JSON, and
+ * "which runs are still unmeasured" has to stay answerable as a query. Each
+ * segment also stores the calibration in force when it was traced, which the
+ * scene graph cannot express — MeasureShape recomputes metres from the
+ * drawing's CURRENT calibration, so recalibrating silently rewrites every
+ * measurement ever taken with the measure tool. A cable length is signed
+ * against; it must never move under the person who recorded it.
+ */
+export type RouteModeProps = {
+  /** The run being measured, for the banner: e.g. "MB 3.1 → DB-07". */
+  runLabel: string
+  /** Legs already saved for this run, across all sheets. */
+  savedLegs: Array<{ id: string; floorPlanName: string; pageIndex: number; lengthM: number }>
+  /**
+   * Commit one traced leg. Receives PIXELS ONLY — the server reads the
+   * drawing's `pixels_per_meter` itself and decides the length. The browser
+   * never sends metres.
+   */
+  onCommitLeg: (leg: { points: number[]; pageIndex: number }) => Promise<{ error?: string }>
+  /** Where "Done" returns to — the measure worklist. */
+  doneHref: string
+}
 
 type Props = {
   plan: {
@@ -308,6 +347,13 @@ type Props = {
    * Switching modes at runtime preserves canvas state (shapes, zoom, page).
    */
   mode?: ViewerMode
+  /**
+   * Route-tracing mode (cable schedule). When provided, the tool palette
+   * collapses to select + polyline, every markup save path is hidden, and a
+   * finished polyline is handed to `onCommitLeg` instead of being committed to
+   * the scene. When ABSENT, every existing code path runs exactly as before.
+   */
+  routeMode?: RouteModeProps
   /**
    * External-save mode (QC markup). When provided, MarkupCanvas hands the
    * flattened PNG + editable scene graph to the caller and does NOT create or
@@ -338,6 +384,7 @@ export function MarkupCanvas({
   rfis = [],
   editing = null,
   mode = 'markup',
+  routeMode,
   onSaveMarkup,
   initialScene,
 }: Props) {
@@ -460,6 +507,15 @@ export function MarkupCanvas({
       setPolyPoints([])
       return
     }
+    // Route mode: hand the vertices to the caller for `route_segments` and do
+    // NOT touch the scene graph. Pixels only — the server reads the drawing's
+    // pixels_per_meter and decides the length.
+    if (routeMode && !wantClosed) {
+      const points = polyPoints
+      setPolyPoints([])
+      void routeMode.onCommitLeg({ points, pageIndex: currentPage })
+      return
+    }
     const dash = dashFor(strokeStyle, strokeWidth)
     commit(
       wantClosed
@@ -478,6 +534,16 @@ export function MarkupCanvas({
   // Starts on the page the hydrated markup lives on (QC re-edit); 1 otherwise.
   const [currentPage, setCurrentPage] = useState(initialPageIndex)
   const [pageCount, setPageCount] = useState(1)
+
+  // Vertices belong to the page they were clicked on. Carrying an in-progress
+  // polyline (or a half-finished calibration) across a page change would stamp
+  // it with the NEW page and redraw it in the wrong place on the wrong sheet —
+  // silently, because nothing downstream can tell. Abandon it on every page
+  // change; a leg is cheap to retrace and a wrong length is not.
+  useEffect(() => {
+    setPolyPoints([])
+    setCalibPoints([])
+  }, [currentPage])
   // PDFDocumentProxy from pdfjs — kept as ref to avoid re-render on assignment.
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
   const pageImagesRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -1391,6 +1457,28 @@ export function MarkupCanvas({
     setCalibSaving(true)
     setCalibError(null)
     try {
+      // Route mode writes through the role-gated server action: calibration is
+      // the scale every route on this sheet is measured against, so it needs
+      // the schedule's own write role (ORG_WRITE_ROLES), not merely the markup
+      // role this page is gated on. The action derives px/m server-side.
+      //
+      // The markup path below keeps its direct write deliberately — narrowing
+      // it to ORG_WRITE_ROLES would take calibration away from contractors, who
+      // are the primary markup authors and have had it since 00035. That is a
+      // policy change for the owner, not a side effect of this feature.
+      if (routeMode) {
+        const res = await calibrateFloorPlanAction({
+          floorPlanId: plan.id,
+          points: [calibPoints[0][0], calibPoints[0][1], calibPoints[1][0], calibPoints[1][1]],
+          realMetres: metres,
+        })
+        if (res.error) throw new Error(res.error)
+        setPixelsPerMeter(res.pixelsPerMeter ?? ppm)
+        setCalibPoints([])
+        setCalibDistance('')
+        setTool('select')
+        return
+      }
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       // Calibration columns added in migration 00035 — generated types will
@@ -1925,12 +2013,39 @@ export function MarkupCanvas({
       {/* Toolbar — tool palette / colour / stroke / undo groups are hidden
           in view mode; zoom + page-nav stay visible so the viewer can pan,
           zoom and step through multi-page PDFs while read-only. */}
+      {routeMode && (
+        <div
+          className="data-panel"
+          style={{ padding: '10px 12px', marginBottom: 8, display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap' }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 700 }}>
+            Measuring <span style={{ fontFamily: 'var(--font-mono)' }}>{routeMode.runLabel}</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+            {!pixelsPerMeter
+              ? 'This sheet has no scale yet — set the scale once and every later run on it is ready.'
+              : 'Click each corner of the route, then double-click to finish the leg. Change sheet to continue the run.'}
+          </div>
+          <div style={{ flex: 1 }} />
+          <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--c-text-mid)' }}>
+            {routeMode.savedLegs.length === 0
+              ? 'no legs yet'
+              : `${routeMode.savedLegs.length} leg${routeMode.savedLegs.length === 1 ? '' : 's'} · ${routeMode.savedLegs
+                  .reduce((n, l) => n + l.lengthM, 0)
+                  .toFixed(2)} m traced`}
+          </div>
+        </div>
+      )}
       <div className="data-panel" style={{ padding: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         {mode !== 'view' && (
           <>
             <ToolbarGroup>
-              {TOOLS.map((t) => {
-                const disabled = t.needsCalibration && !pixelsPerMeter
+              {(routeMode ? TOOLS.filter((t) => ROUTE_TOOLS.includes(t.value)) : TOOLS).map((t) => {
+                // Tracing an uncalibrated sheet would produce a leg the server
+                // must reject. Require the scale first, the same way the
+                // measure tool already does.
+                const needsScale = t.needsCalibration || (!!routeMode && t.value === 'polyline')
+                const disabled = needsScale && !pixelsPerMeter
                 return (
                   <ToolbarButton
                     key={t.value}
@@ -2109,7 +2224,7 @@ export function MarkupCanvas({
           </span>
         </ToolbarGroup>
         <ToolbarSeparator />
-        {mode !== 'view' && (
+        {mode !== 'view' && !routeMode && (
           <ToolbarGroup>
             <ToolbarButton onClick={undo} disabled={undoStack.length === 0} title="Undo">↶</ToolbarButton>
             <ToolbarButton onClick={redo} disabled={redoStack.length === 0} title="Redo">↷</ToolbarButton>
@@ -2160,7 +2275,22 @@ export function MarkupCanvas({
           </>
         )}
         <div style={{ flex: 1 }} />
-        {mode !== 'view' && (
+        {routeMode && (
+          <ToolbarGroup>
+            <ToolbarButton onClick={startCalibration} title="Set this drawing's scale">
+              {pixelsPerMeter ? 'Recalibrate' : 'Set scale'}
+            </ToolbarButton>
+            <button
+              type="button"
+              className="btn-primary-amber"
+              onClick={() => router.push(routeMode.doneHref)}
+              title="Back to the measure worklist"
+            >
+              Done
+            </button>
+          </ToolbarGroup>
+        )}
+        {mode !== 'view' && !routeMode && (
         <ToolbarGroup>
           <ToolbarButton onClick={startCalibration} title="Calibrate this drawing for the measure tool">Calibrate</ToolbarButton>
           {onSaveMarkup ? (
