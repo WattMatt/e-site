@@ -727,6 +727,12 @@ describe('calibrateFloorPlanAction — who may set a drawing\'s scale', () => {
     const w = writesTo('floor_plans')
     expect(w).toHaveLength(1)
     expect((w[0].payload as any).pixels_per_meter).toBe(50)
+    // The two points and the metres are stored WITH the scale. Without them a
+    // calibrated sheet shows a number and nothing else — nobody can see where
+    // the scale was taken, so nobody can tell whether it was taken sensibly.
+    expect((w[0].payload as any).calibration_points).toEqual([0, 0, 250, 0])
+    expect((w[0].payload as any).calibration_metres).toBe(5)
+    expect((w[0].payload as any).calibration_page_index).toBe(1)
   })
 
   it('gates on the plan\'s OWN project, not one the caller names', async () => {

@@ -73,12 +73,18 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
   const scheduleGate = await requireEffectiveRole(supabase as any, projectId, ORG_WRITE_ROLES)
   const canMeasureCables = scheduleGate.ok
 
-  const [cableSchedule, route] = await Promise.all([
+  const [cableSchedule, routeBase, calibration] = await Promise.all([
     canMeasureCables ? loadCableSchedule(supabase, projectId) : Promise.resolve(undefined),
     canMeasureCables && initialMode === 'route' && supplyId
       ? loadRouteContext(supabase, projectId, supplyId)
       : Promise.resolve(undefined),
+    loadCalibration(supabase, planId),
   ])
+  // Context for the sheet being traced: every OTHER run's legs on it, labelled
+  // from the schedule already loaded. Needs both of the above, hence after.
+  const route = routeBase
+    ? { ...routeBase, otherLegsOnSheet: await loadOtherLegsOnSheet(supabase, planId, routeBase.supplyId, cableSchedule) }
+    : undefined
 
   const effectiveMode: ViewerMode =
     route ? 'route' : canWrite && initialMode !== 'route' ? initialMode : 'view'
@@ -194,6 +200,9 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
           pixels_per_meter: plan.pixels_per_meter ?? null,
           signedUrl,
           isPdf,
+          calibration_points: calibration.points,
+          calibration_metres: calibration.metres,
+          calibration_page_index: calibration.pageIndex,
         }}
         projectId={projectId}
         annotations={annotations}
@@ -222,7 +231,7 @@ async function loadRouteContext(
   supabase: Awaited<ReturnType<typeof createClient>>,
   projectId: string,
   supplyId: string,
-): Promise<RouteContext | undefined> {
+): Promise<Omit<RouteContext, 'otherLegsOnSheet'> | undefined> {
   const { data: supply } = await (supabase as any)
     .schema('cable_schedule')
     .from('supplies')
@@ -253,7 +262,7 @@ async function loadRouteContext(
     ? await (supabase as any)
         .schema('cable_schedule')
         .from('route_segments')
-        .select('id, seq, floor_plan_id, floor_plan_name, page_index, points, length_m')
+        .select('id, seq, floor_plan_id, floor_plan_name, page_index, points, pixels_per_meter, length_m')
         .eq('route_id', routeRow.id)
         .order('seq')
     : { data: [] }
@@ -272,9 +281,60 @@ async function loadRouteContext(
       floorPlanName: g.floor_plan_name ?? 'Drawing',
       pageIndex: g.page_index,
       points: (g.points ?? []) as number[],
+      pixelsPerMeter: Number(g.pixels_per_meter),
       lengthM: Number(g.length_m),
     })),
   }
+}
+
+/** Where this sheet's scale was taken (00198). All-null before it is set. */
+async function loadCalibration(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  planId: string,
+): Promise<{ points: number[] | null; metres: number | null; pageIndex: number | null }> {
+  const { data } = await (supabase as any)
+    .schema('tenants')
+    .from('floor_plans')
+    .select('calibration_points, calibration_metres, calibration_page_index')
+    .eq('id', planId)
+    .maybeSingle()
+  const pts = data?.calibration_points
+  return {
+    points: Array.isArray(pts) && pts.length === 4 ? pts.map(Number) : null,
+    metres: data?.calibration_metres == null ? null : Number(data.calibration_metres),
+    pageIndex: data?.calibration_page_index == null ? null : Number(data.calibration_page_index),
+  }
+}
+
+/**
+ * Every other run's legs on this sheet, labelled — so a measurer tracing DB-10
+ * can see DB-09 already runs down the same corridor.
+ */
+async function loadOtherLegsOnSheet(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  planId: string,
+  excludeSupplyId: string,
+  schedule: CableScheduleContext | undefined,
+): Promise<RouteContext['otherLegsOnSheet']> {
+  const { data: segs } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('route_segments')
+    .select('route_id, page_index, points')
+    .eq('floor_plan_id', planId)
+  const rows = ((segs ?? []) as any[])
+  if (rows.length === 0) return []
+  const routeIds = [...new Set(rows.map((r) => r.route_id))]
+  const { data: routes } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supply_routes')
+    .select('id, supply_id')
+    .in('id', routeIds)
+  const supplyOf = new Map<string, string>(((routes ?? []) as any[]).map((r) => [r.id, r.supply_id]))
+  const labelOf = new Map<string, string>((schedule?.runs ?? []).map((r) => [r.supplyId, r.label]))
+  return rows
+    .map((r) => ({ supplyId: supplyOf.get(r.route_id), pageIndex: Number(r.page_index), points: (r.points ?? []) as number[] }))
+    .filter((r) => r.supplyId && r.supplyId !== excludeSupplyId && r.points.length >= 4)
+    .map((r) => ({ label: labelOf.get(r.supplyId as string) ?? 'run', pageIndex: r.pageIndex, points: r.points }))
 }
 
 /**

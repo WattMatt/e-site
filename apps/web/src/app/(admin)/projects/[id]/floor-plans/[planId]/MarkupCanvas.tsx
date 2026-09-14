@@ -24,6 +24,8 @@ import {
 } from '@/actions/rfi-annotation.actions'
 import { createRfiAction } from '@/actions/rfi.actions'
 import { calibrateFloorPlanAction } from '@/actions/cable-route.actions'
+import { edgeLengthsM, moveVertex, insertVertexAfter, removeVertex } from '@esite/shared'
+import { RouteLayer, type RouteLayerLeg, type OtherLeg, type CalibrationLine } from './RouteLayer'
 import {
   type StrokeStyle,
   STROKE_STYLES,
@@ -338,14 +340,19 @@ export type CablePicker = {
 export type RouteModeProps = {
   /** The run being measured, for the banner: e.g. "MB 3.1 → DB-07". */
   runLabel: string
-  /** Legs already saved for this run, across all sheets. */
-  savedLegs: Array<{ id: string; floorPlanName: string; pageIndex: number; lengthM: number }>
+  /** Legs already saved for this run, across all sheets, WITH their geometry. */
+  savedLegs: Array<RouteLayerLeg & { floorPlanName: string }>
+  /** Other runs' legs on this sheet, for context. */
+  otherLegsOnSheet: OtherLeg[]
   /**
    * Commit one traced leg. Receives PIXELS ONLY — the server reads the
    * drawing's `pixels_per_meter` itself and decides the length. The browser
    * never sends metres.
    */
   onCommitLeg: (leg: { points: number[]; pageIndex: number }) => Promise<{ error?: string }>
+  /** Replace one saved leg's geometry (vertex dragged, added or removed). */
+  onUpdateLeg: (legId: string, points: number[]) => Promise<{ error?: string }>
+  onDeleteLeg: (legId: string) => Promise<{ error?: string }>
   /** Where "Done" returns to — the measure worklist. */
   doneHref: string
 }
@@ -358,6 +365,10 @@ type Props = {
     height_px: number | null
     pixels_per_meter: number | null
     isPdf: boolean
+    /** Where the scale was taken (00198). Absent on callers that predate it. */
+    calibration_points?: number[] | null
+    calibration_metres?: number | null
+    calibration_page_index?: number | null
   }
   snagPins: Array<{ id: string; floor_plan_pin: { x: number; y: number } }>
   projectId: string
@@ -465,6 +476,19 @@ export function MarkupCanvas({
   const [calibSaving, setCalibSaving] = useState(false)
   /** Filter text for the in-drawing cable run picker. */
   const [cableQuery, setCableQuery] = useState('')
+
+  // ── Route mode ───────────────────────────────────────────────────────────
+  /** A finished leg the measurer has not yet pressed Save on. */
+  const [pendingLeg, setPendingLeg] = useState<number[] | null>(null)
+  const [legSaving, setLegSaving] = useState(false)
+  const [legError, setLegError] = useState<string | null>(null)
+  const [selectedLegId, setSelectedLegId] = useState<string | null>(null)
+  /** The stored calibration line, drawn on the sheet so the scale is visible. */
+  const [calibLine, setCalibLine] = useState<CalibrationLine | null>(
+    plan.calibration_points && plan.calibration_points.length === 4 && plan.calibration_metres
+      ? { points: plan.calibration_points, metres: plan.calibration_metres, pageIndex: plan.calibration_page_index ?? 1 }
+      : null,
+  )
   const [calibError, setCalibError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -548,9 +572,12 @@ export function MarkupCanvas({
     // NOT touch the scene graph. Pixels only — the server reads the drawing's
     // pixels_per_meter and decides the length.
     if (routeMode && !wantClosed) {
-      const points = polyPoints
+      // Route mode: the leg becomes PENDING — drawn solid and labelled, still
+      // the measurer's — until they press Save. A double-click writes nothing,
+      // so a mis-click cannot commit a route silently.
+      setPendingLeg(polyPoints)
       setPolyPoints([])
-      void routeMode.onCommitLeg({ points, pageIndex: currentPage })
+      setLegError(null)
       return
     }
     const dash = dashFor(strokeStyle, strokeWidth)
@@ -560,6 +587,68 @@ export function MarkupCanvas({
         : { id: makeId(), type: 'polyline', points: polyPoints, color, strokeWidth, dash },
     )
     setPolyPoints([])
+  }
+
+  // ── Route mode: save / edit ───────────────────────────────────────────────
+  async function saveLeg() {
+    if (!routeMode || !pendingLeg) return
+    setLegSaving(true)
+    setLegError(null)
+    try {
+      const res = await routeMode.onCommitLeg({ points: pendingLeg, pageIndex: currentPage })
+      if (res.error) { setLegError(res.error); return }
+      setPendingLeg(null)
+    } finally {
+      setLegSaving(false)
+    }
+  }
+
+  async function persistLeg(legId: string, points: number[]) {
+    if (!routeMode) return
+    setLegSaving(true)
+    setLegError(null)
+    try {
+      const res = await routeMode.onUpdateLeg(legId, points)
+      if (res.error) setLegError(res.error)
+    } finally {
+      setLegSaving(false)
+    }
+  }
+
+  function legPoints(legId: string): number[] | null {
+    return routeMode?.savedLegs.find((l) => l.id === legId)?.points ?? null
+  }
+
+  function onMoveLegVertex(legId: string, index: number, x: number, y: number) {
+    const pts = legPoints(legId)
+    if (pts) void persistLeg(legId, moveVertex(pts, index, x, y))
+  }
+  function onInsertLegVertex(legId: string, afterIndex: number, x: number, y: number) {
+    const pts = legPoints(legId)
+    if (pts) void persistLeg(legId, insertVertexAfter(pts, afterIndex, x, y))
+  }
+  function onRemoveLegVertex(legId: string, index: number) {
+    const pts = legPoints(legId)
+    if (!pts) return
+    try {
+      void persistLeg(legId, removeVertex(pts, index))
+    } catch (e) {
+      setLegError(e instanceof Error ? e.message : 'Could not remove that point')
+    }
+  }
+
+  async function deleteLeg(legId: string) {
+    if (!routeMode) return
+    if (!window.confirm('Delete this leg from the route?')) return
+    setLegSaving(true)
+    setLegError(null)
+    try {
+      const res = await routeMode.onDeleteLeg(legId)
+      if (res.error) setLegError(res.error)
+      else setSelectedLegId(null)
+    } finally {
+      setLegSaving(false)
+    }
   }
 
   // Load image (or PDF page rasterised to a canvas via pdfjs-dist).
@@ -580,7 +669,18 @@ export function MarkupCanvas({
   useEffect(() => {
     setPolyPoints([])
     setCalibPoints([])
+    setPendingLeg(null)
+    setSelectedLegId(null)
+    setLegError(null)
   }, [currentPage])
+
+  // Route mode hands the measurer the polyline, not the selector. Arriving by
+  // either door — the worklist or the ⚡ picker — you are holding the tool
+  // that traces, and the first click on the drawing places a vertex.
+  useEffect(() => {
+    if (routeMode) setTool('polyline')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!routeMode])
   // PDFDocumentProxy from pdfjs — kept as ref to avoid re-render on assignment.
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
   const pageImagesRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -925,6 +1025,21 @@ export function MarkupCanvas({
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (mode === 'view') return
+      if (routeMode) {
+        if (e.key === 'Enter' && polyPoints.length >= 4) { e.preventDefault(); finishPoly(); return }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          if (polyPoints.length) setPolyPoints([])
+          else if (pendingLeg) setPendingLeg(null)
+          else setSelectedLegId(null)
+          return
+        }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLegId) {
+          e.preventDefault()
+          void deleteLeg(selectedLegId)
+          return
+        }
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         e.preventDefault()
         deleteSelected()
@@ -935,7 +1050,7 @@ export function MarkupCanvas({
     window.addEventListener('keydown', onEdit)
     return () => window.removeEventListener('keydown', onEdit)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, shapes, mode])
+  }, [selectedId, shapes, mode, routeMode, polyPoints, pendingLeg, selectedLegId])
 
   // ── History ───────────────────────────────────────────────────────────
   function pushHistory(prev: AnyShape[]) {
@@ -1503,14 +1618,17 @@ export function MarkupCanvas({
       // it to ORG_WRITE_ROLES would take calibration away from contractors, who
       // are the primary markup authors and have had it since 00035. That is a
       // policy change for the owner, not a side effect of this feature.
+      const calibPts = [calibPoints[0][0], calibPoints[0][1], calibPoints[1][0], calibPoints[1][1]]
       if (routeMode) {
         const res = await calibrateFloorPlanAction({
           floorPlanId: plan.id,
-          points: [calibPoints[0][0], calibPoints[0][1], calibPoints[1][0], calibPoints[1][1]],
+          points: calibPts,
           realMetres: metres,
+          pageIndex: currentPage,
         })
         if (res.error) throw new Error(res.error)
         setPixelsPerMeter(res.pixelsPerMeter ?? ppm)
+        setCalibLine({ points: calibPts, metres, pageIndex: currentPage })
         setCalibPoints([])
         setCalibDistance('')
         setTool('select')
@@ -1527,10 +1645,14 @@ export function MarkupCanvas({
           pixels_per_meter: ppm,
           calibrated_at: new Date().toISOString(),
           calibrated_by: user?.id ?? null,
+          calibration_points: calibPts,
+          calibration_metres: metres,
+          calibration_page_index: currentPage,
         })
         .eq('id', plan.id)
       if (error) throw error
       setPixelsPerMeter(ppm)
+      setCalibLine({ points: calibPts, metres, pageIndex: currentPage })
       setCalibPoints([])
       setCalibDistance('')
       setTool('select')
@@ -2065,12 +2187,50 @@ export function MarkupCanvas({
           </div>
           <div style={{ flex: 1 }} />
           <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--c-text-mid)' }}>
-            {routeMode.savedLegs.length === 0
-              ? 'no legs yet'
-              : `${routeMode.savedLegs.length} leg${routeMode.savedLegs.length === 1 ? '' : 's'} · ${routeMode.savedLegs
-                  .reduce((n, l) => n + l.lengthM, 0)
-                  .toFixed(2)} m traced`}
+            {(() => {
+              const saved = routeMode.savedLegs.reduce((n, l) => n + l.lengthM, 0)
+              const live = pixelsPerMeter
+                ? [...(pendingLeg ? [pendingLeg] : []), ...(polyPoints.length >= 4 ? [polyPoints] : [])]
+                    .reduce((n, pts) => n + edgeLengthsM(pts, pixelsPerMeter).reduce((a, b) => a + b, 0), 0)
+                : 0
+              const legs = routeMode.savedLegs.length
+              return `${legs} saved leg${legs === 1 ? '' : 's'} · ${saved.toFixed(2)} m${live > 0 ? ` + ${live.toFixed(2)} m unsaved` : ''}`
+            })()}
           </div>
+        </div>
+      )}
+      {routeMode && (pendingLeg || polyPoints.length > 0 || selectedLegId || legError) && (
+        <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {polyPoints.length > 0 && (
+            <>
+              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+                {polyPoints.length / 2} point{polyPoints.length === 2 ? '' : 's'} — double-click or Enter to finish the leg
+              </span>
+              <ToolbarButton onClick={() => setPolyPoints((p) => p.slice(0, -2))} title="Undo last point">↶ point</ToolbarButton>
+              <ToolbarButton onClick={() => setPolyPoints([])} title="Discard this trace (Esc)">Discard</ToolbarButton>
+            </>
+          )}
+          {pendingLeg && !polyPoints.length && (
+            <>
+              <button type="button" className="btn-primary-amber" onClick={saveLeg} disabled={legSaving || !pixelsPerMeter}>
+                {legSaving
+                  ? 'Saving…'
+                  : `Save leg${pixelsPerMeter ? ` · ${edgeLengthsM(pendingLeg, pixelsPerMeter).reduce((a, b) => a + b, 0).toFixed(2)} m` : ''}`}
+              </button>
+              <ToolbarButton onClick={() => setPendingLeg(null)} title="Discard this leg (Esc)">Discard</ToolbarButton>
+              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>The server re-measures from the drawing's scale; its figure is the one stored.</span>
+            </>
+          )}
+          {selectedLegId && !pendingLeg && !polyPoints.length && (
+            <>
+              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+                Leg selected — drag a point to move it, click a midpoint to add one, right-click a point to remove it.
+              </span>
+              <ToolbarButton onClick={() => void deleteLeg(selectedLegId)} title="Delete this leg (Del)">Delete leg</ToolbarButton>
+              <ToolbarButton onClick={() => setSelectedLegId(null)} title="Deselect (Esc)">Done editing</ToolbarButton>
+            </>
+          )}
+          {legError && <span role="alert" style={{ color: '#dc2626', fontSize: 12 }}>{legError}</span>}
         </div>
       )}
       <div className="data-panel" style={{ padding: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2100,6 +2260,11 @@ export function MarkupCanvas({
                 )
               })}
             </ToolbarGroup>
+            {/* Colour, width and style belong to markup. Route mode's look is fixed
+                by the route layer — a measuring tool cannot borrow its style from a
+                highlighter — so the controls that would only mislead are hidden. */}
+            {!routeMode && (
+              <>
             <ToolbarSeparator />
             <ToolbarGroup>
               {COLORS.map((c) => (
@@ -2195,6 +2360,8 @@ export function MarkupCanvas({
                 </ToolbarButton>
               ))}
             </ToolbarGroup>
+              </>
+            )}
             <ToolbarSeparator />
             <ToolbarGroup>
               <ToolbarButton active={gridOn} onClick={() => setGridOn((v) => !v)} title="Toggle grid overlay">
@@ -2769,7 +2936,7 @@ export function MarkupCanvas({
               )}
               {/* Polygon/polyline in-progress: vertices + connecting line.
                   Double-click (or Enter) finishes. */}
-              {(tool === 'polygon' || tool === 'polyline') && polyPoints.length >= 2 && (
+              {!routeMode && (tool === 'polygon' || tool === 'polyline') && polyPoints.length >= 2 && (
                 <Line
                   points={polyPoints}
                   stroke={color}
@@ -2778,7 +2945,7 @@ export function MarkupCanvas({
                   closed={tool === 'polygon' && polyPoints.length >= 6}
                 />
               )}
-              {(tool === 'polygon' || tool === 'polyline') &&
+              {!routeMode && (tool === 'polygon' || tool === 'polyline') &&
                 Array.from({ length: polyPoints.length / 2 }).map((_, i) => (
                   <Circle
                     key={`poly-vtx-${i}`}
@@ -2791,6 +2958,26 @@ export function MarkupCanvas({
                   />
                 ))}
             </Layer>
+            {routeMode && (
+              <RouteLayer
+                planId={plan.id}
+                currentPage={currentPage}
+                scale={scale}
+                pixelsPerMeter={pixelsPerMeter}
+                legs={routeMode.savedLegs}
+                otherLegs={routeMode.otherLegsOnSheet}
+                pendingLeg={pendingLeg}
+                draftPoints={tool === 'polyline' ? polyPoints : []}
+                selectedLegId={selectedLegId}
+                editable={tool === 'select' && !legSaving}
+                calibration={calibLine}
+                showCalibration
+                onSelectLeg={setSelectedLegId}
+                onMoveVertex={onMoveLegVertex}
+                onInsertVertex={onInsertLegVertex}
+                onRemoveVertex={onRemoveLegVertex}
+              />
+            )}
           </Stage>
         )}
       </div>

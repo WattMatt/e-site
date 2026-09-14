@@ -400,11 +400,14 @@ export async function calibrateFloorPlanAction(input: {
   floorPlanId: string
   points: number[]
   realMetres: number
+  pageIndex?: number
 }): Promise<{ ok?: true; error?: string; pixelsPerMeter?: number }> {
   const parsed = z.object({
     floorPlanId: uuid,
     points: z.array(z.number()).min(4).max(4),
     realMetres: z.number().positive().max(10000),
+    /** Which PDF page the two points were picked on. */
+    pageIndex: z.number().int().min(1).default(1),
   }).safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
 
@@ -449,6 +452,12 @@ export async function calibrateFloorPlanAction(input: {
       pixels_per_meter: ppm,
       calibrated_at: new Date().toISOString(),
       calibrated_by: user.id,
+      // Where the scale was taken, so the sheet can SHOW it (00198). A bare
+      // px/m figure tells nobody whether it was set across a 5 m door or a
+      // 5 m car — and the difference is every length on the schedule.
+      calibration_points: parsed.data.points,
+      calibration_metres: parsed.data.realMetres,
+      calibration_page_index: parsed.data.pageIndex,
     })
     .eq('id', parsed.data.floorPlanId)
   if (error) return { error: error.message }

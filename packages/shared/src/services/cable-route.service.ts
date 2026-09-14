@@ -170,3 +170,85 @@ export function isSegmentCalibrationStale(
   const diff = Math.abs(segment.pixels_per_meter - planPixelsPerMeter)
   return diff > Math.max(1e-6, Math.abs(planPixelsPerMeter) * 1e-9)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-EDGE GEOMETRY — what the canvas labels while you trace and after you save.
+// ─────────────────────────────────────────────────────────────────────────────
+// A leg's stored length is the whole path rounded once (`segmentLengthM`). The
+// labels are each edge rounded separately, so their sum may differ from the
+// stored figure by up to half a cent per edge. That is the honest number to
+// print beside each edge; the stored figure is the honest number to sign. The
+// test suite pins the bound so the two formulas cannot drift apart.
+
+/** One vertex-to-vertex piece of a polyline, with where to hang its label. */
+export interface PolylineEdge {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  /** Pixel length of this edge alone. */
+  px: number
+  midX: number
+  midY: number
+}
+
+/** Split a flat [x1,y1,x2,y2,…] polyline into its edges. Empty below two points. */
+export function polylineEdges(points: readonly number[]): PolylineEdge[] {
+  const out: PolylineEdge[] = []
+  for (let i = 0; i + 3 < points.length; i += 2) {
+    const x1 = points[i], y1 = points[i + 1], x2 = points[i + 2], y2 = points[i + 3]
+    out.push({ x1, y1, x2, y2, px: Math.hypot(x2 - x1, y2 - y1), midX: (x1 + x2) / 2, midY: (y1 + y2) / 2 })
+  }
+  return out
+}
+
+/** Metres for each edge, at centimetre precision, in path order. */
+export function edgeLengthsM(points: readonly number[], pixelsPerMeter: number): number[] {
+  if (!(pixelsPerMeter > 0)) {
+    throw new Error('Cannot measure without a positive calibration (pixels per metre).')
+  }
+  return polylineEdges(points).map((e) => roundMetres(e.px / pixelsPerMeter))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EDITING A SAVED LEG — pure, index-checked, never in place.
+// ─────────────────────────────────────────────────────────────────────────────
+// The canvas drags a vertex and asks for a new point list; it never mutates the
+// stored array, so an aborted edit leaves the saved leg exactly as it was.
+
+function assertVertexIndex(points: readonly number[], index: number): void {
+  const count = points.length / 2
+  if (!Number.isInteger(index) || index < 0 || index >= count) {
+    throw new Error(`Vertex index ${index} is out of range for a leg with ${count} vertices.`)
+  }
+}
+
+/** The leg with vertex `index` moved to (x, y). */
+export function moveVertex(points: readonly number[], index: number, x: number, y: number): number[] {
+  assertVertexIndex(points, index)
+  const out = [...points]
+  out[index * 2] = x
+  out[index * 2 + 1] = y
+  return out
+}
+
+/** The leg with a new vertex (x, y) inserted after vertex `index`. */
+export function insertVertexAfter(points: readonly number[], index: number, x: number, y: number): number[] {
+  assertVertexIndex(points, index)
+  const at = (index + 1) * 2
+  return [...points.slice(0, at), x, y, ...points.slice(at)]
+}
+
+/**
+ * The leg without vertex `index`. Refuses to go below two vertices: a single
+ * point is not a route, and the server would reject it anyway — better to say
+ * so here than to lose the leg on save.
+ */
+export function removeVertex(points: readonly number[], index: number): number[] {
+  assertVertexIndex(points, index)
+  if (points.length <= 4) {
+    throw new Error('A leg needs at least two vertices; delete the leg instead.')
+  }
+  const at = index * 2
+  return [...points.slice(0, at), ...points.slice(at + 2)]
+}

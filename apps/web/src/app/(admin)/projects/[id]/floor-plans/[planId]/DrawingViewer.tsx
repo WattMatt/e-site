@@ -40,6 +40,10 @@ export type DrawingPlan = {
   pixels_per_meter: number | null
   signedUrl: string | null
   isPdf: boolean
+  /** Where the scale was taken (00198), so the sheet can show it. */
+  calibration_points: number[] | null
+  calibration_metres: number | null
+  calibration_page_index: number | null
 }
 
 export type AnnotationListItem = {
@@ -93,8 +97,11 @@ export type RouteContext = {
     floorPlanName: string
     pageIndex: number
     points: number[]
+    pixelsPerMeter: number
     lengthM: number
   }>
+  /** Other runs' legs on THIS sheet, for context while tracing. */
+  otherLegsOnSheet: Array<{ label: string; pageIndex: number; points: number[] }>
 }
 
 const MODES: ReadonlyArray<{ value: ViewerMode; label: string; hint: string }> = [
@@ -136,19 +143,21 @@ export function DrawingViewer({
   const [committing, setCommitting] = useState(false)
 
   /**
-   * Append one traced leg to this run's route.
+   * Persist the whole segment list. `saveSupplyRouteAction` REPLACES the list,
+   * so append, edit and delete are all "send the new list" — one path, one set
+   * of guards, no way for the three to disagree about rise and drop.
    *
-   * ⚠ The save action replaces the entire segment list, so a segment whose
-   * drawing has since been deleted (`floor_plan_id` is ON DELETE SET NULL)
-   * cannot be resent — the schema requires a uuid. Appending in that state
-   * would silently drop a leg and shorten the run. Refuse instead, and say so.
+   * ⚠ A segment whose drawing has since been deleted (`floor_plan_id` is ON
+   * DELETE SET NULL) cannot be resent — the schema requires a uuid — so any
+   * write in that state would silently drop a leg and shorten the run. Refuse
+   * instead, and say so.
    */
-  const onCommitLeg = useCallback(
-    async ({ points, pageIndex }: { points: number[]; pageIndex: number }) => {
+  const persistSegments = useCallback(
+    async (next: Array<{ floorPlanId: string | null; pageIndex: number; points: number[] }>) => {
       if (!route) return {}
-      const orphaned = route.segments.filter((g) => !g.floorPlanId)
+      const orphaned = next.filter((g) => !g.floorPlanId)
       if (orphaned.length > 0) {
-        const msg = `This run has ${orphaned.length} leg${orphaned.length === 1 ? '' : 's'} traced on a drawing that is no longer available, so it cannot be added to safely. Re-measure the run from the worklist.`
+        const msg = `This run has ${orphaned.length} leg${orphaned.length === 1 ? '' : 's'} traced on a drawing that is no longer available, so it cannot be changed safely. Remove the route from the worklist and retrace it.`
         setRouteError(msg)
         return { error: msg }
       }
@@ -159,14 +168,7 @@ export function DrawingViewer({
           supplyId: route.supplyId,
           riseM: route.riseM,
           dropM: route.dropM,
-          segments: [
-            ...route.segments.map((g) => ({
-              floorPlanId: g.floorPlanId as string,
-              pageIndex: g.pageIndex,
-              points: g.points,
-            })),
-            { floorPlanId: plan.id, pageIndex, points },
-          ],
+          segments: next.map((g) => ({ floorPlanId: g.floorPlanId as string, pageIndex: g.pageIndex, points: g.points })),
         })
         if (res.error) {
           setRouteError(res.error)
@@ -178,7 +180,24 @@ export function DrawingViewer({
         setCommitting(false)
       }
     },
-    [route, plan.id, router],
+    [route, router],
+  )
+
+  const onCommitLeg = useCallback(
+    ({ points, pageIndex }: { points: number[]; pageIndex: number }) =>
+      persistSegments([...(route?.segments ?? []), { floorPlanId: plan.id, pageIndex, points }]),
+    [persistSegments, route, plan.id],
+  )
+
+  const onUpdateLeg = useCallback(
+    (legId: string, points: number[]) =>
+      persistSegments((route?.segments ?? []).map((g) => (g.id === legId ? { ...g, points } : g))),
+    [persistSegments, route],
+  )
+
+  const onDeleteLeg = useCallback(
+    (legId: string) => persistSegments((route?.segments ?? []).filter((g) => g.id !== legId)),
+    [persistSegments, route],
   )
 
   // Re-edit always lands in markup mode (the toolbar makes no sense in
@@ -313,11 +332,16 @@ export function DrawingViewer({
                   runLabel: route.runLabel,
                   savedLegs: route.segments.map((g) => ({
                     id: g.id,
+                    floorPlanId: g.floorPlanId,
                     floorPlanName: g.floorPlanName,
                     pageIndex: g.pageIndex,
+                    points: g.points,
                     lengthM: g.lengthM,
                   })),
+                  otherLegsOnSheet: route.otherLegsOnSheet,
                   onCommitLeg,
+                  onUpdateLeg,
+                  onDeleteLeg,
                   doneHref: route.doneHref,
                 }
               : undefined
