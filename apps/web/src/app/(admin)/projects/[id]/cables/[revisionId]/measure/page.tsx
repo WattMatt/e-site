@@ -42,8 +42,9 @@ export default async function MeasureRunsPage({ params }: Props) {
   // Same write gate as the rest of the schedule. Page gating is not a gate on
   // its own — the actions re-check and the database policies gate the writes —
   // but a read-only role should not be shown a measuring workspace at all.
-  const allowed = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
-  if (!allowed) redirect(`/projects/${projectId}/cables/${revisionId}`)
+  // `.ok` — the helper returns a result object, so bare truthiness never fires.
+  const roleGate = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!roleGate.ok) redirect(`/projects/${projectId}/cables/${revisionId}`)
 
   if (revision.status !== 'DRAFT') {
     redirect(`/projects/${projectId}/cables/${revisionId}`)

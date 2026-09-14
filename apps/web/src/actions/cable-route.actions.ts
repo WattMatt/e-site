@@ -427,8 +427,13 @@ export async function calibrateFloorPlanAction(input: {
   if (planErr) return { error: planErr.message }
   if (!plan) return { error: 'Drawing not found' }
 
-  const allowed = await requireEffectiveRole(supabase, plan.project_id, ORG_WRITE_ROLES)
-  if (!allowed) return { error: 'You do not have permission to set the scale on this drawing.' }
+  // `requireEffectiveRole` resolves to a RESULT OBJECT ({ ok: false, error } |
+  // { ok: true, role }), never a boolean — so `if (!allowed)` is always false and
+  // the gate above it is dead code. Read `.ok`, as every other call site does.
+  const roleGate = await requireEffectiveRole(supabase, plan.project_id, ORG_WRITE_ROLES)
+  if (!roleGate.ok) {
+    return { error: 'You do not have permission to set the scale on this drawing.' }
+  }
 
   let ppm: number
   try {

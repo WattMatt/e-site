@@ -692,7 +692,11 @@ describe('calibrateFloorPlanAction — who may set a drawing\'s scale', () => {
     // sheet is measured against, so changing it makes every stored segment on
     // that drawing stale. A directly-invocable server action that rewrites it
     // needs the same gate as the schedule.
-    requireEffectiveRoleMock.mockResolvedValue(false)
+    // The real helper resolves to a RESULT OBJECT, never a boolean. Mocking a
+    // boolean here is what made this suite incapable of catching the inert
+    // `if (!allowed)` gate that shipped in PR #180 — `!{}` is always false, and
+    // `!false` is always true, so a boolean mock passes either way.
+    requireEffectiveRoleMock.mockResolvedValue({ ok: false, error: 'Your role (contractor) is not allowed to perform this action' })
     use(calibFixture())
 
     const res = await calibrateFloorPlanAction({
@@ -707,7 +711,7 @@ describe('calibrateFloorPlanAction — who may set a drawing\'s scale', () => {
   })
 
   it('derives px/m from the drawn line for a permitted caller', async () => {
-    requireEffectiveRoleMock.mockResolvedValue(true)
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
     use(calibFixture())
 
     const res = await calibrateFloorPlanAction({
@@ -726,7 +730,7 @@ describe('calibrateFloorPlanAction — who may set a drawing\'s scale', () => {
   })
 
   it('gates on the plan\'s OWN project, not one the caller names', async () => {
-    requireEffectiveRoleMock.mockResolvedValue(true)
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
     use(calibFixture())
     await calibrateFloorPlanAction({ floorPlanId: PLAN, points: [0, 0, 250, 0], realMetres: 5 })
     expect(requireEffectiveRoleMock).toHaveBeenCalledWith(expect.anything(), PROJECT, expect.anything())
