@@ -201,10 +201,12 @@ export function RouteLayer({
                     key={`ins-${i}`}
                     x={e.midX}
                     y={e.midY}
-                    radius={5 / scale}
+                    // 8 screen px: a midpoint target a mouse can land on. At 5 it
+                    // was missed from frame coordinates and would be fiddly by hand.
+                    radius={8 / scale}
                     fill={ROUTE_HALO}
                     stroke={SELECTED_COLOUR}
-                    strokeWidth={1.5 / scale}
+                    strokeWidth={2 / scale}
                     onMouseDown={(ev) => { ev.cancelBubble = true; onInsertVertex(leg.id, i, e.midX, e.midY) }}
                     onTouchStart={(ev) => { ev.cancelBubble = true; onInsertVertex(leg.id, i, e.midX, e.midY) }}
                   />
@@ -214,7 +216,7 @@ export function RouteLayer({
                     key={`vtx-${i}`}
                     x={pts[i * 2]}
                     y={pts[i * 2 + 1]}
-                    radius={7 / scale}
+                    radius={9 / scale}
                     fill={SELECTED_COLOUR}
                     stroke={ROUTE_HALO}
                     strokeWidth={2 / scale}

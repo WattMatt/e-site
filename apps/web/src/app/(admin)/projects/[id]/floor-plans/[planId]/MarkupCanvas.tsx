@@ -482,7 +482,18 @@ export function MarkupCanvas({
   const [pendingLeg, setPendingLeg] = useState<number[] | null>(null)
   const [legSaving, setLegSaving] = useState(false)
   const [legError, setLegError] = useState<string | null>(null)
-  const [selectedLegId, setSelectedLegId] = useState<string | null>(null)
+  // Selection is by POSITION in the route, not by row id: every save replaces
+  // the segment list wholesale and every row gets a new id, so an id-keyed
+  // selection went stale the moment a dragged vertex was persisted — the edit
+  // bar stayed up with nothing selected. Order survives a replace; ids do not.
+  const [selectedLegIndex, setSelectedLegIndex] = useState<number | null>(null)
+  const selectedLegId =
+    routeMode && selectedLegIndex != null ? (routeMode.savedLegs[selectedLegIndex]?.id ?? null) : null
+  const setSelectedLegId = (id: string | null) => {
+    if (id == null || !routeMode) { setSelectedLegIndex(null); return }
+    const i = routeMode.savedLegs.findIndex((l) => l.id === id)
+    setSelectedLegIndex(i >= 0 ? i : null)
+  }
   /** The stored calibration line, drawn on the sheet so the scale is visible. */
   const [calibLine, setCalibLine] = useState<CalibrationLine | null>(
     plan.calibration_points && plan.calibration_points.length === 4 && plan.calibration_metres
@@ -660,6 +671,8 @@ export function MarkupCanvas({
   // pages on demand. Per-page bitmaps are cached in pageImagesRef so
   // navigating back doesn't re-render.
   const [img, setImg] = useState<Backing | null>(null)
+  const signedUrlRef = useRef<string | null>(plan.signedUrl)
+  signedUrlRef.current = plan.signedUrl
   const [loadError, setLoadError] = useState<string | null>(null)
   // Starts on the page the hydrated markup lives on (QC re-edit); 1 otherwise.
   const [currentPage, setCurrentPage] = useState(initialPageIndex)
@@ -725,7 +738,11 @@ export function MarkupCanvas({
   //    inline (so single-page PDFs don't hang waiting for an effect that
   //    only re-fires when pageCount changes from 1).
   useEffect(() => {
-    if (!plan.signedUrl) return
+    // Read the URL through a ref so a re-render that only re-minted the signed
+    // URL (every server render does) does not re-rasterise the sheet. Only a
+    // different drawing — a new plan id — reloads.
+    const signedUrl = signedUrlRef.current
+    if (!signedUrl) return
     const signal = { cancelled: false }
     setLoadError(null)
     setImg(null)
@@ -743,7 +760,7 @@ export function MarkupCanvas({
           if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
             pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
           }
-          const loadingTask = pdfjsLib.getDocument(plan.signedUrl!)
+          const loadingTask = pdfjsLib.getDocument(signedUrl)
           const pdf = await loadingTask.promise
           if (signal.cancelled) return
           pdfDocRef.current = pdf as unknown as {
@@ -768,13 +785,14 @@ export function MarkupCanvas({
       i.onerror = () => {
         if (!signal.cancelled) setLoadError('Image failed to load')
       }
-      i.src = plan.signedUrl
+      i.src = signedUrl
     }
 
     return () => {
       signal.cancelled = true
     }
-  }, [plan.signedUrl, plan.isPdf, renderPdfPage, initialPageIndex])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan.id, plan.isPdf, renderPdfPage, initialPageIndex])
 
   // 2) Re-render when the user navigates to a different PDF page.
   //    Page 1 on initial mount is handled by the load effect above; the
@@ -865,10 +883,12 @@ export function MarkupCanvas({
     return () => window.removeEventListener('keydown', onEsc)
   }, [isFullscreen])
 
-  // Reset auto-fit when source OR current page changes.
+  // Reset auto-fit when the DRAWING or the current page changes — not when a
+  // server re-render merely re-mints the signed URL, which would snap the view
+  // back to fit-to-width under the measurer after every save.
   useEffect(() => {
     initFitDone.current = false
-  }, [plan.signedUrl, plan.isPdf, currentPage])
+  }, [plan.id, plan.isPdf, currentPage])
 
   const fitToView = useCallback(() => {
     if (!img) return

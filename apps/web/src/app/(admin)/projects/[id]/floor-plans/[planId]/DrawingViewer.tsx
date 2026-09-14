@@ -195,13 +195,18 @@ export function DrawingViewer({
             })),
           )
         }
-        router.refresh()
+        // No router.refresh() here, on purpose. The server re-renders this
+        // page with a NEW signed URL for the PDF every time, and the canvas
+        // keys its load on that URL — so a refresh after each save blanked the
+        // sheet for a full re-rasterise, several seconds of "where did my
+        // drawing go". The route state above is authoritative for this run;
+        // the worklist is revalidated by the action itself.
         return {}
       } finally {
         setCommitting(false)
       }
     },
-    [route, router],
+    [route],
   )
 
   const onCommitLeg = useCallback(
