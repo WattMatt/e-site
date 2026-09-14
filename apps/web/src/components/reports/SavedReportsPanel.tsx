@@ -42,6 +42,9 @@ interface Props {
  * whatever it likes and still read sensibly without touching this component.
  */
 const SUMMARY_LABELS: Record<string, string> = {
+  // Cable route sheets (exportRouteSheetAction).
+  legsHere: 'legs on this sheet',
+  onSheetM: 'm traced on this sheet',
   boards: 'boards',
   lines: 'lines',
   received: 'received',

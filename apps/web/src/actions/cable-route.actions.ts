@@ -27,8 +27,10 @@
  */
 
 import { revalidatePath } from 'next/cache'
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { winAnsiSafe } from '@/lib/pdf/winansi'
 import { z } from 'zod'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { lookupCableRole, ROLE_CAPS } from '@/lib/cable-schedule/roles'
 import { requireRoleForRevision, ROLES_ENGINEER_AND_FIELD } from '@/lib/cable-schedule/require-role'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
@@ -38,6 +40,7 @@ import {
   routeTotalM,
   validateRoutePoints,
   derivePixelsPerMeter,
+  sheetLegendRows,
 } from '@esite/shared'
 
 const uuid = z.string().uuid()
@@ -525,4 +528,264 @@ export async function deleteSupplyRouteAction(input: {
   // "this run has no length".
   revalidatePath(`/projects/${ctx.projectId}/cables/${ctx.revisionId}`)
   return { ok: true }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT A SHEET — the drawing with its routes and a legend, kept as a report.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const exportSheetSchema = z.object({
+  floorPlanId: uuid,
+  revisionId: uuid,
+  pageIndex: z.number().int().min(1).default(1),
+  /** The sheet as rasterised by the browser at native resolution, routes drawn. */
+  jpegBase64: z.string().min(100).max(9_500_000),
+  note: z.string().max(500).optional().nullable(),
+})
+
+export interface ExportSheetResult {
+  ok?: true
+  error?: string
+  reportId?: string
+  version?: number
+  runs?: number
+}
+
+const A3_LANDSCAPE: [number, number] = [1190.55, 841.89]
+const A4_PORTRAIT: [number, number] = [595.28, 841.89]
+
+/**
+ * Save the sheet the measurer is looking at — drawing, routes, per-edge
+ * lengths and the calibration line as the browser drew them — as a versioned
+ * PDF in `projects.reports`, with a legend page rendered from the route tables.
+ *
+ * The image comes from the browser because the drawing is rasterised there
+ * (pdf.js) and the routes are drawn there (Konva); re-doing both in Node would
+ * be a second renderer that could disagree with the first. The LEGEND does
+ * not: it is computed here from `route_segments`, so the numbers on page 2
+ * are the stored ones, never something the client could have edited.
+ *
+ * Reads of the saved artefact are open to every project role (see
+ * report-kind-access.ts); writing one needs the schedule's write role.
+ */
+export async function exportRouteSheetAction(
+  input: z.infer<typeof exportSheetSchema>,
+): Promise<ExportSheetResult> {
+  const parsed = exportSheetSchema.safeParse(input)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
+  const { floorPlanId, revisionId, pageIndex, jpegBase64, note } = parsed.data
+
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: plan } = await (supabase as any)
+    .schema('tenants')
+    .from('floor_plans')
+    .select('id, name, project_id, organisation_id, pixels_per_meter, calibration_metres')
+    .eq('id', floorPlanId)
+    .maybeSingle()
+  if (!plan) return { error: 'Drawing not found' }
+
+  const roleGate = await requireEffectiveRole(supabase, plan.project_id, ORG_WRITE_ROLES)
+  if (!roleGate.ok) return { error: 'You do not have permission to export cable routes.' }
+
+  const { data: revision } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id, code, project_id')
+    .eq('id', revisionId)
+    .maybeSingle()
+  if (!revision || revision.project_id !== plan.project_id) return { error: 'Revision not found on this project' }
+  // Separate read: the revision lives in cable_schedule and the project in
+  // projects, and PostgREST will not embed across schemas — an embed here
+  // returned nothing and read as "revision not found" on production.
+  const { data: project } = await (supabase as any)
+    .schema('projects')
+    .from('projects')
+    .select('name, code')
+    .eq('id', plan.project_id)
+    .maybeSingle()
+
+  // Every route on the revision, every segment of those routes, and the codes
+  // that name the runs. The legend needs all sheets to say "continues on
+  // another sheet" honestly, not just the one being exported.
+  const { data: routes } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supply_routes')
+    .select('id, supply_id, total_length_m')
+    .eq('revision_id', revisionId)
+  const routeRows = ((routes ?? []) as any[])
+  const routeIds = routeRows.map((r) => r.id)
+  const { data: segs } = routeIds.length
+    ? await (supabase as any)
+        .schema('cable_schedule')
+        .from('route_segments')
+        .select('route_id, floor_plan_id, page_index, length_m')
+        .in('route_id', routeIds)
+    : { data: [] }
+  const supplyOfRoute = new Map<string, string>(routeRows.map((r) => [r.id, r.supply_id]))
+  const { data: supplies } = routeRows.length
+    ? await (supabase as any)
+        .schema('cable_schedule')
+        .from('supplies')
+        .select('id, from_node_id, to_node_id')
+        .in('id', routeRows.map((r) => r.supply_id))
+    : { data: [] }
+  const supplyRows = ((supplies ?? []) as any[])
+  const nodeIds = [...new Set(supplyRows.flatMap((x) => [x.from_node_id, x.to_node_id]).filter(Boolean))] as string[]
+  const { data: nodes } = nodeIds.length
+    ? await (supabase as any).schema('structure').from('nodes').select('id, code').in('id', nodeIds)
+    : { data: [] }
+  const codeOf = new Map<string, string>(((nodes ?? []) as any[]).map((n) => [n.id, n.code as string]))
+  const labelOf = new Map<string, string>(
+    supplyRows.map((x) => [
+      x.id,
+      `${x.from_node_id ? (codeOf.get(x.from_node_id) ?? '—') : 'Source'} → ${x.to_node_id ? (codeOf.get(x.to_node_id) ?? '—') : '—'}`,
+    ]),
+  )
+
+  const legend = sheetLegendRows(
+    { floorPlanId, pageIndex },
+    routeRows.map((r) => ({ supplyId: r.supply_id, label: labelOf.get(r.supply_id) ?? 'run', totalM: Number(r.total_length_m) })),
+    ((segs ?? []) as any[]).map((g) => ({
+      supplyId: supplyOfRoute.get(g.route_id) ?? '',
+      floorPlanId: g.floor_plan_id,
+      pageIndex: Number(g.page_index),
+      lengthM: Number(g.length_m),
+    })),
+  )
+  if (legend.length === 0) return { error: 'Nothing is traced on this page of the drawing yet.' }
+
+  // ── The PDF ──
+  const today = new Date().toISOString().slice(0, 10)
+  // Project names in this dataset already carry their number — "(P89.7) DE
+  // POORT" — so prefixing the code again printed "(PDP) (P89.7) DE POORT".
+  const projectName = project?.name ?? ''
+  const scaleLine = plan.pixels_per_meter
+    ? `scale ${Number(plan.pixels_per_meter).toFixed(1)} px/m${plan.calibration_metres ? ` (set across ${Number(plan.calibration_metres).toFixed(2)} m)` : ''}`
+    : 'uncalibrated'
+  const T = (t: string) => winAnsiSafe(t)
+
+  let pdfBytes: Uint8Array
+  try {
+    const doc = await PDFDocument.create()
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+    // Hand pdf-lib the base64 string: it decodes it itself, in its own realm.
+    // A Node Buffer here fails pdf-lib's `instanceof Uint8Array` under a jsdom
+    // test realm and surfaces as "SOI not found" — a fixture-shaped error for
+    // what is a runtime-shaped cause.
+    const jpg = await doc.embedJpg(jpegBase64)
+
+    // Page 1 — the sheet.
+    const p1 = doc.addPage(A3_LANDSCAPE)
+    const [W, H] = A3_LANDSCAPE
+    const margin = 28
+    const headerH = 54
+    p1.drawText(T(`Cable routes — ${plan.name}${pageIndex > 1 ? ` (page ${pageIndex})` : ''}`), { x: margin, y: H - margin - 14, size: 15, font: bold })
+    p1.drawText(T(`${projectName} · ${revision.code} · ${scaleLine} · ${today}`), { x: margin, y: H - margin - 32, size: 9.5, font, color: rgb(0.35, 0.35, 0.35) })
+    const boxW = W - margin * 2
+    const boxH = H - margin * 2 - headerH
+    const k = Math.min(boxW / jpg.width, boxH / jpg.height)
+    const drawW = jpg.width * k
+    const drawH = jpg.height * k
+    p1.drawImage(jpg, { x: margin + (boxW - drawW) / 2, y: margin + (boxH - drawH) / 2, width: drawW, height: drawH })
+    p1.drawText(T(`${legend.length} run${legend.length === 1 ? '' : 's'} on this sheet — legend on the next page. Lengths are the horizontal route only; rise and drop are added in the schedule.`), { x: margin, y: 12, size: 8, font, color: rgb(0.4, 0.4, 0.4) })
+
+    // Page 2+ — the legend, from the route tables.
+    const rowH = 15
+    const cols = [
+      { title: 'Run', x: 32, w: 200 },
+      { title: 'Legs here', x: 236, w: 60, align: 'right' as const },
+      { title: 'On this sheet (m)', x: 300, w: 95, align: 'right' as const },
+      { title: 'Run total (m)', x: 400, w: 85, align: 'right' as const },
+      { title: '', x: 492, w: 90 },
+    ]
+    const perPage = Math.floor((A4_PORTRAIT[1] - 120) / rowH)
+    for (let start = 0; start < legend.length; start += perPage) {
+      const page = doc.addPage(A4_PORTRAIT)
+      const [, ph] = A4_PORTRAIT
+      let y = ph - 40
+      page.drawText(T(`Cable routes on ${plan.name}${pageIndex > 1 ? ` (page ${pageIndex})` : ''} — legend`), { x: 32, y, size: 12, font: bold })
+      y -= 16
+      page.drawText(T(`${projectName} · ${revision.code} · ${today}`), { x: 32, y, size: 8.5, font, color: rgb(0.35, 0.35, 0.35) })
+      y -= 24
+      for (const c of cols) {
+        const tw = bold.widthOfTextAtSize(T(c.title), 8.5)
+        page.drawText(T(c.title), { x: c.align === 'right' ? c.x + c.w - tw : c.x, y, size: 8.5, font: bold })
+      }
+      y -= 6
+      page.drawLine({ start: { x: 32, y }, end: { x: 582, y }, thickness: 0.6, color: rgb(0.6, 0.6, 0.6) })
+      y -= rowH
+      for (const row of legend.slice(start, start + perPage)) {
+        const cells = [
+          row.label,
+          String(row.legsHere),
+          row.onSheetM.toFixed(2),
+          row.totalM.toFixed(2),
+          row.continuesElsewhere ? 'continues on another sheet' : '',
+        ]
+        cells.forEach((cell, i) => {
+          const c = cols[i]
+          const txt = T(cell)
+          const tw = font.widthOfTextAtSize(txt, 9)
+          page.drawText(txt, { x: c.align === 'right' ? c.x + c.w - tw : c.x, y, size: 9, font, color: i === 4 ? rgb(0.55, 0.35, 0.05) : rgb(0, 0, 0) })
+        })
+        y -= rowH
+      }
+      page.drawText(T('Lengths are the horizontal route traced on the drawing. Rise and drop are added per run in the cable schedule; the schedule holds the figure that is issued.'), { x: 32, y: 24, size: 7.5, font, color: rgb(0.4, 0.4, 0.4) })
+    }
+    pdfBytes = await doc.save()
+  } catch (e) {
+    return { error: e instanceof Error ? `PDF render failed: ${e.message}` : 'PDF render failed' }
+  }
+
+  // ── Persist as the next version for this sheet ──
+  const service = createServiceClient() as any
+  const { data: prior } = await service
+    .schema('projects').from('reports')
+    .select('id, version')
+    .eq('project_id', plan.project_id).eq('kind', 'cable_route_sheet').eq('source_id', floorPlanId).eq('status', 'issued')
+    .order('version', { ascending: false }).limit(1).maybeSingle()
+  const version: number = prior ? Number(prior.version) + 1 : 1
+  const storagePath = `${plan.organisation_id}/${plan.project_id}/cable-route-sheets/${floorPlanId}-p${pageIndex}-v${version}.pdf`
+  const { error: upErr } = await service.storage.from('reports')
+    .upload(storagePath, Buffer.from(pdfBytes), { contentType: 'application/pdf', upsert: false })
+  if (upErr) return { error: `Upload failed: ${upErr.message}` }
+
+  const onSheetM = legend.reduce((n, r) => n + r.onSheetM, 0)
+  const { data: report, error: insErr } = await service
+    .schema('projects').from('reports')
+    .insert({
+      organisation_id: plan.organisation_id,
+      project_id: plan.project_id,
+      kind: 'cable_route_sheet',
+      source_table: 'tenants.floor_plans',
+      source_id: floorPlanId,
+      title: `Cable routes — ${plan.name}${pageIndex > 1 ? ` (page ${pageIndex})` : ''}`,
+      storage_path: storagePath,
+      mime_type: 'application/pdf',
+      size_bytes: pdfBytes.length,
+      status: 'issued',
+      version,
+      // What the saved-reports panel prints beside the version. The page is in
+      // the title and the revision on the legend page; both read as counts here.
+      summary: { runs: legend.length, legsHere: legend.reduce((n, r) => n + r.legsHere, 0), onSheetM: Math.round(onSheetM * 100) / 100 },
+      note: note ?? null,
+      generated_by: user.id,
+    })
+    .select('id').single()
+  if (insErr || !report) {
+    await service.storage.from('reports').remove([storagePath])
+    return { error: `Failed to save report: ${insErr?.message ?? 'unknown'}` }
+  }
+  if (prior) {
+    await service.schema('projects').from('reports')
+      .update({ status: 'superseded', superseded_by: report.id })
+      .eq('id', prior.id)
+  }
+
+  revalidatePath(`/projects/${plan.project_id}/cables/${revisionId}/measure`)
+  return { ok: true, reportId: report.id as string, version, runs: legend.length }
 }

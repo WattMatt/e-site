@@ -269,6 +269,7 @@ async function loadRouteContext(
 
   return {
     supplyId,
+    revisionId: supply.revision_id as string,
     runLabel,
     riseM: routeRow ? Number(routeRow.rise_m) : 0,
     dropM: routeRow ? Number(routeRow.drop_m) : 0,

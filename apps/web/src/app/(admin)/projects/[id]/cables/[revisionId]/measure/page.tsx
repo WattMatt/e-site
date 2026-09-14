@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { RouteMeasureWorkspace, type RunRow, type PlanRow } from './RouteMeasureWorkspace'
+import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 
 export const metadata: Metadata = { title: 'Measure cable runs' }
 
@@ -206,6 +207,12 @@ export default async function MeasureRunsPage({ params, searchParams }: Props) {
         plans={planRows}
         initialSupplyId={runs.some((r) => r.supplyId === initialSupplyId) ? initialSupplyId : undefined}
       />
+
+      {/* Every sheet exported from the drawing viewer, as versioned PDFs:
+          the record of what was traced, re-openable and downloadable. */}
+      <div style={{ marginTop: 20 }}>
+        <SavedReportsPanel projectId={projectId} kind="cable_route_sheet" title="Exported sheets" />
+      </div>
     </div>
   )
 }

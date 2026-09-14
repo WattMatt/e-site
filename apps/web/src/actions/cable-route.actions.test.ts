@@ -31,19 +31,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const {
   createClientMock,
+  createServiceClientMock,
   revalidatePathMock,
   requireRoleForRevisionMock,
   lookupCableRoleMock,
   requireEffectiveRoleMock,
 } = vi.hoisted(() => ({
   createClientMock: vi.fn(),
+  createServiceClientMock: vi.fn(),
   revalidatePathMock: vi.fn(),
   requireRoleForRevisionMock: vi.fn(),
   lookupCableRoleMock: vi.fn(),
   requireEffectiveRoleMock: vi.fn(),
 }))
 
-vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock }))
+vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock, createServiceClient: createServiceClientMock }))
 vi.mock('@/lib/auth/require-role', () => ({
   requireEffectiveRole: (...a: unknown[]) => requireEffectiveRoleMock(...a),
 }))
@@ -68,6 +70,7 @@ vi.mock('@/lib/cable-schedule/roles', async (importOriginal) => {
 })
 
 import {
+  exportRouteSheetAction,
   calibrateFloorPlanAction,
   saveSupplyRouteAction,
   applyRouteToScheduleAction,
@@ -140,6 +143,12 @@ function makeClient(fx: Fixture) {
           return { data: rows.map((r: any, i: number) => ({ id: `seg-${i + 1}`, ...r })), error: null }
         }
         return { data: null, error: null }
+      }
+      // Generic fallback: a fixture may describe any table's rows directly.
+      // A `.maybeSingle()`/`.single()` read returns the first row.
+      const keyed = (fx as any).tables?.[`${schema}.${table}`]
+      if (keyed !== undefined) {
+        return { data: single ? (Array.isArray(keyed) ? (keyed[0] ?? null) : keyed) : keyed, error: null }
       }
       if (schema === 'cable_schedule' && table === 'supplies') {
         return fx.supply
@@ -764,5 +773,132 @@ describe('calibrateFloorPlanAction — who may set a drawing\'s scale', () => {
     use(calibFixture())
     await calibrateFloorPlanAction({ floorPlanId: PLAN, points: [0, 0, 250, 0], realMetres: 5 })
     expect(requireEffectiveRoleMock).toHaveBeenCalledWith(expect.anything(), PROJECT, expect.anything())
+  })
+})
+
+/* ─────────────── 5. exporting a sheet keeps a record, not a download ─────────────── */
+
+describe('exportRouteSheetAction — the sheet becomes a versioned report', () => {
+  const PLAN_ROW = { id: PLAN_A, name: 'POWER LAYOUT A', project_id: PROJECT_ID, organisation_id: ORG_ID, pixels_per_meter: 10, calibration_metres: 5 }
+  const REV_ROW = { id: REVISION_ID, code: 'Rev 0', project_id: PROJECT_ID }
+  // A real 1x1 JPEG (generated with sips) — pdf-lib checks the SOI marker.
+  const JPEG_1PX = '/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAAQABAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwUDAwMFBgUFBQUGCAYGBgYGCAoICAgICAgKCgoKCgoKCgwMDAwMDA4ODg4ODw8PDw8PDw8PD//bAEMBAgICBAQEBwQEBxALCQsQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEP/dAAQAAf/aAAwDAQACEQMRAD8A/fyiiigD/9k='
+
+  type ServiceWrite = { table: string; op: 'insert' | 'update'; payload: unknown }
+  let serviceWrites: ServiceWrite[] = []
+  let uploads: Array<{ path: string; bytes: Uint8Array; contentType: string }> = []
+  let removed: string[] = []
+
+  function fakeService(opts: { insertFails?: boolean } = {}) {
+    const builder = (table: string) => {
+      let op: 'select' | 'insert' | 'update' = 'select'
+      const api: any = {
+        select: () => api,
+        eq: () => api,
+        neq: () => api,
+        order: () => api,
+        limit: () => api,
+        insert: (payload: unknown) => { op = 'insert'; serviceWrites.push({ table, op, payload }); return api },
+        update: (payload: unknown) => { op = 'update'; serviceWrites.push({ table, op, payload }); return api },
+        single: () => Promise.resolve(
+          op === 'insert'
+            ? (opts.insertFails ? { data: null, error: { message: 'boom' } } : { data: { id: 'report-1' }, error: null })
+            : { data: null, error: null },
+        ),
+        maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        then: (res: any, rej: any) => Promise.resolve({ data: null, error: null }).then(res, rej),
+      }
+      return api
+    }
+    return {
+      schema: () => ({ from: builder }),
+      storage: {
+        from: () => ({
+          upload: async (path: string, bytes: Uint8Array, o: { contentType: string }) => { uploads.push({ path, bytes, contentType: o.contentType }); return { error: null } },
+          remove: async (paths: string[]) => { removed.push(...paths); return { error: null } },
+        }),
+      },
+    }
+  }
+
+  function sheetFixture(): Fixture {
+    return fixture({
+      tables: {
+        'tenants.floor_plans': [PLAN_ROW],
+        'cable_schedule.revisions': [REV_ROW],
+        'projects.projects': [{ name: 'KINGSWALK', code: '643' }],
+        'cable_schedule.supply_routes': [{ id: ROUTE_ID, supply_id: SUPPLY_ID, total_length_m: 73.5 }],
+        // One leg on this sheet, one on another — the legend must say so.
+        'cable_schedule.route_segments': [
+          { route_id: ROUTE_ID, floor_plan_id: PLAN_A, page_index: 1, length_m: 70 },
+          { route_id: ROUTE_ID, floor_plan_id: PLAN_B, page_index: 1, length_m: 3.5 },
+        ],
+        'cable_schedule.supplies': [{ id: SUPPLY_ID, from_node_id: 'n1', to_node_id: 'n2' }],
+        'structure.nodes': [{ id: 'n1', code: 'MB 1.1' }, { id: 'n2', code: 'DB-10' }],
+      },
+    } as any)
+  }
+
+  beforeEach(() => {
+    serviceWrites = []
+    uploads = []
+    removed = []
+    createServiceClientMock.mockReset().mockReturnValue(fakeService())
+    requireEffectiveRoleMock.mockReset()
+  })
+
+  it('refuses a caller without the schedule write role, and touches neither storage nor the reports table', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: false, error: 'Your role (contractor) is not allowed to perform this action' })
+    use(sheetFixture())
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 1, jpegBase64: JPEG_1PX })
+    expect(res.ok).toBeUndefined()
+    expect(res.error).toMatch(/permission/i)
+    expect(uploads).toHaveLength(0)
+    expect(serviceWrites).toHaveLength(0)
+  })
+
+  it('renders a PDF, uploads it, and records a versioned report row for THIS sheet', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
+    use(sheetFixture())
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 1, jpegBase64: JPEG_1PX })
+    expect(res.error).toBeUndefined()
+    expect(res).toMatchObject({ ok: true, reportId: 'report-1', version: 1, runs: 1 })
+    expect(uploads).toHaveLength(1)
+    expect(uploads[0].contentType).toBe('application/pdf')
+    expect(Buffer.from(uploads[0].bytes.slice(0, 5)).toString('latin1')).toBe('%PDF-')
+    expect(uploads[0].path).toBe(`${ORG_ID}/${PROJECT_ID}/cable-route-sheets/${PLAN_A}-p1-v1.pdf`)
+    const [insert] = serviceWrites.filter((w) => w.op === 'insert')
+    expect(insert.table).toBe('reports')
+    expect(insert.payload).toMatchObject({
+      kind: 'cable_route_sheet',
+      source_table: 'tenants.floor_plans',
+      source_id: PLAN_A,
+      status: 'issued',
+      version: 1,
+      generated_by: USER_ID,
+      // The legend is computed here from the stored segments: one 70 m leg on
+      // this sheet, of a 73.5 m run that continues elsewhere.
+      summary: { runs: 1, legsHere: 1, onSheetM: 70 },
+    })
+    expect(removed).toHaveLength(0)
+  })
+
+  it('refuses to export a page with nothing traced on it, before touching storage', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    use(sheetFixture())
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 2, jpegBase64: JPEG_1PX })
+    expect(res.error).toMatch(/nothing is traced/i)
+    expect(uploads).toHaveLength(0)
+    expect(serviceWrites).toHaveLength(0)
+  })
+
+  it('removes the uploaded object when the report row fails to insert — no orphan in the bucket', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    createServiceClientMock.mockReturnValue(fakeService({ insertFails: true }))
+    use(sheetFixture())
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 1, jpegBase64: JPEG_1PX })
+    expect(res.error).toMatch(/failed to save report/i)
+    expect(uploads).toHaveLength(1)
+    expect(removed).toEqual([uploads[0].path])
   })
 })

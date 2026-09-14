@@ -49,6 +49,8 @@ membership.
 | `/projects/[id]/forms/new` | W | W | W | W | W | W | — |
 | `/projects/[id]/forms/[formId]` (capture / view) | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | W¹¹ | R¹⁰ |
 | `/projects/[id]/cables` | W | W | W | R⁷ | — | — | R¹ |
+| `/projects/[id]/cables/[revisionId]/measure` (cable-route worklist) | W | W | W | → schedule | → schedule | → schedule | → schedule |
+| `/projects/[id]/floor-plans/[planId]?mode=route&supply=…` (trace a run on the drawing) | W | W | W | view¹⁴ | view | view | view |
 | `/projects/[id]/medium-voltage` (MV protection studies; per-user paid subscription on top of role) | W²⁰ | W²⁰ | W²⁰ | — | — | — | — |
 | `/projects/[id]/equipment-materials` | W | W | W | W | — | — | R¹ |
 | `/projects/[id]/equipment-schedule` | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ | →⁶ |
@@ -492,6 +494,18 @@ Read-only actions require project access (any project member). Write/export acti
 > **Submission is gated on legal constraints, not just completeness.** `submitSiteFormAction` runs `evaluateSubmitGates` and returns the whole issue list rather than submitting partially: no energising without an insulation-resistance reading (SANS 10142-1 8.6.8, with the NOTE 2 exception), no out-of-calibration instrument, no incomplete prove-test-prove sequence, EIR reg 9(3) duties mandatory on any C1 defect, and registration-scope checks. The client shows the same issues live via the shared `buildGateInput`/`evaluateSubmitGates` pair, but the server re-checks independently.
 >
 > **Distribution never silently emails.** `previewFormRecipientsAction` returns the resolved recipient list and the per-project `notify_form_email` state so the reviewer sees exactly who will receive it, and how many, before sending. `project_notification_recipients()` resolves 12 real wmeng.co.za people for any WM-Consulting project, so a mistaken send goes company-wide. Re-distribution is permitted and issues a **new report version** through the `projects.reports` supersede chain; a distributed form is never reopened — it is voided with a reason and reissued, mirroring the spirit of EIR reg 9(5).
+
+### Cable route measurement (`cable-route.actions.ts`)
+
+| Action | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| `saveSupplyRouteAction` | W | W | W | — | — | — | — |
+| `applyRouteToScheduleAction` | W | W | W | — | — | — | — |
+| `deleteSupplyRouteAction` | W | W | W | — | — | — | — |
+| `calibrateFloorPlanAction` | W | W | W | — | — | — | — |
+| `exportRouteSheetAction` | W | W | W | — | — | — | — |
+
+> **Added 2026-09-14.** Route tracing writes to the cable schedule, so every action here gates on `ORG_WRITE_ROLES` — narrower than the drawing viewer's own `MARKUP_WRITE_ROLES`, which admits `contractor`. ¹⁴ The viewer page keeps `MARKUP_WRITE_ROLES` for markup and RFIs; `?mode=route` and the ⚡ *Measure a cable run* palette tool are additionally gated on `ORG_WRITE_ROLES` and fall back to a plain view for anyone else, so a contractor keeps full markup rights and never sees route mode. `calibrateFloorPlanAction` shares this gate because a drawing's scale is what every route on the sheet is measured against — note that the markup toolbar's own calibration path (a direct `tenants.floor_plans` update, since `00035`) remains open to contractors; narrowing it is an owner decision, not a side effect of this feature. Reads of an exported sheet (`projects.reports` kind `cable_route_sheet`) are OPEN to every project role, like the schedule's own cost-redacted PDF/CSV exports (`lib/reports/report-kind-access.ts`). Both gates in this file were **inert** from 2026-09-11 to 2026-09-14 (`if (!allowed)` on a result object — see `lib/auth/role-gate-call-sites.contract.test.ts`).
 
 ### Work items (`work-items.actions.ts`)
 

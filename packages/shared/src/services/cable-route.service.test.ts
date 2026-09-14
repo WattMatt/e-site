@@ -13,6 +13,7 @@ import {
   insertVertexAfter,
   removeVertex,
   dedupeConsecutivePoints,
+  sheetLegendRows,
   type RouteSegmentForTotal,
 } from './cable-route.service'
 
@@ -318,5 +319,53 @@ describe('dedupeConsecutivePoints', () => {
 
   it('never returns fewer than the first point', () => {
     expect(dedupeConsecutivePoints([5, 5, 5, 5, 6, 5], 2)).toEqual([5, 5])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The sheet legend — what the exported drawing says about the runs drawn on it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('sheetLegendRows', () => {
+  const runs = [
+    { supplyId: 'a', label: 'MB 1.1 → DB-10', totalM: 173.48 },
+    { supplyId: 'b', label: 'MB 1.1 → DB-3', totalM: 60 },
+    { supplyId: 'c', label: 'MB 1.1 → DB-9', totalM: 42 },
+  ]
+  const segments = [
+    // a: one leg here, one on another sheet — the sheet shows PART of the run.
+    { supplyId: 'a', floorPlanId: 'sheet-1', pageIndex: 1, lengthM: 100 },
+    { supplyId: 'a', floorPlanId: 'sheet-2', pageIndex: 1, lengthM: 70 },
+    // b: two legs here, nothing elsewhere.
+    { supplyId: 'b', floorPlanId: 'sheet-1', pageIndex: 1, lengthM: 25 },
+    { supplyId: 'b', floorPlanId: 'sheet-1', pageIndex: 1, lengthM: 35 },
+    // c: only on page 2 of this sheet — not on the page being exported.
+    { supplyId: 'c', floorPlanId: 'sheet-1', pageIndex: 2, lengthM: 42 },
+  ]
+
+  it('lists only runs with a leg on THIS sheet and page, sorted by label', () => {
+    const rows = sheetLegendRows({ floorPlanId: 'sheet-1', pageIndex: 1 }, runs, segments)
+    expect(rows.map((r) => r.label)).toEqual(['MB 1.1 → DB-10', 'MB 1.1 → DB-3'])
+  })
+
+  it('separates the metres drawn on this page from the run total, and flags a run that continues elsewhere', () => {
+    const rows = sheetLegendRows({ floorPlanId: 'sheet-1', pageIndex: 1 }, runs, segments)
+    // A reader must never take the number beside a line as the length of what
+    // is drawn in front of them when part of the route is on another sheet.
+    expect(rows[0]).toEqual({ label: 'MB 1.1 → DB-10', legsHere: 1, onSheetM: 100, totalM: 173.48, continuesElsewhere: true })
+    expect(rows[1]).toEqual({ label: 'MB 1.1 → DB-3', legsHere: 2, onSheetM: 60, totalM: 60, continuesElsewhere: false })
+  })
+
+  it('is empty for a page with nothing traced on it', () => {
+    expect(sheetLegendRows({ floorPlanId: 'sheet-1', pageIndex: 3 }, runs, segments)).toEqual([])
+  })
+
+  it('ignores a segment whose run is unknown rather than inventing a label', () => {
+    const rows = sheetLegendRows({ floorPlanId: 'sheet-1', pageIndex: 1 }, runs, [
+      ...segments,
+      { supplyId: 'ghost', floorPlanId: 'sheet-1', pageIndex: 1, lengthM: 9 },
+    ])
+    expect(rows.some((r) => r.label.includes('ghost'))).toBe(false)
+    expect(rows).toHaveLength(2)
   })
 })

@@ -270,3 +270,66 @@ export function dedupeConsecutivePoints(points: readonly number[], tolerancePx: 
   }
   return out
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SHEET LEGEND — what an exported drawing says about the runs drawn on it.
+// ─────────────────────────────────────────────────────────────────────────────
+// Rendered from the route tables at export time, never stored in a scene, so
+// it cannot drift from the schedule. `onSheetM` is the metres drawn on THIS
+// page; `totalM` is the whole run; `continuesElsewhere` is the honest half —
+// a reader must never take the number beside a line for the length of what is
+// drawn in front of them when part of the route is on another sheet.
+
+export interface LegendRun {
+  supplyId: string
+  /** "MB 1.1 → DB-10" */
+  label: string
+  totalM: number
+}
+
+export interface LegendSegment {
+  supplyId: string
+  floorPlanId: string | null
+  pageIndex: number
+  lengthM: number
+}
+
+export interface SheetLegendRow {
+  label: string
+  legsHere: number
+  onSheetM: number
+  totalM: number
+  continuesElsewhere: boolean
+}
+
+export function sheetLegendRows(
+  sheet: { floorPlanId: string; pageIndex: number },
+  runs: readonly LegendRun[],
+  segments: readonly LegendSegment[],
+): SheetLegendRow[] {
+  const runById = new Map(runs.map((r) => [r.supplyId, r]))
+  const here = new Map<string, { legs: number; m: number }>()
+  const everywhere = new Map<string, number>()
+  for (const s of segments) {
+    if (!runById.has(s.supplyId)) continue
+    everywhere.set(s.supplyId, (everywhere.get(s.supplyId) ?? 0) + 1)
+    if (s.floorPlanId === sheet.floorPlanId && s.pageIndex === sheet.pageIndex) {
+      const cur = here.get(s.supplyId) ?? { legs: 0, m: 0 }
+      cur.legs += 1
+      cur.m += s.lengthM
+      here.set(s.supplyId, cur)
+    }
+  }
+  return [...here.entries()]
+    .map(([supplyId, h]) => {
+      const run = runById.get(supplyId)!
+      return {
+        label: run.label,
+        legsHere: h.legs,
+        onSheetM: roundMetres(h.m),
+        totalM: roundMetres(run.totalM),
+        continuesElsewhere: (everywhere.get(supplyId) ?? 0) > h.legs,
+      }
+    })
+    .sort((a, b) => a.label.localeCompare(b.label))
+}

@@ -353,6 +353,11 @@ export type RouteModeProps = {
   /** Replace one saved leg's geometry (vertex dragged, added or removed). */
   onUpdateLeg: (legId: string, points: number[]) => Promise<{ error?: string }>
   onDeleteLeg: (legId: string) => Promise<{ error?: string }>
+  /**
+   * Keep this sheet — routes, labels and calibration as drawn — as a versioned
+   * PDF report. Receives the native-resolution JPEG the canvas rasterised.
+   */
+  onExportSheet: (jpegBase64: string, pageIndex: number) => Promise<{ error?: string; version?: number }>
   /** Where "Done" returns to — the measure worklist. */
   doneHref: string
 }
@@ -487,6 +492,9 @@ export function MarkupCanvas({
   // selection went stale the moment a dragged vertex was persisted — the edit
   // bar stayed up with nothing selected. Order survives a replace; ids do not.
   const [selectedLegIndex, setSelectedLegIndex] = useState<number | null>(null)
+  /** While true the route layer draws only what should be on paper. */
+  const [exporting, setExporting] = useState(false)
+  const [exportMsg, setExportMsg] = useState<string | null>(null)
   const selectedLegId =
     routeMode && selectedLegIndex != null ? (routeMode.savedLegs[selectedLegIndex]?.id ?? null) : null
   const setSelectedLegId = (id: string | null) => {
@@ -649,6 +657,45 @@ export function MarkupCanvas({
       void persistLeg(legId, removeVertex(pts, index))
     } catch (e) {
       setLegError(e instanceof Error ? e.message : 'Could not remove that point')
+    }
+  }
+
+  /**
+   * Rasterise the sheet at native resolution with the routes drawn, and hand
+   * it to the caller to keep. Same transform dance as `snapshotScene`, but
+   * JPEG (a PNG of an A1 at source density is ~4× the size and brushes the
+   * 10 MB action body limit) and with selection handles, the pending leg and
+   * the grid left off the page.
+   */
+  async function exportSheet() {
+    if (!routeMode || !stageRef.current || !img) return
+    setExporting(true)
+    setExportMsg(null)
+    await new Promise((r) => setTimeout(r, 60)) // let the route layer redraw without handles
+    const stage = stageRef.current
+    const savedScale = stage.scaleX()
+    const savedPos = stage.position()
+    const gridVisible = gridLayerRef.current?.visible() ?? false
+    try {
+      stage.scale({ x: 1, y: 1 })
+      stage.position({ x: 0, y: 0 })
+      gridLayerRef.current?.visible(false)
+      stage.draw()
+      const dataUrl = stage.toDataURL({ pixelRatio: 1, mimeType: 'image/jpeg', quality: 0.85, x: 0, y: 0, width: naturalW, height: naturalH })
+      stage.scale({ x: savedScale, y: savedScale })
+      stage.position(savedPos)
+      gridLayerRef.current?.visible(gridVisible)
+      stage.draw()
+      const res = await routeMode.onExportSheet(dataUrl.split(',')[1] ?? '', currentPage)
+      setExportMsg(res.error ? res.error : `Saved as version ${res.version} — it is listed under Exported sheets on the measure page.`)
+    } catch (e) {
+      stage.scale({ x: savedScale, y: savedScale })
+      stage.position(savedPos)
+      gridLayerRef.current?.visible(gridVisible)
+      stage.draw()
+      setExportMsg(e instanceof Error ? e.message : 'Export failed')
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -2223,7 +2270,7 @@ export function MarkupCanvas({
           </div>
         </div>
       )}
-      {routeMode && (pendingLeg || polyPoints.length > 0 || selectedLegId || legError) && (
+      {routeMode && !exporting && (pendingLeg || polyPoints.length > 0 || selectedLegId || legError) && (
         <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {polyPoints.length > 0 && (
             <>
@@ -2255,6 +2302,11 @@ export function MarkupCanvas({
             </>
           )}
           {legError && <span role="alert" style={{ color: '#dc2626', fontSize: 12 }}>{legError}</span>}
+        </div>
+      )}
+      {routeMode && exportMsg && (
+        <div className="data-panel" role="status" style={{ padding: '8px 12px', marginBottom: 8, fontSize: 12 }}>
+          {exportMsg}
         </div>
       )}
       <div className="data-panel" style={{ padding: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2511,6 +2563,13 @@ export function MarkupCanvas({
           <ToolbarGroup>
             <ToolbarButton onClick={startCalibration} title="Set this drawing's scale">
               {pixelsPerMeter ? 'Recalibrate' : 'Set scale'}
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => void exportSheet()}
+              disabled={exporting || !img || routeMode.savedLegs.every((l) => l.floorPlanId !== plan.id)}
+              title="Keep this sheet — routes, lengths and scale as drawn — as a versioned PDF report"
+            >
+              {exporting ? 'Exporting…' : 'Export sheet'}
             </ToolbarButton>
             <button
               type="button"
@@ -2990,10 +3049,10 @@ export function MarkupCanvas({
                 pixelsPerMeter={pixelsPerMeter}
                 legs={routeMode.savedLegs}
                 otherLegs={routeMode.otherLegsOnSheet}
-                pendingLeg={pendingLeg}
-                draftPoints={tool === 'polyline' ? polyPoints : []}
-                selectedLegId={selectedLegId}
-                editable={tool === 'select' && !legSaving}
+                pendingLeg={exporting ? null : pendingLeg}
+                draftPoints={!exporting && tool === 'polyline' ? polyPoints : []}
+                selectedLegId={exporting ? null : selectedLegId}
+                editable={!exporting && tool === 'select' && !legSaving}
                 calibration={calibLine}
                 showCalibration
                 onSelectLeg={setSelectedLegId}

@@ -56,6 +56,10 @@ export const OPEN_READ_REPORT_KINDS: readonly string[] = [
   'snag',
   'qc',
   'site_form',
+  // A drawing with cable routes and a length legend — no cost. Open to every
+  // project role, the same policy the schedule's own PDF/CSV exports apply to
+  // site roles (cost-redacted). Writing one still needs ORG_WRITE_ROLES.
+  'cable_route_sheet',
 ]
 
 /** Roles required to read this kind, or null when it is open to project members. */

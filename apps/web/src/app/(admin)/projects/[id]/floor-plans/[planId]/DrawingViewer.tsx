@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useState, useCallback, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import type { SceneGraph, RfiOption, ViewerMode, CableRunOption } from './MarkupCanvas'
-import { saveSupplyRouteAction } from '@/actions/cable-route.actions'
+import { saveSupplyRouteAction, exportRouteSheetAction } from '@/actions/cable-route.actions'
 
 const MarkupCanvas = dynamic(
   () => import('./MarkupCanvas').then((m) => m.MarkupCanvas),
@@ -85,6 +85,7 @@ export type CableScheduleContext = {
 
 export type RouteContext = {
   supplyId: string
+  revisionId: string
   runLabel: string
   riseM: number
   dropM: number
@@ -219,6 +220,15 @@ export function DrawingViewer({
     (legId: string, points: number[]) =>
       persistSegments(segments.map((g) => (g.id === legId ? { ...g, points } : g))),
     [persistSegments, segments],
+  )
+
+  const onExportSheet = useCallback(
+    async (jpegBase64: string, pageIndex: number) => {
+      if (!route) return { error: 'No run is being measured.' }
+      const res = await exportRouteSheetAction({ floorPlanId: plan.id, revisionId: route.revisionId, pageIndex, jpegBase64 })
+      return res.error ? { error: res.error } : { version: res.version }
+    },
+    [route, plan.id],
   )
 
   const onDeleteLeg = useCallback(
@@ -368,6 +378,7 @@ export function DrawingViewer({
                   onCommitLeg,
                   onUpdateLeg,
                   onDeleteLeg,
+                  onExportSheet,
                   doneHref: route.doneHref,
                 }
               : undefined
