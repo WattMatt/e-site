@@ -93,10 +93,17 @@ function Pill({ x, y, text, scale, colour, small }: { x: number; y: number; text
   )
 }
 
-/** A polyline with a white halo underneath so it reads on any linework. */
+/**
+ * A polyline with a white halo underneath so it reads on any linework.
+ *
+ * Selection fires on mousedown/touchstart, not click — the same choice every
+ * markup shape in MarkupCanvas makes, because Konva's synthesised `click` does
+ * not arrive reliably under automated input (see the pointer-handler note
+ * there), and a control that only a human can operate cannot be tested.
+ */
 function HaloLine({
-  points, colour, scale, dashed, listening, onClick,
-}: { points: number[]; colour: string; scale: number; dashed?: boolean; listening?: boolean; onClick?: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void }) {
+  points, colour, scale, dashed, listening, onPress,
+}: { points: number[]; colour: string; scale: number; dashed?: boolean; listening?: boolean; onPress?: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void }) {
   return (
     <>
       <Line points={points} stroke={ROUTE_HALO} strokeWidth={8 / scale} lineCap="round" lineJoin="round" opacity={0.9} listening={false} />
@@ -109,8 +116,8 @@ function HaloLine({
         dash={dashed ? [10 / scale, 6 / scale] : undefined}
         hitStrokeWidth={16 / scale}
         listening={!!listening}
-        onClick={onClick}
-        onTap={onClick}
+        onMouseDown={onPress}
+        onTouchStart={onPress}
       />
     </>
   )
@@ -131,10 +138,14 @@ function EdgeLabels({ points, ppm, scale, colour }: { points: number[]; ppm: num
 }
 
 export function RouteLayer({
-  planId, currentPage, scale, pixelsPerMeter, legs, otherLegs, pendingLeg, draftPoints,
+  planId, currentPage, scale, pixelsPerMeter, legs = [], otherLegs = [], pendingLeg, draftPoints = [],
   selectedLegId, editable, calibration, showCalibration,
   onSelectLeg, onMoveVertex, onInsertVertex, onRemoveVertex,
 }: Props) {
+  // A presentation layer must never take the viewer down. The arrays are
+  // required by the type, but a stale payload or a caller that predates a
+  // field should degrade to "nothing to draw", not to a blank drawing.
+
   const onSheet = (l: { floorPlanId?: string | null; pageIndex: number }) =>
     (l.floorPlanId === undefined || l.floorPlanId === planId) && l.pageIndex === currentPage
 
@@ -179,7 +190,7 @@ export function RouteLayer({
               colour={colour}
               scale={scale}
               listening={editable}
-              onClick={(e) => { e.cancelBubble = true; onSelectLeg(selected ? null : leg.id) }}
+              onPress={(e) => { e.cancelBubble = true; onSelectLeg(selected ? null : leg.id) }}
             />
             <EdgeLabels points={pts} ppm={pixelsPerMeter} scale={scale} colour={colour} />
             <Pill x={pts[0]} y={pts[1] - 16 / scale} text={`leg ${legIndex + 1} · ${fmt(leg.lengthM)}`} scale={scale} colour={colour} small />
@@ -194,8 +205,8 @@ export function RouteLayer({
                     fill={ROUTE_HALO}
                     stroke={SELECTED_COLOUR}
                     strokeWidth={1.5 / scale}
-                    onClick={(ev) => { ev.cancelBubble = true; onInsertVertex(leg.id, i, e.midX, e.midY) }}
-                    onTap={(ev) => { ev.cancelBubble = true; onInsertVertex(leg.id, i, e.midX, e.midY) }}
+                    onMouseDown={(ev) => { ev.cancelBubble = true; onInsertVertex(leg.id, i, e.midX, e.midY) }}
+                    onTouchStart={(ev) => { ev.cancelBubble = true; onInsertVertex(leg.id, i, e.midX, e.midY) }}
                   />
                 ))}
                 {Array.from({ length: pts.length / 2 }).map((_, i) => (

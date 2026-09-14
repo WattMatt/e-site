@@ -252,3 +252,21 @@ export function removeVertex(points: readonly number[], index: number): number[]
   const at = index * 2
   return [...points.slice(0, at), ...points.slice(at + 2)]
 }
+
+/**
+ * Collapse consecutive vertices closer than `tolerancePx` into one.
+ *
+ * A double-click finishes a polyline, but each of its two mousedowns has
+ * already appended a vertex on top of the last real one by the time the
+ * dblclick fires. Left in, a leg carries two zero-length edges and prints
+ * "0.00 m" twice — invisible on a markup polyline, wrong on a measurement.
+ */
+export function dedupeConsecutivePoints(points: readonly number[], tolerancePx: number): number[] {
+  if (points.length < 2) return [...points]
+  const out: number[] = [points[0], points[1]]
+  for (let i = 2; i + 1 < points.length; i += 2) {
+    const lx = out[out.length - 2], ly = out[out.length - 1]
+    if (Math.hypot(points[i] - lx, points[i + 1] - ly) > tolerancePx) out.push(points[i], points[i + 1])
+  }
+  return out
+}

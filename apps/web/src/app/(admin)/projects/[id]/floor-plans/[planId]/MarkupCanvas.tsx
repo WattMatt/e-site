@@ -24,7 +24,7 @@ import {
 } from '@/actions/rfi-annotation.actions'
 import { createRfiAction } from '@/actions/rfi.actions'
 import { calibrateFloorPlanAction } from '@/actions/cable-route.actions'
-import { edgeLengthsM, moveVertex, insertVertexAfter, removeVertex } from '@esite/shared'
+import { edgeLengthsM, moveVertex, insertVertexAfter, removeVertex, dedupeConsecutivePoints } from '@esite/shared'
 import { RouteLayer, type RouteLayerLeg, type OtherLeg, type CalibrationLine } from './RouteLayer'
 import {
   type StrokeStyle,
@@ -564,7 +564,11 @@ export function MarkupCanvas({
   function finishPoly() {
     const wantClosed = tool === 'polygon'
     const minEntries = wantClosed ? 6 : 4 // 3 vs 2 vertices
-    if (polyPoints.length < minEntries) {
+    // The double-click that got us here has already stamped one or two extra
+    // vertices on the last real one. Collapse them (3 px in image space) so a
+    // finished shape — and especially a measured leg — has no zero-length edge.
+    const pts = dedupeConsecutivePoints(polyPoints, 3 / scale)
+    if (pts.length < minEntries) {
       setPolyPoints([])
       return
     }
@@ -575,7 +579,7 @@ export function MarkupCanvas({
       // Route mode: the leg becomes PENDING — drawn solid and labelled, still
       // the measurer's — until they press Save. A double-click writes nothing,
       // so a mis-click cannot commit a route silently.
-      setPendingLeg(polyPoints)
+      setPendingLeg(pts)
       setPolyPoints([])
       setLegError(null)
       return
@@ -583,8 +587,8 @@ export function MarkupCanvas({
     const dash = dashFor(strokeStyle, strokeWidth)
     commit(
       wantClosed
-        ? { id: makeId(), type: 'polygon', points: polyPoints, color, strokeWidth, closed: true, dash }
-        : { id: makeId(), type: 'polyline', points: polyPoints, color, strokeWidth, dash },
+        ? { id: makeId(), type: 'polygon', points: pts, color, strokeWidth, closed: true, dash }
+        : { id: makeId(), type: 'polyline', points: pts, color, strokeWidth, dash },
     )
     setPolyPoints([])
   }

@@ -130,9 +130,16 @@ function makeClient(fx: Fixture) {
         return { data: null, error: { message: 'permission denied for table ' + table } }
       }
       if (op !== 'select') {
-        // The only non-select read-back in the file is the route upsert's
-        // .select('id').single().
-        return { data: op === 'upsert' ? { id: ROUTE_ID } : null, error: null }
+        // Two non-select read-backs: the route upsert's .select('id').single(),
+        // and the segment insert's .select(...) which echoes the rows back with
+        // ids so the canvas can draw and edit them without a reload.
+        if (op === 'upsert') return { data: { id: ROUTE_ID }, error: null }
+        if (op === 'insert' && table === 'route_segments') {
+          const last = writes[writes.length - 1]
+          const rows = Array.isArray(last?.payload) ? last.payload : []
+          return { data: rows.map((r: any, i: number) => ({ id: `seg-${i + 1}`, ...r })), error: null }
+        }
+        return { data: null, error: null }
       }
       if (schema === 'cable_schedule' && table === 'supplies') {
         return fx.supply
@@ -293,6 +300,23 @@ describe('saveSupplyRouteAction — the server decides length', () => {
     )
     expect(res.tracedM).toBe(10)
     expect(res.totalM).toBe(14)
+  })
+
+  it('returns the persisted segments with ids, so the sheet can draw and edit them without a reload', async () => {
+    // After the first cut, a saved leg vanished until a hard reload: the
+    // action returned only totals, so the viewer had nothing to draw with.
+    use(fixture())
+    const res = await saveSupplyRouteAction({
+      supplyId: SUPPLY_ID,
+      riseM: 0,
+      dropM: 0,
+      segments: [{ floorPlanId: PLAN_A, pageIndex: 1, points: [0, 0, 300, 0, 300, 400] }],
+    })
+    expect(res.ok).toBe(true)
+    expect(res.segments).toHaveLength(1)
+    expect(res.segments![0]).toMatchObject({ id: 'seg-1', floorPlanId: PLAN_A, pageIndex: 1, points: [0, 0, 300, 0, 300, 400] })
+    expect(res.segments![0].lengthM).toBe(70)   // 700 px along the path at PLAN_A's 10 px/m
+    expect(res.segments![0].pixelsPerMeter).toBe(PLAN_A_PPM)
   })
 
   it('sends merge-duplicates as a Prefer header via onConflict, not only in the query string', async () => {

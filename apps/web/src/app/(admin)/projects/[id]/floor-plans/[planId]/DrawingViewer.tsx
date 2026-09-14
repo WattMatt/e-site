@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import type { SceneGraph, RfiOption, ViewerMode, CableRunOption } from './MarkupCanvas'
 import { saveSupplyRouteAction } from '@/actions/cable-route.actions'
@@ -142,6 +142,14 @@ export function DrawingViewer({
   const [routeError, setRouteError] = useState<string | null>(null)
   const [committing, setCommitting] = useState(false)
 
+  // The route as the browser knows it. Seeded from the server, then replaced
+  // with what each save action returns, so a saved leg is on the sheet the
+  // moment the server confirms it — `router.refresh()` alone left the view
+  // unchanged until a hard reload, which reads as "my trace vanished". A later
+  // server render (new supply, refresh) re-seeds it; the server stays truth.
+  const [segments, setSegments] = useState<RouteContext['segments']>(route?.segments ?? [])
+  useEffect(() => { setSegments(route?.segments ?? []) }, [route])
+
   /**
    * Persist the whole segment list. `saveSupplyRouteAction` REPLACES the list,
    * so append, edit and delete are all "send the new list" — one path, one set
@@ -174,6 +182,19 @@ export function DrawingViewer({
           setRouteError(res.error)
           return { error: res.error }
         }
+        if (res.segments) {
+          setSegments(
+            res.segments.map((g) => ({
+              id: g.id,
+              floorPlanId: g.floorPlanId,
+              floorPlanName: g.floorPlanName,
+              pageIndex: g.pageIndex,
+              points: g.points,
+              pixelsPerMeter: g.pixelsPerMeter,
+              lengthM: g.lengthM,
+            })),
+          )
+        }
         router.refresh()
         return {}
       } finally {
@@ -185,19 +206,19 @@ export function DrawingViewer({
 
   const onCommitLeg = useCallback(
     ({ points, pageIndex }: { points: number[]; pageIndex: number }) =>
-      persistSegments([...(route?.segments ?? []), { floorPlanId: plan.id, pageIndex, points }]),
-    [persistSegments, route, plan.id],
+      persistSegments([...segments, { floorPlanId: plan.id, pageIndex, points }]),
+    [persistSegments, segments, plan.id],
   )
 
   const onUpdateLeg = useCallback(
     (legId: string, points: number[]) =>
-      persistSegments((route?.segments ?? []).map((g) => (g.id === legId ? { ...g, points } : g))),
-    [persistSegments, route],
+      persistSegments(segments.map((g) => (g.id === legId ? { ...g, points } : g))),
+    [persistSegments, segments],
   )
 
   const onDeleteLeg = useCallback(
-    (legId: string) => persistSegments((route?.segments ?? []).filter((g) => g.id !== legId)),
-    [persistSegments, route],
+    (legId: string) => persistSegments(segments.filter((g) => g.id !== legId)),
+    [persistSegments, segments],
   )
 
   // Re-edit always lands in markup mode (the toolbar makes no sense in
@@ -330,7 +351,7 @@ export function DrawingViewer({
             route
               ? {
                   runLabel: route.runLabel,
-                  savedLegs: route.segments.map((g) => ({
+                  savedLegs: segments.map((g) => ({
                     id: g.id,
                     floorPlanId: g.floorPlanId,
                     floorPlanName: g.floorPlanName,
@@ -354,15 +375,15 @@ export function DrawingViewer({
             <div className="data-panel-header">
               <span className="data-panel-title">Legs traced</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
-                {committing ? 'saving…' : route.segments.length}
+                {committing ? 'saving…' : segments.length}
               </span>
             </div>
-            {route.segments.length === 0 ? (
+            {segments.length === 0 ? (
               <div className="data-panel-empty">
                 Nothing traced yet. Pick the polyline tool and click along the route.
               </div>
             ) : (
-              route.segments.map((g, i) => (
+              segments.map((g, i) => (
                 <div key={g.id} className="data-panel-row" style={{ gap: 10 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -385,7 +406,7 @@ export function DrawingViewer({
             >
               <div style={{ flex: 1, fontSize: 12 }}>Traced</div>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                {route.segments.reduce((n, g) => n + g.lengthM, 0).toFixed(2)} m
+                {segments.reduce((n, g) => n + g.lengthM, 0).toFixed(2)} m
               </span>
             </div>
             <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--c-text-dim)', lineHeight: 1.5 }}>

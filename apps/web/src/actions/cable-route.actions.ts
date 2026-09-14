@@ -105,12 +105,26 @@ async function gate(supabase: any, userId: string, ctx: SupplyCtx): Promise<stri
   return null
 }
 
+/** A segment as persisted — what the sheet draws and edits. */
+export interface SavedSegment {
+  id: string
+  seq: number
+  floorPlanId: string
+  floorPlanName: string
+  pageIndex: number
+  points: number[]
+  pixelsPerMeter: number
+  lengthM: number
+}
+
 export interface SaveRouteResult {
   ok?: true
   error?: string
   /** Metres the server computed. The caller displays this, never its own figure. */
   tracedM?: number
   totalM?: number
+  /** The route's segments as now stored, ids included, in path order. */
+  segments?: SavedSegment[]
   /** Drawings that had no calibration — the caller must calibrate these first. */
   uncalibratedPlanIds?: string[]
 }
@@ -236,16 +250,30 @@ export async function saveSupplyRouteAction(
     .eq('route_id', route.id)
   if (delErr) return { error: delErr.message }
 
+  let saved: SavedSegment[] = []
   if (rows.length > 0) {
-    const { error: insErr } = await (supabase as any)
+    const { data: inserted, error: insErr } = await (supabase as any)
       .schema('cable_schedule')
       .from('route_segments')
       .insert(rows.map((r) => ({ ...r, route_id: route.id })))
+      .select('id, seq, floor_plan_id, floor_plan_name, page_index, points, pixels_per_meter, length_m')
     if (insErr) return { error: insErr.message }
+    saved = ((inserted ?? []) as any[])
+      .map((g) => ({
+        id: g.id as string,
+        seq: Number(g.seq),
+        floorPlanId: g.floor_plan_id as string,
+        floorPlanName: (g.floor_plan_name ?? 'Drawing') as string,
+        pageIndex: Number(g.page_index),
+        points: (g.points ?? []) as number[],
+        pixelsPerMeter: Number(g.pixels_per_meter),
+        lengthM: Number(g.length_m),
+      }))
+      .sort((x, y) => x.seq - y.seq)
   }
 
   revalidatePath(`/projects/${ctx.projectId}/cables/${ctx.revisionId}`)
-  return { ok: true, tracedM, totalM }
+  return { ok: true, tracedM, totalM, segments: saved }
 }
 
 export interface ApplyRouteResult {

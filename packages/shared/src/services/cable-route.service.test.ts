@@ -12,6 +12,7 @@ import {
   moveVertex,
   insertVertexAfter,
   removeVertex,
+  dedupeConsecutivePoints,
   type RouteSegmentForTotal,
 } from './cable-route.service'
 
@@ -296,5 +297,26 @@ describe('removeVertex', () => {
 
   it('rejects an out-of-range vertex index', () => {
     expect(() => removeVertex(pts, 3)).toThrow(/index/i)
+  })
+})
+
+describe('dedupeConsecutivePoints', () => {
+  it('drops the vertices a double-click stamps on top of the last real one', () => {
+    // Three real clicks, then a double-click at the last spot: each mousedown
+    // of the double-click appends a vertex before the finish fires, so the leg
+    // arrives with five points and two zero-length edges labelled "0.00 m".
+    expect(dedupeConsecutivePoints([0, 0, 300, 0, 300, 400, 300, 400, 301, 400], 2)).toEqual([0, 0, 300, 0, 300, 400])
+  })
+
+  it('keeps a genuine short edge that is longer than the tolerance', () => {
+    expect(dedupeConsecutivePoints([0, 0, 10, 0, 10, 5], 2)).toEqual([0, 0, 10, 0, 10, 5])
+  })
+
+  it('collapses duplicates anywhere in the path, not only at the end', () => {
+    expect(dedupeConsecutivePoints([0, 0, 0, 1, 300, 0, 300, 400], 2)).toEqual([0, 0, 300, 0, 300, 400])
+  })
+
+  it('never returns fewer than the first point', () => {
+    expect(dedupeConsecutivePoints([5, 5, 5, 5, 6, 5], 2)).toEqual([5, 5])
   })
 })
