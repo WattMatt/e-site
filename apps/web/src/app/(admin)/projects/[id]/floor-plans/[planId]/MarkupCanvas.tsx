@@ -73,6 +73,7 @@ type ToolMode =
   | 'eraser'
   | 'measure'
   | 'calibrate'
+  | 'cable'
 
 // pageIndex is 1-based (matches pdfjs page numbering). Defaults to 1 for
 // backward compat with v1 scene graphs that didn't carry pageIndex.
@@ -198,13 +199,16 @@ const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean;
   { value: 'table', label: '⊞', title: 'Legend / table — click to place, double-click a cell to edit' },
   { value: 'eraser', label: '⌦', title: 'Eraser — drag over marks to rub them out' },
   { value: 'measure', label: '⤢', needsCalibration: true, title: 'Measure (requires calibration)' },
+  // Cable-schedule measuring. Offered only when the caller may write the
+  // schedule AND the project has a DRAFT revision — see `cablePicker`.
+  { value: 'cable', label: '⚡', title: 'Measure a cable run — trace a schedule run on this drawing' },
 ]
 
 /**
  * The only tools route mode offers. Everything else on the palette writes to
  * the markup scene, which a route deliberately does not use.
  */
-const ROUTE_TOOLS: ReadonlyArray<ToolMode> = ['select', 'polyline']
+const ROUTE_TOOLS: ReadonlyArray<ToolMode> = ['select', 'polyline', 'cable']
 
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -307,6 +311,30 @@ export type ViewerMode = 'view' | 'markup' | 'rfi' | 'route'
  * measurement ever taken with the measure tool. A cable length is signed
  * against; it must never move under the person who recorded it.
  */
+/** One run offered by the in-drawing cable tool. */
+export type CableRunOption = {
+  supplyId: string
+  /** "MB 1.1 → DB-50" */
+  label: string
+  traced: boolean
+  scheduleLengthM: number | null
+}
+
+/**
+ * The in-drawing entry to cable measuring — the other half of the double-sided
+ * access. Present only when the caller holds the SCHEDULE write role and the
+ * project has a DRAFT cable revision; absent otherwise, and the tool does not
+ * appear on the palette at all.
+ */
+export type CablePicker = {
+  revisionCode: string
+  runs: CableRunOption[]
+  /** Enter route mode for this run, on the drawing already open. */
+  onPick: (supplyId: string) => void
+  /** The run currently being measured, when already in route mode. */
+  activeSupplyId?: string
+}
+
 export type RouteModeProps = {
   /** The run being measured, for the banner: e.g. "MB 3.1 → DB-07". */
   runLabel: string
@@ -355,6 +383,12 @@ type Props = {
    */
   routeMode?: RouteModeProps
   /**
+   * Cable-schedule measuring, started FROM the drawing. When provided, a ⚡ tool
+   * joins the palette and opens a run picker; choosing a run enters route mode
+   * on this drawing. When ABSENT the tool is not rendered.
+   */
+  cablePicker?: CablePicker
+  /**
    * External-save mode (QC markup). When provided, MarkupCanvas hands the
    * flattened PNG + editable scene graph to the caller and does NOT create or
    * update an RFI annotation, open the RFI picker, or navigate to `/rfis`. The
@@ -385,6 +419,7 @@ export function MarkupCanvas({
   editing = null,
   mode = 'markup',
   routeMode,
+  cablePicker,
   onSaveMarkup,
   initialScene,
 }: Props) {
@@ -428,6 +463,8 @@ export function MarkupCanvas({
   const [calibPoints, setCalibPoints] = useState<Array<[number, number]>>([])
   const [calibDistance, setCalibDistance] = useState('')
   const [calibSaving, setCalibSaving] = useState(false)
+  /** Filter text for the in-drawing cable run picker. */
+  const [cableQuery, setCableQuery] = useState('')
   const [calibError, setCalibError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -2040,7 +2077,11 @@ export function MarkupCanvas({
         {mode !== 'view' && (
           <>
             <ToolbarGroup>
-              {(routeMode ? TOOLS.filter((t) => ROUTE_TOOLS.includes(t.value)) : TOOLS).map((t) => {
+              {TOOLS
+                .filter((t) => (routeMode ? ROUTE_TOOLS.includes(t.value) : true))
+                // The cable tool exists only where a schedule can be written.
+                .filter((t) => t.value !== 'cable' || !!cablePicker)
+                .map((t) => {
                 // Tracing an uncalibrated sheet would produce a leg the server
                 // must reject. Require the scale first, the same way the
                 // measure tool already does.
@@ -2414,6 +2455,89 @@ export function MarkupCanvas({
       )}
 
       {/* Calibration overlay */}
+      {tool === 'cable' && cablePicker && (
+        <div className="data-panel" style={{ padding: 12, marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+            <strong style={{ fontSize: 13 }}>Measure a cable run</strong>
+            <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+              {cablePicker.revisionCode} · pick the run this drawing shows, then trace it here.
+            </span>
+            <div style={{ flex: 1 }} />
+            <input
+              type="search"
+              value={cableQuery}
+              onChange={(e) => setCableQuery(e.target.value)}
+              placeholder="Filter runs…"
+              className="ob-input"
+              style={{ width: 200 }}
+              aria-label="Filter cable runs"
+            />
+            <button
+              type="button"
+              onClick={() => { setCableQuery(''); setTool('select') }}
+              className="btn-primary-amber"
+              style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}
+            >
+              Cancel
+            </button>
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--c-border)', borderRadius: 6 }}>
+            {(() => {
+              const q = cableQuery.trim().toLowerCase()
+              const shown = q
+                ? cablePicker.runs.filter((r) => r.label.toLowerCase().includes(q))
+                : cablePicker.runs
+              if (shown.length === 0) {
+                return (
+                  <p style={{ margin: 0, padding: 14, fontSize: 12, color: 'var(--c-text-dim)' }}>
+                    {cablePicker.runs.length === 0
+                      ? 'This project has no runs on a draft cable schedule.'
+                      : `No run matches "${cableQuery}".`}
+                  </p>
+                )
+              }
+              return shown.map((r) => {
+                const active = r.supplyId === cablePicker.activeSupplyId
+                return (
+                  <button
+                    key={r.supplyId}
+                    type="button"
+                    onClick={() => { setCableQuery(''); cablePicker.onPick(r.supplyId) }}
+                    style={{
+                      display: 'flex',
+                      width: '100%',
+                      gap: 10,
+                      alignItems: 'baseline',
+                      textAlign: 'left',
+                      padding: '7px 12px',
+                      background: active ? 'var(--c-amber-mid)' : 'transparent',
+                      border: 'none',
+                      borderBottom: '1px solid var(--c-border)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      color: 'var(--c-text)',
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}>{r.label}</span>
+                    {r.scheduleLengthM != null && (
+                      <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>
+                        schedule {r.scheduleLengthM.toFixed(1)} m
+                      </span>
+                    )}
+                    <span
+                      className={`badge ${r.traced ? 'badge-amber' : ''}`}
+                      style={{ fontSize: 10 }}
+                    >
+                      {active ? 'measuring' : r.traced ? 'traced' : 'not traced'}
+                    </span>
+                  </button>
+                )
+              })
+            })()}
+          </div>
+        </div>
+      )}
+
       {tool === 'calibrate' && (
         <div className="data-panel" style={{ padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {calibPoints.length < 2 ? (

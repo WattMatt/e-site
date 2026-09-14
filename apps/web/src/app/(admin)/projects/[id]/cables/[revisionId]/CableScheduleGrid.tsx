@@ -959,10 +959,19 @@ export function CableScheduleGrid({
                     <span className={`badge ${LENGTH_STATUS_TONE[run.length_status]}`}>
                       {run.length_status}
                     </span>
-                    {canEdit && !locked && run.length_status === 'UNMEASURED' && (
+                    {/* Offered on every run, not only UNMEASURED ones. Gating on
+                        UNMEASURED hid this link on every project that has ever
+                        recorded a length — KINGSWALK 162/177, DE POORT 55/55 —
+                        which is exactly where re-measuring a hand-typed figure
+                        against the drawing is worth doing. */}
+                    {canEdit && !locked && (
                       <Link
                         href={`/projects/${projectId}/cables/${revisionId}/measure?supply=${run.supply_id}`}
-                        title="Trace this run's route on the drawings and assign its length"
+                        title={
+                          run.length_status === 'UNMEASURED'
+                            ? "Trace this run's route on the drawings and assign its length"
+                            : "Re-measure: trace this run on the drawings and compare with the recorded length"
+                        }
                         style={{
                           display: 'block',
                           marginTop: 3,

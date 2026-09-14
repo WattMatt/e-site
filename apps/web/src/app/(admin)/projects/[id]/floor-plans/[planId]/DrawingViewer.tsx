@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useState, useCallback } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import type { SceneGraph, RfiOption, ViewerMode } from './MarkupCanvas'
+import type { SceneGraph, RfiOption, ViewerMode, CableRunOption } from './MarkupCanvas'
 import { saveSupplyRouteAction } from '@/actions/cable-route.actions'
 
 const MarkupCanvas = dynamic(
@@ -69,6 +69,16 @@ export type EditingAnnotation = {
  * means resending the others — and resending them means carrying rise/drop
  * through untouched, or the save would silently reset them to 0.
  */
+/**
+ * The project's draft cable schedule, for the in-drawing ⚡ tool. Present only
+ * when the caller holds ORG_WRITE_ROLES and a DRAFT revision exists.
+ */
+export type CableScheduleContext = {
+  revisionId: string
+  revisionCode: string
+  runs: CableRunOption[]
+}
+
 export type RouteContext = {
   supplyId: string
   runLabel: string
@@ -103,6 +113,7 @@ export function DrawingViewer({
   initialMode,
   canWrite,
   route,
+  cableSchedule,
 }: {
   plan: DrawingPlan
   projectId: string
@@ -116,6 +127,8 @@ export function DrawingViewer({
   canWrite: boolean
   /** Present only when the page was opened as `?mode=route&supply=…`. */
   route?: RouteContext
+  /** Present when cable measuring may be STARTED from this drawing. */
+  cableSchedule?: CableScheduleContext
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -274,6 +287,20 @@ export function DrawingViewer({
         )}
 
         <MarkupCanvas
+          cablePicker={
+            cableSchedule
+              ? {
+                  revisionCode: cableSchedule.revisionCode,
+                  runs: cableSchedule.runs,
+                  activeSupplyId: route?.supplyId,
+                  // Entering route mode goes through the URL so the server
+                  // re-runs the schedule-role gate and loads the run's existing
+                  // legs — the same door the worklist uses, not a second one.
+                  onPick: (supplyId: string) =>
+                    router.push(`${pathname}?mode=route&supply=${supplyId}`),
+                }
+              : undefined
+          }
           plan={plan}
           snagPins={snagPins}
           projectId={projectId}
