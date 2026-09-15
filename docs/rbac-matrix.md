@@ -542,9 +542,11 @@ Migration `00199_work_item_source_mirrors_and_backfill.sql` introduces **no rout
 | Reassign a mirrored `snag` item ⇒ writes `field.snags.assigned_to` | W | W | W | W¹ | W¹ | W¹ | — |
 | Reassign / re-gatekeep a mirrored `inspection` item | —³ | —³ | —³ | — | — | — | — |
 | Re-file a mirrored `qc_defect` item's priority | —³ | —³ | —³ | —³ | — | — | — |
-| Raise an RFI / snag / inspection / QC defect / site form / delay diary entry ⇒ creates a work item | W | W | W | W⁴ | W⁴ | W⁴ | — |
+| Raise a snag / site form / delay diary entry ⇒ creates a work item | W | W | W | W⁴ | W⁴ | W⁴ | — |
+| Raise an RFI or a QC defect ⇒ creates a work item | W | W | W | W⁴ | —⁴ | —⁴ | — |
+| Schedule an inspection ⇒ creates a work item | W | W | W | —⁴ | W⁴ | —⁴ | — |
 | Close an RFI-mirrored item | gatekeeper only ⁶ | gatekeeper only ⁶ | gatekeeper only ⁶ | **W ⁶** | — | — | — |
-| Delete any of the six sources ⇒ voids its mirrored item (live **or closed**) | W⁵ | W⁵ | W⁵ | — | — | — | — |
+| Delete any of the six sources ⇒ voids its mirrored item (live **or closed**) | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — |
 
 > ¹ **Not a gate in this migration.** Who may change `work_items.assignee_id` or
 > `due_date` is item 2's `projects.user_can_write_work_item(project_id, item_type)`,
@@ -587,11 +589,16 @@ Migration `00199_work_item_source_mirrors_and_backfill.sql` introduces **no rout
 > wrapper passes a "the source's people column actually changed" flag, and the
 > projection forward-reads only then) is recorded for a later quarter.
 >
-> ⁴ **Each source's own write gate decides**, not the spine's: `rfi`
-> `MARKUP_WRITE_ROLES`, `snag` `SNAG_FIELD_ROLES`, `qc_defect` `QC_WRITE_ROLES`
-> + `00176`'s tenancy-bound policies + `qc_report_children_frozen`, `inspection`
-> `ORG_WRITE_ROLES`, `form_action` `FORMS_FIELD_ROLES`, `diary_action`
-> `00145:39-50`. The table below lists each one.
+> ⁴ **Each source's own write gate decides**, not the spine's, which is why the
+> three rows above differ: `rfi` `MARKUP_WRITE_ROLES` and `qc_defect`
+> `QC_WRITE_ROLES` (+ `00176`'s tenancy-bound policies and
+> `qc_report_children_frozen`) both EXCLUDE inspector and supplier; `inspection`
+> is `ORG_WRITE_ROLES`, which excludes contractor and supplier; `snag`
+> `SNAG_FIELD_ROLES` and `form_action` `FORMS_FIELD_ROLES` admit the site roles;
+> `diary_action`'s INSERT gate is `00145:25-36` (the UPDATE policy at
+> `00145:39-50` is the separate, wider one recorded under Known gaps). The table
+> below lists each one — read it rather than these cells when the answer
+> matters.
 >
 > ⁵ **Deleting a source voids its mirrored item, and a CLOSED item is voided
 > too — that is forced, not chosen.** `work_items_source_required` admits a
@@ -603,9 +610,15 @@ Migration `00199_work_item_source_mirrors_and_backfill.sql` introduces **no rout
 > carry that history. Kept as built so "stamps ⇔ closed" stays a simple invariant
 > no future consumer can misread; the two alternatives (preserve the stamps in
 > C′'s exempt path, or admit `closed` in `work_items_source_required`) are owner
-> decisions recorded in the PR body. The cells are `ORG_WRITE_ROLES` because
-> that is the widest **person-satisfiable** DELETE policy across the six sources
-> — see the DELETE table below.
+> decisions recorded in the PR body. The cells are NOT `ORG_WRITE_ROLES`: the
+> widest **person-satisfiable** DELETE policy across the six sources is
+> `projects.site_diary_entries`', which is AUTHOR-scoped rather than role-scoped
+> (`00149:30-36` — `created_by = auth.uid()` AND an active org membership AND
+> not a client viewer). So ANY non-client-viewer role, contractor and inspector
+> and supplier included, can delete a diary entry it authored and thereby void
+> that entry's mirrored item, live or closed. Every other source is owner /
+> admin / PM or service-role-only — see the DELETE table below, which is the
+> per-source detail this row summarises.
 >
 > ⁶ **Close an RFI-mirrored item — the gatekeeper only; under
 > `gatekeeper_rule = 'creator'` that is the RAISER, so a contractor closes the
@@ -641,8 +654,8 @@ Migration `00199_work_item_source_mirrors_and_backfill.sql` introduces **no rout
 | `projects.rfis` | none (`00161` client-viewer RESTRICTIVE only) | no web/mobile delete action | no — service role only |
 | `field.snags` | none | `apps/mobile/src/hooks/useSnags.ts:72` → **silent 0 rows** | no — service role only |
 | `inspections.inspections` | none | `deleteInspectionAction` (`inspections.actions.ts:664`): org owner only, refuses `certified`, deletes with the service key | no (a certified = closed item is refused before the delete); the `voided` event's actor is **NULL** on that path |
-| `projects.qc_reports` → cascades `qc_entries` | `qc_reports_delete` (`00176:122-128`, owner/admin/PM by effective project role) | `deleteQcReportAction` (`qc.actions.ts:149`) | **yes** over PostgREST — the cascade voids each entry's item, closed ones included |
-| `projects.qc_entries` | `qc_entries_delete` (`00176:183-192`; frozen on a CLOSED report) | `deleteQcEntryAction` (`qc.actions.ts:467`) | **yes — measured**: a PM deleting a PASSED entry on an issued report → item `void` / `'source deleted'`, one `voided` event with `actor_id` = the PM, `actor_role = 'project_manager'`, `from_status = 'closed'` |
+| `projects.qc_reports` → cascades `qc_entries` | `qc_reports_delete` (`00176:121-127`, owner/admin/PM by effective project role) | `deleteQcReportAction` (`qc.actions.ts:149`) | **yes** over PostgREST — the cascade voids each entry's item, closed ones included |
+| `projects.qc_entries` | `qc_entries_delete` (`00176:182-192`; frozen on a CLOSED report) | `deleteQcEntryAction` (`qc.actions.ts:467`) | **yes — measured**: a PM deleting a PASSED entry on an issued report → item `void` / `'source deleted'`, one `voided` event with `actor_id` = the PM, `actor_role = 'project_manager'`, `from_status = 'closed'` |
 | `projects.site_diary_entries` | `Authors can delete their diary entries` (`00149:30-36`) | `deleteDiaryEntryAction` (`diary.actions.ts:109`) — service client, so the `voided` event's actor is **NULL** | **yes** over PostgREST |
 | `field.site_forms` | `site_forms_delete` (`00179:483-485`, **drafts only**, owner/admin/PM) | `voidSiteFormAction` voids rather than deletes | no — only drafts are person-deletable, and a draft is never closed |
 
@@ -686,7 +699,7 @@ Migration `00199_work_item_source_mirrors_and_backfill.sql` introduces **no rout
 > PR): the mirror sets `created_by = raised_by` and **the raiser gatekeeps**.
 > ⚠ **So a contractor who raises an RFI IS its gatekeeper and CAN close it**
 > (footnote ⁶; an **ineligible** raiser falls back to the project PM,
-> `00199:955-958`) — any sentence elsewhere saying only owner/admin/PM closes an
+> `00199:968-974`) — any sentence elsewhere saying only owner/admin/PM closes an
 > RFI-mirrored item is wrong. 12 of the 15 live RFIs were raised by contractors, and this is the
 > only Q1 mechanism that puts a work item into a contractor's ball-in-court.
 > Measured on the SELECT policy's four arms for a contractor on their own

@@ -17,8 +17,8 @@ import {
   advanceWorkItemStatusAction,
   setWorkItemDueDateAction,
   voidWorkItemAction,
-  refuseModuleOwnedEdit,
 } from './work-items.actions'
+import { moduleOwnedRefusal } from '@/lib/work-items/module-owned'
 
 const PROJECT = '11111111-1111-1111-1111-111111111111'
 const ITEM    = '44444444-4444-4444-4444-444444444444'
@@ -302,6 +302,22 @@ describe('reassignWorkItemAction', () => {
     expect(revalidatePathMock).not.toHaveBeenCalled()
   })
 
+  it('a CLOSED inspection item is told to reopen, NOT sent to the Inspections module', async () => {
+    // Ordering is deliberate (Task 18 review): the status check runs before the
+    // module-owned refusal. On a closed or void item "reopen it first" is the
+    // actionable sentence; sending someone to the Inspections module to change
+    // an assignment they could not change here anyway is a wild goose chase.
+    requireEffectiveRoleMock.mockResolvedValue(ALLOWED_PM)
+    const updateSpy = vi.fn()
+    createClientMock.mockResolvedValue(
+      client(vi.fn(), updateSpy, item({ item_type: 'inspection', ref: 'INSP-4', status: 'closed' })),
+    )
+    const r = await reassignWorkItemAction({ workItemId: ITEM, userId: OTHER })
+    expect(r.error).toBe('INSP-4 is closed. Reopen it before changing who it belongs to.')
+    expect(r.error).not.toMatch(/Inspections module/)
+    expect(updateSpy).not.toHaveBeenCalled()
+  })
+
   it('refuses an inspection item in the GATEKEEPER arm (answered) with the same sentence — the verifier is module-owned too', async () => {
     requireEffectiveRoleMock.mockResolvedValue(ALLOWED_PM)
     const updateSpy = vi.fn()
@@ -338,13 +354,13 @@ describe('reassignWorkItemAction', () => {
   })
 })
 
-describe('refuseModuleOwnedEdit — the third 00199 refusal, which has no verb yet', () => {
+describe('moduleOwnedRefusal — the third 00199 refusal, which has no verb yet', () => {
   // Q1 ships no priority verb (item 2 shipped five: create, reassign, advance,
   // due date, void), so the qc_defect sentence is exported rather than wired
   // into an action. The Inbox's priority control (§04, items 5/6) calls this so
   // there is exactly one copy of the wording.
   it('names a qc_defect priority edit as module-owned, with the sentence pointing at the QC report', async () => {
-    await expect(refuseModuleOwnedEdit('qc_defect', 'priority')).resolves.toBe(
+    expect(moduleOwnedRefusal('qc_defect', 'priority')).toBe(
       "A QC defect's priority follows its severity in the QC report — change the severity there.",
     )
   })
@@ -352,17 +368,17 @@ describe('refuseModuleOwnedEdit — the third 00199 refusal, which has no verb y
   it('refuses only what the source module owns — every other pair is the spine\'s', async () => {
     // inspection PEOPLE are module-owned; an inspection's priority is not
     // (00199 files it `medium` once and never re-reads it).
-    await expect(refuseModuleOwnedEdit('inspection', 'people')).resolves.toMatch(/Inspections module/)
-    await expect(refuseModuleOwnedEdit('inspection', 'priority')).resolves.toBeNull()
+    expect(moduleOwnedRefusal('inspection', 'people')).toMatch(/Inspections module/)
+    expect(moduleOwnedRefusal('inspection', 'priority')).toBeNull()
     // qc_defect PRIORITY is module-owned; its people are the spine's.
-    await expect(refuseModuleOwnedEdit('qc_defect', 'people')).resolves.toBeNull()
+    expect(moduleOwnedRefusal('qc_defect', 'people')).toBeNull()
     for (const key of ['rfi', 'snag', 'diary_action', 'form_action', 'task', 'order_followup']) {
-      expect(await refuseModuleOwnedEdit(key, 'people'), key).toBeNull()
-      expect(await refuseModuleOwnedEdit(key, 'priority'), key).toBeNull()
+      expect(await moduleOwnedRefusal(key, 'people'), key).toBeNull()
+      expect(await moduleOwnedRefusal(key, 'priority'), key).toBeNull()
     }
     // An unregistered key is not a module-owned edit either — it fails closed
     // at the write-set gate, not here.
-    await expect(refuseModuleOwnedEdit('not_a_type', 'people')).resolves.toBeNull()
+    expect(moduleOwnedRefusal('not_a_type', 'people')).toBeNull()
   })
 })
 
