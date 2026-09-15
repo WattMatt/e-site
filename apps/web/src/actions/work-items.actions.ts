@@ -82,6 +82,83 @@ type ItemRow = {
   ball_in_court_id: string | null
 }
 
+/**
+ * Edits the SOURCE MODULE owns, and the sentence that says so.
+ *
+ * Migration 00199's projection triggers FORWARD-READ the source's own columns
+ * on EVERY projection, so a spine-side edit of one of these is not refused by
+ * the database — it is silently reverted by the next source write. Measured:
+ *
+ *   - `inspection` people. The mirror re-reads inspections.assigned_to_id and
+ *     verifier_id every time it projects, so a PM's reassignment or gatekeeper
+ *     correction is undone by an unrelated title edit — or by the inspector
+ *     merely pressing start (assigned → in_progress). 00066's assignment flow
+ *     and the certification chain own those columns; the spine follows them.
+ *   - `qc_defect` priority. The mirror files priority from qc_entries.severity
+ *     while that is non-NULL, so an owner's re-file lasts until the next
+ *     watched source write.
+ *
+ * Refusing with a sentence that names WHERE the edit belongs is option (a) of
+ * three. Option (b) — write the spine's answer back to the source — was
+ * rejected: the Inspections module owns verifier_id (certification chain).
+ * Option (c) — the projection wrapper passes a "the source's people column
+ * actually changed" flag and the forward read runs only then — is the durable
+ * fix and is recorded for a later quarter.
+ *
+ * This is NOT a security boundary. Over direct PostgREST a write-role holder
+ * can still make the edit; it will simply not survive. The refusal exists so
+ * the product does not offer a control that undoes itself.
+ *
+ * `priority` has no verb in Q1 — item 2 shipped five (create, reassign,
+ * advance, due date, void) and none of them writes priority on an existing
+ * item. The sentence is exported rather than inlined so the Inbox's priority
+ * control (§04, items 5/6) has exactly one copy of it to call, and cannot
+ * re-invent the wording.
+ */
+const MODULE_OWNED_EDITS: ReadonlyArray<{
+  itemType: string
+  field: ModuleOwnedField
+  sentence: string
+}> = [
+  {
+    itemType: 'inspection',
+    field: 'people',
+    sentence:
+      'Inspections are assigned from the Inspections module — change the inspector or verifier there.',
+  },
+  {
+    itemType: 'qc_defect',
+    field: 'priority',
+    sentence:
+      "A QC defect's priority follows its severity in the QC report — change the severity there.",
+  },
+]
+
+/** `people` covers BOTH person columns — assignee while triage/open, gatekeeper
+ *  while answered — because the mirror forward-reads both. */
+export type ModuleOwnedField = 'people' | 'priority'
+
+/** The refusal sentence for a module-owned edit, or null when the spine owns it. */
+function moduleOwnedRefusal(itemType: string, field: ModuleOwnedField): string | null {
+  return MODULE_OWNED_EDITS.find((e) => e.itemType === itemType && e.field === field)?.sentence ?? null
+}
+
+/**
+ * The same lookup, exported for the Inbox.
+ *
+ * `async` because this is a `'use server'` module and Next refuses a
+ * synchronous export from one. It reads nothing, writes nothing and returns a
+ * constant sentence, so it carries no auth surface of its own — it exists so
+ * the Inbox's priority and reassign controls disable themselves with the same
+ * words the action would refuse with, instead of re-inventing the copy.
+ */
+export async function refuseModuleOwnedEdit(
+  itemType: string,
+  field: ModuleOwnedField,
+): Promise<string | null> {
+  return moduleOwnedRefusal(itemType, field)
+}
+
 /** The `projects` schema, typed as nothing until the types regen. */
 function projectsSchema(supabase: SupabaseClient) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -231,6 +308,11 @@ const reassignSchema = z.object({
  * change while `answered`. A contractor with the type write role therefore
  * hands the ASSIGNEE on in triage/open and gets the guard's governance
  * sentence, verbatim, if they try the gatekeeper seat.
+ *
+ * REFUSES `item_type = 'inspection'` outright, in BOTH arms — see
+ * MODULE_OWNED_EDITS. The Inspections module owns assigned_to_id and
+ * verifier_id and 00199's projection forward-reads both on every projection,
+ * so the edit would be silently reverted rather than refused.
  */
 export async function reassignWorkItemAction(
   input: z.infer<typeof reassignSchema>,
@@ -248,6 +330,15 @@ export async function reassignWorkItemAction(
 
   const gate = await requireEffectiveRole(supabase, item.project_id, writeRolesFor(item.item_type))
   if (!gate.ok) return { error: gate.error }
+
+  // Both arms: the assignee while triage/open AND the gatekeeper while
+  // answered. 00199's inspection projection forward-reads assigned_to_id and
+  // verifier_id on every projection, so either edit is reverted by the next
+  // source write — including the inspector pressing start. Refuse with the
+  // sentence that names where the edit belongs rather than let the control
+  // undo itself.
+  const moduleOwned = moduleOwnedRefusal(item.item_type, 'people')
+  if (moduleOwned) return { error: moduleOwned }
 
   const column =
     item.status === 'triage' || item.status === 'open' ? 'assignee_id'
