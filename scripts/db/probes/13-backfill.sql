@@ -50,7 +50,7 @@
 -- no impersonation, no mutation: the backfill has already run, inside the
 -- migration, and everything below is an observation of what it left.
 --
--- Expected: 29 rows. If the printed `assertions seen:` list is shorter than
+-- Expected: 30 rows. If the printed `assertions seen:` list is shorter than
 -- twenty-nine names, a UNION ALL arm was dropped — read the list, not the total.
 
 WITH live AS (

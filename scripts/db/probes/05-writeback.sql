@@ -385,7 +385,11 @@ SELECT 'closed_record_untouched',
        '6 of 15 live RFIs are closed; inventing an assignee on a historical record is the as_left_status lesson'
 UNION ALL
 SELECT 'closed_item_still_exists',
-       (SELECT count(*) FROM projects.work_items w, wb_ctx c WHERE w.rfi_id = c.closed) = 1,
+       -- origin = 'mirror' for the same reason as probe 04's
+       -- reprojection_kept_the_status: a non-mirror row on the same source
+       -- would inflate this count and the row would read as a duplicate.
+       (SELECT count(*) FROM projects.work_items w, wb_ctx c
+         WHERE w.rfi_id = c.closed AND w.origin = 'mirror') = 1,
        'the item is still projected — only the write-back is skipped'
 UNION ALL
 SELECT 'no_runaway_recursion', true,

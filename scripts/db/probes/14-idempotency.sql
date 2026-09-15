@@ -24,7 +24,7 @@
 -- RFIs a THIRD time, to prove the split is neither picked up, overwritten nor
 -- duplicated.
 --
--- Expected: 11 rows, all PASS.
+-- Expected: 13 rows, all PASS.
 --
 -- ⚠ What idempotent DOES and DOES NOT mean here, measured rather than assumed.
 -- The projections are lookup-then-INSERT/UPDATE (deviation 8), so a re-run of a

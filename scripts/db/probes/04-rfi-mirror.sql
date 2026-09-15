@@ -522,7 +522,12 @@ SELECT 'idempotent_reprojection',
        'a second projection (priority edit) must not create a second item'
 UNION ALL
 SELECT 'reprojection_kept_the_status',
-       (SELECT w.status FROM projects.work_items w, rfi_ctx c WHERE w.rfi_id = c.rfi) = 'answered',
+       -- origin = 'mirror' is load-bearing, not decoration: without it this
+       -- scalar subquery returns two rows and aborts with 21000 the moment any
+       -- other row carries the same rfi_id (probe 14 inserts an origin='split'
+       -- one — measured in Task 17's first full-rehearsal assembly).
+       (SELECT w.status FROM projects.work_items w, rfi_ctx c
+         WHERE w.rfi_id = c.rfi AND w.origin = 'mirror') = 'answered',
        'the update arm must not reset a terminal status on an unrelated edit'
 UNION ALL
 -- #4: historical stamps travel with the projection.
