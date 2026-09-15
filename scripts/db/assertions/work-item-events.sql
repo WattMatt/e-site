@@ -45,10 +45,7 @@ SELECT pm.project_id, p.organisation_id,
            AND m.user_id IS DISTINCT FROM projects.resolve_project_pm(pm.project_id)
            AND m.role <> 'client_viewer'
          ORDER BY m.created_at, m.user_id
-         LIMIT 1) AS other_id,
-       -- Assertion 13's source row: a real rfi on the fixture project.
-       (SELECT r.id FROM projects.rfis r WHERE r.project_id = pm.project_id
-         ORDER BY r.created_at, r.id LIMIT 1) AS rfi_id
+         LIMIT 1) AS other_id
   FROM projects.project_members pm
   JOIN projects.projects p ON p.id = pm.project_id
  WHERE pm.user_id = '018f2d31-bbe8-4cc1-bbdd-63af0187081e' AND pm.is_active
@@ -57,7 +54,7 @@ SELECT pm.project_id, p.organisation_id,
 GRANT SELECT ON _e TO authenticated;
 
 DO $$
-DECLARE e record; v_void uuid;
+DECLARE e record; v_void uuid; v_rfi uuid;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM _e) THEN
     RAISE EXCEPTION 'the rbac-test fixture has no project membership; the event assertions cannot run as a real user';
@@ -71,9 +68,6 @@ BEGIN
   END IF;
   IF e.other_id IS NULL THEN
     RAISE EXCEPTION 'no third non-client_viewer member (not the fixture, not the PM) on project %; the reassigned/assigned verbs and the reassign-watcher arm cannot all be reached', e.project_id;
-  END IF;
-  IF e.rfi_id IS NULL THEN
-    RAISE EXCEPTION 'no RFI on the fixture project % — assertion 13 needs a real rfi_id captured as postgres', e.project_id;
   END IF;
   -- The PM must GOVERN (owner/admin/PM), or 2b's correction and 14's takeover
   -- are refused by §12 for a fixture reason: resolve_project_pm() can end at
@@ -95,6 +89,25 @@ BEGIN
   VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
   ON CONFLICT DO NOTHING;
 
+  -- ⚠ Assertion 13's source row is an RFI this file CREATES, not the fixture
+  -- project's oldest live one. Once item 3's backfill (00199 section H) is
+  -- stacked, every non-demo RFI already carries a mirror item and
+  -- work_items_src_rfi_uidx admits exactly one, so the origin='mirror' insert
+  -- below aborted the whole file with
+  --   ERROR: 23505: duplicate key value violates unique constraint "work_items_src_rfi_uidx"
+  -- (measured 2026-09-15, Task 15 Step 6b). Created here and unconditional, so
+  -- assertion 13 can neither collide nor be skipped — and it must come AFTER
+  -- the calendar seed above, because 00199's mirror trigger computes a due date
+  -- through add_working_days on the way in.
+  INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
+                             priority, status, raised_by)
+  VALUES (e.project_id, e.organisation_id, 'assertion fixture rfi', 'body', 'medium',
+          'open', e.pm_id)
+  RETURNING id INTO v_rfi;
+  -- 00199's live trigger mirrors it on insert and assertion 13 inserts its OWN
+  -- mirror row: 0 rows removed before 00199 applies, 1 after.
+  DELETE FROM projects.work_items WHERE rfi_id = v_rfi AND origin = 'mirror';
+
   -- Assertion 13's setup, on the SERVICE path (auth.uid() is NULL here — this
   -- runs before the first impersonation). Item 3's delete-to-void shape: a
   -- source row deleted after its mirrored item was voided runs the RI
@@ -108,7 +121,7 @@ BEGIN
     (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by,
      rfi_id, status, void_reason, origin, opened_at)
   VALUES (e.organisation_id, e.project_id, 'rfi', 'void rfi subject', e.actor_id, e.pm_id, e.pm_id,
-          e.rfi_id, 'void', 'assertion', 'mirror', now() - interval '30 days')
+          v_rfi, 'void', 'assertion', 'mirror', now() - interval '30 days')
   RETURNING id INTO v_void;
   UPDATE projects.work_items SET rfi_id = NULL WHERE id = v_void;
   IF (SELECT rfi_id FROM projects.work_items WHERE id = v_void) IS NOT NULL THEN

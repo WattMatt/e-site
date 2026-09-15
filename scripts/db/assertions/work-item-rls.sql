@@ -35,6 +35,55 @@
 -- impersonation auth.uid() stays set even under RESET ROLE. Every row the
 -- postgres blocks seed is therefore seeded BEFORE the first SET LOCAL ROLE —
 -- §5's opened_at stamp keys on auth.uid() IS NOT NULL.
+-- ⚠ THE TWO INSPECTIONS ARE CREATED HERE, not picked off the fixture project.
+-- 9e/9f insert their own origin='mirror' item against each; once item 3's
+-- backfill (00199 section H) is stacked it has already projected every live
+-- inspection and work_items_src_inspection_uidx admits exactly one, so the old
+-- `ORDER BY i.created_at LIMIT 1 / OFFSET 1` form aborted the whole file with
+--   ERROR: 23505: duplicate key value violates unique constraint "work_items_src_inspection_uidx"
+-- (measured 2026-09-15, Task 15 Step 6b). Cloned from a live inspection on the
+-- same project so no template/target knowledge is duplicated here, and labelled
+-- so _f below captures exactly these two. (f.rfi_id is left as a live pick: 7's
+-- insert is origin='manual', which the partial UNIQUE's predicate excludes, so
+-- it neither collides today nor can start to.)
+DO $insp$
+DECLARE v_proj uuid; v_src uuid; v_id uuid;
+BEGIN
+  SELECT pm.project_id INTO v_proj
+    FROM projects.project_members pm
+   WHERE pm.user_id = '018f2d31-bbe8-4cc1-bbdd-63af0187081e' AND pm.is_active
+   ORDER BY pm.created_at, pm.project_id LIMIT 1;
+  IF v_proj IS NULL THEN
+    RAISE EXCEPTION 'the rbac-test contractor fixture has no active project membership';
+  END IF;
+  SELECT i.id INTO v_src FROM inspections.inspections i
+   WHERE i.project_id = v_proj ORDER BY i.created_at, i.id LIMIT 1;
+  IF v_src IS NULL THEN
+    RAISE EXCEPTION 'no inspection on project % to clone — 9e/9f (the UPDATE identity arms, exercised on a type the contractor cannot write) have no fixture', v_proj;
+  END IF;
+
+  -- 00199's mirror computes a due date through add_working_days, which raises
+  -- no_data_found on an unseeded year; the DO block below seeds the same years.
+  INSERT INTO projects.calendar_years (year)
+  VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
+  ON CONFLICT DO NOTHING;
+
+  FOR i IN 1..2 LOOP
+    INSERT INTO inspections.inspections
+      (organisation_id, project_id, template_id, target_node_type, target_node_id,
+       target_label, target_location, assigned_to_id, verifier_id, status,
+       scheduled_at, created_by)
+    SELECT s.organisation_id, s.project_id, s.template_id, s.target_node_type, s.target_node_id,
+           'assertion fixture inspection ' || i, s.target_location, s.assigned_to_id,
+           s.verifier_id, 'assigned', s.scheduled_at, s.created_by
+      FROM inspections.inspections s WHERE s.id = v_src
+    RETURNING id INTO v_id;
+    -- The live trigger mirrors it on insert; 9e/9f own the mirror they assert
+    -- on. 0 rows before 00199 applies, 1 after — correct in both windows.
+    DELETE FROM projects.work_items WHERE inspection_id = v_id AND origin = 'mirror';
+  END LOOP;
+END $insp$;
+
 CREATE TEMP TABLE _f AS
 SELECT pm.project_id, p.organisation_id,
        '018f2d31-bbe8-4cc1-bbdd-63af0187081e'::uuid AS contractor_id,
@@ -46,11 +95,13 @@ SELECT pm.project_id, p.organisation_id,
        -- inspection.write_roles = owner/admin/project_manager: the contractor
        -- holds NO write role for this type, so only an identity arm can admit
        -- them to an UPDATE of an inspection item (9e, 9f). Two ids, because
-       -- work_items_src_inspection_uidx allows one mirror row per inspection.
+       -- work_items_src_inspection_uidx allows one mirror row per inspection —
+       -- the two this file created above, never live rows (see the DO $insp$
+       -- comment).
        (SELECT i.id FROM inspections.inspections i WHERE i.project_id = pm.project_id
-         ORDER BY i.created_at, i.id LIMIT 1) AS inspection_id,
+         AND i.target_label = 'assertion fixture inspection 1') AS inspection_id,
        (SELECT i.id FROM inspections.inspections i WHERE i.project_id = pm.project_id
-         ORDER BY i.created_at, i.id LIMIT 1 OFFSET 1) AS inspection_id_2
+         AND i.target_label = 'assertion fixture inspection 2') AS inspection_id_2
   FROM projects.project_members pm
   JOIN projects.projects p ON p.id = pm.project_id
  WHERE pm.user_id = '018f2d31-bbe8-4cc1-bbdd-63af0187081e' AND pm.is_active

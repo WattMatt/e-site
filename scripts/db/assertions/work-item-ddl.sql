@@ -28,16 +28,32 @@ BEGIN
   VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
   ON CONFLICT DO NOTHING;
 
-  -- Source fixtures. RAISE rather than skip: a LIMIT 1 that returns nothing
-  -- turns three constraint proofs into no-ops with a green tick.
-  SELECT r.id INTO v_rfi FROM projects.rfis r WHERE r.project_id = v_proj LIMIT 1;
-  IF v_rfi IS NULL THEN
-    RAISE EXCEPTION 'no rfi on project % — work_items_one_source, the per-source partial UNIQUE and the split case cannot fail and would be decorative', v_proj;
-  END IF;
-  SELECT s.id INTO v_snag FROM field.snags s LIMIT 1;
-  IF v_snag IS NULL THEN
-    RAISE EXCEPTION 'no snag anywhere — the two-source violation in assertion 4 cannot be constructed';
-  END IF;
+  -- Source fixtures, CREATED HERE rather than picked off the live estate.
+  -- ⚠ This used to be `SELECT r.id FROM projects.rfis r … LIMIT 1` (and an
+  -- unordered `field.snags LIMIT 1`). Once item 3's backfill (00199 section H)
+  -- is stacked, every non-demo RFI already carries a mirror item and
+  -- work_items_src_rfi_uidx admits exactly ONE, so assertion 7's own
+  -- origin='mirror' insert aborted the whole file with
+  --   ERROR: 23505: duplicate key value violates unique constraint "work_items_src_rfi_uidx"
+  -- (measured 2026-09-15, Task 15 Step 6b). A row the file owns is also
+  -- independent of which live row LIMIT 1 happens to return, which is the
+  -- second reason: the old form asserted against KINGSWALK's oldest RFI and
+  -- would have changed meaning the day someone raised an older one.
+  -- Both inserts are unconditional, so nothing here can be vacuous.
+  INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
+                             priority, status, raised_by)
+  VALUES (v_proj, v_org, 'assertion fixture rfi', 'body', 'medium', 'open', v_pm)
+  RETURNING id INTO v_rfi;
+  INSERT INTO field.snags (project_id, organisation_id, title, location, priority,
+                           status, raised_by)
+  VALUES (v_proj, v_org, 'assertion fixture snag', 'Level 1', 'medium', 'open', v_pm)
+  RETURNING id INTO v_snag;
+
+  -- 00199's live mirror triggers project both rows on insert, and assertion 7
+  -- asserts on a mirror row it inserts ITSELF. Remove the trigger-made ones:
+  -- 0 rows before 00199 applies, 1 each after — correct in both windows.
+  DELETE FROM projects.work_items WHERE rfi_id  = v_rfi  AND origin = 'mirror';
+  DELETE FROM projects.work_items WHERE snag_id = v_snag AND origin = 'mirror';
 
   -- 1. A minimal legal row inserts, and every derived column is populated.
   --    status defaults to 'triage' AT THE COLUMN LEVEL, deliberately: the
