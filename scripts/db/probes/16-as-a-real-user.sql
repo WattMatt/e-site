@@ -9,9 +9,12 @@
 --
 --   the projection is SECURITY DEFINER so that a contractor's perfectly
 --   legitimate INSERT INTO projects.rfis is not refused by item 2's
---   RESTRICTIVE INSERT policy on projects.work_items (00196:1174-1196, arm
---   (a): item_type = 'task'). A mirrored type is source-only: no client
---   session can insert one.
+--   RESTRICTIVE INSERT policy on projects.work_items (00196:1174-1196). A
+--   mirrored type is source-only: no client session can insert one. Note the
+--   gate is conjunctive — item_type = 'task', the ref shape, the source FKs
+--   being NULL and origin = 'manual' all fail for a mirrored row, and a
+--   WITH CHECK cannot report WHICH conjunct refused. So: no conjunct of the
+--   gate can be satisfied by a mirrored type.
 --
 -- Apply the fixture-quality rule and it is stark: make the mirror run as the
 -- person instead of as its owner, and every probe except this one still
@@ -368,7 +371,7 @@ SELECT 'insert_really_ran_as_authenticated',
 UNION ALL
 SELECT 'contractor_rfi_insert_succeeded',
        (SELECT rfi_a IS NOT NULL FROM rls_ctx),
-       'F9: as authenticated, not postgres — the whole point of SECURITY DEFINER on the mirror'
+       'F9: as authenticated, not postgres — the whole point of SECURITY DEFINER on the mirror. (This row cannot print FAIL: a refused INSERT aborts the whole rehearsal, which is exactly how the stripped-definer mutant manifests. It is here to name the precondition the rows below depend on.)'
 UNION ALL
 SELECT 'item_was_projected_under_the_contractors_identity',
        (SELECT count(*) FROM projects.work_items w, rls_ctx c
@@ -392,9 +395,16 @@ SELECT 'gatekeeper_is_the_contractor',
          WHERE w.rfi_id = c.rfi_a AND w.origin = 'mirror'),
        'improvement 4 / gatekeeper_rule = creator: the raiser signs it off, and here the raiser is a contractor'
 UNION ALL
-SELECT 'select_arms_that_admit_the_contractor',
+-- ⚠ This row states FACTS the arms key on; it does not exercise the policy.
+-- Measured (Task 16 review): stripping the assignee, gatekeeper and watcher
+-- arms out of work_items_select entirely leaves this probe 16/16 and still
+-- printing gatekeeper=true watcher=true — because project_access alone already
+-- admits the reader, so the other arms are not load-bearing for the raiser and
+-- cannot be isolated by this fixture. The half that carries weight is
+-- NOT arm_assignee.
+SELECT 'select_arm_facts_for_the_raiser',
        (SELECT arm_access AND NOT arm_assignee AND arm_gatekeeper AND arm_watcher FROM rls_ctx),
-       'work_items_select has four arms and three of them admit the raiser — pinned so item 5/6 knows which it may not rely on. Got: ' ||
+       'the raiser is NOT the assignee — items 5 and 6 must not build "my work" on assignee_id. project_access alone already admits them; this row pins the facts the arms key on, not which arm answers. Got: ' ||
        (SELECT 'project_access=' || COALESCE(arm_access::text, '<null>')
              || ' assignee=' || COALESCE(arm_assignee::text, '<null>')
              || ' gatekeeper=' || COALESCE(arm_gatekeeper::text, '<null>')
@@ -415,6 +425,10 @@ SELECT 'contractor_subject_edit_reprojects_the_title',
        (SELECT COALESCE(c.subject_rows::text, '<null>') || ' row(s), title ' || COALESCE(w.title, '<null>')
           FROM projects.work_items w, rls_ctx c WHERE w.rfi_id = c.rfi_a AND w.origin = 'mirror')
 UNION ALL
+-- ⚠ Near-duplicate of 05b's direct_status_change_refused_for_non_gatekeeper
+-- (same shape, same sentence, RFI seeded as postgres in both) — kept for a
+-- readable narrative here, but it carries no identity increment over 05b. The
+-- row BELOW it does: 05b has no close performed BY the gatekeeper at depth 1.
 SELECT 'contractor_cannot_close_what_they_do_not_gatekeep',
        (SELECT close_state = 'P0001'
                AND close_err LIKE '%Only the person who signs%off can close it%' FROM rls_ctx),
@@ -445,6 +459,11 @@ SELECT 'authors_delete_voided_its_item',
        (SELECT w.status || ' / ' || COALESCE(w.void_reason, '<null>')
           FROM projects.work_items w, rls_ctx c WHERE w.id = c.diary_item)
 UNION ALL
+-- ⚠ Probe 11 already pins the voided actor (voided_event_actor_is_the_deleter,
+-- same actor_role = 'contractor' check) on the service side. This probe's
+-- increment is upstream of the assertion: the contractor AUTHORS the diary
+-- entry in their own signed-in session, so the mirror runs inside that session
+-- rather than under a postgres-seeded fixture.
 SELECT 'voided_event_actor_is_the_contractor',
        (SELECT count(*) FROM projects.work_item_events e, rls_ctx c
          WHERE e.work_item_id = c.diary_item AND e.verb = 'voided'

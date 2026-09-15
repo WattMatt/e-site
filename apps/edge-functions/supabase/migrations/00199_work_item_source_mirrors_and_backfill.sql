@@ -836,12 +836,28 @@ UPDATE projects.work_item_types SET gatekeeper_rule = 'creator' WHERE key = 'rfi
 -- ─── D. Projection ───────────────────────────────────────────────────────────
 -- Every function here is SECURITY DEFINER (§03 §1.2): it writes assignee_id,
 -- gatekeeper_id and due_date, which the contractor who raised the RFI must not
--- be able to forge, and without it item 2's RESTRICTIVE INSERT policy on
--- work_items would be evaluated against that contractor and their perfectly
--- legitimate RFI insert would fail. (Mechanism: the policies are TO
--- authenticated, 00196:1107-1229; a SECURITY DEFINER function owned by
--- postgres — table owner, BYPASSRLS — never evaluates them.) Attribution uses
--- auth.uid(), never current_user, which resolves to the function OWNER.
+-- be able to forge, and without it their perfectly legitimate RFI insert would
+-- fail. (Mechanism: the policies are TO authenticated, 00196:1107-1229; a
+-- SECURITY DEFINER function owned by postgres — table owner, BYPASSRLS — never
+-- evaluates them.) Attribution uses auth.uid(), never current_user, which
+-- resolves to the function OWNER.
+--
+-- ⚠ WHICH definer is load-bearing, and which layer actually refuses — measured
+--    (probe 16, Task 16 + its review), because the obvious answer is wrong. It
+--    is the WRAPPER, mirror_<src>_work_item(), not project_<src>(): making
+--    project_rfi INVOKER on its own changes nothing at all (probe 16 stays
+--    16/16), since the wrapper still runs the whole projection as postgres and
+--    its own SET row_security TO 'off' still applies. project_<src>()'s
+--    declaration is defence-in-depth — its only callers are that wrapper and
+--    section H as postgres. And the layers do not refuse in the order the
+--    sentence above implies: strip the wrapper's definer and section G's
+--    EXECUTE revoke answers FIRST (42501 permission denied for function
+--    project_rfi), never the policy. Only after also granting EXECUTE to
+--    authenticated does item 2's RESTRICTIVE gate become the thing that
+--    refuses, naming work_items rather than rfis. So on the shipped path RLS
+--    never refuses this projection at all; the proof that the spine gate does
+--    bite a real client session is probe 16's arm 3, where the contractor
+--    writes the spine row by hand.
 --
 -- ⚠ F8. Being SECURITY DEFINER does NOT change auth.uid(): inside these
 -- functions it is still the contractor who touched the source row, and item
