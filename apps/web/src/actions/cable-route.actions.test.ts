@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import zlib from 'node:zlib'
 
 /**
  * cable-route.actions.ts — the two separations its module header declares.
@@ -839,6 +840,34 @@ describe('exportRouteSheetAction — the sheet becomes a versioned report', () =
     }
   }
 
+  /**
+   * The drawn text of every content stream. pdf-lib writes standard-font text
+   * as HEX strings (`<7363616c65…> Tj`), so the streams are inflated where
+   * Flate-encoded and the hex literals decoded — an ASCII search on the raw
+   * bytes finds nothing. Latin1 is enough here: the header line is ASCII.
+   */
+  function pdfStreamsText(buf: Buffer): string {
+    let text = ''
+    const streamMarker = Buffer.from('stream')
+    const endMarker = Buffer.from('endstream')
+    let cursor = 0
+    for (;;) {
+      const start = buf.indexOf(streamMarker, cursor)
+      if (start === -1) break
+      const end = buf.indexOf(endMarker, start)
+      if (end === -1) break
+      let dataStart = start + streamMarker.length
+      while (buf[dataStart] === 0x0d || buf[dataStart] === 0x0a) dataStart++
+      const chunk = buf.subarray(dataStart, end)
+      let decoded: string
+      try { decoded = zlib.inflateSync(chunk).toString('latin1') } catch { decoded = chunk.toString('latin1') }
+      for (const m of decoded.matchAll(/<([0-9a-fA-F]+)>/g)) text += Buffer.from(m[1], 'hex').toString('latin1')
+      text += '\n'
+      cursor = end + endMarker.length
+    }
+    return text
+  }
+
   function sheetFixture(): Fixture {
     return fixture({
       tables: {
@@ -908,6 +937,33 @@ describe('exportRouteSheetAction — the sheet becomes a versioned report', () =
     expect(res.error).toMatch(/nothing is traced/i)
     expect(uploads).toHaveLength(0)
     expect(serviceWrites).toHaveLength(0)
+  })
+
+  it('prints the exported PAGE\'s own scale on the sheet, not page 1\'s', async () => {
+    // Page 2 of a multi-page PDF has its own row in floor_plan_page_scales
+    // (00199). The header line used to read floor_plans.pixels_per_meter —
+    // page 1's figure — on every page, so a page-2 sheet was issued with the
+    // wrong scale printed on it.
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    use(fixture({
+      tables: {
+        'tenants.floor_plans': [PLAN_ROW],                         // 10 px/m across 5 m — page 1
+        'tenants.floor_plan_page_scales': [{ floor_plan_id: PLAN_A, page_index: 2, pixels_per_meter: 20, calibration_metres: 4 }],
+        'cable_schedule.revisions': [REV_ROW],
+        'projects.projects': [{ name: 'KINGSWALK', code: '643' }],
+        'cable_schedule.supply_routes': [{ id: ROUTE_ID, supply_id: SUPPLY_ID, total_length_m: 12 }],
+        'cable_schedule.route_segments': [{ route_id: ROUTE_ID, floor_plan_id: PLAN_A, page_index: 2, length_m: 12 }],
+        'cable_schedule.supplies': [{ id: SUPPLY_ID, from_node_id: 'n1', to_node_id: 'n2' }],
+        'structure.nodes': [{ id: 'n1', code: 'MB 1.1' }, { id: 'n2', code: 'DB-10' }],
+      },
+    } as any))
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 2, jpegBase64: JPEG_1PX })
+    expect(res.error).toBeUndefined()
+    expect(uploads).toHaveLength(1)
+    const text = pdfStreamsText(Buffer.from(uploads[0].bytes))
+    expect(text).toContain('scale 20.0 px/m (set across 4.00 m)')
+    expect(text).not.toContain('scale 10.0 px/m')
+    expect(uploads[0].path).toBe(`${ORG_ID}/${PROJECT_ID}/cable-route-sheets/${PLAN_A}-p2-v1.pdf`)
   })
 
   it('removes the uploaded object when the report row fails to insert — no orphan in the bucket', async () => {

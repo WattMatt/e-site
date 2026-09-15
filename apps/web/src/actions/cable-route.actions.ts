@@ -762,8 +762,24 @@ export async function exportRouteSheetAction(
   // Project names in this dataset already carry their number — "(P89.7) DE
   // POORT" — so prefixing the code again printed "(PDP) (P89.7) DE POORT".
   const projectName = project?.name ?? ''
-  const scaleLine = plan.pixels_per_meter
-    ? `scale ${Number(plan.pixels_per_meter).toFixed(1)} px/m${plan.calibration_metres ? ` (set across ${Number(plan.calibration_metres).toFixed(2)} m)` : ''}`
+  // The scale printed on the sheet is THIS page's (00199): page 1 is the
+  // drawing's own, any later page has its own row or is uncalibrated. Printing
+  // page 1's figure on a page-3 export would issue a wrong number.
+  let sheetPpm: number | null = plan.pixels_per_meter == null ? null : Number(plan.pixels_per_meter)
+  let sheetCalM: number | null = plan.calibration_metres == null ? null : Number(plan.calibration_metres)
+  if (pageIndex > 1) {
+    const { data: ps } = await (supabase as any)
+      .schema('tenants')
+      .from('floor_plan_page_scales')
+      .select('pixels_per_meter, calibration_metres')
+      .eq('floor_plan_id', floorPlanId)
+      .eq('page_index', pageIndex)
+      .maybeSingle()
+    sheetPpm = ps?.pixels_per_meter == null ? null : Number(ps.pixels_per_meter)
+    sheetCalM = ps?.calibration_metres == null ? null : Number(ps.calibration_metres)
+  }
+  const scaleLine = sheetPpm
+    ? `scale ${sheetPpm.toFixed(1)} px/m${sheetCalM ? ` (set across ${sheetCalM.toFixed(2)} m)` : ''}`
     : 'uncalibrated'
   const T = (t: string) => winAnsiSafe(t)
 
