@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import { routeTotalM } from '@esite/shared'
 import { saveSupplyRouteAction, applyRouteToScheduleAction, revertRouteAssignmentAction } from '@/actions/cable-route.actions'
 
@@ -46,6 +46,11 @@ export function AssignRoutePanel({
 }: Props) {
   const [riseM, setRiseM] = useState(initialRiseM)
   const [dropM, setDropM] = useState(initialDropM)
+  // The route can change underneath the panel — a restore from history, an
+  // undo, another tab's save arriving via refresh. Follow it, or the inputs
+  // show a figure the route no longer holds.
+  useEffect(() => { setRiseM(initialRiseM) }, [initialRiseM])
+  useEffect(() => { setDropM(initialDropM) }, [initialDropM])
   const [message, setMessage] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<{ existingValuesM: number[]; proposedM: number; strands: number } | null>(null)
   const [pending, startTransition] = useTransition()
