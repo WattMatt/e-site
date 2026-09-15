@@ -74,12 +74,13 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
   const scheduleGate = await requireEffectiveRole(supabase as any, projectId, ORG_WRITE_ROLES)
   const canMeasureCables = scheduleGate.ok
 
-  const [cableSchedule, routeBase, calibration] = await Promise.all([
+  const [cableSchedule, routeBase, calibration, pageScales] = await Promise.all([
     canMeasureCables ? loadCableSchedule(supabase, projectId) : Promise.resolve(undefined),
     canMeasureCables && initialMode === 'route' && supplyId
       ? loadRouteContext(supabase, projectId, supplyId)
       : Promise.resolve(undefined),
     loadCalibration(supabase, planId),
+    loadPageScales(supabase, planId),
   ])
   // Context for the sheet being traced: every OTHER run's legs on it, labelled
   // from the schedule already loaded. Needs both of the above, hence after.
@@ -207,6 +208,7 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
           calibration_points: calibration.points,
           calibration_metres: calibration.metres,
           calibration_page_index: calibration.pageIndex,
+          page_scales: pageScales,
         }}
         projectId={projectId}
         annotations={annotations}
@@ -259,7 +261,7 @@ async function loadRouteContext(
   const { data: routeRow } = await (supabase as any)
     .schema('cable_schedule')
     .from('supply_routes')
-    .select('id, rise_m, drop_m')
+    .select('id, rise_m, drop_m, updated_at')
     .eq('supply_id', supplyId)
     .maybeSingle()
 
@@ -297,6 +299,7 @@ async function loadRouteContext(
     dropM: routeRow ? Number(routeRow.drop_m) : 0,
     scheduleLengthM: scheduleLengthM == null ? null : Number(scheduleLengthM),
     strands: cableRows.length,
+    updatedAt: routeRow?.updated_at ?? null,
     sheets: ((sheetRows ?? []) as any[]).map((p) => ({ id: p.id, name: p.name ?? 'Drawing', calibrated: p.pixels_per_meter != null })),
     // Carry the supply back so "Done" lands on the run just traced, with its
     // legs and total in front of the user, rather than an unselected list.
@@ -455,4 +458,22 @@ async function loadCableSchedule(
       }))
       .sort((a, b) => a.label.localeCompare(b.label)),
   }
+}
+
+/** Scales set per PDF page (00199). Empty before any page other than 1 is calibrated. */
+async function loadPageScales(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  planId: string,
+): Promise<Array<{ pageIndex: number; pixelsPerMeter: number; points: number[] | null; metres: number | null }>> {
+  const { data } = await (supabase as any)
+    .schema('tenants')
+    .from('floor_plan_page_scales')
+    .select('page_index, pixels_per_meter, calibration_points, calibration_metres')
+    .eq('floor_plan_id', planId)
+  return ((data ?? []) as any[]).map((r) => ({
+    pageIndex: Number(r.page_index),
+    pixelsPerMeter: Number(r.pixels_per_meter),
+    points: Array.isArray(r.calibration_points) && r.calibration_points.length === 4 ? r.calibration_points.map(Number) : null,
+    metres: r.calibration_metres == null ? null : Number(r.calibration_metres),
+  }))
 }

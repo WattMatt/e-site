@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Stage,
@@ -26,6 +26,15 @@ import { createRfiAction } from '@/actions/rfi.actions'
 import { calibrateFloorPlanAction } from '@/actions/cable-route.actions'
 import { edgeLengthsM, moveVertex, insertVertexAfter, removeVertex, dedupeConsecutivePoints } from '@esite/shared'
 import { RouteLayer, type RouteLayerLeg, type OtherLeg, type CalibrationLine } from './RouteLayer'
+import {
+  emptyHistory as emptyRouteHistory,
+  pushHistory as pushRouteHistory,
+  undoHistory as undoRouteHistory,
+  redoHistory as redoRouteHistory,
+  snapshotsEqual,
+  type RouteHistory, type RouteSnapshot, type SnapshotLeg,
+} from '@/lib/cable-route/route-history'
+import { snapRouteVertex } from '@/lib/cable-route/snap'
 import {
   type StrokeStyle,
   STROKE_STYLES,
@@ -355,6 +364,8 @@ export type RouteModeProps = {
   /** Replace one saved leg's geometry (vertex dragged, added or removed). */
   onUpdateLeg: (legId: string, points: number[]) => Promise<{ error?: string }>
   onDeleteLeg: (legId: string) => Promise<{ error?: string }>
+  /** Replace the WHOLE leg list — how undo/redo re-persists a prior state. */
+  onReplaceLegs: (legs: SnapshotLeg[]) => Promise<{ error?: string }>
   /**
    * Keep this sheet — routes, labels and calibration as drawn — as a versioned
    * PDF report. Receives the native-resolution JPEG the canvas rasterised.
@@ -393,6 +404,8 @@ type Props = {
     calibration_points?: number[] | null
     calibration_metres?: number | null
     calibration_page_index?: number | null
+    /** Scale per PDF page (00199). Page 1 falls back to the drawing-level scale. */
+    page_scales?: Array<{ pageIndex: number; pixelsPerMeter: number; points: number[] | null; metres: number | null }>
   }
   snagPins: Array<{ id: string; floor_plan_pin: { x: number; y: number } }>
   projectId: string
@@ -497,7 +510,9 @@ export function MarkupCanvas({
   const [current, setCurrent] = useState<AnyShape | null>(null)
   const [undoStack, setUndoStack] = useState<AnyShape[][]>([])
   const [redoStack, setRedoStack] = useState<AnyShape[][]>([])
-  const [pixelsPerMeter, setPixelsPerMeter] = useState<number | null>(plan.pixels_per_meter)
+  const [pixelsPerMeterDrawing, setPixelsPerMeter] = useState<number | null>(plan.pixels_per_meter)
+  /** Scales set in this session for pages other than 1 (00199). */
+  const [sessionPageScales, setSessionPageScales] = useState<Map<number, { ppm: number; points: number[]; metres: number }>>(new Map())
   const [calibPoints, setCalibPoints] = useState<Array<[number, number]>>([])
   const [calibDistance, setCalibDistance] = useState('')
   const [calibSaving, setCalibSaving] = useState(false)
@@ -518,6 +533,19 @@ export function MarkupCanvas({
   const [exporting, setExporting] = useState(false)
   /** The saved-routes overlay outside route mode. On by default when there is anything to show. */
   const [showRoutes, setShowRoutes] = useState(true)
+  /** Undo/redo over snapshots of the whole route — legs, pending leg, draft. */
+  const [history, setHistory] = useState<RouteHistory>(() => emptyRouteHistory({ legs: [], pending: null, draft: [] }))
+  /** True while an undo/redo is being applied, until the canvas state settles on it. */
+  const applyingHistoryRef = useRef(false)
+  /** What the last click snapped to, for the strip. */
+  const [snapHint, setSnapHint] = useState<string | null>(null)
+  /** Set when an unsaved trace was brought back from the last session. */
+  const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null)
+  /** Per-page scales (00199); the drawing-level scale is the page-1 default. */
+  const pageScales = useMemo(
+    () => new Map((plan.page_scales ?? []).map((s) => [s.pageIndex, s])),
+    [plan.page_scales],
+  )
   const [exportMsg, setExportMsg] = useState<string | null>(null)
   const selectedLegId =
     routeMode && selectedLegIndex != null ? (routeMode.savedLegs[selectedLegIndex]?.id ?? null) : null
@@ -531,6 +559,16 @@ export function MarkupCanvas({
     plan.calibration_points && plan.calibration_points.length === 4 && plan.calibration_metres
       ? { points: plan.calibration_points, metres: plan.calibration_metres, pageIndex: plan.calibration_page_index ?? 1 }
       : null,
+  )
+  /** Calibration lines for pages other than the drawing-level one (00199). */
+  const pageCalibLines = useMemo<CalibrationLine[]>(
+    () => [
+      ...(plan.page_scales ?? [])
+        .filter((s) => s.points && s.points.length === 4 && s.metres)
+        .map((s) => ({ points: s.points as number[], metres: s.metres as number, pageIndex: s.pageIndex })),
+      ...[...sessionPageScales.entries()].map(([pageIndex, s]) => ({ points: s.points, metres: s.metres, pageIndex })),
+    ],
+    [plan.page_scales, sessionPageScales],
   )
   const [calibError, setCalibError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -645,6 +683,8 @@ export function MarkupCanvas({
       const res = await routeMode.onCommitLeg({ points: pendingLeg, pageIndex: currentPage })
       if (res.error) { setLegError(res.error); return }
       setPendingLeg(null)
+      setRestoredDraftAt(null)
+      if (routeDraftKey) void clearDraftRecord(routeDraftKey)
     } finally {
       setLegSaving(false)
     }
@@ -761,6 +801,96 @@ export function MarkupCanvas({
     setSelectedLegId(null)
     setLegError(null)
   }, [currentPage])
+
+  // Which scale applies: in route mode, the page we are on (00199), page 1
+  // falling back to the drawing-level scale; in markup mode the drawing-level
+  // scale as always, so the measure tool behaves exactly as before.
+  const pixelsPerMeter: number | null = (() => {
+    if (!routeMode) return pixelsPerMeterDrawing
+    const s = sessionPageScales.get(currentPage) ?? (pageScales.get(currentPage) ? { ppm: pageScales.get(currentPage)!.pixelsPerMeter } : null)
+    if (s) return s.ppm
+    return currentPage === 1 ? pixelsPerMeterDrawing : null
+  })()
+
+  // ── History: record every visible change as a snapshot ─────────────────
+  // Any mutation from any source (a click, a save, a drag) lands here. While an
+  // undo/redo is being applied we do not record, until the canvas state has
+  // settled on the restored snapshot — a persisted undo arrives asynchronously.
+  const currentSnapshot = (): RouteSnapshot => ({
+    legs: (routeMode?.savedLegs ?? []).map((l) => ({ floorPlanId: l.floorPlanId ?? '', pageIndex: l.pageIndex, points: l.points })),
+    pending: pendingLeg,
+    draft: polyPoints,
+  })
+  useEffect(() => {
+    if (!routeMode) return
+    const now = currentSnapshot()
+    if (applyingHistoryRef.current) {
+      if (snapshotsEqual(now, history.present)) applyingHistoryRef.current = false
+      return
+    }
+    setHistory((h) => pushRouteHistory(h, now))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeMode?.savedLegs, pendingLeg, polyPoints])
+  // A new run starts a fresh history.
+  useEffect(() => {
+    if (routeMode) setHistory(emptyRouteHistory(currentSnapshot()))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeMode?.supplyId])
+
+  async function applySnapshot(next: RouteSnapshot) {
+    if (!routeMode) return
+    applyingHistoryRef.current = true
+    setPolyPoints(next.draft)
+    setPendingLeg(next.pending)
+    setSelectedLegIndex(null)
+    setLegError(null)
+    const legsNow = currentSnapshot().legs
+    const same = legsNow.length === next.legs.length && legsNow.every((l, i) => l.floorPlanId === next.legs[i].floorPlanId && l.pageIndex === next.legs[i].pageIndex && l.points.join(',') === next.legs[i].points.join(','))
+    if (!same) {
+      const res = await routeMode.onReplaceLegs(next.legs)
+      if (res.error) {
+        applyingHistoryRef.current = false
+        setLegError(res.error)
+      }
+    }
+  }
+  function undoRoute() {
+    if (!history.canUndo) return
+    const h = undoRouteHistory(history)
+    setHistory(h)
+    void applySnapshot(h.present)
+  }
+  function redoRoute() {
+    if (!history.canRedo) return
+    const h = redoRouteHistory(history)
+    setHistory(h)
+    void applySnapshot(h.present)
+  }
+
+  // ── Draft autosave: an unsaved trace survives a reload ─────────────────
+  const routeDraftKey = routeMode ? `route-draft:${plan.id}:${routeMode.supplyId}:${currentPage}` : null
+  useEffect(() => {
+    if (!routeDraftKey) return
+    let live = true
+    ;(async () => {
+      const rec = (await getDraft(routeDraftKey)) as unknown as { draft?: number[]; pending?: number[] | null; savedAt?: string } | null
+      if (!live || !rec) return
+      if ((rec.draft && rec.draft.length >= 2) || (rec.pending && rec.pending.length >= 4)) {
+        setPolyPoints(rec.draft ?? [])
+        setPendingLeg(rec.pending ?? null)
+        setRestoredDraftAt(rec.savedAt ?? null)
+      }
+    })()
+    return () => { live = false }
+  }, [routeDraftKey])
+  useEffect(() => {
+    if (!routeDraftKey) return
+    const t = setTimeout(() => {
+      if (polyPoints.length === 0 && !pendingLeg) void clearDraftRecord(routeDraftKey)
+      else void setDraftRecord(routeDraftKey, { draft: polyPoints, pending: pendingLeg, savedAt: new Date().toISOString() } as unknown as DraftRecord)
+    }, 400)
+    return () => clearTimeout(t)
+  }, [routeDraftKey, polyPoints, pendingLeg])
 
   // Route mode hands the measurer the polyline, not the selector. Arriving by
   // either door — the worklist or the ⚡ picker — you are holding the tool
@@ -1132,6 +1262,11 @@ export function MarkupCanvas({
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (mode === 'view') return
       if (routeMode) {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+          e.preventDefault()
+          if (e.shiftKey) redoRoute(); else undoRoute()
+          return
+        }
         if (e.key === 'Enter' && polyPoints.length >= 4) { e.preventDefault(); finishPoly(); return }
         if (e.key === 'Escape') {
           e.preventDefault()
@@ -1156,7 +1291,7 @@ export function MarkupCanvas({
     window.addEventListener('keydown', onEdit)
     return () => window.removeEventListener('keydown', onEdit)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, shapes, mode, routeMode, polyPoints, pendingLeg, selectedLegId])
+  }, [selectedId, shapes, mode, routeMode, polyPoints, pendingLeg, selectedLegId, history])
 
   // ── History ───────────────────────────────────────────────────────────
   function pushHistory(prev: AnyShape[]) {
@@ -1588,6 +1723,19 @@ export function MarkupCanvas({
     if (tool === 'polygon' || tool === 'polyline') {
       // Click adds a vertex. Double-click (handled separately) finishes:
       // polygon closes, polyline stays open.
+      if (routeMode && tool === 'polyline') {
+        // Route mode snaps: a leg's first vertex to the end of a leg already
+        // saved on this sheet (so the run joins up), and with Shift any later
+        // vertex to 0/45/90° from the previous one (cable trays are orthogonal).
+        const endpoints: Array<[number, number]> = routeMode.savedLegs
+          .filter((l) => l.floorPlanId === plan.id && l.pageIndex === currentPage && l.points.length >= 4)
+          .flatMap((l) => [[l.points[0], l.points[1]], [l.points[l.points.length - 2], l.points[l.points.length - 1]]] as Array<[number, number]>)
+        const prev: [number, number] | null = polyPoints.length >= 2 ? [polyPoints[polyPoints.length - 2], polyPoints[polyPoints.length - 1]] : null
+        const snapped = snapRouteVertex([sx, sy], prev, endpoints, 12 / scale, !!(e.evt as MouseEvent).shiftKey)
+        setPolyPoints((pts) => [...pts, snapped.point[0], snapped.point[1]])
+        setSnapHint(snapped.snappedTo === 'endpoint' ? 'joined to the previous leg' : snapped.snappedTo === 'angle' ? 'snapped to 45°' : null)
+        return
+      }
       setPolyPoints((pts) => [...pts, sx, sy])
       return
     }
@@ -1733,8 +1881,12 @@ export function MarkupCanvas({
           pageIndex: currentPage,
         })
         if (res.error) throw new Error(res.error)
-        setPixelsPerMeter(res.pixelsPerMeter ?? ppm)
-        setCalibLine({ points: calibPts, metres, pageIndex: currentPage })
+        if (currentPage === 1) {
+          setPixelsPerMeter(res.pixelsPerMeter ?? ppm)
+          setCalibLine({ points: calibPts, metres, pageIndex: 1 })
+        } else {
+          setSessionPageScales((m) => new Map(m).set(currentPage, { ppm: res.pixelsPerMeter ?? ppm, points: calibPts, metres }))
+        }
         setCalibPoints([])
         setCalibDistance('')
         // Back to tracing — the scale was set in order to trace.
@@ -2328,6 +2480,12 @@ export function MarkupCanvas({
         )
         return (
           <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 22, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            {restoredDraftAt && (
+              <span style={{ fontSize: 11, color: 'var(--c-amber)' }}>
+                restored an unsaved trace from {new Date(restoredDraftAt).toLocaleTimeString()}
+              </span>
+            )}
+            {snapHint && drafting && <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>{snapHint}</span>}
             {cell(1, 'Trace', pendingLeg
               ? 'leg finished — press Save leg, or Discard'
               : drafting
@@ -2652,6 +2810,8 @@ export function MarkupCanvas({
             <ToolbarButton onClick={startCalibration} title="Set this drawing's scale">
               {pixelsPerMeter ? 'Recalibrate' : 'Set scale'}
             </ToolbarButton>
+            <ToolbarButton onClick={undoRoute} disabled={!history.canUndo || legSaving} title="Undo (⌘Z) — the last vertex, leg, edit or save">↶</ToolbarButton>
+            <ToolbarButton onClick={redoRoute} disabled={!history.canRedo || legSaving} title="Redo (⇧⌘Z)">↷</ToolbarButton>
             <ToolbarButton
               onClick={() => void exportSheet()}
               disabled={exporting || !img || routeMode.savedLegs.every((l) => l.floorPlanId !== plan.id)}
@@ -3141,7 +3301,7 @@ export function MarkupCanvas({
                 draftPoints={!exporting && tool === 'polyline' ? polyPoints : []}
                 selectedLegId={exporting ? null : selectedLegId}
                 editable={!exporting && tool === 'select' && !legSaving}
-                calibration={calibLine}
+                calibration={pageCalibLines.find((c) => c.pageIndex === currentPage) ?? calibLine}
                 showCalibration
                 onSelectLeg={setSelectedLegId}
                 onMoveVertex={onMoveLegVertex}

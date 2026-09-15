@@ -77,6 +77,9 @@ export function RouteMeasureWorkspace({
   const [filter, setFilter] = useState<Filter>(
     initialRun?.route && initialRun.route.segments.length > 0 ? 'all' : 'outstanding',
   )
+  /** Search and sort — KINGSWALK has 125 runs on one revision. */
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<'name' | 'length' | 'status'>('name')
   const [selectedId, setSelectedId] = useState<string | null>(initialSupplyId ?? null)
   /** Which sheet "Trace on drawing" opens. Defaults to the last sheet used. */
   const [tracePlanId, setTracePlanId] = useState<string>(() => {
@@ -93,10 +96,42 @@ export function RouteMeasureWorkspace({
 
   const visible = useMemo(() => {
     const traced = (r: RunRow) => !!r.route && r.route.segments.length > 0
-    if (filter === 'outstanding') return runs.filter((r) => !traced(r))
-    if (filter === 'traced') return runs.filter(traced)
-    return runs
-  }, [runs, filter])
+    let list = filter === 'outstanding' ? runs.filter((r) => !traced(r)) : filter === 'traced' ? runs.filter(traced) : runs
+    const q = query.trim().toLowerCase()
+    if (q) list = list.filter((r) => `${r.fromCode} ${r.toCode} ${r.section ?? ''}`.toLowerCase().includes(q))
+    const label = (r: RunRow) => `${r.fromCode} → ${r.toCode}`
+    return [...list].sort((a, b) =>
+      sort === 'length'
+        ? (b.route?.totalM ?? b.scheduleLengthM ?? -1) - (a.route?.totalM ?? a.scheduleLengthM ?? -1) || label(a).localeCompare(label(b))
+        : sort === 'status'
+          ? Number(traced(a)) - Number(traced(b)) || label(a).localeCompare(label(b))
+          : label(a).localeCompare(label(b)),
+    )
+  }, [runs, filter, query, sort])
+
+  /** Every run with its route figures, as a file the schedule people can keep. */
+  const downloadCsv = useCallback(() => {
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const rows = [
+      ['From', 'To', 'Section', 'Strands', 'Legs', 'Sheets', 'Traced (m)', 'Rise (m)', 'Drop (m)', 'Route total (m)', 'Schedule length (m)', 'On schedule'],
+      ...runs.map((r) => [
+        r.fromCode, r.toCode, r.section ?? '', r.strands,
+        r.route?.segments.length ?? 0,
+        r.route ? [...new Set(r.route.segments.map((g) => g.floorPlanName))].join('; ') : '',
+        r.route ? r.route.tracedM.toFixed(2) : '', r.route ? r.route.riseM : '', r.route ? r.route.dropM : '',
+        r.route ? r.route.totalM.toFixed(2) : '',
+        r.scheduleLengthM == null ? '' : r.scheduleLengthM.toFixed(2),
+        r.route && r.scheduleLengthM != null && Math.abs(r.scheduleLengthM - r.route.totalM) < 0.005 ? 'yes' : 'no',
+      ]),
+    ]
+    const blob = new Blob([rows.map((row) => row.map(esc).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cable-routes-${revisionId.slice(0, 8)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [runs, revisionId])
 
   const outstandingCount = runs.filter((r) => !r.route || r.route.segments.length === 0).length
 
@@ -152,6 +187,26 @@ export function RouteMeasureWorkspace({
         }}
       >
         <div style={{ display: 'flex', gap: 4, padding: 8, borderBottom: '1px solid var(--c-border)' }}>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search runs…"
+            aria-label="Search runs"
+            style={{ ...inputStyle, width: '100%', marginBottom: 6 }}
+          />
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6, fontSize: 11, color: 'var(--c-text-dim)' }}>
+            Sort
+            <select value={sort} onChange={(e) => setSort(e.target.value as 'name' | 'length' | 'status')} aria-label="Sort runs" style={{ ...inputStyle, width: 'auto', marginTop: 0, padding: '3px 6px' }}>
+              <option value="name">by name</option>
+              <option value="length">by length</option>
+              <option value="status">outstanding first</option>
+            </select>
+            <div style={{ flex: 1 }} />
+            <button type="button" onClick={downloadCsv} style={{ ...btn('ghost'), padding: '4px 8px', fontSize: 11 }} title="Every run with its legs, sheets, traced, rise, drop, total and schedule length">
+              Routes CSV
+            </button>
+          </div>
           {(['outstanding', 'traced', 'all'] as Filter[]).map((f) => (
             <button
               key={f}

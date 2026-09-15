@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react'
 import { routeTotalM } from '@esite/shared'
-import { saveSupplyRouteAction, applyRouteToScheduleAction } from '@/actions/cable-route.actions'
+import { saveSupplyRouteAction, applyRouteToScheduleAction, revertRouteAssignmentAction } from '@/actions/cable-route.actions'
 
 /**
  * Rise & drop, the run total, and ASSIGN TO SCHEDULE — one component, mounted
@@ -119,6 +119,16 @@ export function AssignRoutePanel({
     })
   }
 
+  function revert() {
+    setMessage(null)
+    startTransition(async () => {
+      const res = await revertRouteAssignmentAction({ supplyId })
+      if (res.error) { setMessage(res.error); return }
+      setMessage(`Reverted ${res.strands} strand${res.strands === 1 ? '' : 's'} to ${res.revertedToM == null ? 'no length' : `${res.revertedToM.toFixed(2)} m`} — recorded in the change log.`)
+      onChanged?.()
+    })
+  }
+
   const row: React.CSSProperties = compact
     ? { display: 'flex', flexDirection: 'column', gap: 10 }
     : { display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }
@@ -164,6 +174,17 @@ export function AssignRoutePanel({
           >
             {pending ? 'Working…' : 'Assign to schedule'}
           </button>
+          {onSchedule && (
+            <button
+              type="button"
+              onClick={revert}
+              disabled={pending}
+              style={btn('ghost')}
+              title="Put the schedule back to the length it held before this route was assigned (recorded in the change log)"
+            >
+              Revert to previous length
+            </button>
+          )}
         </div>
       </div>
 
@@ -191,7 +212,7 @@ export function AssignRoutePanel({
       )}
 
       {message && (
-        <p role="status" style={{ margin: '10px 0 0', fontSize: 12, color: /^(Assigned|Saved)/.test(message) ? 'var(--c-text)' : '#dc2626' }}>
+        <p role="status" style={{ margin: '10px 0 0', fontSize: 12, color: /^(Assigned|Saved|Reverted)/.test(message) ? 'var(--c-text)' : '#dc2626' }}>
           {message}
         </p>
       )}

@@ -70,6 +70,10 @@ vi.mock('@/lib/cable-schedule/roles', async (importOriginal) => {
 })
 
 import {
+  restoreRouteHistoryAction,
+  remeasureRouteLegsAction,
+  revertRouteAssignmentAction,
+  calibrateFloorPlanAction as calibrateAction,
   exportRouteSheetAction,
   calibrateFloorPlanAction,
   saveSupplyRouteAction,
@@ -136,7 +140,11 @@ function makeClient(fx: Fixture) {
         // Two non-select read-backs: the route upsert's .select('id').single(),
         // and the segment insert's .select(...) which echoes the rows back with
         // ids so the canvas can draw and edit them without a reload.
-        if (op === 'upsert') return { data: { id: ROUTE_ID }, error: null }
+        // The route row comes back with its trigger-maintained updated_at, for
+        // both the upsert (save) and the update (restore) read-backs.
+        if ((op === 'upsert' || op === 'update') && table === 'supply_routes') {
+          return { data: { id: ROUTE_ID, updated_at: '2026-09-15T10:00:00.000Z' }, error: null }
+        }
         if (op === 'insert' && table === 'route_segments') {
           const last = writes[writes.length - 1]
           const rows = Array.isArray(last?.payload) ? last.payload : []
@@ -175,6 +183,9 @@ function makeClient(fx: Fixture) {
     }
 
     const api: any = {
+      // emitProductEvent (00194) calls .rpc on the same client; it swallows a
+      // failure, but a fake without it logs a TypeError on every save.
+      rpc: async () => ({ data: null, error: null }),
       select: () => api,
       eq: (col: string, val: unknown) => { filters.push({ col, val }); return api },
       in: (col: string, val: unknown) => { filters.push({ col, val }); return api },
@@ -194,6 +205,8 @@ function makeClient(fx: Fixture) {
   }
 
   return {
+    // emitProductEvent (00194) calls .rpc on the caller's client and swallows a failure.
+    rpc: async () => ({ data: null, error: null }),
     auth: { getUser: async () => ({ data: { user: { id: USER_ID } }, error: null }) },
     // lookupCableRole is mocked, so the public-schema path is never taken.
     from: (table: string) => builder('public', table),
@@ -267,6 +280,9 @@ function payloadWithClientClaims(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   writes = []
   createClientMock.mockReset()
+  // emitProductEvent (00194) runs its RPC on the service client and swallows a
+  // failure; without a default here every save logs a TypeError.
+  createServiceClientMock.mockReset().mockReturnValue({ rpc: async () => ({ data: null, error: null }) })
   revalidatePathMock.mockReset()
   requireRoleForRevisionMock.mockReset().mockResolvedValue({ ok: true, role: 'admin' })
   lookupCableRoleMock.mockReset().mockResolvedValue('Admin')
@@ -812,6 +828,7 @@ describe('exportRouteSheetAction — the sheet becomes a versioned report', () =
       return api
     }
     return {
+      rpc: async () => ({ data: null, error: null }),
       schema: () => ({ from: builder }),
       storage: {
         from: () => ({
@@ -924,5 +941,153 @@ describe('applyRouteToScheduleAction — status follows the grid rule', () => {
     // …and the status write is scoped to strands that were UNMEASURED.
     expect(updates[1].payload).toEqual({ length_status: 'MEASURED' })
     expect(updates[1].filters).toEqual(expect.arrayContaining([{ col: 'length_status', val: 'UNMEASURED' }]))
+  })
+})
+
+/* ─────────────── 6. history, concurrency, per-page scale ─────────────── */
+
+describe('saveSupplyRouteAction — trail and guards', () => {
+  it('writes one route_history row per save, holding the whole list as stored', async () => {
+    use(fixture())
+    const res = await saveSupplyRouteAction({ supplyId: SUPPLY_ID, riseM: 1, dropM: 2, segments: [{ floorPlanId: PLAN_A, pageIndex: 1, points: [0, 0, 300, 0] }] })
+    expect(res.ok).toBe(true)
+    const [hist] = writesTo('route_history').filter((w) => w.op === 'insert')
+    expect(hist).toBeDefined()
+    const p = hist.payload as any
+    expect(p).toMatchObject({ route_id: ROUTE_ID, supply_id: SUPPLY_ID, reason: 'save', rise_m: 1, drop_m: 2, saved_by: USER_ID })
+    expect(Array.isArray(p.snapshot)).toBe(true)
+    expect(p.snapshot[0]).toMatchObject({ seq: 1, floor_plan_id: PLAN_A, length_m: 30, pixels_per_meter: PLAN_A_PPM })
+    expect(res.updatedAt).toBeDefined()
+  })
+
+  it('refuses to overwrite a route someone else saved since the caller loaded it, and writes nothing', async () => {
+    use(fixture({ route: { id: ROUTE_ID, total_length_m: 5, traced_length_m: 5, updated_at: '2026-09-15T10:00:00.000Z' } as any }))
+    const res = await saveSupplyRouteAction({
+      supplyId: SUPPLY_ID, riseM: 0, dropM: 0, segments: [{ floorPlanId: PLAN_A, pageIndex: 1, points: HUNDRED_PX }],
+      expectedUpdatedAt: '2026-09-15T09:00:00.000Z',
+    })
+    expect(res.ok).toBeUndefined()
+    expect(res.error).toMatch(/saved by someone else/i)
+    expect(res.conflict?.updatedAt).toBe('2026-09-15T10:00:00.000Z')
+    expect(writesTo('supply_routes')).toHaveLength(0)
+    expect(writesTo('route_segments')).toHaveLength(0)
+  })
+
+  it('accepts a save whose token matches the stored updated_at', async () => {
+    use(fixture({ route: { id: ROUTE_ID, total_length_m: 5, traced_length_m: 5, updated_at: '2026-09-15T10:00:00.000Z' } as any }))
+    const res = await saveSupplyRouteAction({
+      supplyId: SUPPLY_ID, riseM: 0, dropM: 0, segments: [{ floorPlanId: PLAN_A, pageIndex: 1, points: HUNDRED_PX }],
+      expectedUpdatedAt: '2026-09-15T10:00:00.000Z',
+    })
+    expect(res.ok).toBe(true)
+  })
+
+  it('refuses a leg on page 2 of a drawing with no page-2 scale, naming the page', async () => {
+    use(fixture())
+    const res = await saveSupplyRouteAction({ supplyId: SUPPLY_ID, riseM: 0, dropM: 0, segments: [{ floorPlanId: PLAN_A, pageIndex: 2, points: HUNDRED_PX }] })
+    expect(res.error).toMatch(/page 2/i)
+    expect(writesTo('route_segments')).toHaveLength(0)
+  })
+
+  it('measures a page-2 leg with the PAGE scale, not the drawing scale', async () => {
+    // Drawing scale 10 px/m would give 10.00 m for 100 px; the page-2 scale of
+    // 20 px/m gives 5.00 m. Only one of those is the page the leg is on.
+    use(fixture({ tables: { 'tenants.floor_plan_page_scales': [{ floor_plan_id: PLAN_A, page_index: 2, pixels_per_meter: 20 }] } } as any))
+    const res = await saveSupplyRouteAction({ supplyId: SUPPLY_ID, riseM: 0, dropM: 0, segments: [{ floorPlanId: PLAN_A, pageIndex: 2, points: HUNDRED_PX }] })
+    expect(res.error).toBeUndefined()
+    const [insert] = writesTo('route_segments').filter((w) => w.op === 'insert')
+    expect((insert.payload as any[])[0]).toMatchObject({ page_index: 2, pixels_per_meter: 20, length_m: 5 })
+  })
+})
+
+describe('restoreRouteHistoryAction — a prior state comes back verbatim', () => {
+  it('re-inserts the snapshot as stored, restores rise/drop, and logs the restore', async () => {
+    use(fixture({
+      route: { id: ROUTE_ID, total_length_m: 5, traced_length_m: 5 },
+      tables: {
+        'cable_schedule.route_history': [{
+          id: '99999999-9999-9999-9999-999999999999', route_id: ROUTE_ID, supply_id: SUPPLY_ID, rise_m: 3, drop_m: 1,
+          // Stored under an OLD scale of 8 px/m: restore must keep 8 and 12.5, not re-measure at the drawing's 10.
+          snapshot: [{ floor_plan_id: PLAN_A, floor_plan_name: 'A', page_index: 1, points: [0, 0, 100, 0], pixels_per_meter: 8, length_m: 12.5 }],
+        }],
+      },
+    } as any))
+    const res = await restoreRouteHistoryAction({ supplyId: SUPPLY_ID, historyId: '99999999-9999-9999-9999-999999999999' })
+    expect(res.error).toBeUndefined()
+    const [ins] = writesTo('route_segments').filter((w) => w.op === 'insert')
+    expect((ins.payload as any[])[0]).toMatchObject({ pixels_per_meter: 8, length_m: 12.5, route_id: ROUTE_ID })
+    const [upd] = writesTo('supply_routes').filter((w) => w.op === 'update')
+    expect(upd.payload).toMatchObject({ rise_m: 3, drop_m: 1 })
+    const [hist] = writesTo('route_history').filter((w) => w.op === 'insert')
+    expect(hist.payload).toMatchObject({ reason: 'restore' })
+    expect(res.totalM).toBe(16.5)
+  })
+})
+
+describe('remeasureRouteLegsAction — after a rescale, points stay and lengths follow', () => {
+  const stale = { id: 'seg-a', seq: 1, points: [0, 0, 100, 0], pixels_per_meter: 5, length_m: 20, floor_plan_id: PLAN_A, floor_plan_name: 'A', page_index: 1 }
+  const fresh = { id: 'seg-b', seq: 2, points: [0, 0, 50, 0], pixels_per_meter: PLAN_A_PPM, length_m: 5, floor_plan_id: PLAN_A, floor_plan_name: 'A', page_index: 1 }
+
+  it('previews before/after for only the legs whose scale differs, writing nothing on a dry run', async () => {
+    use(fixture({ route: { id: ROUTE_ID, rise_m: 0, drop_m: 0 }, planSingle: { id: PLAN_A, pixels_per_meter: PLAN_A_PPM }, tables: { 'cable_schedule.route_segments': [stale, fresh] } } as any))
+    const res = await remeasureRouteLegsAction({ supplyId: SUPPLY_ID, floorPlanId: PLAN_A, pageIndex: 1, dryRun: true })
+    expect(res.preview).toBe(true)
+    expect(res.legs).toEqual([{ id: 'seg-a', seq: 1, beforeM: 20, afterM: 10, beforePpm: 5, afterPpm: PLAN_A_PPM }])
+    expect(writesTo('route_segments')).toHaveLength(0)
+  })
+
+  it('rewrites the stale leg\'s scale and length, leaves the fresh one, and logs a remeasure', async () => {
+    use(fixture({ route: { id: ROUTE_ID, rise_m: 0, drop_m: 0 }, planSingle: { id: PLAN_A, pixels_per_meter: PLAN_A_PPM }, tables: { 'cable_schedule.route_segments': [stale, fresh] } } as any))
+    const res = await remeasureRouteLegsAction({ supplyId: SUPPLY_ID, floorPlanId: PLAN_A, pageIndex: 1 })
+    expect(res.error).toBeUndefined()
+    const updates = writesTo('route_segments').filter((w) => w.op === 'update')
+    expect(updates).toHaveLength(1)
+    expect(updates[0].payload).toEqual({ pixels_per_meter: PLAN_A_PPM, length_m: 10 })
+    expect(writesTo('route_history').filter((w) => w.op === 'insert')[0].payload).toMatchObject({ reason: 'remeasure' })
+  })
+})
+
+describe('revertRouteAssignmentAction — the schedule goes back to what it held', () => {
+  it('restores each strand\'s prior length from the change log, as MANUAL, and logs the reversal', async () => {
+    use(applyFixture({
+      tables: {
+        'cable_schedule.change_log': [
+          { entity_id: CABLE_1, old_value: 99, new_value: 137.25, changed_at: '2026-09-15T01:00:00Z' },
+          { entity_id: CABLE_1, old_value: 80, new_value: 99, changed_at: '2026-09-14T01:00:00Z' },   // older: must be ignored
+          { entity_id: CABLE_2, old_value: null, new_value: 137.25, changed_at: '2026-09-15T01:00:00Z' },
+        ],
+      },
+    } as any))
+    const res = await revertRouteAssignmentAction({ supplyId: SUPPLY_ID })
+    expect(res.error).toBeUndefined()
+    expect(res.strands).toBe(2)
+    const updates = writesTo('cables').filter((w) => w.op === 'update')
+    expect(updates).toHaveLength(2)
+    expect(updates[0].payload).toMatchObject({ measured_length_m: 99, measured_length_method: 'MANUAL' })
+    expect(updates[0].payload).not.toHaveProperty('length_status')
+    // A strand that had NO length before goes back to unmeasured, method cleared.
+    expect(updates[1].payload).toMatchObject({ measured_length_m: null, measured_length_method: null, length_status: 'UNMEASURED' })
+    const [log] = writesTo('change_log').filter((w) => w.op === 'insert')
+    expect((log.payload as any[])[0]).toMatchObject({ field_name: 'measured_length_m', new_value: 99, reason: expect.stringMatching(/revert/i) })
+  })
+
+  it('refuses when no assignment was ever recorded', async () => {
+    use(applyFixture({ tables: { 'cable_schedule.change_log': [] } } as any))
+    const res = await revertRouteAssignmentAction({ supplyId: SUPPLY_ID })
+    expect(res.error).toMatch(/nothing to revert/i)
+    expect(writesTo('cables')).toHaveLength(0)
+  })
+})
+
+describe('calibrateFloorPlanAction — a page other than 1 has its own scale', () => {
+  it('writes page 2 to floor_plan_page_scales and leaves the drawing-level scale alone', async () => {
+    requireEffectiveRoleMock.mockReset().mockResolvedValue({ ok: true, role: 'admin' })
+    use(fixture({ planSingle: { id: PLAN_A, project_id: PROJECT_ID, organisation_id: ORG_ID } } as any))
+    const res = await calibrateAction({ floorPlanId: PLAN_A, points: [0, 0, 250, 0], realMetres: 5, pageIndex: 2 })
+    expect(res.ok).toBe(true)
+    expect(writesTo('floor_plans')).toHaveLength(0)
+    const [up] = writesTo('floor_plan_page_scales').filter((w) => w.op === 'upsert')
+    expect(up.payload).toMatchObject({ floor_plan_id: PLAN_A, page_index: 2, pixels_per_meter: 50, calibration_metres: 5 })
+    expect((up as any).opts).toMatchObject({ onConflict: 'floor_plan_id,page_index' })
   })
 })

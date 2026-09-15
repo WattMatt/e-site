@@ -40,14 +40,20 @@ function migrationContaining(needle: string): string {
 }
 
 function checkValues(sql: string, column: string): string[] {
-  const m = stripLineComments(sql).match(new RegExp(`${column}\\s+text\\s+NOT NULL[\\s\\S]{0,400}?CHECK\\s*\\(\\s*${column}\\s+IN\\s*\\(([^)]*)\\)`, 'i'))
+  const src = stripLineComments(sql)
+  // Either the inline CHECK on the column at CREATE time, or a later named
+  // `ADD CONSTRAINT <table>_<column>_check CHECK (<column> IN (…))` that
+  // redefined it (00199 widened product_events.event this way).
+  const m =
+    src.match(new RegExp(`${column}\\s+text\\s+NOT NULL[\\s\\S]{0,400}?CHECK\\s*\\(\\s*${column}\\s+IN\\s*\\(([^)]*)\\)`, 'i')) ??
+    src.match(new RegExp(`ADD CONSTRAINT\\s+\\w+_${column}_check\\s+CHECK\\s*\\(\\s*${column}\\s+IN\\s*\\(([^)]*)\\)`, 'i'))
   if (!m) throw new Error(`Could not locate the ${column} CHECK constraint`)
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort()
 }
 
 describe('product-event registry', () => {
   it('equals public.product_events.event CHECK in both directions', () => {
-    const sql = migrationContaining('CREATE TABLE public.product_events')
+    const sql = migrationContaining('ADD CONSTRAINT product_events_event_check')
     expect(checkValues(sql, 'event')).toEqual([...PRODUCT_EVENTS].sort())
   })
 })

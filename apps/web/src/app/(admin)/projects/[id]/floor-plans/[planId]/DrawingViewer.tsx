@@ -7,7 +7,14 @@ import { usePathname, useRouter } from 'next/navigation'
 import type { SceneGraph, RfiOption, ViewerMode, CableRunOption } from './MarkupCanvas'
 import type { OtherLeg } from './RouteLayer'
 import { isSegmentCalibrationStale } from '@esite/shared'
-import { saveSupplyRouteAction, exportRouteSheetAction } from '@/actions/cable-route.actions'
+import {
+  saveSupplyRouteAction,
+  exportRouteSheetAction,
+  listRouteHistoryAction,
+  restoreRouteHistoryAction,
+  remeasureRouteLegsAction,
+  type RouteHistoryEntry,
+} from '@/actions/cable-route.actions'
 import { AssignRoutePanel } from '@/components/cable-route/AssignRoutePanel'
 
 const MarkupCanvas = dynamic(
@@ -47,6 +54,8 @@ export type DrawingPlan = {
   calibration_points: number[] | null
   calibration_metres: number | null
   calibration_page_index: number | null
+  /** Scale per PDF page (00199). */
+  page_scales?: Array<{ pageIndex: number; pixelsPerMeter: number; points: number[] | null; metres: number | null }>
 }
 
 export type AnnotationListItem = {
@@ -95,6 +104,8 @@ export type RouteContext = {
   /** What the schedule holds for this run now (any strand), and how many strands. */
   scheduleLengthM: number | null
   strands: number
+  /** The route's updated_at as loaded — the concurrency token for saves. */
+  updatedAt: string | null
   /** Every drawing on the project, for continuing a run on another sheet. */
   sheets: Array<{ id: string; name: string; calibrated: boolean }>
   /** Back to the measure worklist. */
@@ -161,6 +172,14 @@ export function DrawingViewer({
   // server render (new supply, refresh) re-seeds it; the server stays truth.
   const [segments, setSegments] = useState<RouteContext['segments']>(route?.segments ?? [])
   useEffect(() => { setSegments(route?.segments ?? []) }, [route])
+  // The token the next save must present. Refreshed from every successful save.
+  const [routeUpdatedAt, setRouteUpdatedAt] = useState<string | null>(route?.updatedAt ?? null)
+  useEffect(() => { setRouteUpdatedAt(route?.updatedAt ?? null) }, [route])
+  const [conflict, setConflict] = useState(false)
+  // History (lazy) and re-measure state for the rail.
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyEntries, setHistoryEntries] = useState<RouteHistoryEntry[] | null>(null)
+  const [remeasurePreview, setRemeasurePreview] = useState<Array<{ id: string; seq: number; beforeM: number; afterM: number }> | null>(null)
 
   /**
    * Persist the whole segment list. `saveSupplyRouteAction` REPLACES the list,
@@ -189,11 +208,15 @@ export function DrawingViewer({
           riseM: route.riseM,
           dropM: route.dropM,
           segments: next.map((g) => ({ floorPlanId: g.floorPlanId as string, pageIndex: g.pageIndex, points: g.points })),
+          expectedUpdatedAt: routeUpdatedAt,
         })
         if (res.error) {
           setRouteError(res.error)
+          if (res.conflict) setConflict(true)
           return { error: res.error }
         }
+        if (res.updatedAt) setRouteUpdatedAt(res.updatedAt)
+        setHistoryEntries(null)
         if (res.segments) {
           setSegments(
             res.segments.map((g) => ({
@@ -218,8 +241,63 @@ export function DrawingViewer({
         setCommitting(false)
       }
     },
-    [route],
+    [route, routeUpdatedAt],
   )
+
+  const applyRestored = useCallback((res: Awaited<ReturnType<typeof restoreRouteHistoryAction>>) => {
+    if (res.segments) {
+      setSegments(res.segments.map((g) => ({ id: g.id, floorPlanId: g.floorPlanId, floorPlanName: g.floorPlanName, pageIndex: g.pageIndex, points: g.points, pixelsPerMeter: g.pixelsPerMeter, lengthM: g.lengthM })))
+    }
+    if (res.updatedAt) setRouteUpdatedAt(res.updatedAt)
+    setHistoryEntries(null)
+    router.refresh()
+  }, [router])
+
+  const loadHistory = useCallback(async () => {
+    if (!route) return
+    setHistoryOpen(true)
+    const res = await listRouteHistoryAction({ supplyId: route.supplyId })
+    setHistoryEntries(res.entries ?? [])
+    if (res.error) setRouteError(res.error)
+  }, [route])
+
+  const restore = useCallback(async (historyId: string) => {
+    if (!route) return
+    if (!window.confirm('Put the route back to this saved state? The current state is kept in history.')) return
+    setCommitting(true)
+    try {
+      const res = await restoreRouteHistoryAction({ supplyId: route.supplyId, historyId })
+      if (res.error) { setRouteError(res.error); return }
+      setRouteError(null)
+      applyRestored(res)
+    } finally {
+      setCommitting(false)
+    }
+  }, [route, applyRestored])
+
+  const staleOnThisSheet = segments.filter(
+    (g) => g.floorPlanId === plan.id && plan.pixels_per_meter != null && isSegmentCalibrationStale({ pixels_per_meter: g.pixelsPerMeter }, plan.pixels_per_meter),
+  )
+  const previewRemeasure = useCallback(async () => {
+    if (!route) return
+    const res = await remeasureRouteLegsAction({ supplyId: route.supplyId, floorPlanId: plan.id, pageIndex: 1, dryRun: true })
+    if (res.error) { setRouteError(res.error); return }
+    setRemeasurePreview(res.legs ?? [])
+  }, [route, plan.id])
+  const confirmRemeasure = useCallback(async () => {
+    if (!route) return
+    setCommitting(true)
+    try {
+      const res = await remeasureRouteLegsAction({ supplyId: route.supplyId, floorPlanId: plan.id, pageIndex: 1 })
+      if (res.error) { setRouteError(res.error); return }
+      setSegments((cur) => cur.map((g) => { const l = res.legs?.find((x) => x.id === g.id); return l ? { ...g, lengthM: l.afterM, pixelsPerMeter: l.afterPpm } : g }))
+      setRemeasurePreview(null)
+      setHistoryEntries(null)
+      router.refresh()
+    } finally {
+      setCommitting(false)
+    }
+  }, [route, plan.id, router])
 
   const onCommitLeg = useCallback(
     ({ points, pageIndex }: { points: number[]; pageIndex: number }) =>
@@ -244,6 +322,25 @@ export function DrawingViewer({
 
   const onDeleteLeg = useCallback(
     (legId: string) => persistSegments(segments.filter((g) => g.id !== legId)),
+    [persistSegments, segments],
+  )
+
+  /** Undo/redo re-persists a whole prior leg list. */
+  const onReplaceLegs = useCallback(
+    (legs: Array<{ floorPlanId: string; pageIndex: number; points: number[] }>) =>
+      persistSegments(legs.map((l) => ({ floorPlanId: l.floorPlanId || null, pageIndex: l.pageIndex, points: l.points }))),
+    [persistSegments],
+  )
+
+  /** Move a leg up or down the run; seq is rewritten on save. */
+  const onReorderLeg = useCallback(
+    (index: number, dir: -1 | 1) => {
+      const j = index + dir
+      if (j < 0 || j >= segments.length) return Promise.resolve({})
+      const next = [...segments]
+      ;[next[index], next[j]] = [next[j], next[index]]
+      return persistSegments(next)
+    },
     [persistSegments, segments],
   )
 
@@ -294,10 +391,13 @@ export function DrawingViewer({
         {routeError && (
           <div
             className="data-panel"
-            style={{ padding: '8px 12px', fontSize: 12, color: 'var(--c-danger, #b4413c)', borderColor: 'var(--c-danger, #b4413c)' }}
+            style={{ padding: '8px 12px', fontSize: 12, color: 'var(--c-danger, #b4413c)', borderColor: 'var(--c-danger, #b4413c)', display: 'flex', gap: 10, alignItems: 'center' }}
             role="alert"
           >
-            {routeError}
+            <span style={{ flex: 1 }}>{routeError}</span>
+            {conflict && (
+              <button type="button" className="btn-primary-amber" onClick={() => window.location.reload()}>Reload</button>
+            )}
           </div>
         )}
         {canWrite && !editing && !route && (
@@ -398,6 +498,7 @@ export function DrawingViewer({
                   onCommitLeg,
                   onUpdateLeg,
                   onDeleteLeg,
+                  onReplaceLegs,
                   onExportSheet,
                   sheets: route.sheets,
                   riseM: route.riseM,
@@ -443,6 +544,10 @@ export function DrawingViewer({
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--c-text-mid)' }}>
                     {g.lengthM.toFixed(2)} m
                   </span>
+                  <span style={{ display: 'inline-flex', gap: 2 }}>
+                    <button type="button" onClick={() => void onReorderLeg(i, -1)} disabled={i === 0 || committing} title="Move this leg earlier in the run" style={legBtn}>↑</button>
+                    <button type="button" onClick={() => void onReorderLeg(i, 1)} disabled={i === segments.length - 1 || committing} title="Move this leg later in the run" style={legBtn}>↓</button>
+                  </span>
                 </div>
               ))
             )}
@@ -457,6 +562,47 @@ export function DrawingViewer({
             </div>
             <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--c-text-dim)', lineHeight: 1.5 }}>
               Tracing never changes a cable length on its own. Add rise and drop, then assign.
+            </div>
+            {staleOnThisSheet.length > 0 && (
+              <div style={{ padding: '8px 12px', borderTop: '1px solid var(--c-border)', fontSize: 12 }}>
+                <div style={{ color: 'var(--c-amber)', marginBottom: 6 }}>
+                  {staleOnThisSheet.length} leg{staleOnThisSheet.length === 1 ? '' : 's'} on this sheet {staleOnThisSheet.length === 1 ? 'was' : 'were'} traced under a different scale.
+                </div>
+                {remeasurePreview ? (
+                  <>
+                    {remeasurePreview.map((l) => (
+                      <div key={l.id} style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>leg {l.seq}: {l.beforeM.toFixed(2)} m → {l.afterM.toFixed(2)} m</div>
+                    ))}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <button type="button" className="btn-primary-amber" onClick={() => void confirmRemeasure()} disabled={committing}>Re-measure {remeasurePreview.length} leg{remeasurePreview.length === 1 ? '' : 's'}</button>
+                      <button type="button" onClick={() => setRemeasurePreview(null)} style={legBtnWide}>Keep as traced</button>
+                    </div>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => void previewRemeasure()} style={legBtnWide} disabled={committing}>Show what re-measuring would change</button>
+                )}
+              </div>
+            )}
+            <div style={{ padding: '8px 12px', borderTop: '1px solid var(--c-border)', fontSize: 12 }}>
+              {!historyOpen ? (
+                <button type="button" onClick={() => void loadHistory()} style={legBtnWide}>History…</button>
+              ) : historyEntries == null ? (
+                <span style={{ color: 'var(--c-text-dim)' }}>Loading history…</span>
+              ) : historyEntries.length === 0 ? (
+                <span style={{ color: 'var(--c-text-dim)' }}>No saves yet.</span>
+              ) : (
+                historyEntries.map((h, i) => (
+                  <div key={h.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '3px 0', borderBottom: '1px solid var(--c-border)' }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11 }}>
+                      {new Date(h.savedAt).toLocaleString()} · {h.reason} · {h.legs} leg{h.legs === 1 ? '' : 's'} · {h.tracedM.toFixed(2)} m
+                    </span>
+                    {i > 0 && (
+                      <button type="button" onClick={() => void restore(h.id)} disabled={committing} style={legBtnWide} title="Put the route back to this state">Restore</button>
+                    )}
+                    {i === 0 && <span style={{ fontSize: 10, color: 'var(--c-text-dim)' }}>current</span>}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         ) : null}
@@ -526,4 +672,27 @@ export function DrawingViewer({
       </aside>
     </div>
   )
+}
+
+const legBtn: React.CSSProperties = {
+  width: 20,
+  height: 20,
+  padding: 0,
+  fontSize: 11,
+  lineHeight: '18px',
+  border: '1px solid var(--c-border)',
+  borderRadius: 4,
+  background: 'var(--c-panel)',
+  color: 'var(--c-text-mid)',
+  cursor: 'pointer',
+}
+
+const legBtnWide: React.CSSProperties = {
+  padding: '3px 8px',
+  fontSize: 11,
+  border: '1px solid var(--c-border)',
+  borderRadius: 4,
+  background: 'var(--c-panel)',
+  color: 'var(--c-text-mid)',
+  cursor: 'pointer',
 }
