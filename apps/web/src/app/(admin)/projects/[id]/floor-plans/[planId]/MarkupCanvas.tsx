@@ -363,8 +363,22 @@ export type RouteModeProps = {
   /** Every drawing on the project; picking one continues THIS run there. */
   sheets: Array<{ id: string; name: string; calibrated: boolean }>
   onSwitchSheet: (planId: string) => void
-  /** Where "Done" returns to — the measure worklist. */
+  /** For the status strip. */
+  riseM: number
+  dropM: number
+  scheduleLengthM: number | null
+  /** Where "Back to schedule" returns to — the measure worklist. */
   doneHref: string
+}
+
+/**
+ * The saved routes on this sheet, drawn in EVERY mode — view, markup, route —
+ * so the drawing is the record and not just the workspace. Pressing a route
+ * starts measuring that run when the caller supplies `onMeasure`.
+ */
+export type RouteOverlay = {
+  legs: OtherLeg[]
+  onMeasure?: (supplyId: string) => void
 }
 
 type Props = {
@@ -403,6 +417,8 @@ type Props = {
    * the scene. When ABSENT, every existing code path runs exactly as before.
    */
   routeMode?: RouteModeProps
+  /** Saved routes on this sheet, for any mode. Absent = nothing to draw. */
+  routeOverlay?: RouteOverlay
   /**
    * Cable-schedule measuring, started FROM the drawing. When provided, a ⚡ tool
    * joins the palette and opens a run picker; choosing a run enters route mode
@@ -440,6 +456,7 @@ export function MarkupCanvas({
   editing = null,
   mode = 'markup',
   routeMode,
+  routeOverlay,
   cablePicker,
   onSaveMarkup,
   initialScene,
@@ -499,6 +516,8 @@ export function MarkupCanvas({
   const [selectedLegIndex, setSelectedLegIndex] = useState<number | null>(null)
   /** While true the route layer draws only what should be on paper. */
   const [exporting, setExporting] = useState(false)
+  /** The saved-routes overlay outside route mode. On by default when there is anything to show. */
+  const [showRoutes, setShowRoutes] = useState(true)
   const [exportMsg, setExportMsg] = useState<string | null>(null)
   const selectedLegId =
     routeMode && selectedLegIndex != null ? (routeMode.savedLegs[selectedLegIndex]?.id ?? null) : null
@@ -2290,19 +2309,41 @@ export function MarkupCanvas({
               ))}
             </select>
           </label>
-          <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--c-text-mid)' }}>
-            {(() => {
-              const saved = routeMode.savedLegs.reduce((n, l) => n + l.lengthM, 0)
-              const live = pixelsPerMeter
-                ? [...(pendingLeg ? [pendingLeg] : []), ...(polyPoints.length >= 4 ? [polyPoints] : [])]
-                    .reduce((n, pts) => n + edgeLengthsM(pts, pixelsPerMeter).reduce((a, b) => a + b, 0), 0)
-                : 0
-              const legs = routeMode.savedLegs.length
-              return `${legs} saved leg${legs === 1 ? '' : 's'} · ${saved.toFixed(2)} m${live > 0 ? ` + ${live.toFixed(2)} m unsaved` : ''}`
-            })()}
-          </div>
         </div>
       )}
+      {routeMode && (() => {
+        // THE STATUS STRIP — which of the three steps this run is on, always.
+        const legs = routeMode.savedLegs.length
+        const saved = routeMode.savedLegs.reduce((n, l) => n + l.lengthM, 0)
+        const total = saved + routeMode.riseM + routeMode.dropM
+        const drafting = polyPoints.length > 0
+        const assigned = routeMode.scheduleLengthM != null && legs > 0 && Math.abs(routeMode.scheduleLengthM - total) < 0.005
+        const step = pendingLeg || drafting ? 1 : legs === 0 ? 1 : assigned ? 3 : 2
+        const cell = (n: number, title: string, body: string) => (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', opacity: step === n ? 1 : 0.62 }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: step === n ? 'var(--c-amber)' : 'var(--c-text-dim)', border: `1px solid ${step === n ? 'var(--c-amber)' : 'var(--c-border)'}`, borderRadius: 10, padding: '1px 7px' }}>{n}</span>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{title}</span>
+            <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{body}</span>
+          </div>
+        )
+        return (
+          <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 22, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            {cell(1, 'Trace', pendingLeg
+              ? 'leg finished — press Save leg, or Discard'
+              : drafting
+                ? `${polyPoints.length / 2} point${polyPoints.length === 2 ? '' : 's'} placed — double-click to finish the leg`
+                : legs === 0
+                  ? 'no legs saved yet'
+                  : `${legs} leg${legs === 1 ? '' : 's'} saved · ${saved.toFixed(2)} m`)}
+            {cell(2, 'Rise & drop', legs === 0 ? '—' : `${routeMode.riseM} m + ${routeMode.dropM} m → run total ${total.toFixed(2)} m`)}
+            {cell(3, 'Schedule', assigned
+              ? `assigned ${routeMode.scheduleLengthM!.toFixed(2)} m`
+              : routeMode.scheduleLengthM != null
+                ? `holds ${routeMode.scheduleLengthM.toFixed(2)} m — assign to replace`
+                : 'not assigned yet — use the panel on the right')}
+          </div>
+        )
+      })()}
       {routeMode && !exporting && (pendingLeg || polyPoints.length > 0 || selectedLegId || legError) && (
         <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {polyPoints.length > 0 && (
@@ -2591,6 +2632,20 @@ export function MarkupCanvas({
             </ToolbarGroup>
           </>
         )}
+        {!routeMode && routeOverlay && routeOverlay.legs.length > 0 && (
+          <>
+            <ToolbarSeparator />
+            <ToolbarGroup>
+              <ToolbarButton
+                active={showRoutes}
+                onClick={() => setShowRoutes((v) => !v)}
+                title={`${routeOverlay.legs.length} cable route${routeOverlay.legs.length === 1 ? '' : 's'} saved on this drawing — show or hide${routeOverlay.onMeasure ? '; press a route to measure that run' : ''}`}
+              >
+                ⚡ Routes
+              </ToolbarButton>
+            </ToolbarGroup>
+          </>
+        )}
         <div style={{ flex: 1 }} />
         {routeMode && (
           <ToolbarGroup>
@@ -2608,9 +2663,9 @@ export function MarkupCanvas({
               type="button"
               className="btn-primary-amber"
               onClick={() => router.push(routeMode.doneHref)}
-              title="Back to the measure worklist"
+              title="Back to the measure worklist. Every leg you pressed Save on is already kept."
             >
-              Done
+              Back to schedule
             </button>
           </ToolbarGroup>
         )}
@@ -3074,7 +3129,7 @@ export function MarkupCanvas({
                   />
                 ))}
             </Layer>
-            {routeMode && (
+            {routeMode ? (
               <RouteLayer
                 planId={plan.id}
                 currentPage={currentPage}
@@ -3093,7 +3148,30 @@ export function MarkupCanvas({
                 onInsertVertex={onInsertLegVertex}
                 onRemoveVertex={onRemoveLegVertex}
               />
-            )}
+            ) : routeOverlay && showRoutes && routeOverlay.legs.length > 0 ? (
+              // The record: every saved route on this sheet, in full, in any
+              // mode. Pressable to start measuring when the role allows it.
+              <RouteLayer
+                planId={plan.id}
+                currentPage={currentPage}
+                scale={scale}
+                pixelsPerMeter={pixelsPerMeter}
+                legs={[]}
+                otherLegs={routeOverlay.legs}
+                otherStyle="full"
+                onPressOther={routeOverlay.onMeasure}
+                pendingLeg={null}
+                draftPoints={[]}
+                selectedLegId={null}
+                editable={false}
+                calibration={calibLine}
+                showCalibration
+                onSelectLeg={() => {}}
+                onMoveVertex={() => {}}
+                onInsertVertex={() => {}}
+                onRemoveVertex={() => {}}
+              />
+            ) : null}
           </Stage>
         )}
       </div>

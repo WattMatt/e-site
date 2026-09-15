@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useState, useCallback, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import type { SceneGraph, RfiOption, ViewerMode, CableRunOption } from './MarkupCanvas'
+import type { OtherLeg } from './RouteLayer'
+import { isSegmentCalibrationStale } from '@esite/shared'
 import { saveSupplyRouteAction, exportRouteSheetAction } from '@/actions/cable-route.actions'
 import { AssignRoutePanel } from '@/components/cable-route/AssignRoutePanel'
 
@@ -108,7 +110,7 @@ export type RouteContext = {
     lengthM: number
   }>
   /** Other runs' legs on THIS sheet, for context while tracing. */
-  otherLegsOnSheet: Array<{ label: string; pageIndex: number; points: number[] }>
+  otherLegsOnSheet: OtherLeg[]
 }
 
 const MODES: ReadonlyArray<{ value: ViewerMode; label: string; hint: string }> = [
@@ -128,6 +130,7 @@ export function DrawingViewer({
   canWrite,
   route,
   cableSchedule,
+  sheetLegs = [],
 }: {
   plan: DrawingPlan
   projectId: string
@@ -143,6 +146,8 @@ export function DrawingViewer({
   route?: RouteContext
   /** Present when cable measuring may be STARTED from this drawing. */
   cableSchedule?: CableScheduleContext
+  /** Every saved route leg on this sheet, for the overlay in any mode. */
+  sheetLegs?: OtherLeg[]
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -362,6 +367,14 @@ export function DrawingViewer({
                 }
               : undefined
           }
+          routeOverlay={{
+            legs: sheetLegs,
+            // Measuring from a pressed route needs the schedule write role —
+            // the same gate that decides whether the ⚡ tool exists.
+            onMeasure: cableSchedule
+              ? (supplyId: string) => router.push(`${pathname}?mode=route&supply=${supplyId}`)
+              : undefined,
+          }}
           plan={plan}
           snagPins={snagPins}
           projectId={projectId}
@@ -387,6 +400,9 @@ export function DrawingViewer({
                   onDeleteLeg,
                   onExportSheet,
                   sheets: route.sheets,
+                  riseM: route.riseM,
+                  dropM: route.dropM,
+                  scheduleLengthM: route.scheduleLengthM,
                   onSwitchSheet: (planId: string) =>
                     router.push(`/projects/${projectId}/floor-plans/${planId}?mode=route&supply=${route.supplyId}`),
                   doneHref: route.doneHref,
@@ -415,6 +431,10 @@ export function DrawingViewer({
                     <div style={{ fontSize: 12, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {i + 1}. {g.floorPlanName}
                       {!g.floorPlanId && ' (drawing removed)'}
+                      {g.floorPlanId === plan.id &&
+                        isSegmentCalibrationStale({ pixels_per_meter: g.pixelsPerMeter }, plan.pixels_per_meter) && (
+                          <span style={{ color: 'var(--c-amber)' }}> · sheet re-scaled since tracing</span>
+                        )}
                     </div>
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
                       page {g.pageIndex}

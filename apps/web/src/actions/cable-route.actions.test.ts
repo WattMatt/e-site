@@ -534,7 +534,7 @@ describe('applyRouteToScheduleAction — the overwrite gate', () => {
     use(applyFixture({ failWriteOn: 'change_log' } as any))
     const res = await applyRouteToScheduleAction({ supplyId: SUPPLY_ID, confirmOverwrite: true })
 
-    expect(writesTo('cables')).toHaveLength(1)   // the length DID apply
+    expect(writesTo('cables').filter((w) => w.op === 'update')).toHaveLength(2)   // the length DID apply (fields, then status)
     expect(res.ok).toBeUndefined()
     expect(res.error).toMatch(/audit log/i)
     expect(res.error).toMatch(/applied to 2 strands/i)
@@ -548,7 +548,7 @@ describe('applyRouteToScheduleAction — the overwrite gate', () => {
     expect(res.ok).toBe(true)
     expect(res.appliedM).toBe(PROPOSED_M)
     expect(res.strands).toBe(2)
-    expect(writesTo('cables').filter((w) => w.op === 'update')).toHaveLength(1)
+    expect(writesTo('cables').filter((w) => w.op === 'update')).toHaveLength(2)
   })
 
   it('does not stall on a first application, when there is nothing to overwrite', async () => {
@@ -567,14 +567,15 @@ describe('applyRouteToScheduleAction — what it writes', () => {
     const res = await applyRouteToScheduleAction({ supplyId: SUPPLY_ID, confirmOverwrite: true })
     expect(res.ok).toBe(true)
 
-    const [update] = writesTo('cables').filter((w) => w.op === 'update')
+    const [update, status] = writesTo('cables').filter((w) => w.op === 'update')
     expect(update).toBeDefined()
     expect(update.payload).toMatchObject({
       measured_length_m: PROPOSED_M,
       measured_length_method: 'SCALE_RULE',
-      length_status: 'MEASURED',
       measured_length_by: USER_ID,
     })
+    // Status is a second, narrower write: only UNMEASURED strands are promoted.
+    expect(status.payload).toEqual({ length_status: 'MEASURED' })
     // Parallels share a route, so the filter is the supply — not one cable id.
     expect(update.filters).toEqual([{ col: 'supply_id', val: SUPPLY_ID }])
     expect(update.filters.some((f) => f.col === 'id')).toBe(false)
@@ -900,5 +901,28 @@ describe('exportRouteSheetAction — the sheet becomes a versioned report', () =
     expect(res.error).toMatch(/failed to save report/i)
     expect(uploads).toHaveLength(1)
     expect(removed).toEqual([uploads[0].path])
+  })
+})
+
+describe('applyRouteToScheduleAction — status follows the grid rule', () => {
+  it('promotes only UNMEASURED strands to MEASURED and leaves a CONFIRMED strand alone', async () => {
+    // A site-confirmed strand must keep its status: demoting it to MEASURED
+    // would flip as-built volt-drop and cost back to the designer's figure.
+    use(applyFixture({
+      cables: [
+        { id: CABLE_1, measured_length_m: EXISTING_M, confirmed_length_m: EXISTING_M, length_status: 'CONFIRMED' },
+        { id: CABLE_2, measured_length_m: null, confirmed_length_m: null, length_status: 'UNMEASURED' },
+      ],
+    } as any))
+    const res = await applyRouteToScheduleAction({ supplyId: SUPPLY_ID, confirmOverwrite: true })
+    expect(res.error).toBeUndefined()
+    const updates = writesTo('cables').filter((w) => w.op === 'update')
+    expect(updates).toHaveLength(2)
+    // The length write carries no status at all…
+    expect(updates[0].payload).not.toHaveProperty('length_status')
+    expect(updates[0].payload).toMatchObject({ measured_length_method: 'SCALE_RULE' })
+    // …and the status write is scoped to strands that were UNMEASURED.
+    expect(updates[1].payload).toEqual({ length_status: 'MEASURED' })
+    expect(updates[1].filters).toEqual(expect.arrayContaining([{ col: 'length_status', val: 'UNMEASURED' }]))
   })
 })

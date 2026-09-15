@@ -9,6 +9,7 @@ import {
   type RouteContext,
   type CableScheduleContext,
 } from './DrawingViewer'
+import type { OtherLeg } from './RouteLayer'
 import type { ViewerMode } from './MarkupCanvas'
 
 interface Props {
@@ -82,8 +83,11 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
   ])
   // Context for the sheet being traced: every OTHER run's legs on it, labelled
   // from the schedule already loaded. Needs both of the above, hence after.
+  // Every saved leg on this sheet, for the overlay in ANY mode. RLS decides who
+  // may read routes; the page asks regardless of role.
+  const sheetLegs = await loadLegsOnSheet(supabase, planId)
   const route = routeBase
-    ? { ...routeBase, otherLegsOnSheet: await loadOtherLegsOnSheet(supabase, planId, routeBase.supplyId, cableSchedule) }
+    ? { ...routeBase, otherLegsOnSheet: sheetLegs.filter((l) => l.supplyId !== routeBase.supplyId) }
     : undefined
 
   const effectiveMode: ViewerMode =
@@ -213,6 +217,7 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
         canWrite={canWrite}
         route={route}
         cableSchedule={cableSchedule}
+        sheetLegs={sheetLegs}
       />
       )}
     </div>
@@ -328,21 +333,20 @@ async function loadCalibration(
 }
 
 /**
- * Every other run's legs on this sheet, labelled — so a measurer tracing DB-10
- * can see DB-09 already runs down the same corridor.
+ * Every saved route leg on this sheet, labelled by run — the record the
+ * drawing shows in any mode. Labels are resolved here rather than borrowed
+ * from the ⚡ picker's list, which exists only for schedule writers.
  */
-async function loadOtherLegsOnSheet(
+async function loadLegsOnSheet(
   supabase: Awaited<ReturnType<typeof createClient>>,
   planId: string,
-  excludeSupplyId: string,
-  schedule: CableScheduleContext | undefined,
-): Promise<RouteContext['otherLegsOnSheet']> {
+): Promise<OtherLeg[]> {
   const { data: segs } = await (supabase as any)
     .schema('cable_schedule')
     .from('route_segments')
-    .select('route_id, page_index, points')
+    .select('route_id, page_index, points, length_m')
     .eq('floor_plan_id', planId)
-  const rows = ((segs ?? []) as any[])
+  const rows = ((segs ?? []) as any[]).filter((r) => Array.isArray(r.points) && r.points.length >= 4)
   if (rows.length === 0) return []
   const routeIds = [...new Set(rows.map((r) => r.route_id))]
   const { data: routes } = await (supabase as any)
@@ -351,11 +355,26 @@ async function loadOtherLegsOnSheet(
     .select('id, supply_id')
     .in('id', routeIds)
   const supplyOf = new Map<string, string>(((routes ?? []) as any[]).map((r) => [r.id, r.supply_id]))
-  const labelOf = new Map<string, string>((schedule?.runs ?? []).map((r) => [r.supplyId, r.label]))
+  const supplyIds = [...new Set([...supplyOf.values()])]
+  const { data: supplies } = supplyIds.length
+    ? await (supabase as any).schema('cable_schedule').from('supplies').select('id, from_node_id, to_node_id').in('id', supplyIds)
+    : { data: [] }
+  const supplyRows = ((supplies ?? []) as any[])
+  const nodeIds = [...new Set(supplyRows.flatMap((x) => [x.from_node_id, x.to_node_id]).filter(Boolean))] as string[]
+  const { data: nodes } = nodeIds.length
+    ? await (supabase as any).schema('structure').from('nodes').select('id, code').in('id', nodeIds)
+    : { data: [] }
+  const codeOf = new Map<string, string>(((nodes ?? []) as any[]).map((n) => [n.id, n.code as string]))
+  const labelOf = new Map<string, string>(
+    supplyRows.map((x) => [
+      x.id,
+      `${x.from_node_id ? (codeOf.get(x.from_node_id) ?? '—') : 'Source'} → ${x.to_node_id ? (codeOf.get(x.to_node_id) ?? '—') : '—'}`,
+    ]),
+  )
   return rows
-    .map((r) => ({ supplyId: supplyOf.get(r.route_id), pageIndex: Number(r.page_index), points: (r.points ?? []) as number[] }))
-    .filter((r) => r.supplyId && r.supplyId !== excludeSupplyId && r.points.length >= 4)
-    .map((r) => ({ label: labelOf.get(r.supplyId as string) ?? 'run', pageIndex: r.pageIndex, points: r.points }))
+    .map((r) => ({ supplyId: supplyOf.get(r.route_id) ?? '', pageIndex: Number(r.page_index), points: r.points as number[], lengthM: Number(r.length_m) }))
+    .filter((r) => r.supplyId)
+    .map((r) => ({ ...r, label: labelOf.get(r.supplyId) ?? 'run' }))
 }
 
 /**

@@ -378,10 +378,21 @@ export async function applyRouteToScheduleAction(input: {
       // Nothing here touches confirmed_length_m. The site-confirmation half of
       // the workflow has never been used in production and this is the
       // designer's measurement, not a site verification.
-      length_status: 'MEASURED',
     })
     .eq('supply_id', supplyId)
   if (upErr) return { error: upErr.message }
+
+  // Status: promote UNMEASURED → MEASURED and leave everything else alone —
+  // the same rule the grid applies to a typed length. The first cut set
+  // MEASURED unconditionally, which would have demoted a site-CONFIRMED strand
+  // back to the designer's figure and flipped as-built volt-drop with it.
+  const { error: stErr } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .update({ length_status: 'MEASURED' })
+    .eq('supply_id', supplyId)
+    .eq('length_status', 'UNMEASURED')
+  if (stErr) return { error: stErr.message }
 
   // One change_log row per strand, matching updateMeasuredLengthAction's shape
   // so the two paths read identically in an audit.

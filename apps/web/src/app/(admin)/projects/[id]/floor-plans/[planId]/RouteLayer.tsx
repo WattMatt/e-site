@@ -36,7 +36,7 @@ export type RouteLayerLeg = {
   lengthM: number
 }
 
-export type OtherLeg = { label: string; pageIndex: number; points: number[] }
+export type OtherLeg = { supplyId: string; label: string; pageIndex: number; points: number[]; lengthM?: number }
 
 export type CalibrationLine = { points: number[]; metres: number; pageIndex: number }
 
@@ -47,8 +47,12 @@ type Props = {
   pixelsPerMeter: number | null
   /** This run's saved legs, in path order across every sheet. */
   legs: RouteLayerLeg[]
-  /** Other runs' legs on this sheet — context, drawn faint. */
+  /** Other runs' legs on this sheet. Faint beside an active run; full when the
+   *  drawing is simply being viewed, so the sheet IS the record. */
   otherLegs: OtherLeg[]
+  otherStyle?: 'faint' | 'full'
+  /** Press a run drawn in full to start measuring it. Absent = not pressable. */
+  onPressOther?: (supplyId: string) => void
   /** Finished but not yet saved. */
   pendingLeg: number[] | null
   /** Still being clicked out. */
@@ -139,7 +143,7 @@ function EdgeLabels({ points, ppm, scale, colour }: { points: number[]; ppm: num
 
 export function RouteLayer({
   planId, currentPage, scale, pixelsPerMeter, legs = [], otherLegs = [], pendingLeg, draftPoints = [],
-  selectedLegId, editable, calibration, showCalibration,
+  selectedLegId, editable, calibration, showCalibration, otherStyle = 'faint', onPressOther,
   onSelectLeg, onMoveVertex, onInsertVertex, onRemoveVertex,
 }: Props) {
   // A presentation layer must never take the viewer down. The arrays are
@@ -169,13 +173,27 @@ export function RouteLayer({
         </Group>
       )}
 
-      {/* Other runs on this sheet — context only. */}
-      {otherLegs.filter(onSheet).map((o, i) => (
-        <Group key={`other-${i}`} listening={false}>
-          <Line points={o.points} stroke={OTHER_COLOUR} strokeWidth={2 / scale} opacity={0.55} lineCap="round" lineJoin="round" />
-          <Pill x={o.points[0]} y={o.points[1] - 12 / scale} text={o.label} scale={scale} colour={OTHER_COLOUR} small />
-        </Group>
-      ))}
+      {/* Other runs on this sheet. */}
+      {otherLegs.filter(onSheet).map((o, i) =>
+        otherStyle === 'full' ? (
+          <Group key={`other-${i}`}>
+            <HaloLine
+              points={o.points}
+              colour={ROUTE_COLOUR}
+              scale={scale}
+              listening={!!onPressOther}
+              onPress={(e) => { e.cancelBubble = true; onPressOther?.(o.supplyId) }}
+            />
+            <EdgeLabels points={o.points} ppm={pixelsPerMeter} scale={scale} colour={ROUTE_COLOUR} />
+            <Pill x={o.points[0]} y={o.points[1] - 16 / scale} text={o.lengthM != null ? `${o.label} · ${fmt(o.lengthM)}` : o.label} scale={scale} colour={ROUTE_COLOUR} small />
+          </Group>
+        ) : (
+          <Group key={`other-${i}`} listening={false}>
+            <Line points={o.points} stroke={OTHER_COLOUR} strokeWidth={2 / scale} opacity={0.55} lineCap="round" lineJoin="round" />
+            <Pill x={o.points[0]} y={o.points[1] - 12 / scale} text={o.label} scale={scale} colour={OTHER_COLOUR} small />
+          </Group>
+        ),
+      )}
 
       {/* This run's saved legs. */}
       {legs.map((leg, legIndex) => {
