@@ -28,9 +28,15 @@
 --          never entered.
 --
 -- Restore: additive only, except the guard replacement and the registry row.
---          To undo:
---            DELETE FROM projects.work_items
---             WHERE origin = 'mirror' AND created_at <= <apply timestamp>;
+--          ⚠ ORDER AND session_replication_role ARE LOAD-BEARING. The obvious
+--          recipe — delete the items, then restore the sources — does NOT work,
+--          and was measured failing before it shipped: the source UPDATEs fire
+--          rfis_mirror_work_item_upd, which RESURRECTS 9 items with fresh refs
+--          (RFI-1…RFI-5, status 'triage'), section E then re-assigns and
+--          re-floors all 9 RFIs, and §11 writes 9 more 'created' events. Restore
+--          the SOURCES FIRST with triggers off, then delete the items:
+--            BEGIN;
+--            SET LOCAL session_replication_role = replica;  -- stops BOTH the mirror _upd and set_updated_at
 --            UPDATE projects.rfis r SET assigned_to = b.assigned_to, due_date = b.due_date,
 --                   updated_at = b.updated_at
 --              FROM projects.backup_00199_source_assignees b
@@ -38,8 +44,18 @@
 --            UPDATE field.snags s SET assigned_to = b.assigned_to, updated_at = b.updated_at
 --              FROM projects.backup_00199_source_assignees b
 --             WHERE b.kind = 'snag' AND b.id = s.id;
+--            SET LOCAL session_replication_role = origin;   -- RI back on, so the DELETE cascades events + watchers
+--            DELETE FROM projects.work_items
+--             WHERE origin = 'mirror' AND created_at <= <apply timestamp>;
 --            UPDATE projects.work_item_types SET gatekeeper_rule = 'project_pm' WHERE key = 'rfi';
+--            COMMIT;
 --            -- and re-run 00196 §12's CREATE OR REPLACE FUNCTION projects.work_items_transition_guard()
+--          Measured after this form (rolled back, 2026-09-15): 0 mirror items,
+--          0 assigned RFIs, 0 due_date / updated_at / snag diffs, 0 orphaned
+--          events or watchers, registry back to 'project_pm'. ⚠ updated_at is
+--          restorable ONLY inside the replica window — rfis_updated_at
+--          (00002:100) overwrites it on any ordinary UPDATE, so the snapshot's
+--          updated_at column is unusable without it.
 --          No source row is destroyed. The write-back is the only thing this
 --          migration changes on a source table, and it rewrites `updated_at`
 --          via the pre-existing set_updated_at triggers (rfis_updated_at
@@ -3444,11 +3460,15 @@ BEGIN
   --    but it would abort db push).
   --
   -- ⚠ A LOOP, not the plan's `PERFORM projects.project_rfi(r.id) FROM … ORDER
-  --    BY …`. A volatile function in a target list is evaluated by the node
-  --    BELOW the Sort, so `SELECT f(x) FROM t ORDER BY y` runs f in scan order
-  --    and the ORDER BY decides nothing — the same reason `ORDER BY` never
-  --    orders nextval(). The ordering above is the whole point of the clause,
-  --    so it is expressed the only way that guarantees it.
+  --    BY …`. The ordering above is the whole point of the clause, and a LOOP
+  --    is the only form that states it as a guarantee rather than leaving it to
+  --    the planner's target-list placement. (An earlier comment here claimed a
+  --    volatile function in a target list is evaluated BELOW the Sort and so
+  --    runs in scan order. That is FALSE on 17.6 and was measured: over 40 rows
+  --    `PERFORM f(s.v) FROM _src s ORDER BY s.k` recorded 40,39,38,37,36 — sort
+  --    order, not scan order (1,2,3,4,5), because make_sort_input_target()
+  --    unconditionally postpones volatile expressions ABOVE the Sort. The loop
+  --    is kept because it does not depend on that behaviour holding.)
 
   -- 1. RFIs — 15 on 2026-09-15 (6 closed, 8 open, 1 responded; the plan's 15).
   --    Projected DIRECTLY through projects.project_rfi(), never by touching the
@@ -3580,6 +3600,17 @@ BEGIN
   --    restore). The chain ends there: due_date is not in
   --    rfis_mirror_work_item_upd's UPDATE OF list, so the source write fires no
   --    projection at all.
+  --    Neither helper can return NULL here, so there is no 22004 to guard and no
+  --    §5-style no_data_found handler: add_working_days walks a calendar seeded
+  --    2024→2035 (checked at Task 14), and push_past_builders_shutdown returns a
+  --    date for every input — measured on the worst case, a floor inside a
+  --    shutdown band: push(add(2026-12-20, 5)) = 2027-01-16, not NULL. A future
+  --    go_live beyond the seeded calendar is the only way to reach one, and the
+  --    seed's own guard raises there first.
+  --    `due_date IS NULL` is never floored — the comparison is NULL, so the row
+  --    is not matched. No mirrored item has a NULL due date today (§5 computes
+  --    one for every type), and a floor on an item with no deadline would be
+  --    inventing a deadline, which is the one thing this clause must not do.
   UPDATE projects.work_items w
      SET due_date = GREATEST(w.due_date,
                       projects.push_past_builders_shutdown(
@@ -3618,7 +3649,7 @@ END $backfill$;
 -- product_events.properties->>'backfill_completed_at'". Without this row, item
 -- 4's 07:00 recap on day one lists all 35 backfilled items — the exact failure
 -- the suppression GUC above exists to avoid.
--- F11: `event` is a fixed CHECK vocabulary (00194:225-238) and
+-- F11: `event` is a fixed CHECK vocabulary (00194:231-238) and
 -- 'backfill_completed' is its arm for this (section A refuses the apply if the
 -- constraint does not admit it, so the failure is a sentence at the top rather
 -- than a 23514 after the whole backfill has run); properties.migration says

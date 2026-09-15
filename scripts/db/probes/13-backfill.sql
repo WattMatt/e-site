@@ -92,7 +92,8 @@ SELECT 'snag_count_is_zero', count(*) = 0,
   FROM live WHERE item_type = 'snag' AND origin = 'mirror'
 UNION ALL
 SELECT 'diary_count_is_zero', count(*) = 0,
-       'improvement 1: all 6 of 6 live "delays" say None; got ' || count(*)
+       'improvement 1: all 6 of 6 live "delays" say None; got ' || count(*) ||
+       ' (the only count with no positive counterpart here — the diary arm is deliberately absent from the backfill, and probe 09 is where the live trigger IS proved to project a real delay)'
   FROM live WHERE item_type = 'diary_action' AND origin = 'mirror'
 UNION ALL
 SELECT 'qc_count_is_zero', count(*) = 0,
@@ -169,7 +170,7 @@ SELECT 'events_written_but_no_bells',
          WHERE type IN ('work_item_assigned','ball_in_court_changed','work_item_overdue')) = 0,
        '§12 §(d): events ARE written (the metrics need them); the bell half is VACUOUS until item 4 adds the emit and the esite.suppress_notifications guard to §11 (00196:1354-1356) — and none of those three types is in notifications_type_check yet either. Kept so the assertion is already in place'
 UNION ALL
--- Section I. F11: `event` is a fixed CHECK vocabulary (00194:225-238) and
+-- Section I. F11: `event` is a fixed CHECK vocabulary (00194:231-238) and
 -- 'backfill_completed' is its arm for this.
 SELECT 'completion_event_written',
        (SELECT count(*) FROM public.product_events
@@ -189,6 +190,26 @@ UNION ALL
 -- #4: the backfill keeps history; §11 dates `created` at opened_at.
 -- MAX, not the plan's MIN: with MIN a regression in ONE arm is invisible
 -- behind the oldest item of another (the oldest inspection is 2026-05-21).
+-- ⚠ The window below is a COARSE guard and it decays: raise one RFI in the 24h
+-- before a rehearsal and it reds for a reason that has nothing to do with the
+-- backfill. opened_at_matches_each_source is the exact, non-decaying half — it
+-- compares every item to ITS OWN source row, so it is the one to read first.
+SELECT 'opened_at_matches_each_source',
+       NOT EXISTS (
+         SELECT 1 FROM live w
+          WHERE w.origin = 'mirror'
+            AND w.opened_at IS DISTINCT FROM CASE
+                  WHEN w.rfi_id        IS NOT NULL THEN (SELECT r.created_at FROM projects.rfis r WHERE r.id = w.rfi_id)
+                  WHEN w.inspection_id IS NOT NULL THEN (SELECT i.created_at FROM inspections.inspections i WHERE i.id = w.inspection_id)
+                  WHEN w.site_form_id  IS NOT NULL THEN (SELECT f.created_at FROM field.site_forms f WHERE f.id = w.site_form_id)
+                  WHEN w.snag_id       IS NOT NULL THEN (SELECT sn.created_at FROM field.snags sn WHERE sn.id = w.snag_id)
+                  WHEN w.qc_entry_id   IS NOT NULL THEN (SELECT GREATEST(e.created_at, COALESCE(rp.issued_at, e.created_at))
+                                                           FROM projects.qc_entries e
+                                                           JOIN projects.qc_reports rp ON rp.id = e.report_id
+                                                          WHERE e.id = w.qc_entry_id)
+                  ELSE w.opened_at END),
+       'each backfilled item carries ITS OWN source''s created_at (qc: GREATEST(entry, issued_at)) — the exact form, unlike the 1-day window below, which decays as live data is raised'
+UNION ALL
 SELECT 'opened_at_is_historical',
        (SELECT max(opened_at) FROM live WHERE origin = 'mirror') < now() - interval '1 day',
        'every INSERT supplies opened_at = the source''s created_at (qc: GREATEST(entry, issued_at)) and §5 keeps it on the service path (00196:629-636); the NEWEST backfilled item must still predate the apply, or metric 5''s denominator gets 35 items in one week. Newest live source: an inspection of 2026-09-11'
