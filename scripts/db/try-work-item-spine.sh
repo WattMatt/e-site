@@ -59,12 +59,48 @@ if [[ -n "${WITH_EXTRA:-}" ]]; then
   done
 fi
 
-SQL=$(printf 'BEGIN;\n%s\n%s\n%s\n%s\n%s\nROLLBACK;\n' \
+# RFI-number sequence guard — the same one scripts/db/rehearse-sql.ts carries,
+# for the same reason. projects.rfis.rfi_number is GENERATED ALWAYS AS IDENTITY
+# (00002:83) and sequences are NOT transactional, so every fixture RFI an
+# assertion file raises permanently consumes a number the ROLLBACK does not
+# return (measured drift from these two suites: last_value 736 against
+# max(rfi_number) 16 on 2026-09-15). Five of these files now create their own
+# source rows — Task 15 Step 6b, because after item 3's backfill they can no
+# longer share a live RFI — so this harness consumes them too.
+#   * the capture reads BOTH operands right after BEGIN, before any migration or
+#     assertion has run: reading max(rfi_number) at restore time instead would
+#     read this transaction's own uncommitted fixture rows;
+#   * the restore is a setval, which is non-transactional and therefore survives
+#     the ROLLBACK while every fixture row vanishes with it;
+#   * RESET ROLE first, because an assertion file may end impersonating and
+#     `authenticated` cannot setval the sequence;
+#   * a DO block returns no rows, so the "assertion files return nothing" shape
+#     this harness relies on is unchanged.
+# A file that RAISEs aborts the transaction before the restore and leaks its
+# numbers — that is the failing path, and it is reported loudly either way.
+SEQ_CAPTURE="CREATE TEMP TABLE _rehearse_seq_guard AS
+SELECT s.last_value, s.is_called,
+       (SELECT pg_catalog.max(r.rfi_number) FROM projects.rfis r) AS max_rfi_number
+  FROM projects.rfis_rfi_number_seq s;"
+SEQ_RESTORE="RESET ROLE;
+DO \$_rehearse_seq_restore\$
+BEGIN
+  PERFORM pg_catalog.setval(
+    'projects.rfis_rfi_number_seq',
+    GREATEST((SELECT g.last_value FROM _rehearse_seq_guard g),
+             COALESCE((SELECT g.max_rfi_number FROM _rehearse_seq_guard g), 0)),
+    true);
+END
+\$_rehearse_seq_restore\$;"
+
+SQL=$(printf 'BEGIN;\n%s\n%s\n%s\n%s\n%s\n%s\n%s\nROLLBACK;\n' \
+  "$SEQ_CAPTURE" \
   "$PRELUDE" \
   "$(cat "$MIG1")" \
   "$(cat "$MIG2")" \
   "$EXTRA" \
-  "$(cat "$ASSERT")")
+  "$(cat "$ASSERT")" \
+  "$SEQ_RESTORE")
 
 rc=0
 RESULT="$(mgmt_query "$SQL" 2>&1)" || rc=$?

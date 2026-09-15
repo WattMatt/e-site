@@ -9,7 +9,8 @@
  *
  * ONE request per rehearsal. The harness concatenates
  *
- *   BEGIN;  +  every --with file, in the order given  +  the probe  +  ROLLBACK;
+ *   BEGIN;  +  the RFI-number sequence capture  +  every --with file, in the
+ *   order given  +  the probe  +  the sequence restore  +  ROLLBACK;
  *
  * and POSTs it to the Management API's /database/query endpoint as a single
  * query, so everything the --with files and the probe do happens in one
@@ -72,6 +73,33 @@
  *      `request.jwt.claims::jsonb ->> 'sub'`; both arms read NULL on `''`.
  * The harness enforces rule 2's observable consequence (see below); rules 1 and
  * 3 are the probe author's, checked in review.
+ *
+ * RFI-NUMBER SEQUENCE GUARD. `projects.rfis.rfi_number` is
+ * `INTEGER GENERATED ALWAYS AS IDENTITY` (00002:83) and sequences are NOT
+ * transactional: every fixture RFI a probe inserts permanently consumes a
+ * number that the trailing ROLLBACK does not return. Measured drift from the
+ * item-2/item-3 rehearsals: `last_value` 736 against `max(rfi_number)` 16 (15
+ * live RFIs) on 2026-09-15 — the next RFI a human raises would display 737, and
+ * a single 50,000-row scale rehearsal would make it six digits. So the harness
+ * brackets every rehearsal:
+ *   - right after BEGIN, `_rehearse_seq_guard` captures the sequence's
+ *     (last_value, is_called) AND `max(rfi_number)` as they are BEFORE any
+ *     --with file or probe runs;
+ *   - after the probe and before ROLLBACK, a DO block setval()s the sequence
+ *     back to GREATEST(captured last_value, captured max(rfi_number)). setval
+ *     is non-transactional, so the restore survives the ROLLBACK while every
+ *     fixture row vanishes with it.
+ * Both operands are read at BEGIN, deliberately: reading `max(rfi_number)` in
+ * the restore block instead would read the probe's OWN uncommitted fixture rows
+ * (a 50,000-row scale probe would "restore" the sequence to 50,736 — the exact
+ * drift the guard exists to prevent). GREATEST is the floor against a human
+ * raising an RFI just before the rehearsal started; `rfi_number` carries no
+ * unique constraint (measured), so the restore cannot collide either way.
+ * A DO block produces no result set, so the probe's assertion SELECT is still
+ * the LAST one the Management API sees. The restore runs only when the
+ * transaction is still alive: a probe that aborts (a RAISE, a failed --with
+ * file) rolls back without it and leaks its consumed numbers — re-run cleanly
+ * or restore by hand.
  *
  * WHY THE HARNESS FAILS ON ZERO ROWS. The Management API returns rows from the
  * LAST row-producing statement only (measured: `SELECT 1 AS a; SELECT 2 AS b;`
@@ -155,9 +183,30 @@ function push(label: string, text: string) {
   parts.push(text)
   lineCursor += text.split('\n').length // join('\n') below adds exactly one line per boundary
 }
-push('<harness>', 'BEGIN;')
+// The sequence guard's two halves — see RFI-NUMBER SEQUENCE GUARD in the header.
+// Both operands are captured here, before any --with file or probe has run.
+const SEQ_CAPTURE = `CREATE TEMP TABLE _rehearse_seq_guard AS
+SELECT s.last_value, s.is_called,
+       (SELECT pg_catalog.max(r.rfi_number) FROM projects.rfis r) AS max_rfi_number
+  FROM projects.rfis_rfi_number_seq s;`
+// RESET ROLE first: a probe that ends impersonating would not be able to
+// setval() the sequence, and that error would abort the transaction and throw
+// away the probe's rows (exit 5) instead of reporting them.
+const SEQ_RESTORE = `RESET ROLE;
+DO $_rehearse_seq_restore$
+BEGIN
+  PERFORM pg_catalog.setval(
+    'projects.rfis_rfi_number_seq',
+    GREATEST((SELECT g.last_value FROM _rehearse_seq_guard g),
+             COALESCE((SELECT g.max_rfi_number FROM _rehearse_seq_guard g), 0)),
+    true);
+END
+$_rehearse_seq_restore$;`
+
+push('<harness>', `BEGIN;\n${SEQ_CAPTURE}`)
 for (const p of withPaths) push(p, readSql(p))
 push(probePath, readSql(probePath))
+push('<harness:seq-restore>', SEQ_RESTORE)
 const body = parts.join('\n')
 
 function locate(index: number): string {
