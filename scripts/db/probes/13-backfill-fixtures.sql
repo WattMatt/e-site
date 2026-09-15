@@ -15,7 +15,7 @@
 -- Run (both --with files, in this order, then the probe):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/13-backfill.sql \
 --     --with scripts/db/probes/13-backfill-fixtures.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 --
 -- Both projects are named '_probe_%' so probe 13's live counts exclude them
 -- (and so Task 17's full rehearsal, which concatenates every probe into one

@@ -40,10 +40,10 @@ import {
  *     projects.work_items, not from the first `status IN (…)` in the file —
  *     a partial index and a ball-in-court CHECK also carry that phrase.
  *   - The seed is compared AS AMENDED: a later migration may UPDATE a seeded
- *     row in place (00198 sets rfi.gatekeeper_rule = 'creator'), and the
+ *     row in place (00199 sets rfi.gatekeeper_rule = 'creator'), and the
  *     registry production holds is the seed with those UPDATEs applied in
  *     migration order — that, not the raw seed, is what WORK_ITEM_TYPES must
- *     equal. Amendments are parsed with `--` comments blanked (00198's header
+ *     equal. Amendments are parsed with `--` comments blanked (00199's header
  *     carries the rollback statement inside a comment) and only in the
  *     single-column form; any other UPDATE of the registry throws rather than
  *     being skipped.
@@ -131,7 +131,7 @@ const AMEND_RE = /UPDATE\s+projects\.work_item_types\s+SET\s+([a-z_]+)\s*=\s*(?:
 
 /** Every in-place amendment of a seeded row, from every migration that sorts at
  *  or after the seed's, in file order. Comments are blanked FIRST (the same
- *  rule the locator uses): 00198's header carries the rollback statement — the
+ *  rule the locator uses): 00199's header carries the rollback statement — the
  *  same UPDATE with the old value — inside a comment. Every UPDATE of the
  *  registry in CODE must match the single-column, single-key form, or this
  *  throws: an amendment the test cannot model is a reason to extend it, never
@@ -274,7 +274,7 @@ describe('work-item type registry — A(b) <-> migration <-> TypeScript', () => 
     expect(Object.keys(sqlRefPrefixes(sql)).length).toBeGreaterThan(0)
     expect(ddlColumns(sql).length).toBeGreaterThan(0)
     expect(appendixColumns().length).toBeGreaterThan(0)
-    // 00198 amends rfi.gatekeeper_rule; a parser that matched nothing would let
+    // 00199 amends rfi.gatekeeper_rule; a parser that matched nothing would let
     // WORK_ITEM_TYPES drift from what the database holds while staying green.
     expect(amendments.length, 'no registry amendment parsed from any migration at or after the seed').toBeGreaterThan(0)
   })

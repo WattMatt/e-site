@@ -1,10 +1,10 @@
--- 12-grants.sql — Task 13: section G of 00198 — every function this migration
+-- 12-grants.sql — Task 13: section G of 00199 — every function this migration
 -- creates is revoked from PUBLIC and from anon, and nothing is GRANTed (F5).
 -- Asserted against production inside one rolled-back transaction.
 --
--- Run (00198 is not applied, so it is stacked):
+-- Run (00199 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/12-grants.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 -- Before section G existed this reported 4/8: anon_cannot_execute_any and
 -- public_cannot_execute_any named all twenty-two functions, because a new
 -- `projects` function inherits Postgres's built-in PUBLIC EXECUTE — pg_default_acl

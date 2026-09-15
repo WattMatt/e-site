@@ -1,14 +1,14 @@
 -- 03-status-map.sql — Task 4: status mapping, the due-date floor and the diary
--- negation stop-list (00198 section C). Four pure functions, asserted against
+-- negation stop-list (00199 section C). Four pure functions, asserted against
 -- production inside one rolled-back transaction:
 --   projects.map_source_status(text,text)                — pure vocabulary
 --   projects.work_item_status_for_mirror(text,text,bool) — §03 §1.6 triage policy
 --   projects.work_item_mirror_due_date(date)             — improvement 6
 --   projects.diary_delay_text(text,text)                 — improvement 1
 --
--- Run (00198 is not applied, so it is stacked):
+-- Run (00199 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/03-status-map.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 -- Before section C existed this failed with 42883 "function
 -- projects.map_source_status(unknown, unknown) does not exist" — the first
 -- reference in the `cases` VALUES list.

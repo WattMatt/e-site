@@ -13,9 +13,9 @@ BEGIN
   -- 2. A(b)'s due offsets and calendars, row by row. A flat default would pass
   --    a count test, so this asserts the values.
   FOR r IN SELECT * FROM (VALUES
-      -- rfi: 'creator', amended by 00198 C' (improvement 4). This file asserts
-      -- the registry as of the LATEST migration: green with WITH_EXTRA=<00198>
-      -- stacked, red against production until 00198 applies.
+      -- rfi: 'creator', amended by 00199 C' (improvement 4). This file asserts
+      -- the registry as of the LATEST migration: green with WITH_EXTRA=<00199>
+      -- stacked, red against production until 00199 applies.
       ('rfi',7,'office','creator'), ('snag',5,'site','project_pm'),
       ('qc_defect',5,'site','project_pm'), ('inspection',3,'site','verifier_else_pm'),
       ('diary_action',2,'site','project_pm'), ('form_action',3,'site','project_pm'),

@@ -4,7 +4,7 @@
 -- guard can refuse it (F8): a mirror trigger runs in the source writer's
 -- session, where auth.uid() is a person, and item 2's guard exempted only
 -- auth.uid() IS NULL (00196:1540). Probe 04 runs as postgres — the service path
--- — and cannot see any of this. Section C' of 00198 replaces the guard with
+-- — and cannot see any of this. Section C' of 00199 replaces the guard with
 --   IF v_actor IS NULL OR pg_trigger_depth() > 1 THEN …
 -- and adds source_status to clause (a). This file is the evidence for both.
 --
@@ -95,7 +95,7 @@ BEGIN
 
   SELECT count(*) INTO v_n FROM projects.work_items w WHERE w.rfi_id IN (v_rfi1, v_rfi2, v_rfi3);
   IF v_n <> 3 THEN
-    RAISE EXCEPTION 'fixture: expected 3 mirrored items, found % — is 00198 stacked with --with?', v_n;
+    RAISE EXCEPTION 'fixture: expected 3 mirrored items, found % — is 00199 stacked with --with?', v_n;
   END IF;
   FOR v_row IN
     SELECT w.rfi_id, w.status, w.gatekeeper_id, w.origin, r.raised_by

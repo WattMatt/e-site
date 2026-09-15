@@ -1,4 +1,4 @@
--- 08-qc-mirror.sql — Task 9: the qc_defect projection (00198 section D.4, the
+-- 08-qc-mirror.sql — Task 9: the qc_defect projection (00199 section D.4, the
 -- third copy of D.1's template and the only one with TWO entry points).
 -- Asserted against production inside one rolled-back transaction:
 --   projects.project_qc_entry(uuid)          — the projection body (no recursion guard)
@@ -15,9 +15,9 @@
 -- on qc_entries alone never fires there. Mutation: comment out
 -- CREATE TRIGGER qc_reports_mirror_defects and every issue-path row goes red.
 --
--- Run (00198 is not applied, so it is stacked):
+-- Run (00199 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/08-qc-mirror.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 -- Before section D.4 existed this reported 2/27 (27 rows then; the Task 9
 -- and Task 10 reviews added the rows past that count): draft_report_projects_nothing
 -- and issue_report_ignores_the_rest pass VACUOUSLY (nothing projects
@@ -352,7 +352,7 @@ BEGIN
 
   -- pass → na on a CLOSED item: 'na' maps to NULL (leave unchanged), so the
   -- item stays closed with its stamps — the guard restores closed_at/closed_by
-  -- when the status does not change (00198 section C').
+  -- when the status does not change (00199 section C').
   UPDATE projects.qc_entries SET conformance = 'na' WHERE id = v_fail;
   SELECT w.status, w.closed_at, w.source_status INTO v_pass_na
     FROM projects.work_items w WHERE w.qc_entry_id = v_fail;

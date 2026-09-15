@@ -1,12 +1,12 @@
 -- 02-resolvers.sql — Task 3: the mirror's resolver (F3, improvement 7).
 -- Asserts projects.work_item_person_eligible, projects.resolve_mirror_assignee
--- and projects.resolve_work_item_gatekeeper (00198 section B) against production
+-- and projects.resolve_work_item_gatekeeper (00199 section B) against production
 -- inside one rolled-back transaction. 00195's resolve_project_pm is READ here,
 -- never redefined; its own contract is item 2's (work-item-settings.sql).
 --
--- Run (00198 is not applied, so it is stacked):
+-- Run (00199 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/02-resolvers.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 -- Before section B existed this failed at the orphan fixture's PERFORM with
 -- 42883 "function projects.resolve_mirror_assignee(uuid, unknown, unknown) does
 -- not exist" — the DO block is reached before the assertion SELECT.

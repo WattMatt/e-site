@@ -1,4 +1,4 @@
--- 11-delete-to-void.sql — Task 12: the six delete-to-void triggers (00198
+-- 11-delete-to-void.sql — Task 12: the six delete-to-void triggers (00199
 -- section F, F1). Asserted against production inside one rolled-back
 -- transaction:
 --   projects.void_work_item_on_source_delete()  — one BEFORE DELETE function, keyed on TG_ARGV[0]
@@ -6,9 +6,9 @@
 --   qc_entries_void_work_item / site_diary_entries_void_work_item /
 --   site_forms_void_work_item                  — BEFORE DELETE, one per source
 --
--- Run (00198 is not applied, so it is stacked):
+-- Run (00199 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/11-delete-to-void.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 --
 -- ⚠ Before section F existed this did not report FAIL rows — it ABORTED: the
 -- first DELETE died with `23514: new row for relation "work_items" violates

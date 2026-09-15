@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration: 00198_work_item_source_mirrors_and_backfill.sql
+-- Migration: 00199_work_item_source_mirrors_and_backfill.sql
 -- Appendix A(f) Q1 ordinal 9. Depends on 00194 (ordinal 1), 00195 (ordinal 6,
 --   item 2's slice) and 00196 (ordinal 7) being APPLIED — all three since 2026-09-12.
 -- Description: Six projection entry points push module status into
@@ -579,7 +579,7 @@ BEGIN
 
   IF v_actor IS NULL OR pg_trigger_depth() > 1 THEN
     -- Service client / migration, OR a trigger-driven write — item 3's mirror,
-    -- write-back and delete-to-void (00198). The action layer, or the source
+    -- write-back and delete-to-void (00199). The action layer, or the source
     -- module's own gates, are what authorised these. A client statement is
     -- depth 1 and its guard call runs there, so a person's direct write is NOT
     -- exempt; a mirror UPDATE (source statement → AFTER trigger → this guard)
@@ -640,9 +640,9 @@ BEGIN
   --      A mirror trigger runs in the SOURCE WRITER's session, where
   --      auth.uid() is a person, so the projection's own title rewrite reaches
   --      this function too — at depth 2, where the exemption above returns
-  --      before this clause (item 3, 00198 section C'). A person's hand edit
+  --      before this clause (item 3, 00199 section C'). A person's hand edit
   --      is depth 1 and is refused here. source_status sits in clause (a) for
-  --      the same reason: from 00198 the projection is its only writer.
+  --      the same reason: from 00199 the projection is its only writer.
   IF OLD.origin = 'mirror' AND NEW.title IS DISTINCT FROM OLD.title THEN
     RAISE EXCEPTION '% is mirrored from its source record, so its title is edited there and updates here automatically.', OLD.ref
       USING ERRCODE = 'raise_exception';

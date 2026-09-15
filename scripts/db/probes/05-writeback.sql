@@ -1,11 +1,11 @@
--- 05-writeback.sql — Task 6: the assignment + due-date write-back (00198
+-- 05-writeback.sql — Task 6: the assignment + due-date write-back (00199
 -- section E). Asserted against production inside one rolled-back transaction:
 --   projects.work_item_assignment_writeback()        — SECURITY DEFINER, NO depth guard (F2)
 --   work_items_assignment_writeback_ins / _upd        — AFTER INSERT / AFTER UPDATE OF … WHEN (F7)
 --
--- Run (00198 is not applied, so it is stacked):
+-- Run (00199 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/05-writeback.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 -- Before section E existed this reported 10/21: the mirror (section D) resolved a
 -- holder and projected every RFI, but nothing reached rfis.assigned_to /
 -- rfis.due_date or field.snags.assigned_to, and the round trip REVERTED a spine

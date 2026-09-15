@@ -1,4 +1,4 @@
--- 10-form-mirror.sql — Task 11: the form_action projection (00198 section D.6,
+-- 10-form-mirror.sql — Task 11: the form_action projection (00199 section D.6,
 -- the fifth copy of D.1's template and the one that is BORN OPEN — F10).
 -- Asserted against production inside one rolled-back transaction:
 --   projects.project_form_action(uuid)        — the projection body (no recursion guard)
@@ -26,9 +26,9 @@
 -- DO block, and pinned on the guard's own sentence: the mirror never fires,
 -- the item does not move.
 --
--- Run (00198 is not applied, so it is stacked):
+-- Run (00199 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/10-form-mirror.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 -- Before section D.6 existed this reported 1/23 (23 rows then; the Task 10
 -- review added three): closed_clears_bic passes VACUOUSLY (there is no ball
 -- to clear — the plan's Step 2 names it); every other row reads a NULL
@@ -44,7 +44,7 @@
 -- 2026-09-13) — template_row_id is NOT NULL.
 --
 -- Runs as postgres with auth.uid() NULL throughout the first block (no
--- impersonation) — the SERVICE PATH of the transition guard (00198 section C':
+-- impersonation) — the SERVICE PATH of the transition guard (00199 section C':
 -- v_actor IS NULL skips authority and the machine, stamps closed_at = now() on
 -- a close, keeps the supplied closed_by, clears both on any other status
 -- change). The second block impersonates the owner for ONE statement, then

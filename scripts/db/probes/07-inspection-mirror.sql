@@ -1,4 +1,4 @@
--- 07-inspection-mirror.sql — Task 8: the inspection projection (00198 section
+-- 07-inspection-mirror.sql — Task 8: the inspection projection (00199 section
 -- D.3, the second copy of D.1's template). Asserted against production inside
 -- one rolled-back transaction:
 --   projects.project_inspection(uuid)        — the projection body (no recursion guard)
@@ -18,9 +18,9 @@
 -- CLOSED item's people and due date are part of the record and never
 -- re-derived (closed_item_people_are_not_reprojected, Task 8 review S1).
 --
--- Run (00198 is not applied, so it is stacked):
+-- Run (00199 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/07-inspection-mirror.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 -- Before section D.3 existed this reported 0/29: no trigger fires, no
 -- inspection projects anything, every recorded observation is NULL (a NULL
 -- `ok` is a FAIL in the harness, never a coerced false). no_writeback_to_source

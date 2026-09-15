@@ -1,4 +1,4 @@
--- 13-backfill.sql — Task 14: sections H and I of 00198 (renumbered to 00199 at
+-- 13-backfill.sql — Task 14: sections H and I of 00199 (renumbered to 00199 at
 -- merge; the snapshot table is already named for it). Asserted against
 -- production inside one rolled-back transaction:
 --   H  the pre-migration snapshot, the six backfill arms, the due-date floor
@@ -16,7 +16,7 @@
 -- Run (fixtures FIRST, then the migration, then this file):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/13-backfill.sql \
 --     --with scripts/db/probes/13-backfill-fixtures.sql \
---     --with apps/edge-functions/supabase/migrations/00198_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
 --
 -- The fixture file is separate and stacked AHEAD of the migration on purpose:
 -- the qc and snag arms project ZERO live rows, and a fixture created by this
