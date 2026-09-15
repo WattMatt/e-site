@@ -183,6 +183,8 @@ export async function loadRouteSheetAttachments(
 export function routeSheetFileName(sheet: RouteSheetRef): string {
   const base = sheet.title
     .replace(/^cable routes\s*[—-]\s*/i, '')
+    // The drawing's own file extension ("… LAYOUT.pdf") is not part of the name.
+    .replace(/\.(pdf|dwg|dxf|png|jpe?g)(?=\s*(\(page \d+\))?\s*$)/i, '')
     .replace(/\((page \d+)\)/i, '$1')
     .replace(/[^a-z0-9]+/gi, '-')
     .replace(/^-+|-+$/g, '')

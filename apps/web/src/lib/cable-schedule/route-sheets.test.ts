@@ -100,6 +100,13 @@ describe('routeSheetFileName', () => {
     const ref = refsFromReportRows([row({ title: 'Cable routes — POWER LAYOUT A (page 2)', version: 3 })], new Map())[0]
     expect(routeSheetFileName(ref)).toBe('power-layout-a-page-2-v3.pdf')
   })
+
+  it('drops the drawing\'s own file extension from the name (live: "…LAYOUT.pdf" became "…-pdf-v1.pdf")', () => {
+    const one = refsFromReportRows([row({ title: 'Cable routes — 666-E-110 - OVERALL POWER LAYOUT.pdf', version: 1 })], new Map())[0]
+    expect(routeSheetFileName(one)).toBe('666-e-110-overall-power-layout-v1.pdf')
+    const two = refsFromReportRows([row({ title: 'Cable routes — 666-E-110 - OVERALL POWER LAYOUT.pdf (page 2)', version: 4 })], new Map())[0]
+    expect(routeSheetFileName(two)).toBe('666-e-110-overall-power-layout-page-2-v4.pdf')
+  })
 })
 
 describe('appendRouteSheetsToPdf — the appendix', () => {
