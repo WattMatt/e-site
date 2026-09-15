@@ -2,9 +2,13 @@
 -- allocator and its permanent prefixes). Run inside the rolled-back transaction
 -- opened by try-work-item-spine.sh.
 --
--- The table is created in this same transaction, so it is EMPTY when the first
--- insert below runs: "the first task is TASK-1" is a real assertion here, not
--- an assumption about production.
+-- ⚠ This file no longer relies on projects.work_items being empty, and must
+-- not: stacked behind 00199 (WITH_EXTRA), section H has already backfilled 35
+-- mirror items before these assertions run. Every ref assertion instead uses a
+-- project this file CREATES, which is empty in both windows — unstacked, where
+-- the table itself is new, and stacked, where it is not. "The first task is
+-- TASK-1" is therefore a real assertion about a known-empty (project, type)
+-- pair, not an assumption about the estate.
 DO $$
 DECLARE v_proj uuid; v_org uuid; v_pm uuid; v_rfi uuid; v_a uuid; v_b uuid; r text; n int;
         v_proj2 uuid; v_org2 uuid; v_pm2 uuid;

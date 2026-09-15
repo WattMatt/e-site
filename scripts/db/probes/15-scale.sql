@@ -51,9 +51,15 @@
 -- item 2 and do NOT work around it in the mirror (Task 15 Step 6).
 --
 -- ⚠ The nearest real-world number: production holds 15 RFIs and 453
--- structure.node_orders rows, and section H projects 39 items in total. The
--- quadratic term is invisible at that size (it is 0.026 ms at n = 39). This
--- probe exists to find the cliff, not to describe the estate.
+-- structure.node_orders rows, and section H projects 35 items across five
+-- projects. At that size the quadratic term is 1.71e-3 x 35^2 = 2.1 ms and the
+-- whole projection is t(35) ~ 89 ms — the allocator's shape has no bearing on
+-- the apply. (An earlier comment put the quadratic term at "0.026 ms at n = 39";
+-- that was the FRACTION of total time, not the time, and 100x too small.)
+-- Extrapolating to 50,000 gives 40-73 minutes depending on which 5,000-row
+-- reading you fit (44,590 ms -> a~4.57, b~8.7e-4 -> ~40 min; 55,045 ms ->
+-- a~2.48, b~1.71e-3 -> ~73 min). Quote the range, not a point. This probe
+-- exists to find the cliff, not to describe the estate.
 --
 -- ⚠ projects.rfis.rfi_number is INTEGER GENERATED ALWAYS AS IDENTITY (00002:83)
 -- and sequences are NOT transactional: the ROLLBACK does not return the v_rows

@@ -78,7 +78,8 @@ BEGIN
   -- it bloats the table and it wakes every AFTER trigger). Rule 1's early
   -- return is the thing this measures, so it has to be measured by tuple.
   CREATE TEMP TABLE idem_item_before ON COMMIT DROP AS
-    SELECT id, ctid::text AS tid, status, last_activity_at
+    SELECT id, ctid::text AS tid, md5(work_items::text) AS row_md5,
+           status, last_activity_at
       FROM projects.work_items WHERE origin = 'mirror';
 
   -- The sources, too: section E writes back to projects.rfis, and a re-run that
@@ -252,7 +253,8 @@ UNION ALL
 -- Rule 1's early return, measured by tuple: a closed or void record is not
 -- rewritten by a re-projection that changes nothing it projects.
 SELECT 'terminal_records_were_not_rewritten',
-       NOT EXISTS (
+       (SELECT count(*) FROM idem_item_before WHERE status IN ('closed','void')) > 0
+       AND NOT EXISTS (
          SELECT 1 FROM idem_item_before b JOIN projects.work_items w ON w.id = b.id
           WHERE b.status IN ('closed','void') AND w.ctid::text IS DISTINCT FROM b.tid),
        (SELECT count(*)::text FROM idem_item_before WHERE status IN ('closed','void'))
@@ -272,7 +274,8 @@ UNION ALL
 -- before this probe starts. Blinding D.1's lookup (so no projection ever takes
 -- the UPDATE arm) left that version green; the ctid form reds it.
 SELECT 'live_records_are_rewritten_by_a_reprojection',
-       NOT EXISTS (
+       (SELECT count(*) FROM idem_item_before WHERE status NOT IN ('closed','void')) > 0
+       AND NOT EXISTS (
          SELECT 1 FROM idem_item_before b JOIN projects.work_items w ON w.id = b.id
           WHERE b.status NOT IN ('closed','void') AND w.ctid::text = b.tid),
        (SELECT count(*)::text FROM idem_item_before WHERE status NOT IN ('closed','void'))
@@ -296,4 +299,36 @@ SELECT 'reruns_wrote_nothing_back_to_the_sources',
 UNION ALL
 SELECT 'duplicate_mirror_insert_is_refused_by_the_index',
        (SELECT sqlstate = '23505' AND constraint_name = 'work_items_src_rfi_uidx' FROM idem_dup),
-       (SELECT sqlstate || ' ' || COALESCE(constraint_name, '(no constraint)') || ': ' || message FROM idem_dup);
+       (SELECT sqlstate || ' ' || COALESCE(constraint_name, '(no constraint)') || ': ' || message FROM idem_dup)
+UNION ALL
+-- I4 (Task 15 review). The ctid row above says a live tuple is REWRITTEN; this
+-- says the rewrite changes no value. now() is frozen for the transaction
+-- (00196:1523), so within one transaction a re-projection is byte-identical in
+-- every column and only the physical tuple moves. Across two separate APPLIES
+-- all 33 live items would take a new last_activity_at — reachable only by
+-- running section H twice, which the ledger prevents.
+SELECT 'a_reprojection_changes_no_column_value',
+       (SELECT count(*) FROM idem_item_before WHERE status NOT IN ('closed','void')) > 0
+       AND NOT EXISTS (
+         SELECT 1 FROM idem_item_before b JOIN projects.work_items w ON w.id = b.id
+          WHERE b.status NOT IN ('closed','void')
+            AND md5(w::text) IS DISTINCT FROM b.row_md5),
+       (SELECT count(*)::text FROM idem_item_before WHERE status NOT IN ('closed','void'))
+         || ' live records: same values, new tuple — the rewrite is physical only'
+UNION ALL
+-- I3 (Task 15 review). Deleting the ON CONFLICT clause does NOT red any
+-- behavioural row here, because every projection looks the item up first and
+-- returns before reaching the INSERT. The clause guards only the CONCURRENT
+-- path — a human raising an RFI while section H runs — which no rolled-back
+-- rehearsal can stage. So it is pinned STRUCTURALLY instead: all six
+-- project_<source>() bodies must carry the guarded form. (Row
+-- 'a_concurrent_insert_is_absorbed' above stages the race by blinding the
+-- lookup and proves the INDEX; this proves the CLAUSE.)
+SELECT 'every_projection_carries_the_guarded_on_conflict',
+       (SELECT count(*) FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'projects'
+           AND p.proname IN ('project_rfi','project_snag','project_inspection',
+                             'project_qc_entry','project_diary_action','project_form_action')
+           AND p.prosrc ~ 'ON CONFLICT \([a-z_]+\) WHERE [a-z_]+ IS NOT NULL AND origin = ''mirror'' DO NOTHING') = 6,
+       'all six projections must absorb a concurrent duplicate, not raise 23505 mid-apply';

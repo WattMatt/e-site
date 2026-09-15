@@ -77,7 +77,16 @@ fi
 #   * a DO block returns no rows, so the "assertion files return nothing" shape
 #     this harness relies on is unchanged.
 # A file that RAISEs aborts the transaction before the restore and leaks its
-# numbers — that is the failing path, and it is reported loudly either way.
+# numbers. That is the COMMON path while an assertion file is being written, so
+# restore by hand afterwards, outside any rehearsal transaction, where max()
+# sees only committed rows and is therefore exact:
+#   source scripts/db/mgmt-api.sh
+#   mgmt_query "SELECT setval('projects.rfis_rfi_number_seq', (SELECT max(rfi_number) FROM projects.rfis), true)"
+# Rehearsal against rehearsal is safe (every capture is >= the committed
+# high-water mark at its own BEGIN, so the sequence can only ratchet up). The
+# one case the guard cannot see is an RFI COMMITTED DURING the window: the
+# restore lowers past its number and the next RFI re-uses it silently, since
+# rfi_number carries no unique constraint. Rehearse outside SA working hours.
 SEQ_CAPTURE="CREATE TEMP TABLE _rehearse_seq_guard AS
 SELECT s.last_value, s.is_called,
        (SELECT pg_catalog.max(r.rfi_number) FROM projects.rfis r) AS max_rfi_number

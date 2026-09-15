@@ -80,7 +80,7 @@
  * number that the trailing ROLLBACK does not return. Measured drift from the
  * item-2/item-3 rehearsals: `last_value` 736 against `max(rfi_number)` 16 (15
  * live RFIs) on 2026-09-15 — the next RFI a human raises would display 737, and
- * a single 50,000-row scale rehearsal would make it six digits. So the harness
+ * a single 50,000-row scale rehearsal would make it five digits. So the harness
  * brackets every rehearsal:
  *   - right after BEGIN, `_rehearse_seq_guard` captures the sequence's
  *     (last_value, is_called) AND `max(rfi_number)` as they are BEFORE any
@@ -91,15 +91,35 @@
  *     fixture row vanishes with it.
  * Both operands are read at BEGIN, deliberately: reading `max(rfi_number)` in
  * the restore block instead would read the probe's OWN uncommitted fixture rows
- * (a 50,000-row scale probe would "restore" the sequence to 50,736 — the exact
+ * (a 50,000-row scale probe would "restore" the sequence to 50,763 — the exact
  * drift the guard exists to prevent). GREATEST is the floor against a human
- * raising an RFI just before the rehearsal started; `rfi_number` carries no
- * unique constraint (measured), so the restore cannot collide either way.
+ * raising an RFI just before the rehearsal started.
+ *
+ * WHAT THE GUARD IS AND IS NOT SAFE AGAINST, precisely (`rfi_number` carries no
+ * unique constraint, measured, so nothing here can ERROR — the risk is a silent
+ * duplicate number):
+ *   - rehearsal against rehearsal is SAFE. Every capture is >= the committed
+ *     high-water mark at its own BEGIN, so no restore can lower the sequence
+ *     below that mark. Concurrent captures do not agree (measured: one session
+ *     read 771 while another's baseline was 763) and the last writer wins, so
+ *     the sequence may ratchet UP — a harmless leak, never a re-use.
+ *   - an RFI COMMITTED DURING the window is the one case the guard cannot see.
+ *     Its number exceeds the captured last_value, the restore lowers past it,
+ *     and the next RFI re-uses it silently. Unfixable inside the transaction,
+ *     so: rehearse outside SA working hours.
  * A DO block produces no result set, so the probe's assertion SELECT is still
  * the LAST one the Management API sees. The restore runs only when the
- * transaction is still alive: a probe that aborts (a RAISE, a failed --with
- * file) rolls back without it and leaks its consumed numbers — re-run cleanly
- * or restore by hand.
+ * transaction is still alive: a probe that ABORTS (a RAISE, a failed --with
+ * file) rolls back without it and leaks its consumed numbers. That is the
+ * COMMON path while a probe is being written — measured this session, an
+ * aborted probe left the sequence at 771 against a 763 baseline. Restore by
+ * hand, outside any rehearsal transaction, where max() sees only committed rows
+ * and is therefore exact:
+ *   source scripts/db/mgmt-api.sh
+ *   mgmt_query "SELECT setval('projects.rfis_rfi_number_seq', (SELECT max(rfi_number) FROM projects.rfis), true)"
+ * (the same statement Task 20 runs once, pre-apply). `is_called` is captured
+ * for symmetry but deliberately unused: the forced `true` is correct for any
+ * sequence that has ever issued a value, and this one has issued 763.
  *
  * WHY THE HARNESS FAILS ON ZERO ROWS. The Management API returns rows from the
  * LAST row-producing statement only (measured: `SELECT 1 AS a; SELECT 2 AS b;`

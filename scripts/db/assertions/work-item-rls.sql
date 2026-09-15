@@ -154,7 +154,7 @@ BEGIN
     RAISE EXCEPTION 'no second organisation exists — assertions 9 and 9b need a real foreign org id captured as postgres';
   END IF;
   IF f.inspection_id IS NULL OR f.inspection_id_2 IS NULL THEN
-    RAISE EXCEPTION 'fewer than two inspections on the fixture project % — 9e/9f (the UPDATE identity arms, exercised on a type the contractor cannot write) have no fixture', f.project_id;
+    RAISE EXCEPTION 'the two inspection clones this file creates on project % are missing — 9e/9f (the UPDATE identity arms, exercised on a type the contractor cannot write) have no fixture. They are cloned here rather than picked from live data, so this means the clone INSERT failed, not that the estate is short of inspections', f.project_id;
   END IF;
   -- The fixture's org role is contractor. Were it ever elevated to
   -- owner/admin/PM, user_has_project_access() clause (b) would admit it to
