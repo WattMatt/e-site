@@ -532,6 +532,7 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 | Route | Access |
 |---|---|
 | `/login`, `/signup`, `/forgot-password` | Public |
+| `/auth/confirm` | Public; single-use-link interstitial. Emailed `token_hash` links (invites, recovery, magic links) land here **unverified** — the page's form POSTs the token to `POST /auth/callback`, the only place `verifyOtp` runs, so mail-scanner GET prefetch can't burn the token. Renders nothing sensitive; a missing/unknown-type token redirects to `/login?error=auth_callback_failed`. |
 | `/inspection/[token]` | Public; signed COC share link (expires) |
 | `/(portal)/compliance` | Public; client view of approved COCs |
 | `/`, `/pricing`, `/legal/*` | Public marketing/legal content; signed-in users are NOT bounced |
