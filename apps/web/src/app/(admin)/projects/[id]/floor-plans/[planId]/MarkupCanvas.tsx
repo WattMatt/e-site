@@ -541,6 +541,13 @@ export function MarkupCanvas({
   const [snapHint, setSnapHint] = useState<string | null>(null)
   /** Set when an unsaved trace was brought back from the last session. */
   const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null)
+  /** Delete leg is armed by a first press and committed by a second within 4 s — never window.confirm (Safari suppresses it). */
+  const [armedDeleteLegId, setArmedDeleteLegId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!armedDeleteLegId) return
+    const t = setTimeout(() => setArmedDeleteLegId(null), 4000)
+    return () => clearTimeout(t)
+  }, [armedDeleteLegId])
   /** Per-page scales (00199); the drawing-level scale is the page-1 default. */
   const pageScales = useMemo(
     () => new Map((plan.page_scales ?? []).map((s) => [s.pageIndex, s])),
@@ -765,7 +772,8 @@ export function MarkupCanvas({
 
   async function deleteLeg(legId: string) {
     if (!routeMode) return
-    if (!window.confirm('Delete this leg from the route?')) return
+    if (armedDeleteLegId !== legId) { setArmedDeleteLegId(legId); return }
+    setArmedDeleteLegId(null)
     setLegSaving(true)
     setLegError(null)
     try {
@@ -2529,7 +2537,13 @@ export function MarkupCanvas({
               <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
                 Leg selected — drag a point to move it, click a midpoint to add one, right-click a point to remove it.
               </span>
-              <ToolbarButton onClick={() => void deleteLeg(selectedLegId)} title="Delete this leg (Del)">Delete leg</ToolbarButton>
+              <ToolbarButton
+                active={armedDeleteLegId === selectedLegId}
+                onClick={() => void deleteLeg(selectedLegId)}
+                title={armedDeleteLegId === selectedLegId ? 'Press again to delete this leg' : 'Delete this leg (Del) — press twice'}
+              >
+                {armedDeleteLegId === selectedLegId ? 'Confirm delete' : 'Delete leg'}
+              </ToolbarButton>
               <ToolbarButton onClick={() => setSelectedLegId(null)} title="Deselect (Esc)">Done editing</ToolbarButton>
             </>
           )}

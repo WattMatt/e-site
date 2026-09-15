@@ -1,6 +1,6 @@
 # Cable route measurement — the process
 
-**Status:** built on `feat/cable-route-viewer-handoff` (2026-09-14/15), replacing the PR #180 surface. Migrations `00192` (routes) and `00198` (calibration geometry).
+**Status:** built on `feat/cable-route-viewer-handoff` (2026-09-14/15), replacing the PR #180 surface. Migrations `00192` (routes), `00198` (calibration geometry), `00199` (route history, per-page scales, telemetry). Gap analysis and design: `docs/superpowers/specs/2026-09-15-cable-route-measurement-complete-design.md`.
 
 ## What it is
 
@@ -30,21 +30,38 @@ Step 3 is the only "save" you press repeatedly; 5 and 6 are one panel; 7 is opti
 
 Every drawing shows its saved routes whenever it is opened — view, markup or route mode — with per-edge lengths, toggleable from the toolbar. Press a route to measure that run. On the schedule grid, a run whose length came from a trace carries a **traced** badge linking to its route. On the worklist, a run is *outstanding* until it has a route with at least one leg.
 
+## While tracing
+
+- **Undo / redo** — ⌘Z / ⇧⌘Z or ↶ ↷ in route mode. One history covers everything you can see change: vertices as you place them, the pending leg, and every saved edit (a dragged vertex, an inserted or removed one, a deleted leg). Undoing a saved edit re-saves the previous state; it is not a client-side illusion.
+- **Snapping** — a new leg's first vertex snaps to the end of a leg already saved on the sheet so the run joins up; hold **Shift** to constrain a vertex to 0/45/90° from the previous one (cable trays are orthogonal). The strip says what snapped.
+- **An unsaved trace survives** — the polyline you are clicking out and a finished-but-unsaved leg are kept in the browser per drawing, run and page, and brought back if you reload or navigate away; the strip says *restored an unsaved trace from HH:MM*. Saving the leg clears it.
+- **Scale per page** — a multi-page PDF can carry a different scale on each page; *Set scale* on page N sets page N's. Page 1 uses the drawing's scale. A leg on a page with no scale is refused, naming the page.
+- **Two people, one run** — a save carries the route's last-known timestamp; if someone else saved first, yours is refused with when, and the viewer offers Reload. Nothing is silently overwritten.
+
+## History
+
+Every save writes a row to `cable_schedule.route_history` — who, when, why (*save*, *restore*, *remeasure*), and the whole leg list as it was. The rail's **History…** lists them; **Restore** puts the route back to any earlier state verbatim (the lengths and scale-at-the-time as they were — nothing is re-measured), and that restore is itself a history row. The log has no update or delete policy: it cannot be edited, only added to.
+
 ## What can change a stored length
 
 - Editing a leg (drag / insert / remove a vertex) rewrites that leg's points and length — the route's total updates; the schedule does **not** until you Assign again.
-- Recalibrating a sheet does **not** change any stored leg. The rail and the worklist flag such legs *sheet re-scaled since tracing*; re-trace or accept.
+- Recalibrating a sheet does **not** change any stored leg. The rail and the worklist flag such legs *sheet re-scaled since tracing*; the rail offers **Show what re-measuring would change** — a per-leg before/after — and then **Re-measure**, which re-derives those legs from their stored points and the sheet's current scale and logs a *remeasure* history row.
 - Assigning replaces `measured_length_m` and records the old value in the change log. It promotes `UNMEASURED` → `MEASURED` and leaves a `CONFIRMED` or `DISCREPANCY` status alone, the same rule as typing a length in the grid.
+- **Revert to previous length** (in the panel, once a route is on the schedule) puts each strand back to what the change log says it held before the last Assign — as `MANUAL`, or `UNMEASURED` if it had none — and logs that too.
 - An ISSUED revision is frozen by database trigger: no route on it can be written.
 
 ## Who may do what
 
 Tracing, calibrating from route mode, assigning and exporting need `ORG_WRITE_ROLES` (owner / admin / project manager) — the schedule's write role. The drawing viewer itself admits `contractor` for markup and RFIs; a contractor never sees route mode or the ⚡ tool. Reading routes on a drawing and reading an exported sheet is open to every project role. See `docs/rbac-matrix.md`.
 
+## Outputs and records
+
+Beyond the sheet PDF: the worklist offers a **Routes CSV** (every run with legs, sheets, traced, rise, drop, total, schedule length, on-schedule); the schedule's own CSV and Excel exports carry a **Method** column (`MANUAL` / `SCALE_RULE` / `CAD`); and three product events — `cable_route_leg_saved`, `cable_route_assigned`, `cable_route_sheet_exported` — make the tool's use measurable on `/metrics`.
+
 ## Known gaps
 
 - The markup toolbar's own calibration write (since `00035`) is still open to contractors; narrowing it is an owner decision.
 - A member promoted to PM on one project (`project_members`) passes the page gate but is refused by RLS, which keys on the org role. Fail-closed; no such user exists today.
 - `supply_routes.notes` is stored but has no control.
-- `00192`'s column comment says calibration is "per drawing AND page"; the sheet's scale is per drawing, with the page recorded alongside since `00198`. Each leg stores its own scale regardless.
+- Split / merge of legs, export from the worklist, and a low-resolution preview during rasterisation were deliberately left out (owner decision, 2026-09-15). `RouteLayer` has no component test (Konva needs a real canvas); the Playwright spec `12-cable-route-measure` covers the flow end to end when `E2E_ROUTE_*` is set.
 - `packages/db/src/types.ts` has not been regenerated; the actions cast `.schema('cable_schedule')`.

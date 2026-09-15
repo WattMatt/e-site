@@ -180,6 +180,15 @@ export function DrawingViewer({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyEntries, setHistoryEntries] = useState<RouteHistoryEntry[] | null>(null)
   const [remeasurePreview, setRemeasurePreview] = useState<Array<{ id: string; seq: number; beforeM: number; afterM: number }> | null>(null)
+  // Two-step inline confirmation, never window.confirm(): Safari suppresses
+  // that dialog silently (the snag module's lesson, PR #158). First press
+  // arms, second press within 4 s commits.
+  const [armedRestoreId, setArmedRestoreId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!armedRestoreId) return
+    const t = setTimeout(() => setArmedRestoreId(null), 4000)
+    return () => clearTimeout(t)
+  }, [armedRestoreId])
 
   /**
    * Persist the whole segment list. `saveSupplyRouteAction` REPLACES the list,
@@ -261,9 +270,16 @@ export function DrawingViewer({
     if (res.error) setRouteError(res.error)
   }, [route])
 
+  // A save clears the entries so the list cannot go stale; while the panel is
+  // open that must refetch, or it sits on "Loading history…" forever.
+  useEffect(() => {
+    if (historyOpen && historyEntries == null) void loadHistory()
+  }, [historyOpen, historyEntries, loadHistory])
+
   const restore = useCallback(async (historyId: string) => {
     if (!route) return
-    if (!window.confirm('Put the route back to this saved state? The current state is kept in history.')) return
+    if (armedRestoreId !== historyId) { setArmedRestoreId(historyId); return }
+    setArmedRestoreId(null)
     setCommitting(true)
     try {
       const res = await restoreRouteHistoryAction({ supplyId: route.supplyId, historyId })
@@ -273,7 +289,7 @@ export function DrawingViewer({
     } finally {
       setCommitting(false)
     }
-  }, [route, applyRestored])
+  }, [route, applyRestored, armedRestoreId])
 
   const staleOnThisSheet = segments.filter(
     (g) => g.floorPlanId === plan.id && plan.pixels_per_meter != null && isSegmentCalibrationStale({ pixels_per_meter: g.pixelsPerMeter }, plan.pixels_per_meter),
@@ -597,7 +613,15 @@ export function DrawingViewer({
                       {new Date(h.savedAt).toLocaleString()} · {h.reason} · {h.legs} leg{h.legs === 1 ? '' : 's'} · {h.tracedM.toFixed(2)} m
                     </span>
                     {i > 0 && (
-                      <button type="button" onClick={() => void restore(h.id)} disabled={committing} style={legBtnWide} title="Put the route back to this state">Restore</button>
+                      <button
+                        type="button"
+                        onClick={() => void restore(h.id)}
+                        disabled={committing}
+                        style={armedRestoreId === h.id ? { ...legBtnWide, background: 'var(--c-amber)', color: '#1a1a1a', borderColor: 'var(--c-amber)' } : legBtnWide}
+                        title={armedRestoreId === h.id ? 'Press again to put the route back to this state — the current state stays in history' : 'Put the route back to this state'}
+                      >
+                        {armedRestoreId === h.id ? 'Confirm restore' : 'Restore'}
+                      </button>
                     )}
                     {i === 0 && <span style={{ fontSize: 10, color: 'var(--c-text-dim)' }}>current</span>}
                   </div>

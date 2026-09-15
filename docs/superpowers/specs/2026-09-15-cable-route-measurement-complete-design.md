@@ -1,6 +1,6 @@
 # Cable route measurement — completeness design
 
-**Date:** 2026-09-15 · **Status:** gap analysis + design, awaiting go · **Supersedes:** `2026-09-11-cable-route-measurement-design.md` (the shipped PR #180 surface) · **Branch:** `feat/cable-route-viewer-handoff`
+**Date:** 2026-09-15 · **Status:** built — every non-skipped row below is Built; decisions taken 2026-09-15 (per-page scale table, Revert, three skips) · **Supersedes:** `2026-09-11-cable-route-measurement-design.md` (the shipped PR #180 surface) · **Branch:** `feat/cable-route-viewer-handoff`
 
 ## Why this document exists
 
@@ -17,36 +17,36 @@ Status: **Built** = exists and verified in a browser against production data · 
 | A2 | From the drawing — the ⚡ tool with a filterable run list | Built | picker gated on ORG_WRITE_ROLES + a DRAFT revision |
 | A3 | From a route already drawn on the sheet (press it) | Built, verification interrupted | overlay + `onPressOther` |
 | A4 | From the worklist, deep-linkable | Built | `?supply=` |
-| A5 | Worklist search / sort | **Missing** | three filter tabs only; KINGSWALK has 125 runs |
+| A5 | Worklist search / sort | Built | search box, sort by name / length / outstanding-first |
 
 ### B. Scale
 | # | Capability | Status | Evidence / gap |
 |---|---|---|---|
 | B1 | Set scale in-flow, stored with WHERE it was taken, drawn on the sheet | Built | `00198` |
 | B2 | Recalibration flags every leg traced under the old scale | Built | rail + worklist |
-| B3 | **Re-measure flagged legs in one action** (points are stored; only the divisor changed) | **Missing** | today: delete and retrace |
-| B4 | Scale per PDF page | **Missing — decision** | one scale per drawing; the page is recorded. Tracing on another page silently uses page 1's scale |
+| B3 | Re-measure flagged legs in one action | Built | `remeasureRouteLegsAction`, dry-run preview then write, logged |
+| B4 | Scale per PDF page | Built | `tenants.floor_plan_page_scales` (`00199`); a leg on an unscaled page is refused, naming the page |
 
 ### C. Tracing
 | # | Capability | Status | Evidence / gap |
 |---|---|---|---|
 | C1 | Click-to-add vertices, double-click / Enter to finish, live per-edge lengths, running total | Built | |
 | C2 | Undo last point, Discard, Esc | Built | |
-| C3 | **Keyboard undo/redo (⌘Z / ⇧⌘Z) while tracing** | **Missing** | |
-| C4 | **Snap the first vertex of a new leg to the end of the previous leg** (continuity) | **Missing** | legs of one run can visibly fail to join |
-| C5 | **Orthogonal snap (Shift → 0/45/90°)** — cable trays are orthogonal | **Missing** for polyline | the line tool has `snapAngle` |
+| C3 | Keyboard undo/redo (⌘Z / ⇧⌘Z) while tracing | Built, browser-verified | snapshot history, `lib/cable-route/route-history.ts` |
+| C4 | Snap the first vertex of a new leg to the end of the previous leg | Built | `lib/cable-route/snap.ts`, 12 screen px |
+| C5 | Orthogonal snap (Shift → 0/45/90°) | Built | |
 | C6 | Zoom, pan, fit, multi-page, continue on another sheet | Built | |
 | C7 | Explicit Save leg with server-computed length; pending state visible | Built | status strip |
-| C8 | **In-progress trace survives a reload / accidental navigation** | **Missing** | markup has IndexedDB draft autosave; route mode has none |
+| C8 | In-progress trace survives a reload | Built | IndexedDB draft per (drawing, run, page) |
 | C9 | Touch / tablet (tap, double-tap) | Untested | handlers are shared with markup |
 
 ### D. Editing a saved route
 | # | Capability | Status | Evidence / gap |
 |---|---|---|---|
 | D1 | Select a leg; drag / insert / remove vertices; delete a leg | Built | persists via replace-all |
-| D2 | **Undo/redo of persisted edits** | **Missing** | a dragged vertex cannot be undone except by dragging back |
+| D2 | Undo/redo of persisted edits | Built | undo re-persists the previous snapshot's legs |
 | D3 | Edit rise & drop | Built | shared panel |
-| D4 | Reorder legs | **Missing** | seq = save order; a run traced out of order totals correctly but lists wrongly |
+| D4 | Reorder legs | Built | ↑↓ in the rail |
 | D5 | Split / merge legs | Missing — proposed skip | delete + retrace covers it |
 
 ### E. Saving, recall, history
@@ -54,32 +54,32 @@ Status: **Built** = exists and verified in a browser against production data · 
 |---|---|---|---|
 | E1 | Routes drawn on the drawing in every mode; toggle; press to measure | Built | the drawing is the record |
 | E2 | Reopen route mode → legs recalled; worklist reflects state | Built | |
-| E3 | **Route history — who changed what, when; restore a prior state** | **Missing** | segments are replaced wholesale with no trail; only the assigned length is in `change_log` |
-| E4 | **Concurrent editing guarded** | **Missing** | `UNIQUE(supply_id)` stops duplicates; two people editing legs = last write wins, silently |
+| E3 | Route history — who changed what, when; restore a prior state | Built | `cable_schedule.route_history` (`00199`), append-only; Restore in the rail |
+| E4 | Concurrent editing guarded | Built | `expectedUpdatedAt` token; stale save refused with when; Reload offered |
 | E5 | Assign with overwrite confirmation listing every existing value; status rule matches the grid | Built | |
-| E6 | Revert an assignment to the previous schedule figure | **Missing — decision** | the old value is in `change_log` |
+| E6 | Revert an assignment to the previous schedule figure | Built | `revertRouteAssignmentAction`, logged |
 | E7 | ISSUED revision frozen | Built | DB trigger |
 
 ### F. Output
 | # | Capability | Status | Evidence / gap |
 |---|---|---|---|
 | F1 | Export sheet → versioned PDF with legend; listed, previewable, downloadable | Built | |
-| F2 | **Routes CSV per revision** (run, sheets, legs, traced, rise, drop, total, on schedule?) | **Missing** | |
-| F3 | **Method column in the schedule's own PDF/Excel/CSV exports** | **Missing** | provenance stops at the grid |
+| F2 | Routes CSV per revision | Built | worklist |
+| F3 | Method column in the schedule's CSV/Excel exports | Built | CSV `length_method`; Excel trailing column V |
 | F4 | Export a sheet from the worklist without opening it | Missing — proposed skip | the raster comes from the browser |
 
 ### G. Trust
 | # | Capability | Status | Evidence / gap |
 |---|---|---|---|
 | G1 | App gates + RLS; contract test for inert gates; matrix rows | Built | |
-| G2 | **Telemetry** — leg saved, assigned, exported | **Missing** | `product_events` will never show use |
+| G2 | Telemetry — leg saved, assigned, exported | Built | three events, CHECK widened in `00199` |
 | G3 | Project-promoted PM refused by RLS (fail-closed) | Open, documented | owner decision |
 
 ### H. Quality
 | # | Capability | Status | Evidence / gap |
 |---|---|---|---|
 | H1 | Pure maths + actions unit-tested (51 + 37 cases) | Built | |
-| H2 | **End-to-end spec for trace → save → assign → recall** | **Missing** | Konva has no jsdom; Playwright is the repo's e2e tool |
+| H2 | End-to-end spec | Built | `e2e/tests/12-cable-route-measure.spec.ts`, env-gated |
 | H3 | Empty / error states: no drawings, no scale, ISSUED, orphaned leg | Built | |
 
 ## What gets built (no exceptions, in this order)
