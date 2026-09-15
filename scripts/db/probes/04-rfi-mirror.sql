@@ -34,8 +34,8 @@
 -- Contract: exactly ONE row-producing statement, last in the file. No
 -- impersonation.
 --
--- Expected: 25 rows. If the printed `assertions seen:` list is shorter than
--- twenty-five names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 26 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-six names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -69,6 +69,10 @@ DECLARE
   v_livemv_err text;  -- the move's error, if any: a dropped move arm leaves the raiser as gatekeeper on a project he is not on, and the membership trigger refuses the move
   v_cl_ctid_before text;   -- the born-closed record's tuple identity before an unrelated watched edit (Task 10 review, rule 1)
   v_cl_restamp     record; -- …and its ctid / last_activity_at / closed_by after a closed_by re-stamp on the source
+  v_void_rfi   uuid;       -- a fourth RFI, voided ON THE SPINE while the source stays alive (rule 2, via Task 14)
+  v_void_at    record;     -- the item as the void left it: title + ctid
+  v_void_ren1  record;     -- after a source RENAME alone — rule 1 must return early, so the tuple is not even rewritten
+  v_void_ren2  record;     -- after a rename PAIRED with a status edit — the arm runs, and rule 2 freezes the title
 BEGIN
   SELECT u.user_id INTO v_pm FROM public.user_organisations u
    WHERE u.organisation_id = v_org AND u.role = 'owner' AND u.is_active
@@ -343,6 +347,43 @@ BEGIN
   SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
     FROM projects.work_items w WHERE w.rfi_id = v_cv_rfi AND w.origin = 'mirror';
 
+  -- ── Rule 2 (Task 10 review; landed in D.1 by Task 14): a VOID row's title is
+  --    FROZEN, while a closed row keeps following the source ────────────────
+  -- The case is the SPINE-side void with the source still alive: a person
+  -- voids the ITEM with a reason (§03 §1.7), the RFI lives on, and the record
+  -- must keep saying what it said when it was voided. Section F's
+  -- delete-to-void cannot express this — it nulls rfi_id, which puts the row
+  -- beyond project_rfi() forever.
+  --   1. a source RENAME alone: rule 1's early return fires (a void row's
+  --      title is never compared), so the tuple is not even rewritten;
+  --   2. a rename PAIRED with a status edit: source_status moves, rule 1
+  --      cannot return, the UPDATE arm runs — and everything it projects
+  --      follows the source EXCEPT the title. source_status is asserted below
+  --      precisely so this row cannot pass by the arm never running.
+  INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
+                             priority, status, raised_by)
+  VALUES (v_proj, v_org, 'Probe VOID RFI', 'body', 'medium', 'open', v_other)
+  RETURNING id INTO v_void_rfi;
+  -- Service path (auth.uid() IS NULL): the guard's exemption returns NEW after
+  -- clearing the closed stamps, so a direct void with a reason is legal here.
+  UPDATE projects.work_items
+     SET status = 'void', void_reason = 'voided on the spine, source still live'
+   WHERE rfi_id = v_void_rfi AND origin = 'mirror';
+  SELECT w.title, w.ctid::text AS ctid INTO v_void_at
+    FROM projects.work_items w WHERE w.rfi_id = v_void_rfi AND w.origin = 'mirror';
+  IF v_void_at.title IS DISTINCT FROM 'Probe VOID RFI' THEN
+    RAISE EXCEPTION 'fixture: the spine-side void did not leave the item titled "Probe VOID RFI" (got %)', v_void_at.title;
+  END IF;
+
+  UPDATE projects.rfis SET subject = 'Renamed once' WHERE id = v_void_rfi;
+  SELECT w.title, w.ctid::text AS ctid INTO v_void_ren1
+    FROM projects.work_items w WHERE w.rfi_id = v_void_rfi AND w.origin = 'mirror';
+
+  UPDATE projects.rfis SET subject = 'Renamed twice', status = 'responded'
+   WHERE id = v_void_rfi;
+  SELECT w.title, w.status, w.source_status, w.void_reason INTO v_void_ren2
+    FROM projects.work_items w WHERE w.rfi_id = v_void_rfi AND w.origin = 'mirror';
+
   CREATE TEMP TABLE rfi_ctx(
     rfi uuid, closed_rfi uuid, proj uuid, pm uuid, other uuid,
     ins_status text, ins_bic uuid, ins_assignee uuid, ins_gate uuid,
@@ -361,7 +402,11 @@ BEGIN
     proj3 uuid, admin3 uuid,
     livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid, livemv_err text,
     cl_ctid_before text, cl_ctid_after text, cl_restamp_last_activity timestamptz,
-    cl_restamp_closed_by uuid, cl_restamp_status text)
+    cl_restamp_closed_by uuid, cl_restamp_status text,
+    void_rfi uuid, void_title_at_void text, void_ctid_at_void text,
+    void_title_ren1 text, void_ctid_ren1 text,
+    void_title_ren2 text, void_status_ren2 text, void_source_status_ren2 text,
+    void_reason_ren2 text)
     ON COMMIT DROP;
   INSERT INTO rfi_ctx VALUES (
     v_rfi, v_closed_rfi, v_proj, v_pm, v_other,
@@ -382,7 +427,11 @@ BEGIN
     v_proj3, v_admin3,
     v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id, v_livemv_err,
     v_cl_ctid_before, v_cl_restamp.ctid_after, v_cl_restamp.last_activity_at,
-    v_cl_restamp.closed_by, v_cl_restamp.status);
+    v_cl_restamp.closed_by, v_cl_restamp.status,
+    v_void_rfi, v_void_at.title, v_void_at.ctid,
+    v_void_ren1.title, v_void_ren1.ctid,
+    v_void_ren2.title, v_void_ren2.status, v_void_ren2.source_status,
+    v_void_ren2.void_reason);
 END $probe$;
 
 SELECT 'item_created' AS probe,
@@ -525,4 +574,15 @@ SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
            AND c.cl_restamp_closed_by = c.pm AND c.cl_restamp_status = 'closed'
            AND (SELECT r.closed_by FROM projects.rfis r WHERE r.id = c.closed_rfi) = c.chain_pm
           FROM rfi_ctx c),
-       'a closed_by re-stamp on a CLOSED RFI fires the _upd trigger (the column is watched) but changes nothing the closed record projects — first closer wins — so the UPDATE arm returns early: same ctid, last_activity_at keeps its historical value instead of the guard''s now(), and the record still names the first closer while the source names the second';
+       'a closed_by re-stamp on a CLOSED RFI fires the _upd trigger (the column is watched) but changes nothing the closed record projects — first closer wins — so the UPDATE arm returns early: same ctid, last_activity_at keeps its historical value instead of the guard''s now(), and the record still names the first closer while the source names the second'
+UNION ALL
+-- Task 10 review, rule 2 (via Task 14): a VOID row's title is frozen.
+SELECT 'spine_voided_item_title_is_frozen',
+       (SELECT c.void_title_at_void = 'Probe VOID RFI'
+           AND c.void_title_ren1 = 'Probe VOID RFI' AND c.void_ctid_ren1 = c.void_ctid_at_void
+           AND c.void_title_ren2 = 'Probe VOID RFI'
+           AND c.void_status_ren2 = 'void' AND c.void_source_status_ren2 = 'responded'
+           AND c.void_reason_ren2 = 'voided on the spine, source still live'
+           AND (SELECT r.subject FROM projects.rfis r WHERE r.id = c.void_rfi) = 'Renamed twice'
+          FROM rfi_ctx c),
+       'an item voided ON THE SPINE while its RFI lives on keeps the title it was voided with: a rename ALONE returns early on rule 1 (same ctid — the tuple is not even rewritten), and a rename PAIRED with a status edit runs the UPDATE arm — source_status follows to ''responded'' and void_reason survives, but the title does not move, while the source now reads "Renamed twice"';

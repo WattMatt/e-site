@@ -97,14 +97,14 @@ SELECT 'no_current_user_authorisation',
   FROM fns
 UNION ALL
 SELECT 'snapshot_table_not_anon_readable',
-       NOT has_table_privilege('anon', to_regclass('projects.backup_00198_source_assignees')::oid, 'SELECT'),
-       CASE WHEN to_regclass('projects.backup_00198_source_assignees') IS NULL
-            THEN 'projects.backup_00198_source_assignees does not exist yet — Task 14 section H creates it (expected red until then)'
+       NOT has_table_privilege('anon', to_regclass('projects.backup_00199_source_assignees')::oid, 'SELECT'),
+       CASE WHEN to_regclass('projects.backup_00199_source_assignees') IS NULL
+            THEN 'projects.backup_00199_source_assignees does not exist yet — Task 14 section H creates it (expected red until then)'
             ELSE 'holds every RFI and snag assignee; explicitly revoked (00196:1310 already made new projects tables non-anon-readable — belt and braces)' END
 UNION ALL
 SELECT 'snapshot_table_has_rls',
        (SELECT c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-         WHERE n.nspname = 'projects' AND c.relname = 'backup_00198_source_assignees'),
-       CASE WHEN to_regclass('projects.backup_00198_source_assignees') IS NULL
-            THEN 'projects.backup_00198_source_assignees does not exist yet — Task 14 section H creates it (expected red until then)'
+         WHERE n.nspname = 'projects' AND c.relname = 'backup_00199_source_assignees'),
+       CASE WHEN to_regclass('projects.backup_00199_source_assignees') IS NULL
+            THEN 'projects.backup_00199_source_assignees does not exist yet — Task 14 section H creates it (expected red until then)'
             ELSE 'RLS on with no policy: service-role only' END;

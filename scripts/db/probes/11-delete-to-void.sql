@@ -33,7 +33,7 @@
 -- Two deletes run under IMPERSONATION (probe 05b's pattern; the rest run as
 -- postgres, the service path): rbac-test — a contractor, the only sanctioned
 -- fixture — deletes two diary entries they authored, through "Authors can
--- delete their diary entries" (00149:30-37: author + org member + not a
+-- delete their diary entries" (00149:30-36: author + org member + not a
 -- client viewer). Person-satisfiable DELETE policies exist on four sources:
 -- that one, qc_reports_delete / qc_entries_delete (00176:122-128 / 183-192,
 -- owner/admin/PM by effective project role; the entry path is frozen on a
@@ -297,7 +297,7 @@ BEGIN
   DELETE FROM projects.site_diary_entries WHERE id = c.diary_live;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   IF v_n <> 1 THEN
-    RAISE EXCEPTION 'fixture: the impersonated delete of the LIVE diary entry touched % rows — the author DELETE policy (00149:30-37) did not admit rbac-test', v_n;
+    RAISE EXCEPTION 'fixture: the impersonated delete of the LIVE diary entry touched % rows — the author DELETE policy (00149:30-36) did not admit rbac-test', v_n;
   END IF;
   UPDATE imp_ctx SET n_live = v_n;
 

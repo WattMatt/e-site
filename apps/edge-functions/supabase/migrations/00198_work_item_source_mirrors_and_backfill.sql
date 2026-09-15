@@ -33,10 +33,10 @@
 --             WHERE origin = 'mirror' AND created_at <= <apply timestamp>;
 --            UPDATE projects.rfis r SET assigned_to = b.assigned_to, due_date = b.due_date,
 --                   updated_at = b.updated_at
---              FROM projects.backup_00198_source_assignees b
+--              FROM projects.backup_00199_source_assignees b
 --             WHERE b.kind = 'rfi' AND b.id = r.id;
 --            UPDATE field.snags s SET assigned_to = b.assigned_to, updated_at = b.updated_at
---              FROM projects.backup_00198_source_assignees b
+--              FROM projects.backup_00199_source_assignees b
 --             WHERE b.kind = 'snag' AND b.id = s.id;
 --            UPDATE projects.work_item_types SET gatekeeper_rule = 'project_pm' WHERE key = 'rfi';
 --            -- and re-run 00196 §12's CREATE OR REPLACE FUNCTION projects.work_items_transition_guard()
@@ -50,7 +50,7 @@
 --          the spine side only); the snapshot's due_date column restores it.
 --
 -- @verify:begin
--- table: projects.backup_00198_source_assignees
+-- table: projects.backup_00199_source_assignees
 -- function: projects.work_item_person_eligible(uuid,uuid)
 -- function: projects.resolve_mirror_assignee(uuid,text,uuid)
 -- function: projects.resolve_work_item_gatekeeper(uuid,uuid)
@@ -98,7 +98,7 @@
 -- trigger: qc_entries_void_work_item ON projects.qc_entries
 -- trigger: site_diary_entries_void_work_item ON projects.site_diary_entries
 -- trigger: site_forms_void_work_item ON field.site_forms
--- grant_absent: anon SELECT ON projects.backup_00198_source_assignees
+-- grant_absent: anon SELECT ON projects.backup_00199_source_assignees
 -- grant_absent: anon EXECUTE ON projects.work_item_person_eligible(uuid,uuid)
 -- grant_absent: anon EXECUTE ON projects.resolve_mirror_assignee(uuid,text,uuid)
 -- grant_absent: anon EXECUTE ON projects.resolve_work_item_gatekeeper(uuid,uuid)
@@ -1007,8 +1007,12 @@ BEGIN
     -- rfi_id, or through a spine-side void with the source still live), its
     -- priority (SET from the source unconditionally here, unlike D.4's) and
     -- source_status. People are re-derived on a live item only (below) and
-    -- the closed stamps keep the first closer, so neither is compared. Probe
-    -- 04 closed_item_unrelated_source_edit_leaves_the_record.
+    -- the closed stamps keep the first closer — and a record with no recorded
+    -- closer keeps none (closed_by is SET but not compared, so a later source
+    -- stamp does not back-fill it; 0 of the 6 closed RFIs have a NULL closer
+    -- and rfi.actions.ts:214 always stamps, so this has no live instance).
+    -- Neither is compared. Probe 04
+    -- closed_item_unrelated_source_edit_leaves_the_record.
     IF NOT v_live AND NOT v_moved
        AND v_item.organisation_id IS NOT DISTINCT FROM r.organisation_id
        AND (v_item.status = 'void' OR r.subject = v_item.title)
@@ -1056,7 +1060,19 @@ BEGIN
     UPDATE projects.work_items
        SET project_id       = r.project_id,
            organisation_id  = r.organisation_id,
-           title            = r.subject,
+           -- Rule 2 (Task 10 review; D.4-D.6's form, landed here by Task 14): a
+           -- VOID row's title is FROZEN, while a closed row keeps following the
+           -- source (a typo correction on a closed record is still worth
+           -- having). An RFI item reaches 'void' two ways: section F nulls
+           -- rfi_id on a source delete — after which this function can never
+           -- run for it again — or a person voids the ITEM on the spine with a
+           -- reason while the RFI lives on. The second is the one this clause
+           -- is for: the void record says what it said when it was voided, and
+           -- a later rename of the RFI (which, paired with a status edit,
+           -- slips past rule 1's early return above) must not rewrite it.
+           -- Probe 04 spine_voided_item_title_is_frozen.
+           title            = CASE WHEN v_item.status = 'void' THEN v_item.title
+                                   ELSE r.subject END,
            priority         = r.priority,
            source_status    = r.status,
            status           = projects.work_item_status_for_mirror(
@@ -1444,8 +1460,11 @@ BEGIN
     -- row still projects: project / org (a move), title (a closed row follows
     -- a rename; a void row's is never compared — a snag record is void only
     -- through section F, which nulls snag_id, or through a spine-side void),
-    -- priority (SET from the source unconditionally) and source_status. Probe
-    -- 06 closed_item_unrelated_source_edit_leaves_the_record.
+    -- priority (SET from the source unconditionally) and source_status. The
+    -- closed stamps keep the first closer — and a record with no recorded
+    -- closer keeps none: closed_by is SET but not compared, so a later
+    -- signed_off_by stamp on an already-closed snag does not back-fill it.
+    -- Probe 06 closed_item_unrelated_source_edit_leaves_the_record.
     IF NOT v_live AND NOT v_moved
        AND v_item.organisation_id IS NOT DISTINCT FROM s.organisation_id
        AND (v_item.status = 'void' OR v_title = v_item.title)
@@ -1490,7 +1509,17 @@ BEGIN
     UPDATE projects.work_items
        SET project_id       = s.project_id,
            organisation_id  = s.organisation_id,
-           title            = v_title,
+           -- D.1's rule 2 (Task 10 review, via Task 14): a VOID row's title is
+           -- FROZEN; a closed row keeps following the source. field.snags has
+           -- no void state, so a snag item is void only through section F
+           -- (which nulls snag_id and puts the row beyond this function) or
+           -- through a spine-side void with the snag still live — the case
+           -- this clause is for: a later rename or re-location of the snag,
+           -- paired with a status edit so rule 1's early return does not fire,
+           -- must not rewrite what the void record says. Probe 06
+           -- spine_voided_item_title_is_frozen.
+           title            = CASE WHEN v_item.status = 'void' THEN v_item.title
+                                   ELSE v_title END,
            priority         = s.priority,
            source_status    = s.status,
            status           = projects.work_item_status_for_mirror(
@@ -3261,8 +3290,11 @@ CREATE TRIGGER site_forms_void_work_item BEFORE DELETE ON field.site_forms
 -- measured it; re-read live 2026-09-13: one sequence (S) and one table (r)
 -- entry, both postgres's, nothing for functions), unlike `public`, where
 -- 00113's precedent pairs FROM PUBLIC with FROM anon because Supabase's
--- bootstrap ALTER DEFAULT PRIVILEGES grants anon EXECUTE directly at creation
--- (how field.allocate_form_no shipped executable by anon, 00179:317). Both
+-- bootstrap ALTER DEFAULT PRIVILEGES grants anon EXECUTE directly at creation,
+-- which is why 00113 pairs both revokes in `public`. `field` is like
+-- `projects` — no function default — so 00179:314-320's bare FROM PUBLIC
+-- sufficed there; field.allocate_form_no shipped open because 00179:326's
+-- GRANT … TO service_role was issued with no revoke at all. Both
 -- revokes are issued anyway: belt and braces, and every grant_absent: line
 -- above then holds whichever convention a later migration copies. So the
 -- mutation that proves this block bites is dropping the FROM PUBLIC line
@@ -3315,7 +3347,13 @@ END $grants$;
 -- live 2026-09-13: project_had_activity, project_settings_audit,
 -- resolve_project_pm, resolve_triage_owner, resolve_work_item_assignee and
 -- work_items_transition_guard, every one already revoked — so the assertion is
--- true today and stays a tripwire for every later migration in this schema.
+-- true today. It is NOT a durable tripwire: this DO block runs once, at this
+-- apply. The estate-wide one re-evaluated on every deploy is 00186's
+-- `anon_execute_absent: … projects …`, and it filters prosecdef — so the four
+-- SECURITY INVOKER helpers here (map_source_status, work_item_status_for_mirror,
+-- work_item_mirror_due_date, diary_delay_text) are covered by this file's
+-- grant_absent: lines and by nothing else, and a future INVOKER projects.mirror_*
+-- leak would be caught by neither.
 DO $assert_grants$
 DECLARE v_leak text;
 BEGIN
@@ -3327,6 +3365,306 @@ BEGIN
                                    'void\_work\_item\_%','diary\_delay\_text'])
      AND has_function_privilege('anon', p.oid, 'EXECUTE');
   IF v_leak IS NOT NULL THEN
-    RAISE EXCEPTION 'anon retains EXECUTE on: %', v_leak;
+    RAISE EXCEPTION 'anon retains EXECUTE on: %. Add each to section G''s DO $grants$ list.', v_leak;
   END IF;
 END $assert_grants$;
+
+-- ─── H. Pre-migration snapshot, then the backfill ────────────────────────────
+-- R52 (A(f)): every migration that overwrites a column takes a snapshot into a
+-- timestamped backup_<version>_<object> table in the same transaction, with the
+-- restore statement named in the header. updated_at is included because the
+-- write-back fires rfis_updated_at (00002:100) and snags_updated_at (00004:33)
+-- on the rows it touches. due_date is included because the floor UPDATE below
+-- reaches projects.rfis.due_date through the write-back on the open RFIs.
+--
+-- Measured 2026-09-15, which is what the snapshot has to be able to undo: 15
+-- RFIs (6 closed / 8 open / 1 responded), ALL FIFTEEN with assigned_to NULL and
+-- every non-closed one already past its due date; 6 snags, all in the E-Site
+-- DEMO org and all unassigned. So the write-back's live effect is exactly nine
+-- rows on projects.rfis — assigned_to, due_date and updated_at — and zero rows
+-- on field.snags. Both tables are snapshotted whole anyway: the restore must
+-- not depend on today's measurement being right.
+CREATE TABLE IF NOT EXISTS projects.backup_00199_source_assignees AS
+  SELECT 'rfi'::text AS kind, id, assigned_to, due_date, updated_at
+    FROM projects.rfis
+  UNION ALL
+  SELECT 'snag', id, assigned_to, NULL::date, updated_at
+    FROM field.snags;
+
+-- 00196:1310 ran ALTER DEFAULT PRIVILEGES IN SCHEMA projects REVOKE SELECT ON
+-- TABLES FROM anon, so this table is NOT born anon-readable (the 00025:26
+-- default no longer applies in this schema). Revoked explicitly anyway: it
+-- holds the assignee of every RFI and snag on the platform, and the revoke is
+-- true whichever default a later migration re-establishes. ⚠ Deleting this
+-- line does NOT turn probe 12's snapshot_table_not_anon_readable red today —
+-- there is nothing for it to remove — which is why the proving mutation is a
+-- GRANT SELECT … TO anon placed immediately BEFORE it (still 8/8: the revoke
+-- removed the grant) and then immediately AFTER it (red).
+REVOKE SELECT ON projects.backup_00199_source_assignees FROM anon;
+ALTER TABLE projects.backup_00199_source_assignees ENABLE ROW LEVEL SECURITY;
+-- No policy, deliberately: RLS with no policy is deny-all for every role except
+-- the table owner and service_role. Nothing in the app reads this table.
+
+-- ⚠ Notification suppression — forward-looking, and vacuous today. Item 2's
+-- §11 writes NO bell and reads NO GUC ("Nothing here writes a bell",
+-- 00196:1354-1356); item 4 adds the emit and the
+-- current_setting('esite.suppress_notifications', true) guard to that same
+-- function by CREATE OR REPLACE. This SET LOCAL is the exact GUC item 4 will
+-- honour, so it is set here on principle: against an estate where 964
+-- notifications have produced 57 reads, ~35 assignment bells plus overdue
+-- bells plus a 07:00 recap listing 35 stale items is the failure this
+-- programme exists to reverse, and a backfill that runs after item 4 lands
+-- (a re-run, a restore) must already carry it. work_item_events rows are
+-- STILL written — the metrics need them.
+SET LOCAL esite.suppress_notifications = 'on';
+
+DO $backfill$
+DECLARE
+  -- ⚠ ONE literal, re-derived at merge to the planned APPLY date (Task 20
+  --   Step 4). Everything else is computed from it: the floor for a backfilled
+  --   OPEN item is go_live + 5 office working days on THAT PROJECT's calendar,
+  --   pushed past that project's builders' shutdown band — projects.
+  --   add_working_days and push_past_builders_shutdown are item 2's §5
+  --   functions, the same two §5 uses to compute every live due date, so the
+  --   backfill and the live path cannot disagree about what a working day is.
+  --   (The plan's hand-derived DATE '2026-11-10' literal was a second
+  --   calendar; it happens to be what all five projects holding a backfilled
+  --   item answer today, which is exactly how a second calendar survives
+  --   review.)
+  v_go_live  CONSTANT date := DATE '2026-11-03';   -- Tuesday; set at merge to the planned apply date (Task 20 Step 4)
+  v_demo     CONSTANT uuid := 'e51ede00-0000-0000-0000-000000000001';  -- E-Site DEMO
+  v_row  record;
+  v_n    int;
+BEGIN
+  -- ⚠ Lock order (#18, item 2 hand-off). §6's ref allocator takes a
+  --    per-(project, type) advisory lock held to COMMIT (00196:752-803). One
+  --    LOOP per type, each ordered by (project_id, source id), gives every
+  --    session the same acquisition order; a concurrent client insert during
+  --    the apply could otherwise deadlock (40P01 — aborted cleanly, retry-safe,
+  --    but it would abort db push).
+  --
+  -- ⚠ A LOOP, not the plan's `PERFORM projects.project_rfi(r.id) FROM … ORDER
+  --    BY …`. A volatile function in a target list is evaluated by the node
+  --    BELOW the Sort, so `SELECT f(x) FROM t ORDER BY y` runs f in scan order
+  --    and the ORDER BY decides nothing — the same reason `ORDER BY` never
+  --    orders nextval(). The ordering above is the whole point of the clause,
+  --    so it is expressed the only way that guarantees it.
+
+  -- 1. RFIs — 15 on 2026-09-15 (6 closed, 8 open, 1 responded; the plan's 15).
+  --    Projected DIRECTLY through projects.project_rfi(), never by touching the
+  --    source row: every source table carries a BEFORE UPDATE set_updated_at
+  --    trigger, and with the F7 WHEN predicates in place a no-op UPDATE would
+  --    fire nothing anyway. Historical stamps travel with the projection (#4):
+  --    opened_at = rfis.created_at, closed_at/closed_by for the 6 closed ones —
+  --    kept because this runs on the service path (auth.uid() IS NULL under
+  --    db push, so §5 does not re-stamp opened_at).
+  --    The INSERT fires section E at depth 1: each open RFI receives the
+  --    resolved holder and the spine's computed due date on projects.rfis, and
+  --    the re-entrant mirror at depth 2 returns on the wrapper's guard. That
+  --    write-back is the point (rule (a)) — the RFI page renders a holder for
+  --    the first time — and the snapshot above is its undo.
+  v_n := 0;
+  FOR v_row IN
+    SELECT r.id FROM projects.rfis r
+      JOIN projects.projects p ON p.id = r.project_id
+     WHERE p.organisation_id <> v_demo
+     ORDER BY p.id, r.id
+  LOOP
+    PERFORM projects.project_rfi(v_row.id);
+    v_n := v_n + 1;
+  END LOOP;
+  RAISE NOTICE 'backfill: projected % rfis (15 expected on 2026-09-15 data)', v_n;
+
+  -- 2. Inspections — 19 on 2026-09-15 (the plan says 18; two were raised since
+  --    2026-09-10 and Task 8 already measured 19 on 2026-09-13). Every one is
+  --    at status 'assigned' with both assigned_to_id and verifier_id set.
+  --    No profiles guard here: projects.project_inspection() already handles an
+  --    auth user with no profiles row via work_item_person_eligible, and a
+  --    second WHERE EXISTS would SKIP a row the projection would have handled
+  --    correctly, turning a data question into a count mismatch. Measured: 0
+  --    such rows exist today.
+  v_n := 0;
+  FOR v_row IN
+    SELECT i.id FROM inspections.inspections i
+      JOIN projects.projects p ON p.id = i.project_id
+     WHERE p.organisation_id <> v_demo
+     ORDER BY p.id, i.id
+  LOOP
+    PERFORM projects.project_inspection(v_row.id);
+    v_n := v_n + 1;
+  END LOOP;
+  RAISE NOTICE 'backfill: projected % inspections (19 expected on 2026-09-15 data)', v_n;
+
+  -- 3. Snags — improvement 2. All six live rows are seeded E-Site DEMO fixtures
+  --    (identical created_at, one demo contractor as raiser, a project whose
+  --    creator resolves to contractor and would therefore be his own
+  --    gatekeeper). Backfilling them manufactures defects no real person owes
+  --    and pollutes metric 2a's contractor numerator with a fixture account.
+  --    The snag spine goes live EMPTY; the live trigger is unaffected. The
+  --    predicate is written out rather than the arm deleted, so the intent
+  --    survives the demo data — and probe 13's snag_arm_includes_non_demo_orgs
+  --    projects a synthetic snag on a REAL-org project through this exact arm,
+  --    so "0 rows" can never be read as "snags are not mirrored".
+  v_n := 0;
+  FOR v_row IN
+    SELECT s.id FROM field.snags s
+      JOIN projects.projects p ON p.id = s.project_id
+     WHERE p.organisation_id <> v_demo AND p.status = 'active'
+     ORDER BY p.id, s.id
+  LOOP
+    PERFORM projects.project_snag(v_row.id);
+    v_n := v_n + 1;
+  END LOOP;
+  RAISE NOTICE 'backfill: projected % snags (0 expected — all 6 live rows are demo)', v_n;
+
+  -- 4. QC defects — failed entries on issued/closed reports only.
+  --    Expected to project ZERO rows today: all 11 live entries are
+  --    conformance='na', on one issued report (F4, re-measured 2026-09-15).
+  --    That is not a reason to widen the predicate. A defect projected here is
+  --    born at its report's ISSUE, not at its draft (deviation 18 (3):
+  --    opened_at = GREATEST(entry.created_at, report.issued_at)).
+  v_n := 0;
+  FOR v_row IN
+    SELECT e.id FROM projects.qc_entries e
+      JOIN projects.qc_reports r ON r.id = e.report_id
+      JOIN projects.projects p ON p.id = e.project_id
+     WHERE e.conformance = 'fail' AND r.status IN ('issued','closed')
+       AND p.organisation_id <> v_demo
+     ORDER BY p.id, e.id
+  LOOP
+    PERFORM projects.project_qc_entry(v_row.id);
+    v_n := v_n + 1;
+  END LOOP;
+  RAISE NOTICE 'backfill: projected % qc defects (0 expected on 2026-09-15 live data)', v_n;
+
+  -- 5. Diary — NO ARM. Improvement 1. All 6 of 6 entries a non-empty test would
+  --    have projected are negations ("None," ×2, "None" ×2, "NO", and "No delays
+  --    or info required was noted in the site walk and or meeting"; plus two
+  --    delay_notes both reading "None" — re-measured 2026-09-15). Zero of them
+  --    is a delay, so there is nothing historical to project. Entries written
+  --    from go-live onward are projected by the live trigger, which carries the
+  --    same stop-list. A filtered arm that selects zero rows is omitted rather
+  --    than written, because a zero-row filter invites someone to "fix" it.
+
+  -- 6. Site forms — the single live row (the draft on (649) PNP FAERIE GLEN;
+  --    its author is the org owner, so F10 births it 'open' on him).
+  v_n := 0;
+  FOR v_row IN
+    SELECT f.id FROM field.site_forms f
+      JOIN projects.projects p ON p.id = f.project_id
+     WHERE p.organisation_id <> v_demo
+     ORDER BY p.id, f.id
+  LOOP
+    PERFORM projects.project_form_action(v_row.id);
+    v_n := v_n + 1;
+  END LOOP;
+  RAISE NOTICE 'backfill: projected % site forms (1 expected on 2026-09-15 data)', v_n;
+
+  -- 7. structure.node_orders: NOTHING. 453 rows (440 on 2026-09-10), no
+  --    trigger, no backfill. A(b): order_followup is created only by the
+  --    explicit chase control on an order line. Projecting 453 procurement rows
+  --    into an inbox that is read 6% of the time is the fastest way to prove
+  --    the new inbox is also noise.
+
+  -- 8. Floor every backfilled OPEN due date. An item months overdue on day one
+  --    is a red inbox nobody opens (§03 §1.10) — and on today's data EVERY one
+  --    of the nine non-closed RFIs is already past its due date. Closed and
+  --    void items are NOT floored (improvement 9): giving a July record a
+  --    November deadline sorts finished work into My Work's date bands.
+  --    GREATEST, so an item whose computed date is already beyond the floor
+  --    keeps it; the WHERE makes that case a no-op rather than a rewrite.
+  --    This UPDATE runs on the service path (auth.uid() NULL under db push), so
+  --    the guard's clause (a4) does not apply; it reaches projects.rfis.due_date
+  --    on the open RFIs through the write-back at depth 1 (and bumps their
+  --    updated_at — the snapshot's due_date/updated_at columns are the
+  --    restore). The chain ends there: due_date is not in
+  --    rfis_mirror_work_item_upd's UPDATE OF list, so the source write fires no
+  --    projection at all.
+  UPDATE projects.work_items w
+     SET due_date = GREATEST(w.due_date,
+                      projects.push_past_builders_shutdown(
+                        projects.add_working_days(v_go_live, 5, w.project_id, 'office'),
+                        w.project_id))
+   WHERE w.origin = 'mirror'
+     AND w.status IN ('triage','open','answered')
+     AND w.due_date < projects.push_past_builders_shutdown(
+                        projects.add_working_days(v_go_live, 5, w.project_id, 'office'),
+                        w.project_id);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RAISE NOTICE 'backfill: floored % open due dates to go_live(%) + 5 office working days, per project', v_n, v_go_live;
+
+  -- 9. Departed watchers (#10, item 2 hand-off). §11 seeds created_by as a
+  --    watcher on every INSERT regardless of membership, so a raiser who has
+  --    since left the project becomes a non-member watcher who can read the
+  --    item through the SELECT policy's watcher arm. Backfill-only: the live
+  --    path's raiser is, by construction, a current member.
+  --    ⚠ Measured 2026-09-15: every raiser, inspector, verifier and author
+  --    behind the 35 live items still holds an effective role, so this deletes
+  --    ZERO rows today. It is kept because "zero" here measures the estate's
+  --    current staffing, not the absence of the case — the same mistake as the
+  --    form_response newline count — and probe 13 makes it bite with a snag
+  --    raised by an org contractor who is not a member of its project.
+  DELETE FROM projects.work_item_watchers w
+   USING projects.work_items wi
+   WHERE wi.id = w.work_item_id AND wi.origin = 'mirror'
+     AND public.user_effective_project_role(wi.project_id, w.user_id) IS NULL;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RAISE NOTICE 'backfill: removed % non-member watchers', v_n;
+END $backfill$;
+
+-- ─── I. The completion event ─────────────────────────────────────────────────
+-- A(f) ordinal 9, and §12 §(d): "The first recap after go-live carries only
+-- items whose events post-date the backfill timestamp, recorded as
+-- product_events.properties->>'backfill_completed_at'". Without this row, item
+-- 4's 07:00 recap on day one lists all 35 backfilled items — the exact failure
+-- the suppression GUC above exists to avoid.
+-- F11: `event` is a fixed CHECK vocabulary (00194:225-238) and
+-- 'backfill_completed' is its arm for this (section A refuses the apply if the
+-- constraint does not admit it, so the failure is a sentence at the top rather
+-- than a 23514 after the whole backfill has run); properties.migration says
+-- WHICH backfill. Direct INSERT, not emit_product_event() — that raises on an
+-- absent project, and these are org-level rows (project_id nullable).
+-- public.product_events.organisation_id is NOT NULL (§12 §(i)), so one row is
+-- written per organisation touched, each carrying the same timestamp (now() is
+-- fixed for the transaction). That is also the more correct shape: each org's
+-- recap reads its own row. One row today — every backfilled item belongs to
+-- WM-Consulting.
+INSERT INTO public.product_events (organisation_id, project_id, actor_id, event, properties)
+SELECT o.organisation_id, NULL, NULL, 'backfill_completed',
+       jsonb_build_object(
+         'backfill_completed_at', now(),
+         'items', o.n,
+         'migration', 'work_item_source_mirrors_and_backfill')
+  FROM (SELECT p.organisation_id, count(*) AS n
+          FROM projects.work_items w JOIN projects.projects p ON p.id = w.project_id
+         WHERE w.origin = 'mirror'
+         GROUP BY p.organisation_id) o;
+
+-- Post-conditions, asserted in the same transaction that made them.
+DO $postcheck$
+DECLARE v_total int; v_orders int; v_stranded int;
+BEGIN
+  SELECT count(*) INTO v_total FROM projects.work_items WHERE origin = 'mirror';
+  IF v_total = 0 THEN
+    RAISE EXCEPTION 'the backfill projected nothing at all';
+  END IF;
+
+  SELECT count(*) INTO v_orders FROM projects.work_items WHERE item_type = 'order_followup';
+  IF v_orders > 0 THEN
+    RAISE EXCEPTION 'order_followup items exist (%) — A(b) forbids an automatic path', v_orders;
+  END IF;
+
+  SELECT count(*) INTO v_stranded
+    FROM projects.work_items w
+   WHERE w.origin = 'mirror' AND w.status IN ('triage','open','answered')
+     AND public.user_effective_project_role(w.project_id, w.ball_in_court_id) = 'client_viewer';
+  IF v_stranded > 0 THEN
+    RAISE EXCEPTION '% items land on a client viewer, who cannot clear them until Q3', v_stranded;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.product_events
+                  WHERE event = 'backfill_completed'
+                    AND properties->>'migration' = 'work_item_source_mirrors_and_backfill') THEN
+    RAISE EXCEPTION 'no backfill-completion event was written (§12 §(d))';
+  END IF;
+END $postcheck$;
