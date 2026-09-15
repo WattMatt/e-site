@@ -640,7 +640,9 @@ export function DrawingViewer({
             initialDropM={route.dropM}
             scheduleLengthM={route.scheduleLengthM}
             strands={route.strands}
-            onChanged={() => router.refresh()}
+            // A rise/drop save or an Assign is a history row too — clear the
+            // cached list so an open History panel refetches it.
+            onChanged={() => { setHistoryEntries(null); router.refresh() }}
           />
         ) : (
         <>
