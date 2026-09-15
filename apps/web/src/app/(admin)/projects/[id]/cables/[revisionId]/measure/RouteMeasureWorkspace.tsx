@@ -2,12 +2,9 @@
 
 import { useCallback, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { routeTotalM, isSegmentCalibrationStale } from '@esite/shared'
-import {
-  saveSupplyRouteAction,
-  applyRouteToScheduleAction,
-  deleteSupplyRouteAction,
-} from '@/actions/cable-route.actions'
+import { isSegmentCalibrationStale } from '@esite/shared'
+import { deleteSupplyRouteAction } from '@/actions/cable-route.actions'
+import { AssignRoutePanel } from '@/components/cable-route/AssignRoutePanel'
 
 export interface PlanRow {
   id: string
@@ -86,10 +83,7 @@ export function RouteMeasureWorkspace({
     const legs = initialRun?.route?.segments ?? []
     return legs.length ? (legs[legs.length - 1].floorPlanId ?? '') : ''
   })
-  const [riseM, setRiseM] = useState(initialRun?.route?.riseM ?? 0)
-  const [dropM, setDropM] = useState(initialRun?.route?.dropM ?? 0)
   const [message, setMessage] = useState<string | null>(null)
-  const [confirming, setConfirming] = useState<{ existingM: number; proposedM: number } | null>(null)
   const [pending, startTransition] = useTransition()
   const router = useRouter()
 
@@ -117,23 +111,10 @@ export function RouteMeasureWorkspace({
    */
   const savedSegments = selected?.route?.segments ?? []
 
-  /** Totals from the same shared maths the server uses. */
-  const liveTotal = useMemo(
-    () => routeTotalM({ segments: savedSegments.map((s) => ({ length_m: s.lengthM })), riseM, dropM }),
-    [savedSegments, riseM, dropM],
-  )
-  const liveTraced = useMemo(
-    () => routeTotalM({ segments: savedSegments.map((s) => ({ length_m: s.lengthM })), riseM: 0, dropM: 0 }),
-    [savedSegments],
-  )
-
   const selectRun = useCallback(
     (run: RunRow) => {
       setSelectedId(run.supplyId)
       setMessage(null)
-      setConfirming(null)
-      setRiseM(run.route?.riseM ?? 0)
-      setDropM(run.route?.dropM ?? 0)
       // Continue on the sheet this run was last traced on; otherwise leave the
       // picker empty so choosing a sheet is a deliberate act.
       const legs = run.route?.segments ?? []
@@ -149,63 +130,6 @@ export function RouteMeasureWorkspace({
       `/projects/${projectId}/floor-plans/${tracePlanId}?mode=route&supply=${selected.supplyId}`,
     )
   }, [router, projectId, selected, tracePlanId])
-
-  const save = useCallback(() => {
-    if (!selected) return
-    setMessage(null)
-    startTransition(async () => {
-      const res = await saveSupplyRouteAction({
-        supplyId: selected.supplyId,
-        riseM,
-        dropM,
-        // Resent unchanged. A leg whose drawing was deleted has a null
-        // floor_plan_id and cannot be resent, so saving would silently shorten
-        // the run — `save` is disabled in that state rather than dropping it.
-        segments: savedSegments
-          .filter((s) => s.floorPlanId)
-          .map((s) => ({
-            floorPlanId: s.floorPlanId as string,
-            pageIndex: s.pageIndex,
-            points: s.points,
-          })),
-      })
-      if (res.error) {
-        setMessage(res.error)
-        return
-      }
-      // The server's figure wins on screen. The client's live total is an aid
-      // while tracing; it is not the number that was stored.
-      setMessage(`Route saved — ${res.totalM?.toFixed(2)} m (traced ${res.tracedM?.toFixed(2)} m).`)
-    })
-  }, [selected, riseM, dropM, savedSegments])
-
-  const apply = useCallback(
-    (confirmOverwrite: boolean) => {
-      if (!selected) return
-      setMessage(null)
-      startTransition(async () => {
-        const res = await applyRouteToScheduleAction({
-          supplyId: selected.supplyId,
-          confirmOverwrite,
-        })
-        if (res.needsConfirmation) {
-          setConfirming({
-            existingM: res.needsConfirmation.existingM,
-            proposedM: res.needsConfirmation.proposedM,
-          })
-          return
-        }
-        setConfirming(null)
-        setMessage(
-          res.error
-            ? res.error
-            : `Applied ${res.appliedM?.toFixed(2)} m to ${res.strands} strand${res.strands === 1 ? '' : 's'}.`,
-        )
-      })
-    },
-    [selected],
-  )
-
 
   const removeRoute = useCallback(() => {
     if (!selected) return
@@ -409,104 +333,31 @@ export function RouteMeasureWorkspace({
               )}
             </div>
 
-            <div
-              style={{
-                marginTop: 12,
-                padding: 12,
-                background: 'var(--c-surface)',
-                border: '1px solid var(--c-border)',
-                borderRadius: 10,
-                display: 'flex',
-                gap: 16,
-                flexWrap: 'wrap',
-                alignItems: 'flex-end',
-              }}
-            >
-              <label style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
-                Rise (m)
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={riseM}
-                  onChange={(e) => setRiseM(Math.max(0, Number(e.target.value) || 0))}
-                  style={inputStyle}
-                />
-              </label>
-              <label style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
-                Drop (m)
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={dropM}
-                  onChange={(e) => setDropM(Math.max(0, Number(e.target.value) || 0))}
-                  style={inputStyle}
-                />
-              </label>
-
-              <div style={{ fontSize: 13 }}>
-                <div style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>
-                  Traced {liveTraced.toFixed(2)} m + rise {riseM} + drop {dropM}
-                </div>
-                <div style={{ fontSize: 20, fontWeight: 700 }}>{liveTotal.toFixed(2)} m</div>
-              </div>
-
-              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={save}
-                  disabled={pending || savedSegments.some((g) => !g.floorPlanId)}
-                  style={btn('ghost')}
-                  title={
-                    savedSegments.some((g) => !g.floorPlanId)
-                      ? 'A leg was traced on a drawing that no longer exists — saving would drop it. Remove the route and retrace.'
-                      : 'Save the rise and drop against this route'
-                  }
-                >
-                  Save rise &amp; drop
-                </button>
-                <button
-                  type="button"
-                  onClick={() => apply(false)}
-                  disabled={pending || savedSegments.length === 0}
-                  style={btn('primary')}
-                >
-                  Assign to schedule
-                </button>
-                {selected.route && (
-                  <button type="button" onClick={removeRoute} disabled={pending} style={btn('ghost')}>
-                    Remove route
-                  </button>
-                )}
-              </div>
+            {/* Rise & drop and Assign — the same component the drawing viewer
+                mounts, so there is exactly one assign surface and one overwrite
+                confirmation. Keyed on the run so its inputs reset per run. */}
+            <div style={{ marginTop: 12 }}>
+              <AssignRoutePanel
+                key={selected.supplyId}
+                supplyId={selected.supplyId}
+                segments={savedSegments}
+                initialRiseM={selected.route?.riseM ?? 0}
+                initialDropM={selected.route?.dropM ?? 0}
+                scheduleLengthM={selected.scheduleLengthM}
+                strands={selected.strands}
+                onChanged={() => router.refresh()}
+              />
             </div>
-
-            {confirming && (
-              <div
-                style={{
-                  marginTop: 10,
-                  padding: 12,
-                  borderRadius: 10,
-                  border: '1px solid var(--c-amber)',
-                  background: 'color-mix(in srgb, var(--c-amber) 10%, transparent)',
-                  fontSize: 13,
-                }}
-              >
-                This run already has a length of <strong>{confirming.existingM} m</strong> on the
-                schedule. The traced route gives <strong>{confirming.proposedM} m</strong>. Replacing
-                it records both values in the change log.
-                <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                  <button type="button" onClick={() => apply(true)} disabled={pending} style={btn('primary')}>
-                    Replace with {confirming.proposedM} m
-                  </button>
-                  <button type="button" onClick={() => setConfirming(null)} style={btn('ghost')}>
-                    Keep {confirming.existingM} m
-                  </button>
-                </div>
+            {selected.route && (
+              <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button type="button" onClick={removeRoute} disabled={pending} style={btn('ghost')}>
+                  Remove route
+                </button>
+                <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>
+                  Deletes the traced legs. The schedule keeps whatever length it holds.
+                </span>
               </div>
             )}
-
             {message && (
               <p style={{ marginTop: 10, fontSize: 13, color: 'var(--c-text-dim)' }}>{message}</p>
             )}

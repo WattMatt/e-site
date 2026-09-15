@@ -155,6 +155,8 @@ export interface EnrichedCable {
   standard: string | null
   ohm_per_km: number | null
   measured_length_m: number | null
+  /** MANUAL | SCALE_RULE | CAD | null — where the measured length came from. Display-only. */
+  measured_length_method?: string | null
   confirmed_length_m: number | null
   length_status: 'UNMEASURED' | 'MEASURED' | 'CONFIRMED' | 'DISCREPANCY'
   derated_current_rating_a: number | null
@@ -243,6 +245,7 @@ export interface EnrichedRun {
 }
 
 interface RawCable extends CableForCalc {
+  measured_length_method?: string | null
   cores: '3' | '3+E' | '4'
   conductor: 'CU' | 'AL'
   insulation: 'PVC' | 'XLPE' | 'PILC'
@@ -370,7 +373,7 @@ export async function getRevisionExportPayload(
         .from('cables')
         .select(
           'id, supply_id, cable_no, size_mm2, cores, conductor, insulation, armour, standard, ' +
-          'ohm_per_km, measured_length_m, confirmed_length_m, length_status, ' +
+          'ohm_per_km, measured_length_m, measured_length_method, confirmed_length_m, length_status, ' +
           'installation_method, depth_mm, grouped_with, grouping_arrangement, ambient_temp_c, ' +
           'derated_current_rating_a, tag_override, manual_override, notes',
         )
@@ -386,7 +389,7 @@ export async function getRevisionExportPayload(
         .from('cables')
         .select(
           'id, supply_id, cable_no, size_mm2, cores, conductor, insulation, armour, standard, ' +
-          'ohm_per_km, measured_length_m, confirmed_length_m, length_status, ' +
+          'ohm_per_km, measured_length_m, measured_length_method, confirmed_length_m, length_status, ' +
           'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
           'derated_current_rating_a, tag_override, manual_override, notes',
         )
@@ -512,6 +515,7 @@ export async function getRevisionExportPayload(
       standard: c.standard,
       ohm_per_km: c.ohm_per_km == null ? null : Number(c.ohm_per_km),
       measured_length_m: c.measured_length_m == null ? null : Number(c.measured_length_m),
+      measured_length_method: c.measured_length_method ?? null,
       confirmed_length_m:
         c.confirmed_length_m == null ? null : Number(c.confirmed_length_m),
       length_status: c.length_status,

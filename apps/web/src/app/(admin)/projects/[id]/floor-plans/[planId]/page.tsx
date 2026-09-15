@@ -258,6 +258,23 @@ async function loadRouteContext(
     .eq('supply_id', supplyId)
     .maybeSingle()
 
+  // What the schedule holds for this run, so the drawing can say whether the
+  // trace is on it yet. Parallels share a route; any strand's figure is the run's.
+  const { data: cables } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .select('measured_length_m')
+    .eq('supply_id', supplyId)
+  const cableRows = ((cables ?? []) as any[])
+  const scheduleLengthM = cableRows.find((c) => c.measured_length_m != null)?.measured_length_m
+  const { data: sheetRows } = await (supabase as any)
+    .schema('tenants')
+    .from('floor_plans')
+    .select('id, name, pixels_per_meter')
+    .eq('project_id', projectId)
+    .eq('is_active', true)
+    .order('name')
+
   const { data: segments } = routeRow
     ? await (supabase as any)
         .schema('cable_schedule')
@@ -273,6 +290,9 @@ async function loadRouteContext(
     runLabel,
     riseM: routeRow ? Number(routeRow.rise_m) : 0,
     dropM: routeRow ? Number(routeRow.drop_m) : 0,
+    scheduleLengthM: scheduleLengthM == null ? null : Number(scheduleLengthM),
+    strands: cableRows.length,
+    sheets: ((sheetRows ?? []) as any[]).map((p) => ({ id: p.id, name: p.name ?? 'Drawing', calibrated: p.pixels_per_meter != null })),
     // Carry the supply back so "Done" lands on the run just traced, with its
     // legs and total in front of the user, rather than an unselected list.
     doneHref: `/projects/${projectId}/cables/${supply.revision_id}/measure?supply=${supplyId}`,

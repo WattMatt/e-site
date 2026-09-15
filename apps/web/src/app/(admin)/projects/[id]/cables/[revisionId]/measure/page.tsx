@@ -195,8 +195,11 @@ export default async function MeasureRunsPage({ params, searchParams }: Props) {
         </Link>
         <h1 style={{ margin: '8px 0 2px', fontSize: 20, fontWeight: 700 }}>Measure cable runs</h1>
         <p style={{ margin: 0, fontSize: 13, color: 'var(--c-text-dim)' }}>
-          {measured} of {runs.length} runs traced. Pick a run, trace its route on the drawing, add
-          the rise and drop, then assign the length to the schedule.
+          {measured} of {runs.length} runs traced.{' '}
+          <strong>1</strong> Pick a run and trace it on the drawing — each leg is saved as you go.{' '}
+          <strong>2</strong> Add rise and drop.{' '}
+          <strong>3</strong> Assign the total to the schedule (from the drawing or from here).{' '}
+          Export a sheet from the drawing to keep a PDF record; they are listed below.
         </p>
       </div>
 

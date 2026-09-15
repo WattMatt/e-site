@@ -360,6 +360,9 @@ export type RouteModeProps = {
    * PDF report. Receives the native-resolution JPEG the canvas rasterised.
    */
   onExportSheet: (jpegBase64: string, pageIndex: number) => Promise<{ error?: string; version?: number }>
+  /** Every drawing on the project; picking one continues THIS run there. */
+  sheets: Array<{ id: string; name: string; calibrated: boolean }>
+  onSwitchSheet: (planId: string) => void
   /** Where "Done" returns to — the measure worklist. */
   doneHref: string
 }
@@ -2268,9 +2271,25 @@ export function MarkupCanvas({
           <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
             {!pixelsPerMeter
               ? 'This sheet has no scale yet — set the scale once and every later run on it is ready.'
-              : 'Click each corner of the route, then double-click to finish the leg. Change sheet to continue the run.'}
+              : 'Click each corner of the route, then double-click to finish the leg. Save it, then continue on another sheet if the run crosses one.'}
           </div>
           <div style={{ flex: 1 }} />
+          <label style={{ fontSize: 11, color: 'var(--c-text-dim)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            Continue on
+            <select
+              className="ob-input"
+              style={{ fontSize: 12, maxWidth: 260 }}
+              value={plan.id}
+              onChange={(e) => { if (e.target.value !== plan.id) routeMode.onSwitchSheet(e.target.value) }}
+              aria-label="Continue this run on another sheet"
+            >
+              {routeMode.sheets.map((sh) => (
+                <option key={sh.id} value={sh.id}>
+                  {sh.name}{sh.calibrated ? '' : ' (no scale yet)'}
+                </option>
+              ))}
+            </select>
+          </label>
           <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--c-text-mid)' }}>
             {(() => {
               const saved = routeMode.savedLegs.reduce((n, l) => n + l.lengthM, 0)

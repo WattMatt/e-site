@@ -60,6 +60,8 @@ const INSTALL_OPTIONS = [
  * iterates this directly (one row per RUN now).
  */
 export interface ScheduleRow {
+  /** MANUAL | SCALE_RULE | CAD | null — provenance of measured_length_m. */
+  measured_length_method?: string | null
   id: string
   cable_no: number
   from_label: string
@@ -964,6 +966,16 @@ export function CableScheduleGrid({
                         recorded a length — KINGSWALK 162/177, DE POORT 55/55 —
                         which is exactly where re-measuring a hand-typed figure
                         against the drawing is worth doing. */}
+                    {run.cables.some((c) => c.measured_length_method === 'SCALE_RULE') && (
+                      <Link
+                        href={`/projects/${projectId}/cables/${revisionId}/measure?supply=${run.supply_id}`}
+                        title="This length was traced on the drawings — open the route"
+                        className="badge badge-amber"
+                        style={{ display: 'inline-block', marginLeft: 6, fontSize: 9, textDecoration: 'none', verticalAlign: 'middle' }}
+                      >
+                        traced
+                      </Link>
+                    )}
                     {canEdit && !locked && (
                       <Link
                         href={`/projects/${projectId}/cables/${revisionId}/measure?supply=${run.supply_id}`}

@@ -6,6 +6,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import type { SceneGraph, RfiOption, ViewerMode, CableRunOption } from './MarkupCanvas'
 import { saveSupplyRouteAction, exportRouteSheetAction } from '@/actions/cable-route.actions'
+import { AssignRoutePanel } from '@/components/cable-route/AssignRoutePanel'
 
 const MarkupCanvas = dynamic(
   () => import('./MarkupCanvas').then((m) => m.MarkupCanvas),
@@ -89,6 +90,11 @@ export type RouteContext = {
   runLabel: string
   riseM: number
   dropM: number
+  /** What the schedule holds for this run now (any strand), and how many strands. */
+  scheduleLengthM: number | null
+  strands: number
+  /** Every drawing on the project, for continuing a run on another sheet. */
+  sheets: Array<{ id: string; name: string; calibrated: boolean }>
   /** Back to the measure worklist. */
   doneHref: string
   segments: Array<{
@@ -380,6 +386,9 @@ export function DrawingViewer({
                   onUpdateLeg,
                   onDeleteLeg,
                   onExportSheet,
+                  sheets: route.sheets,
+                  onSwitchSheet: (planId: string) =>
+                    router.push(`/projects/${projectId}/floor-plans/${planId}?mode=route&supply=${route.supplyId}`),
                   doneHref: route.doneHref,
                 }
               : undefined
@@ -427,10 +436,22 @@ export function DrawingViewer({
               </span>
             </div>
             <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--c-text-dim)', lineHeight: 1.5 }}>
-              Rise and drop are added back in the worklist, where the total is assigned to the
-              schedule. Tracing a route never changes a cable length on its own.
+              Tracing never changes a cable length on its own. Add rise and drop, then assign.
             </div>
           </div>
+        ) : null}
+        {route ? (
+          <AssignRoutePanel
+            key={route.supplyId}
+            compact
+            supplyId={route.supplyId}
+            segments={segments}
+            initialRiseM={route.riseM}
+            initialDropM={route.dropM}
+            scheduleLengthM={route.scheduleLengthM}
+            strands={route.strands}
+            onChanged={() => router.refresh()}
+          />
         ) : (
         <>
         <div className="data-panel">
