@@ -365,6 +365,7 @@ export function DrawingViewer({
           routeMode={
             route
               ? {
+                  supplyId: route.supplyId,
                   runLabel: route.runLabel,
                   savedLegs: segments.map((g) => ({
                     id: g.id,

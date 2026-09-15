@@ -338,6 +338,8 @@ export type CablePicker = {
 }
 
 export type RouteModeProps = {
+  /** The run being measured. Changing it re-arms the polyline. */
+  supplyId: string
   /** The run being measured, for the banner: e.g. "MB 3.1 → DB-07". */
   runLabel: string
   /** Legs already saved for this run, across all sheets, WITH their geometry. */
@@ -741,10 +743,21 @@ export function MarkupCanvas({
   // Route mode hands the measurer the polyline, not the selector. Arriving by
   // either door — the worklist or the ⚡ picker — you are holding the tool
   // that traces, and the first click on the drawing places a vertex.
+  //
+  // Keyed on the RUN, not on "is route mode on": picking a second run from the
+  // ⚡ panel while already measuring navigates to the new supply with route
+  // mode still true, and the first cut left the picker tool in hand with its
+  // panel open — every click on the drawing did nothing.
   useEffect(() => {
-    if (routeMode) setTool('polyline')
+    if (routeMode) {
+      setTool('polyline')
+      setCableQuery('')
+      setPendingLeg(null)
+      setSelectedLegIndex(null)
+      setLegError(null)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!routeMode])
+  }, [routeMode?.supplyId])
   // PDFDocumentProxy from pdfjs — kept as ref to avoid re-render on assignment.
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
   const pageImagesRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -1657,7 +1670,7 @@ export function MarkupCanvas({
     setCalibPoints([])
     setCalibDistance('')
     setCalibError(null)
-    setTool('select')
+    setTool(routeMode ? 'polyline' : 'select')
   }
 
   async function saveCalibration() {
@@ -1702,7 +1715,8 @@ export function MarkupCanvas({
         setCalibLine({ points: calibPts, metres, pageIndex: currentPage })
         setCalibPoints([])
         setCalibDistance('')
-        setTool('select')
+        // Back to tracing — the scale was set in order to trace.
+        setTool('polyline')
         return
       }
       const supabase = createClient()
