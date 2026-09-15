@@ -5,30 +5,39 @@ import { createClient } from '@/lib/supabase/server'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { RouteMeasureWorkspace, type RunRow, type PlanRow } from './RouteMeasureWorkspace'
+import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 
 export const metadata: Metadata = { title: 'Measure cable runs' }
 
 interface Props {
   params: Promise<{ id: string; revisionId: string }>
+  /** `?supply=` preselects a run — the grid and any other surface deep-links here. */
+  searchParams: Promise<{ supply?: string }>
 }
 
 /**
  * Measure cable runs against the project's drawings.
  *
- * A dedicated surface rather than a mode inside the general markup canvas.
- * The markup canvas is a 2,795-line general-purpose tool with seventeen tools
- * and three save paths; this flow needs one tool, one save path, and a worklist
- * that drives the whole session. Bolting it in would have coupled a schedule
- * feature to every future change in RFI and QC markup, and would have inherited
- * that canvas's scene-graph storage, which cannot express a route that crosses
- * sheets.
+ * This page is the WORKLIST. Tracing happens on the drawing viewer, in route
+ * mode (`?mode=route&supply=…`).
+ *
+ * It did not start that way: the first cut carried its own canvas so a schedule
+ * feature would not be coupled to RFI and QC markup. That canvas shipped with
+ * no zoom and no pan, which put a traced vertex within roughly 30-50cm of real
+ * site — worse than the measure tool the firm already had on the viewer, and a
+ * third control doing the same job as the grid's length cell. The coupling
+ * concern was real and is answered instead by what route mode may touch: it
+ * borrows the viewport and the polyline input, and a committed leg goes to
+ * `route_segments`, never to the markup scene. The scene graph still cannot
+ * express a route that crosses sheets, and nothing asks it to.
  *
  * The worklist is a QUERY, not a maintained list: a run is outstanding when it
  * has no route. Measuring one removes it. That is what narrows the list as the
  * work proceeds.
  */
-export default async function MeasureRunsPage({ params }: Props) {
+export default async function MeasureRunsPage({ params, searchParams }: Props) {
   const { id: projectId, revisionId } = await params
+  const { supply: initialSupplyId } = await searchParams
   const supabase = await createClient()
 
   const { data: revision } = await (supabase as any)
@@ -42,8 +51,9 @@ export default async function MeasureRunsPage({ params }: Props) {
   // Same write gate as the rest of the schedule. Page gating is not a gate on
   // its own — the actions re-check and the database policies gate the writes —
   // but a read-only role should not be shown a measuring workspace at all.
-  const allowed = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
-  if (!allowed) redirect(`/projects/${projectId}/cables/${revisionId}`)
+  // `.ok` — the helper returns a result object, so bare truthiness never fires.
+  const roleGate = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
+  if (!roleGate.ok) redirect(`/projects/${projectId}/cables/${revisionId}`)
 
   if (revision.status !== 'DRAFT') {
     redirect(`/projects/${projectId}/cables/${revisionId}`)
@@ -185,8 +195,11 @@ export default async function MeasureRunsPage({ params }: Props) {
         </Link>
         <h1 style={{ margin: '8px 0 2px', fontSize: 20, fontWeight: 700 }}>Measure cable runs</h1>
         <p style={{ margin: 0, fontSize: 13, color: 'var(--c-text-dim)' }}>
-          {measured} of {runs.length} runs traced. Pick a run, trace its route on the drawing, add
-          the rise and drop, then assign the length to the schedule.
+          {measured} of {runs.length} runs traced.{' '}
+          <strong>1</strong> Pick a run and trace it on the drawing — each leg is saved as you go.{' '}
+          <strong>2</strong> Add rise and drop.{' '}
+          <strong>3</strong> Assign the total to the schedule (from the drawing or from here).{' '}
+          Export a sheet from the drawing to keep a PDF record; they are listed below.
         </p>
       </div>
 
@@ -195,7 +208,14 @@ export default async function MeasureRunsPage({ params }: Props) {
         revisionId={revisionId}
         runs={runs}
         plans={planRows}
+        initialSupplyId={runs.some((r) => r.supplyId === initialSupplyId) ? initialSupplyId : undefined}
       />
+
+      {/* Every sheet exported from the drawing viewer, as versioned PDFs:
+          the record of what was traced, re-openable and downloadable. */}
+      <div style={{ marginTop: 20 }}>
+        <SavedReportsPanel projectId={projectId} kind="cable_route_sheet" title="Exported sheets" />
+      </div>
     </div>
   )
 }

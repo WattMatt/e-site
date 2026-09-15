@@ -1,14 +1,20 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, floorPlanService, rfiService, MARKUP_WRITE_ROLES } from '@esite/shared'
+import { projectService, floorPlanService, rfiService, MARKUP_WRITE_ROLES, ORG_WRITE_ROLES } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { DrawingViewer, type EditingAnnotation } from './DrawingViewer'
+import {
+  DrawingViewer,
+  type EditingAnnotation,
+  type RouteContext,
+  type CableScheduleContext,
+} from './DrawingViewer'
+import type { OtherLeg } from './RouteLayer'
 import type { ViewerMode } from './MarkupCanvas'
 
 interface Props {
   params: Promise<{ id: string; planId: string }>
-  searchParams: Promise<{ annotation?: string; mode?: string }>
+  searchParams: Promise<{ annotation?: string; mode?: string; supply?: string }>
 }
 
 type AnnotationRow = {
@@ -20,7 +26,7 @@ type AnnotationRow = {
 
 // Whitelist for the ?mode= querystring. Anything else (including absent)
 // falls back to 'view' so a stale or hand-typed URL doesn't 404.
-const VALID_MODES: ReadonlyArray<ViewerMode> = ['view', 'markup', 'rfi']
+const VALID_MODES: ReadonlyArray<ViewerMode> = ['view', 'markup', 'rfi', 'route']
 function parseMode(raw: string | undefined): ViewerMode {
   return (VALID_MODES as readonly string[]).includes(raw ?? '')
     ? (raw as ViewerMode)
@@ -29,7 +35,7 @@ function parseMode(raw: string | undefined): ViewerMode {
 
 export default async function DrawingViewerPage({ params, searchParams }: Props) {
   const { id: projectId, planId } = await params
-  const { annotation: editingId, mode: rawMode } = await searchParams
+  const { annotation: editingId, mode: rawMode, supply: supplyId } = await searchParams
   const initialMode = parseMode(rawMode)
   const supabase = await createClient()
 
@@ -53,7 +59,40 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
   // stops a hand-typed ?mode=markup from presenting tools that can't save.
   const gate = await requireEffectiveRole(supabase as any, projectId, MARKUP_WRITE_ROLES)
   const canWrite = gate.ok
-  const effectiveMode: ViewerMode = canWrite ? initialMode : 'view'
+
+  // ── Route mode ──────────────────────────────────────────────────────────
+  // Entered from the cable-schedule measure worklist as
+  // `?mode=route&supply=<id>`. It writes to the SCHEDULE, so it carries the
+  // schedule's write role and not this page's: MARKUP_WRITE_ROLES admits
+  // `contractor` (the primary markup author) while ORG_WRITE_ROLES does not.
+  // Without this second gate, moving tracing onto the drawing viewer would
+  // hand route-writing to every contractor. Anything that fails here falls
+  // back to a normal view of the drawing rather than an error.
+  // One gate, two consumers: the ⚡ tool that STARTS measuring from a drawing,
+  // and the route session itself. Both are the schedule's business, so both
+  // answer to ORG_WRITE_ROLES rather than this page's MARKUP_WRITE_ROLES.
+  const scheduleGate = await requireEffectiveRole(supabase as any, projectId, ORG_WRITE_ROLES)
+  const canMeasureCables = scheduleGate.ok
+
+  const [cableSchedule, routeBase, calibration, pageScales] = await Promise.all([
+    canMeasureCables ? loadCableSchedule(supabase, projectId) : Promise.resolve(undefined),
+    canMeasureCables && initialMode === 'route' && supplyId
+      ? loadRouteContext(supabase, projectId, supplyId)
+      : Promise.resolve(undefined),
+    loadCalibration(supabase, planId),
+    loadPageScales(supabase, planId),
+  ])
+  // Context for the sheet being traced: every OTHER run's legs on it, labelled
+  // from the schedule already loaded. Needs both of the above, hence after.
+  // Every saved leg on this sheet, for the overlay in ANY mode. RLS decides who
+  // may read routes; the page asks regardless of role.
+  const sheetLegs = await loadLegsOnSheet(supabase, planId)
+  const route = routeBase
+    ? { ...routeBase, otherLegsOnSheet: sheetLegs.filter((l) => l.supplyId !== routeBase.supplyId) }
+    : undefined
+
+  const effectiveMode: ViewerMode =
+    route ? 'route' : canWrite && initialMode !== 'route' ? initialMode : 'view'
 
   // RFIs eligible for attachment: not closed.
   const rfis = (rfisRaw as Array<{ id: string; subject: string; status: string }>)
@@ -166,6 +205,10 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
           pixels_per_meter: plan.pixels_per_meter ?? null,
           signedUrl,
           isPdf,
+          calibration_points: calibration.points,
+          calibration_metres: calibration.metres,
+          calibration_page_index: calibration.pageIndex,
+          page_scales: pageScales,
         }}
         projectId={projectId}
         annotations={annotations}
@@ -174,8 +217,263 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
         editing={editing}
         initialMode={effectiveMode}
         canWrite={canWrite}
+        route={route}
+        cableSchedule={cableSchedule}
+        sheetLegs={sheetLegs}
       />
       )}
     </div>
   )
+}
+
+/**
+ * Load the run being measured, its route so far, and the label for the banner.
+ *
+ * Returns `undefined` — a plain drawing view, not an error — when the supply
+ * does not exist, belongs to another project, or its revision is no longer
+ * DRAFT. A drawing is a harmless thing to land on. The schedule write role is
+ * checked by the caller.
+ */
+async function loadRouteContext(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+  supplyId: string,
+): Promise<Omit<RouteContext, 'otherLegsOnSheet'> | undefined> {
+  const { data: supply } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supplies')
+    .select('id, revision_id, from_node_id, to_node_id, revision:revisions(id, status, project_id)')
+    .eq('id', supplyId)
+    .maybeSingle()
+  if (!supply) return undefined
+  const rev = (supply as any).revision
+  if (!rev || rev.project_id !== projectId || rev.status !== 'DRAFT') return undefined
+
+  const nodeIds = [supply.from_node_id, supply.to_node_id].filter(Boolean) as string[]
+  const { data: nodes } = nodeIds.length
+    ? await (supabase as any).schema('structure').from('nodes').select('id, code').in('id', nodeIds)
+    : { data: [] }
+  const codeOf = new Map<string, string>(((nodes ?? []) as any[]).map((n) => [n.id, n.code as string]))
+  const runLabel = `${supply.from_node_id ? (codeOf.get(supply.from_node_id) ?? '—') : 'Source'} → ${
+    supply.to_node_id ? (codeOf.get(supply.to_node_id) ?? '—') : '—'
+  }`
+
+  const { data: routeRow } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supply_routes')
+    .select('id, rise_m, drop_m, updated_at')
+    .eq('supply_id', supplyId)
+    .maybeSingle()
+
+  // What the schedule holds for this run, so the drawing can say whether the
+  // trace is on it yet. Parallels share a route; any strand's figure is the run's.
+  const { data: cables } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .select('measured_length_m')
+    .eq('supply_id', supplyId)
+  const cableRows = ((cables ?? []) as any[])
+  const scheduleLengthM = cableRows.find((c) => c.measured_length_m != null)?.measured_length_m
+  const { data: sheetRows } = await (supabase as any)
+    .schema('tenants')
+    .from('floor_plans')
+    .select('id, name, pixels_per_meter')
+    .eq('project_id', projectId)
+    .eq('is_active', true)
+    .order('name')
+
+  const { data: segments } = routeRow
+    ? await (supabase as any)
+        .schema('cable_schedule')
+        .from('route_segments')
+        .select('id, seq, floor_plan_id, floor_plan_name, page_index, points, pixels_per_meter, length_m')
+        .eq('route_id', routeRow.id)
+        .order('seq')
+    : { data: [] }
+
+  return {
+    supplyId,
+    revisionId: supply.revision_id as string,
+    runLabel,
+    riseM: routeRow ? Number(routeRow.rise_m) : 0,
+    dropM: routeRow ? Number(routeRow.drop_m) : 0,
+    scheduleLengthM: scheduleLengthM == null ? null : Number(scheduleLengthM),
+    strands: cableRows.length,
+    updatedAt: routeRow?.updated_at ?? null,
+    sheets: ((sheetRows ?? []) as any[]).map((p) => ({ id: p.id, name: p.name ?? 'Drawing', calibrated: p.pixels_per_meter != null })),
+    // Carry the supply back so "Done" lands on the run just traced, with its
+    // legs and total in front of the user, rather than an unselected list.
+    doneHref: `/projects/${projectId}/cables/${supply.revision_id}/measure?supply=${supplyId}`,
+    segments: ((segments ?? []) as any[]).map((g) => ({
+      id: g.id,
+      floorPlanId: g.floor_plan_id,
+      floorPlanName: g.floor_plan_name ?? 'Drawing',
+      pageIndex: g.page_index,
+      points: (g.points ?? []) as number[],
+      pixelsPerMeter: Number(g.pixels_per_meter),
+      lengthM: Number(g.length_m),
+    })),
+  }
+}
+
+/** Where this sheet's scale was taken (00198). All-null before it is set. */
+async function loadCalibration(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  planId: string,
+): Promise<{ points: number[] | null; metres: number | null; pageIndex: number | null }> {
+  const { data } = await (supabase as any)
+    .schema('tenants')
+    .from('floor_plans')
+    .select('calibration_points, calibration_metres, calibration_page_index')
+    .eq('id', planId)
+    .maybeSingle()
+  const pts = data?.calibration_points
+  return {
+    points: Array.isArray(pts) && pts.length === 4 ? pts.map(Number) : null,
+    metres: data?.calibration_metres == null ? null : Number(data.calibration_metres),
+    pageIndex: data?.calibration_page_index == null ? null : Number(data.calibration_page_index),
+  }
+}
+
+/**
+ * Every saved route leg on this sheet, labelled by run — the record the
+ * drawing shows in any mode. Labels are resolved here rather than borrowed
+ * from the ⚡ picker's list, which exists only for schedule writers.
+ */
+async function loadLegsOnSheet(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  planId: string,
+): Promise<OtherLeg[]> {
+  const { data: segs } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('route_segments')
+    .select('route_id, page_index, points, length_m')
+    .eq('floor_plan_id', planId)
+  const rows = ((segs ?? []) as any[]).filter((r) => Array.isArray(r.points) && r.points.length >= 4)
+  if (rows.length === 0) return []
+  const routeIds = [...new Set(rows.map((r) => r.route_id))]
+  const { data: routes } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supply_routes')
+    .select('id, supply_id')
+    .in('id', routeIds)
+  const supplyOf = new Map<string, string>(((routes ?? []) as any[]).map((r) => [r.id, r.supply_id]))
+  const supplyIds = [...new Set([...supplyOf.values()])]
+  const { data: supplies } = supplyIds.length
+    ? await (supabase as any).schema('cable_schedule').from('supplies').select('id, from_node_id, to_node_id').in('id', supplyIds)
+    : { data: [] }
+  const supplyRows = ((supplies ?? []) as any[])
+  const nodeIds = [...new Set(supplyRows.flatMap((x) => [x.from_node_id, x.to_node_id]).filter(Boolean))] as string[]
+  const { data: nodes } = nodeIds.length
+    ? await (supabase as any).schema('structure').from('nodes').select('id, code').in('id', nodeIds)
+    : { data: [] }
+  const codeOf = new Map<string, string>(((nodes ?? []) as any[]).map((n) => [n.id, n.code as string]))
+  const labelOf = new Map<string, string>(
+    supplyRows.map((x) => [
+      x.id,
+      `${x.from_node_id ? (codeOf.get(x.from_node_id) ?? '—') : 'Source'} → ${x.to_node_id ? (codeOf.get(x.to_node_id) ?? '—') : '—'}`,
+    ]),
+  )
+  return rows
+    .map((r) => ({ supplyId: supplyOf.get(r.route_id) ?? '', pageIndex: Number(r.page_index), points: r.points as number[], lengthM: Number(r.length_m) }))
+    .filter((r) => r.supplyId)
+    .map((r) => ({ ...r, label: labelOf.get(r.supplyId) ?? 'run' }))
+}
+
+/**
+ * The project's DRAFT cable schedule, for the in-drawing ⚡ tool.
+ *
+ * A run is offered whether or not it already has a length: the re-measure case
+ * is exactly the one a hand-typed schedule needs, and hiding traced runs would
+ * make the tool disappear on every project that has ever recorded a length.
+ * Returns `undefined` when the project has no DRAFT revision, so the tool is
+ * absent rather than empty.
+ */
+async function loadCableSchedule(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+): Promise<CableScheduleContext | undefined> {
+  const { data: revision } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('revisions')
+    .select('id, code')
+    .eq('project_id', projectId)
+    .eq('status', 'DRAFT')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!revision) return undefined
+
+  const { data: supplies } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supplies')
+    .select('id, from_node_id, to_node_id')
+    .eq('revision_id', revision.id)
+  const supplyRows = ((supplies ?? []) as any[])
+  if (supplyRows.length === 0) return undefined
+
+  // Node codes name the run. Fetched separately rather than through a
+  // PostgREST embed: `supplies` has two FKs into the same table, which makes
+  // the embed alias ambiguous and version-sensitive.
+  const nodeIds = [...new Set(supplyRows.flatMap((s) => [s.from_node_id, s.to_node_id]).filter(Boolean))] as string[]
+  const { data: nodes } = nodeIds.length
+    ? await (supabase as any).schema('structure').from('nodes').select('id, code').in('id', nodeIds)
+    : { data: [] }
+  const codeOf = new Map<string, string>(((nodes ?? []) as any[]).map((n) => [n.id, n.code as string]))
+
+  const { data: routes } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('supply_routes')
+    .select('supply_id, traced_length_m')
+    .eq('revision_id', revision.id)
+  // Traced means a route WITH geometry — an empty route is still outstanding,
+  // the same rule the worklist uses.
+  const tracedSupplies = new Set(
+    ((routes ?? []) as any[]).filter((r) => Number(r.traced_length_m) > 0).map((r) => r.supply_id),
+  )
+
+  const { data: cables } = await (supabase as any)
+    .schema('cable_schedule')
+    .from('cables')
+    .select('supply_id, measured_length_m')
+    .eq('revision_id', revision.id)
+  const lengthOf = new Map<string, number>()
+  for (const c of ((cables ?? []) as any[])) {
+    if (c.measured_length_m != null && !lengthOf.has(c.supply_id)) {
+      lengthOf.set(c.supply_id, Number(c.measured_length_m))
+    }
+  }
+
+  return {
+    revisionId: revision.id,
+    revisionCode: revision.code,
+    runs: supplyRows
+      .map((s) => ({
+        supplyId: s.id,
+        label: `${s.from_node_id ? (codeOf.get(s.from_node_id) ?? '—') : 'Source'} → ${
+          s.to_node_id ? (codeOf.get(s.to_node_id) ?? '—') : '—'
+        }`,
+        traced: tracedSupplies.has(s.id),
+        scheduleLengthM: lengthOf.get(s.id) ?? null,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  }
+}
+
+/** Scales set per PDF page (00199). Empty before any page other than 1 is calibrated. */
+async function loadPageScales(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  planId: string,
+): Promise<Array<{ pageIndex: number; pixelsPerMeter: number; points: number[] | null; metres: number | null }>> {
+  const { data } = await (supabase as any)
+    .schema('tenants')
+    .from('floor_plan_page_scales')
+    .select('page_index, pixels_per_meter, calibration_points, calibration_metres')
+    .eq('floor_plan_id', planId)
+  return ((data ?? []) as any[]).map((r) => ({
+    pageIndex: Number(r.page_index),
+    pixelsPerMeter: Number(r.pixels_per_meter),
+    points: Array.isArray(r.calibration_points) && r.calibration_points.length === 4 ? r.calibration_points.map(Number) : null,
+    metres: r.calibration_metres == null ? null : Number(r.calibration_metres),
+  }))
 }

@@ -152,6 +152,10 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
     // ignores trailing columns.
     ['T', 'Breaker A'],
     ['U', 'Poles'],
+    // Provenance of the measured length — MANUAL, SCALE_RULE (traced on the
+    // drawings) or CAD; distinct values across strands, ;-joined. Trailing,
+    // so the importer-read columns are untouched.
+    ['V', 'Method'],
   ]
   for (const [letter, label] of HEADERS) {
     const cell = ws.getCell(`${letter}6`)
@@ -190,6 +194,7 @@ function buildScheduleSheet(wb: ExcelJS.Workbook, payload: ExportPayload): void 
   ws.getColumn('R').width = 30
   ws.getColumn('S').width = 9
   ws.getColumn('T').width = 10
+  ws.getColumn('V').width = 14
   ws.getColumn('U').width = 8
 
   // ONE ROW PER RUN — collapse parallels under their shared logical feed.
@@ -299,6 +304,7 @@ function writeRunRow(
   ws.getCell(`S${rowIdx}`).value = run.parallel_count
   ws.getCell(`T${rowIdx}`).value = run.breaker_a
   ws.getCell(`U${rowIdx}`).value = run.pole_config
+  ws.getCell(`V${rowIdx}`).value = [...new Set(run.cables.filter((c) => c.measured_length_m != null).map((c) => c.measured_length_method ?? 'MANUAL'))].sort().join(';')
 
   // Number formats
   ws.getCell(`G${rowIdx}`).numFmt = '0'

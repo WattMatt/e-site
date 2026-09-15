@@ -25,9 +25,11 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { renderProjectAllRevisionsZip } from '@/lib/cable-schedule/export-multi-zip'
 import { getExportPolicy } from '@/lib/cable-schedule/export-role'
+import { wantsRouteSheets } from '@/lib/cable-schedule/assert-export-policy'
+import { loadRouteSheetAttachments } from '@/lib/cable-schedule/route-sheets'
 
 export const runtime = 'nodejs'
 
@@ -94,6 +96,13 @@ export async function GET(req: NextRequest) {
     supabase,
     projectId,
     policy,
+    {
+      onlyIssued: true,
+      // Opt-in: every revision's marked-up cable route sheets ride along.
+      loadRouteSheets: wantsRouteSheets(req)
+        ? (revisionId) => loadRouteSheetAttachments(supabase, createServiceClient().storage, projectId, revisionId)
+        : undefined,
+    },
   )
   if ('error' in result) {
     return NextResponse.json({ error: result.error }, { status: 404 })

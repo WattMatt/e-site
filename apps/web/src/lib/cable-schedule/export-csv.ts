@@ -103,6 +103,7 @@ function scheduleCsv(payload: ExportPayload): string {
     'ohm_per_km',
     'effective_length_m', // worst across strands
     'length_status',      // worst across strands
+    'length_method',      // MANUAL | SCALE_RULE | CAD — distinct across strands, ;-joined
     'vd_pct',
     'cumulative_vd_pct',
     'combined_capacity_a', // sum across strands
@@ -116,6 +117,10 @@ function scheduleCsv(payload: ExportPayload): string {
   function runTag(run: ExportPayload['runs'][number]): string {
     const head = run.cables[0]
     return head?.tag_override?.trim() || `${run.from_label}-${run.to_label}`
+  }
+  /** Where the strands' measured lengths came from — the provenance the grid shows as "traced". */
+  function runMethod(run: ExportPayload['runs'][number]): string {
+    return [...new Set(run.cables.filter((c) => c.measured_length_m != null).map((c) => c.measured_length_method ?? 'MANUAL'))].sort().join(';')
   }
   function runLen(run: ExportPayload['runs'][number]): number | '' {
     let worst: number | null = null
@@ -148,6 +153,7 @@ function scheduleCsv(payload: ExportPayload): string {
         run.ohm_per_km ?? '',
         runLen(run),
         run.length_status,
+        runMethod(run),
         round2(run.vd_pct),
         round2(run.cumulative_vd_pct),
         run.combined_capacity_a ?? '',

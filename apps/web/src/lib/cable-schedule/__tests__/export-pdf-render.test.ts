@@ -189,6 +189,31 @@ describe('renderRevisionPdf', () => {
     expect(await pageCount(redacted)).toBe((await pageCount(full)) - 1)
   })
 
+  it('appends the route sheets as an appendix only when the payload carries them', async () => {
+    const bare = await pageCount(await renderRevisionPdf(hostilePayload()))
+    // A two-page sheet as exportRouteSheetAction would have saved it.
+    const sheet = await PDFDocument.create()
+    sheet.addPage([1190.55, 841.89])
+    sheet.addPage([595.28, 841.89])
+    const bytes = await sheet.save()
+    const payload = hostilePayload()
+    payload.routeSheets = {
+      sheets: [{
+        reportId: 'rep-1', title: 'Cable routes — POWER LAYOUT Ω (page 2)', version: 2, generatedAt: '2026-09-15T10:00:00.000Z',
+        storagePath: 'x.pdf', sizeBytes: bytes.byteLength, floorPlanId: 'plan', pageIndex: 2, stale: true, bytes,
+      }],
+      omitted: [{ title: 'Cable routes — PORTION → B', reason: 'file could not be read' }],
+    }
+    const withSheets = await renderRevisionPdf(payload)
+    expect(await pageCount(withSheets)).toBe(bare + 1 + 2)   // divider + the sheet's two pages
+    // pdf-lib writes standard-font text as hex strings — decode them before searching.
+    const raw = await contentStreamText(withSheets)
+    const text = [...raw.matchAll(/<([0-9a-fA-F]+)>/g)].map((m) => Buffer.from(m[1], 'hex').toString('latin1')).join('\n')
+    expect(text).toContain('Appendix')
+    expect(text).toContain('routes changed after export')
+    expect(text).toContain('Not included')
+  })
+
   it('renders an empty revision without throwing', async () => {
     const bytes = await renderRevisionPdf({
       ...hostilePayload(),

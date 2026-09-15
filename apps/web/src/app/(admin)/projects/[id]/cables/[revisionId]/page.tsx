@@ -22,6 +22,7 @@ import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-pay
 import { StructureSection } from './StructureSection'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 import { ExportMenu } from './ExportMenu'
+import { listRouteSheetsForRevision } from '@/lib/cable-schedule/route-sheets'
 import { FaultLevelEditor } from './FaultLevelEditor'
 
 export const metadata: Metadata = { title: 'Cable schedule revision' }
@@ -73,6 +74,8 @@ interface SupplyRow {
 }
 
 interface CableRow extends CableForCalc {
+  /** MANUAL | SCALE_RULE | CAD | null — provenance of measured_length_m. */
+  measured_length_method?: string | null
   cores: string
   conductor: 'CU' | 'AL'
   insulation: 'PVC' | 'XLPE' | 'PILC'
@@ -105,6 +108,11 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   // Uses effective role so a project_members.role='project_manager' promotion
   // surfaces the link on this project for a narrower org-level role.
   const canSeeCost = (await requireEffectiveRole(supabase, projectId, COST_VIEW_ROLES)).ok
+  // The marked-up cable route sheets exported for this revision — the export
+  // menu offers to include them in the report pack. Never blocks the page.
+  const routeSheetCounts = await listRouteSheetsForRevision(supabase, projectId, revisionId)
+    .then((refs) => ({ count: refs.length, stale: refs.filter((r) => r.stale).length }))
+    .catch(() => ({ count: 0, stale: 0 }))
 
   const [{ data: revisionRow }, { data: priorList }] = await Promise.all([
     (supabase as any)
@@ -154,7 +162,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       .from('cables')
       .select(
         'id, supply_id, cable_no, size_mm2, cores, conductor, insulation, armour, ohm_per_km, ' +
-        'measured_length_m, confirmed_length_m, length_status, ' +
+        'measured_length_m, measured_length_method, confirmed_length_m, length_status, ' +
         'derate_depth, derate_thermal, derate_grouping, derate_temp, ' +
         'derated_current_rating_a, installation_method, depth_mm, grouped_with, ' +
         'ambient_temp_c, tag_override, manual_override, notes',
@@ -198,7 +206,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
     // are resolved in JS against the project's nodes (loaded once below).
     const cableDiffSelect =
       'id, cable_no, size_mm2, cores, conductor, insulation, ' +
-      'measured_length_m, confirmed_length_m, length_status, ohm_per_km, ' +
+      'measured_length_m, measured_length_method, confirmed_length_m, length_status, ohm_per_km, ' +
       'installation_method, depth_mm, grouped_with, ambient_temp_c, ' +
       'derated_current_rating_a, tag_override, notes, ' +
       'supply:supplies!supply_id(' +
@@ -233,6 +241,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       conductor: c.conductor,
       insulation: c.insulation,
       measured_length_m: c.measured_length_m == null ? null : Number(c.measured_length_m),
+      measured_length_method: c.measured_length_method ?? null,
       confirmed_length_m: c.confirmed_length_m == null ? null : Number(c.confirmed_length_m),
       length_status: c.length_status,
       ohm_per_km: c.ohm_per_km == null ? null : Number(c.ohm_per_km),
@@ -393,6 +402,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
         insulation: c.insulation,
         ohm_per_km: c.ohm_per_km,
         measured_length_m: c.measured_length_m,
+        measured_length_method: c.measured_length_method ?? null,
         confirmed_length_m: c.confirmed_length_m,
         length_status: c.length_status,
         vd_pct: 0,
@@ -435,6 +445,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       insulation: c.insulation,
       ohm_per_km: c.ohm_per_km,
       measured_length_m: c.measured_length_m,
+      measured_length_method: c.measured_length_method ?? null,
       confirmed_length_m: c.confirmed_length_m,
       length_status: c.length_status,
       vd_pct: supplyVdById.get(c.supply_id) ?? 0,
@@ -492,6 +503,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
       standard: null,
       ohm_per_km: r.ohm_per_km,
       measured_length_m: r.measured_length_m,
+      measured_length_method: r.measured_length_method ?? null,
       confirmed_length_m: r.confirmed_length_m,
       length_status: r.length_status,
       derated_current_rating_a: r.derated_rating_a,
@@ -664,7 +676,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
               current={lengthMode}
               hasConfirmedLengths={hasConfirmedLengths}
             />
-            <ExportMenu projectId={projectId} revisionId={revisionId} redactCost={!canSeeCost} />
+            <ExportMenu projectId={projectId} revisionId={revisionId} redactCost={!canSeeCost} routeSheets={routeSheetCounts} />
           </div>
         </div>
       </div>
