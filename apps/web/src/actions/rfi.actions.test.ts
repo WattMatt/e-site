@@ -34,6 +34,7 @@ vi.mock('@esite/shared', async () => {
   return { ...actual, rfiService: { ...actual.rfiService, create: rfiServiceCreateMock } }
 })
 
+import { RFI_CLOSE_REFUSED } from '@esite/shared'
 import { createRfiAction, respondToRfiAction, closeRfiAction } from './rfi.actions'
 
 const PROJECT_ID = '11111111-1111-1111-1111-111111111111'
@@ -53,12 +54,21 @@ const RFI_ROW = {
 
 /**
  * Cookie client covering: the user_organisations membership read, the
- * projects.rfis single read, the rfi_responses insert and the status updates.
+ * projects.rfis single read, the rfi_responses insert, the status updates and
+ * the user_effective_project_role RPC the close gate resolves the caller with.
+ *
+ * `updatedRows` is what the status UPDATE reports as affected. It is a
+ * parameter rather than a constant because migration 00201's RESTRICTIVE
+ * policy refuses SILENTLY — no error, no rows — and every silent-refusal test
+ * below turns on telling those two apart.
  */
-function mockClient(opts: { rfiRow?: object | null } = {}) {
-  const { rfiRow = RFI_ROW } = opts
+function mockClient(
+  opts: { rfiRow?: object | null; effectiveRole?: string | null; updatedRows?: object[] } = {},
+) {
+  const { rfiRow = RFI_ROW, effectiveRole = 'project_manager', updatedRows = [{ id: RFI_ID }] } = opts
   return {
     auth: { getUser: async () => ({ data: { user: { id: USER_ID } } }) },
+    rpc: async (_fn: string) => ({ data: effectiveRole, error: null }),
     // public.user_organisations
     from: () => ({
       select: () => ({
@@ -75,7 +85,7 @@ function mockClient(opts: { rfiRow?: object | null } = {}) {
         insert: () => ({
           select: () => ({ single: async () => ({ data: { id: 'resp-1' }, error: null }) }),
         }),
-        update: () => ({ eq: async () => ({ error: null }) }),
+        update: () => ({ eq: () => ({ select: async () => ({ data: updatedRows, error: null }) }) }),
         __table: table,
       }),
     }),
@@ -142,5 +152,66 @@ describe('every RFI lifecycle action announces its event', () => {
     createClientMock.mockResolvedValue(mockClient({ rfiRow: { ...RFI_ROW, status: 'closed' } }))
     expect(await closeRfiAction(RFI_ID)).toEqual({ error: 'RFI is already closed' })
     expect(notifyRfiEventMock).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The gap migration 00201 closes, at the layer the user meets first.
+ * `closeRfiAction` checked authentication and nothing else: any org member
+ * could close any RFI in the organisation, and the Close button was rendered
+ * for every role that could see the record. The database is the backstop; this
+ * is the gate.
+ */
+describe('closeRfiAction — only the raiser, or a governing role, may close', () => {
+  it('refuses a caller who is neither the raiser nor owner/admin/project_manager', async () => {
+    createClientMock.mockResolvedValue(mockClient({ effectiveRole: 'contractor' }))
+    const res = await closeRfiAction(RFI_ID)
+    expect(res.error).toBe(RFI_CLOSE_REFUSED)
+    expect(notifyRfiEventMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses a caller with no role on the RFI\'s project at all', async () => {
+    createClientMock.mockResolvedValue(mockClient({ effectiveRole: null }))
+    expect((await closeRfiAction(RFI_ID)).error).toBe(RFI_CLOSE_REFUSED)
+    expect(notifyRfiEventMock).not.toHaveBeenCalled()
+  })
+
+  it('lets the RAISER close, without needing a governing role', async () => {
+    createClientMock.mockResolvedValue(
+      mockClient({ rfiRow: { ...RFI_ROW, raised_by: USER_ID }, effectiveRole: 'contractor' }),
+    )
+    const res = await closeRfiAction(RFI_ID)
+    expect(res.error).toBeUndefined()
+    expect(notifyRfiEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: 'closed' }))
+  })
+
+  it('lets a governing role close an RFI it did not raise', async () => {
+    createClientMock.mockResolvedValue(mockClient({ effectiveRole: 'owner' }))
+    expect((await closeRfiAction(RFI_ID)).error).toBeUndefined()
+  })
+
+  it('reports a SILENT policy refusal rather than announcing a close that never happened', async () => {
+    // 00201's RESTRICTIVE policy matching no row raises nothing. Before the
+    // rows-affected check the action returned {} and sent the closed bell.
+    createClientMock.mockResolvedValue(mockClient({ effectiveRole: 'owner', updatedRows: [] }))
+    expect((await closeRfiAction(RFI_ID)).error).toBe(RFI_CLOSE_REFUSED)
+    expect(notifyRfiEventMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('respondToRfiAction — a refused status flip never discards the answer', () => {
+  it('warns, and still returns the response id, when the flip matches no row', async () => {
+    createClientMock.mockResolvedValue(mockClient({ updatedRows: [] }))
+    const res = await respondToRfiAction({ rfiId: RFI_ID, body: 'Rated 800A per the data sheet.' } as never)
+    expect(res.responseId).toBe('resp-1')
+    expect(res.error).toBeUndefined()
+    expect(res.statusWarning).toMatch(/could not be moved to Responded/)
+    // The answer landed, so the participants are still told about it.
+    expect(notifyRfiEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: 'responded' }))
+  })
+
+  it('carries no warning when the flip took', async () => {
+    const res = await respondToRfiAction({ rfiId: RFI_ID, body: 'Rated 800A per the data sheet.' } as never)
+    expect(res.statusWarning).toBeUndefined()
   })
 })
