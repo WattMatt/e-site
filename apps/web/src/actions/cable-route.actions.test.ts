@@ -924,8 +924,10 @@ describe('exportRouteSheetAction — the sheet becomes a versioned report', () =
       version: 1,
       generated_by: USER_ID,
       // The legend is computed here from the stored segments: one 70 m leg on
-      // this sheet, of a 73.5 m run that continues elsewhere.
-      summary: { runs: 1, legsHere: 1, onSheetM: 70 },
+      // this sheet, of a 73.5 m run that continues elsewhere. `page` and
+      // `revisionId` identify the sheet — the schedule's report pack finds
+      // "the applicable sheets" for a revision by them.
+      summary: { runs: 1, legsHere: 1, onSheetM: 70, page: 1, revisionId: REVISION_ID },
     })
     expect(removed).toHaveLength(0)
   })

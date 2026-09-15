@@ -36,6 +36,19 @@ export interface ExportPayload {
    * output is byte-identical to the pre-accent hard-coded amber.
    */
   accent?: string
+  /**
+   * Cable route sheets to carry with the report — the marked-up drawings the
+   * traced lengths were measured on — when the user asked for them
+   * (`?routeSheets=1` on the pdf / zip / multi-zip routes). Loaded by the
+   * route handler from `projects.reports` (kind `cable_route_sheet`, this
+   * revision, current version) via lib/cable-schedule/route-sheets.ts; the
+   * PDF pack appends them as an appendix, the ZIPs add them as files. Unset
+   * or empty → the report is exactly what it was before this option existed.
+   */
+  routeSheets?: {
+    sheets: import('./route-sheets').RouteSheetAttachment[]
+    omitted: Array<{ title: string; reason: string }>
+  }
   project: {
     id: string
     name: string

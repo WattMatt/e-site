@@ -205,10 +205,10 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/cable-schedule/parse` | W | W | W | —⁷ | — | — | — |
 | `POST /api/cable-schedule/commit` | W | W | W | —⁷ | — | — | — |
 | `GET /api/cable-schedule/export/excel` | R | R | R | R¹ | R¹ | R¹ | R¹ |
-| `GET /api/cable-schedule/export/pdf` | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/pdf` (`?routeSheets=1` attaches the cable route sheets — same gate; the sheets are an OPEN report kind) | R | R | R | R¹ | R¹ | R¹ | R¹ |
 | `GET /api/cable-schedule/export/csv` | R | R | R | R¹ | R¹ | R¹ | R¹ |
-| `GET /api/cable-schedule/export/zip` | R | R | R | R¹ | R¹ | R¹ | R¹ |
-| `GET /api/cable-schedule/export/multi-zip` | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/zip` (`?routeSheets=1` as above) | R | R | R | R¹ | R¹ | R¹ | R¹ |
+| `GET /api/cable-schedule/export/multi-zip` (`?routeSheets=1` as above, per revision) | R | R | R | R¹ | R¹ | R¹ | R¹ |
 | `GET /api/cable-schedule/export/tag-list/pdf` | R | R | R | R¹ | R¹ | R¹ | R¹ |
 | `GET /api/cable-schedule/export/tag-labels/pdf` | R | R | R | R¹ | R¹ | R¹ | R¹ |
 

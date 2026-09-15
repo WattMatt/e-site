@@ -55,6 +55,7 @@ Status: **Built** = exists and verified in a browser against production data · 
 | E1 | Routes drawn on the drawing in every mode; toggle; press to measure | Built | the drawing is the record |
 | E2 | Reopen route mode → legs recalled; worklist reflects state | Built | |
 | E3 | Route history — who changed what, when; restore a prior state | Built | `cable_schedule.route_history` (`00199`), append-only; Restore in the rail |
+| E3a | The marked-up sheet travels with the cable schedule report (owner, 2026-09-15: "the option when generating a cable schedule report to add or not add the applicable file") | Built | `ExportMenu` option *Include the marked-up route sheets (N)* → `?routeSheets=1` on the PDF pack / revision ZIP / all-revisions ZIP; `lib/cable-schedule/route-sheets.ts` lists the current sheet per (drawing, page) exported for the revision, flags stale ones, appends an appendix to the pack PDF and files under `route-sheets/` in the ZIPs; versions per (drawing, page, revision) |
 | E4 | Concurrent editing guarded | Built | `expectedUpdatedAt` token; stale save refused with when; Reload offered |
 | E5 | Assign with overwrite confirmation listing every existing value; status rule matches the grid | Built | |
 | E6 | Revert an assignment to the previous schedule figure | Built | `revertRouteAssignmentAction`, logged |

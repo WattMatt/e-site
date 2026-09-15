@@ -22,6 +22,7 @@ import type { EnrichedRun, EnrichedCable } from '@/lib/cable-schedule/export-pay
 import { StructureSection } from './StructureSection'
 import { LengthModeToggle, type LengthMode } from './LengthModeToggle'
 import { ExportMenu } from './ExportMenu'
+import { listRouteSheetsForRevision } from '@/lib/cable-schedule/route-sheets'
 import { FaultLevelEditor } from './FaultLevelEditor'
 
 export const metadata: Metadata = { title: 'Cable schedule revision' }
@@ -107,6 +108,11 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
   // Uses effective role so a project_members.role='project_manager' promotion
   // surfaces the link on this project for a narrower org-level role.
   const canSeeCost = (await requireEffectiveRole(supabase, projectId, COST_VIEW_ROLES)).ok
+  // The marked-up cable route sheets exported for this revision — the export
+  // menu offers to include them in the report pack. Never blocks the page.
+  const routeSheetCounts = await listRouteSheetsForRevision(supabase, projectId, revisionId)
+    .then((refs) => ({ count: refs.length, stale: refs.filter((r) => r.stale).length }))
+    .catch(() => ({ count: 0, stale: 0 }))
 
   const [{ data: revisionRow }, { data: priorList }] = await Promise.all([
     (supabase as any)
@@ -670,7 +676,7 @@ export default async function RevisionDetailPage({ params, searchParams }: Props
               current={lengthMode}
               hasConfirmedLengths={hasConfirmedLengths}
             />
-            <ExportMenu projectId={projectId} revisionId={revisionId} redactCost={!canSeeCost} />
+            <ExportMenu projectId={projectId} revisionId={revisionId} redactCost={!canSeeCost} routeSheets={routeSheetCounts} />
           </div>
         </div>
       </div>

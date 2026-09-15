@@ -859,10 +859,15 @@ export async function exportRouteSheetAction(
 
   // ── Persist as the next version for this sheet ──
   const service = createServiceClient() as any
+  // One version chain per (drawing, PAGE, revision): page 2's sheet must not
+  // supersede page 1's, and Rev 1's export must not retire the sheet that
+  // belongs to the issued Rev 0 report. Both live in `summary`, which is also
+  // how the schedule's report pack finds "the applicable sheets" for a revision.
   const { data: prior } = await service
     .schema('projects').from('reports')
     .select('id, version')
     .eq('project_id', plan.project_id).eq('kind', 'cable_route_sheet').eq('source_id', floorPlanId).eq('status', 'issued')
+    .eq('summary->>page', String(pageIndex)).eq('summary->>revisionId', revisionId)
     .order('version', { ascending: false }).limit(1).maybeSingle()
   const version: number = prior ? Number(prior.version) + 1 : 1
   const storagePath = `${plan.organisation_id}/${plan.project_id}/cable-route-sheets/${floorPlanId}-p${pageIndex}-v${version}.pdf`
@@ -885,9 +890,10 @@ export async function exportRouteSheetAction(
       size_bytes: pdfBytes.length,
       status: 'issued',
       version,
-      // What the saved-reports panel prints beside the version. The page is in
-      // the title and the revision on the legend page; both read as counts here.
-      summary: { runs: legend.length, legsHere: legend.reduce((n, r) => n + r.legsHere, 0), onSheetM: Math.round(onSheetM * 100) / 100 },
+      // Counts the saved-reports panel prints beside the version, plus the two
+      // keys that identify the sheet: its PDF page and the revision whose runs
+      // its legend lists (the panel labels `page` and hides `revisionId`).
+      summary: { runs: legend.length, legsHere: legend.reduce((n, r) => n + r.legsHere, 0), onSheetM: Math.round(onSheetM * 100) / 100, page: pageIndex, revisionId },
       note: note ?? null,
       generated_by: user.id,
     })

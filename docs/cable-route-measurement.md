@@ -42,6 +42,18 @@ Every drawing shows its saved routes whenever it is opened — view, markup or r
 
 Every save writes a row to `cable_schedule.route_history` — who, when, why (*save*, *restore*, *remeasure*), and the whole leg list as it was. The rail's **History…** lists them; **Restore** puts the route back to any earlier state verbatim (the lengths and scale-at-the-time as they were — nothing is re-measured), and that restore is itself a history row. The log has no update or delete policy: it cannot be edited, only added to.
 
+## Carrying the sheets with the schedule report
+
+An exported route sheet is the evidence for the traced lengths, so the schedule's own report can carry it. On the revision page, **Export** offers *Include the marked-up route sheets (N)* whenever this revision has exported sheets — ticked by default, the user's choice either way:
+
+- **PDF revision pack** — an *Appendix — Cable route sheets* divider (sheet, version, export date, freshness) followed by every sheet's own pages (A3 drawing + A4 legend, their own sizes).
+- **Revision pack (ZIP)** and **All ISSUED revisions (ZIP)** — the same appendix inside the pack PDF, plus each sheet as its own file under `route-sheets/` (an A3 prints better on its own), listed in the README.
+- Excel, tag labels and the CSVs are tabular and never carry a drawing.
+
+"Applicable" means the **current** version of every (drawing, page) exported **for this revision** — a sheet records the revision whose runs its legend lists (`summary.revisionId`) and its PDF page (`summary.page`), and versions run per (drawing, page, revision), so exporting page 2 never retires page 1's sheet and Rev 1's export never retires the sheet behind the issued Rev 0 report. A sheet whose routes were saved after it was exported is flagged *routes changed after export* in the menu, the appendix and the README — re-export it from the drawing to carry the latest trace. Caps: 20 sheets / 40 MB per pack; anything beyond is listed as not included, never silently dropped.
+
+Server side this is `lib/cable-schedule/route-sheets.ts` (`listRouteSheetsForRevision`, `loadRouteSheetAttachments`, `appendRouteSheetsToPdf`), read through the caller's session and gated exactly as the export routes are (`?routeSheets=1`).
+
 ## What can change a stored length
 
 - Editing a leg (drag / insert / remove a vertex) rewrites that leg's points and length — the route's total updates; the schedule does **not** until you Assign again.

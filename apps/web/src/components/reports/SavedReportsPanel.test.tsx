@@ -39,6 +39,19 @@ describe('SavedReportsPanel', () => {
     expect(screen.getByText(/no saved reports yet/i)).toBeDefined()
   })
 
+  it('prints a cable route sheet\'s summary with the page first and the revision id never', async () => {
+    await renderPanel({
+      kind: 'cable_route_sheet',
+      reports: [{ ...ROW, kind: 'cable_route_sheet', title: 'Cable routes — POWER LAYOUT A (page 2)', summary: { runs: 3, legsHere: 4, onSheetM: 120.5, page: 2, revisionId: '33333333-3333-3333-3333-333333333333' } } as ProjectReportRow],
+    })
+    const line = screen.getByText(/legs on this sheet/).textContent ?? ''
+    expect(line).toContain('page 2')
+    expect(line).toContain('3 runs')
+    expect(line).toContain('4 legs on this sheet')
+    expect(line).not.toContain('3333')
+    expect(line).not.toContain('revisionId')
+  })
+
   it('renders a row with version label and status', async () => {
     await renderPanel()
     expect(screen.getByText('v3')).toBeDefined()
