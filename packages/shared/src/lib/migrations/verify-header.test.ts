@@ -54,6 +54,52 @@ describe('parseVerifyBlock', () => {
     ).toThrow(/tabel/)
   })
 
+  it('throws when a sql: continuation line is prose rather than SQL (the 00204 trap)', () => {
+    // 00204 shipped this to production. A `sql:` payload is executed
+    // byte-for-byte as SELECT (<payload>) and its continuation lines are FOLDED
+    // IN, so the explanatory sentence became part of the query and the deploy
+    // died at the post-push verify step with `42601: syntax error at or near "("`
+    // — after the migration had already applied.
+    expect(() =>
+      parseVerifyBlock(
+        [
+          '-- @verify:begin',
+          "-- sql: public.user_has_project_access('00000000-0000-0000-0000-000000000000'::uuid) IS FALSE",
+          '--        (no session: auth.uid() is NULL, so the helper must answer FALSE, never NULL —',
+          '--        data-independent, a NULL user matches no membership row)',
+          '-- @verify:end',
+        ].join('\n'),
+      ),
+    ).toThrow(/em dash outside a string literal/)
+  })
+
+  it('accepts the same sentence once it is wrapped in a SQL block comment', () => {
+    const d = parseVerifyBlock(
+      [
+        '-- @verify:begin',
+        "-- sql: public.user_has_project_access('00000000-0000-0000-0000-000000000000'::uuid) IS FALSE",
+        '--        /* no session: auth.uid() is NULL, so the helper must answer FALSE, never',
+        '--           NULL - data-independent, a NULL user matches no membership row */',
+        '-- @verify:end',
+      ].join('\n'),
+    )
+    expect(d).toHaveLength(1)
+    expect(d![0].kind).toBe('sql')
+  })
+
+  it('does not reject an em dash that is inside a string literal', () => {
+    // A predicate may legitimately compare against text that contains one —
+    // a COMMENT body, for instance — and that is valid SQL.
+    const d = parseVerifyBlock(
+      [
+        '-- @verify:begin',
+        "-- sql: (SELECT obj_description('public.t'::regclass) LIKE '%a — b%')",
+        '-- @verify:end',
+      ].join('\n'),
+    )
+    expect(d).toHaveLength(1)
+  })
+
   it('throws on a block with no directives — an empty block is decorative', () => {
     expect(() => parseVerifyBlock('-- @verify:begin\n-- @verify:end')).toThrow(/at least one directive/)
   })
