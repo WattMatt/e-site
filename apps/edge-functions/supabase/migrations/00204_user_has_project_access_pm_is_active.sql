@@ -132,8 +132,8 @@
 --          AND 'search_path=public' = ANY (p.proconfig)
 --        FROM pg_proc p WHERE p.oid = 'public.user_has_project_access(uuid)'::regprocedure)
 -- sql: public.user_has_project_access('00000000-0000-0000-0000-000000000000'::uuid) IS FALSE
---        (no session: auth.uid() is NULL, so the helper must answer FALSE, never NULL —
---        data-independent, a NULL user matches no membership row)
+--        /* no session: auth.uid() is NULL, so the helper must answer FALSE, never
+--           NULL - data-independent, a NULL user matches no membership row */
 -- grant_present: authenticated EXECUTE ON public.user_has_project_access(uuid)
 -- grant_present: service_role EXECUTE ON public.user_has_project_access(uuid)
 -- grant_absent: anon EXECUTE ON public.user_has_project_access(uuid)
