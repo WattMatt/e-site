@@ -4041,7 +4041,12 @@ UNION ALL SELECT 'idempotent_reprojection',
        (SELECT count(*) FROM projects.work_items w, rfi_ctx c WHERE w.rfi_id = c.rfi) = 1,
        'a second projection (priority edit) must not create a second item'
 UNION ALL SELECT 'reprojection_kept_the_status',
-       (SELECT w.status FROM projects.work_items w, rfi_ctx c WHERE w.rfi_id = c.rfi) = 'answered',
+       -- origin = 'mirror' is load-bearing, not decoration: without it this
+       -- scalar subquery returns two rows and aborts with 21000 the moment any
+       -- other row carries the same rfi_id (probe 14 inserts an origin='split'
+       -- one — measured in Task 17's first full-rehearsal assembly).
+       (SELECT w.status FROM projects.work_items w, rfi_ctx c
+         WHERE w.rfi_id = c.rfi AND w.origin = 'mirror') = 'answered',
        'the update arm must not reset a terminal status on an unrelated edit'
 -- #4: historical stamps travel with the projection.
 UNION ALL SELECT 'opened_at_is_source_created_at',
@@ -4117,7 +4122,11 @@ UNION ALL SELECT 'closed_record_untouched',
        (SELECT c.ca IS NULL AND c.cd IS NULL AND c.closed_updated_at = c.hist FROM wb_ctx c),
        '6 of 15 live RFIs are closed; inventing an assignee on a historical record is the as_left_status lesson'
 UNION ALL SELECT 'closed_item_still_exists',
-       (SELECT count(*) FROM projects.work_items w, wb_ctx c WHERE w.rfi_id = c.closed) = 1,
+       -- origin = 'mirror' for the same reason as probe 04's
+       -- reprojection_kept_the_status: a non-mirror row on the same source
+       -- would inflate this count and the row would read as a duplicate.
+       (SELECT count(*) FROM projects.work_items w, wb_ctx c
+         WHERE w.rfi_id = c.closed AND w.origin = 'mirror') = 1,
        'the item is still projected — only the write-back is skipped'
 UNION ALL SELECT 'no_runaway_recursion', true,
        'reaching this row at all proves the mirror ⇄ write-back cycle terminated'
@@ -5205,5 +5214,4 @@ UNION ALL SELECT 'voided_event_actor_is_the_contractor',
           FROM projects.work_item_events e, rls_ctx c WHERE e.work_item_id = c.diary_item)
 UNION ALL SELECT 'source_row_is_gone',
        (SELECT NOT EXISTS (SELECT 1 FROM projects.site_diary_entries d, rls_ctx c WHERE d.id = c.diary)),
-       'the DELETE completed: the void is what let work_items_source_required pass on the RI SET NULL'
-;
+       'the DELETE completed: the void is what let work_items_source_required pass on the RI SET NULL';

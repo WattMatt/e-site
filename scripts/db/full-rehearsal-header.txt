@@ -1,0 +1,92 @@
+-- 17-full-rehearsal.sql — Task 17. The whole of 00202 rehearsed END TO END
+-- against real production data inside ONE transaction that is rolled back:
+-- every mirror, the write-back, the guard exemption, delete-to-void, the
+-- backfill over the live estate, and the same run seen through a real
+-- contractor's signed-in session. Nothing here is hand-written; the file is
+-- assembled, mechanically, out of probes 04-16.
+--
+-- ⚠ GENERATED FILE. Edit the probe it came from, then re-assemble. The whole
+-- transformation is four rules, listed below, and is small enough to redo by
+-- hand.
+--
+-- Run (fixtures FIRST, then the migration, then this file):
+--   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/17-full-rehearsal.sql \
+--     --with scripts/db/probes/13-backfill-fixtures.sql \
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
+--
+-- ⚠ WHY THIS IS NOT TWELVE PROBE FILES CONCATENATED. The Management API
+-- returns rows from the LAST row-producing statement only (measured:
+-- `SELECT 1 AS a; SELECT 2 AS b;` returns `[{"b":2}]`). A concatenation would
+-- discard eleven probes SILENTLY and report the twelfth's count as the total —
+-- the one test in the plan structurally incapable of failing. So the file is:
+--   1. every fixture `DO $…$ … END $…$;` block, in probe order, verbatim, each
+--      with its own `CREATE TEMP TABLE … ON COMMIT DROP` context table
+--      (rfi_ctx, wb_ctx, sn_ctx, in_ctx, qc_ctx, di_ctx, fm_ctx, del_ctx,
+--      imp_ctx, gd_ctx, rls_ctx — checked distinct across all eleven files
+--      before assembly; the plan text's `d_ctx`/`f_ctx` are `di_ctx`/`fm_ctx`);
+--   2. then ONE `SELECT … UNION ALL …`, the arms of every probe end to end.
+-- The two impersonating probes (05b, 16) go LAST: each clears its claim (the
+-- harness's rule 3), but `set_config(…, true)` is TRANSACTION-local, so every
+-- postgres block that depends on the service path is run before any
+-- impersonation at all.
+--
+-- The only edits made to the borrowed text, all mechanical:
+--   - the trailing `;` is dropped from every probe's assertion but the last;
+--   - a line that is exactly `UNION ALL` is dropped and the `SELECT '…'` that
+--     follows it (comments in between are left where they are) is prefixed with
+--     `UNION ALL `, so exactly ONE line in this file begins with `SELECT '`.
+--     That is the shape check: `grep -c "^SELECT '"` must print 1;
+--   - probe 13's `WITH live / floors / holders` clause is hoisted to the top of
+--     the single statement, where its CTEs are visible to every arm. `live`
+--     excludes projects named `_probe_%`, which is what keeps the ten other
+--     probes' fixtures out of the live counts — without it `total_live_items`
+--     reads forty-odd instead of 35, for a reason that has nothing to do with
+--     the backfill.
+--
+-- ⚠ PROBE 14 IS DELIBERATELY NOT IN THIS FILE. It is the one probe whose arms
+-- are estate-wide snapshots — "nothing moved since section H ran" — and in a
+-- transaction where ten other probes have already added, closed, voided and
+-- deleted sources that sentence is simply false. Measured 2026-09-15, all
+-- three ways it goes wrong:
+--   · THREE arms red for the company they keep, not for anything 00202 did:
+--     `every_source_in_scope_carries_exactly_one_item` (probe 11 has DELETED an
+--     RFI whose void item survives with a NULL FK, and probe 08 has re-marked a
+--     failing entry `na`, so the mirror count can no longer equal the source
+--     count), `live_records_are_rewritten_by_a_reprojection` (probe 09's diary
+--     items are live and probe 14's re-run loop has no diary arm, so they keep
+--     their ctid) and `one_item_per_source_row` / `a_reprojection_changes_no_
+--     column_value` depending on which fixtures are present.
+--   · Worse, it makes the whole rehearsal NON-DETERMINISTIC. Probe 14 inserts
+--     a deliberate `origin='split'` row picked by `ORDER BY w.id LIMIT 1` over
+--     every rfi mirror item; `id` is a uuid, so in the assembly that lands on
+--     an arbitrary item — sometimes one of probe 04's fixtures. Probe 04's
+--     `reprojection_kept_the_status` arm reads
+--     `(SELECT w.status FROM projects.work_items w, rfi_ctx c WHERE w.rfi_id =
+--     c.rfi)` with no `origin` predicate, so the split makes it a two-row
+--     scalar subquery and the ENTIRE run dies with
+--     `21000: more than one row returned by a subquery used as an expression`
+--     — no assertion rows at all, exit 5. That is what a first assembly of all
+--     twelve probes actually did.
+--   · Rewriting those arms to survive the company would make them assert less
+--     than they do standing alone, which is the opposite of the point.
+-- So probe 14 is run as its own rehearsal, on the same --with stack, exactly
+-- the way the four stateless probes are:
+--   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/14-idempotency.sql \
+--     --with scripts/db/probes/13-backfill-fixtures.sql \
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
+-- (Two latent nits it surfaced in probes that are otherwise fine standing
+-- alone, recorded rather than silently patched: probe 04's
+-- `reprojection_kept_the_status` and probe 05's `closed_item_still_exists`
+-- both read `projects.work_items` by `rfi_id` with no `origin = 'mirror'`
+-- predicate. Nothing in production can put a second row there — only a probe
+-- can — but the predicate belongs in both.)
+--
+-- Expected: 266 rows, all PASS — 04:26 05:22 06:25 07:39 08:35 09:23 10:26
+-- 11:15 13:30 05b:9 16:16. If the printed `assertions seen:` list is shorter
+-- than 266 names, an arm was lost in the assembly: READ THE LIST, NOT THE
+-- TOTAL. The proof that the assembly discards nothing is Task 17 Step 4 — break
+-- one arm in the middle of the file and EXACTLY ONE row must red while the
+-- other 265 still report. Measured 2026-09-15 with probe 06's
+-- `gatekeeper_is_pm_not_raiser` expectation flipped from `c.pm` to `c.ctr`:
+-- 265/266, that row alone red.
+
