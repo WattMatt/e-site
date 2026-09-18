@@ -1,4 +1,4 @@
--- assert-diary-update-nonmember.sql — subject A for migration 00200.
+-- assert-diary-update-nonmember.sql — subject A for migration 00203.
 --
 -- THE HEADLINE HOLE. `projects.site_diary_entries`' UPDATE policy
 -- "Org members can update diary entries" (00145:39-50) qualifies on
@@ -22,7 +22,7 @@
 -- fail, and the file is the only thing in that transaction.
 --
 -- Red/green: run it first against a no-op migration and watch rows 1-5 fail —
--- that is the leak. Against 00200 every row must be ok.
+-- that is the leak. Against 00203 every row must be ok.
 --
 -- ⚠ Each probe targets a DIFFERENT entry (ordinals 0-3 of MAMAILA's 30). A
 -- probe that SUCCEEDS mutates its target inside the transaction, so sharing

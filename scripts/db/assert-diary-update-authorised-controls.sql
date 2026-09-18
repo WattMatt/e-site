@@ -1,4 +1,4 @@
--- assert-diary-update-authorised-controls.sql — subject C for migration 00200.
+-- assert-diary-update-authorised-controls.sql — subject C for migration 00203.
 --
 -- The other half of the pair. Subjects A and B prove the gate CLOSES; this
 -- file proves it does not close on the people it is meant to admit, and that
@@ -19,7 +19,7 @@
 -- guards, green on both sides); 3 fails — an org admin can currently point a
 -- diary entry at a project in an organisation they have nothing to do with,
 -- leaving a row whose organisation_id disagrees with its project's. Against
--- 00200 all four pass.
+-- 00203 all four pass.
 
 SELECT set_config('x.kingswalk', '81fc2329-2462-457d-9d24-9b051673c909', true);  -- (643) KINGSWALK
 SELECT set_config('x.watermeyer','e2041c18-29b5-4039-8afc-659de267fa1d', true);  -- (650) WATERMEYER — same org

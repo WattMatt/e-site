@@ -1,4 +1,4 @@
--- assert-diary-update-member-contractor.sql — subject B for migration 00200.
+-- assert-diary-update-member-contractor.sql — subject B for migration 00203.
 --
 -- The same `rbac-test` contractor fixture, now on (643) KINGSWALK, where it
 -- DOES hold an active project membership with effective role `contractor`.
@@ -18,7 +18,7 @@
 -- ROLLBACK). Nothing persists — including the entry seeded at 3.
 --
 -- Red/green against a no-op migration: 1, 2 and 5 fail; 3 and 4 pass.
--- Against 00200 all five pass.
+-- Against 00203 all five pass.
 --
 -- ⚠ The fixture's own entry is seeded as postgres BEFORE the first
 -- impersonation. set_config('request.jwt.claims', …, true) is
@@ -120,7 +120,7 @@ BEGIN
   END;
 END $$;
 
--- 4. …and so must deleting it (00149's author arm, untouched by 00200).
+-- 4. …and so must deleting it (00149's author arm, untouched by 00203).
 DO $$
 DECLARE n int;
 BEGIN
@@ -135,7 +135,7 @@ BEGIN
 END $$;
 
 -- 5. The residual the author arm could otherwise carry: relocating YOUR OWN
---    entry onto a project you are not on. Closed because 00200's predicate
+--    entry onto a project you are not on. Closed because 00203's predicate
 --    requires an effective role on the project named by the NEW row, not just
 --    authorship of it. Seeded fresh — 4 deleted the first one.
 INSERT INTO projects.site_diary_entries
@@ -149,7 +149,7 @@ DO $$
 DECLARE n int;
 BEGIN
   IF current_setting('x.e_own2', true) IS NULL THEN
-    RAISE EXCEPTION 'probe 5''s entry was not seeded — the fixture could not INSERT its own diary entry, which 00200 does not touch';
+    RAISE EXCEPTION 'probe 5''s entry was not seeded — the fixture could not INSERT its own diary entry, which 00203 does not touch';
   END IF;
   BEGIN
     UPDATE projects.site_diary_entries

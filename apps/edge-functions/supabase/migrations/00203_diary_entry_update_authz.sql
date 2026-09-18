@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00200: projects.site_diary_entries — a write-authority gate on
+-- Migration 00203: projects.site_diary_entries — a write-authority gate on
 --                  UPDATE, and a binding between the row's organisation and
 --                  its project (the 00193 pattern, one table)
 -- ---------------------------------------------------------------------------
@@ -233,7 +233,7 @@ AS $function$
 $function$;
 
 COMMENT ON FUNCTION projects.user_can_edit_diary_entry(UUID, UUID) IS
-'TRUE when the caller may edit a site-diary entry on the given project: they hold owner / admin / project_manager as their EFFECTIVE project role (public.user_effective_project_role — org-level admins win everywhere, per-project promotions are honoured), or they authored the entry AND still hold some effective role on that project. The second conjunct is what stops the author arm becoming a second org-wide hole and what keeps project_id from being relocated onto a project the caller is not on. FALSE, never NULL, for a caller with no role on the project. See migration 00200.';
+'TRUE when the caller may edit a site-diary entry on the given project: they hold owner / admin / project_manager as their EFFECTIVE project role (public.user_effective_project_role — org-level admins win everywhere, per-project promotions are honoured), or they authored the entry AND still hold some effective role on that project. The second conjunct is what stops the author arm becoming a second org-wide hole and what keeps project_id from being relocated onto a project the caller is not on. FALSE, never NULL, for a caller with no role on the project. See migration 00203.';
 
 -- Supabase's bootstrap ALTER DEFAULT PRIVILEGES grants `anon` EXECUTE DIRECTLY
 -- at creation in the `public` schema, a SEPARATE grant that
