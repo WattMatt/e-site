@@ -3349,30 +3349,60 @@ CREATE TRIGGER site_forms_void_work_item BEFORE DELETE ON field.site_forms
 -- (00196:1041-1064, 1461-1462, 1770-1771); its GRANT of
 -- resolve_work_item_assignee to authenticated (00196:1078, the people-picker)
 -- is not touched here and is not what the assertion tests.
-DO $grants$
-DECLARE r record;
-BEGIN
-  FOR r IN
-    SELECT n.nspname || '.' || p.proname || '(' ||
-           pg_get_function_identity_arguments(p.oid) || ')' AS sig
-      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-     WHERE n.nspname = 'projects'
-       AND p.proname IN ('resolve_mirror_assignee',
-                         'resolve_work_item_gatekeeper','work_item_person_eligible',
-                         'map_source_status','work_item_status_for_mirror',
-                         'work_item_mirror_due_date','diary_delay_text',
-                         'project_rfi','project_snag','project_inspection',
-                         'project_qc_entry','project_diary_action','project_form_action',
-                         'mirror_rfi_work_item','mirror_snag_work_item',
-                         'mirror_inspection_work_item','mirror_qc_defect_work_item',
-                         'mirror_qc_report_defects','mirror_diary_action_work_item',
-                         'mirror_form_action_work_item','work_item_assignment_writeback',
-                         'void_work_item_on_source_delete')
-  LOOP
-    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', r.sig);
-    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM anon', r.sig);
-  END LOOP;
-END $grants$;
+-- ⚠ WRITTEN OUT, one statement per function, NOT a DO-block loop over
+--    pg_proc. The loop revoked correctly — probe 12 proved it at runtime — but
+--    packages/db's anon-execute-secdef.test.ts scans this file's TEXT for a
+--    REVOKE naming each SECURITY DEFINER function it creates, and a revoke
+--    assembled inside EXECUTE format() is invisible to it. That test is a
+--    repo-wide guard over every migration, so the migration bends, not the
+--    guard: it cannot verify dynamic SQL, and a static list is also what a
+--    human reads in the diff. It removes a second hazard too — a typo in the
+--    loop's proname list revoked nothing for that name and only the assertion
+--    below would have caught it.
+REVOKE ALL     ON FUNCTION projects.work_item_person_eligible(uuid,uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.work_item_person_eligible(uuid,uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.resolve_mirror_assignee(uuid,text,uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.resolve_mirror_assignee(uuid,text,uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.resolve_work_item_gatekeeper(uuid,uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.resolve_work_item_gatekeeper(uuid,uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.map_source_status(text,text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.map_source_status(text,text) FROM anon;
+REVOKE ALL     ON FUNCTION projects.work_item_status_for_mirror(text,text,boolean) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.work_item_status_for_mirror(text,text,boolean) FROM anon;
+REVOKE ALL     ON FUNCTION projects.work_item_mirror_due_date(date) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.work_item_mirror_due_date(date) FROM anon;
+REVOKE ALL     ON FUNCTION projects.diary_delay_text(text,text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.diary_delay_text(text,text) FROM anon;
+REVOKE ALL     ON FUNCTION projects.project_rfi(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.project_rfi(uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.project_snag(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.project_snag(uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.project_inspection(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.project_inspection(uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.project_qc_entry(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.project_qc_entry(uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.project_diary_action(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.project_diary_action(uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.project_form_action(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.project_form_action(uuid) FROM anon;
+REVOKE ALL     ON FUNCTION projects.mirror_rfi_work_item() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.mirror_rfi_work_item() FROM anon;
+REVOKE ALL     ON FUNCTION projects.mirror_snag_work_item() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.mirror_snag_work_item() FROM anon;
+REVOKE ALL     ON FUNCTION projects.mirror_inspection_work_item() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.mirror_inspection_work_item() FROM anon;
+REVOKE ALL     ON FUNCTION projects.mirror_qc_defect_work_item() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.mirror_qc_defect_work_item() FROM anon;
+REVOKE ALL     ON FUNCTION projects.mirror_qc_report_defects() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.mirror_qc_report_defects() FROM anon;
+REVOKE ALL     ON FUNCTION projects.mirror_diary_action_work_item() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.mirror_diary_action_work_item() FROM anon;
+REVOKE ALL     ON FUNCTION projects.mirror_form_action_work_item() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.mirror_form_action_work_item() FROM anon;
+REVOKE ALL     ON FUNCTION projects.work_item_assignment_writeback() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.work_item_assignment_writeback() FROM anon;
+REVOKE ALL     ON FUNCTION projects.void_work_item_on_source_delete() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION projects.void_work_item_on_source_delete() FROM anon;
 
 -- Assert the revoke actually took, in the same transaction that made it.
 -- The LIKE ANY pattern is deliberately BROADER than the explicit list above, so
