@@ -8,7 +8,7 @@
 -- Run (both --with files, in this order, then this probe):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/14-idempotency.sql \
 --     --with scripts/db/probes/13-backfill-fixtures.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 --
 -- The fixture file is stacked for the same reason probe 13 stacks it: live data
 -- carries ZERO in-scope snags and ZERO failing QC entries, so without it the

@@ -37,7 +37,7 @@
 -- §5's opened_at stamp keys on auth.uid() IS NOT NULL.
 -- ⚠ THE TWO INSPECTIONS ARE CREATED HERE, not picked off the fixture project.
 -- 9e/9f insert their own origin='mirror' item against each; once item 3's
--- backfill (00199 section H) is stacked it has already projected every live
+-- backfill (00202 section H) is stacked it has already projected every live
 -- inspection and work_items_src_inspection_uidx admits exactly one, so the old
 -- `ORDER BY i.created_at LIMIT 1 / OFFSET 1` form aborted the whole file with
 --   ERROR: 23505: duplicate key value violates unique constraint "work_items_src_inspection_uidx"
@@ -62,7 +62,7 @@ BEGIN
     RAISE EXCEPTION 'no inspection on project % to clone — 9e/9f (the UPDATE identity arms, exercised on a type the contractor cannot write) have no fixture', v_proj;
   END IF;
 
-  -- 00199's mirror computes a due date through add_working_days, which raises
+  -- 00202's mirror computes a due date through add_working_days, which raises
   -- no_data_found on an unseeded year; the DO block below seeds the same years.
   INSERT INTO projects.calendar_years (year)
   VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
@@ -79,7 +79,7 @@ BEGIN
       FROM inspections.inspections s WHERE s.id = v_src
     RETURNING id INTO v_id;
     -- The live trigger mirrors it on insert; 9e/9f own the mirror they assert
-    -- on. 0 rows before 00199 applies, 1 after — correct in both windows.
+    -- on. 0 rows before 00202 applies, 1 after — correct in both windows.
     DELETE FROM projects.work_items WHERE inspection_id = v_id AND origin = 'mirror';
   END LOOP;
 END $insp$;

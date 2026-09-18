@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration: 00199_work_item_source_mirrors_and_backfill.sql
+-- Migration: 00202_work_item_source_mirrors_and_backfill.sql
 -- Appendix A(f) Q1 ordinal 9. Depends on 00194 (ordinal 1), 00195 (ordinal 6,
 --   item 2's slice) and 00196 (ordinal 7) being APPLIED — all three since 2026-09-12.
 -- Description: Six projection entry points push module status into
@@ -39,10 +39,10 @@
 --            SET LOCAL session_replication_role = replica;  -- stops BOTH the mirror _upd and set_updated_at
 --            UPDATE projects.rfis r SET assigned_to = b.assigned_to, due_date = b.due_date,
 --                   updated_at = b.updated_at
---              FROM projects.backup_00199_source_assignees b
+--              FROM projects.backup_00202_source_assignees b
 --             WHERE b.kind = 'rfi' AND b.id = r.id;
 --            UPDATE field.snags s SET assigned_to = b.assigned_to, updated_at = b.updated_at
---              FROM projects.backup_00199_source_assignees b
+--              FROM projects.backup_00202_source_assignees b
 --             WHERE b.kind = 'snag' AND b.id = s.id;
 --            SET LOCAL session_replication_role = origin;   -- RI back on, so the DELETE cascades events + watchers
 --            DELETE FROM projects.work_items
@@ -66,7 +66,7 @@
 --          the spine side only); the snapshot's due_date column restores it.
 --
 -- @verify:begin
--- table: projects.backup_00199_source_assignees
+-- table: projects.backup_00202_source_assignees
 -- function: projects.work_item_person_eligible(uuid,uuid)
 -- function: projects.resolve_mirror_assignee(uuid,text,uuid)
 -- function: projects.resolve_work_item_gatekeeper(uuid,uuid)
@@ -114,7 +114,7 @@
 -- trigger: qc_entries_void_work_item ON projects.qc_entries
 -- trigger: site_diary_entries_void_work_item ON projects.site_diary_entries
 -- trigger: site_forms_void_work_item ON field.site_forms
--- grant_absent: anon SELECT ON projects.backup_00199_source_assignees
+-- grant_absent: anon SELECT ON projects.backup_00202_source_assignees
 -- grant_absent: anon EXECUTE ON projects.work_item_person_eligible(uuid,uuid)
 -- grant_absent: anon EXECUTE ON projects.resolve_mirror_assignee(uuid,text,uuid)
 -- grant_absent: anon EXECUTE ON projects.resolve_work_item_gatekeeper(uuid,uuid)
@@ -595,7 +595,7 @@ BEGIN
 
   IF v_actor IS NULL OR pg_trigger_depth() > 1 THEN
     -- Service client / migration, OR a trigger-driven write — item 3's mirror,
-    -- write-back and delete-to-void (00199). The action layer, or the source
+    -- write-back and delete-to-void (00202). The action layer, or the source
     -- module's own gates, are what authorised these. A client statement is
     -- depth 1 and its guard call runs there, so a person's direct write is NOT
     -- exempt; a mirror UPDATE (source statement → AFTER trigger → this guard)
@@ -656,9 +656,9 @@ BEGIN
   --      A mirror trigger runs in the SOURCE WRITER's session, where
   --      auth.uid() is a person, so the projection's own title rewrite reaches
   --      this function too — at depth 2, where the exemption above returns
-  --      before this clause (item 3, 00199 section C'). A person's hand edit
+  --      before this clause (item 3, 00202 section C'). A person's hand edit
   --      is depth 1 and is refused here. source_status sits in clause (a) for
-  --      the same reason: from 00199 the projection is its only writer.
+  --      the same reason: from 00202 the projection is its only writer.
   IF OLD.origin = 'mirror' AND NEW.title IS DISTINCT FROM OLD.title THEN
     RAISE EXCEPTION '% is mirrored from its source record, so its title is edited there and updates here automatically.', OLD.ref
       USING ERRCODE = 'raise_exception';
@@ -3416,7 +3416,7 @@ END $assert_grants$;
 -- rows on projects.rfis — assigned_to, due_date and updated_at — and zero rows
 -- on field.snags. Both tables are snapshotted whole anyway: the restore must
 -- not depend on today's measurement being right.
-CREATE TABLE IF NOT EXISTS projects.backup_00199_source_assignees AS
+CREATE TABLE IF NOT EXISTS projects.backup_00202_source_assignees AS
   SELECT 'rfi'::text AS kind, id, assigned_to, due_date, updated_at
     FROM projects.rfis
   UNION ALL
@@ -3432,8 +3432,8 @@ CREATE TABLE IF NOT EXISTS projects.backup_00199_source_assignees AS
 -- there is nothing for it to remove — which is why the proving mutation is a
 -- GRANT SELECT … TO anon placed immediately BEFORE it (still 8/8: the revoke
 -- removed the grant) and then immediately AFTER it (red).
-REVOKE SELECT ON projects.backup_00199_source_assignees FROM anon;
-ALTER TABLE projects.backup_00199_source_assignees ENABLE ROW LEVEL SECURITY;
+REVOKE SELECT ON projects.backup_00202_source_assignees FROM anon;
+ALTER TABLE projects.backup_00202_source_assignees ENABLE ROW LEVEL SECURITY;
 -- No policy, deliberately: RLS with no policy is deny-all for every role except
 -- the table owner and service_role. Nothing in the app reads this table.
 

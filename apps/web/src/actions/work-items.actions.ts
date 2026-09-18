@@ -235,7 +235,7 @@ const reassignSchema = z.object({
  *
  * REFUSES `item_type = 'inspection'` outright, in BOTH arms — see
  * MODULE_OWNED_EDITS. The Inspections module owns assigned_to_id and
- * verifier_id and 00199's projection forward-reads both on every projection,
+ * verifier_id and 00202's projection forward-reads both on every projection,
  * so the edit would be silently reverted rather than refused.
  */
 export async function reassignWorkItemAction(
@@ -271,7 +271,7 @@ export async function reassignWorkItemAction(
   }
 
   // Both arms: the assignee while triage/open AND the gatekeeper while
-  // answered. 00199's inspection projection forward-reads assigned_to_id and
+  // answered. 00202's inspection projection forward-reads assigned_to_id and
   // verifier_id on every projection, so either edit is reverted by the next
   // source write — including the inspector pressing start. Refuse with the
   // sentence that names where the edit belongs rather than let the control

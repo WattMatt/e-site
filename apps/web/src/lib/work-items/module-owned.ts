@@ -1,11 +1,11 @@
 // The source modules that own an edit the spine cannot keep. See
 // work-items.actions.ts for the actions that enforce this, and migration
-// 00199 section D for the forward reads that make it necessary.
+// 00202 section D for the forward reads that make it necessary.
 
 /**
  * Edits the SOURCE MODULE owns, and the sentence that says so.
  *
- * Migration 00199's projection triggers FORWARD-READ the source's own columns
+ * Migration 00202's projection triggers FORWARD-READ the source's own columns
  * on EVERY projection, so a spine-side edit of one of these is not refused by
  * the database — it is silently reverted by the next source write. Measured:
  *

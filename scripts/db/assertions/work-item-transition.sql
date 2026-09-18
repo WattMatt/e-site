@@ -40,7 +40,7 @@
 -- ⚠ THE THREE RFIs ARE CREATED HERE, not picked off the fixture project. #1
 -- and #3 back origin='mirror' items this file inserts itself, and #2 is the
 -- re-link target clause (a3) must refuse — which only works while #2 has NO
--- mirror. Once item 3's backfill (00199 section H) is stacked it has already
+-- mirror. Once item 3's backfill (00202 section H) is stacked it has already
 -- projected every live RFI and work_items_src_rfi_uidx admits exactly one, so
 -- the old `ORDER BY r.created_at LIMIT 1 / OFFSET 1 / OFFSET 2` form aborted
 -- the whole file with
@@ -64,7 +64,7 @@ BEGIN
     RAISE EXCEPTION 'resolve_project_pm(%) is NULL — nobody can raise the fixture RFIs', v_proj;
   END IF;
 
-  -- 00199's mirror computes a due date through add_working_days, which raises
+  -- 00202's mirror computes a due date through add_working_days, which raises
   -- no_data_found on an unseeded year; the main DO block seeds the same years.
   INSERT INTO projects.calendar_years (year)
   VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
@@ -76,7 +76,7 @@ BEGIN
     VALUES (v_proj, v_org, 'assertion fixture rfi ' || i, 'body', 'medium', 'open', v_pm)
     RETURNING id INTO v_id;
     -- The live trigger mirrors each on insert; this file owns every mirror row
-    -- it asserts on. 0 rows before 00199 applies, 1 each after.
+    -- it asserts on. 0 rows before 00202 applies, 1 each after.
     DELETE FROM projects.work_items WHERE rfi_id = v_id AND origin = 'mirror';
   END LOOP;
 END $rfis$;

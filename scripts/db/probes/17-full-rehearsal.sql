@@ -1,4 +1,4 @@
--- 17-full-rehearsal.sql — Task 17. The whole of 00199 rehearsed END TO END
+-- 17-full-rehearsal.sql — Task 17. The whole of 00202 rehearsed END TO END
 -- against real production data inside ONE transaction that is rolled back:
 -- every mirror, the write-back, the guard exemption, delete-to-void, the
 -- backfill over the live estate, and the same run seen through a real
@@ -12,7 +12,7 @@
 -- Run (fixtures FIRST, then the migration, then this file):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/17-full-rehearsal.sql \
 --     --with scripts/db/probes/13-backfill-fixtures.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 --
 -- ⚠ WHY THIS IS NOT TWELVE PROBE FILES CONCATENATED. The Management API
 -- returns rows from the LAST row-producing statement only (measured:
@@ -48,7 +48,7 @@
 -- transaction where ten other probes have already added, closed, voided and
 -- deleted sources that sentence is simply false. Measured 2026-09-15, all
 -- three ways it goes wrong:
---   · THREE arms red for the company they keep, not for anything 00199 did:
+--   · THREE arms red for the company they keep, not for anything 00202 did:
 --     `every_source_in_scope_carries_exactly_one_item` (probe 11 has DELETED an
 --     RFI whose void item survives with a NULL FK, and probe 08 has re-marked a
 --     failing entry `na`, so the mirror count can no longer equal the source
@@ -73,7 +73,7 @@
 -- the way the four stateless probes are:
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/14-idempotency.sql \
 --     --with scripts/db/probes/13-backfill-fixtures.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 -- (Two latent nits it surfaced in probes that are otherwise fine standing
 -- alone, recorded rather than silently patched: probe 04's
 -- `reprojection_kept_the_status` and probe 05's `closed_item_still_exists`
@@ -2068,7 +2068,7 @@ BEGIN
 
   -- pass → na on a CLOSED item: 'na' maps to NULL (leave unchanged), so the
   -- item stays closed with its stamps — the guard restores closed_at/closed_by
-  -- when the status does not change (00199 section C').
+  -- when the status does not change (00202 section C').
   UPDATE projects.qc_entries SET conformance = 'na' WHERE id = v_fail;
   SELECT w.status, w.closed_at, w.source_status INTO v_pass_na
     FROM projects.work_items w WHERE w.qc_entry_id = v_fail;
@@ -3524,7 +3524,7 @@ BEGIN
 
   SELECT count(*) INTO v_n FROM projects.work_items w WHERE w.rfi_id IN (v_rfi1, v_rfi2, v_rfi3);
   IF v_n <> 3 THEN
-    RAISE EXCEPTION 'fixture: expected 3 mirrored items, found % — is 00199 stacked with --with?', v_n;
+    RAISE EXCEPTION 'fixture: expected 3 mirrored items, found % — is 00202 stacked with --with?', v_n;
   END IF;
   FOR v_row IN
     SELECT w.rfi_id, w.status, w.gatekeeper_id, w.origin, r.raised_by
@@ -3754,7 +3754,7 @@ BEGIN
   SELECT w.status, w.assignee_id, w.gatekeeper_id, w.origin INTO v_row
     FROM projects.work_items w WHERE w.rfi_id = v_rfi_b AND w.origin = 'mirror';
   IF v_row IS NULL THEN
-    RAISE EXCEPTION 'fixture: rfi_b was not mirrored at all — is 00199 stacked with --with?';
+    RAISE EXCEPTION 'fixture: rfi_b was not mirrored at all — is 00202 stacked with --with?';
   END IF;
   IF v_row.status <> 'open' OR v_row.assignee_id IS DISTINCT FROM v_ctr
      OR v_row.gatekeeper_id IS DISTINCT FROM v_pm THEN

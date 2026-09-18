@@ -30,7 +30,7 @@ BEGIN
 
   -- Source fixtures, CREATED HERE rather than picked off the live estate.
   -- ⚠ This used to be `SELECT r.id FROM projects.rfis r … LIMIT 1` (and an
-  -- unordered `field.snags LIMIT 1`). Once item 3's backfill (00199 section H)
+  -- unordered `field.snags LIMIT 1`). Once item 3's backfill (00202 section H)
   -- is stacked, every non-demo RFI already carries a mirror item and
   -- work_items_src_rfi_uidx admits exactly ONE, so assertion 7's own
   -- origin='mirror' insert aborted the whole file with
@@ -49,9 +49,9 @@ BEGIN
   VALUES (v_proj, v_org, 'assertion fixture snag', 'Level 1', 'medium', 'open', v_pm)
   RETURNING id INTO v_snag;
 
-  -- 00199's live mirror triggers project both rows on insert, and assertion 7
+  -- 00202's live mirror triggers project both rows on insert, and assertion 7
   -- asserts on a mirror row it inserts ITSELF. Remove the trigger-made ones:
-  -- 0 rows before 00199 applies, 1 each after — correct in both windows.
+  -- 0 rows before 00202 applies, 1 each after — correct in both windows.
   DELETE FROM projects.work_items WHERE rfi_id  = v_rfi  AND origin = 'mirror';
   DELETE FROM projects.work_items WHERE snag_id = v_snag AND origin = 'mirror';
 

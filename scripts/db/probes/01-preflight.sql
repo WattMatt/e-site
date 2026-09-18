@@ -1,8 +1,8 @@
--- 01-preflight.sql — Task 2's gate. Asserts the objects 00199 reads from item 2
+-- 01-preflight.sql — Task 2's gate. Asserts the objects 00202 reads from item 2
 -- AS BUILT exist on production. Expected to pass; a FAIL here means a rollback,
 -- a diverged branch or a wrong project ref — not an unapplied item. Run:
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/01-preflight.sql
--- and again with --with 00199 stacked, which must still read 7/7.
+-- and again with --with 00202 stacked, which must still read 7/7.
 SELECT 'spine_applied' AS probe,
        to_regclass('projects.work_items') IS NOT NULL AS ok,
        'A(f) ordinal 7 (00196) must be APPLIED to production, not merely merged' AS detail

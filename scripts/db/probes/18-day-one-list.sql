@@ -15,7 +15,7 @@
 -- Run:
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/18-day-one-list.sql \
 --     --with scripts/db/probes/13-backfill-fixtures.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 --
 -- The fixture file is stacked for consistency with probes 13/14/17 — its two
 -- '_probe_%' projects are excluded below, so it changes nothing here; stacking

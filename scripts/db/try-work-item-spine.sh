@@ -48,7 +48,7 @@ if [[ "${WITH_ITEM1:-0}" == "1" ]]; then
 fi
 
 # WITH_EXTRA=<file>[:<file>…]: later migrations stacked after 00196 and before
-# the assertion file, so this suite can run against item 3's 00199 (and later)
+# the assertion file, so this suite can run against item 3's 00202 (and later)
 # before they merge. Colon-separated, applied in order.
 EXTRA=""
 if [[ -n "${WITH_EXTRA:-}" ]]; then

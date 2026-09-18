@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 /**
- * Structural contract for the work-item source mirrors (00199): the things
+ * Structural contract for the work-item source mirrors (00202): the things
  * that were measured on production and cannot be re-learned by reading the
  * migration in review. Each test names the failure it guards; each was
  * proved to bite by mutating a scratch copy of the migration (Task 12 Step 8).

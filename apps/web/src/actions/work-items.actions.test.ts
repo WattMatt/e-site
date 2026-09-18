@@ -284,7 +284,7 @@ describe('reassignWorkItemAction', () => {
     expect(updateSpy).not.toHaveBeenCalled()
   })
 
-  // 00199 option (a): the three module-owned refusals. The role gate is mocked
+  // 00202 option (a): the three module-owned refusals. The role gate is mocked
   // OPEN in both, so it is the type refusal — not authorisation — that answers;
   // delete the refusal and each test reaches updateItem and returns ok.
   it('refuses an inspection item in the ASSIGNEE arm (triage/open) — the Inspections module owns the column', async () => {
@@ -354,7 +354,7 @@ describe('reassignWorkItemAction', () => {
   })
 })
 
-describe('moduleOwnedRefusal — the third 00199 refusal, which has no verb yet', () => {
+describe('moduleOwnedRefusal — the third 00202 refusal, which has no verb yet', () => {
   // Q1 ships no priority verb (item 2 shipped five: create, reassign, advance,
   // due date, void), so the qc_defect sentence is exported rather than wired
   // into an action. The Inbox's priority control (§04, items 5/6) calls this so
@@ -367,7 +367,7 @@ describe('moduleOwnedRefusal — the third 00199 refusal, which has no verb yet'
 
   it('refuses only what the source module owns — every other pair is the spine\'s', async () => {
     // inspection PEOPLE are module-owned; an inspection's priority is not
-    // (00199 files it `medium` once and never re-reads it).
+    // (00202 files it `medium` once and never re-reads it).
     expect(moduleOwnedRefusal('inspection', 'people')).toMatch(/Inspections module/)
     expect(moduleOwnedRefusal('inspection', 'priority')).toBeNull()
     // qc_defect PRIORITY is module-owned; its people are the spine's.

@@ -90,22 +90,22 @@ BEGIN
   ON CONFLICT DO NOTHING;
 
   -- ⚠ Assertion 13's source row is an RFI this file CREATES, not the fixture
-  -- project's oldest live one. Once item 3's backfill (00199 section H) is
+  -- project's oldest live one. Once item 3's backfill (00202 section H) is
   -- stacked, every non-demo RFI already carries a mirror item and
   -- work_items_src_rfi_uidx admits exactly one, so the origin='mirror' insert
   -- below aborted the whole file with
   --   ERROR: 23505: duplicate key value violates unique constraint "work_items_src_rfi_uidx"
   -- (measured 2026-09-15, Task 15 Step 6b). Created here and unconditional, so
   -- assertion 13 can neither collide nor be skipped — and it must come AFTER
-  -- the calendar seed above, because 00199's mirror trigger computes a due date
+  -- the calendar seed above, because 00202's mirror trigger computes a due date
   -- through add_working_days on the way in.
   INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
                              priority, status, raised_by)
   VALUES (e.project_id, e.organisation_id, 'assertion fixture rfi', 'body', 'medium',
           'open', e.pm_id)
   RETURNING id INTO v_rfi;
-  -- 00199's live trigger mirrors it on insert and assertion 13 inserts its OWN
-  -- mirror row: 0 rows removed before 00199 applies, 1 after.
+  -- 00202's live trigger mirrors it on insert and assertion 13 inserts its OWN
+  -- mirror row: 0 rows removed before 00202 applies, 1 after.
   DELETE FROM projects.work_items WHERE rfi_id = v_rfi AND origin = 'mirror';
 
   -- Assertion 13's setup, on the SERVICE path (auth.uid() is NULL here — this

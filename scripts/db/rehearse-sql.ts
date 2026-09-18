@@ -16,13 +16,13 @@
  * query, so everything the --with files and the probe do happens in one
  * transaction that is rolled back at the end. --with is REPEATABLE: it exists so
  * a probe can assert against objects that do not exist on production yet — the
- * migration under development (00199) and any future dependency — stacked ahead
+ * migration under development (00202) and any future dependency — stacked ahead
  * of the probe. Do NOT stack a migration that is already applied (00194, 00195,
  * 00196 are live on cbskbnvvgcybmfikxgky): its CREATE TABLEs fail on the
  * existing objects and abort the whole rehearsal. A --with file must not carry
  * its own transaction wrapper either: a file with `BEGIN;` … `COMMIT;` around
  * its body (29 of the older migrations do) is refused by the interlock below —
- * correctly, since that COMMIT would end the rehearsal's transaction. 00199
+ * correctly, since that COMMIT would end the rehearsal's transaction. 00202
  * must not wrap itself; the harness supplies BEGIN and ROLLBACK.
  *
  * SAFETY INTERLOCK — this harness must never be the thing that commits. Before

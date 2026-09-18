@@ -1,4 +1,4 @@
--- 06-snag-mirror.sql — Task 7: the snag projection (00199 section D.2, the
+-- 06-snag-mirror.sql — Task 7: the snag projection (00202 section D.2, the
 -- first copy of D.1's template). Asserted against production inside one
 -- rolled-back transaction:
 --   projects.project_snag(uuid)          — the projection body (no recursion guard)
@@ -9,9 +9,9 @@
 -- the raiser is the spine's default holder, not "assigned to fix") and an
 -- OPEN one reaches it (assigned_snag_reaches_source, on a spine un-triage).
 --
--- Run (00199 is not applied, so it is stacked):
+-- Run (00202 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/06-snag-mirror.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 -- Before section D.2 existed this reported 1/20: no trigger fires, no snag
 -- projects anything, every recorded observation is NULL (a NULL `ok` is a FAIL
 -- in the harness, never a coerced false), and closed_clears_bic passes

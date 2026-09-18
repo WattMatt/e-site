@@ -1,13 +1,13 @@
--- 04-rfi-mirror.sql — Task 5: the RFI projection (00199 section D, the
+-- 04-rfi-mirror.sql — Task 5: the RFI projection (00202 section D, the
 -- reference implementation Tasks 7-11 copy). Asserted against production inside
 -- one rolled-back transaction:
 --   projects.project_rfi(uuid)          — the projection body (no recursion guard)
 --   projects.mirror_rfi_work_item()     — the trigger wrapper (depth guard, F2)
 --   rfis_mirror_work_item_ins / _upd    — AFTER INSERT / AFTER UPDATE OF … WHEN (F7)
 --
--- Run (00199 is not applied, so it is stacked):
+-- Run (00202 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/04-rfi-mirror.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 -- Before section D existed this reported 0/16 (the source_assignment row was
 -- added afterwards, red first under its own mutation): no trigger fires, both
 -- RFIs project nothing, and every recorded observation is NULL (a NULL `ok`

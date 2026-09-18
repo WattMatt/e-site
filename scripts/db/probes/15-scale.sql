@@ -7,7 +7,7 @@
 --
 -- Run:
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/15-scale.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 --
 -- The row count is ONE literal, v_rows below. Measured on production
 -- (2026-09-15, 04:40-04:46 SAST — outside SA working hours, deliberately):

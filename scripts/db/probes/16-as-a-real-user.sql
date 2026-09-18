@@ -172,7 +172,7 @@ BEGIN
   SELECT w.status, w.assignee_id, w.gatekeeper_id, w.origin INTO v_row
     FROM projects.work_items w WHERE w.rfi_id = v_rfi_b AND w.origin = 'mirror';
   IF v_row IS NULL THEN
-    RAISE EXCEPTION 'fixture: rfi_b was not mirrored at all — is 00199 stacked with --with?';
+    RAISE EXCEPTION 'fixture: rfi_b was not mirrored at all — is 00202 stacked with --with?';
   END IF;
   IF v_row.status <> 'open' OR v_row.assignee_id IS DISTINCT FROM v_ctr
      OR v_row.gatekeeper_id IS DISTINCT FROM v_pm THEN

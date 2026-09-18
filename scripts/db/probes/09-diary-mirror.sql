@@ -1,4 +1,4 @@
--- 09-diary-mirror.sql — Task 10: the diary_action projection (00199 section D.5,
+-- 09-diary-mirror.sql — Task 10: the diary_action projection (00202 section D.5,
 -- the fourth copy of D.1's template and the one with the EMPTIEST source).
 -- Asserted against production inside one rolled-back transaction:
 --   projects.project_diary_action(uuid)        — the projection body (no recursion guard)
@@ -16,9 +16,9 @@
 -- plan's own (Task 10 Step 5: swap the predicate for
 -- COALESCE(NULLIF(TRIM(delays),''), NULLIF(TRIM(delay_notes),'')) → both red).
 --
--- Run (00199 is not applied, so it is stacked):
+-- Run (00202 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/09-diary-mirror.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 -- Before section D.5 existed this reported 3/19: empty_entry_not_mirrored,
 -- sentence_negation_not_mirrored and source_status_is_null pass VACUOUSLY
 -- (nothing projects anything, so "no item" and "NULL source_status" are
@@ -34,7 +34,7 @@
 -- caller, and a skipped fixture is a probe that cannot fail.
 --
 -- Runs as postgres with auth.uid() NULL throughout (no impersonation) — which
--- is the SERVICE PATH of the transition guard (00199 section C': v_actor IS
+-- is the SERVICE PATH of the transition guard (00202 section C': v_actor IS
 -- NULL skips authority and the machine, stamps closed_at = now() on a close,
 -- keeps the supplied closed_by). That is how a diary item is CLOSED here:
 -- projects.site_diary_entries has no closing state, so nothing on the source

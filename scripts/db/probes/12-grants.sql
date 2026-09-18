@@ -1,10 +1,10 @@
--- 12-grants.sql — Task 13: section G of 00199 — every function this migration
+-- 12-grants.sql — Task 13: section G of 00202 — every function this migration
 -- creates is revoked from PUBLIC and from anon, and nothing is GRANTed (F5).
 -- Asserted against production inside one rolled-back transaction.
 --
--- Run (00199 is not applied, so it is stacked):
+-- Run (00202 is not applied, so it is stacked):
 --   node --experimental-strip-types scripts/db/rehearse-sql.ts scripts/db/probes/12-grants.sql \
---     --with apps/edge-functions/supabase/migrations/00199_work_item_source_mirrors_and_backfill.sql
+--     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 -- Before section G existed this reported 4/8: anon_cannot_execute_any and
 -- public_cannot_execute_any named all twenty-two functions, because a new
 -- `projects` function inherits Postgres's built-in PUBLIC EXECUTE — pg_default_acl
@@ -97,14 +97,14 @@ SELECT 'no_current_user_authorisation',
   FROM fns
 UNION ALL
 SELECT 'snapshot_table_not_anon_readable',
-       NOT has_table_privilege('anon', to_regclass('projects.backup_00199_source_assignees')::oid, 'SELECT'),
-       CASE WHEN to_regclass('projects.backup_00199_source_assignees') IS NULL
-            THEN 'projects.backup_00199_source_assignees does not exist yet — Task 14 section H creates it (expected red until then)'
+       NOT has_table_privilege('anon', to_regclass('projects.backup_00202_source_assignees')::oid, 'SELECT'),
+       CASE WHEN to_regclass('projects.backup_00202_source_assignees') IS NULL
+            THEN 'projects.backup_00202_source_assignees does not exist yet — Task 14 section H creates it (expected red until then)'
             ELSE 'holds every RFI and snag assignee; explicitly revoked (00196:1310 already made new projects tables non-anon-readable — belt and braces)' END
 UNION ALL
 SELECT 'snapshot_table_has_rls',
        (SELECT c.relrowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-         WHERE n.nspname = 'projects' AND c.relname = 'backup_00199_source_assignees'),
-       CASE WHEN to_regclass('projects.backup_00199_source_assignees') IS NULL
-            THEN 'projects.backup_00199_source_assignees does not exist yet — Task 14 section H creates it (expected red until then)'
+         WHERE n.nspname = 'projects' AND c.relname = 'backup_00202_source_assignees'),
+       CASE WHEN to_regclass('projects.backup_00202_source_assignees') IS NULL
+            THEN 'projects.backup_00202_source_assignees does not exist yet — Task 14 section H creates it (expected red until then)'
             ELSE 'RLS on with no policy: service-role only' END;

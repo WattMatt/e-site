@@ -3,7 +3,7 @@
 -- opened by try-work-item-spine.sh.
 --
 -- ⚠ This file no longer relies on projects.work_items being empty, and must
--- not: stacked behind 00199 (WITH_EXTRA), section H has already backfilled 35
+-- not: stacked behind 00202 (WITH_EXTRA), section H has already backfilled 35
 -- mirror items before these assertions run. Every ref assertion instead uses a
 -- project this file CREATES, which is empty in both windows — unstacked, where
 -- the table itself is new, and stacked, where it is not. "The first task is
@@ -17,7 +17,7 @@ BEGIN
   -- and 3a all read "the first <type> on this project is <PREFIX>-1", which is
   -- only true while work_items holds nothing for that project. That was free
   -- while the table was created inside this same transaction — but once item
-  -- 3's backfill (00199 section H) is stacked it projects a mirror item for
+  -- 3's backfill (00202 section H) is stacked it projects a mirror item for
   -- every live RFI, inspection and site form, so the oldest live project
   -- already holds RFI-1 and this file aborted with
   --   ERROR: 23505: duplicate key value violates unique constraint "work_items_src_rfi_uidx"
@@ -55,10 +55,10 @@ BEGIN
                              priority, status, raised_by)
   VALUES (v_proj, v_org, 'assertion fixture rfi', 'body', 'medium', 'open', v_pm)
   RETURNING id INTO v_rfi;
-  -- 00199's live trigger mirrors this RFI on insert and that mirror takes RFI-1;
+  -- 00202's live trigger mirrors this RFI on insert and that mirror takes RFI-1;
   -- assertion 2 inserts the rfi item ITSELF and reads the ref back. Removing the
   -- trigger-made row restores an empty rfi series (the allocator is MAX+1 over
-  -- rows that exist): 0 rows before 00199 applies, 1 after — correct in both.
+  -- rows that exist): 0 rows before 00202 applies, 1 after — correct in both.
   DELETE FROM projects.work_items WHERE rfi_id = v_rfi AND origin = 'mirror';
 
   -- 1a. The first task on this project is <PREFIX>-<n> ...
@@ -153,7 +153,7 @@ BEGIN
   --    while the first project already holds several — a MAX that forgot the
   --    project predicate would hand it TASK-10002. A SECOND project this file
   --    creates, for the same reason as the first: a live second project holds
-  --    backfilled items once 00199 is stacked, and "only one active project"
+  --    backfilled items once 00202 is stacked, and "only one active project"
   --    would have made the assertion decorative.
   v_org2 := v_org;
   v_pm2  := v_pm;
