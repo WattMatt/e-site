@@ -83,10 +83,13 @@
 -- so both arms now say `origin = 'mirror'`, and they are safe in any company
 -- rather than only while probe 14 is kept out of the assembly.)
 --
--- Expected: 266 rows, all PASS — 04:26 05:22 06:25 07:39 08:35 09:23 10:26
--- 11:15 13:30 05b:9 16:16. If the printed `assertions seen:` list is shorter
--- than 266 names, an arm was lost in the assembly: READ THE LIST, NOT THE
--- TOTAL. The proof that the assembly discards nothing is Task 17 Step 4 — break
+-- Expected: 270 rows, all PASS — 04:26 05:22 06:25 07:39 08:36 09:24 10:27
+-- 11:15 13:31 05b:9 16:16. Those are not prose: build-full-rehearsal.ts holds
+-- the same numbers in EXPECTED_ARMS, checks them per probe by name, and fails
+-- naming the offender — because a probe that silently loses arms otherwise
+-- yields a smaller file still reporting "N/N green". If the printed
+-- `assertions seen:` list is shorter than 270 names, an arm was lost in the
+-- assembly: READ THE LIST, NOT THE TOTAL. The proof that the assembly discards nothing is Task 17 Step 4 — break
 -- one arm in the middle of the file and EXACTLY ONE row must red while the
 -- other 265 still report. Measured 2026-09-15 with probe 06's
 -- `gatekeeper_is_pm_not_raiser` expectation flipped from `c.pm` to `c.ctr`:
