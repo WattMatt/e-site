@@ -62,8 +62,8 @@
 -- should not have fired would have stamped now() over it (site_forms_updated_at
 -- is BEFORE UPDATE only, 00179:631, so the INSERT keeps the supplied value).
 --
--- Expected: 26 rows. If the printed `assertions seen:` list is shorter than
--- twenty-six names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 27 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-seven names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org      uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -90,6 +90,7 @@ DECLARE
   v_fcv      uuid;   -- authored by the client viewer: arm 2, born triage; then MOVED live
   v_fmv      uuid;   -- authored by the client viewer, distributed, then MOVED closed (Task 8 review S1)
   v_fill     uuid;   -- the illegal-transition subject (second block)
+  v_fsv      uuid;   -- voided ON THE SPINE while the form stays live: rule 2's only reachable shape
   -- now() is fixed for the whole transaction, so these are exact targets.
   v_hist_created timestamptz := now() - interval '40 days';
   v_hist_updated timestamptz := now() - interval '30 days';
@@ -123,6 +124,8 @@ DECLARE
   v_mvclosed    record;   -- the closed client-viewer item before the move
   v_mvmoved     record;   -- … after the move
   v_ill_before  record;   -- the illegal-transition subject before the attempt
+  v_sv_title_at_void text;  -- the spine-voided item's title at the moment of the void
+  v_sv_after    record;   -- … after a board rename PAIRED with a source status move (the UPDATE arm)
 BEGIN
   IF auth.uid() IS NOT NULL THEN
     RAISE EXCEPTION 'fixture: auth.uid() is % — the first block relies on the guard''s service path (no impersonation in it)', auth.uid();
@@ -447,6 +450,39 @@ BEGIN
   SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_mvmoved
     FROM projects.work_items w WHERE w.site_form_id = v_fmv AND w.origin = 'mirror';
 
+  -- ── Task 10 review rule 2, ON THE UPDATE ARM ─────────────────────────
+  -- The born-void rename above pins rule 1's EARLY RETURN, not rule 2's frozen
+  -- title: a rename-only edit on a void record returns before the UPDATE arm
+  -- is reached (whole-branch review, finding 1). And a BORN-void form can
+  -- never reach that arm by a rename at all — its source_status already
+  -- equals f.status ('void'), so the early return's
+  -- `f.status IS NOT DISTINCT FROM v_item.source_status` half holds through
+  -- every rename. The shape that reaches it is the SPINE-side void with the
+  -- form still live (probes 04 and 06's spine_voided_item_title_is_frozen):
+  -- someone voids the ITEM with a reason (§03 §1.7), the form lives on, and
+  -- the record must keep saying what it said when it was voided. The board
+  -- rename and the form's own status move in ONE statement, so f.status
+  -- differs from source_status and rule 1 cannot return.
+  INSERT INTO field.site_forms (organisation_id, project_id, template_row_id, form_no, board_ref, board_label, status, created_by)
+  VALUES (v_org, v_proj, v_tpl, 'TMS-PRB-2026-0010', 'DB-SV', 'Spine-void board', 'draft', v_pm)
+  RETURNING id INTO v_fsv;
+  -- Service path (auth.uid() IS NULL): the guard's exemption returns NEW after
+  -- clearing the closed stamps, so a direct void with a reason is legal here.
+  UPDATE projects.work_items
+     SET status = 'void', void_reason = 'voided on the spine, form still live'
+   WHERE site_form_id = v_fsv AND origin = 'mirror';
+  SELECT w.title INTO v_sv_title_at_void
+    FROM projects.work_items w WHERE w.site_form_id = v_fsv AND w.origin = 'mirror';
+  IF v_sv_title_at_void IS DISTINCT FROM 'TMS-PRB-2026-0010 — Spine-void board' THEN
+    RAISE EXCEPTION 'fixture: the spine-side void did not leave the item titled "TMS-PRB-2026-0010 — Spine-void board" (got %)', v_sv_title_at_void;
+  END IF;
+  UPDATE field.site_forms
+     SET board_label = 'Spine-void board (renamed)',
+         status = 'submitted', submitted_at = now(), submitted_by = v_pm
+   WHERE id = v_fsv;
+  SELECT w.title, w.status, w.source_status, w.void_reason, w.closed_at INTO v_sv_after
+    FROM projects.work_items w WHERE w.site_form_id = v_fsv AND w.origin = 'mirror';
+
   -- ── the illegal-transition subject (attempted in the second block) ─────────
   INSERT INTO field.site_forms (organisation_id, project_id, template_row_id, form_no, board_ref, board_label, status, created_by)
   VALUES (v_org, v_proj, v_tpl, 'TMS-PRB-2026-0009', 'DB-ILL', 'Guarded board', 'draft', v_pm)
@@ -480,6 +516,8 @@ BEGIN
     mvc_status text, mvc_assignee uuid, mvc_gate uuid,
     mvm_status text, mvm_project uuid, mvm_assignee uuid, mvm_gate uuid,
     form_ill uuid, ill_before_status text, ill_before_closed_at timestamptz, ill_before_src text,
+    form_sv uuid, sv_title_at_void text, sv_title_after text, sv_status_after text,
+    sv_src_after text, sv_reason_after text, sv_closed_at_after timestamptz,
     -- written by the second block
     ill_err text, ill_sqlstate text, ill_uid uuid, ill_after_status text, ill_after_closed_at timestamptz,
     ill_after_src text, ill_form_status text, ill_cleared boolean) ON COMMIT DROP;
@@ -507,7 +545,9 @@ BEGIN
     same_last,
     mvc_status, mvc_assignee, mvc_gate,
     mvm_status, mvm_project, mvm_assignee, mvm_gate,
-    form_ill, ill_before_status, ill_before_closed_at, ill_before_src)
+    form_ill, ill_before_status, ill_before_closed_at, ill_before_src,
+    form_sv, sv_title_at_void, sv_title_after, sv_status_after,
+    sv_src_after, sv_reason_after, sv_closed_at_after)
   VALUES (
     v_pm, v_chain_pm, v_admin2, v_admin3, v_cv, v_proj, v_proj2, v_proj3,
     v_default_due, v_hist_created, v_hist_updated, v_hist_dist,
@@ -533,7 +573,9 @@ BEGIN
     v_same_last,
     v_mvclosed.status, v_mvclosed.assignee_id, v_mvclosed.gatekeeper_id,
     v_mvmoved.status, v_mvmoved.project_id, v_mvmoved.assignee_id, v_mvmoved.gatekeeper_id,
-    v_fill, v_ill_before.status, v_ill_before.closed_at, v_ill_before.source_status);
+    v_fill, v_ill_before.status, v_ill_before.closed_at, v_ill_before.source_status,
+    v_fsv, v_sv_title_at_void, v_sv_after.title, v_sv_after.status,
+    v_sv_after.source_status, v_sv_after.void_reason, v_sv_after.closed_at);
 END $probe$;
 
 -- The ONE illegal transition, under impersonation. As the owner (authenticated,
@@ -661,12 +703,26 @@ SELECT 'born_void_carries_source_reason',
        (SELECT c.bv_status = 'void' AND c.bv_reason = 'Probe: created in error' AND c.bv_closed_at IS NULL FROM fm_ctx c),
        '#4 / #3: a form inserted already void is born void carrying the source''s reason (the guard''s void-reason check does not run on INSERT — the projection is the only reason-supplier)'
 UNION ALL
--- Task 10 review, rule 2: a void row's title is frozen.
-SELECT 'void_item_title_is_frozen',
+-- Task 10 review, rule 1 on a VOID row. This row pins the EARLY RETURN's void
+-- clause, NOT rule 2's frozen title: a rename-only edit on a void record
+-- returns before the UPDATE arm is reached, so thawing rule 2's CASE cannot
+-- redden it (whole-branch review, finding 1). Rule 2 is the row below.
+SELECT 'void_item_rename_alone_leaves_the_record',
        (SELECT c.bv_title = 'TMS-PRB-2026-0004 — Void board' AND c.bv_renamed_title = c.bv_title
            AND c.bv_renamed_status = 'void' AND c.bv_renamed_reason = 'Probe: created in error'
            AND c.bv_renamed_last = c.hist_updated FROM fm_ctx c),
-       'a board rename on a VOID form leaves the item''s title as it was when the record was withdrawn; status and reason untouched, and the record is NOT rewritten — last_activity_at keeps its historical value instead of the guard''s now() (Task 11 review I2: rule 1''s early return never compares a void row''s title; a closed row''s title keeps following — closed_item_title_follows_the_source)'
+       'a board rename on a BORN-void form is a rename-only source edit, so rule 1''s early return fires — its `v_item.status = ''void''` clause stands in for the title comparison — and the record is not even REWRITTEN: last_activity_at keeps its historical value instead of the guard''s now(), the title still reading what it read when the record was withdrawn (Task 11 review I2). A born-void form can reach the UPDATE arm by NO rename at all, since its source_status already equals f.status: dropping the void clause reddens this row, and thawing rule 2''s CASE says nothing about it (a closed row''s title keeps following — closed_item_title_follows_the_source)'
+UNION ALL
+-- Task 10 review, rule 2: a void row's title is frozen ON THE UPDATE ARM.
+SELECT 'spine_voided_item_title_is_frozen',
+       (SELECT c.sv_title_at_void = 'TMS-PRB-2026-0010 — Spine-void board'
+           AND c.sv_title_after = c.sv_title_at_void
+           AND c.sv_status_after = 'void' AND c.sv_src_after = 'submitted'
+           AND c.sv_reason_after = 'voided on the spine, form still live'
+           AND c.sv_closed_at_after IS NULL
+           AND (SELECT f.board_label FROM field.site_forms f WHERE f.id = c.form_sv) = 'Spine-void board (renamed)'
+          FROM fm_ctx c),
+       'an item voided ON THE SPINE while its form lives on keeps the title it was voided with. The board rename and the form''s own status move in ONE statement, so the early return cannot fire (f.status ''submitted'' <> source_status ''draft'') and the UPDATE arm runs with v_item.status = ''void'': source_status follows to ''submitted'' and the spine''s reason survives the answered mapping, but the title does not move, while the form now reads "Spine-void board (renamed)". Thawing rule 2''s CASE reddens this row'
 UNION ALL
 SELECT 'void_carries_reason',
        (SELECT c.vlive_status IN ('triage','open') AND c.vlive_reason IS NULL

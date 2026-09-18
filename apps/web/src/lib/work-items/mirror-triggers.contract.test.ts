@@ -15,7 +15,12 @@ const REPO_ROOT = resolve(__dirname, '../../../../..')
 const MIG_DIR = join(REPO_ROOT, 'apps/edge-functions/supabase/migrations')
 
 function mirrorMigration(): { name: string; sql: string } {
-  for (const n of readdirSync(MIG_DIR).sort()) {
+  // `.sql` ONLY, as scripts/verify-migration-applied.ts:92 filters. A stray
+  // sibling is otherwise read as a migration; here first-match means a name
+  // sorting BEFORE the real file wins (`00202_….sql.bak` sorts after and is
+  // harmless, `00201a_….txt` is not), and the sister test's `pick: 'last'`
+  // makes the `.bak` itself the winner (whole-branch review, finding 2).
+  for (const n of readdirSync(MIG_DIR).filter((f) => f.endsWith('.sql')).sort()) {
     const sql = readFileSync(join(MIG_DIR, n), 'utf8')
     if (sql.includes('projects.void_work_item_on_source_delete')) return { name: n, sql }
   }

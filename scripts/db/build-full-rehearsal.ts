@@ -90,8 +90,57 @@ function assertionOf(name: string): string {
   const rest = sql.slice(after)
   const at = rest.search(/^(WITH |SELECT ')/m)
   if (at === -1) throw new Error(`${name}: no assertion statement`)
-  return rest.slice(at).replace(/;\s*$/, '').trimEnd()
+  const body = rest.slice(at).replace(/;\s*$/, '').trimEnd()
+  // Only 13-backfill's CTEs are HOISTED (see build()). Any other probe's own
+  // WITH clause would be spliced in mid-UNION — `UNION ALL WITH live AS (…)
+  // SELECT …` — which is not valid SQL, so the whole rehearsal would abort
+  // with a syntax error rather than report a missing arm. Refuse it here,
+  // where the probe that did it can be named.
+  if (name !== '13-backfill' && /^WITH /.test(body)) {
+    throw new Error(
+      `${name}: its assertion statement begins with a WITH clause. Only 13-backfill's CTEs are ` +
+      'hoisted to the top of the one shared statement; another probe\'s WITH would be emitted ' +
+      'mid-UNION and the file would not parse. Fold the CTE into the arms that need it, or teach ' +
+      'build() to hoist this one too.',
+    )
+  }
+  return body
 }
+
+/**
+ * How many assertion arms each probe contributes to the one statement.
+ *
+ * WHY THIS EXISTS. The shape check below (`exactly one line begins with
+ * SELECT '`) proves the arms were WELDED into one statement; it says nothing
+ * about how many survived. A probe that silently loses arms — an edit that
+ * drops a `UNION ALL SELECT '…'` block, a `fixturesOf` boundary that swallows
+ * the first arm — still produces a well-formed file, and the rehearsal then
+ * reports "N/N green" against a smaller N. So the count is DECLARED here and
+ * every probe is checked against its own number, by name. Change a probe's arm
+ * count deliberately and you change this map in the same commit; change it by
+ * accident and the generator names the probe.
+ *
+ * MEASURED from the probe files (whole-branch review, finding 3): 08, 09 and 10
+ * each gained rule 2's arm-side row (finding 1) and 13 gained
+ * floor_is_computed_per_project (c115160).
+ */
+const EXPECTED_ARMS: Record<(typeof ARM_ORDER)[number], number> = {
+  '04-rfi-mirror': 26,
+  '05-writeback': 22,
+  '06-snag-mirror': 25,
+  '07-inspection-mirror': 39,
+  '08-qc-mirror': 36,
+  '09-diary-mirror': 24,
+  '10-form-mirror': 27,
+  '11-delete-to-void': 15,
+  '13-backfill': 31,
+  '05b-guard-exemption': 9,
+  '16-as-a-real-user': 16,
+}
+const EXPECTED_TOTAL = Object.values(EXPECTED_ARMS).reduce((a, b) => a + b, 0)
+
+/** Arms in a chunk of the one statement: the first probe's leading `SELECT '` and every `UNION ALL SELECT '`. */
+const armsIn = (text: string) => (text.match(/^(UNION ALL )?SELECT '/gm) ?? []).length
 
 /**
  * Turn a probe's standalone assertion into arms of one shared statement: a line
@@ -137,10 +186,23 @@ function build(): string {
     "-- 13's CTEs are hoisted here so its arms can see them.",
     backfill.slice(0, armsAt).trimEnd(),
   )
+  const wrong: string[] = []
   const arms = ARM_ORDER.map((name, i) => {
     const a = name === '13-backfill' ? backfill.slice(armsAt) : assertionOf(name)
-    return `${armBanner(`${name}.sql`)}\n${toArms(a, i === 0)}`
+    const body = toArms(a, i === 0)
+    const n = armsIn(body)
+    if (n !== EXPECTED_ARMS[name]) wrong.push(`${name}.sql contributed ${n} arms, EXPECTED_ARMS says ${EXPECTED_ARMS[name]}`)
+    return `${armBanner(`${name}.sql`)}\n${body}`
   })
+  if (wrong.length > 0) {
+    throw new Error(
+      `arm-count check failed \u2014 ${wrong.length} probe(s) contributed a different number of assertions ` +
+      `than declared:\n  ${wrong.join('\n  ')}\n` +
+      'A probe that silently loses arms still assembles, and the rehearsal then reports "N/N green" ' +
+      'against a smaller N. If the change is deliberate, update EXPECTED_ARMS in ' +
+      'scripts/db/build-full-rehearsal.ts in the same commit.',
+    )
+  }
   parts.push(arms.join('\n') + ';')
   return parts.join('\n') + '\n'
 }
@@ -149,6 +211,12 @@ const text = build()
 const armCount = (text.match(/^(UNION ALL )?SELECT '/gm) ?? []).length
 const leading = (text.match(/^SELECT '/gm) ?? []).length
 if (leading !== 1) throw new Error(`shape check failed: ${leading} lines begin with SELECT ' (want 1)`)
+// The per-probe check above cannot catch an arm that leaks in BETWEEN the
+// chunks (a stray row in the hoisted WITH clause, say), so the total is
+// asserted against the same declared map.
+if (armCount !== EXPECTED_TOTAL) {
+  throw new Error(`arm-count check failed: the assembled file carries ${armCount} arms, EXPECTED_ARMS sums to ${EXPECTED_TOTAL}`)
+}
 
 if (process.argv.includes('--check')) {
   if (readFileSync(OUT, 'utf8') === text) { console.log(`17-full-rehearsal.sql is current — ${armCount} arms`); process.exit(0) }

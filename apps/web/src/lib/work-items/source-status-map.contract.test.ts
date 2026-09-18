@@ -32,7 +32,12 @@ const MIG_DIR = join(REPO_ROOT, 'apps/edge-functions/supabase/migrations')
  */
 function migrationContaining(needle: string, pick: 'only' | 'last' = 'only'): string {
   const hits: string[] = []
-  for (const n of readdirSync(MIG_DIR).sort()) {
+  // `.sql` ONLY, as scripts/verify-migration-applied.ts:92 filters. Without it
+  // any stray sibling is read as a migration, and with `pick: 'last'` a name
+  // that sorts AFTER the real file SHADOWS it: a `sed -i.bak` left a
+  // `00202_….sql.bak` and this test went green against a mutation of the real
+  // migration that should have reddened it (whole-branch review, finding 2).
+  for (const n of readdirSync(MIG_DIR).filter((f) => f.endsWith('.sql')).sort()) {
     const sql = readFileSync(join(MIG_DIR, n), 'utf8')
     if (sql.includes(needle)) hits.push(sql)
   }

@@ -75,11 +75,13 @@
 --     --with scripts/db/probes/13-backfill-fixtures.sql \
 --     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 -- (Two latent nits it surfaced in probes that are otherwise fine standing
--- alone, recorded rather than silently patched: probe 04's
+-- alone, both PATCHED rather than merely recorded — `0b657df`: probe 04's
 -- `reprojection_kept_the_status` and probe 05's `closed_item_still_exists`
--- both read `projects.work_items` by `rfi_id` with no `origin = 'mirror'`
--- predicate. Nothing in production can put a second row there — only a probe
--- can — but the predicate belongs in both.)
+-- identified "the item for this source" by `rfi_id` alone, with no
+-- `origin = 'mirror'` predicate. Nothing in production can put a second row
+-- there — only a probe can, and probe 14's `origin='split'` row is what did —
+-- so both arms now say `origin = 'mirror'`, and they are safe in any company
+-- rather than only while probe 14 is kept out of the assembly.)
 --
 -- Expected: 266 rows, all PASS — 04:26 05:22 06:25 07:39 08:35 09:23 10:26
 -- 11:15 13:30 05b:9 16:16. If the printed `assertions seen:` list is shorter
@@ -1848,6 +1850,9 @@ DECLARE
   v_na_ctid_before text;   -- … and its tuple identity around that rename: not rewritten (Task 11 review I2)
   v_na_ctid_after  text;
   v_rename2_minor text;    -- a live item's title after it: follows
+  v_sv           uuid;     -- 'Spine-void defect': voided ON THE SPINE while its entry stays live
+  v_sv_title_at_void text; -- its title at the moment of the spine-side void
+  v_sv_after     record;   -- … after a source edit that moves the title input AND the verdict (the UPDATE arm)
   v_draftfail_before int;  -- items for the draft-window fail BEFORE the re-issue: 0 (Task 11 review S4)
   v_livemv       record;   -- the client-viewer live item after its move
   v_bf_opened    timestamptz;
@@ -2214,6 +2219,40 @@ BEGIN
   SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
     FROM projects.work_items w WHERE w.qc_entry_id = v_livecv AND w.origin = 'mirror';
 
+  -- ── Task 10 review rule 2, ON THE UPDATE ARM ───────────────────────────────
+  -- The rename block above pins rule 1's EARLY RETURN, not rule 2's frozen
+  -- title: a rename-only edit on a void record returns before the UPDATE arm
+  -- is reached (whole-branch review, finding 1). Rule 2's CASE lives ON the
+  -- arm, so pinning it needs a void item whose source edit rule 1 cannot
+  -- swallow — and no entry-driven void can supply one. A born-void or
+  -- N/A-voided entry carries source_status = its own conformance, so the
+  -- early return's `e.conformance IS NOT DISTINCT FROM v_item.source_status`
+  -- half holds through any rename and the arm is unreachable by a rename at
+  -- all. The shape that DOES reach it is the SPINE-side void with the entry
+  -- still live — probes 04 and 06's spine_voided_item_title_is_frozen: a
+  -- person voids the ITEM with a reason (§03 §1.7), the entry lives on, and
+  -- the record must keep saying what it said when it was voided.
+  INSERT INTO projects.qc_entries (report_id, organisation_id, project_id, title, conformance, severity, created_by)
+  VALUES (v_rep, v_org, v_proj, 'Spine-void defect', 'fail', 'major', v_pm) RETURNING id INTO v_sv;
+  -- Service path (auth.uid() IS NULL): the guard's exemption returns NEW after
+  -- clearing the closed stamps, so a direct void with a reason is legal here.
+  UPDATE projects.work_items
+     SET status = 'void', void_reason = 'voided on the spine, entry still live'
+   WHERE qc_entry_id = v_sv AND origin = 'mirror';
+  SELECT w.title INTO v_sv_title_at_void
+    FROM projects.work_items w WHERE w.qc_entry_id = v_sv AND w.origin = 'mirror';
+  IF v_sv_title_at_void IS DISTINCT FROM 'Spine-void defect — Level 3 handover QC (rev C)' THEN
+    RAISE EXCEPTION 'fixture: the spine-side void did not leave the item titled "Spine-void defect — Level 3 handover QC (rev C)" (got %)', v_sv_title_at_void;
+  END IF;
+  -- The title input AND the verdict move in ONE statement: conformance now
+  -- differs from source_status, so rule 1 cannot return and the UPDATE arm
+  -- runs with v_item.status = 'void'. source_status is asserted below
+  -- precisely so this row cannot pass by the arm never running.
+  UPDATE projects.qc_entries SET title = 'Spine-void defect (rev)', conformance = 'na', severity = NULL
+   WHERE id = v_sv;
+  SELECT w.title, w.status, w.source_status, w.void_reason, w.priority INTO v_sv_after
+    FROM projects.work_items w WHERE w.qc_entry_id = v_sv AND w.origin = 'mirror';
+
   -- ── Report 2: the backfill shape ───────────────────────────────────────────
   -- A failed entry on a report that was CLOSED before the spine existed: the
   -- close is written with triggers off (session_replication_role = replica,
@@ -2262,6 +2301,8 @@ BEGIN
     cl_ctid_before text, cl_ctid_after text, cl_prio_restamp text,
     cl_refiled_status text, cl_refiled_title text, cl_refiled_prio text,
     rename2_na text, rename2_minor text, na_ctid_before text, na_ctid_after text,
+    sv uuid, sv_title_at_void text, sv_title_after text, sv_status_after text,
+    sv_src_after text, sv_reason_after text, sv_prio_after text,
     livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid,
     draft_items int, issued_fail int, issued_rest int,
     fi_priority text, fi_src text, fi_title text, fi_status text, fi_assignee uuid,
@@ -2293,6 +2334,8 @@ BEGIN
     v_cl_ctid_before, v_cl_ctid_after, v_cl_prio_restamp,
     v_cl_refiled.status, v_cl_refiled.title, v_cl_refiled.priority,
     v_rename2_na, v_rename2_minor, v_na_ctid_before, v_na_ctid_after,
+    v_sv, v_sv_title_at_void, v_sv_after.title, v_sv_after.status,
+    v_sv_after.source_status, v_sv_after.void_reason, v_sv_after.priority,
     v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id,
     v_draft_items, v_issued_fail, v_issued_rest,
     v_fi.priority, v_fi.source_status, v_fi.title, v_fi.status, v_fi.assignee_id,
@@ -2372,6 +2415,10 @@ DECLARE
   v_admin3      uuid;     -- arm 2 on the THIRD project: distinct from admin2, the PM chain and the owner, so a live move must re-run the chain to be seen
   v_proj3       uuid;     -- the live-move target (a moved item keeps its ref; two moves into one project collide on work_item_ref_unique — deviation 20)
   v_livemv      record;   -- the client-viewer-authored LIVE delay's item after its move
+  v_sv          uuid;     -- a real delay whose item is voided ON THE SPINE while the entry stays live
+  v_proj4       uuid;     -- its move target: on D.5 a MOVE is the only source edit a void row's early return cannot swallow
+  v_sv_title_at_void text;
+  v_sv_after    record;   -- the void item after the paired delay-text edit + move (the UPDATE arm)
 BEGIN
   IF auth.uid() IS NOT NULL THEN
     RAISE EXCEPTION 'fixture: auth.uid() is % — this probe relies on the guard''s service path (no impersonation anywhere in it)', auth.uid();
@@ -2655,6 +2702,51 @@ BEGIN
   SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
     FROM projects.work_items w WHERE w.diary_id = v_cvdelay AND w.origin = 'mirror';
 
+  -- ── Task 10 review rule 2, ON THE UPDATE ARM ─────────────────────────
+  -- void_is_terminal_when_delay_returns above pins rule 1's EARLY RETURN, not
+  -- rule 2's frozen title: the returning delay never reaches the UPDATE arm
+  -- (whole-branch review, finding 1). Rule 2's CASE lives ON the arm, and on
+  -- D.5 reaching it with a void row takes more than any text edit can do.
+  -- D.5's early return is
+  --   NOT v_live AND NOT v_moved AND <same org>
+  --   AND (v_item.status = 'void' OR v_delay IS NULL OR v_title = v_item.title)
+  -- so on a void row that parenthesis is TRUE whatever the diarist types: a
+  -- delay-text edit ALONE can never run the arm, and a source-driven void
+  -- (the withdrawal) has nothing else to offer either. What is left is
+  -- `NOT v_moved` — a project MOVE. So: a spine-side void with the entry still
+  -- live (probes 04 and 06's spine_voided_item_title_is_frozen), then the
+  -- delay text and the project moved in ONE statement. The move is what opens
+  -- the arm; the new delay text is what makes the frozen title a real claim
+  -- (with the old text v_title would equal the frozen title and thawing the
+  -- CASE could not be seen).
+  INSERT INTO projects.site_diary_entries (project_id, organisation_id, entry_date, progress_notes, delays, created_by)
+  VALUES (v_proj, v_org, DATE '2026-09-15', 'Crane', 'Crane breakdown, 4h lost', v_pm)
+  RETURNING id INTO v_sv;
+  -- Service path (auth.uid() IS NULL): the guard's exemption returns NEW after
+  -- clearing the closed stamps, so a direct void with a reason is legal here.
+  UPDATE projects.work_items
+     SET status = 'void', void_reason = 'voided on the spine, entry still live'
+   WHERE diary_id = v_sv AND origin = 'mirror';
+  SELECT w.title INTO v_sv_title_at_void
+    FROM projects.work_items w WHERE w.diary_id = v_sv AND w.origin = 'mirror';
+  IF v_sv_title_at_void IS DISTINCT FROM 'Delay 2026-09-15: Crane breakdown, 4h lost' THEN
+    RAISE EXCEPTION 'fixture: the spine-side void did not leave the item titled "Delay 2026-09-15: Crane breakdown, 4h lost" (got %)', v_sv_title_at_void;
+  END IF;
+  -- A FOURTH project, not proj2 or proj3: a moved item keeps its ref and the
+  -- allocator numbers per project, so a second move into either would risk
+  -- work_items_ref_unique (deviation 20). No work_item_defaults are needed —
+  -- a non-live move re-resolves nobody (improvement 8 is gated on v_live), so
+  -- this project only has to exist and admit the two people the membership
+  -- trigger re-validates (both org admins, eligible on any project — 00107).
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org, '_probe_diary_4', 'active', 'ZAR', v_pm) RETURNING id INTO v_proj4;
+  UPDATE projects.site_diary_entries
+     SET delays = 'Crane back, 1h lost', project_id = v_proj4
+   WHERE id = v_sv;
+  SELECT w.title, w.status, w.void_reason, w.project_id, w.source_status,
+         w.assignee_id, w.gatekeeper_id INTO v_sv_after
+    FROM projects.work_items w WHERE w.diary_id = v_sv AND w.origin = 'mirror';
+
   CREATE TEMP TABLE di_ctx(
     pm uuid, chain_pm uuid, admin2 uuid, cv uuid,
     default_due date, hist_created timestamptz, hist_updated timestamptz,
@@ -2676,7 +2768,10 @@ BEGIN
     same_last timestamptz,
     proj2 uuid, moved_status text, moved_project uuid, moved_assignee uuid, moved_gate uuid,
     proj3 uuid, admin3 uuid,
-    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid) ON COMMIT DROP;
+    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid,
+    sv uuid, proj4 uuid, sv_title_at_void text, sv_title_after text, sv_status_after text,
+    sv_reason_after text, sv_project_after uuid, sv_src_after text,
+    sv_assignee_after uuid, sv_gate_after uuid) ON COMMIT DROP;
   INSERT INTO di_ctx VALUES (
     v_pm, v_chain_pm, v_admin2, v_cv,
     v_default_due, v_hist_created, v_hist_updated,
@@ -2698,7 +2793,10 @@ BEGIN
     v_same_last,
     v_proj2, v_moved.status, v_moved.project_id, v_moved.assignee_id, v_moved.gatekeeper_id,
     v_proj3, v_admin3,
-    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id);
+    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id,
+    v_sv, v_proj4, v_sv_title_at_void, v_sv_after.title, v_sv_after.status,
+    v_sv_after.void_reason, v_sv_after.project_id, v_sv_after.source_status,
+    v_sv_after.assignee_id, v_sv_after.gatekeeper_id);
 END $probe$;
 
 -- ══ fixtures from 10-form-mirror.sql ════════════════════════════════════════
@@ -2728,6 +2826,7 @@ DECLARE
   v_fcv      uuid;   -- authored by the client viewer: arm 2, born triage; then MOVED live
   v_fmv      uuid;   -- authored by the client viewer, distributed, then MOVED closed (Task 8 review S1)
   v_fill     uuid;   -- the illegal-transition subject (second block)
+  v_fsv      uuid;   -- voided ON THE SPINE while the form stays live: rule 2's only reachable shape
   -- now() is fixed for the whole transaction, so these are exact targets.
   v_hist_created timestamptz := now() - interval '40 days';
   v_hist_updated timestamptz := now() - interval '30 days';
@@ -2761,6 +2860,8 @@ DECLARE
   v_mvclosed    record;   -- the closed client-viewer item before the move
   v_mvmoved     record;   -- … after the move
   v_ill_before  record;   -- the illegal-transition subject before the attempt
+  v_sv_title_at_void text;  -- the spine-voided item's title at the moment of the void
+  v_sv_after    record;   -- … after a board rename PAIRED with a source status move (the UPDATE arm)
 BEGIN
   IF auth.uid() IS NOT NULL THEN
     RAISE EXCEPTION 'fixture: auth.uid() is % — the first block relies on the guard''s service path (no impersonation in it)', auth.uid();
@@ -3085,6 +3186,39 @@ BEGIN
   SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_mvmoved
     FROM projects.work_items w WHERE w.site_form_id = v_fmv AND w.origin = 'mirror';
 
+  -- ── Task 10 review rule 2, ON THE UPDATE ARM ─────────────────────────
+  -- The born-void rename above pins rule 1's EARLY RETURN, not rule 2's frozen
+  -- title: a rename-only edit on a void record returns before the UPDATE arm
+  -- is reached (whole-branch review, finding 1). And a BORN-void form can
+  -- never reach that arm by a rename at all — its source_status already
+  -- equals f.status ('void'), so the early return's
+  -- `f.status IS NOT DISTINCT FROM v_item.source_status` half holds through
+  -- every rename. The shape that reaches it is the SPINE-side void with the
+  -- form still live (probes 04 and 06's spine_voided_item_title_is_frozen):
+  -- someone voids the ITEM with a reason (§03 §1.7), the form lives on, and
+  -- the record must keep saying what it said when it was voided. The board
+  -- rename and the form's own status move in ONE statement, so f.status
+  -- differs from source_status and rule 1 cannot return.
+  INSERT INTO field.site_forms (organisation_id, project_id, template_row_id, form_no, board_ref, board_label, status, created_by)
+  VALUES (v_org, v_proj, v_tpl, 'TMS-PRB-2026-0010', 'DB-SV', 'Spine-void board', 'draft', v_pm)
+  RETURNING id INTO v_fsv;
+  -- Service path (auth.uid() IS NULL): the guard's exemption returns NEW after
+  -- clearing the closed stamps, so a direct void with a reason is legal here.
+  UPDATE projects.work_items
+     SET status = 'void', void_reason = 'voided on the spine, form still live'
+   WHERE site_form_id = v_fsv AND origin = 'mirror';
+  SELECT w.title INTO v_sv_title_at_void
+    FROM projects.work_items w WHERE w.site_form_id = v_fsv AND w.origin = 'mirror';
+  IF v_sv_title_at_void IS DISTINCT FROM 'TMS-PRB-2026-0010 — Spine-void board' THEN
+    RAISE EXCEPTION 'fixture: the spine-side void did not leave the item titled "TMS-PRB-2026-0010 — Spine-void board" (got %)', v_sv_title_at_void;
+  END IF;
+  UPDATE field.site_forms
+     SET board_label = 'Spine-void board (renamed)',
+         status = 'submitted', submitted_at = now(), submitted_by = v_pm
+   WHERE id = v_fsv;
+  SELECT w.title, w.status, w.source_status, w.void_reason, w.closed_at INTO v_sv_after
+    FROM projects.work_items w WHERE w.site_form_id = v_fsv AND w.origin = 'mirror';
+
   -- ── the illegal-transition subject (attempted in the second block) ─────────
   INSERT INTO field.site_forms (organisation_id, project_id, template_row_id, form_no, board_ref, board_label, status, created_by)
   VALUES (v_org, v_proj, v_tpl, 'TMS-PRB-2026-0009', 'DB-ILL', 'Guarded board', 'draft', v_pm)
@@ -3118,6 +3252,8 @@ BEGIN
     mvc_status text, mvc_assignee uuid, mvc_gate uuid,
     mvm_status text, mvm_project uuid, mvm_assignee uuid, mvm_gate uuid,
     form_ill uuid, ill_before_status text, ill_before_closed_at timestamptz, ill_before_src text,
+    form_sv uuid, sv_title_at_void text, sv_title_after text, sv_status_after text,
+    sv_src_after text, sv_reason_after text, sv_closed_at_after timestamptz,
     -- written by the second block
     ill_err text, ill_sqlstate text, ill_uid uuid, ill_after_status text, ill_after_closed_at timestamptz,
     ill_after_src text, ill_form_status text, ill_cleared boolean) ON COMMIT DROP;
@@ -3145,7 +3281,9 @@ BEGIN
     same_last,
     mvc_status, mvc_assignee, mvc_gate,
     mvm_status, mvm_project, mvm_assignee, mvm_gate,
-    form_ill, ill_before_status, ill_before_closed_at, ill_before_src)
+    form_ill, ill_before_status, ill_before_closed_at, ill_before_src,
+    form_sv, sv_title_at_void, sv_title_after, sv_status_after,
+    sv_src_after, sv_reason_after, sv_closed_at_after)
   VALUES (
     v_pm, v_chain_pm, v_admin2, v_admin3, v_cv, v_proj, v_proj2, v_proj3,
     v_default_due, v_hist_created, v_hist_updated, v_hist_dist,
@@ -3171,7 +3309,9 @@ BEGIN
     v_same_last,
     v_mvclosed.status, v_mvclosed.assignee_id, v_mvclosed.gatekeeper_id,
     v_mvmoved.status, v_mvmoved.project_id, v_mvmoved.assignee_id, v_mvmoved.gatekeeper_id,
-    v_fill, v_ill_before.status, v_ill_before.closed_at, v_ill_before.source_status);
+    v_fill, v_ill_before.status, v_ill_before.closed_at, v_ill_before.source_status,
+    v_fsv, v_sv_title_at_void, v_sv_after.title, v_sv_after.status,
+    v_sv_after.source_status, v_sv_after.void_reason, v_sv_after.closed_at);
 END $probe$;
 
 -- The ONE illegal transition, under impersonation. As the owner (authenticated,
@@ -4581,12 +4721,25 @@ UNION ALL SELECT 'closed_item_priority_is_not_refiled',
 UNION ALL SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
        (SELECT c.cl_ctid_before = c.cl_ctid_after AND c.cl_prio_restamp = 'high' FROM qc_ctx c),
        'a severity-only edit on a passed entry fires the _upd trigger (severity is watched) but changes nothing the closed record projects, so the UPDATE arm returns early and the tuple is not rewritten (same ctid) — before the early return the guard stamped last_activity_at = now() on it'
--- Task 10 review, rule 2: a void row's title is frozen.
-UNION ALL SELECT 'void_item_title_is_frozen_on_rename',
+-- Task 10 review, rule 1 on a VOID row. This row pins the EARLY RETURN's void
+-- clause, NOT rule 2's frozen title: a rename-only edit on a void record
+-- returns before the UPDATE arm is reached, so thawing rule 2's CASE cannot
+-- redden it (whole-branch review, finding 1). Rule 2 is the row below.
+UNION ALL SELECT 'void_item_rename_alone_leaves_the_record',
        (SELECT c.rename2_na = 'Untested check — Level 3 handover QC (rev B)'
            AND c.rename2_minor = 'Label missing — Level 3 handover QC (rev C)'
            AND c.na_ctid_before = c.na_ctid_after FROM qc_ctx c),
-       'a second report rename retitles the live items and leaves the void (N/A) item''s title as it was when the record was withdrawn — and does not rewrite its tuple (same ctid): rule 1''s early return never compares a void row''s title (Task 11 review I2 — under the plain title comparison the frozen title still ran the arm and the guard re-stamped last_activity_at)'
+       'a second report rename retitles the live items; on the void (N/A) item it is a RENAME-ONLY source edit, so rule 1''s early return fires — its `v_item.status = ''void''` clause stands in for the title comparison — and the record is not even REWRITTEN: same ctid, the title still reading what it read when the record was withdrawn. Task 11 review I2: under the plain title comparison the frozen title still ran the arm and the guard re-stamped last_activity_at. Dropping the void clause reddens this row; thawing rule 2''s CASE says nothing about it'
+-- Task 10 review, rule 2: a void row's title is frozen ON THE UPDATE ARM.
+UNION ALL SELECT 'spine_voided_item_title_is_frozen',
+       (SELECT c.sv_title_at_void = 'Spine-void defect — Level 3 handover QC (rev C)'
+           AND c.sv_title_after = c.sv_title_at_void
+           AND c.sv_status_after = 'void' AND c.sv_src_after = 'na'
+           AND c.sv_reason_after = 'voided on the spine, entry still live'
+           AND c.sv_prio_after = 'high'
+           AND (SELECT e.title FROM projects.qc_entries e WHERE e.id = c.sv) = 'Spine-void defect (rev)'
+          FROM qc_ctx c),
+       'an item voided ON THE SPINE while its entry lives on keeps the title it was voided with. The entry title and the verdict move in ONE statement, so the early return cannot fire (conformance ''na'' <> source_status ''fail'') and the UPDATE arm runs with v_item.status = ''void'': source_status follows to ''na'', the reason survives and the closed record''s priority is not re-filed — but the title does not move, while the entry now reads "Spine-void defect (rev)". No entry-driven void can reach this arm (a born-void or N/A-voided entry''s source_status already equals its conformance, so a rename always returns early), which is why the shape is the spine-side void of probes 04 and 06. Thawing rule 2''s CASE reddens this row'
 -- Task 9 review I1: the live-move arm.
 UNION ALL SELECT 'live_move_reruns_the_chain_through_the_qc_key',
        (SELECT c.livemv_status = 'triage' AND c.livemv_project = c.proj3 AND c.livemv_assignee = c.admin3
@@ -4636,12 +4789,28 @@ UNION ALL SELECT 'withdrawn_delay_voids_with_reason',
 UNION ALL SELECT 'withdrawal_writes_a_voided_event',
        (SELECT c.wd_voided_n = 1 AND c.wd_voided_actor_null FROM di_ctx c),
        '§11 records the trigger-driven void as one `voided` event (actor NULL on the service path; the PM on the live path) — the claim the row above makes, measured (S4)'
-UNION ALL SELECT 'void_is_terminal_when_delay_returns',
+-- Task 10 review, rule 1 on a VOID row. This row pins the EARLY RETURN's void
+-- clause, NOT rule 2's frozen title: the returning delay never reaches the
+-- UPDATE arm, so thawing rule 2's CASE cannot redden it (whole-branch review,
+-- finding 1). Rule 2's arm-side claim is spine_voided_item_title_is_frozen.
+UNION ALL SELECT 'void_item_delay_edit_alone_leaves_the_record',
        (SELECT c.wd_return_status = 'void' AND c.wd_return_reason = 'delay withdrawn at source'
            AND c.wd_return_title = c.wd_void_title
            AND c.wd_return_title <> 'Delay 2026-09-08: Rain again, 2h lost'
            AND c.wd_ctid_before = c.wd_ctid_after FROM di_ctx c),
-       'Task 4''s rule: void has no exit; an entry re-edited back into scope leaves the item void with its reason AND its title (Task 10 review, rule 2: a void row''s title is frozen — the record of what was withdrawn) and does not rewrite its tuple (same ctid — Task 11 review I2: rule 1''s early return never compares a void row''s title) — a genuinely new delay is a new entry'
+       'a delay re-recorded on an entry whose item is already void is a TEXT-ONLY source edit, so rule 1''s early return fires — its `v_item.status = ''void''` clause stands in for the title comparison — and the record is not even REWRITTEN: same ctid, still void with its reason, the title still reading what was withdrawn rather than "Rain again, 2h lost". Nothing was written, so this says nothing about rule 2''s CASE (nor, strictly, about void terminality — the arm that keeps void through a write is the row below); dropping the void clause is what reddens it, and a genuinely new delay is a new entry'
+-- Task 10 review, rule 2: a void row's title is frozen ON THE UPDATE ARM.
+UNION ALL SELECT 'spine_voided_item_title_is_frozen',
+       (SELECT c.sv_title_at_void = 'Delay 2026-09-15: Crane breakdown, 4h lost'
+           AND c.sv_title_after = c.sv_title_at_void
+           AND c.sv_status_after = 'void'
+           AND c.sv_reason_after = 'voided on the spine, entry still live'
+           AND c.sv_src_after IS NULL
+           AND c.sv_project_after = c.proj4
+           AND c.sv_assignee_after = c.pm AND c.sv_gate_after = c.chain_pm
+           AND (SELECT d.delays FROM projects.site_diary_entries d WHERE d.id = c.sv) = 'Crane back, 1h lost'
+          FROM di_ctx c),
+       'an item voided ON THE SPINE while its entry lives on keeps the title it was voided with. On D.5 no text edit can reach the UPDATE arm of a void row — the early return''s parenthesis is TRUE for any delay — so the delay text and the PROJECT move in one statement: project_id = proj4 proves the arm ran, and with it the title would have followed to "Delay 2026-09-15: Crane back, 1h lost". It does not; void stays void with its reason, source_status stays NULL, and the people are not re-resolved (improvement 8 is gated on v_live). Thawing rule 2''s CASE reddens this row'
 -- Task 10 review, rule 1: a closed record is not rewritten for nothing.
 UNION ALL SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
        (SELECT c.cl_ctid_before = c.cl_ctid_after AND c.cl_after_status = 'closed' FROM di_ctx c),
@@ -4745,12 +4914,25 @@ UNION ALL SELECT 'closed_item_title_follows_the_source',
 UNION ALL SELECT 'born_void_carries_source_reason',
        (SELECT c.bv_status = 'void' AND c.bv_reason = 'Probe: created in error' AND c.bv_closed_at IS NULL FROM fm_ctx c),
        '#4 / #3: a form inserted already void is born void carrying the source''s reason (the guard''s void-reason check does not run on INSERT — the projection is the only reason-supplier)'
--- Task 10 review, rule 2: a void row's title is frozen.
-UNION ALL SELECT 'void_item_title_is_frozen',
+-- Task 10 review, rule 1 on a VOID row. This row pins the EARLY RETURN's void
+-- clause, NOT rule 2's frozen title: a rename-only edit on a void record
+-- returns before the UPDATE arm is reached, so thawing rule 2's CASE cannot
+-- redden it (whole-branch review, finding 1). Rule 2 is the row below.
+UNION ALL SELECT 'void_item_rename_alone_leaves_the_record',
        (SELECT c.bv_title = 'TMS-PRB-2026-0004 — Void board' AND c.bv_renamed_title = c.bv_title
            AND c.bv_renamed_status = 'void' AND c.bv_renamed_reason = 'Probe: created in error'
            AND c.bv_renamed_last = c.hist_updated FROM fm_ctx c),
-       'a board rename on a VOID form leaves the item''s title as it was when the record was withdrawn; status and reason untouched, and the record is NOT rewritten — last_activity_at keeps its historical value instead of the guard''s now() (Task 11 review I2: rule 1''s early return never compares a void row''s title; a closed row''s title keeps following — closed_item_title_follows_the_source)'
+       'a board rename on a BORN-void form is a rename-only source edit, so rule 1''s early return fires — its `v_item.status = ''void''` clause stands in for the title comparison — and the record is not even REWRITTEN: last_activity_at keeps its historical value instead of the guard''s now(), the title still reading what it read when the record was withdrawn (Task 11 review I2). A born-void form can reach the UPDATE arm by NO rename at all, since its source_status already equals f.status: dropping the void clause reddens this row, and thawing rule 2''s CASE says nothing about it (a closed row''s title keeps following — closed_item_title_follows_the_source)'
+-- Task 10 review, rule 2: a void row's title is frozen ON THE UPDATE ARM.
+UNION ALL SELECT 'spine_voided_item_title_is_frozen',
+       (SELECT c.sv_title_at_void = 'TMS-PRB-2026-0010 — Spine-void board'
+           AND c.sv_title_after = c.sv_title_at_void
+           AND c.sv_status_after = 'void' AND c.sv_src_after = 'submitted'
+           AND c.sv_reason_after = 'voided on the spine, form still live'
+           AND c.sv_closed_at_after IS NULL
+           AND (SELECT f.board_label FROM field.site_forms f WHERE f.id = c.form_sv) = 'Spine-void board (renamed)'
+          FROM fm_ctx c),
+       'an item voided ON THE SPINE while its form lives on keeps the title it was voided with. The board rename and the form''s own status move in ONE statement, so the early return cannot fire (f.status ''submitted'' <> source_status ''draft'') and the UPDATE arm runs with v_item.status = ''void'': source_status follows to ''submitted'' and the spine''s reason survives the answered mapping, but the title does not move, while the form now reads "Spine-void board (renamed)". Thawing rule 2''s CASE reddens this row'
 UNION ALL SELECT 'void_carries_reason',
        (SELECT c.vlive_status IN ('triage','open') AND c.vlive_reason IS NULL
            AND c.void_status = 'void' AND c.void_reason = 'Probe: wrong board' FROM fm_ctx c),

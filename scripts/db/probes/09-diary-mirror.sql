@@ -56,8 +56,8 @@
 -- (set_updated_at on site_diary_entries is BEFORE UPDATE only, 00002:160, so
 -- the INSERT keeps the supplied value.)
 --
--- Expected: 23 rows. If the printed `assertions seen:` list is shorter than
--- twenty-three names, a UNION ALL arm was dropped — read the list, not the total.
+-- Expected: 24 rows. If the printed `assertions seen:` list is shorter than
+-- twenty-four names, a UNION ALL arm was dropped — read the list, not the total.
 DO $probe$
 DECLARE
   v_org   uuid := 'dddddddd-0000-0000-0000-000000000001';  -- WM-Consulting
@@ -113,6 +113,10 @@ DECLARE
   v_admin3      uuid;     -- arm 2 on the THIRD project: distinct from admin2, the PM chain and the owner, so a live move must re-run the chain to be seen
   v_proj3       uuid;     -- the live-move target (a moved item keeps its ref; two moves into one project collide on work_item_ref_unique — deviation 20)
   v_livemv      record;   -- the client-viewer-authored LIVE delay's item after its move
+  v_sv          uuid;     -- a real delay whose item is voided ON THE SPINE while the entry stays live
+  v_proj4       uuid;     -- its move target: on D.5 a MOVE is the only source edit a void row's early return cannot swallow
+  v_sv_title_at_void text;
+  v_sv_after    record;   -- the void item after the paired delay-text edit + move (the UPDATE arm)
 BEGIN
   IF auth.uid() IS NOT NULL THEN
     RAISE EXCEPTION 'fixture: auth.uid() is % — this probe relies on the guard''s service path (no impersonation anywhere in it)', auth.uid();
@@ -396,6 +400,51 @@ BEGIN
   SELECT w.status, w.project_id, w.assignee_id, w.gatekeeper_id INTO v_livemv
     FROM projects.work_items w WHERE w.diary_id = v_cvdelay AND w.origin = 'mirror';
 
+  -- ── Task 10 review rule 2, ON THE UPDATE ARM ─────────────────────────
+  -- void_is_terminal_when_delay_returns above pins rule 1's EARLY RETURN, not
+  -- rule 2's frozen title: the returning delay never reaches the UPDATE arm
+  -- (whole-branch review, finding 1). Rule 2's CASE lives ON the arm, and on
+  -- D.5 reaching it with a void row takes more than any text edit can do.
+  -- D.5's early return is
+  --   NOT v_live AND NOT v_moved AND <same org>
+  --   AND (v_item.status = 'void' OR v_delay IS NULL OR v_title = v_item.title)
+  -- so on a void row that parenthesis is TRUE whatever the diarist types: a
+  -- delay-text edit ALONE can never run the arm, and a source-driven void
+  -- (the withdrawal) has nothing else to offer either. What is left is
+  -- `NOT v_moved` — a project MOVE. So: a spine-side void with the entry still
+  -- live (probes 04 and 06's spine_voided_item_title_is_frozen), then the
+  -- delay text and the project moved in ONE statement. The move is what opens
+  -- the arm; the new delay text is what makes the frozen title a real claim
+  -- (with the old text v_title would equal the frozen title and thawing the
+  -- CASE could not be seen).
+  INSERT INTO projects.site_diary_entries (project_id, organisation_id, entry_date, progress_notes, delays, created_by)
+  VALUES (v_proj, v_org, DATE '2026-09-15', 'Crane', 'Crane breakdown, 4h lost', v_pm)
+  RETURNING id INTO v_sv;
+  -- Service path (auth.uid() IS NULL): the guard's exemption returns NEW after
+  -- clearing the closed stamps, so a direct void with a reason is legal here.
+  UPDATE projects.work_items
+     SET status = 'void', void_reason = 'voided on the spine, entry still live'
+   WHERE diary_id = v_sv AND origin = 'mirror';
+  SELECT w.title INTO v_sv_title_at_void
+    FROM projects.work_items w WHERE w.diary_id = v_sv AND w.origin = 'mirror';
+  IF v_sv_title_at_void IS DISTINCT FROM 'Delay 2026-09-15: Crane breakdown, 4h lost' THEN
+    RAISE EXCEPTION 'fixture: the spine-side void did not leave the item titled "Delay 2026-09-15: Crane breakdown, 4h lost" (got %)', v_sv_title_at_void;
+  END IF;
+  -- A FOURTH project, not proj2 or proj3: a moved item keeps its ref and the
+  -- allocator numbers per project, so a second move into either would risk
+  -- work_items_ref_unique (deviation 20). No work_item_defaults are needed —
+  -- a non-live move re-resolves nobody (improvement 8 is gated on v_live), so
+  -- this project only has to exist and admit the two people the membership
+  -- trigger re-validates (both org admins, eligible on any project — 00107).
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org, '_probe_diary_4', 'active', 'ZAR', v_pm) RETURNING id INTO v_proj4;
+  UPDATE projects.site_diary_entries
+     SET delays = 'Crane back, 1h lost', project_id = v_proj4
+   WHERE id = v_sv;
+  SELECT w.title, w.status, w.void_reason, w.project_id, w.source_status,
+         w.assignee_id, w.gatekeeper_id INTO v_sv_after
+    FROM projects.work_items w WHERE w.diary_id = v_sv AND w.origin = 'mirror';
+
   CREATE TEMP TABLE di_ctx(
     pm uuid, chain_pm uuid, admin2 uuid, cv uuid,
     default_due date, hist_created timestamptz, hist_updated timestamptz,
@@ -417,7 +466,10 @@ BEGIN
     same_last timestamptz,
     proj2 uuid, moved_status text, moved_project uuid, moved_assignee uuid, moved_gate uuid,
     proj3 uuid, admin3 uuid,
-    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid) ON COMMIT DROP;
+    livemv_status text, livemv_project uuid, livemv_assignee uuid, livemv_gate uuid,
+    sv uuid, proj4 uuid, sv_title_at_void text, sv_title_after text, sv_status_after text,
+    sv_reason_after text, sv_project_after uuid, sv_src_after text,
+    sv_assignee_after uuid, sv_gate_after uuid) ON COMMIT DROP;
   INSERT INTO di_ctx VALUES (
     v_pm, v_chain_pm, v_admin2, v_cv,
     v_default_due, v_hist_created, v_hist_updated,
@@ -439,7 +491,10 @@ BEGIN
     v_same_last,
     v_proj2, v_moved.status, v_moved.project_id, v_moved.assignee_id, v_moved.gatekeeper_id,
     v_proj3, v_admin3,
-    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id);
+    v_livemv.status, v_livemv.project_id, v_livemv.assignee_id, v_livemv.gatekeeper_id,
+    v_sv, v_proj4, v_sv_title_at_void, v_sv_after.title, v_sv_after.status,
+    v_sv_after.void_reason, v_sv_after.project_id, v_sv_after.source_status,
+    v_sv_after.assignee_id, v_sv_after.gatekeeper_id);
 END $probe$;
 
 SELECT 'empty_entry_not_mirrored' AS probe,
@@ -490,12 +545,29 @@ SELECT 'withdrawal_writes_a_voided_event',
        (SELECT c.wd_voided_n = 1 AND c.wd_voided_actor_null FROM di_ctx c),
        '§11 records the trigger-driven void as one `voided` event (actor NULL on the service path; the PM on the live path) — the claim the row above makes, measured (S4)'
 UNION ALL
-SELECT 'void_is_terminal_when_delay_returns',
+-- Task 10 review, rule 1 on a VOID row. This row pins the EARLY RETURN's void
+-- clause, NOT rule 2's frozen title: the returning delay never reaches the
+-- UPDATE arm, so thawing rule 2's CASE cannot redden it (whole-branch review,
+-- finding 1). Rule 2's arm-side claim is spine_voided_item_title_is_frozen.
+SELECT 'void_item_delay_edit_alone_leaves_the_record',
        (SELECT c.wd_return_status = 'void' AND c.wd_return_reason = 'delay withdrawn at source'
            AND c.wd_return_title = c.wd_void_title
            AND c.wd_return_title <> 'Delay 2026-09-08: Rain again, 2h lost'
            AND c.wd_ctid_before = c.wd_ctid_after FROM di_ctx c),
-       'Task 4''s rule: void has no exit; an entry re-edited back into scope leaves the item void with its reason AND its title (Task 10 review, rule 2: a void row''s title is frozen — the record of what was withdrawn) and does not rewrite its tuple (same ctid — Task 11 review I2: rule 1''s early return never compares a void row''s title) — a genuinely new delay is a new entry'
+       'a delay re-recorded on an entry whose item is already void is a TEXT-ONLY source edit, so rule 1''s early return fires — its `v_item.status = ''void''` clause stands in for the title comparison — and the record is not even REWRITTEN: same ctid, still void with its reason, the title still reading what was withdrawn rather than "Rain again, 2h lost". Nothing was written, so this says nothing about rule 2''s CASE (nor, strictly, about void terminality — the arm that keeps void through a write is the row below); dropping the void clause is what reddens it, and a genuinely new delay is a new entry'
+UNION ALL
+-- Task 10 review, rule 2: a void row's title is frozen ON THE UPDATE ARM.
+SELECT 'spine_voided_item_title_is_frozen',
+       (SELECT c.sv_title_at_void = 'Delay 2026-09-15: Crane breakdown, 4h lost'
+           AND c.sv_title_after = c.sv_title_at_void
+           AND c.sv_status_after = 'void'
+           AND c.sv_reason_after = 'voided on the spine, entry still live'
+           AND c.sv_src_after IS NULL
+           AND c.sv_project_after = c.proj4
+           AND c.sv_assignee_after = c.pm AND c.sv_gate_after = c.chain_pm
+           AND (SELECT d.delays FROM projects.site_diary_entries d WHERE d.id = c.sv) = 'Crane back, 1h lost'
+          FROM di_ctx c),
+       'an item voided ON THE SPINE while its entry lives on keeps the title it was voided with. On D.5 no text edit can reach the UPDATE arm of a void row — the early return''s parenthesis is TRUE for any delay — so the delay text and the PROJECT move in one statement: project_id = proj4 proves the arm ran, and with it the title would have followed to "Delay 2026-09-15: Crane back, 1h lost". It does not; void stays void with its reason, source_status stays NULL, and the people are not re-resolved (improvement 8 is gated on v_live). Thawing rule 2''s CASE reddens this row'
 UNION ALL
 -- Task 10 review, rule 1: a closed record is not rewritten for nothing.
 SELECT 'closed_item_unrelated_source_edit_leaves_the_record',
