@@ -4920,6 +4920,32 @@ UNION ALL SELECT 'due_dates_floored', count(*) = 0,
   FROM live l JOIN floors f ON f.project_id = l.project_id
  WHERE l.origin = 'mirror' AND l.status IN ('triage','open','answered')
    AND l.due_date < f.floor
+-- I3 (whole-branch review). The two rows above hold just as well against a
+-- hard-coded DATE '2026-11-10': every LIVE project answers exactly that date,
+-- so neither of them can tell section H's per-project computation from the
+-- literal the plan first specified (measured — swapping the literal in left the
+-- whole rehearsal at 266/266). This row can, and it reads the ITEM's own
+-- due_date rather than the probe's `floors` CTE — the CTE recomputes the floor
+-- with the same two functions and would agree with itself whatever H did.
+-- _probe_snag_backfill carries a builders' shutdown band over 2026-11-10
+-- (13-backfill-fixtures.sql), so its backfilled item must be floored PAST the
+-- band, to 2026-11-21. Under the literal it would sit on 2026-11-10.
+UNION ALL SELECT 'floor_is_computed_per_project',
+       (SELECT w.due_date FROM projects.work_items w
+          JOIN projects.projects p ON p.id = w.project_id
+         WHERE p.name = '_probe_snag_backfill' AND w.origin = 'mirror'
+           AND w.status IN ('triage','open','answered')
+         ORDER BY w.due_date DESC LIMIT 1)
+         = projects.push_past_builders_shutdown(
+             projects.add_working_days(DATE '2026-11-03', 5,
+               (SELECT id FROM projects.projects WHERE name = '_probe_snag_backfill'), 'office'),
+             (SELECT id FROM projects.projects WHERE name = '_probe_snag_backfill')),
+       'the shutdown-band project''s item must be floored past its band (2026-11-21), not to the 2026-11-10 every other project gets; got '
+         || COALESCE((SELECT w.due_date::text FROM projects.work_items w
+                        JOIN projects.projects p ON p.id = w.project_id
+                       WHERE p.name = '_probe_snag_backfill' AND w.origin = 'mirror'
+                         AND w.status IN ('triage','open','answered')
+                       ORDER BY w.due_date DESC LIMIT 1), '<no live item>')
 UNION ALL SELECT 'closed_items_not_refloored', count(*) = 0,
        'improvement 9: a July record must not acquire a November deadline; got ' || count(*)
   FROM live l JOIN floors f ON f.project_id = l.project_id

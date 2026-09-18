@@ -47,12 +47,16 @@
 --            SET LOCAL session_replication_role = origin;   -- RI back on, so the DELETE cascades events + watchers
 --            DELETE FROM projects.work_items
 --             WHERE origin = 'mirror' AND created_at <= <apply timestamp>;
+--            DELETE FROM public.product_events
+--             WHERE event = 'backfill_completed'
+--               AND properties->>'migration' = 'work_item_source_mirrors_and_backfill';
 --            UPDATE projects.work_item_types SET gatekeeper_rule = 'project_pm' WHERE key = 'rfi';
 --            COMMIT;
 --            -- and re-run 00196 §12's CREATE OR REPLACE FUNCTION projects.work_items_transition_guard()
 --          Measured after this form (rolled back, 2026-09-15): 0 mirror items,
 --          0 assigned RFIs, 0 due_date / updated_at / snag diffs, 0 orphaned
---          events or watchers, registry back to 'project_pm'. ⚠ updated_at is
+--          events or watchers, registry back to 'project_pm', and no
+--          backfill_completed event left behind. ⚠ updated_at is
 --          restorable ONLY inside the replica window — rfis_updated_at
 --          (00002:100) overwrites it on any ordinary UPDATE, so the snapshot's
 --          updated_at column is unusable without it.
@@ -3685,7 +3689,18 @@ SELECT o.organisation_id, NULL, NULL, 'backfill_completed',
   FROM (SELECT p.organisation_id, count(*) AS n
           FROM projects.work_items w JOIN projects.projects p ON p.id = w.project_id
          WHERE w.origin = 'mirror'
-         GROUP BY p.organisation_id) o;
+         GROUP BY p.organisation_id) o
+ -- One row per organisation, EVER. A second apply would otherwise write a
+ -- second row per org, and item 4's recap reads
+ -- properties->>'backfill_completed_at' — with two rows it silently picks one
+ -- and the first post-go-live recap either repeats or skips a week of items.
+ -- product_events has no natural key to put an ON CONFLICT on, so the guard is
+ -- a NOT EXISTS on this migration's own marker.
+ WHERE NOT EXISTS (
+         SELECT 1 FROM public.product_events pe
+          WHERE pe.event = 'backfill_completed'
+            AND pe.organisation_id = o.organisation_id
+            AND pe.properties->>'migration' = 'work_item_source_mirrors_and_backfill');
 
 -- Post-conditions, asserted in the same transaction that made them.
 DO $postcheck$

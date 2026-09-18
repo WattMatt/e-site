@@ -150,6 +150,22 @@ BEGIN
   VALUES (v_proj, v_org, 'Real-org snag', 'Level 1', 'medium', 'open', v_raiser,
           now() - interval '12 days', now() - interval '12 days');
 
+  -- A BUILDERS' SHUTDOWN BAND OVER THE FLOOR, so the per-project floor is
+  -- provably per-project. go_live + 5 office working days is 2026-11-10 on
+  -- every live project, which means the literal DATE '2026-11-10' the plan
+  -- originally specified and section H's
+  -- push_past_builders_shutdown(add_working_days(go_live, 5, project, 'office'))
+  -- answer identically everywhere and nothing could tell them apart (measured:
+  -- swapping in the literal left the rehearsal at 266/266). This band covers
+  -- 2026-11-10, so THIS project's floor lands after it and the two forms
+  -- diverge — which is what probe 13's floor_is_computed_per_project reads.
+  UPDATE projects.project_settings
+     SET builders_shutdown_start_md = '11-05', builders_shutdown_end_md = '11-20'
+   WHERE project_id = v_proj;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'fixture: no project_settings row for the snag fixture project — item 2''s ensure_project_settings_row did not fire';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM projects.work_items WHERE project_id = v_proj) THEN
     RAISE EXCEPTION 'fixture: the snag fixture projected an item before the migration was stacked — this file is in the wrong --with order';
   END IF;
