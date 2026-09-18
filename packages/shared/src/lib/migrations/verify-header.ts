@@ -90,6 +90,48 @@ const PAYLOAD_WRAPS = new Set(['behaviour', 'anon_execute_absent', 'sql'])
 const IDENTIFIER = /^[a-z0-9_]+$/i
 
 /**
+ * A `sql:` payload is handed to the database BYTE-FOR-BYTE as `SELECT (<payload>)`,
+ * and its continuation lines are folded in (PAYLOAD_WRAPS) because a real predicate
+ * genuinely wraps. That combination has one trap, and 00204 fell into it: an
+ * explanatory sentence written on a continuation line is not a comment, it is part
+ * of the query. It shipped to production, and the failure surfaced only in the
+ * post-push verify step as `42601: syntax error at or near "("` — after the
+ * migration had already applied.
+ *
+ * An em dash is the tell. It is never valid SQL outside a string literal or a
+ * comment, and it is what prose in this repo is written with. Reject it at parse
+ * time — which runs in CI's Validate DB Migrations job, BEFORE a merge — and say
+ * how to keep the sentence.
+ */
+function rejectProseInSql(payload: string, line: number, raw: string): void {
+  let inQuote = false
+  let inBlockComment = false
+  for (let i = 0; i < payload.length; i += 1) {
+    const c = payload[i]
+    if (inBlockComment) {
+      if (c === '*' && payload[i + 1] === '/') { inBlockComment = false; i += 1 }
+      continue
+    }
+    if (inQuote) {
+      // '' is an escaped quote inside a literal, not the end of one.
+      if (c === "'" && payload[i + 1] === "'") { i += 1; continue }
+      if (c === "'") inQuote = false
+      continue
+    }
+    if (c === "'") { inQuote = true; continue }
+    if (c === '/' && payload[i + 1] === '*') { inBlockComment = true; i += 1; continue }
+    if (c === '—') {
+      throw new Error(
+        `@verify line ${line}: sql: payload carries an em dash outside a string literal or /* */ comment — ` +
+          'a `sql:` payload is executed byte-for-byte, so a continuation line is part of the QUERY, not a comment. ' +
+          'Wrap the explanation in /* ... */ (it stays next to the predicate and stays valid SQL). ' +
+          `— ${raw}`,
+      )
+    }
+  }
+}
+
+/**
  * Every identifier reaching a predicate is checked against IDENTIFIER first.
  * Quoting is not the concern — `q()` already escapes, and these strings come
  * from files a reviewer reads. The concern is a MIS-PARSE: a folded note or a
@@ -196,6 +238,7 @@ export function parseVerifyBlock(sql: string): VerifyDirective[] | null {
   for (const f of folded) {
     const { kind, line, raw } = f
     // `sql` keeps its payload byte-for-byte; everything else may carry a note.
+    if (kind === 'sql') rejectProseInSql(f.payload, line, raw)
     const split = kind === 'sql' ? { body: f.payload.trim(), comment: undefined } : splitTrailingComment(f.payload)
     const rest = split.body
     const comment = [split.comment, f.note].filter(Boolean).join(' ') || undefined

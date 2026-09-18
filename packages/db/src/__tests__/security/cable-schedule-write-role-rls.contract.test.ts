@@ -142,6 +142,13 @@ const GATED_BY_00193 = [
 /** Gated by 00192, which shipped with the gate from the start. */
 const GATED_BY_00192 = ['supply_routes', 'route_segments'] as const
 
+/**
+ * Gated by 00200. 00199 created route_history with the role test inside a
+ * permissive INSERT policy keyed on the client-supplied organisation_id — the
+ * 00051 shape this test exists to catch — and this test caught it on PR #190.
+ */
+const GATED_BY_00200 = ['route_history'] as const
+
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
@@ -325,7 +332,7 @@ describe('cable_schedule write-role RLS', () => {
     expect(STATE.tables.has('supplies')).toBe(true)
   })
 
-  it.each([...GATED_BY_00193, ...GATED_BY_00192])(
+  it.each([...GATED_BY_00193, ...GATED_BY_00192, ...GATED_BY_00200])(
     '%s carries a RESTRICTIVE gate on INSERT, UPDATE and DELETE',
     (table) => {
       const forTable = [...STATE.policies.values()].filter((p) => p.table === table)

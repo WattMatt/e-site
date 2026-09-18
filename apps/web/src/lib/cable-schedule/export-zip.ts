@@ -9,6 +9,8 @@
  *   csv/tags.csv
  *   csv/cost.csv
  *   csv/change_log.csv
+ *   route-sheets/…pdf   — the marked-up route sheets, when the user opted in
+ *                         (also appended inside the pack PDF)
  *   README.txt          — what the pack contains + when it was generated
  */
 
@@ -17,6 +19,7 @@ import { renderScheduleWorkbook } from './export-excel'
 import { renderRevisionPdf } from './export-pdf'
 import { renderCsv } from './export-csv'
 import { exportFilenameStem } from './export-filename'
+import { routeSheetFileName } from './route-sheets'
 import type { ExportPayload } from './export-payload'
 
 export async function renderRevisionZip(
@@ -43,6 +46,14 @@ export async function renderRevisionZip(
     // README explains the omission. See redactPayloadCost in export-role.ts.
     if (!payload.costRedacted) csv.file('cost.csv', renderCsv('cost', payload))
     csv.file('change_log.csv', renderCsv('change_log', payload))
+  }
+
+  // The route sheets as their own files too — an A3 drawing prints better on
+  // its own than from inside the pack.
+  const sheets = payload.routeSheets?.sheets ?? []
+  if (sheets.length > 0) {
+    const folder = zip.folder('route-sheets')
+    for (const s of sheets) folder?.file(routeSheetFileName(s), s.bytes)
   }
 
   zip.file('README.txt', buildReadme(payload, stem))
@@ -97,6 +108,14 @@ function buildReadme(payload: ExportPayload, stem: string): string {
       ? []
       : [`csv/cost.csv     — Cost rows per (size, conductor) + materials/VAT/grand-total trailer.`]),
     `csv/change_log.csv — Per-entity audit trail.`,
+    ...(payload.routeSheets && (payload.routeSheets.sheets.length > 0 || payload.routeSheets.omitted.length > 0)
+      ? [
+          `route-sheets/    — ${payload.routeSheets.sheets.length} marked-up cable route sheet(s), the drawings the`,
+          `                    traced lengths were measured on (also appended inside ${stem}.pdf):`,
+          ...payload.routeSheets.sheets.map((s) => `                    • ${routeSheetFileName(s)} — ${s.title} v${s.version}, exported ${s.generatedAt.slice(0, 10)}${s.stale ? ' ⚠ routes changed after export' : ''}`),
+          ...payload.routeSheets.omitted.map((o) => `                    • NOT included: ${o.title} — ${o.reason}`),
+        ]
+      : []),
     ``,
     `Notes`,
     `-----`,

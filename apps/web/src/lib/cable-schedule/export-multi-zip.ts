@@ -40,21 +40,33 @@ import {
   type ExportPolicy,
 } from './export-role'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { ExportPayload } from './export-payload'
+import { routeSheetFileName } from './route-sheets'
 
 export interface MultiZipResult {
   bytes: Uint8Array
   filename: string
-  included: Array<{ code: string; status: string }>
+  included: Array<{ code: string; status: string; routeSheets?: number }>
   skipped: Array<{ code: string; status: string; reason: string }>
 }
 
 export type MultiZipOutcome = MultiZipResult | { error: string }
 
+export interface MultiZipOptions {
+  onlyIssued?: boolean
+  /**
+   * When set, each revision's marked-up cable route sheets are loaded and
+   * attached (appendix in the pack PDF + `route-sheets/` files in the
+   * folder). Injected so the lib stays free of the service client.
+   */
+  loadRouteSheets?: (revisionId: string) => Promise<NonNullable<ExportPayload['routeSheets']>>
+}
+
 export async function renderProjectAllRevisionsZip(
   supabase: SupabaseClient,
   projectId: string,
   policy: ExportPolicy,
-  options: { onlyIssued?: boolean } = { onlyIssued: true },
+  options: MultiZipOptions = { onlyIssued: true },
 ): Promise<MultiZipOutcome> {
   const { data: revs } = await (supabase as any)
     .schema('cable_schedule')
@@ -75,7 +87,7 @@ export async function renderProjectAllRevisionsZip(
   }
 
   const zip = new JSZip()
-  const included: Array<{ code: string; status: string }> = []
+  const included: Array<{ code: string; status: string; routeSheets?: number }> = []
   const skipped: Array<{ code: string; status: string; reason: string }> = []
   let projectName = ''
 
@@ -97,6 +109,15 @@ export async function renderProjectAllRevisionsZip(
     }
 
     const payload = policy.redactCost ? redactPayloadCost(raw) : raw
+    if (options.loadRouteSheets) {
+      try {
+        payload.routeSheets = await options.loadRouteSheets(rev.id)
+      } catch (err) {
+        // The pack must still ship without its sheets; the README says so.
+        console.warn('[multi-zip] route sheets could not be loaded', { revisionId: rev.id, error: err instanceof Error ? err.message : String(err) })
+        payload.routeSheets = { sheets: [], omitted: [{ title: 'all route sheets', reason: 'could not be loaded' }] }
+      }
+    }
 
     const sizeCheck = checkExportSize(payload, 'zip')
     if (!sizeCheck.ok) {
@@ -132,8 +153,13 @@ export async function renderProjectAllRevisionsZip(
         folder.file('cost.csv', renderCsv('cost', payload))
       }
       folder.file('change_log.csv', renderCsv('change_log', payload))
+      const sheets = payload.routeSheets?.sheets ?? []
+      if (sheets.length > 0) {
+        const sheetFolder = folder.folder('route-sheets')
+        for (const sh of sheets) sheetFolder?.file(routeSheetFileName(sh), sh.bytes)
+      }
 
-      included.push({ code: rev.code, status: rev.status })
+      included.push({ code: rev.code, status: rev.status, routeSheets: sheets.length })
     } catch (err) {
       // A single revision's render failure (corrupt row, PDF font edge
       // case, etc.) must not abort the whole pack. Record + warn + carry
@@ -184,7 +210,7 @@ export async function renderProjectAllRevisionsZip(
 
 function buildMultiReadme(
   projectName: string,
-  included: Array<{ code: string; status: string }>,
+  included: Array<{ code: string; status: string; routeSheets?: number }>,
   skipped: Array<{ code: string; status: string; reason: string }>,
   redacted: boolean,
 ): string {
@@ -200,7 +226,7 @@ function buildMultiReadme(
     ``,
     `Included`,
     `--------`,
-    ...included.map((r) => `  • ${r.code} (${r.status})`),
+    ...included.map((r) => `  • ${r.code} (${r.status})${r.routeSheets ? ` — ${r.routeSheets} route sheet(s)` : ''}`),
     ``,
     `Each folder contains the full export pack for that revision:`,
     `  • {stem}.xlsx     — ${redacted ? '3' : '4'}-sheet workbook`,
@@ -210,6 +236,9 @@ function buildMultiReadme(
     `  • schedule.csv    — One row per RUN (= supply)`,
     ...(redacted ? [] : [`  • cost.csv        — Cost rows per (size, conductor)`]),
     `  • change_log.csv  — Per-entity audit trail`,
+    ...(included.some((r) => r.routeSheets)
+      ? [`  • route-sheets/   — Marked-up cable route sheets (also appended inside the pack PDF)`]
+      : []),
     ``,
   ]
   if (redacted) {

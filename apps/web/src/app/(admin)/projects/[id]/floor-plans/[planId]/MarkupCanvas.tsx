@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Stage,
@@ -23,6 +23,18 @@ import {
   updateRfiAnnotationAction,
 } from '@/actions/rfi-annotation.actions'
 import { createRfiAction } from '@/actions/rfi.actions'
+import { calibrateFloorPlanAction } from '@/actions/cable-route.actions'
+import { edgeLengthsM, moveVertex, insertVertexAfter, removeVertex, dedupeConsecutivePoints } from '@esite/shared'
+import { RouteLayer, type RouteLayerLeg, type OtherLeg, type CalibrationLine } from './RouteLayer'
+import {
+  emptyHistory as emptyRouteHistory,
+  pushHistory as pushRouteHistory,
+  undoHistory as undoRouteHistory,
+  redoHistory as redoRouteHistory,
+  snapshotsEqual,
+  type RouteHistory, type RouteSnapshot, type SnapshotLeg,
+} from '@/lib/cable-route/route-history'
+import { snapRouteVertex } from '@/lib/cable-route/snap'
 import {
   type StrokeStyle,
   STROKE_STYLES,
@@ -72,6 +84,7 @@ type ToolMode =
   | 'eraser'
   | 'measure'
   | 'calibrate'
+  | 'cable'
 
 // pageIndex is 1-based (matches pdfjs page numbering). Defaults to 1 for
 // backward compat with v1 scene graphs that didn't carry pageIndex.
@@ -197,7 +210,16 @@ const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean;
   { value: 'table', label: '⊞', title: 'Legend / table — click to place, double-click a cell to edit' },
   { value: 'eraser', label: '⌦', title: 'Eraser — drag over marks to rub them out' },
   { value: 'measure', label: '⤢', needsCalibration: true, title: 'Measure (requires calibration)' },
+  // Cable-schedule measuring. Offered only when the caller may write the
+  // schedule AND the project has a DRAFT revision — see `cablePicker`.
+  { value: 'cable', label: '⚡', title: 'Measure a cable run — trace a schedule run on this drawing' },
 ]
+
+/**
+ * The only tools route mode offers. Everything else on the palette writes to
+ * the markup scene, which a route deliberately does not use.
+ */
+const ROUTE_TOOLS: ReadonlyArray<ToolMode> = ['select', 'polyline', 'cable']
 
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -281,7 +303,94 @@ export type EditingAnnotation = {
   scene: SceneGraph
 }
 
-export type ViewerMode = 'view' | 'markup' | 'rfi'
+export type ViewerMode = 'view' | 'markup' | 'rfi' | 'route'
+
+/**
+ * Route mode — tracing a cable run's route for the cable schedule.
+ *
+ * The canvas is borrowed for its VIEWPORT (zoom, pan, fit, multi-page PDF
+ * rasterisation) and its polyline vertex collection. Nothing else is shared.
+ *
+ * ⚠ A committed leg does NOT become a shape in the scene graph. It is handed
+ * straight to the caller, which writes it to `cable_schedule.route_segments`.
+ * This is deliberate and load-bearing: a cable run crosses sheets, so totalling
+ * one run must not mean opening and parsing every drawing's scene JSON, and
+ * "which runs are still unmeasured" has to stay answerable as a query. Each
+ * segment also stores the calibration in force when it was traced, which the
+ * scene graph cannot express — MeasureShape recomputes metres from the
+ * drawing's CURRENT calibration, so recalibrating silently rewrites every
+ * measurement ever taken with the measure tool. A cable length is signed
+ * against; it must never move under the person who recorded it.
+ */
+/** One run offered by the in-drawing cable tool. */
+export type CableRunOption = {
+  supplyId: string
+  /** "MB 1.1 → DB-50" */
+  label: string
+  traced: boolean
+  scheduleLengthM: number | null
+}
+
+/**
+ * The in-drawing entry to cable measuring — the other half of the double-sided
+ * access. Present only when the caller holds the SCHEDULE write role and the
+ * project has a DRAFT cable revision; absent otherwise, and the tool does not
+ * appear on the palette at all.
+ */
+export type CablePicker = {
+  revisionCode: string
+  runs: CableRunOption[]
+  /** Enter route mode for this run, on the drawing already open. */
+  onPick: (supplyId: string) => void
+  /** The run currently being measured, when already in route mode. */
+  activeSupplyId?: string
+}
+
+export type RouteModeProps = {
+  /** The run being measured. Changing it re-arms the polyline. */
+  supplyId: string
+  /** The run being measured, for the banner: e.g. "MB 3.1 → DB-07". */
+  runLabel: string
+  /** Legs already saved for this run, across all sheets, WITH their geometry. */
+  savedLegs: Array<RouteLayerLeg & { floorPlanName: string }>
+  /** Other runs' legs on this sheet, for context. */
+  otherLegsOnSheet: OtherLeg[]
+  /**
+   * Commit one traced leg. Receives PIXELS ONLY — the server reads the
+   * drawing's `pixels_per_meter` itself and decides the length. The browser
+   * never sends metres.
+   */
+  onCommitLeg: (leg: { points: number[]; pageIndex: number }) => Promise<{ error?: string }>
+  /** Replace one saved leg's geometry (vertex dragged, added or removed). */
+  onUpdateLeg: (legId: string, points: number[]) => Promise<{ error?: string }>
+  onDeleteLeg: (legId: string) => Promise<{ error?: string }>
+  /** Replace the WHOLE leg list — how undo/redo re-persists a prior state. */
+  onReplaceLegs: (legs: SnapshotLeg[]) => Promise<{ error?: string }>
+  /**
+   * Keep this sheet — routes, labels and calibration as drawn — as a versioned
+   * PDF report. Receives the native-resolution JPEG the canvas rasterised.
+   */
+  onExportSheet: (jpegBase64: string, pageIndex: number) => Promise<{ error?: string; version?: number }>
+  /** Every drawing on the project; picking one continues THIS run there. */
+  sheets: Array<{ id: string; name: string; calibrated: boolean }>
+  onSwitchSheet: (planId: string) => void
+  /** For the status strip. */
+  riseM: number
+  dropM: number
+  scheduleLengthM: number | null
+  /** Where "Back to schedule" returns to — the measure worklist. */
+  doneHref: string
+}
+
+/**
+ * The saved routes on this sheet, drawn in EVERY mode — view, markup, route —
+ * so the drawing is the record and not just the workspace. Pressing a route
+ * starts measuring that run when the caller supplies `onMeasure`.
+ */
+export type RouteOverlay = {
+  legs: OtherLeg[]
+  onMeasure?: (supplyId: string) => void
+}
 
 type Props = {
   plan: {
@@ -291,6 +400,12 @@ type Props = {
     height_px: number | null
     pixels_per_meter: number | null
     isPdf: boolean
+    /** Where the scale was taken (00198). Absent on callers that predate it. */
+    calibration_points?: number[] | null
+    calibration_metres?: number | null
+    calibration_page_index?: number | null
+    /** Scale per PDF page (00199). Page 1 falls back to the drawing-level scale. */
+    page_scales?: Array<{ pageIndex: number; pixelsPerMeter: number; points: number[] | null; metres: number | null }>
   }
   snagPins: Array<{ id: string; floor_plan_pin: { x: number; y: number } }>
   projectId: string
@@ -308,6 +423,21 @@ type Props = {
    * Switching modes at runtime preserves canvas state (shapes, zoom, page).
    */
   mode?: ViewerMode
+  /**
+   * Route-tracing mode (cable schedule). When provided, the tool palette
+   * collapses to select + polyline, every markup save path is hidden, and a
+   * finished polyline is handed to `onCommitLeg` instead of being committed to
+   * the scene. When ABSENT, every existing code path runs exactly as before.
+   */
+  routeMode?: RouteModeProps
+  /** Saved routes on this sheet, for any mode. Absent = nothing to draw. */
+  routeOverlay?: RouteOverlay
+  /**
+   * Cable-schedule measuring, started FROM the drawing. When provided, a ⚡ tool
+   * joins the palette and opens a run picker; choosing a run enters route mode
+   * on this drawing. When ABSENT the tool is not rendered.
+   */
+  cablePicker?: CablePicker
   /**
    * External-save mode (QC markup). When provided, MarkupCanvas hands the
    * flattened PNG + editable scene graph to the caller and does NOT create or
@@ -338,6 +468,9 @@ export function MarkupCanvas({
   rfis = [],
   editing = null,
   mode = 'markup',
+  routeMode,
+  routeOverlay,
+  cablePicker,
   onSaveMarkup,
   initialScene,
 }: Props) {
@@ -377,10 +510,73 @@ export function MarkupCanvas({
   const [current, setCurrent] = useState<AnyShape | null>(null)
   const [undoStack, setUndoStack] = useState<AnyShape[][]>([])
   const [redoStack, setRedoStack] = useState<AnyShape[][]>([])
-  const [pixelsPerMeter, setPixelsPerMeter] = useState<number | null>(plan.pixels_per_meter)
+  const [pixelsPerMeterDrawing, setPixelsPerMeter] = useState<number | null>(plan.pixels_per_meter)
+  /** Scales set in this session for pages other than 1 (00199). */
+  const [sessionPageScales, setSessionPageScales] = useState<Map<number, { ppm: number; points: number[]; metres: number }>>(new Map())
   const [calibPoints, setCalibPoints] = useState<Array<[number, number]>>([])
   const [calibDistance, setCalibDistance] = useState('')
   const [calibSaving, setCalibSaving] = useState(false)
+  /** Filter text for the in-drawing cable run picker. */
+  const [cableQuery, setCableQuery] = useState('')
+
+  // ── Route mode ───────────────────────────────────────────────────────────
+  /** A finished leg the measurer has not yet pressed Save on. */
+  const [pendingLeg, setPendingLeg] = useState<number[] | null>(null)
+  const [legSaving, setLegSaving] = useState(false)
+  const [legError, setLegError] = useState<string | null>(null)
+  // Selection is by POSITION in the route, not by row id: every save replaces
+  // the segment list wholesale and every row gets a new id, so an id-keyed
+  // selection went stale the moment a dragged vertex was persisted — the edit
+  // bar stayed up with nothing selected. Order survives a replace; ids do not.
+  const [selectedLegIndex, setSelectedLegIndex] = useState<number | null>(null)
+  /** While true the route layer draws only what should be on paper. */
+  const [exporting, setExporting] = useState(false)
+  /** The saved-routes overlay outside route mode. On by default when there is anything to show. */
+  const [showRoutes, setShowRoutes] = useState(true)
+  /** Undo/redo over snapshots of the whole route — legs, pending leg, draft. */
+  const [history, setHistory] = useState<RouteHistory>(() => emptyRouteHistory({ legs: [], pending: null, draft: [] }))
+  /** True while an undo/redo is being applied, until the canvas state settles on it. */
+  const applyingHistoryRef = useRef(false)
+  /** What the last click snapped to, for the strip. */
+  const [snapHint, setSnapHint] = useState<string | null>(null)
+  /** Set when an unsaved trace was brought back from the last session. */
+  const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null)
+  /** Delete leg is armed by a first press and committed by a second within 4 s — never window.confirm (Safari suppresses it). */
+  const [armedDeleteLegId, setArmedDeleteLegId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!armedDeleteLegId) return
+    const t = setTimeout(() => setArmedDeleteLegId(null), 4000)
+    return () => clearTimeout(t)
+  }, [armedDeleteLegId])
+  /** Per-page scales (00199); the drawing-level scale is the page-1 default. */
+  const pageScales = useMemo(
+    () => new Map((plan.page_scales ?? []).map((s) => [s.pageIndex, s])),
+    [plan.page_scales],
+  )
+  const [exportMsg, setExportMsg] = useState<string | null>(null)
+  const selectedLegId =
+    routeMode && selectedLegIndex != null ? (routeMode.savedLegs[selectedLegIndex]?.id ?? null) : null
+  const setSelectedLegId = (id: string | null) => {
+    if (id == null || !routeMode) { setSelectedLegIndex(null); return }
+    const i = routeMode.savedLegs.findIndex((l) => l.id === id)
+    setSelectedLegIndex(i >= 0 ? i : null)
+  }
+  /** The stored calibration line, drawn on the sheet so the scale is visible. */
+  const [calibLine, setCalibLine] = useState<CalibrationLine | null>(
+    plan.calibration_points && plan.calibration_points.length === 4 && plan.calibration_metres
+      ? { points: plan.calibration_points, metres: plan.calibration_metres, pageIndex: plan.calibration_page_index ?? 1 }
+      : null,
+  )
+  /** Calibration lines for pages other than the drawing-level one (00199). */
+  const pageCalibLines = useMemo<CalibrationLine[]>(
+    () => [
+      ...(plan.page_scales ?? [])
+        .filter((s) => s.points && s.points.length === 4 && s.metres)
+        .map((s) => ({ points: s.points as number[], metres: s.metres as number, pageIndex: s.pageIndex })),
+      ...[...sessionPageScales.entries()].map(([pageIndex, s]) => ({ points: s.points, metres: s.metres, pageIndex })),
+    ],
+    [plan.page_scales, sessionPageScales],
+  )
   const [calibError, setCalibError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -456,17 +652,137 @@ export function MarkupCanvas({
   function finishPoly() {
     const wantClosed = tool === 'polygon'
     const minEntries = wantClosed ? 6 : 4 // 3 vs 2 vertices
-    if (polyPoints.length < minEntries) {
+    // The double-click that got us here has already stamped one or two extra
+    // vertices on the last real one. Collapse them (3 px in image space) so a
+    // finished shape — and especially a measured leg — has no zero-length edge.
+    const pts = dedupeConsecutivePoints(polyPoints, 3 / scale)
+    if (pts.length < minEntries) {
       setPolyPoints([])
+      return
+    }
+    // Route mode: hand the vertices to the caller for `route_segments` and do
+    // NOT touch the scene graph. Pixels only — the server reads the drawing's
+    // pixels_per_meter and decides the length.
+    if (routeMode && !wantClosed) {
+      // Route mode: the leg becomes PENDING — drawn solid and labelled, still
+      // the measurer's — until they press Save. A double-click writes nothing,
+      // so a mis-click cannot commit a route silently.
+      setPendingLeg(pts)
+      setPolyPoints([])
+      setLegError(null)
       return
     }
     const dash = dashFor(strokeStyle, strokeWidth)
     commit(
       wantClosed
-        ? { id: makeId(), type: 'polygon', points: polyPoints, color, strokeWidth, closed: true, dash }
-        : { id: makeId(), type: 'polyline', points: polyPoints, color, strokeWidth, dash },
+        ? { id: makeId(), type: 'polygon', points: pts, color, strokeWidth, closed: true, dash }
+        : { id: makeId(), type: 'polyline', points: pts, color, strokeWidth, dash },
     )
     setPolyPoints([])
+  }
+
+  // ── Route mode: save / edit ───────────────────────────────────────────────
+  async function saveLeg() {
+    if (!routeMode || !pendingLeg) return
+    setLegSaving(true)
+    setLegError(null)
+    try {
+      const res = await routeMode.onCommitLeg({ points: pendingLeg, pageIndex: currentPage })
+      if (res.error) { setLegError(res.error); return }
+      setPendingLeg(null)
+      setRestoredDraftAt(null)
+      if (routeDraftKey) void clearDraftRecord(routeDraftKey)
+    } finally {
+      setLegSaving(false)
+    }
+  }
+
+  async function persistLeg(legId: string, points: number[]) {
+    if (!routeMode) return
+    setLegSaving(true)
+    setLegError(null)
+    try {
+      const res = await routeMode.onUpdateLeg(legId, points)
+      if (res.error) setLegError(res.error)
+    } finally {
+      setLegSaving(false)
+    }
+  }
+
+  function legPoints(legId: string): number[] | null {
+    return routeMode?.savedLegs.find((l) => l.id === legId)?.points ?? null
+  }
+
+  function onMoveLegVertex(legId: string, index: number, x: number, y: number) {
+    const pts = legPoints(legId)
+    if (pts) void persistLeg(legId, moveVertex(pts, index, x, y))
+  }
+  function onInsertLegVertex(legId: string, afterIndex: number, x: number, y: number) {
+    const pts = legPoints(legId)
+    if (pts) void persistLeg(legId, insertVertexAfter(pts, afterIndex, x, y))
+  }
+  function onRemoveLegVertex(legId: string, index: number) {
+    const pts = legPoints(legId)
+    if (!pts) return
+    try {
+      void persistLeg(legId, removeVertex(pts, index))
+    } catch (e) {
+      setLegError(e instanceof Error ? e.message : 'Could not remove that point')
+    }
+  }
+
+  /**
+   * Rasterise the sheet at native resolution with the routes drawn, and hand
+   * it to the caller to keep. Same transform dance as `snapshotScene`, but
+   * JPEG (a PNG of an A1 at source density is ~4× the size and brushes the
+   * 10 MB action body limit) and with selection handles, the pending leg and
+   * the grid left off the page.
+   */
+  async function exportSheet() {
+    if (!routeMode || !stageRef.current || !img) return
+    setExporting(true)
+    setExportMsg(null)
+    await new Promise((r) => setTimeout(r, 60)) // let the route layer redraw without handles
+    const stage = stageRef.current
+    const savedScale = stage.scaleX()
+    const savedPos = stage.position()
+    const gridVisible = gridLayerRef.current?.visible() ?? false
+    try {
+      stage.scale({ x: 1, y: 1 })
+      stage.position({ x: 0, y: 0 })
+      gridLayerRef.current?.visible(false)
+      stage.draw()
+      const dataUrl = stage.toDataURL({ pixelRatio: 1, mimeType: 'image/jpeg', quality: 0.85, x: 0, y: 0, width: naturalW, height: naturalH })
+      stage.scale({ x: savedScale, y: savedScale })
+      stage.position(savedPos)
+      gridLayerRef.current?.visible(gridVisible)
+      stage.draw()
+      const res = await routeMode.onExportSheet(dataUrl.split(',')[1] ?? '', currentPage)
+      setExportMsg(res.error ? res.error : `Saved as version ${res.version} — it is listed under Exported sheets on the measure page.`)
+    } catch (e) {
+      stage.scale({ x: savedScale, y: savedScale })
+      stage.position(savedPos)
+      gridLayerRef.current?.visible(gridVisible)
+      stage.draw()
+      setExportMsg(e instanceof Error ? e.message : 'Export failed')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function deleteLeg(legId: string) {
+    if (!routeMode) return
+    if (armedDeleteLegId !== legId) { setArmedDeleteLegId(legId); return }
+    setArmedDeleteLegId(null)
+    setLegSaving(true)
+    setLegError(null)
+    try {
+      const res = await routeMode.onDeleteLeg(legId)
+      if (res.error) setLegError(res.error)
+      else setSelectedLegId(null)
+    } finally {
+      setLegSaving(false)
+    }
   }
 
   // Load image (or PDF page rasterised to a canvas via pdfjs-dist).
@@ -474,10 +790,134 @@ export function MarkupCanvas({
   // pages on demand. Per-page bitmaps are cached in pageImagesRef so
   // navigating back doesn't re-render.
   const [img, setImg] = useState<Backing | null>(null)
+  const signedUrlRef = useRef<string | null>(plan.signedUrl)
+  signedUrlRef.current = plan.signedUrl
   const [loadError, setLoadError] = useState<string | null>(null)
   // Starts on the page the hydrated markup lives on (QC re-edit); 1 otherwise.
   const [currentPage, setCurrentPage] = useState(initialPageIndex)
   const [pageCount, setPageCount] = useState(1)
+
+  // Vertices belong to the page they were clicked on. Carrying an in-progress
+  // polyline (or a half-finished calibration) across a page change would stamp
+  // it with the NEW page and redraw it in the wrong place on the wrong sheet —
+  // silently, because nothing downstream can tell. Abandon it on every page
+  // change; a leg is cheap to retrace and a wrong length is not.
+  useEffect(() => {
+    setPolyPoints([])
+    setCalibPoints([])
+    setPendingLeg(null)
+    setSelectedLegId(null)
+    setLegError(null)
+  }, [currentPage])
+
+  // Which scale applies: in route mode, the page we are on (00199), page 1
+  // falling back to the drawing-level scale; in markup mode the drawing-level
+  // scale as always, so the measure tool behaves exactly as before.
+  const pixelsPerMeter: number | null = (() => {
+    if (!routeMode) return pixelsPerMeterDrawing
+    const s = sessionPageScales.get(currentPage) ?? (pageScales.get(currentPage) ? { ppm: pageScales.get(currentPage)!.pixelsPerMeter } : null)
+    if (s) return s.ppm
+    return currentPage === 1 ? pixelsPerMeterDrawing : null
+  })()
+
+  // ── History: record every visible change as a snapshot ─────────────────
+  // Any mutation from any source (a click, a save, a drag) lands here. While an
+  // undo/redo is being applied we do not record, until the canvas state has
+  // settled on the restored snapshot — a persisted undo arrives asynchronously.
+  const currentSnapshot = (): RouteSnapshot => ({
+    legs: (routeMode?.savedLegs ?? []).map((l) => ({ floorPlanId: l.floorPlanId ?? '', pageIndex: l.pageIndex, points: l.points })),
+    pending: pendingLeg,
+    draft: polyPoints,
+  })
+  useEffect(() => {
+    if (!routeMode) return
+    const now = currentSnapshot()
+    if (applyingHistoryRef.current) {
+      if (snapshotsEqual(now, history.present)) applyingHistoryRef.current = false
+      return
+    }
+    setHistory((h) => pushRouteHistory(h, now))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeMode?.savedLegs, pendingLeg, polyPoints])
+  // A new run starts a fresh history.
+  useEffect(() => {
+    if (routeMode) setHistory(emptyRouteHistory(currentSnapshot()))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeMode?.supplyId])
+
+  async function applySnapshot(next: RouteSnapshot) {
+    if (!routeMode) return
+    applyingHistoryRef.current = true
+    setPolyPoints(next.draft)
+    setPendingLeg(next.pending)
+    setSelectedLegIndex(null)
+    setLegError(null)
+    const legsNow = currentSnapshot().legs
+    const same = legsNow.length === next.legs.length && legsNow.every((l, i) => l.floorPlanId === next.legs[i].floorPlanId && l.pageIndex === next.legs[i].pageIndex && l.points.join(',') === next.legs[i].points.join(','))
+    if (!same) {
+      const res = await routeMode.onReplaceLegs(next.legs)
+      if (res.error) {
+        applyingHistoryRef.current = false
+        setLegError(res.error)
+      }
+    }
+  }
+  function undoRoute() {
+    if (!history.canUndo) return
+    const h = undoRouteHistory(history)
+    setHistory(h)
+    void applySnapshot(h.present)
+  }
+  function redoRoute() {
+    if (!history.canRedo) return
+    const h = redoRouteHistory(history)
+    setHistory(h)
+    void applySnapshot(h.present)
+  }
+
+  // ── Draft autosave: an unsaved trace survives a reload ─────────────────
+  const routeDraftKey = routeMode ? `route-draft:${plan.id}:${routeMode.supplyId}:${currentPage}` : null
+  useEffect(() => {
+    if (!routeDraftKey) return
+    let live = true
+    ;(async () => {
+      const rec = (await getDraft(routeDraftKey)) as unknown as { draft?: number[]; pending?: number[] | null; savedAt?: string } | null
+      if (!live || !rec) return
+      if ((rec.draft && rec.draft.length >= 2) || (rec.pending && rec.pending.length >= 4)) {
+        setPolyPoints(rec.draft ?? [])
+        setPendingLeg(rec.pending ?? null)
+        setRestoredDraftAt(rec.savedAt ?? null)
+      }
+    })()
+    return () => { live = false }
+  }, [routeDraftKey])
+  useEffect(() => {
+    if (!routeDraftKey) return
+    const t = setTimeout(() => {
+      if (polyPoints.length === 0 && !pendingLeg) void clearDraftRecord(routeDraftKey)
+      else void setDraftRecord(routeDraftKey, { draft: polyPoints, pending: pendingLeg, savedAt: new Date().toISOString() } as unknown as DraftRecord)
+    }, 400)
+    return () => clearTimeout(t)
+  }, [routeDraftKey, polyPoints, pendingLeg])
+
+  // Route mode hands the measurer the polyline, not the selector. Arriving by
+  // either door — the worklist or the ⚡ picker — you are holding the tool
+  // that traces, and the first click on the drawing places a vertex.
+  //
+  // Keyed on the RUN, not on "is route mode on": picking a second run from the
+  // ⚡ panel while already measuring navigates to the new supply with route
+  // mode still true, and the first cut left the picker tool in hand with its
+  // panel open — every click on the drawing did nothing.
+  useEffect(() => {
+    if (routeMode) {
+      setTool('polyline')
+      setCableQuery('')
+      setPendingLeg(null)
+      setSelectedLegIndex(null)
+      setLegError(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeMode?.supplyId])
   // PDFDocumentProxy from pdfjs — kept as ref to avoid re-render on assignment.
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
   const pageImagesRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -518,7 +958,11 @@ export function MarkupCanvas({
   //    inline (so single-page PDFs don't hang waiting for an effect that
   //    only re-fires when pageCount changes from 1).
   useEffect(() => {
-    if (!plan.signedUrl) return
+    // Read the URL through a ref so a re-render that only re-minted the signed
+    // URL (every server render does) does not re-rasterise the sheet. Only a
+    // different drawing — a new plan id — reloads.
+    const signedUrl = signedUrlRef.current
+    if (!signedUrl) return
     const signal = { cancelled: false }
     setLoadError(null)
     setImg(null)
@@ -536,7 +980,7 @@ export function MarkupCanvas({
           if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
             pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
           }
-          const loadingTask = pdfjsLib.getDocument(plan.signedUrl!)
+          const loadingTask = pdfjsLib.getDocument(signedUrl)
           const pdf = await loadingTask.promise
           if (signal.cancelled) return
           pdfDocRef.current = pdf as unknown as {
@@ -561,13 +1005,14 @@ export function MarkupCanvas({
       i.onerror = () => {
         if (!signal.cancelled) setLoadError('Image failed to load')
       }
-      i.src = plan.signedUrl
+      i.src = signedUrl
     }
 
     return () => {
       signal.cancelled = true
     }
-  }, [plan.signedUrl, plan.isPdf, renderPdfPage, initialPageIndex])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan.id, plan.isPdf, renderPdfPage, initialPageIndex])
 
   // 2) Re-render when the user navigates to a different PDF page.
   //    Page 1 on initial mount is handled by the load effect above; the
@@ -658,10 +1103,12 @@ export function MarkupCanvas({
     return () => window.removeEventListener('keydown', onEsc)
   }, [isFullscreen])
 
-  // Reset auto-fit when source OR current page changes.
+  // Reset auto-fit when the DRAWING or the current page changes — not when a
+  // server re-render merely re-mints the signed URL, which would snap the view
+  // back to fit-to-width under the measurer after every save.
   useEffect(() => {
     initFitDone.current = false
-  }, [plan.signedUrl, plan.isPdf, currentPage])
+  }, [plan.id, plan.isPdf, currentPage])
 
   const fitToView = useCallback(() => {
     if (!img) return
@@ -822,6 +1269,26 @@ export function MarkupCanvas({
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (mode === 'view') return
+      if (routeMode) {
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+          e.preventDefault()
+          if (e.shiftKey) redoRoute(); else undoRoute()
+          return
+        }
+        if (e.key === 'Enter' && polyPoints.length >= 4) { e.preventDefault(); finishPoly(); return }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          if (polyPoints.length) setPolyPoints([])
+          else if (pendingLeg) setPendingLeg(null)
+          else setSelectedLegId(null)
+          return
+        }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLegId) {
+          e.preventDefault()
+          void deleteLeg(selectedLegId)
+          return
+        }
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         e.preventDefault()
         deleteSelected()
@@ -832,7 +1299,7 @@ export function MarkupCanvas({
     window.addEventListener('keydown', onEdit)
     return () => window.removeEventListener('keydown', onEdit)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, shapes, mode])
+  }, [selectedId, shapes, mode, routeMode, polyPoints, pendingLeg, selectedLegId, history])
 
   // ── History ───────────────────────────────────────────────────────────
   function pushHistory(prev: AnyShape[]) {
@@ -1264,6 +1731,19 @@ export function MarkupCanvas({
     if (tool === 'polygon' || tool === 'polyline') {
       // Click adds a vertex. Double-click (handled separately) finishes:
       // polygon closes, polyline stays open.
+      if (routeMode && tool === 'polyline') {
+        // Route mode snaps: a leg's first vertex to the end of a leg already
+        // saved on this sheet (so the run joins up), and with Shift any later
+        // vertex to 0/45/90° from the previous one (cable trays are orthogonal).
+        const endpoints: Array<[number, number]> = routeMode.savedLegs
+          .filter((l) => l.floorPlanId === plan.id && l.pageIndex === currentPage && l.points.length >= 4)
+          .flatMap((l) => [[l.points[0], l.points[1]], [l.points[l.points.length - 2], l.points[l.points.length - 1]]] as Array<[number, number]>)
+        const prev: [number, number] | null = polyPoints.length >= 2 ? [polyPoints[polyPoints.length - 2], polyPoints[polyPoints.length - 1]] : null
+        const snapped = snapRouteVertex([sx, sy], prev, endpoints, 12 / scale, !!(e.evt as MouseEvent).shiftKey)
+        setPolyPoints((pts) => [...pts, snapped.point[0], snapped.point[1]])
+        setSnapHint(snapped.snappedTo === 'endpoint' ? 'joined to the previous leg' : snapped.snappedTo === 'angle' ? 'snapped to 45°' : null)
+        return
+      }
       setPolyPoints((pts) => [...pts, sx, sy])
       return
     }
@@ -1368,7 +1848,7 @@ export function MarkupCanvas({
     setCalibPoints([])
     setCalibDistance('')
     setCalibError(null)
-    setTool('select')
+    setTool(routeMode ? 'polyline' : 'select')
   }
 
   async function saveCalibration() {
@@ -1391,6 +1871,36 @@ export function MarkupCanvas({
     setCalibSaving(true)
     setCalibError(null)
     try {
+      // Route mode writes through the role-gated server action: calibration is
+      // the scale every route on this sheet is measured against, so it needs
+      // the schedule's own write role (ORG_WRITE_ROLES), not merely the markup
+      // role this page is gated on. The action derives px/m server-side.
+      //
+      // The markup path below keeps its direct write deliberately — narrowing
+      // it to ORG_WRITE_ROLES would take calibration away from contractors, who
+      // are the primary markup authors and have had it since 00035. That is a
+      // policy change for the owner, not a side effect of this feature.
+      const calibPts = [calibPoints[0][0], calibPoints[0][1], calibPoints[1][0], calibPoints[1][1]]
+      if (routeMode) {
+        const res = await calibrateFloorPlanAction({
+          floorPlanId: plan.id,
+          points: calibPts,
+          realMetres: metres,
+          pageIndex: currentPage,
+        })
+        if (res.error) throw new Error(res.error)
+        if (currentPage === 1) {
+          setPixelsPerMeter(res.pixelsPerMeter ?? ppm)
+          setCalibLine({ points: calibPts, metres, pageIndex: 1 })
+        } else {
+          setSessionPageScales((m) => new Map(m).set(currentPage, { ppm: res.pixelsPerMeter ?? ppm, points: calibPts, metres }))
+        }
+        setCalibPoints([])
+        setCalibDistance('')
+        // Back to tracing — the scale was set in order to trace.
+        setTool('polyline')
+        return
+      }
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       // Calibration columns added in migration 00035 — generated types will
@@ -1402,10 +1912,14 @@ export function MarkupCanvas({
           pixels_per_meter: ppm,
           calibrated_at: new Date().toISOString(),
           calibrated_by: user?.id ?? null,
+          calibration_points: calibPts,
+          calibration_metres: metres,
+          calibration_page_index: currentPage,
         })
         .eq('id', plan.id)
       if (error) throw error
       setPixelsPerMeter(ppm)
+      setCalibLine({ points: calibPts, metres, pageIndex: currentPage })
       setCalibPoints([])
       setCalibDistance('')
       setTool('select')
@@ -1925,12 +2439,136 @@ export function MarkupCanvas({
       {/* Toolbar — tool palette / colour / stroke / undo groups are hidden
           in view mode; zoom + page-nav stay visible so the viewer can pan,
           zoom and step through multi-page PDFs while read-only. */}
+      {routeMode && (
+        <div
+          className="data-panel"
+          style={{ padding: '10px 12px', marginBottom: 8, display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap' }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 700 }}>
+            Measuring <span style={{ fontFamily: 'var(--font-mono)' }}>{routeMode.runLabel}</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+            {!pixelsPerMeter
+              ? 'This sheet has no scale yet — set the scale once and every later run on it is ready.'
+              : 'Click each corner of the route, then double-click to finish the leg. Save it, then continue on another sheet if the run crosses one.'}
+          </div>
+          <div style={{ flex: 1 }} />
+          <label style={{ fontSize: 11, color: 'var(--c-text-dim)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            Continue on
+            <select
+              className="ob-input"
+              style={{ fontSize: 12, maxWidth: 260 }}
+              value={plan.id}
+              onChange={(e) => { if (e.target.value !== plan.id) routeMode.onSwitchSheet(e.target.value) }}
+              aria-label="Continue this run on another sheet"
+            >
+              {routeMode.sheets.map((sh) => (
+                <option key={sh.id} value={sh.id}>
+                  {sh.name}{sh.calibrated ? '' : ' (no scale yet)'}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+      {routeMode && (() => {
+        // THE STATUS STRIP — which of the three steps this run is on, always.
+        const legs = routeMode.savedLegs.length
+        const saved = routeMode.savedLegs.reduce((n, l) => n + l.lengthM, 0)
+        const total = saved + routeMode.riseM + routeMode.dropM
+        const drafting = polyPoints.length > 0
+        const assigned = routeMode.scheduleLengthM != null && legs > 0 && Math.abs(routeMode.scheduleLengthM - total) < 0.005
+        const step = pendingLeg || drafting ? 1 : legs === 0 ? 1 : assigned ? 3 : 2
+        const cell = (n: number, title: string, body: string) => (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', opacity: step === n ? 1 : 0.62 }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: step === n ? 'var(--c-amber)' : 'var(--c-text-dim)', border: `1px solid ${step === n ? 'var(--c-amber)' : 'var(--c-border)'}`, borderRadius: 10, padding: '1px 7px' }}>{n}</span>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{title}</span>
+            <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{body}</span>
+          </div>
+        )
+        return (
+          <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 22, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            {restoredDraftAt && (
+              <span style={{ fontSize: 11, color: 'var(--c-amber)' }}>
+                restored an unsaved trace from {new Date(restoredDraftAt).toLocaleTimeString()}
+              </span>
+            )}
+            {snapHint && drafting && <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>{snapHint}</span>}
+            {cell(1, 'Trace', pendingLeg
+              ? 'leg finished — press Save leg, or Discard'
+              : drafting
+                ? `${polyPoints.length / 2} point${polyPoints.length === 2 ? '' : 's'} placed — double-click to finish the leg`
+                : legs === 0
+                  ? 'no legs saved yet'
+                  : `${legs} leg${legs === 1 ? '' : 's'} saved · ${saved.toFixed(2)} m`)}
+            {cell(2, 'Rise & drop', legs === 0 ? '—' : `${routeMode.riseM} m + ${routeMode.dropM} m → run total ${total.toFixed(2)} m`)}
+            {cell(3, 'Schedule', assigned
+              ? `assigned ${routeMode.scheduleLengthM!.toFixed(2)} m`
+              : routeMode.scheduleLengthM != null
+                ? `holds ${routeMode.scheduleLengthM.toFixed(2)} m — assign to replace`
+                : 'not assigned yet — use the panel on the right')}
+          </div>
+        )
+      })()}
+      {routeMode && !exporting && (pendingLeg || polyPoints.length > 0 || selectedLegId || legError) && (
+        <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {polyPoints.length > 0 && (
+            <>
+              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+                {polyPoints.length / 2} point{polyPoints.length === 2 ? '' : 's'} — double-click or Enter to finish the leg
+              </span>
+              <ToolbarButton onClick={() => setPolyPoints((p) => p.slice(0, -2))} title="Undo last point">↶ point</ToolbarButton>
+              <ToolbarButton onClick={() => setPolyPoints([])} title="Discard this trace (Esc)">Discard</ToolbarButton>
+            </>
+          )}
+          {pendingLeg && !polyPoints.length && (
+            <>
+              <button type="button" className="btn-primary-amber" onClick={saveLeg} disabled={legSaving || !pixelsPerMeter}>
+                {legSaving
+                  ? 'Saving…'
+                  : `Save leg${pixelsPerMeter ? ` · ${edgeLengthsM(pendingLeg, pixelsPerMeter).reduce((a, b) => a + b, 0).toFixed(2)} m` : ''}`}
+              </button>
+              <ToolbarButton onClick={() => setPendingLeg(null)} title="Discard this leg (Esc)">Discard</ToolbarButton>
+              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>The server re-measures from the drawing's scale; its figure is the one stored.</span>
+            </>
+          )}
+          {selectedLegId && !pendingLeg && !polyPoints.length && (
+            <>
+              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+                Leg selected — drag a point to move it, click a midpoint to add one, right-click a point to remove it.
+              </span>
+              <ToolbarButton
+                active={armedDeleteLegId === selectedLegId}
+                onClick={() => void deleteLeg(selectedLegId)}
+                title={armedDeleteLegId === selectedLegId ? 'Press again to delete this leg' : 'Delete this leg (Del) — press twice'}
+              >
+                {armedDeleteLegId === selectedLegId ? 'Confirm delete' : 'Delete leg'}
+              </ToolbarButton>
+              <ToolbarButton onClick={() => setSelectedLegId(null)} title="Deselect (Esc)">Done editing</ToolbarButton>
+            </>
+          )}
+          {legError && <span role="alert" style={{ color: '#dc2626', fontSize: 12 }}>{legError}</span>}
+        </div>
+      )}
+      {routeMode && exportMsg && (
+        <div className="data-panel" role="status" style={{ padding: '8px 12px', marginBottom: 8, fontSize: 12 }}>
+          {exportMsg}
+        </div>
+      )}
       <div className="data-panel" style={{ padding: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         {mode !== 'view' && (
           <>
             <ToolbarGroup>
-              {TOOLS.map((t) => {
-                const disabled = t.needsCalibration && !pixelsPerMeter
+              {TOOLS
+                .filter((t) => (routeMode ? ROUTE_TOOLS.includes(t.value) : true))
+                // The cable tool exists only where a schedule can be written.
+                .filter((t) => t.value !== 'cable' || !!cablePicker)
+                .map((t) => {
+                // Tracing an uncalibrated sheet would produce a leg the server
+                // must reject. Require the scale first, the same way the
+                // measure tool already does.
+                const needsScale = t.needsCalibration || (!!routeMode && t.value === 'polyline')
+                const disabled = needsScale && !pixelsPerMeter
                 return (
                   <ToolbarButton
                     key={t.value}
@@ -1944,6 +2582,11 @@ export function MarkupCanvas({
                 )
               })}
             </ToolbarGroup>
+            {/* Colour, width and style belong to markup. Route mode's look is fixed
+                by the route layer — a measuring tool cannot borrow its style from a
+                highlighter — so the controls that would only mislead are hidden. */}
+            {!routeMode && (
+              <>
             <ToolbarSeparator />
             <ToolbarGroup>
               {COLORS.map((c) => (
@@ -2039,6 +2682,8 @@ export function MarkupCanvas({
                 </ToolbarButton>
               ))}
             </ToolbarGroup>
+              </>
+            )}
             <ToolbarSeparator />
             <ToolbarGroup>
               <ToolbarButton active={gridOn} onClick={() => setGridOn((v) => !v)} title="Toggle grid overlay">
@@ -2109,7 +2754,7 @@ export function MarkupCanvas({
           </span>
         </ToolbarGroup>
         <ToolbarSeparator />
-        {mode !== 'view' && (
+        {mode !== 'view' && !routeMode && (
           <ToolbarGroup>
             <ToolbarButton onClick={undo} disabled={undoStack.length === 0} title="Undo">↶</ToolbarButton>
             <ToolbarButton onClick={redo} disabled={redoStack.length === 0} title="Redo">↷</ToolbarButton>
@@ -2159,8 +2804,46 @@ export function MarkupCanvas({
             </ToolbarGroup>
           </>
         )}
+        {!routeMode && routeOverlay && routeOverlay.legs.length > 0 && (
+          <>
+            <ToolbarSeparator />
+            <ToolbarGroup>
+              <ToolbarButton
+                active={showRoutes}
+                onClick={() => setShowRoutes((v) => !v)}
+                title={`${routeOverlay.legs.length} cable route${routeOverlay.legs.length === 1 ? '' : 's'} saved on this drawing — show or hide${routeOverlay.onMeasure ? '; press a route to measure that run' : ''}`}
+              >
+                ⚡ Routes
+              </ToolbarButton>
+            </ToolbarGroup>
+          </>
+        )}
         <div style={{ flex: 1 }} />
-        {mode !== 'view' && (
+        {routeMode && (
+          <ToolbarGroup>
+            <ToolbarButton onClick={startCalibration} title="Set this drawing's scale">
+              {pixelsPerMeter ? 'Recalibrate' : 'Set scale'}
+            </ToolbarButton>
+            <ToolbarButton onClick={undoRoute} disabled={!history.canUndo || legSaving} title="Undo (⌘Z) — the last vertex, leg, edit or save">↶</ToolbarButton>
+            <ToolbarButton onClick={redoRoute} disabled={!history.canRedo || legSaving} title="Redo (⇧⌘Z)">↷</ToolbarButton>
+            <ToolbarButton
+              onClick={() => void exportSheet()}
+              disabled={exporting || !img || routeMode.savedLegs.every((l) => l.floorPlanId !== plan.id)}
+              title="Keep this sheet — routes, lengths and scale as drawn — as a versioned PDF report"
+            >
+              {exporting ? 'Exporting…' : 'Export sheet'}
+            </ToolbarButton>
+            <button
+              type="button"
+              className="btn-primary-amber"
+              onClick={() => router.push(routeMode.doneHref)}
+              title="Back to the measure worklist. Every leg you pressed Save on is already kept."
+            >
+              Back to schedule
+            </button>
+          </ToolbarGroup>
+        )}
+        {mode !== 'view' && !routeMode && (
         <ToolbarGroup>
           <ToolbarButton onClick={startCalibration} title="Calibrate this drawing for the measure tool">Calibrate</ToolbarButton>
           {onSaveMarkup ? (
@@ -2284,6 +2967,89 @@ export function MarkupCanvas({
       )}
 
       {/* Calibration overlay */}
+      {tool === 'cable' && cablePicker && (
+        <div className="data-panel" style={{ padding: 12, marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+            <strong style={{ fontSize: 13 }}>Measure a cable run</strong>
+            <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
+              {cablePicker.revisionCode} · pick the run this drawing shows, then trace it here.
+            </span>
+            <div style={{ flex: 1 }} />
+            <input
+              type="search"
+              value={cableQuery}
+              onChange={(e) => setCableQuery(e.target.value)}
+              placeholder="Filter runs…"
+              className="ob-input"
+              style={{ width: 200 }}
+              aria-label="Filter cable runs"
+            />
+            <button
+              type="button"
+              onClick={() => { setCableQuery(''); setTool('select') }}
+              className="btn-primary-amber"
+              style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}
+            >
+              Cancel
+            </button>
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--c-border)', borderRadius: 6 }}>
+            {(() => {
+              const q = cableQuery.trim().toLowerCase()
+              const shown = q
+                ? cablePicker.runs.filter((r) => r.label.toLowerCase().includes(q))
+                : cablePicker.runs
+              if (shown.length === 0) {
+                return (
+                  <p style={{ margin: 0, padding: 14, fontSize: 12, color: 'var(--c-text-dim)' }}>
+                    {cablePicker.runs.length === 0
+                      ? 'This project has no runs on a draft cable schedule.'
+                      : `No run matches "${cableQuery}".`}
+                  </p>
+                )
+              }
+              return shown.map((r) => {
+                const active = r.supplyId === cablePicker.activeSupplyId
+                return (
+                  <button
+                    key={r.supplyId}
+                    type="button"
+                    onClick={() => { setCableQuery(''); cablePicker.onPick(r.supplyId) }}
+                    style={{
+                      display: 'flex',
+                      width: '100%',
+                      gap: 10,
+                      alignItems: 'baseline',
+                      textAlign: 'left',
+                      padding: '7px 12px',
+                      background: active ? 'var(--c-amber-mid)' : 'transparent',
+                      border: 'none',
+                      borderBottom: '1px solid var(--c-border)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      color: 'var(--c-text)',
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}>{r.label}</span>
+                    {r.scheduleLengthM != null && (
+                      <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>
+                        schedule {r.scheduleLengthM.toFixed(1)} m
+                      </span>
+                    )}
+                    <span
+                      className={`badge ${r.traced ? 'badge-amber' : ''}`}
+                      style={{ fontSize: 10 }}
+                    >
+                      {active ? 'measuring' : r.traced ? 'traced' : 'not traced'}
+                    </span>
+                  </button>
+                )
+              })
+            })()}
+          </div>
+        </div>
+      )}
+
       {tool === 'calibrate' && (
         <div className="data-panel" style={{ padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {calibPoints.length < 2 ? (
@@ -2515,7 +3281,7 @@ export function MarkupCanvas({
               )}
               {/* Polygon/polyline in-progress: vertices + connecting line.
                   Double-click (or Enter) finishes. */}
-              {(tool === 'polygon' || tool === 'polyline') && polyPoints.length >= 2 && (
+              {!routeMode && (tool === 'polygon' || tool === 'polyline') && polyPoints.length >= 2 && (
                 <Line
                   points={polyPoints}
                   stroke={color}
@@ -2524,7 +3290,7 @@ export function MarkupCanvas({
                   closed={tool === 'polygon' && polyPoints.length >= 6}
                 />
               )}
-              {(tool === 'polygon' || tool === 'polyline') &&
+              {!routeMode && (tool === 'polygon' || tool === 'polyline') &&
                 Array.from({ length: polyPoints.length / 2 }).map((_, i) => (
                   <Circle
                     key={`poly-vtx-${i}`}
@@ -2537,6 +3303,49 @@ export function MarkupCanvas({
                   />
                 ))}
             </Layer>
+            {routeMode ? (
+              <RouteLayer
+                planId={plan.id}
+                currentPage={currentPage}
+                scale={scale}
+                pixelsPerMeter={pixelsPerMeter}
+                legs={routeMode.savedLegs}
+                otherLegs={routeMode.otherLegsOnSheet}
+                pendingLeg={exporting ? null : pendingLeg}
+                draftPoints={!exporting && tool === 'polyline' ? polyPoints : []}
+                selectedLegId={exporting ? null : selectedLegId}
+                editable={!exporting && tool === 'select' && !legSaving}
+                calibration={pageCalibLines.find((c) => c.pageIndex === currentPage) ?? calibLine}
+                showCalibration
+                onSelectLeg={setSelectedLegId}
+                onMoveVertex={onMoveLegVertex}
+                onInsertVertex={onInsertLegVertex}
+                onRemoveVertex={onRemoveLegVertex}
+              />
+            ) : routeOverlay && showRoutes && routeOverlay.legs.length > 0 ? (
+              // The record: every saved route on this sheet, in full, in any
+              // mode. Pressable to start measuring when the role allows it.
+              <RouteLayer
+                planId={plan.id}
+                currentPage={currentPage}
+                scale={scale}
+                pixelsPerMeter={pixelsPerMeter}
+                legs={[]}
+                otherLegs={routeOverlay.legs}
+                otherStyle="full"
+                onPressOther={routeOverlay.onMeasure}
+                pendingLeg={null}
+                draftPoints={[]}
+                selectedLegId={null}
+                editable={false}
+                calibration={calibLine}
+                showCalibration
+                onSelectLeg={() => {}}
+                onMoveVertex={() => {}}
+                onInsertVertex={() => {}}
+                onRemoveVertex={() => {}}
+              />
+            ) : null}
           </Stage>
         )}
       </div>
