@@ -37,6 +37,50 @@
 -- ⚠ Every id a role-scoped block needs is captured HERE, as postgres. Under
 -- the demoted role projects.rfis, projects.projects and project_members are
 -- RLS-filtered, and a zero-row subquery would turn a SENTINEL into a false red.
+-- ⚠ THE THREE RFIs ARE CREATED HERE, not picked off the fixture project. #1
+-- and #3 back origin='mirror' items this file inserts itself, and #2 is the
+-- re-link target clause (a3) must refuse — which only works while #2 has NO
+-- mirror. Once item 3's backfill (00202 section H) is stacked it has already
+-- projected every live RFI and work_items_src_rfi_uidx admits exactly one, so
+-- the old `ORDER BY r.created_at LIMIT 1 / OFFSET 1 / OFFSET 2` form aborted
+-- the whole file with
+--   ERROR: 23505: duplicate key value violates unique constraint "work_items_src_rfi_uidx"
+-- (measured 2026-09-15, Task 15 Step 6b) — and 5b's re-link would have been
+-- refused by the index rather than by the guard under test. Rows this file owns
+-- are also independent of the fixture project's RFI ordering.
+DO $rfis$
+DECLARE v_proj uuid; v_org uuid; v_pm uuid; v_id uuid;
+BEGIN
+  SELECT pm.project_id, p.organisation_id INTO v_proj, v_org
+    FROM projects.project_members pm
+    JOIN projects.projects p ON p.id = pm.project_id
+   WHERE pm.user_id = '018f2d31-bbe8-4cc1-bbdd-63af0187081e' AND pm.is_active
+   ORDER BY pm.created_at, pm.project_id LIMIT 1;
+  IF v_proj IS NULL THEN
+    RAISE EXCEPTION 'the rbac-test fixture has no project membership; the transition guard cannot be exercised as a real user';
+  END IF;
+  v_pm := projects.resolve_project_pm(v_proj);
+  IF v_pm IS NULL THEN
+    RAISE EXCEPTION 'resolve_project_pm(%) is NULL — nobody can raise the fixture RFIs', v_proj;
+  END IF;
+
+  -- 00202's mirror computes a due date through add_working_days, which raises
+  -- no_data_found on an unseeded year; the main DO block seeds the same years.
+  INSERT INTO projects.calendar_years (year)
+  VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
+  ON CONFLICT DO NOTHING;
+
+  FOR i IN 1..3 LOOP
+    INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
+                               priority, status, raised_by)
+    VALUES (v_proj, v_org, 'assertion fixture rfi ' || i, 'body', 'medium', 'open', v_pm)
+    RETURNING id INTO v_id;
+    -- The live trigger mirrors each on insert; this file owns every mirror row
+    -- it asserts on. 0 rows before 00202 applies, 1 each after.
+    DELETE FROM projects.work_items WHERE rfi_id = v_id AND origin = 'mirror';
+  END LOOP;
+END $rfis$;
+
 CREATE TEMP TABLE _t AS
 SELECT pm.project_id, p.organisation_id,
        '018f2d31-bbe8-4cc1-bbdd-63af0187081e'::uuid AS actor_id,
@@ -51,16 +95,16 @@ SELECT pm.project_id, p.organisation_id,
            AND m.role <> 'client_viewer'
          ORDER BY m.created_at, m.user_id
          LIMIT 1) AS other_id,
-       -- Three rfis (3 exist on the fixture project, measured 2026-09-12):
-       -- #1 backs the mirrored subject, #2 is the re-link target clause (a3)
-       -- must refuse, #3 backs the service-path void mirror (15). Distinct
+       -- The three rfis created in DO $rfis$ above: #1 backs the mirrored
+       -- subject, #2 is the re-link target clause (a3) must refuse (it must
+       -- carry NO mirror), #3 backs the service-path void mirror (15). Distinct
        -- rows, because work_items_src_rfi_uidx allows one mirror per rfi.
        (SELECT r.id FROM projects.rfis r WHERE r.project_id = pm.project_id
-         ORDER BY r.created_at, r.id LIMIT 1) AS rfi_id,
+         AND r.subject = 'assertion fixture rfi 1') AS rfi_id,
        (SELECT r.id FROM projects.rfis r WHERE r.project_id = pm.project_id
-         ORDER BY r.created_at, r.id LIMIT 1 OFFSET 1) AS rfi_id_2,
+         AND r.subject = 'assertion fixture rfi 2') AS rfi_id_2,
        (SELECT r.id FROM projects.rfis r WHERE r.project_id = pm.project_id
-         ORDER BY r.created_at, r.id LIMIT 1 OFFSET 2) AS rfi_id_3,
+         AND r.subject = 'assertion fixture rfi 3') AS rfi_id_3,
        -- A project in the same org on which the actor holds NO effective role
        -- (12 such exist, measured 2026-09-12), for the trigger-order pin (5b).
        (SELECT p2.id FROM projects.projects p2

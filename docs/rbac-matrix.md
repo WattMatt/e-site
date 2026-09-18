@@ -526,6 +526,200 @@ Cells describe the `task` type — the only client-insertable type in Q1 (migrat
 > **`client_viewer` may be an ASSIGNEE from Q1 but may not write, and may not browse.** In a shopping-centre fit-out the landlord is frequently the ball-in-court, so an item must be able to point at them. Their writes are blocked by `work_items_update_gate` and by the fact that no registered type admits `client_viewer` in `write_roles` — **`00161_client_viewer_readonly_write_block.sql` does NOT cover `work_items`**, it loops over a hard-coded list of thirteen tables (`00161:61-75`), so this is one layer, not two. Their **reads** are narrowed too: `work_items_select` excludes `client_viewer` from the project-access arm, because `public.user_has_project_access()` is TRUE for any `project_members` row regardless of role (`00106` clause (a)) — the identical predicate PR #162 closed on saved reports. They see only items they are assigned, gatekeep or watch, which is what §04 §(d) describes. The Q3 Watcher tier replaces the write block.
 >
 > **`work_item_events` has no write policy at all**, and `INSERT`/`UPDATE`/`DELETE` are revoked from `authenticated`. It is written solely by a `SECURITY DEFINER` append trigger, so the assignment and status history cannot be forged by the person it incriminates.
+>
+> **Three of the five verbs are narrowed by ITEM TYPE, because the source module owns the column** (migration `00202`; measured, not assumed). `reassignWorkItemAction` refuses `item_type = 'inspection'` in **both** its arms — the `assignee_id` write while triage/open and the `gatekeeper_id` write while `answered` — with *"Inspections are assigned from the Inspections module — change the inspector or verifier there."* The mirror forward-reads `inspections.assigned_to_id` and `verifier_id` on **every** projection, so a spine-side reassignment or gatekeeper correction is reverted by the next source write — including the inspector merely pressing start (`assigned → in_progress`). A spine-side **due date** on an inspection is transient for the same reason while `scheduled_at` is in the future (the UPDATE arm re-derives it); `setWorkItemDueDateAction` is *not* gated on the type, because a past/same-day reschedule keeps the spine's date and the control is still useful — the transience is documented, not refused. Priority on a `qc_defect` is module-owned while `severity` is set: the refusal sentence is *"A QC defect's priority follows its severity in the QC report — change the severity there."* Q1 ships **no priority verb** in `work-items.actions.ts` (item 2 shipped five: create, reassign, advance, due date, void), so that refusal is exported as `refuseModuleOwnedEdit('qc_defect', 'priority')` for the Inbox control item 5/6 builds — one string, so the copy cannot be re-invented.
+>
+> **A mirrored item follows its source across a project move and keeps its `ref` — and a second such move can be refused** (`00202`, measured). The `ref` allocator is max-based per `(project, item_type)` under an advisory lock (`00196:777-789`) and `ref` is immutable, so moving item A (`RFI-3`) from project P into C succeeds, and then moving item B (also `RFI-3`, from Q) into C raises `23505 work_items_ref_unique` **on the source statement** — fail-closed, zero residue, the source row stays where it was. Reachable only over direct PostgREST: no app path moves an RFI, snag, form, QC entry or diary entry between projects, and every source's WITH CHECK binds the **org**, not the project. Recorded as a known limit for Q1.
+
+### Work-item source mirrors (database triggers, no route)
+
+Migration `00202_work_item_source_mirrors_and_backfill.sql` introduces **no route and no endpoint**, so there is no route row. It does change **effective write authority**, which is the thing this file exists to record: a work-item reassign or re-date now writes `projects.rfis.assigned_to`, `projects.rfis.due_date` and `field.snags.assigned_to` through a `SECURITY DEFINER … SET row_security TO 'off'` function, so those tables' own RLS is bypassed on that path.
+
+| Path | owner | admin | project_manager | contractor | inspector | supplier | client_viewer |
+|---|---|---|---|---|---|---|---|
+| Reassign a mirrored `rfi` item ⇒ writes `projects.rfis.assigned_to` | W | W | W | W¹ | — | — | — |
+| Re-date a mirrored `rfi` item ⇒ writes `projects.rfis.due_date` | W | W | W | —² | — | — | — |
+| Reassign a mirrored `snag` item ⇒ writes `field.snags.assigned_to` | W | W | W | W¹ | W¹ | W¹ | — |
+| Reassign / re-gatekeep a mirrored `inspection` item | —³ | —³ | —³ | — | — | — | — |
+| Re-file a mirrored `qc_defect` item's priority | —³ | —³ | —³ | —³ | — | — | — |
+| Raise a snag / site form / delay diary entry ⇒ creates a work item | W | W | W | W⁴ | W⁴ | W⁴ | — |
+| Raise an RFI or a QC defect ⇒ creates a work item | W | W | W | W⁴ | —⁴ | —⁴ | — |
+| Schedule an inspection ⇒ creates a work item | W | W | W | —⁴ | W⁴ | —⁴ | — |
+| Close an RFI-mirrored item | gatekeeper only ⁶ | gatekeeper only ⁶ | gatekeeper only ⁶ | **W ⁶** | — | — | — |
+| Delete any of the six sources ⇒ voids its mirrored item (live **or closed**) | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | W⁵ | — |
+
+> ¹ **Not a gate in this migration.** Who may change `work_items.assignee_id` or
+> `due_date` is item 2's `projects.user_can_write_work_item(project_id, item_type)`,
+> enforced by a RESTRICTIVE UPDATE policy; these rows record only where that
+> authority *lands*. The cells therefore follow the **type's** write set:
+> `rfi` is `MARKUP_WRITE_ROLES` (contractor included) and `snag` is
+> `SNAG_FIELD_ROLES` (everyone but `client_viewer`), which is why a contractor
+> reassigning an RFI item writes `projects.rfis.assigned_to` and an inspector
+> reassigning a snag item writes `field.snags.assigned_to`.
+> **The write-back function is `SECURITY DEFINER … SET row_security TO 'off'`,
+> so it bypasses the RLS on `projects.rfis` and `field.snags`.** That is
+> deliberate: the mirror resolves an assignee the raiser could not have written
+> themselves (the triage owner, the project PM), and the two source columns must
+> agree with the spine or every existing reader and PDF shows something
+> different from the Inbox. The authority check happens **once**, on the
+> `work_items` UPDATE. The write-back **skips `closed` and `void` records**, so a
+> historical row never acquires an assignee nobody set. Its **snag** arm
+> additionally skips `triage` items: on a snag `assigned_to` means "assigned to
+> fix", and writing the raiser there on the creation request would make
+> `notifySnagCreatedAction`'s email render the raiser as the assignee.
+>
+> ² `setWorkItemDueDateAction` is `ORG_WRITE_ROLES` only — deliberately narrower
+> than §12 (a4), which would also accept the type's write set or the gatekeeper.
+> A deadline is a management decision (§13 item 2). ⚠ **The spine owns an RFI's
+> due date and writes it source-ward, never the reverse**: an RFI raised with a
+> past or same-day `due_date` has that column rewritten to the spine's computed,
+> shutdown-pushed date **on the same request**, and a later source-side re-date
+> is a silent no-op for the spine. Item 4 must point the RFI page's due-date
+> control at the spine or the page and the Inbox diverge after the first source
+> re-date.
+>
+> ³ **Refused by the action with a sentence, because the edit would be
+> transient.** See "Three of the five verbs are narrowed by ITEM TYPE" above:
+> inspection people are module-owned (`00066`'s assignment flow and the
+> certification chain own `assigned_to_id` / `verifier_id`; the mirror forward-reads
+> both on every projection), and a `qc_defect`'s priority follows its entry's
+> `severity` while that is non-NULL. Neither is a *security* boundary — over
+> direct PostgREST a write-role holder can still make the edit, and the next
+> watched source write will revert it. The durable alternative (option (c): the
+> wrapper passes a "the source's people column actually changed" flag, and the
+> projection forward-reads only then) is recorded for a later quarter.
+>
+> ⁴ **Each source's own write gate decides**, not the spine's, which is why the
+> three rows above differ: `rfi` `MARKUP_WRITE_ROLES` and `qc_defect`
+> `QC_WRITE_ROLES` (+ `00176`'s tenancy-bound policies and
+> `qc_report_children_frozen`) both EXCLUDE inspector and supplier; `inspection`
+> is `ORG_WRITE_ROLES`, which excludes contractor and supplier; `snag`
+> `SNAG_FIELD_ROLES` and `form_action` `FORMS_FIELD_ROLES` admit the site roles;
+> `diary_action`'s INSERT gate is `00145:25-36` (the UPDATE policy at
+> `00145:39-50` is the separate, wider one recorded under Known gaps). The table
+> below lists each one — read it rather than these cells when the answer
+> matters.
+>
+> ⁵ **Deleting a source voids its mirrored item, and a CLOSED item is voided
+> too — that is forced, not chosen.** `work_items_source_required` admits a
+> source-less mirror item only while `status = 'void'`, so leaving a closed item
+> closed with its FK nulled fails the CHECK on the RI `SET NULL` and the DELETE
+> aborts with `23514`. C′'s exempt path then clears `closed_at` / `closed_by` on
+> the `closed → void` transition (inherited from `00196:1545-1546`), so the close
+> stamps do **not** survive the delete — only the `closed` and `voided` events
+> carry that history. Kept as built so "stamps ⇔ closed" stays a simple invariant
+> no future consumer can misread; the two alternatives (preserve the stamps in
+> C′'s exempt path, or admit `closed` in `work_items_source_required`) are owner
+> decisions recorded in the PR body. The cells are NOT `ORG_WRITE_ROLES`: the
+> widest **person-satisfiable** DELETE policy across the six sources is
+> `projects.site_diary_entries`', which is AUTHOR-scoped rather than role-scoped
+> (`00149:30-36` — `created_by = auth.uid()` AND an active org membership AND
+> not a client viewer). So ANY non-client-viewer role, contractor and inspector
+> and supplier included, can delete a diary entry it authored and thereby void
+> that entry's mirrored item, live or closed. Every other source is owner /
+> admin / PM or service-role-only — see the DELETE table below, which is the
+> per-source detail this row summarises.
+>
+> ⁶ **Close an RFI-mirrored item — the gatekeeper only; under
+> `gatekeeper_rule = 'creator'` that is the RAISER, so a contractor closes the
+> RFI item they raised.** A contractor who merely holds the ball on someone
+> else's RFI cannot — clause (d) refuses with `P0001 Only the person who signs
+> RFI-1 off can close it. Take it over first, or ask them to close it.`
+> `00202:834` runs `UPDATE projects.work_item_types SET gatekeeper_rule =
+> 'creator' WHERE key = 'rfi'`, and `project_rfi` calls
+> `resolve_work_item_gatekeeper(r.project_id, r.raised_by)` on **INSERT**
+> (`00202:979`) and on a project **MOVE** (`00202:1074`, inside the
+> `ELSIF v_moved` arm) — and nowhere else: the ordinary UPDATE arm keeps
+> `v_item.gatekeeper_id`, so once an item exists a source edit never
+> re-resolves its gatekeeper and a spine-side correction survives. Measured
+> `gatekeeper_is_the_contractor = true`. **An INELIGIBLE raiser — departed, a
+> client viewer, or an org-level contractor with no `project_members` row —
+> falls back to the project PM** (`resolve_work_item_gatekeeper`'s own chain,
+> `00202:347-353`; the reasoning is at `00202:969-978`). Any sentence anywhere in this file
+> or in the specs saying only owner/admin/PM closes an RFI-mirrored item is
+> wrong.
+
+**Each source's own write gate, beside the spine's.** The spine's governance clauses are now exactly as strong as the write authority of the table they mirror: a source write reaches the projection at `pg_trigger_depth() = 2`, where the transition guard's authority and state-machine clauses are skipped.
+
+| Source | Write gate on the SOURCE table | Note |
+|---|---|---|
+| `projects.rfis` | `00027:48-50` — **org-membership-wide UPDATE, no `WITH CHECK`, no role predicate, no column list** | ⚠ Over direct PostgREST any org member can set `status`, `closed_by` or `project_id` on any RFI in the org, and the mirror follows at depth 2. **Pre-existing on `rfis`**, not introduced here; spun off as a task chip ("Gate `projects.rfis` writes by role and column"). |
+| `field.snags` | `00161` client-viewer RESTRICTIVE block + the module's own policies | `apps/mobile/src/hooks/useSnags.ts:72` deletes snags under the **user's** client and `field.snags` carries no permissive DELETE policy — the mutation reports success on **0 rows**. Pre-existing; a matrix note, not item 3's bug. |
+| `inspections.inspections` | `inspections.user_can_write_responses` / `user_can_verify` (`00066`) | People columns are module-owned; the spine reads them and never writes back. |
+| `projects.qc_entries` | `00176:53-68` write policies (`QC_WRITE_ROLES` + tenancy binding) + `qc_report_children_frozen` (closed reports only, signed-in actors only) | |
+| `projects.qc_reports.status` | `qc_reports_status_guard` (`00172:249-263`) — **role-only (owner/admin/PM), with no direction check** | ⚠ `issued → draft` and `closed → draft` are therefore legal at the database over PostgREST, though no app action writes them. The projection **leaves a withdrawn report's items live**, and a re-issue projects only the fails added during the draft cycle. Whether the guard should also refuse draft-ward transitions (it reads as if it did) is a pre-existing owner question on `qc_reports`, same family as the `rfis` chip. |
+| `projects.site_diary_entries` | `00145:39-50` — **org-wide UPDATE, no `WITH CHECK`, no column list** (any non-client-viewer org member could already rewrite every column of any entry) | ⚠ The mirror does not widen that hole **in kind**, but it extends its **blast radius onto the spine**: the same statement can now void, move or re-title a live work item through the depth-2 exempt path. Owner chip spawned (`WITH CHECK` binding org/project; UPDATE narrowed to author-or-`ORG_WRITE_ROLES`). No app path UPDATEs a diary entry at all. |
+| `field.site_forms` | `field.user_can_write_form` (draft only) + `enforce_site_form_transition` (`00179:347/415`, BEFORE, SECURITY INVOKER) | The transition trigger runs first and refuses an illegal move with its own `42501` sentence; the mirror is AFTER and never fires on a refused statement. |
+
+**DELETE paths per source** (which of them a *person* can walk, and whether it can void a **closed** spine item):
+
+| Source | Permissive DELETE policy a person can satisfy | App path | Can a person void a CLOSED item this way? |
+|---|---|---|---|
+| `projects.rfis` | none (`00161` client-viewer RESTRICTIVE only) | no web/mobile delete action | no — service role only |
+| `field.snags` | none | `apps/mobile/src/hooks/useSnags.ts:72` → **silent 0 rows** | no — service role only |
+| `inspections.inspections` | none | `deleteInspectionAction` (`inspections.actions.ts:664`): org owner only, refuses `certified`, deletes with the service key | no (a certified = closed item is refused before the delete); the `voided` event's actor is **NULL** on that path |
+| `projects.qc_reports` → cascades `qc_entries` | `qc_reports_delete` (`00176:121-127`, owner/admin/PM by effective project role) | `deleteQcReportAction` (`qc.actions.ts:149`) | **yes** over PostgREST — the cascade voids each entry's item, closed ones included |
+| `projects.qc_entries` | `qc_entries_delete` (`00176:182-192`; frozen on a CLOSED report) | `deleteQcEntryAction` (`qc.actions.ts:467`) | **yes — measured**: a PM deleting a PASSED entry on an issued report → item `void` / `'source deleted'`, one `voided` event with `actor_id` = the PM, `actor_role = 'project_manager'`, `from_status = 'closed'` |
+| `projects.site_diary_entries` | `Authors can delete their diary entries` (`00149:30-36`) | `deleteDiaryEntryAction` (`diary.actions.ts:109`) — service client, so the `voided` event's actor is **NULL** | **yes** over PostgREST |
+| `field.site_forms` | `site_forms_delete` (`00179:483-485`, **drafts only**, owner/admin/PM) | `voidSiteFormAction` voids rather than deletes | no — only drafts are person-deletable, and a draft is never closed |
+
+> **`structure.node_orders` has no projection trigger and no row here.**
+> `order_followup` is created only by the explicit chase control on an order line
+> (Appendix A(b)) — which no Q1 deliverable builds, so that type produces nothing
+> this quarter. A contract test fails the build if any trigger in the mirror
+> migration names that table: **453 live procurement rows** projected into inboxes
+> is the backfill poisoning the roadmap names as a risk.
+>
+> **`inspections.inspections.assigned_to_id` is read but never written back.**
+> `00066`'s own assignment flow stays the system of record for that column; the
+> spine follows it forward so the Inbox does not name a previous assignee forever.
+>
+> **`client_viewer` is excluded from every step of the MIRROR's resolver**
+> (`projects.resolve_mirror_assignee`) until their write set lands in Q3
+> (§03 §1.9). An item that landed on one could never be cleared: `00161` blocks
+> their writes and `work_items_bic_present` keeps the row pointing at them.
+> ⚠ **Deliberate divergence:** item 2's people-picker resolver
+> `resolve_work_item_assignee` (`00196:911-913`) still **admits** a client
+> viewer — in a fit-out the landlord is often the ball-in-court — so a PM can
+> assign one by hand through the Inbox; the mirror never resolves to one on
+> its own. Both are decisions; delete the mirror's clause in Q3 with the write set.
+> ⚠ **Improvement 7 is destructive on the source once the write-back lands:** a
+> client viewer named on `rfis.assigned_to` **at creation** is replaced by the
+> chain's answer and that answer is written back to the source; one set by a
+> **later** source edit stays on the source while the spine holds the chain's
+> answer. Zero live instances today (0 of 15 RFIs and 0 of 6 snags are assigned
+> to anyone — module age, not rarity).
+>
+> **The transition guard's exemption is depth-scoped, not identity-scoped.**
+> `projects.work_items_transition_guard()` (replaced by this migration) skips
+> authority and the state machine when `auth.uid() IS NULL OR
+> pg_trigger_depth() > 1`: a mirror, write-back or delete-to-void UPDATE runs
+> at depth 2 and was authorised on the source row; a client statement is depth
+> 1 and still meets every clause. `source_status` is now immutable for clients.
+> Proved under impersonation (probe 05b): a contractor's direct title edit on a
+> mirrored item is refused while their RFI respond is projected.
+>
+> **`rfi`'s registry `gatekeeper_rule` is `'creator'`** (owner decision, this
+> PR): the mirror sets `created_by = raised_by` and **the raiser gatekeeps**.
+> ⚠ **So a contractor who raises an RFI IS its gatekeeper and CAN close it**
+> (footnote ⁶; an **ineligible** raiser falls back to the project PM,
+> `00202:968-974`) — any sentence elsewhere saying only owner/admin/PM closes an
+> RFI-mirrored item is wrong. 12 of the 15 live RFIs were raised by contractors, and this is the
+> only Q1 mechanism that puts a work item into a contractor's ball-in-court.
+> Measured on the SELECT policy's four arms for a contractor on their own
+> mirrored item: `project_access = true`, `assignee = false`, `gatekeeper = true`,
+> `watcher = true`. Changing the **gatekeeper seat** still needs governance
+> (owner/admin/PM) — that is item 2's clause and unchanged.
+>
+> **A closed `qc_defect` reopens when its entry crosses back INTO `fail`** — a
+> projection-level crossing rule, not a map change (`map_source_status` keeps
+> `fail → NULL`). The map change was measured and rejected: it pulled every
+> `answered` defect of a report back to `open` on any unrelated entry edit and on
+> a report rename. A reopened defect is re-filed at the severity it was
+> **re-failed** with. On the issue path the `created` events carry a **NULL
+> actor** — `issueQcReportAction` flips the report with the service client — and
+> the items are born at issue (`opened_at = GREATEST(entry.created_at,
+> report.issued_at)`), not pre-aged through the draft cycle.
 
 ## Public / unauthenticated
 
@@ -602,5 +796,9 @@ These are tracked outside this doc:
 - **Supplier self-registration is dead code.** `registerSupplierAction` creates the org with the **user session**, but the only INSERT policy on `public.organisations` is "Parent admins can insert shadow children" (`is_shadow = true`), so the non-shadow insert is rejected (42501, verified on prod) and the `user_organisations` self-insert one statement later is unreachable. Repairing it means moving **both** writes to the service client, the pattern `onboarding.actions.ts` already documents — deliberately out of `00177`'s scope because it changes who may create an organisation.
 - **Mobile invite screen self-upserts a membership row.** `apps/mobile/app/(auth)/invite/[token].tsx` upserts `user_organisations` with a role read from `auth` user metadata (user-writable via `auth.updateUser`), which today can silently overwrite the admin-assigned role — including the literal `'member'` default in that file. Every invite path already creates the membership row server-side with the service client before the email is sent, so the upsert is redundant; `00177` denies it, and the call is already wrapped in `try/catch { /* ignore */ }`. Removing the dead upsert is a tidy-up follow-up.
 - **`billing.subscriptions` is readable by every org member, at every role.** `subscriptions_select_org_member` (`00187`, renamed from `00007`'s misnamed `"Org admins can view subscription"`) qualifies on bare org membership, so any of the 27 WM members can read the org's tier, status, `amount_kobo` and `paystack_customer_code` via PostgREST — a client can see what their consulting engineer pays for its software. Left open deliberately, with the two cheap fixes both proven wrong on production first: (a) an admin-only qual breaks `PaymentStatusBanner.tsx:51-56` (the "Account paused — read-only mode" warning vanishes for the 12 contractors it is for) and `checkProjectQuota` (`project.actions.ts:44-56` falls to its `?? 'free'` default and caps the org at 1 project); (b) `REVOKE SELECT (amount_kobo, …) FROM authenticated` is a **complete no-op** — `authenticated` holds a table-level grant (`relacl authenticated=arwd`) and a column-level REVOKE cannot subtract from one; run in a rolled-back prod transaction, `has_column_privilege(…,'amount_kobo','SELECT')` was still `true` afterwards. The form that does bite (`REVOKE SELECT ON TABLE` then `GRANT SELECT (cols)`) then fails the **owner's own** billing page, because `billingService.getSubscription` issues `select('*')` — measured: `ERROR permission denied for table subscriptions`, while `select(tier,status)` succeeds. Closing it properly means narrowing `PaymentStatusBanner` and `checkProjectQuota` to a `SECURITY DEFINER` RPC (or the service client) and pinning `getSubscription` to an explicit column list, *then* adding the role predicate — application work in `packages/shared` and `apps/web/src/actions`, out of scope for the callback fix.
+- **`projects.rfis` and `projects.site_diary_entries` accept org-wide, column-blind UPDATEs.** `00027:48-50` and `00145:39-50` each qualify on org membership with **no `WITH CHECK`, no role predicate and no column list**, so over direct PostgREST any non-client-viewer org member can rewrite any column of any RFI or diary entry in the org — including `project_id`. Both are pre-existing and neither is introduced by the work-item mirrors; what the mirrors change is the **blast radius**, because the same statement now reaches the spine through the depth-2 exempt path (void, move or re-title a live work item). Two task chips spawned: gate `projects.rfis` writes by role and column; bind `site_diary_entries` UPDATE with a `WITH CHECK` on org/project and narrow it to author-or-`ORG_WRITE_ROLES`.
+- **`qc_reports_status_guard` checks the role but never the direction.** `00172:249-263` admits owner/admin/PM for any `status` change, so `issued → draft` and `closed → draft` are legal at the database over PostgREST even though no app action writes them (`reopenQcReportAction` goes `closed → issued`). The work-item mirror deliberately **leaves a withdrawn report's items live** — void is irreversible on the spine and the partial unique admits one item per entry, so voiding would silently and permanently empty a re-issued report's failures from every inbox. Whether the guard should refuse draft-ward transitions outright is a pre-existing owner question, same family as the `rfis` chip.
+- **Seven `projects` functions leak `EXECUTE` to `anon` (pre-existing, owner note).** `ensure_project_code`, the five `jbcc_*` trigger functions, and `suggest_code` were created without the `REVOKE … FROM PUBLIC` the house rule now requires. Five of the seven are **trigger** functions, which PostgREST never exposes as RPCs, so they are unreachable from the anon key. `jbcc_status_can_transition` and `suggest_code` **are** anon-callable, and both are `IMMUTABLE`/pure — they read no row and write nothing. Surfaced by `00202`'s grant audit; not fixed there because revoking on functions this migration does not create is a separate, reviewable change.
+- **The `work_items` `ref` allocator is O(n²) per `(project, item_type)` (item 2, owner note).** `00196:752-803` takes a per-`(project, type)` advisory lock and computes `MAX(suffix) + 1` per row. Measured 2026-09-15: 2 500 rows 16.9 s, 5 000 rows 44.6–55.0 s, 10 000 rows exceeds the Management API's `statement_timeout = '2min'`; fit `2.48 ms/row + 1.71e-3 ms/n²` ⇒ ~73 min for 50 000. **No bearing on the `00202` apply** — the backfill is 35 rows (≈0.1 s). It would bite a future bulk import of thousands of items onto ONE project. Uniqueness holds at every size measured; the advisory lock, not the row count, is the mechanism.
 - **Multi-org users.** `getOrgContext()` resolves the *oldest* membership, not a user-selected current org. Role checks for users in multiple orgs may apply against the wrong org. Out of scope until multi-org UX exists.
 - **Cells marked `?`.** `/settings/organisation` and `/settings/integrations` for `project_manager` — behaviour not yet verified end-to-end.
