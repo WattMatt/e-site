@@ -5,7 +5,7 @@ import { GATEKEEPER_RULES, WORK_ITEM_CALENDARS } from './types'
 
 /**
  * §12 §(h) test 1, third edge: Appendix A(b)'s PROSE TABLE <-> the registry the
- * database actually holds.
+ * migrations declare.
  *
  * work-item-types.contract.test.ts pins the SQL seed against WORK_ITEM_TYPES,
  * and reads A(b) only for its Q1 KEY SET and its column list. The per-type
@@ -18,12 +18,22 @@ import { GATEKEEPER_RULES, WORK_ITEM_CALENDARS } from './types'
  * behaviour bug with no failing test in front of it. This file is that test.
  *
  * Resolution is AMENDMENT-AWARE, exactly as the sibling's seed<->TypeScript
- * comparison is: the registry production holds is the seed with every later
+ * comparison is: the declared registry is the seed with every later
  * migration's `UPDATE projects.work_item_types SET … WHERE key = …` applied in
  * migration order. Both sources are read off disk — the migrations DIRECTORY,
  * not a pinned number — so this file is correct both before and after item 3's
  * branch lands, and survives the renumbers that branch has already taken
  * (00198 -> 00199 -> 00202).
+ *
+ * What this does NOT prove, stated so nobody reads more into a green run than
+ * is there: it compares A(b) against the migrations AS WRITTEN, and never reads
+ * applied state. A migration can sit on main unapplied, or strand below the
+ * ledger head and never apply at all — on 2026-09-18 four Q1 PRs held four
+ * consecutive numbers with no ordering authority between them. In that window
+ * the files declare one registry and production holds another, and this test
+ * speaks for the files. Proving the ledger agrees is a different job, done
+ * against a real database by scripts/verify-migration-applied.ts and the
+ * `-- @verify:` block every migration >= 00185 carries.
  *
  * Deliberately a sibling, and deliberately holding its own parsers: item 3's
  * unmerged branch rewrites the very hunks of the sibling this would otherwise
@@ -57,7 +67,7 @@ const MIG_DIR = join(ROOT, 'apps/edge-functions/supabase/migrations')
 
 const SEED_NEEDLE = 'INSERT INTO projects.work_item_types'
 
-// ─── the registry, as the database holds it ──────────────────────────────────
+// ─── the registry, as the migrations declare it ──────────────────────────────
 
 /** `--` line comments blanked. Applied before every SQL match in this file:
  *  the migration that amends `rfi` also carries the ROLLBACK statement — the
@@ -152,7 +162,7 @@ function registryAmendments(seedName: string): Amendment[] {
   return out
 }
 
-/** The seed with every amendment applied in migration order — what production holds. */
+/** The seed with every amendment applied in migration order — the declared registry. */
 function applyAmendments(rows: RegistryRow[], amendments: Amendment[]): RegistryRow[] {
   const byKey = new Map(rows.map((r) => [r.key, { ...r }]))
   for (const a of amendments) {
@@ -250,7 +260,7 @@ function fail(key: string, column: string, cell: string, why: string): never {
 /** `project PM` -> project_pm. A cell STATING the machine value wins outright:
  *  item 3's `rfi` cell explains the rule in words that include "the project
  *  PM" and then names `gatekeeper_rule = 'creator'`, which is the value the
- *  database holds. */
+ *  migration declares. */
 function resolveGatekeeper(key: string, cell: string): string {
   const explicit = cell.match(/gatekeeper_rule\s*=\s*'([a-z_]+)'/)
   const rule = explicit ? explicit[1] : GATEKEEPER_PHRASES[normalise(cell)]
@@ -335,7 +345,7 @@ function appendixQ1Rows(): AppendixRow[] {
 
 // ─── the test ────────────────────────────────────────────────────────────────
 
-describe('work-item type registry — Appendix A(b) prose <-> the registry the database holds', () => {
+describe('work-item type registry — Appendix A(b) prose <-> the registry the migrations declare', () => {
   const { name: seedName, sql } = spineMigration()
   const amendments = registryAmendments(seedName)
   const registry = applyAmendments(seededRows(sql), amendments)
@@ -390,47 +400,47 @@ describe('work-item type registry — Appendix A(b) prose <-> the registry the d
       .toEqual([...registry.map((r) => r.key)].sort())
   })
 
-  it('every A(b) Gatekeeper cell states the gatekeeper_rule the database holds', () => {
+  it('every A(b) Gatekeeper cell states the gatekeeper_rule the migrations declare', () => {
     for (const row of registry) {
       const cells = cellsFor(row.key)
       expect(
         cells.gatekeeperRule,
         `A(b) row \`${row.key}\` Gatekeeper reads '${cells.gatekeeperRule}', ` +
-          `the registry holds '${row.gatekeeperRule}' (${provenance(row.key, 'gatekeeper_rule')}) ` +
+          `the migrations declare '${row.gatekeeperRule}' (${provenance(row.key, 'gatekeeper_rule')}) ` +
           `— ${APPENDIX_REL}`,
       ).toBe(row.gatekeeperRule)
     }
   })
 
-  it('every A(b) Default due cell states the default_days the database holds', () => {
+  it('every A(b) Default due cell states the default_days the migrations declare', () => {
     for (const row of registry) {
       const cells = cellsFor(row.key)
       expect(
         cells.days,
         `A(b) row \`${row.key}\` Default due reads +${cells.days} wd, ` +
-          `the registry holds ${row.days} (${provenance(row.key, 'default_days')}) — ${APPENDIX_REL}`,
+          `the migrations declare ${row.days} (${provenance(row.key, 'default_days')}) — ${APPENDIX_REL}`,
       ).toBe(row.days)
     }
   })
 
-  it('every A(b) Calendar cell states the calendar the database holds', () => {
+  it('every A(b) Calendar cell states the calendar the migrations declare', () => {
     for (const row of registry) {
       const cells = cellsFor(row.key)
       expect(
         cells.calendar,
         `A(b) row \`${row.key}\` Calendar reads '${cells.calendar}', ` +
-          `the registry holds '${row.calendar}' (${provenance(row.key, 'calendar')}) — ${APPENDIX_REL}`,
+          `the migrations declare '${row.calendar}' (${provenance(row.key, 'calendar')}) — ${APPENDIX_REL}`,
       ).toBe(row.calendar)
     }
   })
 
-  it('every A(b) Source cell names the source_table the database holds', () => {
+  it('every A(b) Source cell names the source_table the migrations declare', () => {
     for (const row of registry) {
       const cells = cellsFor(row.key)
       expect(
         cells.sourceTable,
         `A(b) row \`${row.key}\` Source names '${cells.sourceTable}', ` +
-          `the registry holds '${row.sourceTable}' (${provenance(row.key, 'source_table')}) — ${APPENDIX_REL}`,
+          `the migrations declare '${row.sourceTable}' (${provenance(row.key, 'source_table')}) — ${APPENDIX_REL}`,
       ).toBe(row.sourceTable)
     }
   })
