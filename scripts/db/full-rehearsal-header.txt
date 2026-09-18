@@ -75,11 +75,13 @@
 --     --with scripts/db/probes/13-backfill-fixtures.sql \
 --     --with apps/edge-functions/supabase/migrations/00202_work_item_source_mirrors_and_backfill.sql
 -- (Two latent nits it surfaced in probes that are otherwise fine standing
--- alone, recorded rather than silently patched: probe 04's
+-- alone, both PATCHED rather than merely recorded — `0b657df`: probe 04's
 -- `reprojection_kept_the_status` and probe 05's `closed_item_still_exists`
--- both read `projects.work_items` by `rfi_id` with no `origin = 'mirror'`
--- predicate. Nothing in production can put a second row there — only a probe
--- can — but the predicate belongs in both.)
+-- identified "the item for this source" by `rfi_id` alone, with no
+-- `origin = 'mirror'` predicate. Nothing in production can put a second row
+-- there — only a probe can, and probe 14's `origin='split'` row is what did —
+-- so both arms now say `origin = 'mirror'`, and they are safe in any company
+-- rather than only while probe 14 is kept out of the assembly.)
 --
 -- Expected: 266 rows, all PASS — 04:26 05:22 06:25 07:39 08:35 09:23 10:26
 -- 11:15 13:30 05b:9 16:16. If the printed `assertions seen:` list is shorter

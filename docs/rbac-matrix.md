@@ -627,11 +627,15 @@ Migration `00202_work_item_source_mirrors_and_backfill.sql` introduces **no rout
 > RFI-1 off can close it. Take it over first, or ask them to close it.`
 > `00202:834` runs `UPDATE projects.work_item_types SET gatekeeper_rule =
 > 'creator' WHERE key = 'rfi'`, and `project_rfi` calls
-> `resolve_work_item_gatekeeper(r.project_id, r.raised_by)` in **both** arms
-> (`00202:975` on insert, `00202:1070` on update); measured
+> `resolve_work_item_gatekeeper(r.project_id, r.raised_by)` on **INSERT**
+> (`00202:979`) and on a project **MOVE** (`00202:1074`, inside the
+> `ELSIF v_moved` arm) — and nowhere else: the ordinary UPDATE arm keeps
+> `v_item.gatekeeper_id`, so once an item exists a source edit never
+> re-resolves its gatekeeper and a spine-side correction survives. Measured
 > `gatekeeper_is_the_contractor = true`. **An INELIGIBLE raiser — departed, a
 > client viewer, or an org-level contractor with no `project_members` row —
-> falls back to the project PM** (`00202:968-974`). Any sentence anywhere in this file
+> falls back to the project PM** (`resolve_work_item_gatekeeper`'s own chain,
+> `00202:347-353`; the reasoning is at `00202:969-978`). Any sentence anywhere in this file
 > or in the specs saying only owner/admin/PM closes an RFI-mirrored item is
 > wrong.
 
