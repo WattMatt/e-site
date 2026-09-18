@@ -1,6 +1,6 @@
--- assert-uhpa-org-admin-control.sql — clause (b) control for migration 00197.
+-- assert-uhpa-org-admin-control.sql — clause (b) control for migration 00204.
 --
--- 00197 touches clause (a) only. This proves clause (b) — the org-level
+-- 00204 touches clause (a) only. This proves clause (b) — the org-level
 -- owner/admin/project_manager auto-pass that needs NO project_members row —
 -- is untouched: an active admin of the project's organisation who holds no
 -- KINGSWALK membership row still reads everything. The subject is resolved

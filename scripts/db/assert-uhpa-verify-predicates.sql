@@ -1,4 +1,4 @@
--- assert-uhpa-verify-predicates.sql — the 00197 @verify block, evaluated
+-- assert-uhpa-verify-predicates.sql — the 00204 @verify block, evaluated
 -- inside the dry-run transaction so the post-push verifier's predicates are
 -- seen green (and, against a no-op migration, seen RED) before the migration
 -- is ever applied. Pure catalogue reads; no impersonation.

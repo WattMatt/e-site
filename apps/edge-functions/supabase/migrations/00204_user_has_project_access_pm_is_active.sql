@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Migration 00197: public.user_has_project_access — clause (a) requires the
+-- Migration 00204: public.user_has_project_access — clause (a) requires the
 --                  projects.project_members row itself to be active
 -- ---------------------------------------------------------------------------
 -- WHY.
@@ -39,7 +39,7 @@
 -- authenticated). structure.nodes and projects.qc_reports were chosen
 -- because user_has_project_access is their ONLY permissive SELECT gate:
 --
---                                              before 00197   after 00197
+--                                              before 00204   after 00204
 --   user_has_project_access(KINGSWALK)         true           false
 --   user_effective_project_role(KINGSWALK)     NULL           NULL
 --   structure.nodes visible                    134 of 134     0 of 134
@@ -142,7 +142,7 @@ SET search_path TO 'public'
 SET row_security TO 'off'
 AS $function$
   SELECT
-    -- Clause (a): explicit project_members entry. 00197: the membership row
+    -- Clause (a): explicit project_members entry. 00204: the membership row
     -- itself must be active, matching user_effective_project_role (00107).
     EXISTS (
       SELECT 1
@@ -169,6 +169,6 @@ AS $function$
 $function$;
 
 COMMENT ON FUNCTION public.user_has_project_access(uuid) IS
-'TRUE when the caller may see the project: an ACTIVE projects.project_members row whose identity org the caller is still ACTIVE in (clause a), or an active owner/admin/project_manager role in the project''s organisation (clause b). 00197 added the membership-row flag to clause (a) so a soft-deactivated member is revoked at the database, not only in the app — the same rule user_effective_project_role (00107) already applied.';
+'TRUE when the caller may see the project: an ACTIVE projects.project_members row whose identity org the caller is still ACTIVE in (clause a), or an active owner/admin/project_manager role in the project''s organisation (clause b). 00204 added the membership-row flag to clause (a) so a soft-deactivated member is revoked at the database, not only in the app — the same rule user_effective_project_role (00107) already applied.';
 
 NOTIFY pgrst, 'reload schema';

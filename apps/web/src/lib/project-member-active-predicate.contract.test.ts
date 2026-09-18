@@ -19,13 +19,13 @@ import { join, resolve } from 'node:path'
  * therefore kept every database read while the app reported no role — and any
  * `COALESCE(user_effective_project_role(...), '') <> 'client_viewer'` predicate
  * read that NULL role as "not a client viewer", WIDENING a deactivated client
- * viewer to the whole project. Migration 00197 adds the predicate to clause
+ * viewer to the whole project. Migration 00204 adds the predicate to clause
  * (a) of user_has_project_access.
  *
  * This test reads the migrations, resolves the FINAL definition of each helper
  * (a later CREATE OR REPLACE wins) and asserts the predicate actually in
  * force. A unit test on calling code cannot catch this: the defect lives
- * entirely in SQL. It was run red against the pre-00197 tree (00106's body is
+ * entirely in SQL. It was run red against the pre-00204 tree (00106's body is
  * the final definition there and carries no `pm.is_active`) before going
  * green, so it is a check that has been seen to fail.
  */
@@ -109,7 +109,7 @@ describe('project_members.is_active revokes access at the database', () => {
     expect(role, 'public.user_effective_project_role is never defined').not.toBeNull()
   })
 
-  it('user_has_project_access clause (a) requires pm.is_active (the 00197 fix)', () => {
+  it('user_has_project_access clause (a) requires pm.is_active (the 00204 fix)', () => {
     const a = clauseA(access!.body)
     expect(
       REQUIRES_PM_ACTIVE.test(a),

@@ -1,4 +1,4 @@
--- assert-uhpa-deactivated-member.sql — subject A for migration 00197.
+-- assert-uhpa-deactivated-member.sql — subject A for migration 00204.
 --
 -- Run through scripts/db/dry-run-migration.sh, which wraps this file as
 --   BEGIN; <migration>; <this file>; ROLLBACK;
@@ -8,7 +8,7 @@
 -- rolled back with the rest.
 --
 -- Red/green: run it first against a no-op migration and watch the first four
--- rows fail — that is the leak. Against 00197 every row must be ok.
+-- rows fail — that is the leak. Against 00204 every row must be ok.
 --
 -- structure.nodes and projects.qc_reports are used because on production
 -- user_has_project_access is their ONLY permissive SELECT gate (16 such
@@ -51,7 +51,7 @@ SET LOCAL ROLE authenticated;
 SELECT * FROM (VALUES
   ('deactivated member: user_has_project_access(KINGSWALK) IS FALSE',
      public.user_has_project_access(current_setting('x.kw')::uuid) IS FALSE),
-  ('deactivated member: user_effective_project_role(KINGSWALK) IS NULL (app gate, unchanged by 00197)',
+  ('deactivated member: user_effective_project_role(KINGSWALK) IS NULL (app gate, unchanged by 00204)',
      public.user_effective_project_role(current_setting('x.kw')::uuid) IS NULL),
   ('deactivated member: structure.nodes on KINGSWALK -> 0 of ' || current_setting('x.nodes_all'),
      (SELECT count(*) FROM structure.nodes WHERE project_id = current_setting('x.kw')::uuid) = 0),

@@ -1,4 +1,4 @@
--- assert-uhpa-active-member-control.sql — control for migration 00197.
+-- assert-uhpa-active-member-control.sql — control for migration 00204.
 --
 -- The same fixture, membership left ACTIVE. Proves the fix narrows only what
 -- it should: an active contractor's reads are unchanged before and after.
