@@ -7,6 +7,13 @@ import {
   validateRoutePoints,
   isSegmentCalibrationStale,
   roundMetres,
+  polylineEdges,
+  edgeLengthsM,
+  moveVertex,
+  insertVertexAfter,
+  removeVertex,
+  dedupeConsecutivePoints,
+  sheetLegendRows,
   type RouteSegmentForTotal,
 } from './cable-route.service'
 
@@ -186,5 +193,179 @@ describe('roundMetres', () => {
   it('does not introduce binary floating-point dust', () => {
     // 0.1 + 0.2 is the classic. A naive sum would give 0.30000000000000004.
     expect(roundMetres(0.1 + 0.2)).toBe(0.3)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-edge geometry — what the canvas labels while you trace and after you save.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('polylineEdges', () => {
+  it('returns one edge per vertex pair, each with its own pixel length and midpoint', () => {
+    // L-shape (0,0)→(300,0)→(300,400): two edges of DIFFERENT length, so a
+    // function that labelled every edge with the same number could not pass.
+    const edges = polylineEdges([0, 0, 300, 0, 300, 400])
+    expect(edges).toHaveLength(2)
+    expect(edges[0]).toEqual({ x1: 0, y1: 0, x2: 300, y2: 0, px: 300, midX: 150, midY: 0 })
+    expect(edges[1]).toEqual({ x1: 300, y1: 0, x2: 300, y2: 400, px: 400, midX: 300, midY: 200 })
+  })
+
+  it('is empty for a single point — nothing to label yet', () => {
+    expect(polylineEdges([10, 10])).toEqual([])
+  })
+
+  it('is empty for no points', () => {
+    expect(polylineEdges([])).toEqual([])
+  })
+})
+
+describe('edgeLengthsM', () => {
+  it('labels each edge in metres at centimetre precision', () => {
+    // 50 px/m: 300px = 6.00m, 400px = 8.00m. Distinct on purpose.
+    expect(edgeLengthsM([0, 0, 300, 0, 300, 400], 50)).toEqual([6, 8])
+  })
+
+  it('labels a diagonal edge by its true length, not its bounding box', () => {
+    // (0,0)→(30,40) is 50px → 1.00m at 50px/m; a dx-only bug would say 0.60.
+    expect(edgeLengthsM([0, 0, 30, 40], 50)).toEqual([1])
+  })
+
+  it('agrees with the stored segment length to within rounding of each label', () => {
+    // The labels are per-edge rounded; the stored length rounds the whole path
+    // once. They can legitimately differ by up to half a cent per edge — and no
+    // more. A different formula in either place would blow past that bound.
+    const pts = [0, 0, 123, 45, 210, 300, 333, 333, 400, 12]
+    const labels = edgeLengthsM(pts, 37)
+    const sum = labels.reduce((a, b) => a + b, 0)
+    expect(Math.abs(sum - segmentLengthM(pts, 37))).toBeLessThanOrEqual(0.005 * labels.length)
+  })
+
+  it('refuses a non-positive calibration, like segmentLengthM does', () => {
+    expect(() => edgeLengthsM([0, 0, 10, 0], 0)).toThrow(/calibration/i)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Editing a saved leg — drag a vertex, add one, drop one. Pure, so the canvas
+// cannot corrupt a stored route by getting an index off by one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('moveVertex', () => {
+  const pts = [0, 0, 300, 0, 300, 400]
+
+  it('moves exactly the named vertex and leaves the others alone', () => {
+    expect(moveVertex(pts, 1, 310, 5)).toEqual([0, 0, 310, 5, 300, 400])
+  })
+
+  it('does not mutate the input', () => {
+    const copy = [...pts]
+    moveVertex(pts, 0, 99, 99)
+    expect(pts).toEqual(copy)
+  })
+
+  it('rejects an out-of-range vertex index', () => {
+    expect(() => moveVertex(pts, 3, 0, 0)).toThrow(/index/i)
+    expect(() => moveVertex(pts, -1, 0, 0)).toThrow(/index/i)
+  })
+})
+
+describe('insertVertexAfter', () => {
+  const pts = [0, 0, 300, 0, 300, 400]
+
+  it('inserts between the named vertex and the next one', () => {
+    expect(insertVertexAfter(pts, 0, 150, 10)).toEqual([0, 0, 150, 10, 300, 0, 300, 400])
+  })
+
+  it('appends when the named vertex is the last one', () => {
+    expect(insertVertexAfter(pts, 2, 500, 400)).toEqual([0, 0, 300, 0, 300, 400, 500, 400])
+  })
+
+  it('rejects an out-of-range vertex index', () => {
+    expect(() => insertVertexAfter(pts, 3, 0, 0)).toThrow(/index/i)
+  })
+})
+
+describe('removeVertex', () => {
+  const pts = [0, 0, 300, 0, 300, 400]
+
+  it('removes exactly the named vertex', () => {
+    expect(removeVertex(pts, 1)).toEqual([0, 0, 300, 400])
+  })
+
+  it('refuses to reduce a leg below two vertices — a route needs a direction', () => {
+    expect(() => removeVertex([0, 0, 10, 10], 0)).toThrow(/two/i)
+  })
+
+  it('rejects an out-of-range vertex index', () => {
+    expect(() => removeVertex(pts, 3)).toThrow(/index/i)
+  })
+})
+
+describe('dedupeConsecutivePoints', () => {
+  it('drops the vertices a double-click stamps on top of the last real one', () => {
+    // Three real clicks, then a double-click at the last spot: each mousedown
+    // of the double-click appends a vertex before the finish fires, so the leg
+    // arrives with five points and two zero-length edges labelled "0.00 m".
+    expect(dedupeConsecutivePoints([0, 0, 300, 0, 300, 400, 300, 400, 301, 400], 2)).toEqual([0, 0, 300, 0, 300, 400])
+  })
+
+  it('keeps a genuine short edge that is longer than the tolerance', () => {
+    expect(dedupeConsecutivePoints([0, 0, 10, 0, 10, 5], 2)).toEqual([0, 0, 10, 0, 10, 5])
+  })
+
+  it('collapses duplicates anywhere in the path, not only at the end', () => {
+    expect(dedupeConsecutivePoints([0, 0, 0, 1, 300, 0, 300, 400], 2)).toEqual([0, 0, 300, 0, 300, 400])
+  })
+
+  it('never returns fewer than the first point', () => {
+    expect(dedupeConsecutivePoints([5, 5, 5, 5, 6, 5], 2)).toEqual([5, 5])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The sheet legend — what the exported drawing says about the runs drawn on it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('sheetLegendRows', () => {
+  const runs = [
+    { supplyId: 'a', label: 'MB 1.1 → DB-10', totalM: 173.48 },
+    { supplyId: 'b', label: 'MB 1.1 → DB-3', totalM: 60 },
+    { supplyId: 'c', label: 'MB 1.1 → DB-9', totalM: 42 },
+  ]
+  const segments = [
+    // a: one leg here, one on another sheet — the sheet shows PART of the run.
+    { supplyId: 'a', floorPlanId: 'sheet-1', pageIndex: 1, lengthM: 100 },
+    { supplyId: 'a', floorPlanId: 'sheet-2', pageIndex: 1, lengthM: 70 },
+    // b: two legs here, nothing elsewhere.
+    { supplyId: 'b', floorPlanId: 'sheet-1', pageIndex: 1, lengthM: 25 },
+    { supplyId: 'b', floorPlanId: 'sheet-1', pageIndex: 1, lengthM: 35 },
+    // c: only on page 2 of this sheet — not on the page being exported.
+    { supplyId: 'c', floorPlanId: 'sheet-1', pageIndex: 2, lengthM: 42 },
+  ]
+
+  it('lists only runs with a leg on THIS sheet and page, sorted by label', () => {
+    const rows = sheetLegendRows({ floorPlanId: 'sheet-1', pageIndex: 1 }, runs, segments)
+    expect(rows.map((r) => r.label)).toEqual(['MB 1.1 → DB-10', 'MB 1.1 → DB-3'])
+  })
+
+  it('separates the metres drawn on this page from the run total, and flags a run that continues elsewhere', () => {
+    const rows = sheetLegendRows({ floorPlanId: 'sheet-1', pageIndex: 1 }, runs, segments)
+    // A reader must never take the number beside a line as the length of what
+    // is drawn in front of them when part of the route is on another sheet.
+    expect(rows[0]).toEqual({ label: 'MB 1.1 → DB-10', legsHere: 1, onSheetM: 100, totalM: 173.48, continuesElsewhere: true })
+    expect(rows[1]).toEqual({ label: 'MB 1.1 → DB-3', legsHere: 2, onSheetM: 60, totalM: 60, continuesElsewhere: false })
+  })
+
+  it('is empty for a page with nothing traced on it', () => {
+    expect(sheetLegendRows({ floorPlanId: 'sheet-1', pageIndex: 3 }, runs, segments)).toEqual([])
+  })
+
+  it('ignores a segment whose run is unknown rather than inventing a label', () => {
+    const rows = sheetLegendRows({ floorPlanId: 'sheet-1', pageIndex: 1 }, runs, [
+      ...segments,
+      { supplyId: 'ghost', floorPlanId: 'sheet-1', pageIndex: 1, lengthM: 9 },
+    ])
+    expect(rows.some((r) => r.label.includes('ghost'))).toBe(false)
+    expect(rows).toHaveLength(2)
   })
 })

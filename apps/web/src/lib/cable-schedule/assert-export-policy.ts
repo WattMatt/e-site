@@ -20,6 +20,9 @@
  *
  * multi-zip stays separate — it iterates revisions instead of taking
  * one as a query param.
+ *
+ * `wantsRouteSheets(req)` reads the shared opt-in flag every pack route
+ * honours: `?routeSheets=1` attaches the marked-up cable route sheets.
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
@@ -35,6 +38,9 @@ import {
 export interface ExportGateResult {
   effectivePayload: ExportPayload
   policy: ExportPolicy
+  /** The caller's session client — for reads the renderer needs beyond the payload (route sheets). */
+  supabase: Awaited<ReturnType<typeof createClient>>
+  userId: string
 }
 
 export async function assertExportPolicy(
@@ -88,5 +94,10 @@ export async function assertExportPolicy(
     return NextResponse.json({ error: sizeCheck.reason }, { status: sizeCheck.status })
   }
 
-  return { effectivePayload, policy }
+  return { effectivePayload, policy, supabase, userId: userData.user.id }
+}
+
+/** `?routeSheets=1` — the user chose to include the marked-up cable route sheets. */
+export function wantsRouteSheets(req: NextRequest): boolean {
+  return req.nextUrl.searchParams.get('routeSheets') === '1'
 }

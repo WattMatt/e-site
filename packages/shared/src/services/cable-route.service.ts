@@ -170,3 +170,166 @@ export function isSegmentCalibrationStale(
   const diff = Math.abs(segment.pixels_per_meter - planPixelsPerMeter)
   return diff > Math.max(1e-6, Math.abs(planPixelsPerMeter) * 1e-9)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-EDGE GEOMETRY — what the canvas labels while you trace and after you save.
+// ─────────────────────────────────────────────────────────────────────────────
+// A leg's stored length is the whole path rounded once (`segmentLengthM`). The
+// labels are each edge rounded separately, so their sum may differ from the
+// stored figure by up to half a cent per edge. That is the honest number to
+// print beside each edge; the stored figure is the honest number to sign. The
+// test suite pins the bound so the two formulas cannot drift apart.
+
+/** One vertex-to-vertex piece of a polyline, with where to hang its label. */
+export interface PolylineEdge {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  /** Pixel length of this edge alone. */
+  px: number
+  midX: number
+  midY: number
+}
+
+/** Split a flat [x1,y1,x2,y2,…] polyline into its edges. Empty below two points. */
+export function polylineEdges(points: readonly number[]): PolylineEdge[] {
+  const out: PolylineEdge[] = []
+  for (let i = 0; i + 3 < points.length; i += 2) {
+    const x1 = points[i], y1 = points[i + 1], x2 = points[i + 2], y2 = points[i + 3]
+    out.push({ x1, y1, x2, y2, px: Math.hypot(x2 - x1, y2 - y1), midX: (x1 + x2) / 2, midY: (y1 + y2) / 2 })
+  }
+  return out
+}
+
+/** Metres for each edge, at centimetre precision, in path order. */
+export function edgeLengthsM(points: readonly number[], pixelsPerMeter: number): number[] {
+  if (!(pixelsPerMeter > 0)) {
+    throw new Error('Cannot measure without a positive calibration (pixels per metre).')
+  }
+  return polylineEdges(points).map((e) => roundMetres(e.px / pixelsPerMeter))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EDITING A SAVED LEG — pure, index-checked, never in place.
+// ─────────────────────────────────────────────────────────────────────────────
+// The canvas drags a vertex and asks for a new point list; it never mutates the
+// stored array, so an aborted edit leaves the saved leg exactly as it was.
+
+function assertVertexIndex(points: readonly number[], index: number): void {
+  const count = points.length / 2
+  if (!Number.isInteger(index) || index < 0 || index >= count) {
+    throw new Error(`Vertex index ${index} is out of range for a leg with ${count} vertices.`)
+  }
+}
+
+/** The leg with vertex `index` moved to (x, y). */
+export function moveVertex(points: readonly number[], index: number, x: number, y: number): number[] {
+  assertVertexIndex(points, index)
+  const out = [...points]
+  out[index * 2] = x
+  out[index * 2 + 1] = y
+  return out
+}
+
+/** The leg with a new vertex (x, y) inserted after vertex `index`. */
+export function insertVertexAfter(points: readonly number[], index: number, x: number, y: number): number[] {
+  assertVertexIndex(points, index)
+  const at = (index + 1) * 2
+  return [...points.slice(0, at), x, y, ...points.slice(at)]
+}
+
+/**
+ * The leg without vertex `index`. Refuses to go below two vertices: a single
+ * point is not a route, and the server would reject it anyway — better to say
+ * so here than to lose the leg on save.
+ */
+export function removeVertex(points: readonly number[], index: number): number[] {
+  assertVertexIndex(points, index)
+  if (points.length <= 4) {
+    throw new Error('A leg needs at least two vertices; delete the leg instead.')
+  }
+  const at = index * 2
+  return [...points.slice(0, at), ...points.slice(at + 2)]
+}
+
+/**
+ * Collapse consecutive vertices closer than `tolerancePx` into one.
+ *
+ * A double-click finishes a polyline, but each of its two mousedowns has
+ * already appended a vertex on top of the last real one by the time the
+ * dblclick fires. Left in, a leg carries two zero-length edges and prints
+ * "0.00 m" twice — invisible on a markup polyline, wrong on a measurement.
+ */
+export function dedupeConsecutivePoints(points: readonly number[], tolerancePx: number): number[] {
+  if (points.length < 2) return [...points]
+  const out: number[] = [points[0], points[1]]
+  for (let i = 2; i + 1 < points.length; i += 2) {
+    const lx = out[out.length - 2], ly = out[out.length - 1]
+    if (Math.hypot(points[i] - lx, points[i + 1] - ly) > tolerancePx) out.push(points[i], points[i + 1])
+  }
+  return out
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SHEET LEGEND — what an exported drawing says about the runs drawn on it.
+// ─────────────────────────────────────────────────────────────────────────────
+// Rendered from the route tables at export time, never stored in a scene, so
+// it cannot drift from the schedule. `onSheetM` is the metres drawn on THIS
+// page; `totalM` is the whole run; `continuesElsewhere` is the honest half —
+// a reader must never take the number beside a line for the length of what is
+// drawn in front of them when part of the route is on another sheet.
+
+export interface LegendRun {
+  supplyId: string
+  /** "MB 1.1 → DB-10" */
+  label: string
+  totalM: number
+}
+
+export interface LegendSegment {
+  supplyId: string
+  floorPlanId: string | null
+  pageIndex: number
+  lengthM: number
+}
+
+export interface SheetLegendRow {
+  label: string
+  legsHere: number
+  onSheetM: number
+  totalM: number
+  continuesElsewhere: boolean
+}
+
+export function sheetLegendRows(
+  sheet: { floorPlanId: string; pageIndex: number },
+  runs: readonly LegendRun[],
+  segments: readonly LegendSegment[],
+): SheetLegendRow[] {
+  const runById = new Map(runs.map((r) => [r.supplyId, r]))
+  const here = new Map<string, { legs: number; m: number }>()
+  const everywhere = new Map<string, number>()
+  for (const s of segments) {
+    if (!runById.has(s.supplyId)) continue
+    everywhere.set(s.supplyId, (everywhere.get(s.supplyId) ?? 0) + 1)
+    if (s.floorPlanId === sheet.floorPlanId && s.pageIndex === sheet.pageIndex) {
+      const cur = here.get(s.supplyId) ?? { legs: 0, m: 0 }
+      cur.legs += 1
+      cur.m += s.lengthM
+      here.set(s.supplyId, cur)
+    }
+  }
+  return [...here.entries()]
+    .map(([supplyId, h]) => {
+      const run = runById.get(supplyId)!
+      return {
+        label: run.label,
+        legsHere: h.legs,
+        onSheetM: roundMetres(h.m),
+        totalM: roundMetres(run.totalM),
+        continuesElsewhere: (everywhere.get(supplyId) ?? 0) > h.legs,
+      }
+    })
+    .sort((a, b) => a.label.localeCompare(b.label))
+}

@@ -14,6 +14,10 @@ export const PRODUCT_EVENTS = [
   'marketplace_order_placed',
   'onboarding_started',
   'backfill_completed',
+  // Cable route measurement (00199).
+  'cable_route_leg_saved',
+  'cable_route_assigned',
+  'cable_route_sheet_exported',
 ] as const
 export type ProductEvent = (typeof PRODUCT_EVENTS)[number]
 

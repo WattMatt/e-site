@@ -23,6 +23,14 @@ interface Props {
    * section reads as policy, not as a bug.
    */
   redactCost?: boolean
+  /**
+   * The marked-up cable route sheets exported for this revision (current
+   * version per drawing page) — `count` available, `stale` of those older
+   * than the routes they show. When `count` > 0 the menu offers to include
+   * them in the PDF pack and the ZIPs (`?routeSheets=1`); the choice is the
+   * user's, defaulting to include. Absent or 0 → the menu is unchanged.
+   */
+  routeSheets?: { count: number; stale: number }
 }
 
 interface MenuItem {
@@ -81,8 +89,11 @@ async function downloadFromUrl(
   }
 }
 
-export function ExportMenu({ projectId, revisionId, filterQuery, redactCost }: Props) {
+export function ExportMenu({ projectId, revisionId, filterQuery, redactCost, routeSheets }: Props) {
   const [open, setOpen] = useState(false)
+  const sheetCount = routeSheets?.count ?? 0
+  const [includeSheets, setIncludeSheets] = useState(true)
+  const withSheets = sheetCount > 0 && includeSheets
   const [error, setError] = useState<string | null>(null)
   const [downloadingHref, setDownloadingHref] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
@@ -109,20 +120,24 @@ export function ExportMenu({ projectId, revisionId, filterQuery, redactCost }: P
   const qs = `?projectId=${encodeURIComponent(projectId)}&revisionId=${encodeURIComponent(revisionId)}`
   const projectQs = `?projectId=${encodeURIComponent(projectId)}`
   const revStem = revisionId.slice(0, 8)
+  // The pack formats honour the route-sheet option; Excel, tag labels and the
+  // CSVs are tabular and cannot carry a drawing, so they never get the flag.
+  const sheetsQs = withSheets ? '&routeSheets=1' : ''
+  const sheetHint = withSheets ? ` + ${sheetCount} route sheet${sheetCount === 1 ? '' : 's'}` : ''
 
   const items: MenuItem[] = [
     {
       label: 'All ISSUED revisions (ZIP)',
-      href: `/api/cable-schedule/export/multi-zip${projectQs}`,
+      href: `/api/cable-schedule/export/multi-zip${projectQs}${sheetsQs}`,
       emoji: '🗂',
-      hint: 'Handover pack — every issued revision in one bundle',
+      hint: `Handover pack — every issued revision in one bundle${withSheets ? ', each with its route sheets' : ''}`,
       fallbackFilename: `cable-schedule-all-issued-${projectId.slice(0, 8)}.zip`,
     },
     {
       label: 'Revision pack (ZIP)',
-      href: `/api/cable-schedule/export/zip${qs}`,
+      href: `/api/cable-schedule/export/zip${qs}${sheetsQs}`,
       emoji: '📦',
-      hint: 'Everything: xlsx + pdf + 4 CSVs + README',
+      hint: `Everything: xlsx + pdf + 4 CSVs + README${sheetHint}`,
       fallbackFilename: `cable-schedule-${revStem}.zip`,
     },
     {
@@ -134,9 +149,9 @@ export function ExportMenu({ projectId, revisionId, filterQuery, redactCost }: P
     },
     {
       label: 'PDF revision pack',
-      href: `/api/cable-schedule/export/pdf${qs}`,
+      href: `/api/cable-schedule/export/pdf${qs}${sheetsQs}`,
       emoji: '📄',
-      hint: 'Cover + schedule + cost + tag schedule',
+      hint: `Cover + schedule + cost + tag schedule${sheetHint}`,
       fallbackFilename: `cable-schedule-${revStem}.pdf`,
     },
     {
@@ -224,6 +239,42 @@ export function ExportMenu({ projectId, revisionId, filterQuery, redactCost }: P
             padding: 4,
           }}
         >
+          {sheetCount > 0 && (
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 8,
+                padding: '8px 12px 10px',
+                fontSize: 12,
+                color: 'var(--c-text)',
+                borderBottom: '1px solid var(--c-border)',
+                marginBottom: 4,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={includeSheets}
+                onChange={(e) => setIncludeSheets(e.target.checked)}
+                disabled={downloadingHref !== null}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <span style={{ fontWeight: 600 }}>
+                  Include the marked-up route sheet{sheetCount === 1 ? '' : 's'} ({sheetCount})
+                </span>
+                <div style={{ fontSize: 11, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                  The drawings the traced lengths were measured on — appended to the PDF pack and added to the ZIPs.
+                  {routeSheets && routeSheets.stale > 0 && (
+                    <span style={{ display: 'block', color: 'var(--c-amber)', marginTop: 2 }}>
+                      {routeSheets.stale === 1 ? '1 sheet is' : `${routeSheets.stale} sheets are`} older than the routes on it — re-export from the drawing to carry the latest trace.
+                    </span>
+                  )}
+                </div>
+              </span>
+            </label>
+          )}
           {items.map((item, idx) => {
             // Dividers:
             //  • after idx 0 — separates the multi-revision pack from the

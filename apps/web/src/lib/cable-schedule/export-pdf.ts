@@ -4,6 +4,7 @@
  *   2. Schedule grid (paginated, A4 landscape)
  *   3. Cost summary
  *   4. Tag schedule with QR codes (10 per A4 portrait page)
+ *   5. Appendix — cable route sheets, when the user opted to include them
  *
  * pdf-lib is low-level — no flowable layout. We position by absolute
  * coordinates and paginate manually.
@@ -18,6 +19,7 @@ import { stampPdfDraft } from './export-watermark'
 import { aggregateCostByMaterialKey } from './cost-aggregation'
 import { winAnsiSafe } from './winansi'
 import { accentColor } from '@/lib/reports/pdf-accent'
+import { appendRouteSheetsToPdf } from './route-sheets'
 
 /**
  * Sanitising wrappers — the ONLY way this module draws or measures text.
@@ -73,6 +75,11 @@ export async function renderRevisionPdf(payload: ExportPayload): Promise<Uint8Ar
   // see redactPayloadCost in export-role.ts.
   if (!payload.costRedacted) drawCostPage(pdf, payload, helv, helvB)
   drawTagPages(pdf, payload, helv, helvB)
+  // 5. Appendix — the marked-up route sheets, only when the user asked for
+  //    them (payload.routeSheets is set by the route handler on ?routeSheets=1).
+  if (payload.routeSheets && (payload.routeSheets.sheets.length > 0 || payload.routeSheets.omitted.length > 0)) {
+    await appendRouteSheetsToPdf(pdf, payload.routeSheets.sheets, payload.routeSheets.omitted, { regular: helv, bold: helvB }, accentColor(payload.accent))
+  }
 
   return pdf.save()
 }

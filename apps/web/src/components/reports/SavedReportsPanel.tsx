@@ -42,6 +42,12 @@ interface Props {
  * whatever it likes and still read sensibly without touching this component.
  */
 const SUMMARY_LABELS: Record<string, string> = {
+  // Cable route sheets (exportRouteSheetAction). A leading `^` puts the label
+  // BEFORE the value ("page 2"); a key in HIDDEN_SUMMARY_KEYS is an identifier
+  // the panel never prints.
+  legsHere: 'legs on this sheet',
+  onSheetM: 'm traced on this sheet',
+  page: '^page',
   boards: 'boards',
   lines: 'lines',
   received: 'received',
@@ -49,15 +55,20 @@ const SUMMARY_LABELS: Record<string, string> = {
   receivedPct: '% received',
 }
 
+/** Identifiers a kind stores in `summary` for its own lookups; never printed. */
+const HIDDEN_SUMMARY_KEYS = new Set(['revisionId'])
+
 /** "48 boards · 31 received · 6 overdue", or null when there is no summary. */
 function summaryLine(rep: ProjectReportRow): string | null {
   const summary = rep.summary
   if (!summary || typeof summary !== 'object') return null
   const parts = Object.entries(summary)
-    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .filter(([k, v]) => !HIDDEN_SUMMARY_KEYS.has(k) && v !== null && v !== undefined && v !== '')
     .map(([k, v]) => {
       const label = SUMMARY_LABELS[k] ?? k
-      return label.startsWith('%') ? `${v}${label}` : `${v} ${label}`
+      if (label.startsWith('%')) return `${v}${label}`
+      if (label.startsWith('^')) return `${label.slice(1)} ${v}`
+      return `${v} ${label}`
     })
   return parts.length > 0 ? parts.join(' · ') : null
 }

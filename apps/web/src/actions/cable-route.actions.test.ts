@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import zlib from 'node:zlib'
 
 /**
  * cable-route.actions.ts — the two separations its module header declares.
@@ -31,19 +32,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const {
   createClientMock,
+  createServiceClientMock,
   revalidatePathMock,
   requireRoleForRevisionMock,
   lookupCableRoleMock,
   requireEffectiveRoleMock,
 } = vi.hoisted(() => ({
   createClientMock: vi.fn(),
+  createServiceClientMock: vi.fn(),
   revalidatePathMock: vi.fn(),
   requireRoleForRevisionMock: vi.fn(),
   lookupCableRoleMock: vi.fn(),
   requireEffectiveRoleMock: vi.fn(),
 }))
 
-vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock }))
+vi.mock('@/lib/supabase/server', () => ({ createClient: createClientMock, createServiceClient: createServiceClientMock }))
 vi.mock('@/lib/auth/require-role', () => ({
   requireEffectiveRole: (...a: unknown[]) => requireEffectiveRoleMock(...a),
 }))
@@ -68,6 +71,11 @@ vi.mock('@/lib/cable-schedule/roles', async (importOriginal) => {
 })
 
 import {
+  restoreRouteHistoryAction,
+  remeasureRouteLegsAction,
+  revertRouteAssignmentAction,
+  calibrateFloorPlanAction as calibrateAction,
+  exportRouteSheetAction,
   calibrateFloorPlanAction,
   saveSupplyRouteAction,
   applyRouteToScheduleAction,
@@ -130,9 +138,26 @@ function makeClient(fx: Fixture) {
         return { data: null, error: { message: 'permission denied for table ' + table } }
       }
       if (op !== 'select') {
-        // The only non-select read-back in the file is the route upsert's
-        // .select('id').single().
-        return { data: op === 'upsert' ? { id: ROUTE_ID } : null, error: null }
+        // Two non-select read-backs: the route upsert's .select('id').single(),
+        // and the segment insert's .select(...) which echoes the rows back with
+        // ids so the canvas can draw and edit them without a reload.
+        // The route row comes back with its trigger-maintained updated_at, for
+        // both the upsert (save) and the update (restore) read-backs.
+        if ((op === 'upsert' || op === 'update') && table === 'supply_routes') {
+          return { data: { id: ROUTE_ID, updated_at: '2026-09-15T10:00:00.000Z' }, error: null }
+        }
+        if (op === 'insert' && table === 'route_segments') {
+          const last = writes[writes.length - 1]
+          const rows = Array.isArray(last?.payload) ? last.payload : []
+          return { data: rows.map((r: any, i: number) => ({ id: `seg-${i + 1}`, ...r })), error: null }
+        }
+        return { data: null, error: null }
+      }
+      // Generic fallback: a fixture may describe any table's rows directly.
+      // A `.maybeSingle()`/`.single()` read returns the first row.
+      const keyed = (fx as any).tables?.[`${schema}.${table}`]
+      if (keyed !== undefined) {
+        return { data: single ? (Array.isArray(keyed) ? (keyed[0] ?? null) : keyed) : keyed, error: null }
       }
       if (schema === 'cable_schedule' && table === 'supplies') {
         return fx.supply
@@ -159,6 +184,9 @@ function makeClient(fx: Fixture) {
     }
 
     const api: any = {
+      // emitProductEvent (00194) calls .rpc on the same client; it swallows a
+      // failure, but a fake without it logs a TypeError on every save.
+      rpc: async () => ({ data: null, error: null }),
       select: () => api,
       eq: (col: string, val: unknown) => { filters.push({ col, val }); return api },
       in: (col: string, val: unknown) => { filters.push({ col, val }); return api },
@@ -178,6 +206,8 @@ function makeClient(fx: Fixture) {
   }
 
   return {
+    // emitProductEvent (00194) calls .rpc on the caller's client and swallows a failure.
+    rpc: async () => ({ data: null, error: null }),
     auth: { getUser: async () => ({ data: { user: { id: USER_ID } }, error: null }) },
     // lookupCableRole is mocked, so the public-schema path is never taken.
     from: (table: string) => builder('public', table),
@@ -251,6 +281,9 @@ function payloadWithClientClaims(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   writes = []
   createClientMock.mockReset()
+  // emitProductEvent (00194) runs its RPC on the service client and swallows a
+  // failure; without a default here every save logs a TypeError.
+  createServiceClientMock.mockReset().mockReturnValue({ rpc: async () => ({ data: null, error: null }) })
   revalidatePathMock.mockReset()
   requireRoleForRevisionMock.mockReset().mockResolvedValue({ ok: true, role: 'admin' })
   lookupCableRoleMock.mockReset().mockResolvedValue('Admin')
@@ -293,6 +326,23 @@ describe('saveSupplyRouteAction — the server decides length', () => {
     )
     expect(res.tracedM).toBe(10)
     expect(res.totalM).toBe(14)
+  })
+
+  it('returns the persisted segments with ids, so the sheet can draw and edit them without a reload', async () => {
+    // After the first cut, a saved leg vanished until a hard reload: the
+    // action returned only totals, so the viewer had nothing to draw with.
+    use(fixture())
+    const res = await saveSupplyRouteAction({
+      supplyId: SUPPLY_ID,
+      riseM: 0,
+      dropM: 0,
+      segments: [{ floorPlanId: PLAN_A, pageIndex: 1, points: [0, 0, 300, 0, 300, 400] }],
+    })
+    expect(res.ok).toBe(true)
+    expect(res.segments).toHaveLength(1)
+    expect(res.segments![0]).toMatchObject({ id: 'seg-1', floorPlanId: PLAN_A, pageIndex: 1, points: [0, 0, 300, 0, 300, 400] })
+    expect(res.segments![0].lengthM).toBe(70)   // 700 px along the path at PLAN_A's 10 px/m
+    expect(res.segments![0].pixelsPerMeter).toBe(PLAN_A_PPM)
   })
 
   it('sends merge-duplicates as a Prefer header via onConflict, not only in the query string', async () => {
@@ -501,7 +551,7 @@ describe('applyRouteToScheduleAction — the overwrite gate', () => {
     use(applyFixture({ failWriteOn: 'change_log' } as any))
     const res = await applyRouteToScheduleAction({ supplyId: SUPPLY_ID, confirmOverwrite: true })
 
-    expect(writesTo('cables')).toHaveLength(1)   // the length DID apply
+    expect(writesTo('cables').filter((w) => w.op === 'update')).toHaveLength(2)   // the length DID apply (fields, then status)
     expect(res.ok).toBeUndefined()
     expect(res.error).toMatch(/audit log/i)
     expect(res.error).toMatch(/applied to 2 strands/i)
@@ -515,7 +565,7 @@ describe('applyRouteToScheduleAction — the overwrite gate', () => {
     expect(res.ok).toBe(true)
     expect(res.appliedM).toBe(PROPOSED_M)
     expect(res.strands).toBe(2)
-    expect(writesTo('cables').filter((w) => w.op === 'update')).toHaveLength(1)
+    expect(writesTo('cables').filter((w) => w.op === 'update')).toHaveLength(2)
   })
 
   it('does not stall on a first application, when there is nothing to overwrite', async () => {
@@ -534,14 +584,15 @@ describe('applyRouteToScheduleAction — what it writes', () => {
     const res = await applyRouteToScheduleAction({ supplyId: SUPPLY_ID, confirmOverwrite: true })
     expect(res.ok).toBe(true)
 
-    const [update] = writesTo('cables').filter((w) => w.op === 'update')
+    const [update, status] = writesTo('cables').filter((w) => w.op === 'update')
     expect(update).toBeDefined()
     expect(update.payload).toMatchObject({
       measured_length_m: PROPOSED_M,
       measured_length_method: 'SCALE_RULE',
-      length_status: 'MEASURED',
       measured_length_by: USER_ID,
     })
+    // Status is a second, narrower write: only UNMEASURED strands are promoted.
+    expect(status.payload).toEqual({ length_status: 'MEASURED' })
     // Parallels share a route, so the filter is the supply — not one cable id.
     expect(update.filters).toEqual([{ col: 'supply_id', val: SUPPLY_ID }])
     expect(update.filters.some((f) => f.col === 'id')).toBe(false)
@@ -692,7 +743,11 @@ describe('calibrateFloorPlanAction — who may set a drawing\'s scale', () => {
     // sheet is measured against, so changing it makes every stored segment on
     // that drawing stale. A directly-invocable server action that rewrites it
     // needs the same gate as the schedule.
-    requireEffectiveRoleMock.mockResolvedValue(false)
+    // The real helper resolves to a RESULT OBJECT, never a boolean. Mocking a
+    // boolean here is what made this suite incapable of catching the inert
+    // `if (!allowed)` gate that shipped in PR #180 — `!{}` is always false, and
+    // `!false` is always true, so a boolean mock passes either way.
+    requireEffectiveRoleMock.mockResolvedValue({ ok: false, error: 'Your role (contractor) is not allowed to perform this action' })
     use(calibFixture())
 
     const res = await calibrateFloorPlanAction({
@@ -707,7 +762,7 @@ describe('calibrateFloorPlanAction — who may set a drawing\'s scale', () => {
   })
 
   it('derives px/m from the drawn line for a permitted caller', async () => {
-    requireEffectiveRoleMock.mockResolvedValue(true)
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
     use(calibFixture())
 
     const res = await calibrateFloorPlanAction({
@@ -723,12 +778,374 @@ describe('calibrateFloorPlanAction — who may set a drawing\'s scale', () => {
     const w = writesTo('floor_plans')
     expect(w).toHaveLength(1)
     expect((w[0].payload as any).pixels_per_meter).toBe(50)
+    // The two points and the metres are stored WITH the scale. Without them a
+    // calibrated sheet shows a number and nothing else — nobody can see where
+    // the scale was taken, so nobody can tell whether it was taken sensibly.
+    expect((w[0].payload as any).calibration_points).toEqual([0, 0, 250, 0])
+    expect((w[0].payload as any).calibration_metres).toBe(5)
+    expect((w[0].payload as any).calibration_page_index).toBe(1)
   })
 
   it('gates on the plan\'s OWN project, not one the caller names', async () => {
-    requireEffectiveRoleMock.mockResolvedValue(true)
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
     use(calibFixture())
     await calibrateFloorPlanAction({ floorPlanId: PLAN, points: [0, 0, 250, 0], realMetres: 5 })
     expect(requireEffectiveRoleMock).toHaveBeenCalledWith(expect.anything(), PROJECT, expect.anything())
+  })
+})
+
+/* ─────────────── 5. exporting a sheet keeps a record, not a download ─────────────── */
+
+describe('exportRouteSheetAction — the sheet becomes a versioned report', () => {
+  const PLAN_ROW = { id: PLAN_A, name: 'POWER LAYOUT A', project_id: PROJECT_ID, organisation_id: ORG_ID, pixels_per_meter: 10, calibration_metres: 5 }
+  const REV_ROW = { id: REVISION_ID, code: 'Rev 0', project_id: PROJECT_ID }
+  // A real 1x1 JPEG (generated with sips) — pdf-lib checks the SOI marker.
+  const JPEG_1PX = '/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAAQABAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwUDAwMFBgUFBQUGCAYGBgYGCAoICAgICAgKCgoKCgoKCgwMDAwMDA4ODg4ODw8PDw8PDw8PD//bAEMBAgICBAQEBwQEBxALCQsQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEP/dAAQAAf/aAAwDAQACEQMRAD8A/fyiiigD/9k='
+
+  type ServiceWrite = { table: string; op: 'insert' | 'update'; payload: unknown }
+  let serviceWrites: ServiceWrite[] = []
+  let uploads: Array<{ path: string; bytes: Uint8Array; contentType: string }> = []
+  let removed: string[] = []
+
+  function fakeService(opts: { insertFails?: boolean } = {}) {
+    const builder = (table: string) => {
+      let op: 'select' | 'insert' | 'update' = 'select'
+      const api: any = {
+        select: () => api,
+        eq: () => api,
+        neq: () => api,
+        order: () => api,
+        limit: () => api,
+        insert: (payload: unknown) => { op = 'insert'; serviceWrites.push({ table, op, payload }); return api },
+        update: (payload: unknown) => { op = 'update'; serviceWrites.push({ table, op, payload }); return api },
+        single: () => Promise.resolve(
+          op === 'insert'
+            ? (opts.insertFails ? { data: null, error: { message: 'boom' } } : { data: { id: 'report-1' }, error: null })
+            : { data: null, error: null },
+        ),
+        maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        then: (res: any, rej: any) => Promise.resolve({ data: null, error: null }).then(res, rej),
+      }
+      return api
+    }
+    return {
+      rpc: async () => ({ data: null, error: null }),
+      schema: () => ({ from: builder }),
+      storage: {
+        from: () => ({
+          upload: async (path: string, bytes: Uint8Array, o: { contentType: string }) => { uploads.push({ path, bytes, contentType: o.contentType }); return { error: null } },
+          remove: async (paths: string[]) => { removed.push(...paths); return { error: null } },
+        }),
+      },
+    }
+  }
+
+  /**
+   * The drawn text of every content stream. pdf-lib writes standard-font text
+   * as HEX strings (`<7363616c65…> Tj`), so the streams are inflated where
+   * Flate-encoded and the hex literals decoded — an ASCII search on the raw
+   * bytes finds nothing. Latin1 is enough here: the header line is ASCII.
+   */
+  function pdfStreamsText(buf: Buffer): string {
+    let text = ''
+    const streamMarker = Buffer.from('stream')
+    const endMarker = Buffer.from('endstream')
+    let cursor = 0
+    for (;;) {
+      const start = buf.indexOf(streamMarker, cursor)
+      if (start === -1) break
+      const end = buf.indexOf(endMarker, start)
+      if (end === -1) break
+      let dataStart = start + streamMarker.length
+      while (buf[dataStart] === 0x0d || buf[dataStart] === 0x0a) dataStart++
+      const chunk = buf.subarray(dataStart, end)
+      let decoded: string
+      try { decoded = zlib.inflateSync(chunk).toString('latin1') } catch { decoded = chunk.toString('latin1') }
+      for (const m of decoded.matchAll(/<([0-9a-fA-F]+)>/g)) text += Buffer.from(m[1], 'hex').toString('latin1')
+      text += '\n'
+      cursor = end + endMarker.length
+    }
+    return text
+  }
+
+  function sheetFixture(): Fixture {
+    return fixture({
+      tables: {
+        'tenants.floor_plans': [PLAN_ROW],
+        'cable_schedule.revisions': [REV_ROW],
+        'projects.projects': [{ name: 'KINGSWALK', code: '643' }],
+        'cable_schedule.supply_routes': [{ id: ROUTE_ID, supply_id: SUPPLY_ID, total_length_m: 73.5 }],
+        // One leg on this sheet, one on another — the legend must say so.
+        'cable_schedule.route_segments': [
+          { route_id: ROUTE_ID, floor_plan_id: PLAN_A, page_index: 1, length_m: 70 },
+          { route_id: ROUTE_ID, floor_plan_id: PLAN_B, page_index: 1, length_m: 3.5 },
+        ],
+        'cable_schedule.supplies': [{ id: SUPPLY_ID, from_node_id: 'n1', to_node_id: 'n2' }],
+        'structure.nodes': [{ id: 'n1', code: 'MB 1.1' }, { id: 'n2', code: 'DB-10' }],
+      },
+    } as any)
+  }
+
+  beforeEach(() => {
+    serviceWrites = []
+    uploads = []
+    removed = []
+    createServiceClientMock.mockReset().mockReturnValue(fakeService())
+    requireEffectiveRoleMock.mockReset()
+  })
+
+  it('refuses a caller without the schedule write role, and touches neither storage nor the reports table', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: false, error: 'Your role (contractor) is not allowed to perform this action' })
+    use(sheetFixture())
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 1, jpegBase64: JPEG_1PX })
+    expect(res.ok).toBeUndefined()
+    expect(res.error).toMatch(/permission/i)
+    expect(uploads).toHaveLength(0)
+    expect(serviceWrites).toHaveLength(0)
+  })
+
+  it('renders a PDF, uploads it, and records a versioned report row for THIS sheet', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'project_manager' })
+    use(sheetFixture())
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 1, jpegBase64: JPEG_1PX })
+    expect(res.error).toBeUndefined()
+    expect(res).toMatchObject({ ok: true, reportId: 'report-1', version: 1, runs: 1 })
+    expect(uploads).toHaveLength(1)
+    expect(uploads[0].contentType).toBe('application/pdf')
+    expect(Buffer.from(uploads[0].bytes.slice(0, 5)).toString('latin1')).toBe('%PDF-')
+    expect(uploads[0].path).toBe(`${ORG_ID}/${PROJECT_ID}/cable-route-sheets/${PLAN_A}-p1-v1.pdf`)
+    const [insert] = serviceWrites.filter((w) => w.op === 'insert')
+    expect(insert.table).toBe('reports')
+    expect(insert.payload).toMatchObject({
+      kind: 'cable_route_sheet',
+      source_table: 'tenants.floor_plans',
+      source_id: PLAN_A,
+      status: 'issued',
+      version: 1,
+      generated_by: USER_ID,
+      // The legend is computed here from the stored segments: one 70 m leg on
+      // this sheet, of a 73.5 m run that continues elsewhere. `page` and
+      // `revisionId` identify the sheet — the schedule's report pack finds
+      // "the applicable sheets" for a revision by them.
+      summary: { runs: 1, legsHere: 1, onSheetM: 70, page: 1, revisionId: REVISION_ID },
+    })
+    expect(removed).toHaveLength(0)
+  })
+
+  it('refuses to export a page with nothing traced on it, before touching storage', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    use(sheetFixture())
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 2, jpegBase64: JPEG_1PX })
+    expect(res.error).toMatch(/nothing is traced/i)
+    expect(uploads).toHaveLength(0)
+    expect(serviceWrites).toHaveLength(0)
+  })
+
+  it('prints the exported PAGE\'s own scale on the sheet, not page 1\'s', async () => {
+    // Page 2 of a multi-page PDF has its own row in floor_plan_page_scales
+    // (00199). The header line used to read floor_plans.pixels_per_meter —
+    // page 1's figure — on every page, so a page-2 sheet was issued with the
+    // wrong scale printed on it.
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    use(fixture({
+      tables: {
+        'tenants.floor_plans': [PLAN_ROW],                         // 10 px/m across 5 m — page 1
+        'tenants.floor_plan_page_scales': [{ floor_plan_id: PLAN_A, page_index: 2, pixels_per_meter: 20, calibration_metres: 4 }],
+        'cable_schedule.revisions': [REV_ROW],
+        'projects.projects': [{ name: 'KINGSWALK', code: '643' }],
+        'cable_schedule.supply_routes': [{ id: ROUTE_ID, supply_id: SUPPLY_ID, total_length_m: 12 }],
+        'cable_schedule.route_segments': [{ route_id: ROUTE_ID, floor_plan_id: PLAN_A, page_index: 2, length_m: 12 }],
+        'cable_schedule.supplies': [{ id: SUPPLY_ID, from_node_id: 'n1', to_node_id: 'n2' }],
+        'structure.nodes': [{ id: 'n1', code: 'MB 1.1' }, { id: 'n2', code: 'DB-10' }],
+      },
+    } as any))
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 2, jpegBase64: JPEG_1PX })
+    expect(res.error).toBeUndefined()
+    expect(uploads).toHaveLength(1)
+    const text = pdfStreamsText(Buffer.from(uploads[0].bytes))
+    expect(text).toContain('scale 20.0 px/m (set across 4.00 m)')
+    expect(text).not.toContain('scale 10.0 px/m')
+    expect(uploads[0].path).toBe(`${ORG_ID}/${PROJECT_ID}/cable-route-sheets/${PLAN_A}-p2-v1.pdf`)
+  })
+
+  it('removes the uploaded object when the report row fails to insert — no orphan in the bucket', async () => {
+    requireEffectiveRoleMock.mockResolvedValue({ ok: true, role: 'admin' })
+    createServiceClientMock.mockReturnValue(fakeService({ insertFails: true }))
+    use(sheetFixture())
+    const res = await exportRouteSheetAction({ floorPlanId: PLAN_A, revisionId: REVISION_ID, pageIndex: 1, jpegBase64: JPEG_1PX })
+    expect(res.error).toMatch(/failed to save report/i)
+    expect(uploads).toHaveLength(1)
+    expect(removed).toEqual([uploads[0].path])
+  })
+})
+
+describe('applyRouteToScheduleAction — status follows the grid rule', () => {
+  it('promotes only UNMEASURED strands to MEASURED and leaves a CONFIRMED strand alone', async () => {
+    // A site-confirmed strand must keep its status: demoting it to MEASURED
+    // would flip as-built volt-drop and cost back to the designer's figure.
+    use(applyFixture({
+      cables: [
+        { id: CABLE_1, measured_length_m: EXISTING_M, confirmed_length_m: EXISTING_M, length_status: 'CONFIRMED' },
+        { id: CABLE_2, measured_length_m: null, confirmed_length_m: null, length_status: 'UNMEASURED' },
+      ],
+    } as any))
+    const res = await applyRouteToScheduleAction({ supplyId: SUPPLY_ID, confirmOverwrite: true })
+    expect(res.error).toBeUndefined()
+    const updates = writesTo('cables').filter((w) => w.op === 'update')
+    expect(updates).toHaveLength(2)
+    // The length write carries no status at all…
+    expect(updates[0].payload).not.toHaveProperty('length_status')
+    expect(updates[0].payload).toMatchObject({ measured_length_method: 'SCALE_RULE' })
+    // …and the status write is scoped to strands that were UNMEASURED.
+    expect(updates[1].payload).toEqual({ length_status: 'MEASURED' })
+    expect(updates[1].filters).toEqual(expect.arrayContaining([{ col: 'length_status', val: 'UNMEASURED' }]))
+  })
+})
+
+/* ─────────────── 6. history, concurrency, per-page scale ─────────────── */
+
+describe('saveSupplyRouteAction — trail and guards', () => {
+  it('writes one route_history row per save, holding the whole list as stored', async () => {
+    use(fixture())
+    const res = await saveSupplyRouteAction({ supplyId: SUPPLY_ID, riseM: 1, dropM: 2, segments: [{ floorPlanId: PLAN_A, pageIndex: 1, points: [0, 0, 300, 0] }] })
+    expect(res.ok).toBe(true)
+    const [hist] = writesTo('route_history').filter((w) => w.op === 'insert')
+    expect(hist).toBeDefined()
+    const p = hist.payload as any
+    expect(p).toMatchObject({ route_id: ROUTE_ID, supply_id: SUPPLY_ID, reason: 'save', rise_m: 1, drop_m: 2, saved_by: USER_ID })
+    expect(Array.isArray(p.snapshot)).toBe(true)
+    expect(p.snapshot[0]).toMatchObject({ seq: 1, floor_plan_id: PLAN_A, length_m: 30, pixels_per_meter: PLAN_A_PPM })
+    expect(res.updatedAt).toBeDefined()
+  })
+
+  it('refuses to overwrite a route someone else saved since the caller loaded it, and writes nothing', async () => {
+    use(fixture({ route: { id: ROUTE_ID, total_length_m: 5, traced_length_m: 5, updated_at: '2026-09-15T10:00:00.000Z' } as any }))
+    const res = await saveSupplyRouteAction({
+      supplyId: SUPPLY_ID, riseM: 0, dropM: 0, segments: [{ floorPlanId: PLAN_A, pageIndex: 1, points: HUNDRED_PX }],
+      expectedUpdatedAt: '2026-09-15T09:00:00.000Z',
+    })
+    expect(res.ok).toBeUndefined()
+    expect(res.error).toMatch(/saved by someone else/i)
+    expect(res.conflict?.updatedAt).toBe('2026-09-15T10:00:00.000Z')
+    expect(writesTo('supply_routes')).toHaveLength(0)
+    expect(writesTo('route_segments')).toHaveLength(0)
+  })
+
+  it('accepts a save whose token matches the stored updated_at', async () => {
+    use(fixture({ route: { id: ROUTE_ID, total_length_m: 5, traced_length_m: 5, updated_at: '2026-09-15T10:00:00.000Z' } as any }))
+    const res = await saveSupplyRouteAction({
+      supplyId: SUPPLY_ID, riseM: 0, dropM: 0, segments: [{ floorPlanId: PLAN_A, pageIndex: 1, points: HUNDRED_PX }],
+      expectedUpdatedAt: '2026-09-15T10:00:00.000Z',
+    })
+    expect(res.ok).toBe(true)
+  })
+
+  it('refuses a leg on page 2 of a drawing with no page-2 scale, naming the page', async () => {
+    use(fixture())
+    const res = await saveSupplyRouteAction({ supplyId: SUPPLY_ID, riseM: 0, dropM: 0, segments: [{ floorPlanId: PLAN_A, pageIndex: 2, points: HUNDRED_PX }] })
+    expect(res.error).toMatch(/page 2/i)
+    expect(writesTo('route_segments')).toHaveLength(0)
+  })
+
+  it('measures a page-2 leg with the PAGE scale, not the drawing scale', async () => {
+    // Drawing scale 10 px/m would give 10.00 m for 100 px; the page-2 scale of
+    // 20 px/m gives 5.00 m. Only one of those is the page the leg is on.
+    use(fixture({ tables: { 'tenants.floor_plan_page_scales': [{ floor_plan_id: PLAN_A, page_index: 2, pixels_per_meter: 20 }] } } as any))
+    const res = await saveSupplyRouteAction({ supplyId: SUPPLY_ID, riseM: 0, dropM: 0, segments: [{ floorPlanId: PLAN_A, pageIndex: 2, points: HUNDRED_PX }] })
+    expect(res.error).toBeUndefined()
+    const [insert] = writesTo('route_segments').filter((w) => w.op === 'insert')
+    expect((insert.payload as any[])[0]).toMatchObject({ page_index: 2, pixels_per_meter: 20, length_m: 5 })
+  })
+})
+
+describe('restoreRouteHistoryAction — a prior state comes back verbatim', () => {
+  it('re-inserts the snapshot as stored, restores rise/drop, and logs the restore', async () => {
+    use(fixture({
+      route: { id: ROUTE_ID, total_length_m: 5, traced_length_m: 5 },
+      tables: {
+        'cable_schedule.route_history': [{
+          id: '99999999-9999-9999-9999-999999999999', route_id: ROUTE_ID, supply_id: SUPPLY_ID, rise_m: 3, drop_m: 1,
+          // Stored under an OLD scale of 8 px/m: restore must keep 8 and 12.5, not re-measure at the drawing's 10.
+          snapshot: [{ floor_plan_id: PLAN_A, floor_plan_name: 'A', page_index: 1, points: [0, 0, 100, 0], pixels_per_meter: 8, length_m: 12.5 }],
+        }],
+      },
+    } as any))
+    const res = await restoreRouteHistoryAction({ supplyId: SUPPLY_ID, historyId: '99999999-9999-9999-9999-999999999999' })
+    expect(res.error).toBeUndefined()
+    const [ins] = writesTo('route_segments').filter((w) => w.op === 'insert')
+    expect((ins.payload as any[])[0]).toMatchObject({ pixels_per_meter: 8, length_m: 12.5, route_id: ROUTE_ID })
+    const [upd] = writesTo('supply_routes').filter((w) => w.op === 'update')
+    expect(upd.payload).toMatchObject({ rise_m: 3, drop_m: 1 })
+    const [hist] = writesTo('route_history').filter((w) => w.op === 'insert')
+    expect(hist.payload).toMatchObject({ reason: 'restore' })
+    expect(res.totalM).toBe(16.5)
+  })
+})
+
+describe('remeasureRouteLegsAction — after a rescale, points stay and lengths follow', () => {
+  const stale = { id: 'seg-a', seq: 1, points: [0, 0, 100, 0], pixels_per_meter: 5, length_m: 20, floor_plan_id: PLAN_A, floor_plan_name: 'A', page_index: 1 }
+  const fresh = { id: 'seg-b', seq: 2, points: [0, 0, 50, 0], pixels_per_meter: PLAN_A_PPM, length_m: 5, floor_plan_id: PLAN_A, floor_plan_name: 'A', page_index: 1 }
+
+  it('previews before/after for only the legs whose scale differs, writing nothing on a dry run', async () => {
+    use(fixture({ route: { id: ROUTE_ID, rise_m: 0, drop_m: 0 }, planSingle: { id: PLAN_A, pixels_per_meter: PLAN_A_PPM }, tables: { 'cable_schedule.route_segments': [stale, fresh] } } as any))
+    const res = await remeasureRouteLegsAction({ supplyId: SUPPLY_ID, floorPlanId: PLAN_A, pageIndex: 1, dryRun: true })
+    expect(res.preview).toBe(true)
+    expect(res.legs).toEqual([{ id: 'seg-a', seq: 1, beforeM: 20, afterM: 10, beforePpm: 5, afterPpm: PLAN_A_PPM }])
+    expect(writesTo('route_segments')).toHaveLength(0)
+  })
+
+  it('rewrites the stale leg\'s scale and length, leaves the fresh one, and logs a remeasure', async () => {
+    use(fixture({ route: { id: ROUTE_ID, rise_m: 0, drop_m: 0 }, planSingle: { id: PLAN_A, pixels_per_meter: PLAN_A_PPM }, tables: { 'cable_schedule.route_segments': [stale, fresh] } } as any))
+    const res = await remeasureRouteLegsAction({ supplyId: SUPPLY_ID, floorPlanId: PLAN_A, pageIndex: 1 })
+    expect(res.error).toBeUndefined()
+    const updates = writesTo('route_segments').filter((w) => w.op === 'update')
+    expect(updates).toHaveLength(1)
+    expect(updates[0].payload).toEqual({ pixels_per_meter: PLAN_A_PPM, length_m: 10 })
+    expect(writesTo('route_history').filter((w) => w.op === 'insert')[0].payload).toMatchObject({ reason: 'remeasure' })
+  })
+})
+
+describe('revertRouteAssignmentAction — the schedule goes back to what it held', () => {
+  it('restores each strand\'s prior length from the change log, as MANUAL, and logs the reversal', async () => {
+    use(applyFixture({
+      tables: {
+        'cable_schedule.change_log': [
+          { entity_id: CABLE_1, old_value: 99, new_value: 137.25, changed_at: '2026-09-15T01:00:00Z' },
+          { entity_id: CABLE_1, old_value: 80, new_value: 99, changed_at: '2026-09-14T01:00:00Z' },   // older: must be ignored
+          { entity_id: CABLE_2, old_value: null, new_value: 137.25, changed_at: '2026-09-15T01:00:00Z' },
+        ],
+      },
+    } as any))
+    const res = await revertRouteAssignmentAction({ supplyId: SUPPLY_ID })
+    expect(res.error).toBeUndefined()
+    expect(res.strands).toBe(2)
+    const updates = writesTo('cables').filter((w) => w.op === 'update')
+    expect(updates).toHaveLength(2)
+    expect(updates[0].payload).toMatchObject({ measured_length_m: 99, measured_length_method: 'MANUAL' })
+    expect(updates[0].payload).not.toHaveProperty('length_status')
+    // A strand that had NO length before goes back to unmeasured, method cleared.
+    expect(updates[1].payload).toMatchObject({ measured_length_m: null, measured_length_method: null, length_status: 'UNMEASURED' })
+    const [log] = writesTo('change_log').filter((w) => w.op === 'insert')
+    expect((log.payload as any[])[0]).toMatchObject({ field_name: 'measured_length_m', new_value: 99, reason: expect.stringMatching(/revert/i) })
+  })
+
+  it('refuses when no assignment was ever recorded', async () => {
+    use(applyFixture({ tables: { 'cable_schedule.change_log': [] } } as any))
+    const res = await revertRouteAssignmentAction({ supplyId: SUPPLY_ID })
+    expect(res.error).toMatch(/nothing to revert/i)
+    expect(writesTo('cables')).toHaveLength(0)
+  })
+})
+
+describe('calibrateFloorPlanAction — a page other than 1 has its own scale', () => {
+  it('writes page 2 to floor_plan_page_scales and leaves the drawing-level scale alone', async () => {
+    requireEffectiveRoleMock.mockReset().mockResolvedValue({ ok: true, role: 'admin' })
+    use(fixture({ planSingle: { id: PLAN_A, project_id: PROJECT_ID, organisation_id: ORG_ID } } as any))
+    const res = await calibrateAction({ floorPlanId: PLAN_A, points: [0, 0, 250, 0], realMetres: 5, pageIndex: 2 })
+    expect(res.ok).toBe(true)
+    expect(writesTo('floor_plans')).toHaveLength(0)
+    const [up] = writesTo('floor_plan_page_scales').filter((w) => w.op === 'upsert')
+    expect(up.payload).toMatchObject({ floor_plan_id: PLAN_A, page_index: 2, pixels_per_meter: 50, calibration_metres: 5 })
+    expect((up as any).opts).toMatchObject({ onConflict: 'floor_plan_id,page_index' })
   })
 })
