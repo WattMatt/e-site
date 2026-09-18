@@ -23,11 +23,14 @@ import {
   createRfiSchema,
   respondToRfiSchema,
   rfiService,
+  ORG_WRITE_ROLES,
+  RFI_CLOSE_REFUSED,
   type CreateRfiInput,
   type RespondToRfiInput,
 } from '@esite/shared'
 import { z } from 'zod'
 
+import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { notifyRfiEvent } from '@/lib/rfi-email'
 
 const uuidSchema = z.string().uuid()
@@ -116,7 +119,7 @@ export async function createRfiAction(
 
 export async function respondToRfiAction(
   input: RespondToRfiInput,
-): Promise<{ responseId?: string; error?: string }> {
+): Promise<{ responseId?: string; error?: string; statusWarning?: string }> {
   const parsed = respondToRfiSchema.safeParse(input)
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input' }
 
@@ -148,11 +151,26 @@ export async function respondToRfiAction(
 
   // Flip RFI status — status='responded' is the canonical "awaiting raiser
   // review" state per the schema enum.
-  await (supabase as any)
+  //
+  // The answer is already saved, so a refused flip must never discard it. It is
+  // reported by ROWS AFFECTED rather than by an error: migration 00201's
+  // RESTRICTIVE policy narrows UPDATE to callers with an effective role on the
+  // RFI's project, and a policy that matches no row raises nothing. An org
+  // member with no role on this project can still write the response row
+  // (projects.rfi_responses admits any non-client_viewer org member), so this
+  // is reachable — 43 of 108 member/project pairs on the four RFI-bearing
+  // projects, measured 2026-09-14.
+  const { data: moved, error: statusErr } = await (supabase as any)
     .schema('projects')
     .from('rfis')
     .update({ status: 'responded' })
     .eq('id', parsed.data.rfiId)
+    .select('id')
+  const statusWarning =
+    statusErr?.message ??
+    ((moved ?? []).length === 0
+      ? 'Your response was saved, but the RFI could not be moved to Responded — you have no role on this project. Ask a project manager to add you.'
+      : undefined)
 
   await trackServer(user.id, ANALYTICS_EVENTS.RFI_RESPONDED, {
     rfi_id: rfi.id,
@@ -182,7 +200,7 @@ export async function respondToRfiAction(
 
   revalidatePath(`/rfis/${rfi.id}`)
   revalidatePath('/rfis')
-  return { responseId: response.id }
+  return { responseId: response.id, ...(statusWarning ? { statusWarning } : {}) }
 }
 
 // ─── closeRfiAction ────────────────────────────────────────────────────
@@ -205,7 +223,20 @@ export async function closeRfiAction(rfiId: string): Promise<{ error?: string }>
 
   if (rfi.status === 'closed') return { error: 'RFI is already closed' }
 
-  const { error } = await (supabase as any)
+  // Only the raiser, or a governing role on the RFI's own project, may close.
+  // This is §03 §1.8's "only the gatekeeper closes" — the RFI work item's
+  // gatekeeper is its creator, and a mirrored RFI item's creator is raised_by.
+  // Migration 00201 enforces the same rule at the database for every write
+  // path; this check exists so the person who cannot close is told why here,
+  // rather than meeting a raw policy refusal. Server actions are directly
+  // invocable and sit outside (admin)/layout.tsx, so it is a real gate and not
+  // decoration.
+  if (rfi.raised_by !== user.id) {
+    const gate = await requireEffectiveRole(supabase, rfi.project_id, ORG_WRITE_ROLES)
+    if (!gate.ok) return { error: RFI_CLOSE_REFUSED }
+  }
+
+  const { data: closed, error } = await (supabase as any)
     .schema('projects')
     .from('rfis')
     .update({
@@ -214,8 +245,13 @@ export async function closeRfiAction(rfiId: string): Promise<{ error?: string }>
       closed_by: user.id,
     })
     .eq('id', rfiId)
+    .select('id')
 
   if (error) return { error: error.message }
+  // 00201's RESTRICTIVE policy refuses SILENTLY — a policy that matches no row
+  // raises nothing, so without this the action would report a close that never
+  // happened and the page would re-render unchanged with no explanation.
+  if ((closed ?? []).length === 0) return { error: RFI_CLOSE_REFUSED }
 
   await trackServer(user.id, ANALYTICS_EVENTS.RFI_CLOSED, {
     rfi_id: rfi.id,
