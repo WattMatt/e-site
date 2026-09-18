@@ -97,16 +97,32 @@ function clauseA(body: string): string {
   return next === -1 ? rest : rest.slice(0, next + 1)
 }
 
+/**
+ * The single `projects.project_members pm` SELECT inside custom_jwt_claims,
+ * from that FROM to the statement's semicolon. The hook is plpgsql and its
+ * body holds several statements, so an unscoped match would let a
+ * `pm.is_active` written in any of them satisfy the assertion.
+ */
+function membersQuery(body: string, fn: string): string {
+  const from = body.search(/FROM\s+projects\.project_members\s+pm\b/i)
+  if (from === -1) throw new Error(`${fn} no longer reads projects.project_members`)
+  const rest = body.slice(from)
+  const end = rest.indexOf(';')
+  return end === -1 ? rest : rest.slice(0, end)
+}
+
 const REQUIRES_PM_ACTIVE = /\bpm\.is_active\b/i
 const INVERTS_PM_ACTIVE = /\bNOT\s+pm\.is_active\b/i
 
 describe('project_members.is_active revokes access at the database', () => {
   const access = finalFunctionDefinition('public.user_has_project_access')
   const role = finalFunctionDefinition('public.user_effective_project_role')
+  const jwt = finalFunctionDefinition('public.custom_jwt_claims')
 
-  it('both helpers have a final definition in the migrations', () => {
+  it('all three definitions resolve in the migrations', () => {
     expect(access, 'public.user_has_project_access is never defined').not.toBeNull()
     expect(role, 'public.user_effective_project_role is never defined').not.toBeNull()
+    expect(jwt, 'public.custom_jwt_claims is never defined').not.toBeNull()
   })
 
   it('user_has_project_access clause (a) requires pm.is_active (the 00204 fix)', () => {
@@ -132,6 +148,38 @@ describe('project_members.is_active revokes access at the database', () => {
       `${role!.file}: user_effective_project_role no longer requires pm.is_active`,
     ).toBe(true)
     expect(INVERTS_PM_ACTIVE.test(role!.body)).toBe(false)
+  })
+
+  it('custom_jwt_claims requires pm.is_active (00204 — mobile == web)', () => {
+    // The hook is NOT a caller of user_has_project_access: it mirrors clause
+    // (a) with its own query, which is exactly why fixing the helper alone
+    // left the mobile token listing projects the database had already revoked.
+    // PowerSync syncs off claims.project_ids, so a miss here is a live read of
+    // project data on a phone, not just a stale claim.
+    const q = membersQuery(jwt!.body, 'custom_jwt_claims')
+    expect(
+      REQUIRES_PM_ACTIVE.test(q),
+      `${jwt!.file}: custom_jwt_claims builds project_ids without pm.is_active — ` +
+        "a soft-deactivated member's next mobile token still lists the project and PowerSync keeps syncing it",
+    ).toBe(true)
+    expect(INVERTS_PM_ACTIVE.test(q), `${jwt!.file}: custom_jwt_claims inverts pm.is_active`).toBe(false)
+  })
+
+  it('custom_jwt_claims still requires uo.is_active (the org flag it always had)', () => {
+    expect(
+      /\buo\.is_active\b/i.test(membersQuery(jwt!.body, 'custom_jwt_claims')),
+      `${jwt!.file}: custom_jwt_claims lost uo.is_active`,
+    ).toBe(true)
+  })
+
+  it('custom_jwt_claims keeps SECURITY DEFINER and a pinned search_path', () => {
+    // It runs as supabase_auth_admin on every token mint and reads two schemas
+    // it is not otherwise entitled to. Losing SECURITY DEFINER breaks sign-in;
+    // losing the pinned search_path makes a definer function search-path
+    // injectable, which is what 00186's sweep was about.
+    const h = jwt!.header
+    expect(/\bSECURITY\s+DEFINER\b/i.test(h), `${jwt!.file}: custom_jwt_claims is not SECURITY DEFINER`).toBe(true)
+    expect(/search_path\s+(?:TO|=)\s+'?public'?/i.test(h), `${jwt!.file}: custom_jwt_claims search_path is not pinned`).toBe(true)
   })
 
   it('user_has_project_access keeps SECURITY DEFINER, STABLE and row_security off', () => {

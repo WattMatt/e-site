@@ -1,5 +1,6 @@
 -- ---------------------------------------------------------------------------
--- Migration 00204: public.user_has_project_access — clause (a) requires the
+-- Migration 00204: public.user_has_project_access AND public.custom_jwt_claims
+--                  — clause (a) requires the
 --                  projects.project_members row itself to be active
 -- ---------------------------------------------------------------------------
 -- WHY.
@@ -81,18 +82,28 @@
 -- keep EXECUTE. All 93 policies inherit the fix with no change to any
 -- policy body. No existing row changes behaviour (0 inactive rows).
 --
+-- THE MOBILE HALF, CHANGED IN THE SAME FILE (owner's call, 2026-09-18):
+--
+--   public.custom_jwt_claims (00164) mirrors clause (a) with its OWN query —
+--   it is not a caller of this helper — and deliberately omitted the
+--   membership flag, its comment reading "Deliberately does NOT filter
+--   pm.is_active (00106 clause (a) doesn't), keeping mobile == web". Fixing
+--   only the helper would have kept that parity but in the WRONG direction:
+--   a soft-deactivated member would lose every database read while their next
+--   mobile token still listed the project in `project_ids`, so the PowerSync
+--   sync rule would keep syncing it. Both halves now carry the predicate, so
+--   mobile == web still holds and both are now closed.
+--
+--   The hook runs on EVERY token mint, so nothing else about the function
+--   moves: same signature, plpgsql, SECURITY DEFINER, VOLATILE,
+--   search_path=public, owner postgres, and the ACL is left to CREATE OR
+--   REPLACE (postgres + supabase_auth_admin hold EXECUTE; anon and
+--   authenticated hold none, and the @verify block asserts that is still
+--   true afterwards). A member whose row is active — all 47 on production
+--   today — mints exactly the token they minted before.
+--
 -- NOT CHANGED, STATED RATHER THAN IMPLIED AWAY:
 --
---   * public.custom_jwt_claims (00164) mirrors clause (a) with its own query
---     and DELIBERATELY omits the membership flag — its comment reads
---     "Deliberately does NOT filter pm.is_active (00106 clause (a) doesn't),
---     keeping mobile == web". After this migration that parity breaks in
---     the web-safe direction only: a soft-deactivated member loses every
---     database read, but their next mobile token still lists the project
---     in `project_ids`, so the PowerSync sync rule keeps syncing it. It is a
---     caller relying on the old behaviour by design, and the JWT hook runs
---     on every token mint, so it is left for the owner to decide; the fix
---     is the same one-line predicate.
 --   * inspections.user_has_inspection_read, inspections.user_can_write_
 --     responses and inspections.user_can_verify carry their OWN
 --     project_members joins without the membership flag (the first and
@@ -131,6 +142,21 @@
 --            (scripts/db/assert-uhpa-deactivated-member.sql)
 -- behaviour: an active member and an org admin with no membership row read
 --            exactly what they read before (scripts/db/assert-uhpa-*-control.sql)
+-- function: public.custom_jwt_claims(jsonb)
+-- sql: (SELECT p.prosrc FROM pg_proc p WHERE p.oid = 'public.custom_jwt_claims(jsonb)'::regprocedure)
+--        LIKE '%pm.is_active%'
+-- sql: NOT ((SELECT p.prosrc FROM pg_proc p WHERE p.oid = 'public.custom_jwt_claims(jsonb)'::regprocedure)
+--        ~* 'NOT\s+pm\.is_active')
+-- sql: (SELECT p.prosecdef AND p.provolatile = 'v'
+--          AND 'search_path=public' = ANY (p.proconfig)
+--          AND pg_get_userbyid(p.proowner) = 'postgres'
+--        FROM pg_proc p WHERE p.oid = 'public.custom_jwt_claims(jsonb)'::regprocedure)
+-- grant_present: supabase_auth_admin EXECUTE ON public.custom_jwt_claims(jsonb)
+-- grant_absent: anon EXECUTE ON public.custom_jwt_claims(jsonb)
+-- grant_absent: authenticated EXECUTE ON public.custom_jwt_claims(jsonb)
+-- behaviour: a deactivated member's next token drops that project from
+--            claims.project_ids, so PowerSync stops syncing it, while an
+--            active member's token is unchanged (scripts/db/assert-uhpa-jwt-claims.sql)
 -- @verify:end
 -- ---------------------------------------------------------------------------
 
@@ -170,5 +196,66 @@ $function$;
 
 COMMENT ON FUNCTION public.user_has_project_access(uuid) IS
 'TRUE when the caller may see the project: an ACTIVE projects.project_members row whose identity org the caller is still ACTIVE in (clause a), or an active owner/admin/project_manager role in the project''s organisation (clause b). 00204 added the membership-row flag to clause (a) so a soft-deactivated member is revoked at the database, not only in the app — the same rule user_effective_project_role (00107) already applied.';
+
+-- ---------------------------------------------------------------------------
+-- The mobile half. 00164's body verbatim apart from the one predicate and the
+-- comment that described its absence; keeping it whole (rather than patching)
+-- is deliberate, because this is the function every token mint runs through
+-- and the next reader must be able to see all of it in one place.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.custom_jwt_claims(event jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  _user_id      UUID;
+  _org_id       UUID;
+  _project_ids  JSONB;
+  _claims       JSONB;
+BEGIN
+  _user_id := (event ->> 'user_id')::UUID;
+
+  -- Unchanged: the user's first active organisation (drives the org_* buckets).
+  SELECT organisation_id INTO _org_id
+  FROM public.user_organisations
+  WHERE user_id = _user_id
+    AND is_active = true
+  ORDER BY created_at ASC
+  LIMIT 1;
+
+  -- Projects reachable via an ACTIVE explicit membership whose identity org
+  -- the user is still ACTIVE in. Exact mirror of public.user_has_project_access
+  -- clause (a), including the user_organisations.is_active join the sync rule
+  -- cannot express. 00204: pm.is_active joins uo.is_active here, so a
+  -- soft-deactivated member's next token drops the project and PowerSync stops
+  -- syncing it — mobile == web, which is what 00164 was keeping.
+  SELECT COALESCE(jsonb_agg(DISTINCT pm.project_id), '[]'::jsonb)
+  INTO   _project_ids
+  FROM   projects.project_members pm
+  JOIN   public.user_organisations uo
+    ON   uo.user_id = pm.user_id
+   AND   uo.organisation_id = pm.organisation_id
+  WHERE  pm.user_id = _user_id
+    AND  pm.is_active = TRUE
+    AND  uo.is_active = TRUE;
+
+  _claims := event -> 'claims';
+
+  IF _org_id IS NOT NULL THEN
+    _claims := jsonb_set(_claims, '{org_id}', to_jsonb(_org_id::TEXT));
+  END IF;
+
+  -- Always set (defaults to '[]') so the sync rule's json_each degrades cleanly.
+  _claims := jsonb_set(_claims, '{project_ids}', _project_ids);
+
+  RETURN jsonb_set(event, '{claims}', _claims);
+END;
+$function$;
+
+COMMENT ON FUNCTION public.custom_jwt_claims(jsonb) IS
+'GoTrue custom-access-token hook. Stamps claims.org_id (first active organisation) and claims.project_ids (projects reachable through an ACTIVE projects.project_members row whose identity org the user is still ACTIVE in). 00204 added pm.is_active so the mobile token tracks public.user_has_project_access clause (a) exactly: a soft-deactivated member''s next token drops the project and PowerSync stops syncing it. Existing tokens are unaffected until they are re-minted — deactivation is not a session kill.';
 
 NOTIFY pgrst, 'reload schema';
