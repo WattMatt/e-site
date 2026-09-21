@@ -291,6 +291,7 @@ function Row({
         )}
         <ViewLink projectId={projectId} planId={plan.id} name={plan.name} />
         {canWrite && <MarkupLink projectId={projectId} planId={plan.id} name={plan.name} />}
+        {canWrite && <TraceLink projectId={projectId} planId={plan.id} name={plan.name} />}
         <DownloadButton filePath={plan.file_path} name={plan.name} />
       </div>
     </div>
@@ -360,6 +361,35 @@ function MarkupLink({
     </Link>
   )
 }
+/**
+ * The cable-tracing door on the Drawings tab. It existed nowhere before: route
+ * mode was reachable only from the measure worklist, `trace →` on the schedule
+ * grid, or the ⚡ palette tool once already inside the viewer. `?route=1` opens
+ * the viewer with the run picker already up. A project with no cable schedule
+ * lands on a disabled Route tab that says so, which is better than a link that
+ * is simply absent and leaves the user assuming the feature does not exist.
+ */
+function TraceLink({
+  projectId,
+  planId,
+  name,
+}: {
+  projectId: string
+  planId: string
+  name: string
+}) {
+  return (
+    <Link
+      href={`/projects/${projectId}/floor-plans/${planId}?route=1`}
+      aria-label={`Trace a cable run on ${name}`}
+      title="Trace a cable run on this sheet and measure it"
+      style={actionButtonStyle}
+    >
+      Trace
+    </Link>
+  )
+}
+
 
 function DownloadButton({ filePath, name }: { filePath: string; name: string }) {
   const [busy, setBusy] = useState(false)

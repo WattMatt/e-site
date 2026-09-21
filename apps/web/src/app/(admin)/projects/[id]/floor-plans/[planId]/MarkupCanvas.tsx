@@ -452,6 +452,23 @@ type Props = {
    * path (undefined there), so its behaviour is unchanged.
    */
   initialScene?: SceneGraph
+  /**
+   * Saved markup layers (00205). Present in `markup` mode only. This is the
+   * save the product did not have: before it, the ONLY way to keep a markup
+   * was to attach it to an RFI, so "save my work on this drawing" had nowhere
+   * to live. It sits ALONGSIDE the RFI buttons rather than replacing them
+   * (unlike `onSaveMarkup`, which is QC's exclusive external-save mode) —
+   * attaching to an RFI is now one export of a saved markup, not the only way
+   * to keep it.
+   *
+   * No PNG is rasterised here. The layer stores vectors, and the flatten is
+   * what makes the RFI path slow on an A1 sheet.
+   */
+  saveLayer?: {
+    /** The layer currently open, when the user arrived by reopening one. */
+    openName: string | null
+    onSave: (scene: SceneGraph, name: string) => Promise<{ error?: string }>
+  }
 }
 
 type Backing = HTMLImageElement | HTMLCanvasElement
@@ -473,6 +490,7 @@ export function MarkupCanvas({
   cablePicker,
   onSaveMarkup,
   initialScene,
+  saveLayer,
 }: Props) {
   const router = useRouter()
   // QC re-edit hydrates shapes from `initialScene`; a markup made on a
@@ -590,6 +608,36 @@ export function MarkupCanvas({
   const [newRfiPriority, setNewRfiPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium')
   // Polygon in-progress vertices (image-space). Cleared on commit / cancel.
   const [polyPoints, setPolyPoints] = useState<number[]>([])
+
+  // ── Saved markup layers (00205) ───────────────────────────────────────────
+  // Naming is an inline two-step, never window.prompt: Safari suppresses it
+  // (the same reason every confirm in this codebase is a two-tap arm).
+  const [layerNaming, setLayerNaming] = useState(false)
+  const [layerName, setLayerName] = useState('')
+  const [layerSaving, setLayerSaving] = useState(false)
+  const [layerMsg, setLayerMsg] = useState<string | null>(null)
+  useEffect(() => { setLayerName(saveLayer?.openName ?? '') }, [saveLayer?.openName])
+
+  /** Build the scene WITHOUT rasterising. Vectors are all a layer stores. */
+  function layerScene(): SceneGraph {
+    return { version: 1, canvas: { w: naturalW, h: naturalH }, pageCount, shapes }
+  }
+
+  async function commitLayerSave(name: string) {
+    if (!saveLayer) return
+    const trimmed = name.trim()
+    if (!trimmed) { setLayerMsg('Give this markup a name.'); return }
+    setLayerSaving(true)
+    setLayerMsg(null)
+    try {
+      const res = await saveLayer.onSave(layerScene(), trimmed)
+      if (res.error) { setLayerMsg(res.error); return }
+      setLayerNaming(false)
+      setLayerMsg(`Saved as "${trimmed}".`)
+    } finally {
+      setLayerSaving(false)
+    }
+  }
 
   // ── IndexedDB draft auto-save ────────────────────────────────────────
   // Key by plan + (annotation id when re-editing | 'new'). 5s-debounced.
@@ -2879,6 +2927,67 @@ export function MarkupCanvas({
             </button>
           ) : (
             <>
+              {saveLayer && mode === 'markup' && (
+                layerNaming ? (
+                  <>
+                    <input
+                      autoFocus
+                      value={layerName}
+                      onChange={(e) => setLayerName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); void commitLayerSave(layerName) }
+                        if (e.key === 'Escape') { e.preventDefault(); setLayerNaming(false) }
+                      }}
+                      placeholder="Name this markup"
+                      maxLength={80}
+                      style={{
+                        fontSize: 12, padding: '6px 8px', minWidth: 190,
+                        background: 'var(--c-panel)', color: 'var(--c-text)',
+                        border: '1px solid var(--c-amber)', borderRadius: 4,
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-primary-amber"
+                      onClick={() => void commitLayerSave(layerName)}
+                      disabled={layerSaving || layerName.trim().length === 0}
+                    >
+                      {layerSaving ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLayerNaming(false)}
+                      style={{
+                        fontSize: 12, padding: '6px 10px', background: 'var(--c-panel)',
+                        color: 'var(--c-text-mid)', border: '1px solid var(--c-border)',
+                        borderRadius: 4, cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-primary-amber"
+                    onClick={() => {
+                      // Reopened layer: overwrite in place, no re-prompt.
+                      if (saveLayer.openName) void commitLayerSave(saveLayer.openName)
+                      else setLayerNaming(true)
+                    }}
+                    disabled={layerSaving || shapes.length === 0}
+                    title={
+                      shapes.length === 0
+                        ? 'Nothing to save yet'
+                        : saveLayer.openName
+                          ? `Save over "${saveLayer.openName}"`
+                          : 'Save this markup on the drawing, without an RFI'
+                    }
+                  >
+                    {layerSaving ? 'Saving…' : saveLayer.openName ? `Save "${saveLayer.openName}"` : 'Save markup'}
+                  </button>
+                )
+              )}
               <button
                 type="button"
                 className="btn-primary-amber"
@@ -2911,6 +3020,11 @@ export function MarkupCanvas({
         </ToolbarGroup>
         )}
       </div>
+      {layerMsg && (
+        <div className="data-panel" role="status" style={{ padding: '8px 12px', marginBottom: 8, fontSize: 12 }}>
+          {layerMsg}
+        </div>
+      )}
 
       {/* Symbol picker — shown while the Symbol tool is active. */}
       {mode !== 'view' && tool === 'symbol' && (

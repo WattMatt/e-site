@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { projectService, floorPlanService, rfiService, MARKUP_WRITE_ROLES, ORG_WRITE_ROLES } from '@esite/shared'
+import { listFloorPlanMarkupsAction } from '@/actions/floor-plan-markup.actions'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import {
   DrawingViewer,
@@ -14,7 +15,7 @@ import type { ViewerMode } from './MarkupCanvas'
 
 interface Props {
   params: Promise<{ id: string; planId: string }>
-  searchParams: Promise<{ annotation?: string; mode?: string; supply?: string }>
+  searchParams: Promise<{ annotation?: string; mode?: string; supply?: string; markup?: string; route?: string }>
 }
 
 type AnnotationRow = {
@@ -35,7 +36,7 @@ function parseMode(raw: string | undefined): ViewerMode {
 
 export default async function DrawingViewerPage({ params, searchParams }: Props) {
   const { id: projectId, planId } = await params
-  const { annotation: editingId, mode: rawMode, supply: supplyId } = await searchParams
+  const { annotation: editingId, mode: rawMode, supply: supplyId, markup: openMarkupId, route: openRoutePicker } = await searchParams
   const initialMode = parseMode(rawMode)
   const supabase = await createClient()
 
@@ -136,6 +137,12 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
     .order('created_at', { ascending: false })
   const annotations: AnnotationRow[] = (annotationsData ?? []) as AnnotationRow[]
 
+  // Saved markup layers (00205). Read through the caller's own session, so
+  // RLS is the gate; `staleAgainstDrawing` is computed against the drawing's
+  // CURRENT file_path, which is what makes the warning banner mean anything.
+  const { markups: savedMarkups = [] } = await listFloorPlanMarkupsAction({ floorPlanId: planId })
+  const openMarkup = openMarkupId ? savedMarkups.find((m) => m.id === openMarkupId) ?? null : null
+
   // Snag pins on this drawing (read-only overlay)
   const snagPins = await floorPlanService
     .getSnagPins(supabase as any, planId)
@@ -218,6 +225,16 @@ export default async function DrawingViewerPage({ params, searchParams }: Props)
         initialMode={effectiveMode}
         canWrite={canWrite}
         route={route}
+        openRoutePicker={openRoutePicker === '1'}
+        routeUnavailableReason={
+          cableSchedule
+            ? undefined
+            : !canMeasureCables
+              ? 'Tracing a cable run is limited to owners, admins and project managers'
+              : 'This project has no draft cable schedule yet, so there are no runs to trace'
+        }
+        markups={savedMarkups}
+        openMarkup={openMarkup}
         cableSchedule={cableSchedule}
         sheetLegs={sheetLegs}
       />
