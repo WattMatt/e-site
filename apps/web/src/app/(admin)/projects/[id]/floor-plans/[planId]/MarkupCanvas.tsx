@@ -61,6 +61,7 @@ import {
 import { Tooltip } from './markup-tooltip'
 import { SYMBOLS, SYMBOL_KINDS, SymbolSvg, type SymbolKind } from './markup-symbols'
 import { pngBase64ToBlob } from './markup-export'
+import { isPrimaryDrawPress, isPanPress, isTouchEvent, classifyWheel } from './canvas-input'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -1103,6 +1104,18 @@ export function MarkupCanvas({
     offsetRef.current = offset
   }, [offset])
   const [gestureActive, setGestureActive] = useState(false)
+  /**
+   * A middle-drag or space-drag is moving the sheet. A ref because the pointer
+   * handlers read it synchronously on the same event tick that sets it, and
+   * state would be a render behind; the paired state below is only for cursor.
+   */
+  const panningRef = useRef(false)
+  const [panning, setPanning] = useState(false)
+  /** Space held = temporary hand tool, for trackpads with no middle button. */
+  const spaceHeldRef = useRef(false)
+  const [spaceHeld, setSpaceHeld] = useState(false)
+  /** Fingers currently down, so only the first one may act on the canvas. */
+  const touchCountRef = useRef(0)
 
   useEffect(() => {
     const el = containerRef.current
@@ -1219,11 +1232,22 @@ export function MarkupCanvas({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const { x, y } = localPt(e)
-      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
-      zoomBy(factor, x, y)
+      // Was `e.deltaY < 0 ? 1.1 : 1/1.1` — sign of deltaY only, which made a
+      // trackpad's horizontal swipe zoom OUT (deltaY is 0, and 0 < 0 is false)
+      // and left a MacBook with no pan gesture at all. See classifyWheel.
+      const intent = classifyWheel(e)
+      if (intent.kind === 'zoom') {
+        zoomBy(intent.factor, x, y)
+        return
+      }
+      if (intent.dx === 0 && intent.dy === 0) return
+      const next = { x: offsetRef.current.x + intent.dx, y: offsetRef.current.y + intent.dy }
+      offsetRef.current = next
+      setOffset(next)
     }
     const onDown = (e: PointerEvent) => {
       pointers.set(e.pointerId, localPt(e))
+      if (e.pointerType === 'touch') touchCountRef.current = pointers.size
       if (pointers.size === 2) {
         const pts = [...pointers.values()]
         const dx = pts[1]!.x - pts[0]!.x
@@ -1266,6 +1290,7 @@ export function MarkupCanvas({
     }
     const onUp = (e: PointerEvent) => {
       pointers.delete(e.pointerId)
+      if (e.pointerType === 'touch') touchCountRef.current = pointers.size
       if (pointers.size < 2) {
         gesture = null
         setGestureActive(false)
@@ -1287,6 +1312,136 @@ export function MarkupCanvas({
       el.removeEventListener('pointerleave', onUp)
     }
   }, [zoomBy])
+
+  /**
+   * ── Drag the sheet, in every tool ────────────────────────────────────────
+   *
+   * Middle-drag (mouse) and space+left-drag (trackpad, which has no middle
+   * button). Pan was previously a property of the Select tool
+   * (`draggable={tool === 'select'}`), and leaving a tool wipes that tool's
+   * work — so "move the sheet" and "keep tracing" were mutually exclusive by
+   * construction. This makes navigation orthogonal to the tool, which is what
+   * AutoCAD and Bluebeam have always done.
+   *
+   * THREE DECISIONS WORTH THE COMMENT:
+   *
+   * 1. CAPTURE PHASE ON THE CONTAINER. Konva binds its own listeners on
+   *    `stage.content`, a div INSIDE containerRef, and dispatches without ever
+   *    reading `button`. A capture listener on the ancestor therefore runs
+   *    first, and `stopPropagation()` here means Konva never sees the event at
+   *    all — which suppresses tool logic, shape selection, shape drag and stage
+   *    drag in ONE place. The alternative, a `button` check in each of the ~15
+   *    tool branches plus every shape handler, is a hand-maintained list, and
+   *    this repo has been bitten by those repeatedly.
+   *
+   * 2. NOT A KONVA DRAG. Konva's own drag recomputes position from an offset
+   *    captured once at drag start, so a wheel tick mid-drag is not merely
+   *    ignored, it is REVERTED on the next mousemove. The owner's request was
+   *    literally "the same wheel to zoom and pan", which is impossible if pan
+   *    is a Konva drag. This writes `offsetRef`/`setOffset` — the model the
+   *    two-finger pinch already uses — so zoom and pan compose.
+   *
+   * 3. preventDefault ON `mousedown`, NOT pointerdown. Chrome and Edge on
+   *    Windows and Linux open the autoscroll puck on a middle mousedown, and it
+   *    is the compatibility mouse event that triggers it.
+   */
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    let last: { x: number; y: number } | null = null
+
+    const begin = (e: PointerEvent) => {
+      // Middle button anywhere, or primary while space is held.
+      const wants = isPanPress(e) || (e.button === 0 && spaceHeldRef.current && e.pointerType !== 'touch')
+      if (!wants) return
+      e.preventDefault()
+      e.stopPropagation()
+      last = { x: e.clientX, y: e.clientY }
+      panningRef.current = true
+      setPanning(true)
+      try { el.setPointerCapture(e.pointerId) } catch { /* capture is best-effort */ }
+    }
+
+    const move = (e: PointerEvent) => {
+      if (!panningRef.current || !last) return
+      e.preventDefault()
+      e.stopPropagation()
+      // Screen-space delta applied straight to the offset. NOT divided by
+      // scale: `offset` is the Stage's x/y in screen pixels, with `scale`
+      // applied separately, so the sheet must follow the cursor 1:1 at any zoom.
+      const next = {
+        x: offsetRef.current.x + (e.clientX - last.x),
+        y: offsetRef.current.y + (e.clientY - last.y),
+      }
+      last = { x: e.clientX, y: e.clientY }
+      offsetRef.current = next
+      setOffset(next)
+    }
+
+    const end = (e: PointerEvent) => {
+      if (!panningRef.current) return
+      panningRef.current = false
+      last = null
+      setPanning(false)
+      try { el.releasePointerCapture(e.pointerId) } catch { /* already released */ }
+    }
+
+    // The autoscroll puck would otherwise swallow the drag entirely.
+    const killMiddleDefault = (e: MouseEvent) => { if (e.button === 1) e.preventDefault() }
+
+    el.addEventListener('pointerdown', begin, { capture: true })
+    el.addEventListener('pointermove', move, { capture: true })
+    el.addEventListener('pointerup', end, { capture: true })
+    el.addEventListener('pointercancel', end, { capture: true })
+    el.addEventListener('lostpointercapture', end, { capture: true })
+    el.addEventListener('mousedown', killMiddleDefault, { capture: true })
+    el.addEventListener('auxclick', killMiddleDefault, { capture: true })
+    return () => {
+      el.removeEventListener('pointerdown', begin, { capture: true })
+      el.removeEventListener('pointermove', move, { capture: true })
+      el.removeEventListener('pointerup', end, { capture: true })
+      el.removeEventListener('pointercancel', end, { capture: true })
+      el.removeEventListener('lostpointercapture', end, { capture: true })
+      el.removeEventListener('mousedown', killMiddleDefault, { capture: true })
+      el.removeEventListener('auxclick', killMiddleDefault, { capture: true })
+    }
+  }, [])
+
+  /**
+   * Space = temporary hand. The guard skips typing targets AND buttons: the
+   * toolbar is dense, and space on a focused button is that button's activate
+   * key, so hijacking it would fire whatever the user last clicked.
+   */
+  useEffect(() => {
+    const typing = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null
+      if (!el) return false
+      const tag = el.tagName
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || el.isContentEditable
+    }
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat || typing(e.target)) return
+      e.preventDefault() // or the page scrolls
+      spaceHeldRef.current = true
+      setSpaceHeld(true)
+    }
+    const up = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return
+      spaceHeldRef.current = false
+      setSpaceHeld(false)
+    }
+    // Releasing the key while the window is unfocused would otherwise leave the
+    // hand latched on for ever.
+    const blur = () => { spaceHeldRef.current = false; setSpaceHeld(false) }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+    }
+  }, [])
 
   // Keyboard: F or 0 → fit-to-view, +/= zoom in, - zoom out.
   // Skip when typing in an input/textarea so calibration entry isn't hijacked.
@@ -1337,17 +1492,37 @@ export function MarkupCanvas({
           return
         }
       }
+      // ── The same three keys, in markup mode ──────────────────────────────
+      // These handlers, and the stacks behind them, already existed; only the
+      // `if (routeMode)` fence above kept them from ever running while drawing.
+      // So Escape could not cancel a half-drawn polygon, Enter could not finish
+      // one, and undo was mouse-only — in the mode people spend most time in.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) redo(); else undo()
+        return
+      }
+      if (e.key === 'Enter' && polyPoints.length >= 4) {
+        e.preventDefault()
+        finishPoly()
+        return
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         e.preventDefault()
         deleteSelected()
       } else if (e.key === 'Escape') {
-        setSelectedId(null)
+        // One meaning everywhere: abandon what is in progress, else drop the
+        // selection. Previously Escape silently did nothing to a half-drawn
+        // shape and the only way out was to switch tools, which deleted it.
+        e.preventDefault()
+        if (polyPoints.length) setPolyPoints([])
+        else setSelectedId(null)
       }
     }
     window.addEventListener('keydown', onEdit)
     return () => window.removeEventListener('keydown', onEdit)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, shapes, mode, routeMode, polyPoints, pendingLeg, selectedLegId, history])
+  }, [selectedId, shapes, mode, routeMode, polyPoints, pendingLeg, selectedLegId, history, undoStack, redoStack])
 
   // ── History ───────────────────────────────────────────────────────────
   function pushHistory(prev: AnyShape[]) {
@@ -1648,6 +1823,20 @@ export function MarkupCanvas({
   // mouse strokes at their user-chosen width.
   function onPointerDown(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
     if (mode === 'view') return // read-only: no placement/drawing on the canvas
+    // Only the primary button draws. Before this guard a middle or right press
+    // ran the full tool body: placed a pin, opened a blocking window.prompt,
+    // replaced a calibration point, appended a route vertex, or erased and
+    // pushed undo. `isPrimaryDrawPress` checks the event TYPE first, because a
+    // TouchEvent has no `button` and the naive `button !== 0` test would return
+    // early for every finger press and brick the canvas on a tablet.
+    if (!isPrimaryDrawPress(e.evt)) return
+    // A pan is under way (middle-drag or space-drag): the sheet is moving, so
+    // nothing should be drawn on it.
+    if (panningRef.current) return
+    // Only the FIRST finger may act. A second finger landing on the canvas is
+    // the start of a pinch, and today it stamps its own vertex before the
+    // gesture handler ever sees it.
+    if (isTouchEvent(e.evt) && touchCountRef.current > 1) return
     const stage = e.target.getStage()
     if (!stage) return
     const pos = stage.getRelativePointerPosition()
@@ -1804,6 +1993,7 @@ export function MarkupCanvas({
   }
 
   function onPointerMove(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
+    if (panningRef.current) return
     if (tool === 'eraser') {
       const st = e.target.getStage()
       const p = st?.getRelativePointerPosition()
@@ -1848,7 +2038,11 @@ export function MarkupCanvas({
     })
   }
 
-  function onPointerUp() {
+  function onPointerUp(e?: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
+    // This took no argument at all, so releasing the middle button part-way
+    // through a left-button stroke committed it. The exact workflow this PR
+    // creates — hold the pen, draw, press middle to pan — hit that every time.
+    if (e && !isPrimaryDrawPress(e.evt)) return
     if (!current) return
     const c = current
 
@@ -2776,7 +2970,7 @@ export function MarkupCanvas({
         )}
         <ToolbarGroup>
           <ToolbarButton onClick={zoomOut} title="Zoom out (−, scroll wheel, or pinch)">−</ToolbarButton>
-          <ToolbarButton onClick={fitToView} disabled={!img} title="Fit to view (F or 0) — scroll wheel or pinch to zoom, two-finger drag to pan">
+          <ToolbarButton onClick={fitToView} disabled={!img} title="Fit to view (F or 0). Zoom: wheel or pinch. Pan: middle-drag, hold space and drag, or two fingers — in any tool.">
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, letterSpacing: '0.04em' }}>FIT</span>
           </ToolbarButton>
           <ToolbarButton onClick={zoomIn} title="Zoom in (+, scroll wheel, or pinch)">+</ToolbarButton>
@@ -3277,6 +3471,12 @@ export function MarkupCanvas({
             y={offset.y}
             draggable={tool === 'select' && !gestureActive}
             onDragEnd={(e) => {
+              // ⚠ Konva drag events BUBBLE. Without this guard, dragging a mark
+              // or a route vertex reached here and wrote the SHAPE's image
+              // coordinates into the pan offset, teleporting the sheet. The
+              // guard covers every current and future draggable child, which a
+              // cancelBubble on each one would not.
+              if (e.target !== e.target.getStage()) return
               const t = e.target as Konva.Stage
               const next = { x: t.x(), y: t.y() }
               offsetRef.current = next
@@ -3303,9 +3503,11 @@ export function MarkupCanvas({
                   : undefined
             }
             style={{
-              cursor: gestureActive
+              // Hand beats tool: while the sheet is moving, or space is held
+              // ready to move it, the cursor says so whatever tool is held.
+              cursor: panning || gestureActive
                 ? 'grabbing'
-                : tool === 'select'
+                : spaceHeld || tool === 'select'
                   ? 'grab'
                   : 'crosshair',
               background: 'white',
