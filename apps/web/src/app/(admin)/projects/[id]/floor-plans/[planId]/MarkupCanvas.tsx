@@ -61,7 +61,7 @@ import {
 import { Tooltip } from './markup-tooltip'
 import { SYMBOLS, SYMBOL_KINDS, SymbolSvg, type SymbolKind } from './markup-symbols'
 import { pngBase64ToBlob } from './markup-export'
-import { isPrimaryDrawPress, isPanPress, isTouchEvent, classifyWheel } from './canvas-input'
+import { isPrimaryDrawPress, isPanPress, isTouchEvent, classifyWheel, rollbackPinchVertex } from './canvas-input'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -1116,6 +1116,12 @@ export function MarkupCanvas({
   const [spaceHeld, setSpaceHeld] = useState(false)
   /** Fingers currently down, so only the first one may act on the canvas. */
   const touchCountRef = useRef(0)
+  /**
+   * The vertex list as it stood the instant a finger landed. If that finger
+   * turns out to be half of a pinch, this is what we cut back to — see
+   * `rollbackPinchVertex`. Null for mouse input.
+   */
+  const polyLenBeforeTouchRef = useRef<number | null>(null)
 
   useEffect(() => {
     const el = containerRef.current
@@ -1258,6 +1264,10 @@ export function MarkupCanvas({
           cy: (pts[0]!.y + pts[1]!.y) / 2,
         }
         setCurrent(null)
+        // Finger one already ran the tool — it was indistinguishable from a
+        // deliberate tap until this moment. Cut the vertex it placed.
+        setPolyPoints((pts) => rollbackPinchVertex(pts, polyLenBeforeTouchRef.current))
+        polyLenBeforeTouchRef.current = null
         setGestureActive(true)
       }
     }
@@ -1837,6 +1847,8 @@ export function MarkupCanvas({
     // the start of a pinch, and today it stamps its own vertex before the
     // gesture handler ever sees it.
     if (isTouchEvent(e.evt) && touchCountRef.current > 1) return
+    // Snapshot BEFORE any branch runs, so a pinch can be undone exactly.
+    polyLenBeforeTouchRef.current = isTouchEvent(e.evt) ? polyPoints.length : null
     const stage = e.target.getStage()
     if (!stage) return
     const pos = stage.getRelativePointerPosition()
