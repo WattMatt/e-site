@@ -90,15 +90,28 @@ SELECT * FROM (VALUES
   ('RLS enabled and forced',
      (SELECT relrowsecurity AND relforcerowsecurity
         FROM pg_class WHERE oid = 'tenants.floor_plan_markups'::regclass)),
-  ('write gate is RESTRICTIVE, not a membership test',
-     (SELECT polpermissive = false FROM pg_policy
-       WHERE polname = 'floor_plan_markups_write_authz')),
-  ('write gate names every MARKUP_WRITE_ROLE and no other',
-     (SELECT pg_get_expr(polqual, polrelid) LIKE '%owner%'
-         AND pg_get_expr(polqual, polrelid) LIKE '%project_manager%'
-         AND pg_get_expr(polqual, polrelid) LIKE '%contractor%'
-         AND pg_get_expr(polqual, polrelid) NOT LIKE '%inspector%'
-        FROM pg_policy WHERE polname = 'floor_plan_markups_write_authz')),
+  -- 00206 split the FOR ALL pair into per-verb policies, because FOR ALL
+  -- includes SELECT and a RESTRICTIVE policy narrows every verb it covers.
+  ('every write verb carries a RESTRICTIVE gate',
+     (SELECT count(*) = 3 FROM pg_policy
+       WHERE polrelid = 'tenants.floor_plan_markups'::regclass
+         AND polpermissive = false AND polcmd IN ('a','w','d'))),
+  ('no RESTRICTIVE policy touches SELECT',
+     (SELECT count(*) = 0 FROM pg_policy
+       WHERE polrelid = 'tenants.floor_plan_markups'::regclass
+         AND polpermissive = false AND polcmd NOT IN ('a','w','d'))),
+  ('exactly one policy covers SELECT',
+     (SELECT count(*) = 1 FROM pg_policy
+       WHERE polrelid = 'tenants.floor_plan_markups'::regclass
+         AND polcmd IN ('r','*'))),
+  ('the write gates name every MARKUP_WRITE_ROLE and no other',
+     (SELECT bool_and(
+               COALESCE(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) LIKE '%owner%'
+           AND COALESCE(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) LIKE '%project_manager%'
+           AND COALESCE(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) LIKE '%contractor%'
+           AND COALESCE(pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid)) NOT LIKE '%inspector%')
+        FROM pg_policy WHERE polrelid = 'tenants.floor_plan_markups'::regclass
+          AND polpermissive = false)),
   ('read policy excludes client_viewer',
      (SELECT pg_get_expr(polqual, polrelid) LIKE '%client_viewer%'
         FROM pg_policy WHERE polname = 'floor_plan_markups_select')),

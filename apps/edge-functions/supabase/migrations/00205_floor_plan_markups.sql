@@ -35,6 +35,20 @@
 --
 -- This migration creates schema only. No backfill exists or is needed: both
 -- older stores are empty.
+--
+-- ⚠ AMENDED BY 00206, AND THE @verify BLOCK BELOW WAS EDITED TO MATCH.
+-- This migration's write gate was one `AS RESTRICTIVE FOR ALL` policy, and
+-- FOR ALL includes SELECT, so it narrowed READING to the write set as a side
+-- effect: an inspector or supplier on the project could not see a saved markup
+-- at all. 00206 splits both halves by verb. Its two policies,
+-- floor_plan_markups_write and floor_plan_markups_write_authz, are DROPPED
+-- there, so their directives have been REMOVED from the block below rather
+-- than left to fail: the post-push verifier re-checks every migration >= 00185
+-- on EVERY deploy, so a directive naming an object a later migration
+-- supersedes turns main red at the verify step while the push itself succeeds.
+-- That is the 00204 failure mode, and it was caught here before deploying
+-- rather than after. 00206 declares the six per-verb policies that replaced
+-- them, and pins that exactly one policy may ever cover SELECT.
 -- ---------------------------------------------------------------------------
 
 -- @verify:begin
@@ -51,8 +65,6 @@
 -- trigger: floor_plan_markups_bind_parents ON tenants.floor_plan_markups
 -- trigger: floor_plan_markups_updated_at ON tenants.floor_plan_markups
 -- policy: floor_plan_markups_select ON tenants.floor_plan_markups
--- policy: floor_plan_markups_write ON tenants.floor_plan_markups
--- policy: floor_plan_markups_write_authz ON tenants.floor_plan_markups RESTRICTIVE
 -- grant_present: authenticated SELECT ON tenants.floor_plan_markups
 -- grant_absent: anon SELECT ON tenants.floor_plan_markups
 -- grant_absent: anon EXECUTE ON tenants.floor_plan_markups_bind_parents()
