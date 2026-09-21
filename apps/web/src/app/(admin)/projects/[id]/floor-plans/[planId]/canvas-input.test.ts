@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { isPrimaryDrawPress, isPanPress, classifyWheel, isTouchEvent } from './canvas-input'
+import { isPrimaryDrawPress, isPanPress, classifyWheel, isTouchEvent, rollbackPinchVertex } from './canvas-input'
 
 /**
  * FIXTURE DISCIPLINE — every case below is chosen so a plausible WRONG
@@ -124,5 +124,46 @@ describe('the fixtures can actually fail', () => {
     const naive = (e: { button?: number }) => e.button === 0
     expect(naive(touch() as { button?: number })).toBe(false) // bricks the tablet
     expect(isPrimaryDrawPress(touch())).toBe(true)
+  })
+})
+
+describe('rollbackPinchVertex — the tablet trace-corruption case', () => {
+  // Three vertices already traced. Flat [x,y,…], so length 6.
+  const TRACED = [10, 10, 50, 50, 90, 20]
+
+  it('removes exactly the vertex the first finger of a pinch placed', () => {
+    const afterFingerOne = [...TRACED, 120, 80]
+    // Snapshot was taken before that finger landed.
+    expect(rollbackPinchVertex(afterFingerOne, TRACED.length)).toEqual(TRACED)
+  })
+
+  it('removes ONE vertex, not the whole trace — the run must survive the pan', () => {
+    const afterFingerOne = [...TRACED, 120, 80]
+    const out = rollbackPinchVertex(afterFingerOne, TRACED.length)
+    // The assertion that matters: panning mid-trace must not cost you the trace.
+    expect(out).toHaveLength(6)
+    expect(out).not.toHaveLength(0)
+    expect(out.slice(0, 6)).toEqual(TRACED)
+  })
+
+  it('leaves a mouse trace untouched — there is no snapshot to roll back to', () => {
+    expect(rollbackPinchVertex(TRACED, null)).toEqual(TRACED)
+  })
+
+  it('does nothing when the finger added no vertex', () => {
+    // e.g. the press landed while a different tool was held.
+    expect(rollbackPinchVertex(TRACED, TRACED.length)).toEqual(TRACED)
+  })
+
+  it('never extends or invents points from a stale or absurd snapshot', () => {
+    expect(rollbackPinchVertex(TRACED, 999)).toEqual(TRACED)
+    expect(rollbackPinchVertex(TRACED, -4)).toEqual(TRACED)
+    expect(rollbackPinchVertex([], 0)).toEqual([])
+  })
+
+  it('always leaves an even-length list, or the points stop pairing into x,y', () => {
+    for (const snap of [0, 2, 4, 6]) {
+      expect(rollbackPinchVertex([...TRACED, 120, 80], snap).length % 2).toBe(0)
+    }
   })
 })

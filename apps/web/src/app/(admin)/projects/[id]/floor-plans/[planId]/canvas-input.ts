@@ -111,3 +111,36 @@ export function classifyWheel(e: { deltaX: number; deltaY: number; ctrlKey: bool
   }
   return { kind: 'zoom', factor: e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP }
 }
+
+/**
+ * Undo the vertex the FIRST finger of a pinch placed.
+ *
+ * A pinch is two fingers, but finger one lands alone and is, at that instant,
+ * indistinguishable from a deliberate tap to place a vertex. You only learn it
+ * was a pinch when finger two arrives — by which time the vertex is committed.
+ * Deferring every commit to pointer-up would fix it generally, but that is a
+ * restructure of ~15 tool branches, two of which open a blocking
+ * `window.prompt` and so cannot observe a second finger at all.
+ *
+ * For the polyline this is exact and needs no restructure: snapshot the vertex
+ * list the moment a finger lands, and if a gesture then starts, cut back to it.
+ * No time window, no heuristic — the snapshot IS the pre-touch truth.
+ *
+ * This is the case that matters most: the server re-measures a cable run from
+ * the geometry it is handed, so a phantom vertex is not a cosmetic blemish, it
+ * is a wrong length on a signed schedule. Zooming in to place a vertex more
+ * accurately was what made the measurement wrong.
+ *
+ * `points` is flat [x,y,x,y,…], so a length is 2x a vertex count.
+ */
+export function rollbackPinchVertex(points: number[], snapshotLen: number | null): number[] {
+  // No finger-down snapshot: nothing to roll back to. Happens for mouse input,
+  // and for a gesture that starts without any press having reached the canvas.
+  if (snapshotLen === null) return points
+  // A snapshot at or beyond the current length means the finger added nothing
+  // (or something else already shortened the list). Leave it alone rather than
+  // extending or guessing.
+  if (snapshotLen >= points.length) return points
+  if (snapshotLen < 0) return points
+  return points.slice(0, snapshotLen)
+}
