@@ -23,8 +23,9 @@
  *                                 → download + ADOPT as the active file
  *                                   (version row recorded for history)
  *   - changed drawing WITH annotations (RFI annotations / QC markup
- *     lineage / snag pins / calibration — the check FAILS CLOSED: any
- *     query error counts as annotated)
+ *     lineage / snag pins / calibration, drawing-level or per-page /
+ *     traced cable-route legs / zone polygons — the check FAILS CLOSED:
+ *     any query error counts as annotated)
  *                                 → download as a NEW version row + flag
  *                                   has_newer_version; the active file only
  *                                   moves on the user's explicit Update
@@ -771,8 +772,9 @@ function decideTarget(
 
 /**
  * A drawing is "annotated" when anything is pinned to its active file's
- * geometry: RFI annotations, QC markup lineage, snag pins, or a measure
- * calibration. Annotated drawings are never auto-adopted — a layout change
+ * geometry: RFI annotations, QC markup lineage, snag pins, a measure
+ * calibration (drawing-level OR per-page), a traced cable-route leg, or a zone
+ * polygon. Annotated drawings are never auto-adopted — a layout change
  * in the new revision would silently misalign all of them.
  *
  * FAILS CLOSED: any query error counts as annotated. A transient PostgREST
@@ -817,6 +819,42 @@ async function isAnnotated(
     .limit(1)
     .maybeSingle()
   if (se || snag) return true
+
+  // A traced cable run. Its points are raw image-space pixels on THIS file, so
+  // adopting a different file leaves every leg measuring the wrong thing.
+  const { data: leg, error: le } = await supabase
+    .schema('cable_schedule')
+    .from('route_segments')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (le || leg) return true
+
+  // The scale for page 2+ (00199). This is the sharp edge, not a nicety:
+  // `calibrateFloorPlanAction` deliberately leaves floor_plans.pixels_per_meter
+  // NULL for pageIndex > 1 so the drawing-level scale stays the page-1 default.
+  // Without this check a run traced on page 2 of a multi-page PDF passes every
+  // other test and its drawing is silently adopted.
+  const { data: pageScale, error: pse } = await supabase
+    .schema('tenants')
+    .from('floor_plan_page_scales')
+    .select('floor_plan_id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (pse || pageScale) return true
+
+  // Zone polygons (00006). Stored as a percentage of the image, so they survive
+  // a pure re-raster — but not a layout change, which is what an adopt usually is.
+  const { data: zone, error: ze } = await supabase
+    .schema('tenants')
+    .from('floor_plan_zones')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (ze || zone) return true
 
   return false
 }
