@@ -16,6 +16,7 @@ import {
   type RouteHistoryEntry,
 } from '@/actions/cable-route.actions'
 import { AssignRoutePanel } from '@/components/cable-route/AssignRoutePanel'
+import { buildViewerQuery, saveTargetFor, adoptSavedLayer, type ActiveLayer } from './viewer-state'
 import {
   saveFloorPlanMarkupAction,
   renameFloorPlanMarkupAction,
@@ -228,24 +229,48 @@ export function DrawingViewer({
   }, [armedDeleteMarkupId])
 
   /**
-   * Save the canvas as a named layer. `markupId` is carried only when a layer
-   * was REOPENED, so a fresh drawing session always creates rather than
-   * silently overwriting whatever happened to be open last.
+   * The layer this session is writing to. Seeded from `?markup=` when one was
+   * REOPENED, and — the part that was missing — ADOPTED from the row the first
+   * save returns, so the second save updates instead of inserting again.
+   *
+   * Why this is local state and not the URL: the canvas is keyed on
+   * `openMarkup?.id`, so pushing `markup=<new id>` after a create would remount
+   * it, and a remount re-runs the image effect and re-rasterises the sheet —
+   * 20-60s on an A1. The URL stays the "which layer did I deliberately open"
+   * signal; this is "which layer am I writing to now".
+   */
+  const [activeLayer, setActiveLayer] = useState<ActiveLayer | null>(
+    openMarkup ? { id: openMarkup.id, name: openMarkup.name, updatedAt: openMarkup.updatedAt } : null,
+  )
+  useEffect(() => {
+    setActiveLayer(openMarkup ? { id: openMarkup.id, name: openMarkup.name, updatedAt: openMarkup.updatedAt } : null)
+  }, [openMarkup])
+
+  /**
+   * Save the canvas as a named layer.
+   *
+   * ⚠ The concurrency token and the id BOTH have to come from the last save,
+   * not from the page load. Before this, `markupId` read `openMarkup?.id` —
+   * null for a layer created in this session — so pressing Save twice INSERTed
+   * twice and the second one hit the (floor_plan_id, name) unique constraint.
+   * The user was told to pick another name when they only wanted to save again.
    */
   const onSaveLayer = useCallback(
     async (scene: SceneGraph, name: string) => {
       const res = await saveFloorPlanMarkupAction({
         floorPlanId: plan.id,
-        markupId: openMarkup?.id,
         name,
         scene,
-        expectedUpdatedAt: openMarkup?.updatedAt,
+        ...saveTargetFor(activeLayer),
       })
       if (res.error) return { error: res.error }
+      // Adopt the saved row: its id makes the next save an UPDATE, and its
+      // updated_at is the token that next save must present.
+      setActiveLayer((prev) => adoptSavedLayer(prev, res.markup))
       router.refresh()
       return {}
     },
-    [plan.id, openMarkup, router],
+    [plan.id, activeLayer, router],
   )
   const [committing, setCommitting] = useState(false)
 
@@ -459,10 +484,16 @@ export function DrawingViewer({
       // Sync to URL so the deep-link reflects the current mode, but use
       // `replace` so back-button history isn't polluted by every flick of
       // the toggle. `scroll: false` keeps the viewport pinned.
-      const qs = next === 'view' ? '' : `?mode=${next}`
-      router.replace(`${pathname}${qs}`, { scroll: false })
+      // ⚠ Rebuild the querystring, do NOT replace it. This previously emitted
+      // a bare `?mode=<next>`, which dropped `markup=` — so pressing the RFI
+      // tab with a saved layer open blanked the canvas (the canvas is keyed on
+      // the open layer, so it remounted with no scene) and then greyed both
+      // RFI buttons on `shapes.length === 0`. The user's markup looked lost.
+      // Carrying the layer through is also what makes "open a layer, then
+      // attach it to an RFI" possible at all.
+      router.replace(`${pathname}${buildViewerQuery(next, openMarkup?.id ?? null)}`, { scroll: false })
     },
-    [canWrite, mode, pathname, router],
+    [canWrite, mode, pathname, router, openMarkup],
   )
 
   return (
@@ -630,7 +661,7 @@ export function DrawingViewer({
           initialScene={openMarkup?.scene as SceneGraph | undefined}
           saveLayer={
             canWrite && !route && !editing
-              ? { openName: openMarkup?.name ?? null, onSave: onSaveLayer }
+              ? { openName: activeLayer?.name ?? null, onSave: onSaveLayer }
               : undefined
           }
           cablePicker={
