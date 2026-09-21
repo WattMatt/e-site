@@ -16,6 +16,12 @@ import {
   type RouteHistoryEntry,
 } from '@/actions/cable-route.actions'
 import { AssignRoutePanel } from '@/components/cable-route/AssignRoutePanel'
+import {
+  saveFloorPlanMarkupAction,
+  renameFloorPlanMarkupAction,
+  deleteFloorPlanMarkupAction,
+  type SavedMarkup,
+} from '@/actions/floor-plan-markup.actions'
 
 const MarkupCanvas = dynamic(
   () => import('./MarkupCanvas').then((m) => m.MarkupCanvas),
@@ -126,9 +132,35 @@ export type RouteContext = {
 
 const MODES: ReadonlyArray<{ value: ViewerMode; label: string; hint: string }> = [
   { value: 'view', label: 'View', hint: 'Read-only preview — pan and zoom only' },
-  { value: 'markup', label: 'Markup', hint: 'Full drawing tools; save attaches to an existing RFI' },
+  { value: 'markup', label: 'Markup', hint: 'Full drawing tools; save a named markup on this drawing, or attach one to an RFI' },
   { value: 'rfi', label: 'RFI', hint: 'Full drawing tools; save creates a new RFI with this markup' },
 ]
+
+/**
+ * Route is a FOURTH tab but not a fourth `ViewerMode` the switcher can set on
+ * its own: route mode needs a run, and the run is what the URL carries
+ * (`?mode=route&supply=…`). So the tab opens a picker and the picker navigates.
+ *
+ * It exists because the feature was unreachable without it. Route mode was only
+ * ever produced by the measure worklist, `trace →` on the schedule grid, or the
+ * ⚡ palette tool — none of which a user standing on a drawing would find. The
+ * tab renders even when the project has no cable schedule, disabled with a
+ * reason, because a capability you cannot see is one you assume does not exist.
+ */
+const ROUTE_TAB_HINT = 'Trace a cable run on this sheet and measure it'
+
+const railBtn: React.CSSProperties = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+  padding: '4px 8px',
+  background: 'var(--c-panel)',
+  color: 'var(--c-text-mid)',
+  border: '1px solid var(--c-border)',
+  borderRadius: 4,
+  cursor: 'pointer',
+}
 
 export function DrawingViewer({
   plan,
@@ -140,6 +172,10 @@ export function DrawingViewer({
   initialMode,
   canWrite,
   route,
+  markups,
+  openMarkup,
+  openRoutePicker = false,
+  routeUnavailableReason,
   cableSchedule,
   sheetLegs = [],
 }: {
@@ -155,6 +191,21 @@ export function DrawingViewer({
   canWrite: boolean
   /** Present only when the page was opened as `?mode=route&supply=…`. */
   route?: RouteContext
+  /** Saved markup layers on this drawing (00205). */
+  markups: SavedMarkup[]
+  /** The layer opened via `?markup=<id>`, hydrated onto the canvas. */
+  openMarkup: SavedMarkup | null
+  /** `?route=1` from the Drawings tab: open with the run picker already up. */
+  openRoutePicker?: boolean
+  /**
+   * Why the Route tab is disabled, when it is. Supplied by the page because
+   * only the page knows BOTH facts: whether a cable schedule exists and
+   * whether this caller may measure. Inferring it from `cableSchedule` being
+   * absent would tell a contractor "this project has no cable schedule" when
+   * the project has one and the contractor simply may not trace on it — a
+   * confidently wrong message, which is worse than no message.
+   */
+  routeUnavailableReason?: string
   /** Present when cable measuring may be STARTED from this drawing. */
   cableSchedule?: CableScheduleContext
   /** Every saved route leg on this sheet, for the overlay in any mode. */
@@ -163,6 +214,39 @@ export function DrawingViewer({
   const router = useRouter()
   const pathname = usePathname()
   const [routeError, setRouteError] = useState<string | null>(null)
+  /** The Route tab's run picker. See ROUTE_TAB_HINT for why this tab exists. */
+  const [routePickerOpen, setRoutePickerOpen] = useState(openRoutePicker)
+  /** Saved-markup rail state: which row is armed for delete, and rename. */
+  const [armedDeleteMarkupId, setArmedDeleteMarkupId] = useState<string | null>(null)
+  const [renamingMarkupId, setRenamingMarkupId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [markupError, setMarkupError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!armedDeleteMarkupId) return
+    const t = setTimeout(() => setArmedDeleteMarkupId(null), 4000)
+    return () => clearTimeout(t)
+  }, [armedDeleteMarkupId])
+
+  /**
+   * Save the canvas as a named layer. `markupId` is carried only when a layer
+   * was REOPENED, so a fresh drawing session always creates rather than
+   * silently overwriting whatever happened to be open last.
+   */
+  const onSaveLayer = useCallback(
+    async (scene: SceneGraph, name: string) => {
+      const res = await saveFloorPlanMarkupAction({
+        floorPlanId: plan.id,
+        markupId: openMarkup?.id,
+        name,
+        scene,
+        expectedUpdatedAt: openMarkup?.updatedAt,
+      })
+      if (res.error) return { error: res.error }
+      router.refresh()
+      return {}
+    },
+    [plan.id, openMarkup, router],
+  )
   const [committing, setCommitting] = useState(false)
 
   // The route as the browser knows it. Seeded from the server, then replaced
@@ -416,6 +500,18 @@ export function DrawingViewer({
             )}
           </div>
         )}
+        {openMarkup?.staleAgainstDrawing && (
+          <div
+            className="data-panel"
+            role="alert"
+            style={{ padding: '10px 12px', marginBottom: 8, fontSize: 12, borderColor: 'var(--c-amber)' }}
+          >
+            <strong>&ldquo;{openMarkup.name}&rdquo; was drawn on an earlier version of this drawing.</strong>{' '}
+            The drawing file has been updated since, so these marks may no longer sit where they were put.
+            Check them against the sheet before relying on them. Nothing has been moved: the marks are exactly
+            as they were saved, and there is no way to translate them onto a different revision automatically.
+          </div>
+        )}
         {canWrite && !editing && !route && (
           <div className="data-panel" style={{ padding: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div
@@ -454,6 +550,28 @@ export function DrawingViewer({
                   </button>
                 )
               })}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={false}
+                disabled={!cableSchedule}
+                onClick={() => setRoutePickerOpen((v) => !v)}
+                title={cableSchedule ? ROUTE_TAB_HINT : routeUnavailableReason ?? 'Cable tracing is not available on this project'}
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 10,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  padding: '7px 14px',
+                  background: routePickerOpen ? 'var(--c-amber-mid)' : 'var(--c-panel)',
+                  color: !cableSchedule ? 'var(--c-text-dim)' : routePickerOpen ? 'var(--c-amber)' : 'var(--c-text-mid)',
+                  border: 'none',
+                  borderLeft: '1px solid var(--c-border)',
+                  cursor: cableSchedule ? 'pointer' : 'not-allowed',
+                }}
+              >
+                Route
+              </button>
             </div>
             <span
               style={{
@@ -463,12 +581,58 @@ export function DrawingViewer({
                 letterSpacing: '0.04em',
               }}
             >
-              {MODES.find((m) => m.value === mode)?.hint}
+              {routePickerOpen && cableSchedule ? ROUTE_TAB_HINT : MODES.find((m) => m.value === mode)?.hint}
             </span>
+          </div>
+        )}
+        {routePickerOpen && cableSchedule && (
+          <div className="data-panel" style={{ padding: 10, marginBottom: 8 }}>
+            <div className="data-panel-header" style={{ marginBottom: 6 }}>
+              <span className="data-panel-title">Pick a run to trace on this sheet</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                {cableSchedule.revisionCode}
+              </span>
+            </div>
+            {cableSchedule.runs.length === 0 ? (
+              <div className="data-panel-empty">
+                This revision has no runs yet. Add supplies to the cable schedule first.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 240, overflowY: 'auto' }}>
+                {cableSchedule.runs.map((r) => (
+                  <button
+                    key={r.supplyId}
+                    type="button"
+                    className="data-panel-row"
+                    onClick={() => {
+                      setRoutePickerOpen(false)
+                      router.push(`${pathname}?mode=route&supply=${r.supplyId}`)
+                    }}
+                    style={{ textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', gap: 10 }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--c-text)' }}>{r.label}</span>
+                    {r.traced && <span className="badge badge-amber">traced</span>}
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+                      {r.scheduleLengthM != null ? `${r.scheduleLengthM.toFixed(2)} m` : 'unmeasured'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         <MarkupCanvas
+          // Remount when a different saved layer is opened: `initialScene`
+          // seeds `shapes` as INITIAL state only, so without this, opening a
+          // second layer would leave the first one's shapes on the canvas.
+          key={`${plan.id}:${openMarkup?.id ?? 'new'}`}
+          initialScene={openMarkup?.scene as SceneGraph | undefined}
+          saveLayer={
+            canWrite && !route && !editing
+              ? { openName: openMarkup?.name ?? null, onSave: onSaveLayer }
+              : undefined
+          }
           cablePicker={
             cableSchedule
               ? {
@@ -648,7 +812,105 @@ export function DrawingViewer({
         <>
         <div className="data-panel">
           <div className="data-panel-header">
-            <span className="data-panel-title">Markups on this drawing</span>
+            <span className="data-panel-title">Saved markups</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
+              {markups.length}
+            </span>
+          </div>
+          {markupError && (
+            <div role="alert" style={{ padding: '6px 10px', fontSize: 12, color: '#dc2626' }}>{markupError}</div>
+          )}
+          {markups.length === 0 ? (
+            <div className="data-panel-empty">
+              {canWrite
+                ? 'None yet. Draw on the sheet, then press Save markup.'
+                : 'No saved markups on this drawing.'}
+            </div>
+          ) : (
+            markups.map((mk) => {
+              const isOpen = openMarkup?.id === mk.id
+              return (
+                <div key={mk.id} className="data-panel-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  {renamingMarkupId === mk.id ? (
+                    <>
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        maxLength={80}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={async (e) => {
+                          if (e.key === 'Escape') { setRenamingMarkupId(null); return }
+                          if (e.key !== 'Enter') return
+                          e.preventDefault()
+                          const res = await renameFloorPlanMarkupAction({ markupId: mk.id, name: renameValue })
+                          if (res.error) { setMarkupError(res.error); return }
+                          setMarkupError(null)
+                          setRenamingMarkupId(null)
+                          router.refresh()
+                        }}
+                        style={{
+                          flex: 1, minWidth: 120, fontSize: 12, padding: '4px 6px',
+                          background: 'var(--c-base)', color: 'var(--c-text)',
+                          border: '1px solid var(--c-amber)', borderRadius: 4,
+                        }}
+                      />
+                      <button type="button" onClick={() => setRenamingMarkupId(null)} style={railBtn}>Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => router.push(`${pathname}?mode=markup&markup=${mk.id}`)}
+                        style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                        title={isOpen ? 'This markup is open' : 'Open this markup on the drawing'}
+                      >
+                        <div style={{ fontSize: 12, color: isOpen ? 'var(--c-amber)' : 'var(--c-text)' }}>
+                          {mk.name}{isOpen ? ' · open' : ''}
+                        </div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)', marginTop: 2 }}>
+                          {mk.shapeCount} item{mk.shapeCount === 1 ? '' : 's'} · {new Date(mk.updatedAt).toLocaleDateString()}
+                        </div>
+                      </button>
+                      {mk.staleAgainstDrawing && (
+                        <span className="badge badge-warning" title="Drawn on an earlier version of this drawing">older file</span>
+                      )}
+                      {canWrite && (
+                        <>
+                          <button
+                            type="button"
+                            style={railBtn}
+                            onClick={() => { setRenamingMarkupId(mk.id); setRenameValue(mk.name) }}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            type="button"
+                            style={armedDeleteMarkupId === mk.id ? { ...railBtn, background: 'var(--c-amber)', color: '#1a1a1a', borderColor: 'var(--c-amber)' } : railBtn}
+                            title={armedDeleteMarkupId === mk.id ? 'Press again to delete' : 'Delete this markup — press twice'}
+                            onClick={async () => {
+                              if (armedDeleteMarkupId !== mk.id) { setArmedDeleteMarkupId(mk.id); return }
+                              setArmedDeleteMarkupId(null)
+                              const res = await deleteFloorPlanMarkupAction({ markupId: mk.id })
+                              if (res.error) { setMarkupError(res.error); return }
+                              setMarkupError(null)
+                              if (isOpen) router.push(`${pathname}?mode=markup`)
+                              else router.refresh()
+                            }}
+                          >
+                            {armedDeleteMarkupId === mk.id ? 'Confirm' : 'Delete'}
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+        <div className="data-panel">
+          <div className="data-panel-header">
+            <span className="data-panel-title">RFI markups</span>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--c-text-dim)' }}>
               {annotations.length}
             </span>

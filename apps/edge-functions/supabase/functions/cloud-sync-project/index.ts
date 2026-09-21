@@ -24,7 +24,8 @@
  *                                   (version row recorded for history)
  *   - changed drawing WITH annotations (RFI annotations / QC markup
  *     lineage / snag pins / calibration, drawing-level or per-page /
- *     traced cable-route legs / zone polygons — the check FAILS CLOSED:
+ *     traced cable-route legs / zone polygons / saved markup layers —
+ *     the check FAILS CLOSED:
  *     any query error counts as annotated)
  *                                 → download as a NEW version row + flag
  *                                   has_newer_version; the active file only
@@ -773,8 +774,8 @@ function decideTarget(
 /**
  * A drawing is "annotated" when anything is pinned to its active file's
  * geometry: RFI annotations, QC markup lineage, snag pins, a measure
- * calibration (drawing-level OR per-page), a traced cable-route leg, or a zone
- * polygon. Annotated drawings are never auto-adopted — a layout change
+ * calibration (drawing-level OR per-page), a traced cable-route leg, a zone
+ * polygon, or a saved markup layer. Annotated drawings are never auto-adopted — a layout change
  * in the new revision would silently misalign all of them.
  *
  * FAILS CLOSED: any query error counts as annotated. A transient PostgREST
@@ -855,6 +856,18 @@ async function isAnnotated(
     .limit(1)
     .maybeSingle()
   if (ze || zone) return true
+
+  // A saved markup layer (00205). Its own `file_path` records which revision
+  // it was drawn on and the viewer warns when they diverge, but a warning is
+  // the fallback: not adopting silently is the actual protection.
+  const { data: markup, error: me } = await supabase
+    .schema('tenants')
+    .from('floor_plan_markups')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (me || markup) return true
 
   return false
 }
