@@ -18,7 +18,7 @@
 CREATE TEMP TABLE _r (k text, v boolean) ON COMMIT DROP;
 -- The probe records its findings while impersonating, so the impersonated
 -- roles need to be able to write to the scratch table itself.
-GRANT ALL ON _r TO authenticated, anon;
+GRANT ALL ON _r TO authenticated, anon, service_role;
 
 DO $$
 DECLARE
@@ -147,7 +147,22 @@ BEGIN
     INSERT INTO _r VALUES ('client_viewer_sees_NO_markup', false);
   END IF;
 
-  -- ═══ 4. ANON — must be refused at the grant, before any policy ══════════
+  -- ═══ 4. SERVICE ROLE — cloud-sync's isAnnotated() runs as this ══════════
+  -- The table has FORCE ROW LEVEL SECURITY and its only SELECT policy needs
+  -- user_has_project_access(), which is false with no auth.uid(). If the
+  -- service role were subject to it, isAnnotated() would read ZERO, every
+  -- drawing with a saved markup would read as UNANNOTATED, and cloud-sync
+  -- would silently adopt a new file underneath it — the exact landmine #195
+  -- closed, reopened by the policy that was supposed to protect the layer.
+  --
+  -- An empty-table probe cannot test this: "returns no rows" is equally
+  -- consistent with "bypasses RLS" and "blocked by it". There is a row by now.
+  SET LOCAL ROLE service_role;
+  SELECT count(*) INTO v_seen FROM tenants.floor_plan_markups WHERE floor_plan_id = v_plan;
+  INSERT INTO _r VALUES ('service_role_sees_markups', v_seen >= 1);
+  RESET ROLE;
+
+  -- ═══ 5. ANON — must be refused at the grant, before any policy ══════════
   SET LOCAL ROLE anon;
   BEGIN
     PERFORM 1 FROM tenants.floor_plan_markups LIMIT 1;
@@ -168,5 +183,6 @@ SELECT * FROM (VALUES
   ('inspector delete affects zero rows',                             (SELECT v FROM _r WHERE k='inspector_delete_affects_nothing')),
   ('CONTROL: client_viewer can see the drawing itself',              (SELECT v FROM _r WHERE k='client_viewer_CAN_see_the_drawing')),
   ('client_viewer sees no markup on it',                             (SELECT v FROM _r WHERE k='client_viewer_sees_NO_markup')),
-  ('anon is refused at the grant',                                   (SELECT v FROM _r WHERE k='anon_REFUSED'))
+  ('anon is refused at the grant',                                   (SELECT v FROM _r WHERE k='anon_REFUSED')),
+  ('service_role still SEES markups, so isAnnotated() is not blind',  (SELECT v FROM _r WHERE k='service_role_sees_markups'))
 ) AS t("check", ok);
