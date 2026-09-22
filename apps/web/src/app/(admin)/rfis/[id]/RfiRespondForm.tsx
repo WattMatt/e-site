@@ -14,6 +14,7 @@ export function RfiRespondForm({ rfiId }: { rfiId: string }) {
   const [body, setBody] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<StagedAttachment[]>([])
   const [projectId, setProjectId] = useState<string | null>(null)
   const [orgId, setOrgId] = useState<string | null>(null)
@@ -40,6 +41,7 @@ export function RfiRespondForm({ rfiId }: { rfiId: string }) {
     if (body.trim().length < 10) { setError('Response must be at least 10 characters'); return }
     setSaving(true)
     setError(null)
+    setWarning(null)
 
     // Server action handles the insert + status flip + raiser/assignee
     // notification; attachments stay client-side because they need the
@@ -50,6 +52,11 @@ export function RfiRespondForm({ rfiId }: { rfiId: string }) {
       setSaving(false)
       return
     }
+
+    // The answer saved but the status did not move — the caller has no role on
+    // this project (00201). Never treated as a failure: the response exists,
+    // and discarding the attachments over it would lose real work.
+    if (result.statusWarning) setWarning(result.statusWarning)
 
     if (attachments.length > 0 && projectId && orgId) {
       try {
@@ -92,6 +99,7 @@ export function RfiRespondForm({ rfiId }: { rfiId: string }) {
         allowFloorPlan={!!projectId}
       />
       {error && <p style={{ color: 'var(--c-red)', fontSize: 12 }}>{error}</p>}
+      {warning && <p style={{ color: 'var(--c-amber)', fontSize: 12 }}>{warning}</p>}
       <div>
         <Button size="sm" onClick={submit} isLoading={saving} disabled={!body.trim()}>
           Submit Response

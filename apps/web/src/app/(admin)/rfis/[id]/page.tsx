@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { rfiService, formatDate, formatRelative } from '@esite/shared'
+import { rfiService, formatDate, formatRelative, ORG_WRITE_ROLES } from '@esite/shared'
 import { RfiRespondForm } from './RfiRespondForm'
 import { RfiCloseButton } from './RfiCloseButton'
 import { fetchAttachments } from '@/components/attachments/fetch'
@@ -45,6 +45,19 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
   const assignedTo = (rfi as any).assigned_to_profile as any
   const responses = (rfi as any).rfi_responses as any[] ?? []
   const rfiProjectId = (rfi as any).project_id as string
+
+  // Who may close: the raiser, or a governing role on the RFI's own project —
+  // the rule closeRfiAction enforces and migration 00201 enforces at the
+  // database. Rendered rather than left to a refusal, so a contractor is not
+  // offered a button that always fails.
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: viewerRole } = await (supabase as any).rpc('user_effective_project_role', {
+    p_project_id: rfiProjectId,
+    p_user_id: user?.id,
+  })
+  const canClose =
+    !!user &&
+    ((rfi as any).raised_by === user.id || ORG_WRITE_ROLES.includes(viewerRole as any))
 
   // Load attachments for the RFI + each response in parallel.
   const [rfiAttachments, ...responseAttachments] = await Promise.all([
@@ -276,7 +289,7 @@ export default async function RfiDetailPage({ params, searchParams }: Props) {
               <span>Closed <span style={{ color: 'var(--c-text)' }}>{formatDate(rfi.closed_at)}</span></span>
             )}
           </div>
-          {rfi.status !== 'closed' && <RfiCloseButton rfiId={id} />}
+          {rfi.status !== 'closed' && canClose && <RfiCloseButton rfiId={id} />}
         </div>
       </div>
     </div>

@@ -3,6 +3,15 @@ import type { CreateRfiInput, RespondToRfiInput } from '../schemas/rfi.schema'
 import { fetchProfileMap } from './_utils'
 import { projectSettingsService } from './project-settings.service'
 
+/**
+ * What `projects.rfis_write_guard()` (migration 00201) refuses, in the one
+ * place every caller reads it from, so the app and the database cannot drift
+ * into two different answers. The database's own sentence names the RFI
+ * number; this one is used where the caller has not read it.
+ */
+export const RFI_CLOSE_REFUSED =
+  "Only the person who raised this RFI, or the project's owners, admins or project managers, can close it."
+
 export const rfiService = {
   async listByOrg(client: TypedSupabaseClient, orgId: string) {
     const { data, error } = await client
@@ -113,20 +122,36 @@ export const rfiService = {
       .select()
       .single()
     if (error) throw error
-    await client
+
+    // The answer is saved; the status flip is a separate statement and can be
+    // refused on its own. Migration 00201's RESTRICTIVE policy narrows UPDATE
+    // to callers with an effective role on the RFI's project, and a policy that
+    // matches no row raises NOTHING — so the flip is reported by ROWS AFFECTED,
+    // not by an error. Swallowing it would leave the RFI reading `open` with an
+    // answer under it and nobody told.
+    const { data: moved, error: statusError } = await client
       .schema('projects')
       .from('rfis')
       .update({ status: 'responded' })
       .eq('id', input.rfiId)
-    return data
+      .select('id')
+    return {
+      ...(data as Record<string, unknown>),
+      status_moved: !statusError && (moved ?? []).length > 0,
+      status_error: statusError?.message ?? null,
+    } as any
   },
 
   async close(client: TypedSupabaseClient, rfiId: string, userId: string) {
-    const { error } = await client
+    const { data, error } = await client
       .schema('projects')
       .from('rfis')
       .update({ status: 'closed', closed_at: new Date().toISOString(), closed_by: userId })
       .eq('id', rfiId)
+      .select('id')
     if (error) throw error
+    // Same reason as respond(): 00201's policy refuses silently. Without this
+    // the caller reports a close that never happened.
+    if ((data ?? []).length === 0) throw new Error(RFI_CLOSE_REFUSED)
   },
 }
