@@ -1,6 +1,6 @@
 # Cable route measurement — the process
 
-**Status:** built on `feat/cable-route-viewer-handoff` (2026-09-14/15), replacing the PR #180 surface. Migrations `00192` (routes), `00198` (calibration geometry), `00199` (route history, per-page scales, telemetry). Gap analysis and design: `docs/superpowers/specs/2026-09-15-cable-route-measurement-complete-design.md`.
+**Status:** built on `feat/cable-route-viewer-handoff` (2026-09-14/15), replacing the PR #180 surface; **moved onto its own page 2026-09-22** (`/projects/[id]/cables/[revisionId]/measure` — worklist, sheet canvas and run on one page; the drawing viewer no longer has a route mode, see `docs/superpowers/specs/2026-09-22-cable-route-dedicated-tool-design.md`). Migrations `00192` (routes), `00198` (calibration geometry), `00199` (route history, per-page scales, telemetry). Gap analysis and design: `docs/superpowers/specs/2026-09-15-cable-route-measurement-complete-design.md`.
 
 ## What it is
 
@@ -16,27 +16,27 @@ supply (MB 1.1 → DB-10)
 
 | # | You do | Where | What is written |
 |---|---|---|---|
-| 1 | Pick a run | ⚡ *Measure a cable run* on any drawing · `trace →` on the schedule grid · the measure worklist | nothing |
-| 2 | Set the sheet's scale, once, if it has none | *Set scale* in route mode (or Calibrate in markup) | `tenants.floor_plans.pixels_per_meter` + the two points and metres (`00198`) |
-| 3 | Trace: click the corners, double-click to finish, **Save leg** | the drawing | one `route_segment`; the server re-measures from the sheet's scale and stores *its* figure |
-| 4 | Continue on another sheet if the run crosses one | *Continue on* in the banner | another `route_segment` |
-| 5 | Rise & drop | the rail on the drawing, or the worklist — the same panel | `supply_route.rise_m / drop_m` |
+| 1 | Pick a run | the worklist on the measure page · `trace →` on the schedule grid · **Trace** on the Drawings tab · press a route drawn on any drawing | nothing |
+| 2 | Set the sheet's scale, once, if it has none | *Set scale* on the measure page (or Calibrate in markup) | `tenants.floor_plans.pixels_per_meter` + the two points and metres (`00198`) |
+| 3 | Trace: click the corners, double-click to finish, **Save leg** | the sheet on the measure page | one `route_segment`; the server re-measures from the sheet's scale and stores *its* figure |
+| 4 | Continue on another sheet if the run crosses one | the *Sheet* picker above the canvas | another `route_segment` |
+| 5 | Rise & drop | the run rail on the measure page | `supply_route.rise_m / drop_m` |
 | 6 | **Assign to schedule** (confirming an overwrite if a length exists) | same panel | every strand's `measured_length_m`, method `SCALE_RULE`, `measured_length_by/at`, a `change_log` row |
-| 7 | **Export sheet** | the drawing | a versioned PDF (sheet + legend) in `projects.reports`, kind `cable_route_sheet`, listed under *Exported sheets* |
+| 7 | **Export sheet** | the toolbar on the measure page | a versioned PDF (sheet + legend) in `projects.reports`, kind `cable_route_sheet`, listed under *Exported sheets* |
 
-Step 3 is the only "save" you press repeatedly; 5 and 6 are one panel; 7 is optional. *Back to schedule* is navigation, not a save — nothing is lost by pressing it, because every leg was saved when you pressed **Save leg**.
+Step 3 is the only "save" you press repeatedly; 5 and 6 are one panel; 7 is optional. Leaving the page is navigation, not a save — nothing is lost, because every leg was saved when you pressed **Save leg**.
 
 ## Recall
 
-Every drawing shows its saved routes whenever it is opened — view, markup or route mode — with per-edge lengths, toggleable from the toolbar. Press a route to measure that run. On the schedule grid, a run whose length came from a trace carries a **traced** badge linking to its route. On the worklist, a run is *outstanding* until it has a route with at least one leg.
+Every drawing shows its saved routes whenever it is opened — in view, markup or RFI mode — with per-edge lengths, toggleable from the toolbar. Press a route to open that run on the measure page. On the schedule grid, a run whose length came from a trace carries a **traced** badge linking to its route. On the worklist, a run is *outstanding* until it has a route with at least one leg.
 
 ## While tracing
 
-- **Undo / redo** — ⌘Z / ⇧⌘Z or ↶ ↷ in route mode. One history covers everything you can see change: vertices as you place them, the pending leg, and every saved edit (a dragged vertex, an inserted or removed one, a deleted leg). Undoing a saved edit re-saves the previous state; it is not a client-side illusion.
+- **Undo / redo** — ⌘Z / ⇧⌘Z or ↶ ↷ on the measure page. One history covers everything you can see change: vertices as you place them, the pending leg, and every saved edit (a dragged vertex, an inserted or removed one, a deleted leg). Undoing a saved edit re-saves the previous state; it is not a client-side illusion.
 - **Snapping** — a new leg's first vertex snaps to the end of a leg already saved on the sheet so the run joins up; hold **Shift** to constrain a vertex to 0/45/90° from the previous one (cable trays are orthogonal). The strip says what snapped.
 - **An unsaved trace survives** — the polyline you are clicking out and a finished-but-unsaved leg are kept in the browser per drawing, run and page, and brought back if you reload or navigate away; the strip says *restored an unsaved trace from HH:MM*. Saving the leg clears it.
 - **Scale per page** — a multi-page PDF can carry a different scale on each page; *Set scale* on page N sets page N's. Page 1 uses the drawing's scale. A leg on a page with no scale is refused, naming the page.
-- **Two people, one run** — a save carries the route's last-known timestamp; if someone else saved first, yours is refused with when, and the viewer offers Reload. Nothing is silently overwritten.
+- **Two people, one run** — a save carries the route's last-known timestamp; if someone else saved first, yours is refused with when, and the page offers Reload. Nothing is silently overwritten.
 
 ## History
 
@@ -64,7 +64,7 @@ Server side this is `lib/cable-schedule/route-sheets.ts` (`listRouteSheetsForRev
 
 ## Who may do what
 
-Tracing, calibrating from route mode, assigning and exporting need `ORG_WRITE_ROLES` (owner / admin / project manager) — the schedule's write role. The drawing viewer itself admits `contractor` for markup and RFIs; a contractor never sees route mode or the ⚡ tool. Reading routes on a drawing and reading an exported sheet is open to every project role. See `docs/rbac-matrix.md`.
+Tracing, calibrating from the measure page, assigning and exporting need `ORG_WRITE_ROLES` (owner / admin / project manager) — the schedule's write role, and the measure page itself is gated on it. The drawing viewer admits `contractor` for markup and RFIs; a contractor sees routes drawn there but no way to trace. Reading routes on a drawing and reading an exported sheet is open to every project role. See `docs/rbac-matrix.md`.
 
 ## Outputs and records
 

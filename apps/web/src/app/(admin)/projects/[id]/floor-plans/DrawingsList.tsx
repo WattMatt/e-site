@@ -41,10 +41,16 @@ export function DrawingsList({
   plans,
   projectId,
   canWrite,
+  traceHrefBase = null,
 }: {
   plans: DrawingListItem[]
   projectId: string
   canWrite: boolean
+  /**
+   * The cable schedule's measure page for this project's DRAFT revision, when
+   * the caller may measure on it; null hides the per-row Trace link.
+   */
+  traceHrefBase?: string | null
 }) {
   const [query, setQuery] = useState('')
   const [view, setView] = useState<'list' | 'levels'>('list')
@@ -137,7 +143,7 @@ export function DrawingsList({
           </div>
         </div>
       ) : view === 'list' ? (
-        <Grid plans={filtered} projectId={projectId} canWrite={canWrite} />
+        <Grid plans={filtered} projectId={projectId} canWrite={canWrite} traceHrefBase={traceHrefBase} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {grouped.map(([level, items]) => (
@@ -156,7 +162,7 @@ export function DrawingsList({
                 {level}
                 <span style={{ color: 'var(--c-text-dim)', marginLeft: 6 }}>{items.length}</span>
               </h2>
-              <Grid plans={items} projectId={projectId} canWrite={canWrite} />
+              <Grid plans={items} projectId={projectId} canWrite={canWrite} traceHrefBase={traceHrefBase} />
             </section>
           ))}
         </div>
@@ -169,10 +175,12 @@ function Grid({
   plans,
   projectId,
   canWrite,
+  traceHrefBase,
 }: {
   plans: DrawingListItem[]
   projectId: string
   canWrite: boolean
+  traceHrefBase: string | null
 }) {
   return (
     <div
@@ -189,6 +197,7 @@ function Grid({
           plan={plan}
           projectId={projectId}
           canWrite={canWrite}
+          traceHrefBase={traceHrefBase}
           isLast={i === plans.length - 1}
         />
       ))}
@@ -200,11 +209,13 @@ function Row({
   plan,
   projectId,
   canWrite,
+  traceHrefBase,
   isLast,
 }: {
   plan: DrawingListItem
   projectId: string
   canWrite: boolean
+  traceHrefBase: string | null
   isLast: boolean
 }) {
   // Three explicit, separate row actions: View (signed URL in new tab),
@@ -291,7 +302,7 @@ function Row({
         )}
         <ViewLink projectId={projectId} planId={plan.id} name={plan.name} />
         {canWrite && <MarkupLink projectId={projectId} planId={plan.id} name={plan.name} />}
-        {canWrite && <TraceLink projectId={projectId} planId={plan.id} name={plan.name} />}
+        {traceHrefBase && <TraceLink href={`${traceHrefBase}?sheet=${plan.id}`} name={plan.name} />}
         <DownloadButton filePath={plan.file_path} name={plan.name} />
       </div>
     </div>
@@ -362,25 +373,15 @@ function MarkupLink({
   )
 }
 /**
- * The cable-tracing door on the Drawings tab. It existed nowhere before: route
- * mode was reachable only from the measure worklist, `trace →` on the schedule
- * grid, or the ⚡ palette tool once already inside the viewer. `?route=1` opens
- * the viewer with the run picker already up. A project with no cable schedule
- * lands on a disabled Route tab that says so, which is better than a link that
- * is simply absent and leaves the user assuming the feature does not exist.
+ * The cable-tracing door on the Drawings tab: opens the cable schedule's
+ * measure page with this sheet already up. Rendered only when the page could
+ * resolve a measure URL (the caller may measure AND a DRAFT revision exists),
+ * because a link that bounces teaches the user the feature is broken.
  */
-function TraceLink({
-  projectId,
-  planId,
-  name,
-}: {
-  projectId: string
-  planId: string
-  name: string
-}) {
+function TraceLink({ href, name }: { href: string; name: string }) {
   return (
     <Link
-      href={`/projects/${projectId}/floor-plans/${planId}?route=1`}
+      href={href}
       aria-label={`Trace a cable run on ${name}`}
       title="Trace a cable run on this sheet and measure it"
       style={actionButtonStyle}

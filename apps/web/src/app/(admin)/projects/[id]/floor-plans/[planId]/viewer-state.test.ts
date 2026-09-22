@@ -26,7 +26,6 @@ describe('buildViewerQuery — an open layer survives a mode change', () => {
   it('carries markup= through every mode', () => {
     expect(buildViewerQuery('markup', LAYER.id)).toBe('?mode=markup&markup=aa-11')
     expect(buildViewerQuery('rfi', LAYER.id)).toBe('?mode=rfi&markup=aa-11')
-    expect(buildViewerQuery('route', LAYER.id)).toBe('?mode=route&markup=aa-11')
   })
 
   it('carries it into view mode too, where there is no mode param to hide behind', () => {
