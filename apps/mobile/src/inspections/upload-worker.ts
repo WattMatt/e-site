@@ -14,9 +14,10 @@
 //   7. markDone() — flip status to 'done'
 //
 // On failure: markFailed() increments retry_count + records last_error,
-// then we sleep 10s before retrying. Rows hit the 5-retry cap inside
-// nextPending() — at that point they stop being retried automatically;
-// a future settings screen can surface them for manual intervention.
+// then we sleep 10s before retrying. Rows hit the MAX_AUTO_RETRIES cap
+// inside nextPending() — at that point they stop being retried
+// automatically; the capture screen surfaces them via stalledCount() with
+// a manual retry (retryFailedAttachments()).
 
 import * as FileSystem from 'expo-file-system'
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
@@ -118,8 +119,8 @@ async function processOne(item: PendingAttachment): Promise<void> {
         supabase.storage.from('inspection-photos').upload(originalPath, originalBytes, { contentType: 'image/jpeg', upsert: false }),
         supabase.storage.from('inspection-photos').upload(thumbPath, thumbBytes, { contentType: 'image/jpeg', upsert: false }),
       ])
-      if (upOriginal.error) throw upOriginal.error
-      if (upThumb.error) throw upThumb.error
+      if (upOriginal.error && !alreadyUploaded(upOriginal.error)) throw upOriginal.error
+      if (upThumb.error && !alreadyUploaded(upThumb.error)) throw upThumb.error
 
       const { error: insErr } = await supa.schema('inspections').from('photos').insert({
         inspection_id: item.inspection_id,
@@ -142,7 +143,7 @@ async function processOne(item: PendingAttachment): Promise<void> {
       const { error: upErr } = await supabase.storage
         .from(item.bucket)
         .upload(remotePath, bytes, { contentType, upsert: false })
-      if (upErr) throw upErr
+      if (upErr && !alreadyUploaded(upErr)) throw upErr
       const { error: insErr } = await supa.schema('inspections').from('signatures').insert({
         inspection_id: item.inspection_id,
         role: item.signature_role,
@@ -161,6 +162,15 @@ async function processOne(item: PendingAttachment): Promise<void> {
     await markFailed(item.id, (e as Error).message ?? String(e))
     await sleep(10_000)
   }
+}
+
+// A retried item whose binary reached storage before the metadata insert
+// failed hits 'The resource already exists' (409) on re-upload — the binary
+// is fine, so carry on to the insert. upsert:true is not an option: the
+// storage RLS policies (migration 00073) grant INSERT/DELETE but not the
+// UPDATE an upsert needs.
+function alreadyUploaded(err: { message?: string } | null): boolean {
+  return err != null && /already exists/i.test(err.message ?? '')
 }
 
 function sleep(ms: number): Promise<void> {
