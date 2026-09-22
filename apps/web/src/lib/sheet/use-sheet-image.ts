@@ -112,7 +112,6 @@ export function useSheetImage({
       i.src = url
     }
     return () => { signal.cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planId, isPdf, renderPdfPage, initialPage])
 
   // 2) Re-render when the user moves to another PDF page. The null-check skips

@@ -23,18 +23,11 @@ import {
   updateRfiAnnotationAction,
 } from '@/actions/rfi-annotation.actions'
 import { createRfiAction } from '@/actions/rfi.actions'
-import { calibrateFloorPlanAction } from '@/actions/cable-route.actions'
-import { edgeLengthsM, moveVertex, insertVertexAfter, removeVertex, dedupeConsecutivePoints } from '@esite/shared'
-import { RouteLayer, type RouteLayerLeg, type OtherLeg, type CalibrationLine } from './RouteLayer'
-import {
-  emptyHistory as emptyRouteHistory,
-  pushHistory as pushRouteHistory,
-  undoHistory as undoRouteHistory,
-  redoHistory as redoRouteHistory,
-  snapshotsEqual,
-  type RouteHistory, type RouteSnapshot, type SnapshotLeg,
-} from '@/lib/cable-route/route-history'
-import { snapRouteVertex } from '@/lib/cable-route/snap'
+import { dedupeConsecutivePoints } from '@esite/shared'
+import { RouteLayer, type OtherLeg, type CalibrationLine } from './RouteLayer'
+import { useSheetImage, backingSize, type SheetBacking } from '@/lib/sheet/use-sheet-image'
+import { useSheetViewport } from '@/lib/sheet/use-sheet-viewport'
+import { getDraft, setDraft as setDraftRecord, clearDraft as clearDraftRecord } from '@/lib/sheet/draft-store'
 import {
   type StrokeStyle,
   STROKE_STYLES,
@@ -61,7 +54,7 @@ import {
 import { Tooltip } from './markup-tooltip'
 import { SYMBOLS, SYMBOL_KINDS, SymbolSvg, type SymbolKind } from './markup-symbols'
 import { pngBase64ToBlob } from './markup-export'
-import { isPrimaryDrawPress, isPanPress, isTouchEvent, classifyWheel, rollbackPinchVertex } from './canvas-input'
+import { isPrimaryDrawPress, isTouchEvent, rollbackPinchVertex } from './canvas-input'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types — scene graph format matches migration 00033 docstring:
@@ -85,7 +78,6 @@ type ToolMode =
   | 'eraser'
   | 'measure'
   | 'calibrate'
-  | 'cable'
 
 // pageIndex is 1-based (matches pdfjs page numbering). Defaults to 1 for
 // backward compat with v1 scene graphs that didn't carry pageIndex.
@@ -211,16 +203,7 @@ const TOOLS: Array<{ value: ToolMode; label: string; needsCalibration?: boolean;
   { value: 'table', label: '⊞', title: 'Legend / table — click to place, double-click a cell to edit' },
   { value: 'eraser', label: '⌦', title: 'Eraser — drag over marks to rub them out' },
   { value: 'measure', label: '⤢', needsCalibration: true, title: 'Measure (requires calibration)' },
-  // Cable-schedule measuring. Offered only when the caller may write the
-  // schedule AND the project has a DRAFT revision — see `cablePicker`.
-  { value: 'cable', label: '⚡', title: 'Measure a cable run — trace a schedule run on this drawing' },
 ]
-
-/**
- * The only tools route mode offers. Everything else on the palette writes to
- * the markup scene, which a route deliberately does not use.
- */
-const ROUTE_TOOLS: ReadonlyArray<ToolMode> = ['select', 'polyline', 'cable']
 
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -229,65 +212,9 @@ function makeId() {
   return Math.random().toString(36).slice(2, 11)
 }
 
-// ─── IndexedDB draft persistence ──────────────────────────────────────────
-// Auto-save every 5s of inactivity to a tiny local store so a crash, a tab
-// close, or temporary offline state doesn't lose markup-in-progress. Drafts
-// are scoped per (planId, annotationId-or-'new'). Cleared on successful Save.
-const DRAFT_DB = 'esite-markup-drafts'
-const DRAFT_STORE = 'drafts'
-
-function openDraftDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DRAFT_DB, 1)
-    req.onupgradeneeded = () => req.result.createObjectStore(DRAFT_STORE)
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
+// IndexedDB draft persistence lives in lib/sheet/draft-store (shared with the
+// route canvas). Drafts are scoped per (planId, annotationId-or-'new').
 type DraftRecord = { shapes: AnyShape[]; savedAt: string }
-
-async function getDraft(key: string): Promise<DraftRecord | null> {
-  try {
-    const db = await openDraftDB()
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(DRAFT_STORE, 'readonly')
-      const req = tx.objectStore(DRAFT_STORE).get(key)
-      req.onsuccess = () => resolve((req.result as DraftRecord | undefined) ?? null)
-      req.onerror = () => reject(req.error)
-    })
-  } catch {
-    return null
-  }
-}
-
-async function setDraftRecord(key: string, value: DraftRecord): Promise<void> {
-  try {
-    const db = await openDraftDB()
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(DRAFT_STORE, 'readwrite')
-      tx.objectStore(DRAFT_STORE).put(value, key)
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
-  } catch {
-    /* IDB unavailable (private mode, quota): degrade silently. */
-  }
-}
-
-async function clearDraftRecord(key: string): Promise<void> {
-  try {
-    const db = await openDraftDB()
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(DRAFT_STORE, 'readwrite')
-      tx.objectStore(DRAFT_STORE).delete(key)
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
-  } catch {
-    /* swallow */
-  }
-}
 
 function pxDist(a: [number, number], b: [number, number]) {
   return Math.hypot(b[0] - a[0], b[1] - a[1])
@@ -304,89 +231,13 @@ export type EditingAnnotation = {
   scene: SceneGraph
 }
 
-export type ViewerMode = 'view' | 'markup' | 'rfi' | 'route'
-
-/**
- * Route mode — tracing a cable run's route for the cable schedule.
- *
- * The canvas is borrowed for its VIEWPORT (zoom, pan, fit, multi-page PDF
- * rasterisation) and its polyline vertex collection. Nothing else is shared.
- *
- * ⚠ A committed leg does NOT become a shape in the scene graph. It is handed
- * straight to the caller, which writes it to `cable_schedule.route_segments`.
- * This is deliberate and load-bearing: a cable run crosses sheets, so totalling
- * one run must not mean opening and parsing every drawing's scene JSON, and
- * "which runs are still unmeasured" has to stay answerable as a query. Each
- * segment also stores the calibration in force when it was traced, which the
- * scene graph cannot express — MeasureShape recomputes metres from the
- * drawing's CURRENT calibration, so recalibrating silently rewrites every
- * measurement ever taken with the measure tool. A cable length is signed
- * against; it must never move under the person who recorded it.
- */
-/** One run offered by the in-drawing cable tool. */
-export type CableRunOption = {
-  supplyId: string
-  /** "MB 1.1 → DB-50" */
-  label: string
-  traced: boolean
-  scheduleLengthM: number | null
-}
-
-/**
- * The in-drawing entry to cable measuring — the other half of the double-sided
- * access. Present only when the caller holds the SCHEDULE write role and the
- * project has a DRAFT cable revision; absent otherwise, and the tool does not
- * appear on the palette at all.
- */
-export type CablePicker = {
-  revisionCode: string
-  runs: CableRunOption[]
-  /** Enter route mode for this run, on the drawing already open. */
-  onPick: (supplyId: string) => void
-  /** The run currently being measured, when already in route mode. */
-  activeSupplyId?: string
-}
-
-export type RouteModeProps = {
-  /** The run being measured. Changing it re-arms the polyline. */
-  supplyId: string
-  /** The run being measured, for the banner: e.g. "MB 3.1 → DB-07". */
-  runLabel: string
-  /** Legs already saved for this run, across all sheets, WITH their geometry. */
-  savedLegs: Array<RouteLayerLeg & { floorPlanName: string }>
-  /** Other runs' legs on this sheet, for context. */
-  otherLegsOnSheet: OtherLeg[]
-  /**
-   * Commit one traced leg. Receives PIXELS ONLY — the server reads the
-   * drawing's `pixels_per_meter` itself and decides the length. The browser
-   * never sends metres.
-   */
-  onCommitLeg: (leg: { points: number[]; pageIndex: number }) => Promise<{ error?: string }>
-  /** Replace one saved leg's geometry (vertex dragged, added or removed). */
-  onUpdateLeg: (legId: string, points: number[]) => Promise<{ error?: string }>
-  onDeleteLeg: (legId: string) => Promise<{ error?: string }>
-  /** Replace the WHOLE leg list — how undo/redo re-persists a prior state. */
-  onReplaceLegs: (legs: SnapshotLeg[]) => Promise<{ error?: string }>
-  /**
-   * Keep this sheet — routes, labels and calibration as drawn — as a versioned
-   * PDF report. Receives the native-resolution JPEG the canvas rasterised.
-   */
-  onExportSheet: (jpegBase64: string, pageIndex: number) => Promise<{ error?: string; version?: number }>
-  /** Every drawing on the project; picking one continues THIS run there. */
-  sheets: Array<{ id: string; name: string; calibrated: boolean }>
-  onSwitchSheet: (planId: string) => void
-  /** For the status strip. */
-  riseM: number
-  dropM: number
-  scheduleLengthM: number | null
-  /** Where "Back to schedule" returns to — the measure worklist. */
-  doneHref: string
-}
+export type ViewerMode = 'view' | 'markup' | 'rfi'
 
 /**
  * The saved routes on this sheet, drawn in EVERY mode — view, markup, route —
  * so the drawing is the record and not just the workspace. Pressing a route
- * starts measuring that run when the caller supplies `onMeasure`.
+ * opens it on the cable schedule's measure page when the caller supplies
+ * `onMeasure` — tracing itself lives there, not here.
  */
 export type RouteOverlay = {
   legs: OtherLeg[]
@@ -424,21 +275,8 @@ type Props = {
    * Switching modes at runtime preserves canvas state (shapes, zoom, page).
    */
   mode?: ViewerMode
-  /**
-   * Route-tracing mode (cable schedule). When provided, the tool palette
-   * collapses to select + polyline, every markup save path is hidden, and a
-   * finished polyline is handed to `onCommitLeg` instead of being committed to
-   * the scene. When ABSENT, every existing code path runs exactly as before.
-   */
-  routeMode?: RouteModeProps
   /** Saved routes on this sheet, for any mode. Absent = nothing to draw. */
   routeOverlay?: RouteOverlay
-  /**
-   * Cable-schedule measuring, started FROM the drawing. When provided, a ⚡ tool
-   * joins the palette and opens a run picker; choosing a run enters route mode
-   * on this drawing. When ABSENT the tool is not rendered.
-   */
-  cablePicker?: CablePicker
   /**
    * External-save mode (QC markup). When provided, MarkupCanvas hands the
    * flattened PNG + editable scene graph to the caller and does NOT create or
@@ -472,13 +310,6 @@ type Props = {
   }
 }
 
-type Backing = HTMLImageElement | HTMLCanvasElement
-
-function backingSize(b: Backing | null): [number, number] {
-  if (!b) return [0, 0]
-  return b instanceof HTMLImageElement ? [b.naturalWidth, b.naturalHeight] : [b.width, b.height]
-}
-
 export function MarkupCanvas({
   plan,
   snagPins,
@@ -486,9 +317,7 @@ export function MarkupCanvas({
   rfis = [],
   editing = null,
   mode = 'markup',
-  routeMode,
   routeOverlay,
-  cablePicker,
   onSaveMarkup,
   initialScene,
   saveLayer,
@@ -529,72 +358,17 @@ export function MarkupCanvas({
   const [current, setCurrent] = useState<AnyShape | null>(null)
   const [undoStack, setUndoStack] = useState<AnyShape[][]>([])
   const [redoStack, setRedoStack] = useState<AnyShape[][]>([])
-  const [pixelsPerMeterDrawing, setPixelsPerMeter] = useState<number | null>(plan.pixels_per_meter)
-  /** Scales set in this session for pages other than 1 (00199). */
-  const [sessionPageScales, setSessionPageScales] = useState<Map<number, { ppm: number; points: number[]; metres: number }>>(new Map())
+  const [pixelsPerMeter, setPixelsPerMeter] = useState<number | null>(plan.pixels_per_meter)
   const [calibPoints, setCalibPoints] = useState<Array<[number, number]>>([])
   const [calibDistance, setCalibDistance] = useState('')
   const [calibSaving, setCalibSaving] = useState(false)
-  /** Filter text for the in-drawing cable run picker. */
-  const [cableQuery, setCableQuery] = useState('')
-
-  // ── Route mode ───────────────────────────────────────────────────────────
-  /** A finished leg the measurer has not yet pressed Save on. */
-  const [pendingLeg, setPendingLeg] = useState<number[] | null>(null)
-  const [legSaving, setLegSaving] = useState(false)
-  const [legError, setLegError] = useState<string | null>(null)
-  // Selection is by POSITION in the route, not by row id: every save replaces
-  // the segment list wholesale and every row gets a new id, so an id-keyed
-  // selection went stale the moment a dragged vertex was persisted — the edit
-  // bar stayed up with nothing selected. Order survives a replace; ids do not.
-  const [selectedLegIndex, setSelectedLegIndex] = useState<number | null>(null)
-  /** While true the route layer draws only what should be on paper. */
-  const [exporting, setExporting] = useState(false)
-  /** The saved-routes overlay outside route mode. On by default when there is anything to show. */
+  /** The saved-routes overlay. On by default when there is anything to show. */
   const [showRoutes, setShowRoutes] = useState(true)
-  /** Undo/redo over snapshots of the whole route — legs, pending leg, draft. */
-  const [history, setHistory] = useState<RouteHistory>(() => emptyRouteHistory({ legs: [], pending: null, draft: [] }))
-  /** True while an undo/redo is being applied, until the canvas state settles on it. */
-  const applyingHistoryRef = useRef(false)
-  /** What the last click snapped to, for the strip. */
-  const [snapHint, setSnapHint] = useState<string | null>(null)
-  /** Set when an unsaved trace was brought back from the last session. */
-  const [restoredDraftAt, setRestoredDraftAt] = useState<string | null>(null)
-  /** Delete leg is armed by a first press and committed by a second within 4 s — never window.confirm (Safari suppresses it). */
-  const [armedDeleteLegId, setArmedDeleteLegId] = useState<string | null>(null)
-  useEffect(() => {
-    if (!armedDeleteLegId) return
-    const t = setTimeout(() => setArmedDeleteLegId(null), 4000)
-    return () => clearTimeout(t)
-  }, [armedDeleteLegId])
-  /** Per-page scales (00199); the drawing-level scale is the page-1 default. */
-  const pageScales = useMemo(
-    () => new Map((plan.page_scales ?? []).map((s) => [s.pageIndex, s])),
-    [plan.page_scales],
-  )
-  const [exportMsg, setExportMsg] = useState<string | null>(null)
-  const selectedLegId =
-    routeMode && selectedLegIndex != null ? (routeMode.savedLegs[selectedLegIndex]?.id ?? null) : null
-  const setSelectedLegId = (id: string | null) => {
-    if (id == null || !routeMode) { setSelectedLegIndex(null); return }
-    const i = routeMode.savedLegs.findIndex((l) => l.id === id)
-    setSelectedLegIndex(i >= 0 ? i : null)
-  }
   /** The stored calibration line, drawn on the sheet so the scale is visible. */
   const [calibLine, setCalibLine] = useState<CalibrationLine | null>(
     plan.calibration_points && plan.calibration_points.length === 4 && plan.calibration_metres
       ? { points: plan.calibration_points, metres: plan.calibration_metres, pageIndex: plan.calibration_page_index ?? 1 }
       : null,
-  )
-  /** Calibration lines for pages other than the drawing-level one (00199). */
-  const pageCalibLines = useMemo<CalibrationLine[]>(
-    () => [
-      ...(plan.page_scales ?? [])
-        .filter((s) => s.points && s.points.length === 4 && s.metres)
-        .map((s) => ({ points: s.points as number[], metres: s.metres as number, pageIndex: s.pageIndex })),
-      ...[...sessionPageScales.entries()].map(([pageIndex, s]) => ({ points: s.points, metres: s.metres, pageIndex })),
-    ],
-    [plan.page_scales, sessionPageScales],
   )
   const [calibError, setCalibError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -651,7 +425,7 @@ export function MarkupCanvas({
   useEffect(() => {
     if (editing || initialScene) return
     let cancelled = false
-    getDraft(draftKey).then((d) => {
+    getDraft<DraftRecord>(draftKey).then((d) => {
       if (cancelled) return
       if (d && d.shapes.length > 0) setDraftPrompt(d)
     })
@@ -709,18 +483,6 @@ export function MarkupCanvas({
       setPolyPoints([])
       return
     }
-    // Route mode: hand the vertices to the caller for `route_segments` and do
-    // NOT touch the scene graph. Pixels only — the server reads the drawing's
-    // pixels_per_meter and decides the length.
-    if (routeMode && !wantClosed) {
-      // Route mode: the leg becomes PENDING — drawn solid and labelled, still
-      // the measurer's — until they press Save. A double-click writes nothing,
-      // so a mis-click cannot commit a route silently.
-      setPendingLeg(pts)
-      setPolyPoints([])
-      setLegError(null)
-      return
-    }
     const dash = dashFor(strokeStyle, strokeWidth)
     commit(
       wantClosed
@@ -730,411 +492,51 @@ export function MarkupCanvas({
     setPolyPoints([])
   }
 
-  // ── Route mode: save / edit ───────────────────────────────────────────────
-  async function saveLeg() {
-    if (!routeMode || !pendingLeg) return
-    setLegSaving(true)
-    setLegError(null)
-    try {
-      const res = await routeMode.onCommitLeg({ points: pendingLeg, pageIndex: currentPage })
-      if (res.error) { setLegError(res.error); return }
-      setPendingLeg(null)
-      setRestoredDraftAt(null)
-      if (routeDraftKey) void clearDraftRecord(routeDraftKey)
-    } finally {
-      setLegSaving(false)
-    }
-  }
-
-  async function persistLeg(legId: string, points: number[]) {
-    if (!routeMode) return
-    setLegSaving(true)
-    setLegError(null)
-    try {
-      const res = await routeMode.onUpdateLeg(legId, points)
-      if (res.error) setLegError(res.error)
-    } finally {
-      setLegSaving(false)
-    }
-  }
-
-  function legPoints(legId: string): number[] | null {
-    return routeMode?.savedLegs.find((l) => l.id === legId)?.points ?? null
-  }
-
-  function onMoveLegVertex(legId: string, index: number, x: number, y: number) {
-    const pts = legPoints(legId)
-    if (pts) void persistLeg(legId, moveVertex(pts, index, x, y))
-  }
-  function onInsertLegVertex(legId: string, afterIndex: number, x: number, y: number) {
-    const pts = legPoints(legId)
-    if (pts) void persistLeg(legId, insertVertexAfter(pts, afterIndex, x, y))
-  }
-  function onRemoveLegVertex(legId: string, index: number) {
-    const pts = legPoints(legId)
-    if (!pts) return
-    try {
-      void persistLeg(legId, removeVertex(pts, index))
-    } catch (e) {
-      setLegError(e instanceof Error ? e.message : 'Could not remove that point')
-    }
-  }
-
-  /**
-   * Rasterise the sheet at native resolution with the routes drawn, and hand
-   * it to the caller to keep. Same transform dance as `snapshotScene`, but
-   * JPEG (a PNG of an A1 at source density is ~4× the size and brushes the
-   * 10 MB action body limit) and with selection handles, the pending leg and
-   * the grid left off the page.
-   */
-  async function exportSheet() {
-    if (!routeMode || !stageRef.current || !img) return
-    setExporting(true)
-    setExportMsg(null)
-    await new Promise((r) => setTimeout(r, 60)) // let the route layer redraw without handles
-    const stage = stageRef.current
-    const savedScale = stage.scaleX()
-    const savedPos = stage.position()
-    const gridVisible = gridLayerRef.current?.visible() ?? false
-    try {
-      stage.scale({ x: 1, y: 1 })
-      stage.position({ x: 0, y: 0 })
-      gridLayerRef.current?.visible(false)
-      stage.draw()
-      const dataUrl = stage.toDataURL({ pixelRatio: 1, mimeType: 'image/jpeg', quality: 0.85, x: 0, y: 0, width: naturalW, height: naturalH })
-      stage.scale({ x: savedScale, y: savedScale })
-      stage.position(savedPos)
-      gridLayerRef.current?.visible(gridVisible)
-      stage.draw()
-      const res = await routeMode.onExportSheet(dataUrl.split(',')[1] ?? '', currentPage)
-      setExportMsg(res.error ? res.error : `Saved as version ${res.version} — it is listed under Exported sheets on the measure page.`)
-    } catch (e) {
-      stage.scale({ x: savedScale, y: savedScale })
-      stage.position(savedPos)
-      gridLayerRef.current?.visible(gridVisible)
-      stage.draw()
-      setExportMsg(e instanceof Error ? e.message : 'Export failed')
-    } finally {
-      setExporting(false)
-    }
-  }
-
-  async function deleteLeg(legId: string) {
-    if (!routeMode) return
-    if (armedDeleteLegId !== legId) { setArmedDeleteLegId(legId); return }
-    setArmedDeleteLegId(null)
-    setLegSaving(true)
-    setLegError(null)
-    try {
-      const res = await routeMode.onDeleteLeg(legId)
-      if (res.error) setLegError(res.error)
-      else setSelectedLegId(null)
-    } finally {
-      setLegSaving(false)
-    }
-  }
-
-  // Load image (or PDF page rasterised to a canvas via pdfjs-dist).
-  // Multi-page PDFs: hold the pdfjs document ref + page count, rasterise
-  // pages on demand. Per-page bitmaps are cached in pageImagesRef so
-  // navigating back doesn't re-render.
-  const [img, setImg] = useState<Backing | null>(null)
-  const signedUrlRef = useRef<string | null>(plan.signedUrl)
-  signedUrlRef.current = plan.signedUrl
-  const [loadError, setLoadError] = useState<string | null>(null)
-  // Starts on the page the hydrated markup lives on (QC re-edit); 1 otherwise.
-  const [currentPage, setCurrentPage] = useState(initialPageIndex)
-  const [pageCount, setPageCount] = useState(1)
+  // The sheet: a raster, or a PDF rasterised page by page (lib/sheet). Starts
+  // on the page the hydrated markup lives on (QC re-edit); 1 otherwise.
+  const { img, loadError, currentPage, setCurrentPage, pageCount } = useSheetImage({
+    planId: plan.id,
+    signedUrl: plan.signedUrl,
+    isPdf: plan.isPdf,
+    initialPage: initialPageIndex,
+  })
 
   // Vertices belong to the page they were clicked on. Carrying an in-progress
   // polyline (or a half-finished calibration) across a page change would stamp
-  // it with the NEW page and redraw it in the wrong place on the wrong sheet —
-  // silently, because nothing downstream can tell. Abandon it on every page
-  // change; a leg is cheap to retrace and a wrong length is not.
+  // it with the NEW page and redraw it on the wrong sheet — silently.
   useEffect(() => {
     setPolyPoints([])
     setCalibPoints([])
-    setPendingLeg(null)
-    setSelectedLegId(null)
-    setLegError(null)
   }, [currentPage])
-
-  // Which scale applies: in route mode, the page we are on (00199), page 1
-  // falling back to the drawing-level scale; in markup mode the drawing-level
-  // scale as always, so the measure tool behaves exactly as before.
-  const pixelsPerMeter: number | null = (() => {
-    if (!routeMode) return pixelsPerMeterDrawing
-    const s = sessionPageScales.get(currentPage) ?? (pageScales.get(currentPage) ? { ppm: pageScales.get(currentPage)!.pixelsPerMeter } : null)
-    if (s) return s.ppm
-    return currentPage === 1 ? pixelsPerMeterDrawing : null
-  })()
-
-  // ── History: record every visible change as a snapshot ─────────────────
-  // Any mutation from any source (a click, a save, a drag) lands here. While an
-  // undo/redo is being applied we do not record, until the canvas state has
-  // settled on the restored snapshot — a persisted undo arrives asynchronously.
-  const currentSnapshot = (): RouteSnapshot => ({
-    legs: (routeMode?.savedLegs ?? []).map((l) => ({ floorPlanId: l.floorPlanId ?? '', pageIndex: l.pageIndex, points: l.points })),
-    pending: pendingLeg,
-    draft: polyPoints,
-  })
-  useEffect(() => {
-    if (!routeMode) return
-    const now = currentSnapshot()
-    if (applyingHistoryRef.current) {
-      if (snapshotsEqual(now, history.present)) applyingHistoryRef.current = false
-      return
-    }
-    setHistory((h) => pushRouteHistory(h, now))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeMode?.savedLegs, pendingLeg, polyPoints])
-  // A new run starts a fresh history.
-  useEffect(() => {
-    if (routeMode) setHistory(emptyRouteHistory(currentSnapshot()))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeMode?.supplyId])
-
-  async function applySnapshot(next: RouteSnapshot) {
-    if (!routeMode) return
-    applyingHistoryRef.current = true
-    setPolyPoints(next.draft)
-    setPendingLeg(next.pending)
-    setSelectedLegIndex(null)
-    setLegError(null)
-    const legsNow = currentSnapshot().legs
-    const same = legsNow.length === next.legs.length && legsNow.every((l, i) => l.floorPlanId === next.legs[i].floorPlanId && l.pageIndex === next.legs[i].pageIndex && l.points.join(',') === next.legs[i].points.join(','))
-    if (!same) {
-      const res = await routeMode.onReplaceLegs(next.legs)
-      if (res.error) {
-        applyingHistoryRef.current = false
-        setLegError(res.error)
-      }
-    }
-  }
-  function undoRoute() {
-    if (!history.canUndo) return
-    const h = undoRouteHistory(history)
-    setHistory(h)
-    void applySnapshot(h.present)
-  }
-  function redoRoute() {
-    if (!history.canRedo) return
-    const h = redoRouteHistory(history)
-    setHistory(h)
-    void applySnapshot(h.present)
-  }
-
-  // ── Draft autosave: an unsaved trace survives a reload ─────────────────
-  const routeDraftKey = routeMode ? `route-draft:${plan.id}:${routeMode.supplyId}:${currentPage}` : null
-  useEffect(() => {
-    if (!routeDraftKey) return
-    let live = true
-    ;(async () => {
-      const rec = (await getDraft(routeDraftKey)) as unknown as { draft?: number[]; pending?: number[] | null; savedAt?: string } | null
-      if (!live || !rec) return
-      if ((rec.draft && rec.draft.length >= 2) || (rec.pending && rec.pending.length >= 4)) {
-        setPolyPoints(rec.draft ?? [])
-        setPendingLeg(rec.pending ?? null)
-        setRestoredDraftAt(rec.savedAt ?? null)
-      }
-    })()
-    return () => { live = false }
-  }, [routeDraftKey])
-  useEffect(() => {
-    if (!routeDraftKey) return
-    const t = setTimeout(() => {
-      if (polyPoints.length === 0 && !pendingLeg) void clearDraftRecord(routeDraftKey)
-      else void setDraftRecord(routeDraftKey, { draft: polyPoints, pending: pendingLeg, savedAt: new Date().toISOString() } as unknown as DraftRecord)
-    }, 400)
-    return () => clearTimeout(t)
-  }, [routeDraftKey, polyPoints, pendingLeg])
-
-  // Route mode hands the measurer the polyline, not the selector. Arriving by
-  // either door — the worklist or the ⚡ picker — you are holding the tool
-  // that traces, and the first click on the drawing places a vertex.
-  //
-  // Keyed on the RUN, not on "is route mode on": picking a second run from the
-  // ⚡ panel while already measuring navigates to the new supply with route
-  // mode still true, and the first cut left the picker tool in hand with its
-  // panel open — every click on the drawing did nothing.
-  useEffect(() => {
-    if (routeMode) {
-      setTool('polyline')
-      setCableQuery('')
-      setPendingLeg(null)
-      setSelectedLegIndex(null)
-      setLegError(null)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeMode?.supplyId])
-  // PDFDocumentProxy from pdfjs — kept as ref to avoid re-render on assignment.
-  const pdfDocRef = useRef<{ getPage: (n: number) => Promise<unknown>; numPages: number } | null>(null)
-  const pageImagesRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
-
-  // Page-render helper: rasterise a 1-based PDF page to a backing canvas,
-  // memoise in pageImagesRef, and setImg. Called from both the initial
-  // load (page 1) and explicit page changes.
-  type PdfPage = {
-    getViewport: (opts: { scale: number }) => { width: number; height: number }
-    render: (opts: unknown) => { promise: Promise<void> }
-  }
-  const renderPdfPage = useCallback(
-    async (pageNum: number, signal: { cancelled: boolean }) => {
-      const cached = pageImagesRef.current.get(pageNum)
-      if (cached) {
-        if (!signal.cancelled) setImg(cached)
-        return
-      }
-      const doc = pdfDocRef.current
-      if (!doc) return
-      const page = (await doc.getPage(pageNum)) as PdfPage
-      if (signal.cancelled) return
-      const viewport = page.getViewport({ scale: 2 })
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.floor(viewport.width)
-      canvas.height = Math.floor(viewport.height)
-      const ctx = canvas.getContext('2d')
-      if (!ctx) throw new Error('2d context unavailable')
-      await page.render({ canvasContext: ctx, viewport, canvas }).promise
-      if (signal.cancelled) return
-      pageImagesRef.current.set(pageNum, canvas)
-      setImg(canvas)
-    },
-    [],
-  )
-
-  // 1) Initial load: detect raster vs PDF, load pdfjs doc, render page 1
-  //    inline (so single-page PDFs don't hang waiting for an effect that
-  //    only re-fires when pageCount changes from 1).
-  useEffect(() => {
-    // Read the URL through a ref so a re-render that only re-minted the signed
-    // URL (every server render does) does not re-rasterise the sheet. Only a
-    // different drawing — a new plan id — reloads.
-    const signedUrl = signedUrlRef.current
-    if (!signedUrl) return
-    const signal = { cancelled: false }
-    setLoadError(null)
-    setImg(null)
-    // Reset to the hydrated markup's page (1 for new markups / RFI). Without
-    // this the async load would clobber the initial page back to 1, hiding a
-    // re-edited page-≥2 markup.
-    setCurrentPage(initialPageIndex)
-    pdfDocRef.current = null
-    pageImagesRef.current = new Map()
-
-    if (plan.isPdf) {
-      ;(async () => {
-        try {
-          const pdfjsLib = await import('pdfjs-dist')
-          if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
-          }
-          const loadingTask = pdfjsLib.getDocument(signedUrl)
-          const pdf = await loadingTask.promise
-          if (signal.cancelled) return
-          pdfDocRef.current = pdf as unknown as {
-            getPage: (n: number) => Promise<unknown>
-            numPages: number
-          }
-          setPageCount(pdf.numPages)
-          // Inline page-1 render — avoids the dep-trigger gap.
-          await renderPdfPage(1, signal)
-        } catch (err) {
-          if (signal.cancelled) return
-          setLoadError(err instanceof Error ? err.message : 'PDF load failed')
-        }
-      })()
-    } else {
-      setPageCount(1)
-      const i = new window.Image()
-      i.crossOrigin = 'anonymous'
-      i.onload = () => {
-        if (!signal.cancelled) setImg(i)
-      }
-      i.onerror = () => {
-        if (!signal.cancelled) setLoadError('Image failed to load')
-      }
-      i.src = signedUrl
-    }
-
-    return () => {
-      signal.cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan.id, plan.isPdf, renderPdfPage, initialPageIndex])
-
-  // 2) Re-render when the user navigates to a different PDF page.
-  //    Page 1 on initial mount is handled by the load effect above; the
-  //    pdfDocRef.current null-check skips this run until the doc is ready.
-  //    Once loaded, navigating BACK to page 1 hits the cache via renderPdfPage.
-  useEffect(() => {
-    if (!plan.isPdf) return
-    if (!pdfDocRef.current) return
-    const signal = { cancelled: false }
-    renderPdfPage(currentPage, signal).catch((err) => {
-      if (signal.cancelled) return
-      setLoadError(err instanceof Error ? err.message : 'PDF page render failed')
-    })
-    return () => {
-      signal.cancelled = true
-    }
-  }, [plan.isPdf, currentPage, renderPdfPage])
 
   const [imgW, imgH] = backingSize(img)
   const naturalW = plan.width_px || imgW || 800
   const naturalH = plan.height_px || imgH || 600
   const stageRef = useRef<Konva.Stage | null>(null)
-
-  // ── Viewport / zoom / pan ─────────────────────────────────────────────
-  // Container is fixed-size; Stage is the same dimensions and we scale +
-  // translate the inner image. Initial fit-to-view runs once per drawing.
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [viewport, setViewport] = useState({ w: 800, h: 560 })
-  const [scale, setScale] = useState(1)
-  const [offset, setOffset] = useState({ x: 0, y: 0 })
-  const initFitDone = useRef(false)
-  // Always-fresh refs so wheel/pinch handlers can read the current viewport
-  // synchronously between React commits (rapid input outpaces useState).
-  const scaleRef = useRef(1)
-  const offsetRef = useRef({ x: 0, y: 0 })
-  useEffect(() => {
-    scaleRef.current = scale
-  }, [scale])
-  useEffect(() => {
-    offsetRef.current = offset
-  }, [offset])
-  const [gestureActive, setGestureActive] = useState(false)
-  /**
-   * A middle-drag or space-drag is moving the sheet. A ref because the pointer
-   * handlers read it synchronously on the same event tick that sets it, and
-   * state would be a render behind; the paired state below is only for cursor.
-   */
-  const panningRef = useRef(false)
-  const [panning, setPanning] = useState(false)
-  /** Space held = temporary hand tool, for trackpads with no middle button. */
-  const spaceHeldRef = useRef(false)
-  const [spaceHeld, setSpaceHeld] = useState(false)
-  /** Fingers currently down, so only the first one may act on the canvas. */
-  const touchCountRef = useRef(0)
   /**
    * The vertex list as it stood the instant a finger landed. If that finger
    * turns out to be half of a pinch, this is what we cut back to — see
    * `rollbackPinchVertex`. Null for mouse input.
    */
   const polyLenBeforeTouchRef = useRef<number | null>(null)
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const update = () => {
-      const r = el.getBoundingClientRect()
-      setViewport({ w: r.width, h: r.height })
-    }
-    update()
-    const ro = new ResizeObserver(update)
-    ro.observe(el)
-    return () => ro.disconnect()
+  // Finger one already ran the tool — it was indistinguishable from a
+  // deliberate tap until this moment. Cut the vertex it placed, and drop any
+  // shape it started.
+  const onPinchStart = useCallback(() => {
+    setCurrent(null)
+    setPolyPoints((pts) => rollbackPinchVertex(pts, polyLenBeforeTouchRef.current))
+    polyLenBeforeTouchRef.current = null
   }, [])
+  const imageSize = useMemo<{ w: number; h: number } | null>(() => {
+    if (!img) return null
+    const [w, h] = backingSize(img)
+    return { w, h }
+  }, [img])
+  const {
+    viewport, scale, offset, fitToView, zoomIn, zoomOut, setOffsetFromStage,
+    gestureActive, panning, spaceHeld, panningRef, touchCountRef,
+  } = useSheetViewport({ containerRef, image: imageSize, resetKey: `${plan.id}:${currentPage}`, onPinchStart })
 
   // Fullscreen — max working space. Request OS fullscreen synchronously in the
   // click (gesture requirement); the CSS overlay (fixed inset:0) applies either
@@ -1170,311 +572,6 @@ export function MarkupCanvas({
     return () => window.removeEventListener('keydown', onEsc)
   }, [isFullscreen])
 
-  // Reset auto-fit when the DRAWING or the current page changes — not when a
-  // server re-render merely re-mints the signed URL, which would snap the view
-  // back to fit-to-width under the measurer after every save.
-  useEffect(() => {
-    initFitDone.current = false
-  }, [plan.id, plan.isPdf, currentPage])
-
-  const fitToView = useCallback(() => {
-    if (!img) return
-    const [iw, ih] = backingSize(img)
-    if (iw === 0 || ih === 0 || viewport.w < 50 || viewport.h < 50) return
-    const s = Math.min(viewport.w / iw, viewport.h / ih) * 0.95
-    setScale(s)
-    setOffset({ x: (viewport.w - iw * s) / 2, y: (viewport.h - ih * s) / 2 })
-  }, [img, viewport.w, viewport.h])
-
-  // First-load auto-fit
-  useEffect(() => {
-    if (!img || initFitDone.current) return
-    if (viewport.w < 50) return
-    fitToView()
-    initFitDone.current = true
-  }, [img, viewport.w, viewport.h, fitToView])
-
-  // Zoom by `factor`, keeping the point (anchorX, anchorY) — in container-
-  // local CSS pixels — stationary on screen. Used by wheel, pinch, and the
-  // toolbar buttons (which anchor on the viewport centre).
-  const zoomBy = useCallback((factor: number, anchorX: number, anchorY: number) => {
-    const prev = scaleRef.current
-    const next = Math.min(8, Math.max(0.05, prev * factor))
-    if (next === prev) return
-    const ratio = next / prev
-    const o = offsetRef.current
-    const newOffset = {
-      x: anchorX - (anchorX - o.x) * ratio,
-      y: anchorY - (anchorY - o.y) * ratio,
-    }
-    scaleRef.current = next
-    offsetRef.current = newOffset
-    setScale(next)
-    setOffset(newOffset)
-  }, [])
-
-  function zoomIn() {
-    zoomBy(1.25, viewport.w / 2, viewport.h / 2)
-  }
-  function zoomOut() {
-    zoomBy(1 / 1.25, viewport.w / 2, viewport.h / 2)
-  }
-
-  // Native wheel + multi-touch gestures. Konva doesn't expose pointerId for
-  // reliable 2-finger tracking and wheel needs preventDefault (which Konva's
-  // event wrapper doesn't cleanly support), so we bind directly to the
-  // container in capture phase.
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const pointers = new Map<number, { x: number; y: number }>()
-    let gesture: { dist: number; cx: number; cy: number } | null = null
-
-    const localPt = (e: PointerEvent | WheelEvent) => {
-      const r = el.getBoundingClientRect()
-      return { x: e.clientX - r.left, y: e.clientY - r.top }
-    }
-
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      const { x, y } = localPt(e)
-      // Was `e.deltaY < 0 ? 1.1 : 1/1.1` — sign of deltaY only, which made a
-      // trackpad's horizontal swipe zoom OUT (deltaY is 0, and 0 < 0 is false)
-      // and left a MacBook with no pan gesture at all. See classifyWheel.
-      const intent = classifyWheel(e)
-      if (intent.kind === 'zoom') {
-        zoomBy(intent.factor, x, y)
-        return
-      }
-      if (intent.dx === 0 && intent.dy === 0) return
-      const next = { x: offsetRef.current.x + intent.dx, y: offsetRef.current.y + intent.dy }
-      offsetRef.current = next
-      setOffset(next)
-    }
-    const onDown = (e: PointerEvent) => {
-      pointers.set(e.pointerId, localPt(e))
-      if (e.pointerType === 'touch') touchCountRef.current = pointers.size
-      if (pointers.size === 2) {
-        const pts = [...pointers.values()]
-        const dx = pts[1]!.x - pts[0]!.x
-        const dy = pts[1]!.y - pts[0]!.y
-        gesture = {
-          dist: Math.hypot(dx, dy),
-          cx: (pts[0]!.x + pts[1]!.x) / 2,
-          cy: (pts[0]!.y + pts[1]!.y) / 2,
-        }
-        setCurrent(null)
-        // Finger one already ran the tool — it was indistinguishable from a
-        // deliberate tap until this moment. Cut the vertex it placed.
-        setPolyPoints((pts) => rollbackPinchVertex(pts, polyLenBeforeTouchRef.current))
-        polyLenBeforeTouchRef.current = null
-        setGestureActive(true)
-      }
-    }
-    const onMove = (e: PointerEvent) => {
-      if (!pointers.has(e.pointerId)) return
-      pointers.set(e.pointerId, localPt(e))
-      if (pointers.size === 2 && gesture) {
-        e.preventDefault()
-        const pts = [...pointers.values()]
-        const dx = pts[1]!.x - pts[0]!.x
-        const dy = pts[1]!.y - pts[0]!.y
-        const dist = Math.hypot(dx, dy)
-        const cx = (pts[0]!.x + pts[1]!.x) / 2
-        const cy = (pts[0]!.y + pts[1]!.y) / 2
-        if (dist > 0 && gesture.dist > 0) {
-          zoomBy(dist / gesture.dist, cx, cy)
-        }
-        const panDx = cx - gesture.cx
-        const panDy = cy - gesture.cy
-        if (panDx !== 0 || panDy !== 0) {
-          const newOffset = {
-            x: offsetRef.current.x + panDx,
-            y: offsetRef.current.y + panDy,
-          }
-          offsetRef.current = newOffset
-          setOffset(newOffset)
-        }
-        gesture = { dist, cx, cy }
-      }
-    }
-    const onUp = (e: PointerEvent) => {
-      pointers.delete(e.pointerId)
-      if (e.pointerType === 'touch') touchCountRef.current = pointers.size
-      if (pointers.size < 2) {
-        gesture = null
-        setGestureActive(false)
-      }
-    }
-
-    el.addEventListener('wheel', onWheel, { passive: false })
-    el.addEventListener('pointerdown', onDown)
-    el.addEventListener('pointermove', onMove)
-    el.addEventListener('pointerup', onUp)
-    el.addEventListener('pointercancel', onUp)
-    el.addEventListener('pointerleave', onUp)
-    return () => {
-      el.removeEventListener('wheel', onWheel)
-      el.removeEventListener('pointerdown', onDown)
-      el.removeEventListener('pointermove', onMove)
-      el.removeEventListener('pointerup', onUp)
-      el.removeEventListener('pointercancel', onUp)
-      el.removeEventListener('pointerleave', onUp)
-    }
-  }, [zoomBy])
-
-  /**
-   * ── Drag the sheet, in every tool ────────────────────────────────────────
-   *
-   * Middle-drag (mouse) and space+left-drag (trackpad, which has no middle
-   * button). Pan was previously a property of the Select tool
-   * (`draggable={tool === 'select'}`), and leaving a tool wipes that tool's
-   * work — so "move the sheet" and "keep tracing" were mutually exclusive by
-   * construction. This makes navigation orthogonal to the tool, which is what
-   * AutoCAD and Bluebeam have always done.
-   *
-   * THREE DECISIONS WORTH THE COMMENT:
-   *
-   * 1. CAPTURE PHASE ON THE CONTAINER. Konva binds its own listeners on
-   *    `stage.content`, a div INSIDE containerRef, and dispatches without ever
-   *    reading `button`. A capture listener on the ancestor therefore runs
-   *    first, and `stopPropagation()` here means Konva never sees the event at
-   *    all — which suppresses tool logic, shape selection, shape drag and stage
-   *    drag in ONE place. The alternative, a `button` check in each of the ~15
-   *    tool branches plus every shape handler, is a hand-maintained list, and
-   *    this repo has been bitten by those repeatedly.
-   *
-   * 2. NOT A KONVA DRAG. Konva's own drag recomputes position from an offset
-   *    captured once at drag start, so a wheel tick mid-drag is not merely
-   *    ignored, it is REVERTED on the next mousemove. The owner's request was
-   *    literally "the same wheel to zoom and pan", which is impossible if pan
-   *    is a Konva drag. This writes `offsetRef`/`setOffset` — the model the
-   *    two-finger pinch already uses — so zoom and pan compose.
-   *
-   * 3. preventDefault ON `mousedown`, NOT pointerdown. Chrome and Edge on
-   *    Windows and Linux open the autoscroll puck on a middle mousedown, and it
-   *    is the compatibility mouse event that triggers it.
-   */
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    let last: { x: number; y: number } | null = null
-
-    const begin = (e: PointerEvent) => {
-      // Middle button anywhere, or primary while space is held.
-      const wants = isPanPress(e) || (e.button === 0 && spaceHeldRef.current && e.pointerType !== 'touch')
-      if (!wants) return
-      e.preventDefault()
-      e.stopPropagation()
-      last = { x: e.clientX, y: e.clientY }
-      panningRef.current = true
-      setPanning(true)
-      try { el.setPointerCapture(e.pointerId) } catch { /* capture is best-effort */ }
-    }
-
-    const move = (e: PointerEvent) => {
-      if (!panningRef.current || !last) return
-      e.preventDefault()
-      e.stopPropagation()
-      // Screen-space delta applied straight to the offset. NOT divided by
-      // scale: `offset` is the Stage's x/y in screen pixels, with `scale`
-      // applied separately, so the sheet must follow the cursor 1:1 at any zoom.
-      const next = {
-        x: offsetRef.current.x + (e.clientX - last.x),
-        y: offsetRef.current.y + (e.clientY - last.y),
-      }
-      last = { x: e.clientX, y: e.clientY }
-      offsetRef.current = next
-      setOffset(next)
-    }
-
-    const end = (e: PointerEvent) => {
-      if (!panningRef.current) return
-      panningRef.current = false
-      last = null
-      setPanning(false)
-      try { el.releasePointerCapture(e.pointerId) } catch { /* already released */ }
-    }
-
-    // The autoscroll puck would otherwise swallow the drag entirely.
-    const killMiddleDefault = (e: MouseEvent) => { if (e.button === 1) e.preventDefault() }
-
-    el.addEventListener('pointerdown', begin, { capture: true })
-    el.addEventListener('pointermove', move, { capture: true })
-    el.addEventListener('pointerup', end, { capture: true })
-    el.addEventListener('pointercancel', end, { capture: true })
-    el.addEventListener('lostpointercapture', end, { capture: true })
-    el.addEventListener('mousedown', killMiddleDefault, { capture: true })
-    el.addEventListener('auxclick', killMiddleDefault, { capture: true })
-    return () => {
-      el.removeEventListener('pointerdown', begin, { capture: true })
-      el.removeEventListener('pointermove', move, { capture: true })
-      el.removeEventListener('pointerup', end, { capture: true })
-      el.removeEventListener('pointercancel', end, { capture: true })
-      el.removeEventListener('lostpointercapture', end, { capture: true })
-      el.removeEventListener('mousedown', killMiddleDefault, { capture: true })
-      el.removeEventListener('auxclick', killMiddleDefault, { capture: true })
-    }
-  }, [])
-
-  /**
-   * Space = temporary hand. The guard skips typing targets AND buttons: the
-   * toolbar is dense, and space on a focused button is that button's activate
-   * key, so hijacking it would fire whatever the user last clicked.
-   */
-  useEffect(() => {
-    const typing = (t: EventTarget | null) => {
-      const el = t as HTMLElement | null
-      if (!el) return false
-      const tag = el.tagName
-      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || el.isContentEditable
-    }
-    const down = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || e.repeat || typing(e.target)) return
-      e.preventDefault() // or the page scrolls
-      spaceHeldRef.current = true
-      setSpaceHeld(true)
-    }
-    const up = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return
-      spaceHeldRef.current = false
-      setSpaceHeld(false)
-    }
-    // Releasing the key while the window is unfocused would otherwise leave the
-    // hand latched on for ever.
-    const blur = () => { spaceHeldRef.current = false; setSpaceHeld(false) }
-    window.addEventListener('keydown', down)
-    window.addEventListener('keyup', up)
-    window.addEventListener('blur', blur)
-    return () => {
-      window.removeEventListener('keydown', down)
-      window.removeEventListener('keyup', up)
-      window.removeEventListener('blur', blur)
-    }
-  }, [])
-
-  // Keyboard: F or 0 → fit-to-view, +/= zoom in, - zoom out.
-  // Skip when typing in an input/textarea so calibration entry isn't hijacked.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.key === 'f' || e.key === 'F' || e.key === '0') {
-        e.preventDefault()
-        fitToView()
-      } else if (e.key === '+' || e.key === '=') {
-        e.preventDefault()
-        zoomIn()
-      } else if (e.key === '-' || e.key === '_') {
-        e.preventDefault()
-        zoomOut()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [fitToView])
-
   // Delete / Escape for the selected shape. Separate effect so it always sees
   // the current selection + shapes (re-subscribes on change).
   useEffect(() => {
@@ -1482,31 +579,6 @@ export function MarkupCanvas({
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (mode === 'view') return
-      if (routeMode) {
-        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-          e.preventDefault()
-          if (e.shiftKey) redoRoute(); else undoRoute()
-          return
-        }
-        if (e.key === 'Enter' && polyPoints.length >= 4) { e.preventDefault(); finishPoly(); return }
-        if (e.key === 'Escape') {
-          e.preventDefault()
-          if (polyPoints.length) setPolyPoints([])
-          else if (pendingLeg) setPendingLeg(null)
-          else setSelectedLegId(null)
-          return
-        }
-        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLegId) {
-          e.preventDefault()
-          void deleteLeg(selectedLegId)
-          return
-        }
-      }
-      // ── The same three keys, in markup mode ──────────────────────────────
-      // These handlers, and the stacks behind them, already existed; only the
-      // `if (routeMode)` fence above kept them from ever running while drawing.
-      // So Escape could not cancel a half-drawn polygon, Enter could not finish
-      // one, and undo was mouse-only — in the mode people spend most time in.
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) redo(); else undo()
@@ -1532,7 +604,7 @@ export function MarkupCanvas({
     window.addEventListener('keydown', onEdit)
     return () => window.removeEventListener('keydown', onEdit)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, shapes, mode, routeMode, polyPoints, pendingLeg, selectedLegId, history, undoStack, redoStack])
+  }, [selectedId, shapes, mode, polyPoints, undoStack, redoStack])
 
   // ── History ───────────────────────────────────────────────────────────
   function pushHistory(prev: AnyShape[]) {
@@ -1980,19 +1052,6 @@ export function MarkupCanvas({
     if (tool === 'polygon' || tool === 'polyline') {
       // Click adds a vertex. Double-click (handled separately) finishes:
       // polygon closes, polyline stays open.
-      if (routeMode && tool === 'polyline') {
-        // Route mode snaps: a leg's first vertex to the end of a leg already
-        // saved on this sheet (so the run joins up), and with Shift any later
-        // vertex to 0/45/90° from the previous one (cable trays are orthogonal).
-        const endpoints: Array<[number, number]> = routeMode.savedLegs
-          .filter((l) => l.floorPlanId === plan.id && l.pageIndex === currentPage && l.points.length >= 4)
-          .flatMap((l) => [[l.points[0], l.points[1]], [l.points[l.points.length - 2], l.points[l.points.length - 1]]] as Array<[number, number]>)
-        const prev: [number, number] | null = polyPoints.length >= 2 ? [polyPoints[polyPoints.length - 2], polyPoints[polyPoints.length - 1]] : null
-        const snapped = snapRouteVertex([sx, sy], prev, endpoints, 12 / scale, !!(e.evt as MouseEvent).shiftKey)
-        setPolyPoints((pts) => [...pts, snapped.point[0], snapped.point[1]])
-        setSnapHint(snapped.snappedTo === 'endpoint' ? 'joined to the previous leg' : snapped.snappedTo === 'angle' ? 'snapped to 45°' : null)
-        return
-      }
       setPolyPoints((pts) => [...pts, sx, sy])
       return
     }
@@ -2102,7 +1161,7 @@ export function MarkupCanvas({
     setCalibPoints([])
     setCalibDistance('')
     setCalibError(null)
-    setTool(routeMode ? 'polyline' : 'select')
+    setTool('select')
   }
 
   async function saveCalibration() {
@@ -2125,36 +1184,12 @@ export function MarkupCanvas({
     setCalibSaving(true)
     setCalibError(null)
     try {
-      // Route mode writes through the role-gated server action: calibration is
-      // the scale every route on this sheet is measured against, so it needs
-      // the schedule's own write role (ORG_WRITE_ROLES), not merely the markup
-      // role this page is gated on. The action derives px/m server-side.
-      //
-      // The markup path below keeps its direct write deliberately — narrowing
-      // it to ORG_WRITE_ROLES would take calibration away from contractors, who
-      // are the primary markup authors and have had it since 00035. That is a
-      // policy change for the owner, not a side effect of this feature.
+      // The markup path keeps its direct write deliberately — narrowing it to
+      // ORG_WRITE_ROLES would take calibration away from contractors, who are
+      // the primary markup authors and have had it since 00035. That is a
+      // policy change for the owner, not a side effect. The measure page's own
+      // calibration goes through the role-gated action.
       const calibPts = [calibPoints[0][0], calibPoints[0][1], calibPoints[1][0], calibPoints[1][1]]
-      if (routeMode) {
-        const res = await calibrateFloorPlanAction({
-          floorPlanId: plan.id,
-          points: calibPts,
-          realMetres: metres,
-          pageIndex: currentPage,
-        })
-        if (res.error) throw new Error(res.error)
-        if (currentPage === 1) {
-          setPixelsPerMeter(res.pixelsPerMeter ?? ppm)
-          setCalibLine({ points: calibPts, metres, pageIndex: 1 })
-        } else {
-          setSessionPageScales((m) => new Map(m).set(currentPage, { ppm: res.pixelsPerMeter ?? ppm, points: calibPts, metres }))
-        }
-        setCalibPoints([])
-        setCalibDistance('')
-        // Back to tracing — the scale was set in order to trace.
-        setTool('polyline')
-        return
-      }
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       // Calibration columns added in migration 00035 — generated types will
@@ -2693,136 +1728,12 @@ export function MarkupCanvas({
       {/* Toolbar — tool palette / colour / stroke / undo groups are hidden
           in view mode; zoom + page-nav stay visible so the viewer can pan,
           zoom and step through multi-page PDFs while read-only. */}
-      {routeMode && (
-        <div
-          className="data-panel"
-          style={{ padding: '10px 12px', marginBottom: 8, display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap' }}
-        >
-          <div style={{ fontSize: 13, fontWeight: 700 }}>
-            Measuring <span style={{ fontFamily: 'var(--font-mono)' }}>{routeMode.runLabel}</span>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
-            {!pixelsPerMeter
-              ? 'This sheet has no scale yet — set the scale once and every later run on it is ready.'
-              : 'Click each corner of the route, then double-click to finish the leg. Save it, then continue on another sheet if the run crosses one.'}
-          </div>
-          <div style={{ flex: 1 }} />
-          <label style={{ fontSize: 11, color: 'var(--c-text-dim)', display: 'flex', alignItems: 'center', gap: 6 }}>
-            Continue on
-            <select
-              className="ob-input"
-              style={{ fontSize: 12, maxWidth: 260 }}
-              value={plan.id}
-              onChange={(e) => { if (e.target.value !== plan.id) routeMode.onSwitchSheet(e.target.value) }}
-              aria-label="Continue this run on another sheet"
-            >
-              {routeMode.sheets.map((sh) => (
-                <option key={sh.id} value={sh.id}>
-                  {sh.name}{sh.calibrated ? '' : ' (no scale yet)'}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      )}
-      {routeMode && (() => {
-        // THE STATUS STRIP — which of the three steps this run is on, always.
-        const legs = routeMode.savedLegs.length
-        const saved = routeMode.savedLegs.reduce((n, l) => n + l.lengthM, 0)
-        const total = saved + routeMode.riseM + routeMode.dropM
-        const drafting = polyPoints.length > 0
-        const assigned = routeMode.scheduleLengthM != null && legs > 0 && Math.abs(routeMode.scheduleLengthM - total) < 0.005
-        const step = pendingLeg || drafting ? 1 : legs === 0 ? 1 : assigned ? 3 : 2
-        const cell = (n: number, title: string, body: string) => (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', opacity: step === n ? 1 : 0.62 }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: step === n ? 'var(--c-amber)' : 'var(--c-text-dim)', border: `1px solid ${step === n ? 'var(--c-amber)' : 'var(--c-border)'}`, borderRadius: 10, padding: '1px 7px' }}>{n}</span>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>{title}</span>
-            <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{body}</span>
-          </div>
-        )
-        return (
-          <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 22, alignItems: 'baseline', flexWrap: 'wrap' }}>
-            {restoredDraftAt && (
-              <span style={{ fontSize: 11, color: 'var(--c-amber)' }}>
-                restored an unsaved trace from {new Date(restoredDraftAt).toLocaleTimeString()}
-              </span>
-            )}
-            {snapHint && drafting && <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>{snapHint}</span>}
-            {cell(1, 'Trace', pendingLeg
-              ? 'leg finished — press Save leg, or Discard'
-              : drafting
-                ? `${polyPoints.length / 2} point${polyPoints.length === 2 ? '' : 's'} placed — double-click to finish the leg`
-                : legs === 0
-                  ? 'no legs saved yet'
-                  : `${legs} leg${legs === 1 ? '' : 's'} saved · ${saved.toFixed(2)} m`)}
-            {cell(2, 'Rise & drop', legs === 0 ? '—' : `${routeMode.riseM} m + ${routeMode.dropM} m → run total ${total.toFixed(2)} m`)}
-            {cell(3, 'Schedule', assigned
-              ? `assigned ${routeMode.scheduleLengthM!.toFixed(2)} m`
-              : routeMode.scheduleLengthM != null
-                ? `holds ${routeMode.scheduleLengthM.toFixed(2)} m — assign to replace`
-                : 'not assigned yet — use the panel on the right')}
-          </div>
-        )
-      })()}
-      {routeMode && !exporting && (pendingLeg || polyPoints.length > 0 || selectedLegId || legError) && (
-        <div className="data-panel" style={{ padding: '8px 12px', marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {polyPoints.length > 0 && (
-            <>
-              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
-                {polyPoints.length / 2} point{polyPoints.length === 2 ? '' : 's'} — double-click or Enter to finish the leg
-              </span>
-              <ToolbarButton onClick={() => setPolyPoints((p) => p.slice(0, -2))} title="Undo last point">↶ point</ToolbarButton>
-              <ToolbarButton onClick={() => setPolyPoints([])} title="Discard this trace (Esc)">Discard</ToolbarButton>
-            </>
-          )}
-          {pendingLeg && !polyPoints.length && (
-            <>
-              <button type="button" className="btn-primary-amber" onClick={saveLeg} disabled={legSaving || !pixelsPerMeter}>
-                {legSaving
-                  ? 'Saving…'
-                  : `Save leg${pixelsPerMeter ? ` · ${edgeLengthsM(pendingLeg, pixelsPerMeter).reduce((a, b) => a + b, 0).toFixed(2)} m` : ''}`}
-              </button>
-              <ToolbarButton onClick={() => setPendingLeg(null)} title="Discard this leg (Esc)">Discard</ToolbarButton>
-              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>The server re-measures from the drawing's scale; its figure is the one stored.</span>
-            </>
-          )}
-          {selectedLegId && !pendingLeg && !polyPoints.length && (
-            <>
-              <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
-                Leg selected — drag a point to move it, click a midpoint to add one, right-click a point to remove it.
-              </span>
-              <ToolbarButton
-                active={armedDeleteLegId === selectedLegId}
-                onClick={() => void deleteLeg(selectedLegId)}
-                title={armedDeleteLegId === selectedLegId ? 'Press again to delete this leg' : 'Delete this leg (Del) — press twice'}
-              >
-                {armedDeleteLegId === selectedLegId ? 'Confirm delete' : 'Delete leg'}
-              </ToolbarButton>
-              <ToolbarButton onClick={() => setSelectedLegId(null)} title="Deselect (Esc)">Done editing</ToolbarButton>
-            </>
-          )}
-          {legError && <span role="alert" style={{ color: '#dc2626', fontSize: 12 }}>{legError}</span>}
-        </div>
-      )}
-      {routeMode && exportMsg && (
-        <div className="data-panel" role="status" style={{ padding: '8px 12px', marginBottom: 8, fontSize: 12 }}>
-          {exportMsg}
-        </div>
-      )}
       <div className="data-panel" style={{ padding: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         {mode !== 'view' && (
           <>
             <ToolbarGroup>
-              {TOOLS
-                .filter((t) => (routeMode ? ROUTE_TOOLS.includes(t.value) : true))
-                // The cable tool exists only where a schedule can be written.
-                .filter((t) => t.value !== 'cable' || !!cablePicker)
-                .map((t) => {
-                // Tracing an uncalibrated sheet would produce a leg the server
-                // must reject. Require the scale first, the same way the
-                // measure tool already does.
-                const needsScale = t.needsCalibration || (!!routeMode && t.value === 'polyline')
-                const disabled = needsScale && !pixelsPerMeter
+              {TOOLS.map((t) => {
+                const disabled = !!t.needsCalibration && !pixelsPerMeter
                 return (
                   <ToolbarButton
                     key={t.value}
@@ -2836,11 +1747,6 @@ export function MarkupCanvas({
                 )
               })}
             </ToolbarGroup>
-            {/* Colour, width and style belong to markup. Route mode's look is fixed
-                by the route layer — a measuring tool cannot borrow its style from a
-                highlighter — so the controls that would only mislead are hidden. */}
-            {!routeMode && (
-              <>
             <ToolbarSeparator />
             <ToolbarGroup>
               {COLORS.map((c) => (
@@ -2936,8 +1842,6 @@ export function MarkupCanvas({
                 </ToolbarButton>
               ))}
             </ToolbarGroup>
-              </>
-            )}
             <ToolbarSeparator />
             <ToolbarGroup>
               <ToolbarButton active={gridOn} onClick={() => setGridOn((v) => !v)} title="Toggle grid overlay">
@@ -3008,7 +1912,7 @@ export function MarkupCanvas({
           </span>
         </ToolbarGroup>
         <ToolbarSeparator />
-        {mode !== 'view' && !routeMode && (
+        {mode !== 'view' && (
           <ToolbarGroup>
             <ToolbarButton onClick={undo} disabled={undoStack.length === 0} title="Undo">↶</ToolbarButton>
             <ToolbarButton onClick={redo} disabled={redoStack.length === 0} title="Redo">↷</ToolbarButton>
@@ -3058,14 +1962,14 @@ export function MarkupCanvas({
             </ToolbarGroup>
           </>
         )}
-        {!routeMode && routeOverlay && routeOverlay.legs.length > 0 && (
+        {routeOverlay && routeOverlay.legs.length > 0 && (
           <>
             <ToolbarSeparator />
             <ToolbarGroup>
               <ToolbarButton
                 active={showRoutes}
                 onClick={() => setShowRoutes((v) => !v)}
-                title={`${routeOverlay.legs.length} cable route${routeOverlay.legs.length === 1 ? '' : 's'} saved on this drawing — show or hide${routeOverlay.onMeasure ? '; press a route to measure that run' : ''}`}
+                title={`${routeOverlay.legs.length} cable route${routeOverlay.legs.length === 1 ? '' : 's'} saved on this drawing — show or hide${routeOverlay.onMeasure ? '; press a route to open it on the measure page' : ''}`}
               >
                 ⚡ Routes
               </ToolbarButton>
@@ -3073,31 +1977,7 @@ export function MarkupCanvas({
           </>
         )}
         <div style={{ flex: 1 }} />
-        {routeMode && (
-          <ToolbarGroup>
-            <ToolbarButton onClick={startCalibration} title="Set this drawing's scale">
-              {pixelsPerMeter ? 'Recalibrate' : 'Set scale'}
-            </ToolbarButton>
-            <ToolbarButton onClick={undoRoute} disabled={!history.canUndo || legSaving} title="Undo (⌘Z) — the last vertex, leg, edit or save">↶</ToolbarButton>
-            <ToolbarButton onClick={redoRoute} disabled={!history.canRedo || legSaving} title="Redo (⇧⌘Z)">↷</ToolbarButton>
-            <ToolbarButton
-              onClick={() => void exportSheet()}
-              disabled={exporting || !img || routeMode.savedLegs.every((l) => l.floorPlanId !== plan.id)}
-              title="Keep this sheet — routes, lengths and scale as drawn — as a versioned PDF report"
-            >
-              {exporting ? 'Exporting…' : 'Export sheet'}
-            </ToolbarButton>
-            <button
-              type="button"
-              className="btn-primary-amber"
-              onClick={() => router.push(routeMode.doneHref)}
-              title="Back to the measure worklist. Every leg you pressed Save on is already kept."
-            >
-              Back to schedule
-            </button>
-          </ToolbarGroup>
-        )}
-        {mode !== 'view' && !routeMode && (
+        {mode !== 'view' && (
         <ToolbarGroup>
           <ToolbarButton onClick={startCalibration} title="Calibrate this drawing for the measure tool">Calibrate</ToolbarButton>
           {onSaveMarkup ? (
@@ -3287,89 +2167,6 @@ export function MarkupCanvas({
       )}
 
       {/* Calibration overlay */}
-      {tool === 'cable' && cablePicker && (
-        <div className="data-panel" style={{ padding: 12, marginBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-            <strong style={{ fontSize: 13 }}>Measure a cable run</strong>
-            <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>
-              {cablePicker.revisionCode} · pick the run this drawing shows, then trace it here.
-            </span>
-            <div style={{ flex: 1 }} />
-            <input
-              type="search"
-              value={cableQuery}
-              onChange={(e) => setCableQuery(e.target.value)}
-              placeholder="Filter runs…"
-              className="ob-input"
-              style={{ width: 200 }}
-              aria-label="Filter cable runs"
-            />
-            <button
-              type="button"
-              onClick={() => { setCableQuery(''); setTool('select') }}
-              className="btn-primary-amber"
-              style={{ background: 'var(--c-panel)', border: '1px solid var(--c-border)', color: 'var(--c-text-mid)' }}
-            >
-              Cancel
-            </button>
-          </div>
-          <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--c-border)', borderRadius: 6 }}>
-            {(() => {
-              const q = cableQuery.trim().toLowerCase()
-              const shown = q
-                ? cablePicker.runs.filter((r) => r.label.toLowerCase().includes(q))
-                : cablePicker.runs
-              if (shown.length === 0) {
-                return (
-                  <p style={{ margin: 0, padding: 14, fontSize: 12, color: 'var(--c-text-dim)' }}>
-                    {cablePicker.runs.length === 0
-                      ? 'This project has no runs on a draft cable schedule.'
-                      : `No run matches "${cableQuery}".`}
-                  </p>
-                )
-              }
-              return shown.map((r) => {
-                const active = r.supplyId === cablePicker.activeSupplyId
-                return (
-                  <button
-                    key={r.supplyId}
-                    type="button"
-                    onClick={() => { setCableQuery(''); cablePicker.onPick(r.supplyId) }}
-                    style={{
-                      display: 'flex',
-                      width: '100%',
-                      gap: 10,
-                      alignItems: 'baseline',
-                      textAlign: 'left',
-                      padding: '7px 12px',
-                      background: active ? 'var(--c-amber-mid)' : 'transparent',
-                      border: 'none',
-                      borderBottom: '1px solid var(--c-border)',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                      color: 'var(--c-text)',
-                    }}
-                  >
-                    <span style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}>{r.label}</span>
-                    {r.scheduleLengthM != null && (
-                      <span style={{ color: 'var(--c-text-dim)', fontSize: 11 }}>
-                        schedule {r.scheduleLengthM.toFixed(1)} m
-                      </span>
-                    )}
-                    <span
-                      className={`badge ${r.traced ? 'badge-amber' : ''}`}
-                      style={{ fontSize: 10 }}
-                    >
-                      {active ? 'measuring' : r.traced ? 'traced' : 'not traced'}
-                    </span>
-                  </button>
-                )
-              })
-            })()}
-          </div>
-        </div>
-      )}
-
       {tool === 'calibrate' && (
         <div className="data-panel" style={{ padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {calibPoints.length < 2 ? (
@@ -3490,9 +2287,7 @@ export function MarkupCanvas({
               // cancelBubble on each one would not.
               if (e.target !== e.target.getStage()) return
               const t = e.target as Konva.Stage
-              const next = { x: t.x(), y: t.y() }
-              offsetRef.current = next
-              setOffset(next)
+              setOffsetFromStage({ x: t.x(), y: t.y() })
             }}
             onMouseDown={onPointerDown}
             onMouseMove={onPointerMove}
@@ -3609,7 +2404,7 @@ export function MarkupCanvas({
               )}
               {/* Polygon/polyline in-progress: vertices + connecting line.
                   Double-click (or Enter) finishes. */}
-              {!routeMode && (tool === 'polygon' || tool === 'polyline') && polyPoints.length >= 2 && (
+              {(tool === 'polygon' || tool === 'polyline') && polyPoints.length >= 2 && (
                 <Line
                   points={polyPoints}
                   stroke={color}
@@ -3618,7 +2413,7 @@ export function MarkupCanvas({
                   closed={tool === 'polygon' && polyPoints.length >= 6}
                 />
               )}
-              {!routeMode && (tool === 'polygon' || tool === 'polyline') &&
+              {(tool === 'polygon' || tool === 'polyline') &&
                 Array.from({ length: polyPoints.length / 2 }).map((_, i) => (
                   <Circle
                     key={`poly-vtx-${i}`}
@@ -3631,26 +2426,7 @@ export function MarkupCanvas({
                   />
                 ))}
             </Layer>
-            {routeMode ? (
-              <RouteLayer
-                planId={plan.id}
-                currentPage={currentPage}
-                scale={scale}
-                pixelsPerMeter={pixelsPerMeter}
-                legs={routeMode.savedLegs}
-                otherLegs={routeMode.otherLegsOnSheet}
-                pendingLeg={exporting ? null : pendingLeg}
-                draftPoints={!exporting && tool === 'polyline' ? polyPoints : []}
-                selectedLegId={exporting ? null : selectedLegId}
-                editable={!exporting && tool === 'select' && !legSaving}
-                calibration={pageCalibLines.find((c) => c.pageIndex === currentPage) ?? calibLine}
-                showCalibration
-                onSelectLeg={setSelectedLegId}
-                onMoveVertex={onMoveLegVertex}
-                onInsertVertex={onInsertLegVertex}
-                onRemoveVertex={onRemoveLegVertex}
-              />
-            ) : routeOverlay && showRoutes && routeOverlay.legs.length > 0 ? (
+            {routeOverlay && showRoutes && routeOverlay.legs.length > 0 ? (
               // The record: every saved route on this sheet, in full, in any
               // mode. Pressable to start measuring when the role allows it.
               <RouteLayer

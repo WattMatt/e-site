@@ -1,8 +1,9 @@
 /**
- * Cable route measurement — trace → save → recall → remove, end to end.
+ * Cable route measurement — trace → save → recall → remove, end to end, on the
+ * cable schedule's measure page.
  *
  * Requires a signed-in session (auth.setup) holding ORG_WRITE_ROLES on the
- * project, and three env vars naming a DRAFT-revision run and a calibrated
+ * project, and four env vars naming a DRAFT-revision run and a calibrated
  * drawing on that project:
  *
  *   E2E_ROUTE_PROJECT_ID   the project
@@ -28,20 +29,19 @@ test.describe('cable route measurement', () => {
   })
 
   test('traces a leg, saves it, recalls it on the plain drawing, and removes it', async ({ page }) => {
-    await page.goto(`/projects/${PROJECT}/floor-plans/${PLAN}?mode=route&supply=${SUPPLY}`)
-    // The polyline must be in hand on arrival, and the sheet rasterised.
-    await expect(page.getByRole('button', { name: /Segmented line/ })).toBeVisible()
+    await page.goto(`/projects/${PROJECT}/cables/${REVISION}/measure?supply=${SUPPLY}&sheet=${PLAN}`)
+    // The trace tool must be in hand on arrival, and the sheet rasterised.
+    await expect(page.getByRole('button', { name: /^Trace a leg/ })).toBeVisible()
     const canvas = page.locator('canvas').first()
     await expect(canvas).toBeVisible({ timeout: 90_000 })
     const box = await canvas.boundingBox()
     if (!box) throw new Error('no canvas box')
 
-    // Three corners, double-click to finish → a pending leg with a Save button.
+    // Three corners, double-click to finish → a pending leg with a length.
     const at = (fx: number, fy: number) => ({ x: box.x + box.width * fx, y: box.y + box.height * fy })
-    await page.mouse.click(at(0.35, 0.45).x, at(0.35, 0.45).y)
-    await page.mouse.click(at(0.50, 0.50).x, at(0.50, 0.50).y)
-    await page.mouse.click(at(0.60, 0.62).x, at(0.60, 0.62).y)
-    await page.mouse.dblclick(at(0.60, 0.62).x, at(0.60, 0.62).y)
+    await page.mouse.click(at(0.3, 0.3).x, at(0.3, 0.3).y)
+    await page.mouse.click(at(0.6, 0.3).x, at(0.6, 0.3).y)
+    await page.mouse.dblclick(at(0.6, 0.6).x, at(0.6, 0.6).y)
     await expect(page.getByText(/leg finished — press Save leg/)).toBeVisible()
     const save = page.getByRole('button', { name: /^Save leg · [\d.]+ m$/ })
     await expect(save).toBeVisible()

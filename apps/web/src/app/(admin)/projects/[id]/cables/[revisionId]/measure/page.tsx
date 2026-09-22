@@ -234,7 +234,6 @@ export default async function MeasureRunsPage({ params, searchParams }: Props) {
       </div>
 
       <RouteMeasureWorkspace
-        projectId={projectId}
         revisionId={revisionId}
         runs={runs}
         plans={planRows}

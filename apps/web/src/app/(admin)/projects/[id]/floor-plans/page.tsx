@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { projectService, floorPlanService, MARKUP_WRITE_ROLES } from '@esite/shared'
+import { projectService, floorPlanService, MARKUP_WRITE_ROLES, ORG_WRITE_ROLES } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
 import { FloorPlanUploadButton } from './FloorPlanUploadButton'
 import { DrawingsList, type DrawingListItem } from './DrawingsList'
@@ -37,6 +37,25 @@ export default async function FloorPlansPage({ params }: Props) {
   // just stops offering actions the caller can't complete.
   const gate = await requireEffectiveRole(supabase as any, projectId, MARKUP_WRITE_ROLES)
   const canWrite = gate.ok
+
+  // The per-row Trace link opens the cable schedule's measure page on that
+  // sheet. It is the schedule's door, so it answers to ORG_WRITE_ROLES and
+  // needs a DRAFT revision to open on; without both it is not rendered — a
+  // link that lands on a redirect is worse than no link.
+  const scheduleGate = await requireEffectiveRole(supabase as any, projectId, ORG_WRITE_ROLES)
+  let traceHrefBase: string | null = null
+  if (scheduleGate.ok) {
+    const { data: draft } = await (supabase as any)
+      .schema('cable_schedule')
+      .from('revisions')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('status', 'DRAFT')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (draft?.id) traceHrefBase = `/projects/${projectId}/cables/${draft.id}/measure`
+  }
 
   const orgId = (project as any).organisation_id as string
   const connections = (connectionsRes?.data ?? []) as unknown as ConnectionOption[]
@@ -96,7 +115,7 @@ export default async function FloorPlansPage({ params }: Props) {
         />
       )}
 
-      <DrawingsList plans={plansWithUrls} projectId={projectId} canWrite={canWrite} />
+      <DrawingsList plans={plansWithUrls} projectId={projectId} canWrite={canWrite} traceHrefBase={traceHrefBase} />
     </div>
   )
 }

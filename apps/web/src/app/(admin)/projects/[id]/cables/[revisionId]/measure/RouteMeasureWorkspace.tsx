@@ -45,8 +45,9 @@ type Filter = 'outstanding' | 'traced' | 'all'
  * append, edit, delete, reorder and undo are all "send the new list" — so
  * there is one set of guards and no way for them to disagree about rise/drop.
  */
+const NO_SEGMENTS: RunSegment[] = []
+
 export function RouteMeasureWorkspace({
-  projectId,
   revisionId,
   runs,
   plans,
@@ -55,7 +56,6 @@ export function RouteMeasureWorkspace({
   initialPage,
   otherLegsOnSheet,
 }: {
-  projectId: string
   revisionId: string
   runs: RunRow[]
   plans: PlanRow[]
@@ -77,7 +77,7 @@ export function RouteMeasureWorkspace({
   const [selectedId, setSelectedId] = useState<string | null>(initialSupplyId ?? null)
   useEffect(() => { setSelectedId(initialSupplyId ?? null) }, [initialSupplyId])
   const selected = runsState.find((r) => r.supplyId === selectedId) ?? null
-  const segments: RunSegment[] = selected?.route?.segments ?? []
+  const segments: RunSegment[] = useMemo(() => selected?.route?.segments ?? NO_SEGMENTS, [selected])
 
   // ── Worklist ──────────────────────────────────────────────────────────────
   const initialRun = initialSupplyId ? runs.find((r) => r.supplyId === initialSupplyId) : undefined
