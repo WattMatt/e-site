@@ -354,7 +354,10 @@ export function RouteMeasureWorkspace({
             dropM: selected.route?.dropM ?? 0,
             scheduleLengthM: selected.scheduleLengthM,
             savedLegs: segments.map((g) => ({ id: g.id, floorPlanId: g.floorPlanId, floorPlanName: g.floorPlanName, pageIndex: g.pageIndex, points: g.points, lengthM: g.lengthM })),
-            otherLegsOnSheet,
+            // The server excludes the run it was asked for; between picking a
+            // different run here and that re-render landing, exclude it again
+            // so the new run's own legs are not also drawn faint as "other".
+            otherLegsOnSheet: otherLegsOnSheet.filter((l) => l.supplyId !== selected.supplyId),
           }
         : null,
     [selected, runLabel, segments, otherLegsOnSheet],
@@ -461,7 +464,9 @@ export function RouteMeasureWorkspace({
           </div>
         ) : plans.length === 0 || !sheet ? (
           <div style={{ border: '1px dashed var(--c-border)', borderRadius: 10, padding: 48, textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 14 }}>
-            This project has no drawings loaded, so there is nothing to trace a route on. Upload the power layouts under Floor Plans first.
+            {plans.length === 0
+              ? 'This project has no drawings loaded, so there is nothing to trace a route on. Upload the power layouts under Floor Plans first.'
+              : 'None of this project’s drawings can be shown here. Tracing needs a PDF, PNG, JPG, WebP or SVG drawing.'}
           </div>
         ) : (
           <>

@@ -97,7 +97,11 @@ export function useSheetImage({
           if (signal.cancelled) return
           pdfDocRef.current = pdf as unknown as PdfDoc
           setPageCount(pdf.numPages)
-          await renderPdfPage(Math.min(Math.max(1, initialPage), pdf.numPages), signal)
+          // A page beyond the document (a stale link) opens the last page, and
+          // the state says so — the number shown must be the page drawn.
+          const first = Math.min(Math.max(1, initialPage), pdf.numPages)
+          setCurrentPage(first)
+          await renderPdfPage(first, signal)
         } catch (err) {
           if (signal.cancelled) return
           setLoadError(err instanceof Error ? err.message : 'PDF load failed')

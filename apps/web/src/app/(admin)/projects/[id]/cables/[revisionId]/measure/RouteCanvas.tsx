@@ -137,6 +137,12 @@ export function RouteCanvas({
     initialPage: openPage,
   })
   useEffect(() => { onPageChange(currentPage) }, [currentPage, onPageChange])
+  // A later request for a page — "open · page 3" in the rail, or picking a run
+  // whose last leg is on page 3 of THIS sheet — turns the page without a
+  // reload: the document is already open and pages are cached.
+  useEffect(() => {
+    setCurrentPage(Math.min(Math.max(1, initialPage), pageCount))
+  }, [initialPage, pageCount, setCurrentPage])
   const [imgW, imgH] = backingSize(img)
   const naturalW = sheet.width_px || imgW || 800
   const naturalH = sheet.height_px || imgH || 600
