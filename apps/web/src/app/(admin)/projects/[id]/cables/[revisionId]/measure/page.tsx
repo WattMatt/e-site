@@ -4,40 +4,36 @@ import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { ORG_WRITE_ROLES } from '@esite/shared'
 import { requireEffectiveRole } from '@/lib/auth/require-role'
-import { RouteMeasureWorkspace, type RunRow, type PlanRow } from './RouteMeasureWorkspace'
+import { RouteMeasureWorkspace } from './RouteMeasureWorkspace'
 import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
+import { lastSheetOf } from './route-canvas-logic'
+import type { ActiveSheet, PlanRow, RunRow } from './types'
+import type { OtherLeg } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/RouteLayer'
 
 export const metadata: Metadata = { title: 'Measure cable runs' }
 
 interface Props {
   params: Promise<{ id: string; revisionId: string }>
-  /** `?supply=` preselects a run — the grid and any other surface deep-links here. */
-  searchParams: Promise<{ supply?: string }>
+  /**
+   * `?supply=` the run, `?sheet=` the drawing, `?page=` its PDF page. The grid,
+   * the Drawings tab and a pressed route on the viewer all deep-link here.
+   */
+  searchParams: Promise<{ supply?: string; sheet?: string; page?: string }>
 }
 
 /**
- * Measure cable runs against the project's drawings.
+ * The cable schedule's measuring tool: worklist, sheet and run, on one page.
  *
- * This page is the WORKLIST. Tracing happens on the drawing viewer, in route
- * mode (`?mode=route&supply=…`).
- *
- * It did not start that way: the first cut carried its own canvas so a schedule
- * feature would not be coupled to RFI and QC markup. That canvas shipped with
- * no zoom and no pan, which put a traced vertex within roughly 30-50cm of real
- * site — worse than the measure tool the firm already had on the viewer, and a
- * third control doing the same job as the grid's length cell. The coupling
- * concern was real and is answered instead by what route mode may touch: it
- * borrows the viewport and the polyline input, and a committed leg goes to
- * `route_segments`, never to the markup scene. The scene graph still cannot
- * express a route that crosses sheets, and nothing asks it to.
- *
- * The worklist is a QUERY, not a maintained list: a run is outstanding when it
- * has no route. Measuring one removes it. That is what narrows the list as the
- * work proceeds.
+ * Tracing used to happen on the drawing viewer in a borrowed "route mode";
+ * the viewer served contractors' markup and engineers' measuring under two
+ * role gates on one surface, and every sheet meant a trip between sections.
+ * This page owns the whole flow now. The worklist is still a QUERY, not a
+ * maintained list: a run is outstanding when it has no route, and measuring
+ * one removes it.
  */
 export default async function MeasureRunsPage({ params, searchParams }: Props) {
   const { id: projectId, revisionId } = await params
-  const { supply: initialSupplyId } = await searchParams
+  const { supply: initialSupplyId, sheet: sheetParam, page: pageParam } = await searchParams
   const supabase = await createClient()
 
   const { data: revision } = await (supabase as any)
@@ -48,75 +44,50 @@ export default async function MeasureRunsPage({ params, searchParams }: Props) {
     .maybeSingle()
   if (!revision || revision.project_id !== projectId) notFound()
 
-  // Same write gate as the rest of the schedule. Page gating is not a gate on
-  // its own — the actions re-check and the database policies gate the writes —
-  // but a read-only role should not be shown a measuring workspace at all.
-  // `.ok` — the helper returns a result object, so bare truthiness never fires.
+  // Same write gate as the rest of the schedule. The actions re-check and the
+  // database policies gate the writes; a read-only role is simply not shown a
+  // measuring workspace. `.ok` — the helper returns a result object.
   const roleGate = await requireEffectiveRole(supabase, projectId, ORG_WRITE_ROLES)
   if (!roleGate.ok) redirect(`/projects/${projectId}/cables/${revisionId}`)
+  if (revision.status !== 'DRAFT') redirect(`/projects/${projectId}/cables/${revisionId}`)
 
-  if (revision.status !== 'DRAFT') {
-    redirect(`/projects/${projectId}/cables/${revisionId}`)
-  }
-
-  // Runs, with the node codes that name them and whatever length they already
-  // carry. `supplies` holds no length: lengths live on the strands, and
-  // parallels share a route, so the run's figure is any strand's figure.
-  // Node codes are fetched separately rather than through a PostgREST embed.
-  // `supplies` has two foreign keys into the same table (from_node_id and
-  // to_node_id), which makes the embed name ambiguous and version-sensitive; a
-  // second small query is cheaper than a page that silently renders every run
-  // as "unknown" the day that alias changes.
+  // Runs, with the node codes that name them and whatever length they carry.
+  // Node codes are fetched separately: `supplies` has two FKs into the same
+  // table, which makes a PostgREST embed alias ambiguous and version-sensitive.
   const { data: supplies } = await (supabase as any)
     .schema('cable_schedule')
     .from('supplies')
     .select('id, voltage_v, design_load_a, section, from_node_id, to_node_id')
     .eq('revision_id', revisionId)
-
   const supplyRows = (supplies ?? []) as any[]
-  const nodeIds = [
-    ...new Set(
-      supplyRows.flatMap((s) => [s.from_node_id, s.to_node_id]).filter(Boolean),
-    ),
-  ] as string[]
-
+  const nodeIds = [...new Set(supplyRows.flatMap((s) => [s.from_node_id, s.to_node_id]).filter(Boolean))] as string[]
   const { data: nodes } = nodeIds.length
-    ? await (supabase as any)
-        .schema('structure')
-        .from('nodes')
-        .select('id, code')
-        .in('id', nodeIds)
+    ? await (supabase as any).schema('structure').from('nodes').select('id, code').in('id', nodeIds)
     : { data: [] }
-  const nodeCode = new Map<string, string>(
-    ((nodes ?? []) as any[]).map((n) => [n.id, n.code as string]),
-  )
+  const nodeCode = new Map<string, string>(((nodes ?? []) as any[]).map((n) => [n.id, n.code as string]))
 
   const { data: cables } = await (supabase as any)
     .schema('cable_schedule')
     .from('cables')
     .select('id, supply_id, measured_length_m, length_status')
     .eq('revision_id', revisionId)
-
   const bySupply = new Map<string, { strands: number; lengthM: number | null }>()
   for (const c of ((cables ?? []) as any[])) {
     const cur = bySupply.get(c.supply_id) ?? { strands: 0, lengthM: null }
     cur.strands += 1
-    if (cur.lengthM == null && c.measured_length_m != null) {
-      cur.lengthM = Number(c.measured_length_m)
-    }
+    if (cur.lengthM == null && c.measured_length_m != null) cur.lengthM = Number(c.measured_length_m)
     bySupply.set(c.supply_id, cur)
   }
 
   const { data: routes } = await (supabase as any)
     .schema('cable_schedule')
     .from('supply_routes')
-    .select('id, supply_id, rise_m, drop_m, traced_length_m, total_length_m')
+    .select('id, supply_id, rise_m, drop_m, traced_length_m, total_length_m, updated_at')
     .eq('revision_id', revisionId)
-  const routeBySupply = new Map<string, any>(
-    ((routes ?? []) as any[]).map((r) => [r.supply_id, r]),
-  )
+  const routeRows = (routes ?? []) as any[]
+  const routeBySupply = new Map<string, any>(routeRows.map((r) => [r.supply_id, r]))
 
-  const routeIds = ((routes ?? []) as any[]).map((r) => r.id)
+  const routeIds = routeRows.map((r) => r.id)
   const { data: segments } = routeIds.length
     ? await (supabase as any)
         .schema('cable_schedule')
@@ -131,6 +102,9 @@ export default async function MeasureRunsPage({ params, searchParams }: Props) {
     arr.push(s)
     segsByRoute.set(s.route_id, arr)
   }
+
+  const labelOf = (s: any) =>
+    `${nodeCode.get(s.from_node_id) ?? (s.from_node_id ? '—' : 'Source')} → ${nodeCode.get(s.to_node_id) ?? '—'}`
 
   const runs: RunRow[] = supplyRows.map((s) => {
     const route = routeBySupply.get(s.id)
@@ -149,11 +123,12 @@ export default async function MeasureRunsPage({ params, searchParams }: Props) {
             dropM: Number(route.drop_m),
             tracedM: Number(route.traced_length_m),
             totalM: Number(route.total_length_m),
+            updatedAt: route.updated_at ?? null,
             segments: (segsByRoute.get(route.id) ?? []).map((g) => ({
               id: g.id,
               seq: g.seq,
               floorPlanId: g.floor_plan_id,
-              floorPlanName: g.floor_plan_name,
+              floorPlanName: g.floor_plan_name ?? 'Drawing',
               pageIndex: g.page_index,
               points: (g.points ?? []) as number[],
               pixelsPerMeter: Number(g.pixels_per_meter),
@@ -163,44 +138,99 @@ export default async function MeasureRunsPage({ params, searchParams }: Props) {
         : null,
     }
   })
+  const selectedRun = runs.find((r) => r.supplyId === initialSupplyId) ?? null
 
-  // Drawings. Every drawing in the cable projects is a PDF, so this list is
-  // effectively a sheet list; the name carries the drawing number.
+  // Drawings, with their calibration so the list can say which have a scale.
   const { data: plans } = await (supabase as any)
     .schema('tenants')
     .from('floor_plans')
-    .select('id, name, file_path, pixels_per_meter')
+    .select('id, name, file_path, width_px, height_px, pixels_per_meter, calibration_points, calibration_metres, calibration_page_index')
     .eq('project_id', projectId)
     .eq('is_active', true)
     .order('name')
-
-  const planRows: PlanRow[] = ((plans ?? []) as any[]).map((p) => ({
+  const planRaw = (plans ?? []) as any[]
+  const isPdfPath = (p: string) => /\.pdf$/i.test(p)
+  const isImagePath = (p: string) => /\.(png|jpe?g|webp|svg)$/i.test(p)
+  const planRows: PlanRow[] = planRaw.map((p) => ({
     id: p.id,
     name: p.name ?? 'Drawing',
-    isPdf: String(p.file_path ?? '').toLowerCase().endsWith('.pdf'),
+    isPdf: isPdfPath(String(p.file_path ?? '')),
+    renderable: isPdfPath(String(p.file_path ?? '')) || isImagePath(String(p.file_path ?? '')),
     filePath: p.file_path,
     pixelsPerMeter: p.pixels_per_meter == null ? null : Number(p.pixels_per_meter),
   }))
 
+  // The sheet to open: the one asked for, else the run's last sheet, else the
+  // first drawing the canvas can render. Only THIS sheet gets a signed URL.
+  const last = lastSheetOf(selectedRun)
+  const activePlan =
+    planRaw.find((p) => p.id === sheetParam) ??
+    (last ? planRaw.find((p) => p.id === last.planId) : undefined) ??
+    planRaw.find((p) => isPdfPath(String(p.file_path ?? '')) || isImagePath(String(p.file_path ?? '')))
+  let activeSheet: ActiveSheet | null = null
+  let otherLegsOnSheet: OtherLeg[] = []
+  if (activePlan) {
+    const filePath = String(activePlan.file_path ?? '')
+    const renderable = isPdfPath(filePath) || isImagePath(filePath)
+    let signedUrl: string | null = null
+    if (renderable) {
+      const { data } = await supabase.storage.from('drawings').createSignedUrl(filePath, 3600)
+      signedUrl = data?.signedUrl ?? null
+    }
+    const { data: scales } = await (supabase as any)
+      .schema('tenants')
+      .from('floor_plan_page_scales')
+      .select('page_index, pixels_per_meter, calibration_points, calibration_metres')
+      .eq('floor_plan_id', activePlan.id)
+    const pts = activePlan.calibration_points
+    activeSheet = {
+      id: activePlan.id,
+      name: activePlan.name ?? 'Drawing',
+      signedUrl,
+      isPdf: isPdfPath(filePath),
+      width_px: activePlan.width_px ?? null,
+      height_px: activePlan.height_px ?? null,
+      pixels_per_meter: activePlan.pixels_per_meter == null ? null : Number(activePlan.pixels_per_meter),
+      calibration_points: Array.isArray(pts) && pts.length === 4 ? pts.map(Number) : null,
+      calibration_metres: activePlan.calibration_metres == null ? null : Number(activePlan.calibration_metres),
+      calibration_page_index: activePlan.calibration_page_index == null ? null : Number(activePlan.calibration_page_index),
+      page_scales: ((scales ?? []) as any[]).map((r) => ({
+        pageIndex: Number(r.page_index),
+        pixelsPerMeter: Number(r.pixels_per_meter),
+        points: Array.isArray(r.calibration_points) && r.calibration_points.length === 4 ? r.calibration_points.map(Number) : null,
+        metres: r.calibration_metres == null ? null : Number(r.calibration_metres),
+      })),
+    }
+    // Every OTHER run's legs on this sheet, for context while tracing. Derived
+    // from the segments already loaded — this revision's routes are the ones
+    // that matter on this revision's measure page.
+    const supplyOfRoute = new Map<string, string>(routeRows.map((r) => [r.id, r.supply_id]))
+    const supplyById = new Map<string, any>(supplyRows.map((s) => [s.id, s]))
+    otherLegsOnSheet = ((segments ?? []) as any[])
+      .filter((g) => g.floor_plan_id === activePlan.id && Array.isArray(g.points) && g.points.length >= 4)
+      .map((g) => ({ supplyId: supplyOfRoute.get(g.route_id) ?? '', pageIndex: Number(g.page_index), points: g.points as number[], lengthM: Number(g.length_m) }))
+      .filter((g) => g.supplyId && g.supplyId !== initialSupplyId)
+      .map((g) => ({ ...g, label: supplyById.get(g.supplyId) ? labelOf(supplyById.get(g.supplyId)) : 'run' }))
+  }
+
+  const parsedPage = Number(pageParam)
+  const initialPage = Number.isInteger(parsedPage) && parsedPage >= 1
+    ? parsedPage
+    : last && activeSheet && last.planId === activeSheet.id ? last.page : 1
+
   const measured = runs.filter((r) => r.route && r.route.segments.length > 0).length
 
   return (
-    <div style={{ padding: '20px 24px' }}>
-      <div style={{ marginBottom: 16 }}>
-        <Link
-          href={`/projects/${projectId}/cables/${revisionId}`}
-          style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none' }}
-        >
-          ← Back to schedule {revision.code}
+    <div style={{ padding: '16px 20px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap', marginBottom: 12 }}>
+        <Link href={`/projects/${projectId}/cables/${revisionId}`} style={{ fontSize: 13, color: 'var(--c-text-dim)', textDecoration: 'none' }}>
+          ← Schedule {revision.code}
         </Link>
-        <h1 style={{ margin: '8px 0 2px', fontSize: 20, fontWeight: 700 }}>Measure cable runs</h1>
-        <p style={{ margin: 0, fontSize: 13, color: 'var(--c-text-dim)' }}>
-          {measured} of {runs.length} runs traced.{' '}
-          <strong>1</strong> Pick a run and trace it on the drawing — each leg is saved as you go.{' '}
-          <strong>2</strong> Add rise and drop.{' '}
-          <strong>3</strong> Assign the total to the schedule (from the drawing or from here).{' '}
-          Export a sheet from the drawing to keep a PDF record; they are listed below.
-        </p>
+        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Measure cable runs</h1>
+        <span style={{ fontSize: 13, color: 'var(--c-text-dim)' }}>
+          {measured} of {runs.length} runs traced ·{' '}
+          <strong>1</strong> trace each leg on the sheet, <strong>2</strong> add rise and drop, <strong>3</strong> assign the total to the schedule.
+        </span>
       </div>
 
       <RouteMeasureWorkspace
@@ -208,11 +238,14 @@ export default async function MeasureRunsPage({ params, searchParams }: Props) {
         revisionId={revisionId}
         runs={runs}
         plans={planRows}
-        initialSupplyId={runs.some((r) => r.supplyId === initialSupplyId) ? initialSupplyId : undefined}
+        initialSupplyId={selectedRun?.supplyId}
+        activeSheet={activeSheet}
+        initialPage={initialPage}
+        otherLegsOnSheet={otherLegsOnSheet}
       />
 
-      {/* Every sheet exported from the drawing viewer, as versioned PDFs:
-          the record of what was traced, re-openable and downloadable. */}
+      {/* Every sheet exported from the canvas, as versioned PDFs: the record of
+          what was traced, re-openable and downloadable. */}
       <div style={{ marginTop: 20 }}>
         <SavedReportsPanel projectId={projectId} kind="cable_route_sheet" title="Exported sheets" />
       </div>
