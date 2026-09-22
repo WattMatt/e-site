@@ -2,28 +2,64 @@
 -- allocator and its permanent prefixes). Run inside the rolled-back transaction
 -- opened by try-work-item-spine.sh.
 --
--- The table is created in this same transaction, so it is EMPTY when the first
--- insert below runs: "the first task is TASK-1" is a real assertion here, not
--- an assumption about production.
+-- ⚠ This file no longer relies on projects.work_items being empty, and must
+-- not: stacked behind 00202 (WITH_EXTRA), section H has already backfilled 35
+-- mirror items before these assertions run. Every ref assertion instead uses a
+-- project this file CREATES, which is empty in both windows — unstacked, where
+-- the table itself is new, and stacked, where it is not. "The first task is
+-- TASK-1" is therefore a real assertion about a known-empty (project, type)
+-- pair, not an assumption about the estate.
 DO $$
 DECLARE v_proj uuid; v_org uuid; v_pm uuid; v_rfi uuid; v_a uuid; v_b uuid; r text; n int;
         v_proj2 uuid; v_org2 uuid; v_pm2 uuid;
 BEGIN
-  SELECT p.id, p.organisation_id INTO v_proj, v_org
+  -- ⚠ A project this file CREATES, not the oldest live one. Assertions 1b, 2
+  -- and 3a all read "the first <type> on this project is <PREFIX>-1", which is
+  -- only true while work_items holds nothing for that project. That was free
+  -- while the table was created inside this same transaction — but once item
+  -- 3's backfill (00202 section H) is stacked it projects a mirror item for
+  -- every live RFI, inspection and site form, so the oldest live project
+  -- already holds RFI-1 and this file aborted with
+  --   ERROR: 23505: duplicate key value violates unique constraint "work_items_src_rfi_uidx"
+  -- on the fixture RFI it shared with the backfill (measured 2026-09-15, Task
+  -- 15 Step 6b). A project created here is empty in BOTH windows, and the
+  -- allocator assertions are about mechanics, not about live data.
+  SELECT p.organisation_id INTO v_org
     FROM projects.projects p WHERE p.status='active' ORDER BY p.created_at LIMIT 1;
-  v_pm := projects.resolve_project_pm(v_proj);
+  IF v_org IS NULL THEN
+    RAISE EXCEPTION 'no active project — there is no organisation to hang the fixture project on';
+  END IF;
+  -- The org owner/admin: 00107 gives owner/admin/project_manager an effective
+  -- role on every project of their org from user_organisations alone, so this
+  -- person passes item 2's assignee-membership trigger on a brand-new project
+  -- (resolve_project_pm returns NULL on one, and the NOT NULL people columns
+  -- would then fail on the FK rather than on the allocator under test).
+  SELECT u.user_id INTO v_pm FROM public.user_organisations u
+   WHERE u.organisation_id = v_org AND u.role IN ('owner','admin') AND u.is_active
+     AND EXISTS (SELECT 1 FROM public.profiles pr WHERE pr.id = u.user_id)
+   ORDER BY u.created_at, u.user_id LIMIT 1;
+  IF v_pm IS NULL THEN
+    RAISE EXCEPTION 'organisation % has no active owner/admin with a profile — nobody can own the fixture work items', v_org;
+  END IF;
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org, '_probe_ref_allocator', 'active', 'ZAR', v_pm) RETURNING id INTO v_proj;
+
   -- Every insert runs work_items_set_due_date -> add_working_days, which raises
   -- no_data_found on an unseeded year. Rolled back with everything else.
   INSERT INTO projects.calendar_years (year)
   VALUES (EXTRACT(YEAR FROM CURRENT_DATE)::int), (EXTRACT(YEAR FROM CURRENT_DATE)::int + 1)
   ON CONFLICT DO NOTHING;
 
-  -- RAISE rather than skip: a LIMIT 1 that returns nothing would turn the
-  -- per-type counter proof (assertion 2) into a no-op with a green tick.
-  SELECT r2.id INTO v_rfi FROM projects.rfis r2 WHERE r2.project_id = v_proj LIMIT 1;
-  IF v_rfi IS NULL THEN
-    RAISE EXCEPTION 'no rfi on project % — the per-type counter assertion cannot fail and would be decorative', v_proj;
-  END IF;
+  -- The file's own RFI. Unconditional, so assertion 2 can never be decorative.
+  INSERT INTO projects.rfis (project_id, organisation_id, subject, description,
+                             priority, status, raised_by)
+  VALUES (v_proj, v_org, 'assertion fixture rfi', 'body', 'medium', 'open', v_pm)
+  RETURNING id INTO v_rfi;
+  -- 00202's live trigger mirrors this RFI on insert and that mirror takes RFI-1;
+  -- assertion 2 inserts the rfi item ITSELF and reads the ref back. Removing the
+  -- trigger-made row restores an empty rfi series (the allocator is MAX+1 over
+  -- rows that exist): 0 rows before 00202 applies, 1 after — correct in both.
+  DELETE FROM projects.work_items WHERE rfi_id = v_rfi AND origin = 'mirror';
 
   -- 1a. The first task on this project is <PREFIX>-<n> ...
   INSERT INTO projects.work_items (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
@@ -115,18 +151,14 @@ BEGIN
 
   -- 8. THE COUNTER IS PER PROJECT. The first task on a SECOND project is TASK-1
   --    while the first project already holds several — a MAX that forgot the
-  --    project predicate would hand it TASK-10002. RAISE rather than skip when
-  --    production has only one active project: the assertion would then be
-  --    decorative.
-  SELECT p.id, p.organisation_id INTO v_proj2, v_org2
-    FROM projects.projects p WHERE p.status='active' AND p.id <> v_proj ORDER BY p.created_at LIMIT 1;
-  IF v_proj2 IS NULL THEN
-    RAISE EXCEPTION 'only one active project — the project-scope assertion cannot fail and would be decorative';
-  END IF;
-  v_pm2 := projects.resolve_project_pm(v_proj2);
-  IF v_pm2 IS NULL THEN
-    RAISE EXCEPTION 'resolve_project_pm(%) returned NULL — the second project has nobody who can own work', v_proj2;
-  END IF;
+  --    project predicate would hand it TASK-10002. A SECOND project this file
+  --    creates, for the same reason as the first: a live second project holds
+  --    backfilled items once 00202 is stacked, and "only one active project"
+  --    would have made the assertion decorative.
+  v_org2 := v_org;
+  v_pm2  := v_pm;
+  INSERT INTO projects.projects (organisation_id, name, status, currency, created_by)
+  VALUES (v_org2, '_probe_ref_allocator_2', 'active', 'ZAR', v_pm2) RETURNING id INTO v_proj2;
   INSERT INTO projects.work_items (organisation_id, project_id, item_type, title, assignee_id, gatekeeper_id, created_by)
   VALUES (v_org2, v_proj2, 'task', 'first on another project', v_pm2, v_pm2, v_pm2) RETURNING ref INTO r;
   IF r <> 'TASK-1' THEN

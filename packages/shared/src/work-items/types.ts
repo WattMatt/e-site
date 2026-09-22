@@ -76,7 +76,7 @@ export interface WorkItemTypeSpec {
  * and the due-date trigger reads that COLUMN live rather than a copy of it.
  */
 export const WORK_ITEM_TYPES = [
-  { key: 'rfi',            label: 'RFI',              sourceTable: 'projects.rfis',                sourceColumn: 'assigned_to',     defaultDays: 7,  calendar: 'office', gatekeeperRule: 'project_pm',       writeRoles: MARKUP_WRITE_ROLES, sortOrder: 1 },
+  { key: 'rfi',            label: 'RFI',              sourceTable: 'projects.rfis',                sourceColumn: 'assigned_to',     defaultDays: 7,  calendar: 'office', gatekeeperRule: 'creator',          writeRoles: MARKUP_WRITE_ROLES, sortOrder: 1 },
   { key: 'snag',           label: 'Snag',             sourceTable: 'field.snags',                  sourceColumn: 'assigned_to',     defaultDays: 5,  calendar: 'site',   gatekeeperRule: 'project_pm',       writeRoles: SNAG_FIELD_ROLES,   sortOrder: 2 },
   { key: 'qc_defect',      label: 'QC defect',        sourceTable: 'projects.qc_entries',          sourceColumn: null,              defaultDays: 5,  calendar: 'site',   gatekeeperRule: 'project_pm',       writeRoles: QC_WRITE_ROLES,     sortOrder: 3 },
   { key: 'inspection',     label: 'Inspection',       sourceTable: 'inspections.inspections',      sourceColumn: 'assigned_to_id',  defaultDays: 3,  calendar: 'site',   gatekeeperRule: 'verifier_else_pm', writeRoles: ORG_WRITE_ROLES,    sortOrder: 4 },
