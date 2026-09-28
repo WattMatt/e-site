@@ -13,3 +13,14 @@ export const mwh = (kwh: number) => `${num(kwh / 1000, 1)} MWh`
 export const kw = (x: number) => `${num(x, 1)} kW`
 export const pct = (fraction: number, dp = 1) => `${num(fraction * 100, dp)} %`
 export const years = (y: number | null) => (y === null ? 'n/a' : `${num(y, 1)} years`)
+
+/**
+ * A stored timestamp in SAST (UTC+2, no daylight saving) — deterministic on the server and in the
+ * browser, so a client component renders the same text in both (no hydration mismatch).
+ */
+export function sastDateTime(iso: string | null | undefined): string {
+  const t = iso ? Date.parse(iso) : Number.NaN
+  if (!Number.isFinite(t)) return '—'
+  return `${new Date(t + 2 * 3600_000).toISOString().slice(0, 16).replace('T', ' ')} SAST`
+}
+export const sastDate = (iso: string | null | undefined): string => (sastDateTime(iso) === '—' ? '—' : sastDateTime(iso).slice(0, 10))

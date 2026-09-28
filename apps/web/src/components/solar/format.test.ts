@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rand, mwh, num, pct, years, kw } from './format'
+import { rand, mwh, num, pct, years, kw, sastDateTime, sastDate } from './format'
 
 describe('solar display format (units always shown, spec §0.4 rule 3)', () => {
   it('rand: space thousands, dot decimals, R prefix; negatives', () => {
@@ -18,5 +18,11 @@ describe('solar display format (units always shown, spec §0.4 rule 3)', () => {
   it('a value that rounds to zero is not signed', () => {
     expect(num(-0.04, 1)).toBe('0.0')
     expect(rand(-0.4)).toBe('R 0')
+  })
+  it('timestamps render in SAST, deterministically', () => {
+    expect(sastDateTime('2026-09-28T23:00:05Z')).toBe('2026-09-29 01:00 SAST')
+    expect(sastDate('2026-09-28T23:00:05Z')).toBe('2026-09-29')
+    expect(sastDateTime(null)).toBe('—')
+    expect(sastDate('garbage')).toBe('—')
   })
 })
