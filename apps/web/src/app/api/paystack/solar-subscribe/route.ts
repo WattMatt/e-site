@@ -1,4 +1,3 @@
-import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { OWNER_ADMIN } from '@esite/shared'
@@ -7,6 +6,7 @@ import { orgHasSolar } from '@/lib/solar/access'
 import { rateLimit } from '@/lib/rate-limit'
 import { solarLockedPath, solarReturnTo } from '@/lib/paystack/return-to'
 import { ORG_ADDON_METADATA_TYPE, solarPlanCode } from '@/lib/paystack/org-addon'
+import { solarSubscribeBodySchema } from '@/lib/paystack/solar-subscribe-body'
 
 // Starts the ORG-wide Solar subscription (decision D-01: R1,999/yr excl. VAT,
 // every project of the org) against the PAYSTACK_PLAN_SOLAR_ANNUAL recurring
@@ -27,7 +27,8 @@ import { ORG_ADDON_METADATA_TYPE, solarPlanCode } from '@/lib/paystack/org-addon
 // OWNER ACTION REQUIRED: 503 until PAYSTACK_PLAN_SOLAR_ANNUAL holds a PLN_…
 // code for an annual ZAR plan created on the Paystack dashboard.
 
-const bodySchema = z.object({ project_id: z.string().uuid() })
+// Shared with the Solar SubscribeButton so the sender and the parser cannot drift.
+const bodySchema = solarSubscribeBodySchema
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 

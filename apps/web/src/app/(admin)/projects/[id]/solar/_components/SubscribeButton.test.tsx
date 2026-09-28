@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({ push: vi.fn(), assign: vi.fn(), fetch: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn(), push: h.push }) }))
 
 import { SubscribeButton } from './SubscribeButton'
+import { solarSubscribeBodySchema } from '@/lib/paystack/solar-subscribe-body'
 
 const originalLocation = window.location
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -21,13 +22,20 @@ afterAll(() => {
 })
 
 describe('SubscribeButton', () => {
-  it('POSTs the project to the 1B route and follows authorization_url', async () => {
+  it('POSTs a body the 1B route ACCEPTS (its own schema) and follows authorization_url', async () => {
+    const PID = '7c1f4a8e-2b3d-4e5f-9a6b-1c2d3e4f5a6b'
     h.fetch.mockResolvedValue(json(200, { authorization_url: 'https://checkout.paystack.com/abc' }))
-    render(<SubscribeButton projectId="p1" />)
+    render(<SubscribeButton projectId={PID} />)
     await userEvent.setup().click(screen.getByRole('button', { name: 'Subscribe' }))
-    expect(h.fetch).toHaveBeenCalledWith('/api/paystack/solar-subscribe', expect.objectContaining({
-      method: 'POST', body: JSON.stringify({ projectId: 'p1' }),
-    }))
+    const [url, init] = h.fetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/paystack/solar-subscribe')
+    expect(init.method).toBe('POST')
+    // Checked against the schema the route itself parses with — a body the
+    // button and the route disagree on can no longer pass (review C1: the
+    // first cut sent {projectId} and the route 400'd every press).
+    const parsed = solarSubscribeBodySchema.safeParse(JSON.parse(String(init.body)))
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data.project_id).toBe(PID)
     expect(h.assign).toHaveBeenCalledWith('https://checkout.paystack.com/abc')
   })
 

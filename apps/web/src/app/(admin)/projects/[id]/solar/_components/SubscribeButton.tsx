@@ -1,7 +1,7 @@
 'use client'
 /**
  * Start the org subscription (spec §1.2). The route belongs to Phase 1B:
- * POST /api/paystack/solar-subscribe {projectId}; the org is derived from the
+ * POST /api/paystack/solar-subscribe {project_id}; the org is derived from the
  * PROJECT server-side. Responses (1B contract, 2026-09-28):
  *   200 {authorization_url}  → go to Paystack; it returns the user to
  *                              /projects/<id>/solar/locked?payment=received
@@ -14,6 +14,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
+import type { SolarSubscribeBody } from '@/lib/paystack/solar-subscribe-body'
 
 const FALLBACK = 'Payment could not start — try again.'
 const NOT_ADMIN = 'Only an organisation owner or admin can subscribe.'
@@ -32,7 +33,7 @@ export function SubscribeButton({ projectId }: { projectId: string }) {
       const res = await fetch('/api/paystack/solar-subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ project_id: projectId } satisfies SolarSubscribeBody),
       })
       const body = (await res.json().catch(() => ({}))) as { authorization_url?: unknown; error?: unknown }
       const said = typeof body.error === 'string' && body.error.trim() ? body.error : null
