@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
@@ -31,10 +32,15 @@ export default async function SolarGatedLayout({
   if (!user) redirect('/login')
 
   const level = await requireSolarLevel(id, 'view', supabase)
-  const [{ data: project }, { data: study }] = await Promise.all([
+  const [{ data: project }, { data: study }, grantorRes] = await Promise.all([
     supabase.schema('projects').from('projects').select('name').eq('id', id).maybeSingle(),
     supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva').eq('project_id', id).maybeSingle(),
+    supabase.rpc('solar_is_grantor', { p_project_id: id }),
   ])
+  // Owner default 1 (2026-09-28): grantors get a way to the Access panel from
+  // the module chrome. Hidden (not disabled) for everyone else; the panel's
+  // own loader and every grantor action re-check solar_is_grantor.
+  const isGrantor = !grantorRes.error && grantorRes.data === true
   const readiness = computeSolarReadiness(toSiteReadinessInput(study), level)
 
   return (
@@ -44,6 +50,11 @@ export default async function SolarGatedLayout({
           <h1 className="page-title">Solar</h1>
           <p className="page-subtitle">{(project as { name?: string } | null)?.name ?? ''}</p>
         </div>
+        {isGrantor && (
+          <Link href={`/projects/${id}/solar/access`} style={{ fontSize: 12, color: 'var(--c-amber)', alignSelf: 'center' }}>
+            Manage access
+          </Link>
+        )}
       </div>
       {level === 'view' && <ViewOnlyBanner projectId={id} />}
       <SolarTabBar projectId={id} level={level} readiness={readiness} />

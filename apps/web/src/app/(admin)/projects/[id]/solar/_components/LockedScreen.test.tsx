@@ -88,4 +88,15 @@ describe('LockedScreen — the §0.2 rows', () => {
     render(<LockedScreen {...base} state={{ kind: 'subscribe' }} />)
     expect(screen.getByText('What Solar does')).toBeDefined()
   })
+
+  // Owner default 1 extended: a grantor of an unsubscribed org can already set
+  // grants (00207 does not gate project_access on the subscription), so the
+  // locked screen links to the Access panel too. Row 1 is grantors only.
+  it('row 1 links a grantor to Manage access; other rows do not', () => {
+    const { unmount } = render(<LockedScreen {...base} state={{ kind: 'subscribe' }} />)
+    expect(screen.getByRole('link', { name: 'Manage access' }).getAttribute('href')).toBe('/projects/p1/solar/access')
+    unmount()
+    render(<LockedScreen {...base} state={{ kind: 'ask_admin', requestedAt: null }} />)
+    expect(screen.queryByRole('link', { name: 'Manage access' })).toBeNull()
+  })
 })

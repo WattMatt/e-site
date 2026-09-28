@@ -126,6 +126,8 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `/projects/[id]/solar/overview` | W | W | W | R | → locked | → locked | → locked |
 | `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
 
+> Grantors reach `/solar/access` from a **Manage access** link in the gated chrome and on the locked screen's Subscribe row; nobody else sees the link.
+>
 > `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview and Site & Supply have **no route** in Phase 1 — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12).
 
 ### Solar server actions

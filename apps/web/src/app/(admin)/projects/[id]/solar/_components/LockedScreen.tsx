@@ -4,6 +4,7 @@
  * unlocks it, per the §0.2 row the server resolved. Props are JSON only.
  */
 import { useState, type CSSProperties } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Lock } from 'lucide-react'
 import {
@@ -64,6 +65,10 @@ function LockedAction(p: LockedScreenProps) {
           <h2 style={H2}>Solar is not active for {p.orgName}</h2>
           <p style={MUTED}>{p.priceLine}</p>
           {p.paymentReturn ? <PaymentReturnPoller projectId={p.projectId} /> : <SubscribeButton projectId={p.projectId} />}
+          {/* Row 1 is grantors only; grants may be set before paying (they confer nothing until the org subscribes). */}
+          <p style={{ ...MUTED, margin: '12px 0 0' }}>
+            <Link href={`/projects/${p.projectId}/solar/access`} style={{ color: 'var(--c-amber)' }}>Manage access</Link>
+          </p>
         </>
       )
     case 'ask_admin':

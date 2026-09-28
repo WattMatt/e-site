@@ -72,6 +72,7 @@ financials**; `OWNER_ADMIN` = org owner/admin. Rand values never render for View
 | Status dot on each tab | Indicator (grey = not started, amber = incomplete, green = complete, red = blocking error) | Show readiness at a glance | Computed server-side by `getSolarReadiness(projectId)` from the rules in §2.3 — **no hard-coded statuses** (WM shipped six constants). Tooltip = the exact rule outcome, e.g. "Load: 2 of 14 tenants unassigned" | All roles |
 | "Stale" banner | Banner | Tell the user that results no longer match inputs | Shown on Yield, Financials and Reports when the selected case's stored `inputs_hash` ≠ hash of current inputs (engine spec §1.3). Button **Re-run selected case** (same as Yield → Run) | Button: `SOLAR_WRITE_ROLES` |
 | View-only banner | Banner | Explain the user's level | Shown for View-level users: "You have view access — ask an admin for edit access" + **Request edit access** | — |
+| "Manage access" link | Link → `/projects/[id]/solar/access` | Reach the Access panel (§1.3) from inside the module | Plain navigation. Also shown on the locked screen's Subscribe row (grants may be set before the org pays). Added 2026-09-28 (owner default, Phase 1C) | Grantors only (`solar_is_grantor`: org owner/admin of the project's org) — hidden, not disabled, for everyone else |
 
 ### 0.4 Rules that apply to every control
 
