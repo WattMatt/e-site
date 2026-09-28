@@ -176,3 +176,14 @@ describe('predecessors resolve against the # column, not row position', () => {
     expect(linksByName(noId)).toEqual([['Survey', 'Design', 'FS', 0], ['Design', 'Install', 'FS', 2]])
   })
 })
+
+describe('validateImportPlan — lag range', () => {
+  const t = (key: string, name: string) => ({ key, sourceRow: null, name, category: '', zone: '', start: '2026-10-01', end: '2026-10-02', isMilestone: false, progress: 0, status: 'not_started' as const, colour: null, ownerHint: null, description: '', segments: [] })
+  it('a lag outside ±365 days (the database CHECK) is a sentence, and ±365 is fine', () => {
+    const plan = (lagDays: number) => ({ tasks: [t('a', 'Design'), t('b', 'Install')], links: [{ fromKey: 'a', toKey: 'b', type: 'FS' as const, lagDays }] })
+    expect(validateImportPlan(plan(400))).toEqual([{ row: null, message: 'The link from "Design" to "Install" has a lag of 400 days; a lag must be between -365 and 365 days.' }])
+    expect(validateImportPlan(plan(-366))).toHaveLength(1)
+    expect(validateImportPlan(plan(365))).toEqual([])
+    expect(validateImportPlan(plan(-365))).toEqual([])
+  })
+})

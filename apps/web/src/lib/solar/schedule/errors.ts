@@ -38,6 +38,7 @@ export function humanScheduleError(err: { code?: string; message?: string } | nu
     if (m.includes('inside its task')) return 'A segment must lie inside its task.'
     if (m.includes('cannot overlap')) return 'Segments of one task cannot overlap.'
     if (m.includes('schedule_tasks_dates_ordered') || m.includes('schedule_segments_dates_ordered')) return 'A task cannot end before it starts.'
+    if (m.includes('schedule_dependencies_lag_days_check')) return 'A lag must be between -365 and 365 days.'
     return GENERIC_ERROR
   }
   if (PASS_THROUGH.has(code) && m && !m.startsWith('solar.')) return m

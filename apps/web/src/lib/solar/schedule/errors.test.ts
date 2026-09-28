@@ -18,6 +18,7 @@ describe('humanScheduleError', () => {
     [{ code: '23514', message: 'solar.schedule_segments: segments of one task cannot overlap' }, 'Segments of one task cannot overlap.'],
     [{ code: '23514', message: 'new row violates check constraint "schedule_tasks_dates_ordered"' }, 'A task cannot end before it starts.'],
     [{ code: '23514', message: 'solar.schedule_tasks: the work item is not a solar task' }, GENERIC_ERROR],
+    [{ code: '23514', message: 'new row for relation "schedule_dependencies" violates check constraint "schedule_dependencies_lag_days_check"' }, 'A lag must be between -365 and 365 days.'],
     [{ code: '23505', message: 'duplicate key value violates unique constraint "schedule_dependencies_pair_unique"' }, 'Those two tasks are already linked.'],
     [{ code: '23505', message: '… "schedule_baselines_name_unique"' }, 'A baseline with that name already exists.'],
     [{ code: '23505', message: '… "schedule_filter_presets_name_unique"' }, 'You already have a preset with that name.'],

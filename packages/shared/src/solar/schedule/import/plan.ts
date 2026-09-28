@@ -10,6 +10,8 @@ import { isGanttStatus, type GanttStatus } from '../status'
 import type { ScheduleSegment } from '../rows'
 
 export const MAX_IMPORT_TASKS = 2000
+/** solar.schedule_dependencies.lag_days CHECK (lag_days BETWEEN -365 AND 365), 00212. */
+export const MAX_LAG_DAYS = 365
 
 export interface PlannedTask {
   key: string
@@ -62,6 +64,9 @@ export function validateImportPlan(plan: ImportPlan): ImportIssue[] {
     if (!keys.has(l.fromKey) || !keys.has(l.toKey)) issues.push({ row: null, message: `A dependency points at a task that is not in the file (${l.fromKey} → ${l.toKey}).` })
     else if (l.fromKey === l.toKey) issues.push({ row: null, message: `"${names.get(l.fromKey)}" cannot depend on itself.` })
     if (!isLinkType(l.type)) issues.push({ row: null, message: 'A dependency has an unknown type (use FS, SS, FF or SF).' })
+    if (!Number.isInteger(l.lagDays) || Math.abs(l.lagDays) > MAX_LAG_DAYS) {
+      issues.push({ row: null, message: `The link from "${names.get(l.fromKey) ?? l.fromKey}" to "${names.get(l.toKey) ?? l.toKey}" has a lag of ${l.lagDays} days; a lag must be between -${MAX_LAG_DAYS} and ${MAX_LAG_DAYS} days.` })
+    }
   }
   const cycle = findCycle([...keys], plan.links
     .filter((l) => keys.has(l.fromKey) && keys.has(l.toKey) && l.fromKey !== l.toKey)
