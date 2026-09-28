@@ -109,9 +109,10 @@ interface SidebarContentProps {
   mvUnlocked: boolean
   mvVisible: boolean
   role: OrgRole | null
+  tariffAdmin: boolean
 }
 
-function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisible, role }: SidebarContentProps) {
+function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisible, role, tariffAdmin }: SidebarContentProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
@@ -227,6 +228,15 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
             {label}
           </Link>
         ))}
+        {tariffAdmin && (
+          <Link
+            href="/admin/tariffs"
+            className={`sidebar-nav-item${pathname.startsWith('/admin/tariffs') ? ' active' : ''}`}
+          >
+            <BookOpen {...IC} />
+            Tariff library
+          </Link>
+        )}
         <form action="/auth/signout" method="post">
           <button type="submit" className="sidebar-nav-item sidebar-nav-item--as-button">
             <LogOut {...IC} />
@@ -245,9 +255,11 @@ interface SidebarProps {
   /** Dark-launch: hide the Medium Voltage entry entirely (defaults hidden). */
   mvVisible?: boolean
   role?: OrgRole | null
+  /** Platform tariff admins (00209 allow-list) see the Tariff library link. The pages gate themselves. */
+  tariffAdmin?: boolean
 }
 
-export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvUnlocked = false, mvVisible = false, role = null }: SidebarProps = {}) {
+export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvUnlocked = false, mvVisible = false, role = null, tariffAdmin = false }: SidebarProps = {}) {
   return (
     <aside className="sidebar" aria-label="Application sidebar">
       <Suspense fallback={
@@ -257,7 +269,7 @@ export function Sidebar({ inspectionsUnlocked = false, jbccUnlocked = false, mvU
           <span className="sidebar-version">v2</span>
         </div>
       }>
-        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={role} />
+        <SidebarContent inspectionsUnlocked={inspectionsUnlocked} jbccUnlocked={jbccUnlocked} mvUnlocked={mvUnlocked} mvVisible={mvVisible} role={role} tariffAdmin={tariffAdmin} />
       </Suspense>
     </aside>
   )
