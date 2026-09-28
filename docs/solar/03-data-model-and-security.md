@@ -94,7 +94,7 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `studies` | `project_id` UNIQUE, lat, lng, elevation_m, licensee_id, supply_type, nmd_kva, supply_voltage_v, poc_node_id → structure.nodes, export_mode, export_limit_kw, load_basis, reference_year, common_area_pct, diversity_factor, load_growth_pct, tariff_id, tariff_override_id, export_rule jsonb, escalation jsonb, selected_case_id, constraints_note | One per project |
+| `studies` | `project_id` UNIQUE, lat, lng, elevation_m, licensee_id, supply_type, nmd_kva, supply_voltage_v, poc_node_id → structure.nodes, export_mode, export_limit_kw, load_basis, reference_year, common_area_pct, diversity_factor, load_growth_pct, monthly_bills jsonb (S4 input), schematic_waived, tariff_id, tariff_override_id, export_rule jsonb, escalation jsonb, selected_case_id, constraints_note | One per project |
 | `roof_sources` | study_id, kind (drawing/satellite), floor_plan_id, page_index, file_path, source_revision_id, storage_path, m_per_px, north_bearing_deg, attribution | Anchor fields per `floor_plan_markups` |
 | `meter_files` | org_id, sha256 UNIQUE per org, size_bytes, storage_path, original_name, parsed_filename jsonb, detected_format, delimiter, decimal_sep, header_row, encoding, status (uploaded/parsed/accepted/skipped/failed; `uploaded` = registered, not yet parsed), uploaded_by, project_id (upload route), body_sha256, source_serials, ts_convention, row_order, skip_reason | Raw file kept once; the same bytes through another project of the org are refused as `duplicate_in_other_project` |
 | `meters` | org_id, site_label, serials text[] (a virtual meter holds several), label, shop_no, area_m2, area_source (register_exact / register_llm / filename / manual), kind (tenant/bulk/council/generator/solar/common/vacant/check/virtual/water/unknown), supply_point_confirmed bool, node_id → structure.nodes, parent_meter_id, existing_pv_channel_id → meter_channels (ON DELETE SET NULL) | Org library |
@@ -119,9 +119,10 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 | `proposals` | study_id, case_id, version, status, snapshot jsonb, pdf_path, pdf_sha256, share_token_hash, expires_at, issued_by/at, withdrawn_at | Token stored hashed |
 | `proposal_events` | proposal_id, kind (issued/viewed/accepted/declined/withdrawn/expired), actor_name, actor_email, ip, user_agent, pdf_sha256, at | Append-only (no UPDATE/DELETE policies) |
 | `installations`, `guarantees`, `downtime`, `monthly_report_notes`, `handover_items` | Operations (Phase 7) | Handover items reference E-Site document ids |
-| `schematics` | study_id, name, description, floor_plan_id, page_index, file_path, source_revision_id | Anchored like `floor_plan_markups` |
-| `schematic_cards` | schematic_id, meter_id, x, y, w, h (image px) | **Register in `isAnnotated()`** |
-| `schematic_lines` | schematic_id, from_meter_id, to_meter_id, waypoints jsonb (image px), line_type | Also defines the meter hierarchy; **`isAnnotated()`** |
+| `schematics` | study_id, name (unique per study), description, kind (drawing/blank), floor_plan_id (NO ACTION) + page_index, file_path + source_revision_id (stamped by trigger; compared on open), canvas_w/h (blank) | Replace drawing re-stamps the anchor and carries floor_plan_id to cards and lines (00214) |
+| `schematic_cards` | schematic_id, meter_id (a study meter; one card per meter per schematic), x, y, w, h (image px), colour, floor_plan_id (denormalised by trigger) | **In `isAnnotated()`** (00214) |
+| `schematic_lines` | schematic_id, from_meter_id, to_meter_id, waypoints jsonb (flat image px, even length ≤ 400), line_type (supply/check), floor_plan_id (denormalised) | Supply lines define the meter hierarchy; a loop anywhere in the study is refused; deleting a card deletes its lines; **in `isAnnotated()`** |
+| `load_check_acks` | study_id, check_key (unique per study), note, acknowledged_by/at (stamped) | Load → Checks "Mark as acknowledged" (00214); no UPDATE |
 | `schedule_tasks` | work_item_id → projects.work_items (type `solar_task`), category, zone, start_date date, end_date date, progress, colour, sort_order, is_milestone | Dates as `date`, never timestamptz |
 | `schedule_segments`, `schedule_dependencies` (type FS/SS/FF/SF, lag_days), `schedule_baselines` (+ baseline tasks), `schedule_filter_presets` (per user) | Gantt | |
 | `solar.schedule_templates`, `handover_templates` | org_id, content jsonb | Org settings |
@@ -153,6 +154,23 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
   Edit user writes inputs, sees no money; Edit + financials sees money; member without a grant reads nothing;
   client_viewer and supplier read nothing even if a grant row is forged; user from another org reads nothing;
   **lapsed subscription ⇒ nobody reads or writes, rows unchanged**; service-role bypass holds.
+- **Phase 3b as built (00214, Load + Schematics):**
+  - **No new `product_events` verbs** (owner decision 2026-09-28): the Load build, schematic save and
+    schematic sheet export write `solar.audit_events` only; `00214` does not re-declare
+    `product_events_event_check`.
+  - **Meter comparison overlay** is built on the Load → Meters sub-tab (owner change to default 8): select
+    2–4 meters → one overlaid, downsampled chart that reuses the meter series route and the chart
+    component; only meters sharing one unit are overlaid (the rest are named with the reason). Energy /
+    power data only, no rand values, so View may use it.
+  - **Schematic sheets** are `projects.reports` kind `solar_schematic_sheet` (read: Solar View via
+    `user_can_read_report_kind`, redefined in 00214 with both `solar_layout_sheet` and
+    `solar_schematic_sheet`; delete: Solar Edit). SVG download is client-side (escaped; background
+    embedded as a data URL) and writes nothing.
+  - **`cloud-sync-project` deploy is an owner step AFTER 00214 is applied.** Its `isAnnotated()` now
+    queries `schematics`, `schematic_cards` and `schematic_lines`; deployed before the tables exist, the
+    lookups error and fail closed — every drawing reads as annotated and auto-adopt stops platform-wide.
+  - Point-of-connection offer from the schematic graph (spec §13.3 bullet 3) is deferred to the Site &
+    Supply follow-up (open question).
 
 ### 3.2 Storage buckets (private; signed URLs only)
 `solar-meter-raw` (raw meter exports, path `<org>/<project>/<sha256>.<ext>`), `solar-runs` (8760 outputs),
