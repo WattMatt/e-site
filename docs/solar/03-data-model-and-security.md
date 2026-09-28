@@ -96,13 +96,13 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 |---|---|---|
 | `studies` | `project_id` UNIQUE, lat, lng, elevation_m, licensee_id, supply_type, nmd_kva, supply_voltage_v, poc_node_id → structure.nodes, export_mode, export_limit_kw, load_basis, reference_year, common_area_pct, diversity_factor, load_growth_pct, tariff_id, tariff_override_id, export_rule jsonb, escalation jsonb, selected_case_id, constraints_note | One per project |
 | `roof_sources` | study_id, kind (drawing/satellite), floor_plan_id, page_index, file_path, source_revision_id, storage_path, m_per_px, north_bearing_deg, attribution | Anchor fields per `floor_plan_markups` |
-| `meter_files` | org_id, sha256 UNIQUE per org, storage_path, original_name, parsed_filename jsonb, detected_format, delimiter, decimal_sep, header_row, encoding, status (parsed/accepted/skipped/failed), uploaded_by, project_id (upload route), body_sha256, source_serials, ts_convention, row_order, skip_reason | Raw file kept once |
-| `meters` | org_id, site_label, serial, label, shop_no, area_m2, area_source (register_exact / register_llm / filename / manual), kind (tenant/bulk/council/generator/solar/common/vacant/check/virtual/water/unknown), supply_point_confirmed bool, node_id → structure.nodes, parent_meter_id, existing_pv_channel_id | Org library |
-| `meter_series_hashes` | org_id, body_hash, meter_id, file_id | Detects identical data filed under different names/sites (1,311 distinct series in 2,050 source files) |
-| `meter_register` | org_id, site_label, file_name, tenant_name, shop_no, area_m2, match_method (exact / LLM / unmapped), confirmed_by | From consolidation summaries; LLM/unmapped rows never auto-applied |
+| `meter_files` | org_id, sha256 UNIQUE per org, size_bytes, storage_path, original_name, parsed_filename jsonb, detected_format, delimiter, decimal_sep, header_row, encoding, status (uploaded/parsed/accepted/skipped/failed; `uploaded` = registered, not yet parsed), uploaded_by, project_id (upload route), body_sha256, source_serials, ts_convention, row_order, skip_reason | Raw file kept once; the same bytes through another project of the org are refused as `duplicate_in_other_project` |
+| `meters` | org_id, site_label, serials text[] (a virtual meter holds several), label, shop_no, area_m2, area_source (register_exact / register_llm / filename / manual), kind (tenant/bulk/council/generator/solar/common/vacant/check/virtual/water/unknown), supply_point_confirmed bool, node_id → structure.nodes, parent_meter_id, existing_pv_channel_id → meter_channels (ON DELETE SET NULL) | Org library |
+| `meter_series_hashes` | org_id, body_hash, meter_id, file_id | Detects identical data filed under different names/sites (1,311 distinct series in 2,050 source files); also binds a file to the meter it feeds (written before any channel, so a retried commit reuses that meter) |
+| `meter_register` | org_id, kind (`summary` = consolidation summary / `download_log` = the E serial register), source_file_id, site_label, file_name, tenant_name, shop_no, area_m2, match_method (exact / llm / unmapped / manual / none), serial, mall_name, downloaded, qa jsonb, confirmed_by, confirmed_at (set together) | Consolidation summaries and downloader logs; LLM/unmapped rows never auto-applied |
 | `study_meters` | study_id, meter_id | Study ↔ library link |
-| `meter_channels` | meter_id, file_id, source_column, quantity, direction, unit (enum), interval_min, is_cumulative, tz_convention, is_primary | |
-| `meter_readings` | channel_id, organisation_id, ts_end timestamptz, value double precision NULL, quality smallint; PK (channel_id, ts_end) | Hash-partitioned × 8 on channel_id; written only via solar.write_readings; upsert on PK ⇒ re-import is idempotent |
+| `meter_channels` | organisation_id (bound from the meter), meter_id, file_id, source_column, quantity, direction, phase (l1/l2/l3), source_unit (as in the file), unit (stored enum), interval_min, is_cumulative, tz_convention, is_primary (at most one per meter and file), coverage_only (daily channels), parser_version | |
+| `meter_readings` | channel_id, organisation_id, ts_end timestamptz, value double precision NULL, quality smallint; PK (channel_id, ts_end) | Hash-partitioned × 8 on channel_id; written only via solar.write_readings (upsert on PK); a re-commit of a file first empties its stored channels via solar.clear_channel_readings (same Edit gate), so it REPLACES rather than merges |
 | `meter_import_reports` | file_id, report jsonb, accepted_by, accepted_at | |
 | `tenant_load_basis` | study_id, node_id, source (metered/synthesised/excluded), meters jsonb [{meter_id, weight}], archetype, density_override_w_m2 | |
 | `load_archetypes` | code, version, name, profiles jsonb (24 h × weekday/saturday/sunday/holiday), operating jsonb, seasonal jsonb (12), is_current | Platform data; expanded to 8,760 per reference year (a fixed 8,760 cannot follow a year's weekdays and holidays) |
@@ -133,9 +133,21 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
   `solar.can_see_money(project_id)` — simpler to prove than column rules.
 - **INSERT / UPDATE / DELETE**: a PERMISSIVE policy per verb on `solar.can_view` plus one RESTRICTIVE policy
   **per verb** on `solar.can_edit` (money tables: `solar.can_see_money`) — the `00200` shape.
-- Org library tables (`meters`, `meter_files`, `meter_register`, `equipment` with org_id): SELECT when
-  `org_has_solar(organisation_id)` and the caller is a member of that org with a Solar grant on any of its
-  projects (or owner/admin); writes by the same with Edit level.
+- Org library tables (`meter_files`, `meters`, `meter_series_hashes`, `meter_register`, `meter_channels`,
+  `meter_import_reports`, `meter_readings`, `equipment` with org_id): SELECT when
+  `org_has_solar(organisation_id)` and the caller is an active member of that org with a Solar grant on any
+  of its projects (or owner/admin) — `solar.library_orgs('view')`; writes by the same with Edit level
+  (`library_orgs('edit')`). **Deletes (00210 as built):** `meter_files`, `meters`, `meter_register` need
+  org owner/admin (`library_orgs('admin')`); `meter_channels` and `meter_series_hashes` need Edit (a
+  re-import rebinds them); `meter_readings` has no DELETE grant at all — they go with their channel
+  (cascade) or through `solar.clear_channel_readings` (Edit); `meter_import_reports` cannot be deleted.
+- **Linked read for external View members (owner decision 2, 2026-09-28):** in addition, a caller who is
+  NOT in the org library but holds View on a project (`solar_can_view`) may SELECT the `meters`,
+  `meter_channels` and `meter_readings` of meters linked through `study_meters` to a study on that project
+  (`solar.linked_meter_ids()` / `solar.linked_channel_ids()`, re-checked per statement, so a revoked grant,
+  a lapse or an unlink hides them again). Never `meter_files`, `meter_register`, `meter_import_reports` or
+  `meter_series_hashes`, and no write. A raw object in `solar-meter-raw` needs `library_orgs('view')` on the
+  path's org **and** View on the path's project, so the linked read never reaches raw files.
 - Append-only tables: SELECT + INSERT policies only.
 - **Impersonation assertions** (red first, then green): View user reads layout, cannot write, sees no money;
   Edit user writes inputs, sees no money; Edit + financials sees money; member without a grant reads nothing;

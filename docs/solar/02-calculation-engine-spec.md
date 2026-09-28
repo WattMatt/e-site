@@ -106,8 +106,15 @@ anything else goes to a generic path that requires the user to confirm every cho
   Σ tenants ≈ 2.5 × it). Meters of kind `check` are excluded from both S1 and S2.
 - **S2 Tenants:** `site[h] = (Σ_tenants Σ_meters w_m × meter_m[h] + Σ_unmetered synth_t[h]) × (1 + common_area_pct)`.
 - **S4 Monthly bills:** archetype shape per §2.4 scaled so that for each month m,
-  `Σ_{h∈m} site[h] = bill_kWh_m`; if billed kVA is given, the monthly peak is additionally scaled
-  so `max_{h∈m} site[h] / PF = kVA_m` (PF default 0.95) using a peak-only transform (§2.5).
+  `Σ_{h∈m} site[h] = bill_kWh_m`; if billed kVA is given, the month is additionally reshaped so
+  `max_{h∈m} site[h] = kVA_m × PF` (PF default 0.95) by an **energy-preserving stretch about the monthly
+  mean** (owner decision 5, 2026-09-28): `site'[h] = mean_m + (site[h] − mean_m) × s`, with
+  `s = (kVA_m × PF − mean_m) / (max_m − mean_m)`, which keeps `Σ_{h∈m}` unchanged. Guards: a flat month
+  cannot take a peak (left unchanged, warned); billed `kVA_m × PF` below the monthly mean would need
+  `s < 0` and invert the shape, so the month is left unchanged with "billed kVA below average demand;
+  check PF/kVA"; if the stretch drives hours negative they are clamped to 0 and the month re-scaled to
+  `bill_kWh_m`, and the warning reports the peak actually achieved against the billed one. (Diversity,
+  §2.5, is unrelated: S4 never applies `k`.)
 
 ### 2.4 Synthesis from the tenant schedule (S3)
 For tenant t with area `A_t` (m², `structure.nodes.shop_area_m2`), category → density `D_c` (W/m², org
@@ -133,7 +140,13 @@ disabled for them with the tooltip "Measured data already reflects diversity".
 Monthly maximum demand (kVA) for demand charges uses the **highest sub-hourly interval** available
 (30-min if present, else hourly) in the tariff's chargeable TOU windows. Per format: B/C with a measured
 `S (kVA)` channel use it directly; A files (mostly `p14` only) divide kW by the PF assumption (default 0.95,
-shown as assumed); daily B files cannot produce MD. The averaged profile's peak is never used as MD.
+shown as assumed); the choice is made per month, so a month the kVA channel does not cover falls back to
+kW / PF rather than being dropped; daily B files cannot produce MD. The averaged profile's peak is never
+used as MD.
+
+For a site series with no sub-hourly data behind it — the S2 aggregate, S3 and S4 — MD is taken from the
+**hourly site series and the PF** (owner decision 7, 2026-09-28): `MD_m = max_{h∈m} site[h] / PF` (kVA),
+labelled hourly-based. A month of the series with no data has no MD (null), never 0 kVA.
 
 ---
 
