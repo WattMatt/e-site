@@ -1,6 +1,7 @@
 /**
  * Loan schedule, computed monthly and aggregated per year: `graceMonths` of interest only, then
- * a level annuity over the remaining months of the term.
+ * a level annuity over the remaining months of the term. If the term runs past the analysis
+ * period, the outstanding balance is repaid as a balloon in the final analysed year.
  */
 
 export interface LoanTerms {
@@ -35,6 +36,14 @@ export function loanSchedule(t: LoanTerms, years: number): LoanYear[] {
     y.interestZar += interest
     y.principalZar += principal
     y.paymentZar += interest + principal
+  }
+  // A term longer than the analysis: the balance still owed at the end of the last analysed year
+  // is settled there as a balloon. Dropping it would make the unpaid debt vanish from the
+  // owner's cashflow and overstate NPV and IRR.
+  if (years > 0 && bal > 1e-9) {
+    const last = out[years - 1]!
+    last.principalZar += bal
+    last.paymentZar += bal
   }
   return out
 }

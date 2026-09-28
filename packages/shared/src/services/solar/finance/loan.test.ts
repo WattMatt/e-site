@@ -22,6 +22,14 @@ describe('loan schedule', () => {
     expect(s[1]!.principalZar).toBeCloseTo(10000, 8)
   })
 
+  it('a term longer than the analysis settles the outstanding balance as a balloon in the last year', () => {
+    // R1 m at 11.5 % over 15 years, analysed over 10: without the balloon ≈ R531 k of principal vanished.
+    const s = loanSchedule({ principalZar: 1_000_000, annualRate: 0.115, termYears: 15, graceMonths: 0 }, 10)
+    expect(s.reduce((a, y) => a + y.principalZar, 0)).toBeCloseTo(1_000_000, 6)
+    expect(s[9]!.principalZar).toBeGreaterThan(500_000)
+    expect(s[9]!.paymentZar).toBeCloseTo(s[9]!.interestZar + s[9]!.principalZar, 9)
+  })
+
   it('refuses a grace period as long as the term', () => {
     expect(() => loanSchedule({ principalZar: 1, annualRate: 0.1, termYears: 1, graceMonths: 12 }, 1)).toThrow(/grace months/)
   })
