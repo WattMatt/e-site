@@ -140,13 +140,16 @@ disabled for them with the tooltip "Measured data already reflects diversity".
 Monthly maximum demand (kVA) for demand charges uses the **highest sub-hourly interval** available
 (30-min if present, else hourly) in the tariff's chargeable TOU windows. Per format: B/C with a measured
 `S (kVA)` channel use it directly; A files (mostly `p14` only) divide kW by the PF assumption (default 0.95,
-shown as assumed); the choice is made per month, so a month the kVA channel does not cover falls back to
-kW / PF rather than being dropped; daily B files cannot produce MD. The averaged profile's peak is never
-used as MD.
+shown as assumed); the choice is made per month. A month is **covered** by the kVA channel when it holds
+at least one usable (chargeable) kVA reading; a covered month uses the measured kVA ONLY (its kW is not
+consulted, even if the kVA readings are sparse), and an uncovered month falls back to kW / PF rather than
+being dropped. Daily B files cannot produce MD. The averaged profile's peak is never used as MD.
 
 For a site series with no sub-hourly data behind it — the S2 aggregate, S3 and S4 — MD is taken from the
 **hourly site series and the PF** (owner decision 7, 2026-09-28): `MD_m = max_{h∈m} site[h] / PF` (kVA),
-labelled hourly-based. A month of the series with no data has no MD (null), never 0 kVA.
+labelled hourly-based. Until the tariff calendar exists (Phase 2 TOU windows) it is taken over **all** hours
+of the month, not only the chargeable ones — conservative (it can only overstate). A month of the series
+with no data has no MD (null), never 0 kVA.
 
 ---
 

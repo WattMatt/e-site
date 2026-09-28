@@ -18,9 +18,10 @@
 --   hold at least View on any of the org's projects (owners/admins always); writes need Edit;
 --   deleting a file, meter or register row needs owner/admin; deleting a channel or a series-hash
 --   row needs Edit (a re-import rebinds them); readings have no DELETE grant (they go with their
---   channel, or through solar.clear_channel_readings at Edit); import reports cannot be deleted. One helper, solar.library_orgs(level), returns the caller's orgs as an
---   array, so a policy is `organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[])`: evaluated
---   once per statement (InitPlan), not once per row, which matters at millions of readings.
+--   channel, or through solar.clear_channel_readings at Edit); import reports cannot be deleted.
+--   One helper, solar.library_orgs(level), returns the caller's orgs as an array, so a policy is
+--   `organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[])`: evaluated once per statement
+--   (InitPlan), not once per row, which matters at millions of readings.
 --   Study rows: exactly the solar.studies pattern (00207).
 --   Readings: SELECT policy only; no INSERT/UPDATE/DELETE grant; written by solar.write_readings,
 --   emptied per channel (for a re-commit that replaces them) by solar.clear_channel_readings.
