@@ -9,7 +9,7 @@ is what the specs now say. A change to any of these is a new decision recorded h
 |---|---|---|---|
 | D-25 | Live WM Solar production database = **`lyctmmqndqegptzkajhz`** ("Mattheus Power"; 48 projects, 810 tenants, 182 meters, 23 simulations, 3 proposals, 3 users). `zhhcwtftckdwfoactkea` (Lovable) is not in the account | — | Confirmed |
 | D-24 | **Contain now, all steps** | Done 2026-09-28: 168 anon/public policies → authenticated, anon write grants revoked, RLS on `tariff_uploads`, `tariff-uploads` + `project-schematics` private, signup disabled, `verify_jwt` on all 34 functions. Verified from outside (anon reads 0 rows, writes 401, functions 401, signup 422); data intact. Restore: `WM_Solar_Web/_containment-2026-09-28/`. Accepted breakage: client share links, schematic images | **Done** — owner to confirm signed-in use still works |
-| D-28 | **Rotate the service-role key** (shipped in iOS TestFlight builds) | Plan first (key rotation + Vercel env + redeploy of wm-solar.vercel.app), owner approves before execution | Pending plan |
+| D-28 | **Rotate the service-role key** (shipped in iOS TestFlight builds) | Done 2026-09-28: web app moved to the new publishable key (Vercel env + `vercel redeploy` of the same source), legacy JWT keys disabled (old service_role and anon now refused), two stray full-access secret keys (`anthropic_api_key`, `image_generation`) deleted; no user sessions lost. Rollback: re-enable legacy keys / `vercel rollback` | **Done** — owner to exercise a server-side feature once |
 | D-25b | **Migrate nothing** into E-Site | WM Solar stays as a read-only archive; Phase 8 reduces to archiving | Decided |
 
 ## 2. Commercial
@@ -61,8 +61,9 @@ is what the specs now say. A change to any of these is a new decision recorded h
 
 | ID | Decision | Build rule / action |
 |---|---|---|
-| D-29 | **2026/27 tariffs: Claude downloads** NERSA 2026/27 municipal decision + province books and Eskom 2026/27 schedule from official sources, after the owner approves the download list | Pending download list |
-| D-27 | **PnP SCADA: owner signs in to the PnP portal in the browser pane; Claude downloads per site by serial list (list approved first), files into a clean per-site folder, validates**; ingestion into E-Site waits for the Phase 3 importer. (Claude never types the password.) | Pending owner sign-in |
+| D-29 | **2026/27 tariffs downloaded by Claude.** Eskom 2026/27: 7 files done (`005. NERSA TARIFFS/2026-27/ESKOM/`, manifest with sha256). Municipal: **all** NERSA 2026/27 decisions, collected by a paced background job (NERSA rate-limits); no consolidated 2026/27 province workbook found — per-municipality decision PDFs | Eskom done; municipal in progress |
+| D-27 | **PnP SCADA re-download — parked.** Finding (2026-09-28, thukela-kadesh.pnpscada.com, 1,029 meters / 34 meter accounts): the portal's "Download Profile CSV" (`_DataDownload`) is a meter-*account* export and **ignores the requested meter**, silently substituting the "closest" account (five Kuruman meters returned byte-identical data; Merino Checkers returned a Kuruman logger's data; others fell back to "Parkdene Generator DB1.2"). This is the root cause of the mis-filed PnP folders. Per-meter half-hour data needs a provider-side bulk export (Thukela Metering) or the portal's per-meter tools (CRF2/bulk) — not attempted. 3 suspect files quarantined in `PNP-2026-09/_UNVERIFIED-do-not-use/` | Parked by owner |
+| D-08b | **Solcast is a free/hobbyist tier → the 7-day forecast panel is dropped** (free terms do not permit commercial use) | Functional §10, §16 |
 | D-19 | Validation against **public references only**: PVGIS PVcalc (5 sites × 3 orientations, ±3 %) and the 10 hand-computed tariff cases; no PVsyst/real-bill dependency | Engine §3.7, §5 |
 | D-08 | Providers: **keep WM's set** — Mapbox (maps, geocoding, satellite roof capture), PVGIS + Global Solar Atlas; Solcast 7-day forecast only if the licence is commercial | All server-side |
 | D-11 | Row spacing: **no inter-row shade 09:00–15:00 on 21 June** | Engine §3.1 |
@@ -70,5 +71,6 @@ is what the specs now say. A change to any of these is a new decision recorded h
 | D-06 | Synthesised load **seeded from GCR kW/m² densities + 8 archetypes**, owner reviews the table once | Engine §2.4 |
 
 ## Still open (small, non-blocking)
-- Solcast licence type (commercial or not) — decides whether the forecast panel ships.
 - Owner review of the seeded density/archetype table (Phase 3).
+- Owner to confirm WM Solar still works when signed in (after containment + key rotation).
+- PnP per-meter data route (parked, D-27).

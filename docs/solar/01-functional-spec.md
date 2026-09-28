@@ -509,7 +509,6 @@ that records exactly what the client received.
 | Downtime log | Table + **Add downtime** (start, end, cause, excluded from guarantee?) | Record outages | Auto-detected candidates (zero output during daylight from the weather file's sun position, not a fixed 06:00–17:30 window) proposed for confirmation | `solar.downtime` | write |
 | **Generate monthly report** | Button | Client monthly report | Month select → `projects.reports` kind `solar_monthly` with period, metric snapshot JSON and PDF; regenerating a month creates v2, never edits v1. Content (from WM's monthly report, fixed): performance summary, expected vs actual per source, downtime table with lost kWh and lost revenue at the **pinned tariff's TOU rates**, yearly-to-date rows that are real YTD sums, equipment table from the installation record (no placeholders), realised consumption from the council/bulk meter | reports | write ∩ cost-view |
 | Monthly report editor | Structured text fields per section (commentary, actions) | Add engineer commentary without freezing numbers | Numbers always come from the snapshot; text fields are separate (WM froze every section on any keystroke) | `solar.monthly_report_notes` | write |
-| 7-day generation forecast panel | Chart | Expected output for the coming week (carried from WM's Solcast card) | Server-side Solcast call (only if licence confirmed **[D-08]**), cached 3 h, converted UTC→SAST; hidden when not licensed | cache | tech-read |
 | Handover checklist | Checklist (template "Solar PV Handover": CoC, SLD as-built, commissioning test sheets, O&M manual, warranties, SSEG registration letter, monitoring login handover…) | Track handover documents (carried from WM's Documents tab checklist) | Each item links to a file in E-Site **Documents** (no separate document store); completion %; template editable in org settings; no dependence on folder names | `solar.handover_items` | write |
 
 ---
@@ -661,7 +660,7 @@ in a side table.
 | Tariff (03 §7) | Tariff tab §5 | Carried, fixed |
 | Simulation incl. PVsyst loss chain, battery, advanced sections (04) | Yield & Scenarios §7 (every advanced section either works or is absent) + Financials §8 | Carried, fixed |
 | PV Layout incl. 3D (05) | Layout tab §6 | Carried, fixed + new (auto-fill, strings, north, BOM) |
-| Solar Forecast (04 §6) | Site & Supply → Solar resource §3.3; 7-day forecast in Operations §10 | Carried, fixed |
+| Solar Forecast (04 §6) | Site & Supply → Solar resource §3.3 (PVGIS + Global Solar Atlas). The Solcast 7-day forecast card is **not carried**: the account is a free/hobbyist tier whose terms do not allow commercial use (D-08b) | Carried, fixed (forecast card dropped) |
 | Proposals incl. workspace, share link, client portal, signing (06 A) | Reports & Proposal §9 | Carried, fixed (frozen snapshot, evidential acceptance) |
 | Schedule / Gantt (06 B) | Schedule tab §14 | Carried, fixed |
 | Documents (06 C) | E-Site Documents module (existing, with Dropbox sync) | Mapped to existing |

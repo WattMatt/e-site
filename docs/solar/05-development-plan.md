@@ -26,10 +26,10 @@ P2, P3, P5 and P5b can run in parallel after P1. P4 needs P2 + P3 (P5 optional: 
 | 0.1 | ~~Make both Dropbox folders available offline~~ | **Done 2026-09-28**; both analysed (as-is/09, /10) |
 | 0.2 | ~~Answer the P0 decisions~~ | **Done 2026-09-28** — see `06-open-decisions.md` (decision log) |
 | 0.3 | ~~Contain the live WM Solar exposure~~ | **Done 2026-09-28** (D-24) |
-| 0.4 | Rotate the WM Solar service-role key (D-28) — plan, owner approval, execute | Live risk; independent of the build |
-| 0.5 | Download the 2026/27 NERSA municipal books + decision and Eskom 2026/27 schedule (D-29) — download list approved by owner first | Library would launch a year stale; P2 can start on 2025/26 meanwhile |
-| 0.6 | PnP SCADA re-download (D-27) — owner signs in to the portal; per-site serial list approved; files filed per site and validated | Only blocks using the PnP sites as study data; not the build |
-| 0.7 | Confirm whether the Solcast licence is commercial | Decides whether the forecast panel ships (P7) |
+| 0.4 | ~~Rotate the WM Solar service-role key~~ | **Done 2026-09-28** (D-28) |
+| 0.5 | 2026/27 tariffs (D-29): **Eskom done**; municipal decisions being collected (paced) | Library would launch a year stale; P2 can start on 2025/26 meanwhile |
+| 0.6 | PnP SCADA re-download — **parked** (D-27: the portal export substitutes account data for meters) | Does not block the build |
+| 0.7 | ~~Solcast licence~~ | Free tier → forecast panel dropped (D-08b) |
 
 ## P1 — Subscription, access control, schema skeleton, empty module (≈ 7 days)
 
@@ -127,7 +127,7 @@ Verification
 
 Deliverables: installations, guarantee from the accepted case, idempotent generation ingestion, downtime
 detection from sun position, `solar_monthly` reports with snapshot and separate commentary fields,
-handover checklist linked to E-Site Documents, 7-day Solcast forecast panel (if licensed, D-08).
+handover checklist linked to E-Site Documents. (No Solcast forecast — free tier, D-08b.)
 Verification: re-importing the same generation file changes nothing; a month straddling a year boundary
 books to the right year; monthly report v2 leaves v1 untouched.
 
@@ -147,5 +147,5 @@ page linking to E-Site, and keep the database as an archive.
 
 ## Rough total
 P1–P6 incl. P5b ≈ 73–82 build-days (P1 grew by the access-grant model); P7 ≈ 10 and P8 ≈ 1 more.
-The critical path is P1 → P2/P3 → P4 → P6. Owner actions still pending: D-28 key rotation, D-29 2026/27
-download list, D-27 PnP sign-in, Solcast licence.
+The critical path is P1 → P2/P3 → P4 → P6. Owner actions still pending: confirm WM Solar works signed-in; municipal 2026/27 collection finishing (D-29).
+
