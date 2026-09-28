@@ -112,6 +112,53 @@ describe('commitMeterFile: series', () => {
   })
 })
 
+describe('commitMeterFile: a re-commit resolves to the meter this file already feeds', () => {
+  it('committing `new` twice leaves one meter, one channel and the same readings', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    const first = (await commitMeterFile(repo, ctx, body({}))) as { meterId: string }
+    const second = (await commitMeterFile(repo, ctx, body({}))) as { meterId: string }
+    expect(second.meterId).toBe(first.meterId)
+    expect(state.meters).toHaveLength(1)
+    expect(state.channels).toHaveLength(1)
+    expect(state.readings.get(state.channels[0].id)?.size).toBe(48)
+    expect(state.hashes).toHaveLength(1)
+  })
+
+  it('a retry after a failed read-back check reuses the meter it created', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    state.countOffset = -1
+    await expect(commitMeterFile(repo, ctx, body({}))).rejects.toMatchObject({ status: 500 })
+    state.countOffset = 0
+    await commitMeterFile(repo, ctx, body({}))
+    expect(state.meters).toHaveLength(1)
+    expect(state.channels).toHaveLength(1)
+    expect(state.readings.get(state.channels[0].id)?.size).toBe(48)
+  })
+
+  it('a retry after a failure before any channel was written reuses the meter it created', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    const upsert = repo.upsertChannel
+    let calls = 0
+    repo.upsertChannel = async (row) => {
+      if (calls++ === 0) throw new Error('upsert channel: connection reset')
+      return upsert(row)
+    }
+    await expect(commitMeterFile(repo, ctx, body({}))).rejects.toThrow('connection reset')
+    await commitMeterFile(repo, ctx, body({}))
+    expect(state.meters).toHaveLength(1)
+    expect(state.channels).toHaveLength(1)
+  })
+
+  it('naming a DIFFERENT existing meter for an imported file is a 409 naming the recorded meter', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    const first = (await commitMeterFile(repo, ctx, body({}))) as { meterId: string }
+    state.meters.push({ id: 'm9', organisation_id: 'org1', label: 'Other', site_label: null, serials: [], kind: 'tenant' })
+    await expect(commitMeterFile(repo, ctx, { mode: 'series', fileId: 'f1', meter: { existingMeterId: 'm9' }, identity: { resolution: 'none' } }))
+      .rejects.toMatchObject({ status: 409, body: { error: 'already_imported', meterId: first.meterId, label: 'TENANT-1' } })
+    expect(state.channels.every((c) => c.meter_id === first.meterId)).toBe(true)
+  })
+})
+
 describe('commitMeterFile: register and skip', () => {
   it('imports a consolidation summary once', async () => {
     const { repo, state, ctx } = setup(REGISTER_9COL, 'SITE YA_Consolidation_Summary.9col.csv')

@@ -47,6 +47,13 @@ export function createFakeRepo(seed: Partial<FakeState> = {}): { repo: MeterImpo
     async seriesByBodyHash(org, h) {
       return state.hashes.filter((x) => x.organisation_id === org && x.body_hash === h).map((x) => ({ meterId: x.meter_id, fileId: x.file_id, label: x.label ?? 'meter', siteLabel: x.siteLabel ?? null }))
     },
+    async metersForFile(fileId) {
+      const ids = [...new Set([...state.channels.filter((c) => c.file_id === fileId).map((c) => c.meter_id), ...state.hashes.filter((h) => h.file_id === fileId).map((h) => h.meter_id)])]
+      return ids.map((meterId) => {
+        const m = state.meters.find((x) => x.id === meterId)
+        return { meterId, label: m?.label ?? '(unknown meter)', siteLabel: m?.site_label ?? null }
+      })
+    },
     async metersBySerials(org, serials) { return state.meters.filter((m) => m.organisation_id === org && m.serials.some((s) => serials.includes(s))) },
     async registerBySerials(org, serials) {
       return state.register

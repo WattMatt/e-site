@@ -89,6 +89,21 @@ export async function parseStoredFile(repo: MeterImportRepo, file: MeterFileRow,
 }
 
 async function resolveMeter(repo: MeterImportRepo, ctx: CommitContext, outcome: SeriesOutcome, body: SeriesBody): Promise<MeterRow> {
+  // A file feeds ONE meter. If this file already feeds one (an earlier commit, or a retry after a
+  // partial failure: the series-hash row is written before any channel), a re-commit resolves to
+  // that meter; `new` must not mint a second meter with duplicate readings, and naming a DIFFERENT
+  // meter is refused rather than silently splitting the file's data across two meters.
+  const recorded = await repo.metersForFile(ctx.file.id)
+  if (recorded.length > 1) throw new CommitError(409, { error: 'already_imported', meters: recorded })
+  if (recorded.length === 1) {
+    const r = recorded[0]
+    if ('existingMeterId' in body.meter && body.meter.existingMeterId !== r.meterId) {
+      throw new CommitError(409, { error: 'already_imported', meterId: r.meterId, label: r.label, siteLabel: r.siteLabel })
+    }
+    const m = await repo.getMeter(r.meterId)
+    if (!m || m.organisation_id !== ctx.orgId) throw new CommitError(404, { error: 'meter_not_found' })
+    return m
+  }
   if ('existingMeterId' in body.meter) {
     const m = await repo.getMeter(body.meter.existingMeterId)
     if (!m || m.organisation_id !== ctx.orgId) throw new CommitError(404, { error: 'meter_not_found' })
@@ -160,6 +175,8 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
 
   const meter = await resolveMeter(repo, ctx, outcome, body)
   const sameBodyLink = body.identity.resolution === 'link' && identity.conflicts.some((c) => c.kind === 'same_body' && c.meterId === meter.id)
+  // Bind file -> meter FIRST, so a retry after any later failure finds this meter (resolveMeter).
+  await repo.insertSeriesHash({ organisation_id: ctx.orgId, body_hash: outcome.bodySha256, meter_id: meter.id, file_id: ctx.file.id })
 
   const results: Array<{ channelId: string; sourceColumn: string; readings: number }> = []
   if (!sameBodyLink) {
@@ -194,7 +211,6 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
     }
   }
 
-  await repo.insertSeriesHash({ organisation_id: ctx.orgId, body_hash: outcome.bodySha256, meter_id: meter.id, file_id: ctx.file.id })
   const studyId = await repo.studyId(ctx.projectId)
   if (studyId) await repo.linkStudyMeter(studyId, meter.id)
   const reportId = await repo.insertReport({

@@ -58,6 +58,11 @@ export interface ChannelRow {
   coverage_only: boolean
   parser_version: string
 }
+export interface FileMeter {
+  meterId: string
+  label: string
+  siteLabel: string | null
+}
 export interface RegisterHint {
   tenantName: string | null
   shopNo: string | null
@@ -75,6 +80,8 @@ export interface MeterImportRepo {
   getFile(fileId: string): Promise<MeterFileRow | null>
   updateFile(fileId: string, patch: Record<string, unknown>): Promise<void>
   seriesByBodyHash(orgId: string, bodyHash: string): Promise<Array<{ meterId: string; fileId: string; label: string; siteLabel: string | null }>>
+  /** The meters this file already feeds: through its channels OR its series-hash row (RLS-scoped). */
+  metersForFile(fileId: string): Promise<FileMeter[]>
   metersBySerials(orgId: string, serials: string[]): Promise<MeterRow[]>
   registerBySerials(orgId: string, serials: string[]): Promise<Array<{ serial: string; mallName: string | null; tenantName: string | null }>>
   registerForFile(orgId: string, hints: { label: string | null; shopNo: string | null }): Promise<RegisterHint[]>
@@ -140,6 +147,18 @@ export function createMeterImportRepo(supabase: AnyClient): MeterImportRepo {
       return ((r.data ?? []) as unknown as Array<{ meter_id: string; file_id: string; meters: { label: string; site_label: string | null } | null }>).map((x) => ({
         meterId: x.meter_id, fileId: x.file_id, label: x.meters?.label ?? '(unknown meter)', siteLabel: x.meters?.site_label ?? null,
       }))
+    },
+    async metersForFile(fileId) {
+      type Row = { meter_id: string; meters: { label: string; site_label: string | null } | null }
+      const byChannel = await solar().from('meter_channels').select('meter_id, meters(label, site_label)').eq('file_id', fileId)
+      if (byChannel.error) throw new Error(`meters for file (channels): ${byChannel.error.message}`)
+      const byHash = await solar().from('meter_series_hashes').select('meter_id, meters(label, site_label)').eq('file_id', fileId)
+      if (byHash.error) throw new Error(`meters for file (hashes): ${byHash.error.message}`)
+      const out = new Map<string, FileMeter>()
+      for (const x of [...(byChannel.data ?? []), ...(byHash.data ?? [])] as unknown as Row[]) {
+        if (!out.has(x.meter_id)) out.set(x.meter_id, { meterId: x.meter_id, label: x.meters?.label ?? '(unknown meter)', siteLabel: x.meters?.site_label ?? null })
+      }
+      return [...out.values()]
     },
     async metersBySerials(orgId, serials) {
       if (serials.length === 0) return []
