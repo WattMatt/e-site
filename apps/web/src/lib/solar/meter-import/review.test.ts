@@ -49,6 +49,18 @@ describe('lookupIdentity', () => {
     const id = await lookupIdentity(repo, 'org1', o)
     expect(id.conflicts.map((c) => c.kind)).toEqual(['same_serial', 'serial_other_mall', 'filename_serial_mismatch'])
   })
+  it('the meter this file already feeds is not a same_serial conflict of the file itself (re-parse / re-commit)', async () => {
+    const o = await series(bFile(['30000001']), 'SITE SG, , 30000001_DB-26, .csv')
+    const { repo } = createFakeRepo({
+      meters: [
+        { id: 'm1', organisation_id: 'org1', label: 'DB-26', site_label: 'SITE SG', serials: ['30000001'], kind: 'tenant' },
+        { id: 'm2', organisation_id: 'org1', label: 'Other', site_label: null, serials: ['30000001'], kind: 'tenant' },
+      ],
+      hashes: [{ organisation_id: 'org1', body_hash: o.bodySha256, meter_id: 'm1', file_id: 'f1' }],
+    })
+    const id = await lookupIdentity(repo, 'org1', o, 'f1')
+    expect(id.conflicts.map((c) => [c.kind, c.meterId])).toEqual([['same_serial', 'm2']])
+  })
 })
 
 describe('file status and patch', () => {

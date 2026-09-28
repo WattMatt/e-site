@@ -162,6 +162,22 @@ describe('commitMeterFile: a re-commit resolves to the meter this file already f
     expect(after).toEqual(before.map((t) => new Date(Date.parse(t) + 1_800_000).toISOString()))
   })
 
+  it('a serial-bearing file re-committed with resolution none is not blocked by ITS OWN meter (no duplicate)', async () => {
+    const b = setup(B2_TEXT, 'SITE RM, , E0400, .csv')
+    const virt = { meter: { new: { label: 'E0400', kind: 'virtual' } } }
+    const first = (await commitMeterFile(b.repo, b.ctx, body(virt))) as { meterId: string }
+    const second = (await commitMeterFile(b.repo, b.ctx, body(virt))) as { meterId: string }
+    expect(second.meterId).toBe(first.meterId)
+    expect(b.state.meters).toHaveLength(1)
+  })
+
+  it('a serial-bearing file still conflicts with ANOTHER meter holding its serial', async () => {
+    const b = setup(B2_TEXT, 'SITE RM, , E0400, .csv')
+    b.state.meters.push({ id: 'm7', organisation_id: 'org1', label: 'Old', site_label: null, serials: ['30000001'], kind: 'tenant' })
+    await expect(commitMeterFile(b.repo, b.ctx, body({ meter: { new: { label: 'E0400', kind: 'virtual' } } })))
+      .rejects.toMatchObject({ status: 409, body: { error: 'identity_conflict' } })
+  })
+
   it('naming a DIFFERENT existing meter for an imported file is a 409 naming the recorded meter', async () => {
     const { repo, state, ctx } = setup(A_TEXT)
     const first = (await commitMeterFile(repo, ctx, body({}))) as { meterId: string }

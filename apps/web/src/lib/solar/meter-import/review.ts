@@ -29,7 +29,11 @@ export async function lookupIdentity(repo: MeterImportRepo, orgId: string, outco
     conflicts.push({ kind: 'same_body', meterId: d.meterId, message: `Same data as ${d.label}${d.siteLabel ? ` at ${d.siteLabel}` : ''}.` })
   }
   if (outcome.sourceSerials.length > 0) {
+    // The meter(s) this file already feeds (an earlier commit or a partial one) hold its serials by
+    // construction; they are the file itself, not a conflict, on a re-parse, re-commit or retry.
+    const own = new Set(selfFileId ? (await repo.metersForFile(selfFileId)).map((m) => m.meterId) : [])
     for (const m of await repo.metersBySerials(orgId, outcome.sourceSerials)) {
+      if (own.has(m.id)) continue
       const shared = m.serials.filter((s) => outcome.sourceSerials.includes(s)).join(', ')
       conflicts.push({ kind: 'same_serial', meterId: m.id, message: `Serial ${shared} is already meter ${m.label}${m.site_label ? ` at ${m.site_label}` : ''}.` })
     }
