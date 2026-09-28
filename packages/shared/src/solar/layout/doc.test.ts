@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   removeObjects, removeModules, translateObjects, rotateObjects, selectionPivot, diffObjects,
-  applyObjectDelta, cloneLayoutObjects, stringColour, STRING_COLOURS, stableStringify,
+  applyObjectDelta, cloneLayoutObjects, stringColour, STRING_COLOURS, stableStringify, normaliseReferences,
 } from './doc'
 import { GENERIC_INVERTER_50KW as INV, GENERIC_MODULE_550 as M, type LayoutObject } from './types'
 
@@ -89,5 +89,17 @@ describe('diff / apply / clone', () => {
   it('string colours cycle', () => {
     expect(stringColour(0)).toBe(STRING_COLOURS[0])
     expect(stringColour(STRING_COLOURS.length)).toBe(STRING_COLOURS[0])
+  })
+})
+
+describe('normaliseReferences (re-review: reference integrity after a merge)', () => {
+  it('drops module refs past an array’s end, strings whose inverter is gone, and a module claimed twice', () => {
+    const short = { ...arr, geometry: { modules: [q(0, 0), q(10, 0)] } } as LayoutObject
+    const s1 = { ...str, id: 'S1', props: { inverterId: 'I', mppt: 1, modules: [{ arrayId: 'A', index: 1 }, { arrayId: 'A', index: 2 }] } } as LayoutObject
+    const s2 = { ...str, id: 'S2', props: { inverterId: 'I', mppt: 2, modules: [{ arrayId: 'A', index: 1 }, { arrayId: 'A', index: 0 }] } } as LayoutObject
+    const orphan = { ...str, id: 'S3', props: { inverterId: 'GONE', mppt: 1, modules: [{ arrayId: 'A', index: 0 }] } } as LayoutObject
+    const out = normaliseReferences([roof, short, inv, s1, s2, orphan])
+    const strings = out.filter((o) => o.kind === 'string') as Array<Extract<LayoutObject, { kind: 'string' }>>
+    expect(strings.map((s) => [s.id, s.props.modules.map((m) => m.index)])).toEqual([['S1', [1]], ['S2', [0]]])
   })
 })

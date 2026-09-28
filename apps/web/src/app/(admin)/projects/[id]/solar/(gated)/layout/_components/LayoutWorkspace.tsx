@@ -224,7 +224,11 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
       {restorable && (
         <p role="status">Unsaved changes from {new Date(restorable.draft.savedAt).toLocaleString('en-ZA')} were found
           {restorable.stale ? ' — they were made on an older version of this layout; restoring replays your changes over the current version, keeping everyone else’s' : ''}.{' '}
-          <button type="button" onClick={() => { commit(restoreDraft(restorable.draft, saved)); setRestorable(null) }}>Restore</button>{' '}
+          <button type="button" onClick={() => {
+            const r = restoreDraft(restorable.draft, saved)
+            commit(r.objects); setRestorable(null)
+            if (r.conflicts.length) setMessage(`${r.conflicts.length} object${r.conflicts.length === 1 ? ' was' : 's were'} also changed by someone else and kept as they saved ${r.conflicts.length === 1 ? 'it' : 'them'} — redo your change there if still needed.`)
+          }}>Restore</button>{' '}
           <button type="button" onClick={() => { void clearDraft(draftKey); setRestorable(null) }}>Discard</button>
         </p>
       )}

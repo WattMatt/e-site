@@ -3,8 +3,10 @@
  * kept out of the component so they are unit-tested (the component itself is
  * Konva-bound and untested, like RouteCanvas).
  */
-import { applyObjectDelta, diffObjects, type LayoutObject, type LayoutObjectKind } from '@esite/shared'
-import type { Selection } from '@/app/(admin)/projects/[id]/solar/(gated)/layout/_components/SolarCanvas'
+import { applyObjectDelta, diffObjects, normaliseReferences, type LayoutObject, type LayoutObjectKind, type ModuleRef } from '@esite/shared'
+
+/** Same shape as SolarCanvas's Selection (kept here so lib does not depend on an app route). */
+export interface Selection { ids: string[]; modules: ModuleRef[] }
 
 /** `base` = the saved object list the draft's edits were made against (absent on drafts written before it existed). */
 export type LayoutDraft = { objects: LayoutObject[]; base?: LayoutObject[]; basedOn: string; savedAt: string }
@@ -67,13 +69,28 @@ export function uniqueCopyName(name: string, existing: string[]): string {
 /**
  * The object list a Restore produces. The draft's OWN edits (base → objects)
  * are replayed onto the CURRENT server objects, so a colleague's additions and
- * changes the user never touched survive. A wholesale replace would silently
- * delete and roll back their work and defeat the stale-save refusal.
+ * changes the user never touched survive (a wholesale replace would silently
+ * delete and roll back their work and defeat the stale-save refusal).
+ * An object BOTH sides changed keeps the saved version and is returned in
+ * `conflicts` for the banner to name. String references are then normalised,
+ * because a merge can leave strings on modules that no longer exist.
  */
-export function restoreDraft(draft: LayoutDraft, serverObjects: LayoutObject[]): LayoutObject[] {
-  if (!draft.base) return draft.objects
+export function restoreDraft(draft: LayoutDraft, serverObjects: LayoutObject[]): { objects: LayoutObject[]; conflicts: string[] } {
+  if (!draft.base) return { objects: normaliseReferences(draft.objects), conflicts: [] }
+  const base = new Map(draft.base.map((o) => [o.id, o]))
+  const server = new Map(serverObjects.map((o) => [o.id, o]))
+  const changedOnServer = (id: string) => {
+    const b = base.get(id)
+    const s = server.get(id)
+    return !!b && !!s && diffObjects([b], [s]).upserts.length > 0
+  }
   const d = diffObjects(draft.base, draft.objects)
-  return applyObjectDelta(serverObjects, d.upserts, d.deletes, null)
+  const conflicts = [...d.upserts.map((o) => o.id), ...d.deletes].filter(changedOnServer)
+  const skip = new Set(conflicts)
+  const objects = applyObjectDelta(
+    serverObjects, d.upserts.filter((o) => !skip.has(o.id)), d.deletes.filter((id) => !skip.has(id)), null,
+  )
+  return { objects: normaliseReferences(objects), conflicts }
 }
 
 /** An exported sheet must show every layer its legend and summary count; null when nothing is hidden. */

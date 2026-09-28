@@ -41,6 +41,26 @@ function pruneStrings(objs: LayoutObject[]): LayoutObject[] {
   })
 }
 
+/**
+ * Make every string reference valid after a MERGE (e.g. a rebased draft
+ * restore), which can produce states no single edit does: strings whose
+ * inverter is gone, module refs past an array's end, or a module claimed by
+ * two strings. The first string to claim a module keeps it; emptied strings go.
+ */
+export function normaliseReferences(objs: LayoutObject[]): LayoutObject[] {
+  const claimed = new Set<string>()
+  return pruneStrings(objs).flatMap<LayoutObject>((o) => {
+    if (o.kind !== 'string') return [o]
+    const modules = o.props.modules.filter((m) => {
+      const k = `${m.arrayId}#${m.index}`
+      if (claimed.has(k)) return false
+      claimed.add(k)
+      return true
+    })
+    return modules.length > 0 ? [{ ...o, props: { ...o.props, modules } }] : []
+  })
+}
+
 /** Delete whole objects; strings lose modules of deleted arrays and die with their inverter or when empty. */
 export function removeObjects(objs: LayoutObject[], ids: string[]): LayoutObject[] {
   const gone = new Set(ids)

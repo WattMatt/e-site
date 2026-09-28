@@ -61,17 +61,17 @@ describe('restoreDraft (re-review fix: a stale draft is REBASED, never a wholesa
   it('draft base {a}, draft {a′}, server {a, b} → {a′, b} — a colleague’s b survives', () => {
     const base = [inv('a', 1)]
     const draft = { objects: [inv('a', 5)], base, basedOn: 'T0', savedAt: 'S' }
-    const r = restoreDraft(draft, [inv('a', 1), inv('b', 2)])
+    const r = restoreDraft(draft, [inv('a', 1), inv('b', 2)]).objects
     expect(r.map((o) => [o.id, (o.geometry as { x: number }).x])).toEqual([['a', 5], ['b', 2]])
   })
   it('an object the user deleted in the draft is deleted; one the colleague changed and the user did not touch keeps the colleague’s value', () => {
     const base = [inv('a', 1), inv('c', 3)]
     const draft = { objects: [inv('c', 3)], base, basedOn: 'T0', savedAt: 'S' }
-    const r = restoreDraft(draft, [inv('a', 1), inv('c', 9)])
+    const r = restoreDraft(draft, [inv('a', 1), inv('c', 9)]).objects
     expect(r.map((o) => [o.id, (o.geometry as { x: number }).x])).toEqual([['c', 9]])
   })
   it('a legacy draft with no base falls back to the draft objects', () => {
-    expect(restoreDraft({ objects: [inv('a', 5)], basedOn: 'T0', savedAt: 'S' }, [inv('a', 1)]).map((o) => o.id)).toEqual(['a'])
+    expect(restoreDraft({ objects: [inv('a', 5)], basedOn: 'T0', savedAt: 'S' }, [inv('a', 1)]).objects.map((o) => o.id)).toEqual(['a'])
   })
 })
 
@@ -86,5 +86,24 @@ describe('pruneSelection (re-review fix: hidden objects cannot stay selected)', 
   it('drops ids and modules that are no longer visible', () => {
     const visible = [inv('a', 1)]
     expect(pruneSelection({ ids: ['a', 'b'], modules: [{ arrayId: 'z', index: 0 }] }, visible)).toEqual({ ids: ['a'], modules: [] })
+  })
+})
+
+describe('restoreDraft — second re-review: references and conflicts', () => {
+  const q = (x: number) => [x, 0, x + 10, 0, x + 10, 20, x, 20]
+  const arrX = (n: number): LayoutObject => ({ id: 'X', kind: 'array', pixelsPerMeter: 10, geometry: { modules: Array.from({ length: n }, (_, i) => q(i * 10)) }, props: {} }) as unknown as LayoutObject
+  const I = inv('I', 0)
+  it('a restored string never points at modules the colleague removed', () => {
+    const base = [arrX(4), I]
+    const S = { id: 'S', kind: 'string', pixelsPerMeter: null, geometry: {}, props: { inverterId: 'I', mppt: 1, modules: [{ arrayId: 'X', index: 2 }, { arrayId: 'X', index: 3 }, { arrayId: 'X', index: 1 }] } } as unknown as LayoutObject
+    const r = restoreDraft({ objects: [arrX(4), I, S], base, basedOn: 'T0', savedAt: 's' }, [arrX(2), I])
+    const s = r.objects.find((o) => o.id === 'S') as unknown as { props: { modules: Array<{ index: number }> } }
+    expect(s.props.modules.map((m) => m.index)).toEqual([1])
+  })
+  it('an object BOTH sides changed keeps the saved version and is named as a conflict', () => {
+    const base = [inv('a', 1)]
+    const r = restoreDraft({ objects: [inv('a', 5)], base, basedOn: 'T0', savedAt: 's' }, [inv('a', 9)])
+    expect((r.objects[0]!.geometry as { x: number }).x).toBe(9)
+    expect(r.conflicts).toEqual(['a'])
   })
 })
