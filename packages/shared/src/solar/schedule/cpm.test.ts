@@ -101,9 +101,39 @@ describe('criticalPath — working days and holidays', () => {
 })
 
 describe('criticalPath — milestones, violations, cycles', () => {
-  it('a milestone the day after its predecessor ends is tight', () => {
-    const r = ok(criticalPath([t('A', '2026-10-01', '2026-10-09'), t('M', '2026-10-10', '2026-10-10', true)], [link('A', 'M')], cal))
+  it('a milestone ON its predecessor’s finish date is tight (end of day, as MS Project places it)', () => {
+    const r = ok(criticalPath([t('A', '2026-10-01', '2026-10-09'), t('M', '2026-10-09', '2026-10-09', true)], [link('A', 'M')], cal))
     expect(r.critical).toEqual(new Set(['A', 'M']))
+    expect(r.violations).toEqual([])
+  })
+  it('a milestone the day after its predecessor ends has one day of float', () => {
+    const r = ok(criticalPath([t('A', '2026-10-01', '2026-10-09'), t('M', '2026-10-10', '2026-10-10', true), t('Z', '2026-10-01', '2026-10-10')], [link('A', 'M')], cal))
+    expect(r.totalFloat.get('A')).toBe(1)
+    expect(r.violations).toEqual([])
+  })
+  // MS Project shape: task Mon–Fri, milestone on the Friday (FS), successor on Monday (FS).
+  const msp = [t('A', '2026-10-05', '2026-10-09'), t('M', '2026-10-09', '2026-10-09', true), t('B', '2026-10-12', '2026-10-14')]
+  const mspLinks = [link('A', 'M'), link('M', 'B')]
+  it('MS Project milestone chain, working mode: all critical, no violations', () => {
+    const r = ok(criticalPath(msp, mspLinks, wcal))
+    expect(r.violations).toEqual([])
+    expect(r.critical).toEqual(new Set(['A', 'M', 'B']))
+    expect(r.criticalLinks).toEqual(new Set(mspLinks.map(linkKey)))
+  })
+  it('MS Project milestone chain, calendar mode: no violations; the weekend is the only float', () => {
+    const r = ok(criticalPath(msp, mspLinks, cal))
+    expect(r.violations).toEqual([])
+    expect(r.critical).toEqual(new Set(['B']))
+    expect(r.totalFloat.get('M')).toBe(2)
+    const sat = ok(criticalPath([msp[0], msp[1], t('B', '2026-10-10', '2026-10-12')], mspLinks, cal))
+    expect(sat.violations).toEqual([])
+    expect(sat.critical).toEqual(new Set(['A', 'M', 'B']))
+  })
+  it('a milestone on a predecessor’s finish in working mode across a holiday is tight', () => {
+    // Heritage Day Thu 24 Sep 2026: A Mon–Wed, M Wed, B Fri.
+    const r = ok(criticalPath([t('A', '2026-09-21', '2026-09-23'), t('M', '2026-09-23', '2026-09-23', true), t('B', '2026-09-25', '2026-09-25')], [link('A', 'M'), link('M', 'B')], wcal))
+    expect(r.violations).toEqual([])
+    expect(r.critical).toEqual(new Set(['A', 'M', 'B']))
   })
   it('a plan that breaks a link has negative float and a listed violation', () => {
     const r = ok(criticalPath([t('A', '2026-10-01', '2026-10-05'), t('B', '2026-10-03', '2026-10-06')], [link('A', 'B')], cal))

@@ -91,26 +91,37 @@ export function instantiateScheduleTemplate(items: readonly ScheduleTemplateItem
   const links = items.flatMap((it) => it.after.map((a) => ({ fromKey: a.key, toKey: it.key, type: a.type, lagDays: a.lagDays })))
   const topo = topoOrder(items.map((it) => it.key), links.map((l) => ({ predecessorId: l.fromKey, successorId: l.toKey, type: l.type, lagDays: l.lagDays })))
   if (!topo.ok) throw new Error('The template has a loop')
-  const placed = new Map<string, { start: CalendarDate; end: CalendarDate }>()
-  // FS: next unit after the predecessor's end, plus lag. Units follow the calendar's mode.
+  const placed = new Map<string, { start: CalendarDate; end: CalendarDate; isMilestone: boolean }>()
+  // Every constraint is computed as R, the date whose START the successor may not
+  // begin before (the CPM's S). A task starts on R; a milestone sits at the END of
+  // the day before R (criticalPath: S = F = unit(date + 1)), so an FS milestone
+  // lands ON its predecessor's finish date and its successor starts the next day.
   const after = (d: CalendarDate, n: number) => (cal.mode === 'working' ? shiftDate(cal, d, n) : addCalendarDays(d, n))
-  const startForFinish = (finish: CalendarDate, days: number) => after(finish, -(days - 1))
+  const finishInstant = (p: { end: CalendarDate }) => after(p.end, 1)
+  const startInstant = (p: { start: CalendarDate; end: CalendarDate; isMilestone: boolean }) => (p.isMilestone ? after(p.end, 1) : p.start)
   for (const key of topo.order) {
     const it = byKey.get(key)!
-    const days = it.isMilestone ? 1 : it.durationDays
-    let s = after(start, it.offsetDays)
-    if (cal.mode === 'working') s = nextWorkingDate(cal, s)
+    let base = after(start, it.offsetDays)
+    if (cal.mode === 'working') base = nextWorkingDate(cal, base)
+    let r = it.isMilestone ? after(base, 1) : base
     for (const a of it.after) {
       const p = placed.get(a.key)!
+      // A milestone has no length: FF behaves as FS and SF as SS.
+      const type = it.isMilestone ? (a.type === 'FF' ? 'FS' : a.type === 'SF' ? 'SS' : a.type) : a.type
       const cand =
-        a.type === 'FS' ? after(p.end, 1 + a.lagDays)
-          : a.type === 'SS' ? after(p.start, a.lagDays)
-            : a.type === 'FF' ? startForFinish(after(p.end, a.lagDays), days)
-              : startForFinish(after(p.start, a.lagDays), days)
-      if (cand > s) s = cand
+        type === 'FS' ? after(finishInstant(p), a.lagDays)
+          : type === 'SS' ? after(startInstant(p), a.lagDays)
+            // FF / SF: the successor's last day is the day before the required finish instant.
+            : after(after(type === 'FF' ? finishInstant(p) : startInstant(p), a.lagDays - 1), -(it.durationDays - 1))
+      if (cand > r) r = cand
     }
-    if (cal.mode === 'working') s = nextWorkingDate(cal, s)
-    placed.set(key, { start: s, end: it.isMilestone ? s : endForDuration(cal, s, it.durationDays) })
+    if (cal.mode === 'working') r = nextWorkingDate(cal, r)
+    if (it.isMilestone) {
+      const m = after(r, -1)
+      placed.set(key, { start: m, end: m, isMilestone: true })
+    } else {
+      placed.set(key, { start: r, end: endForDuration(cal, r, it.durationDays), isMilestone: false })
+    }
   }
   const tasks: PlannedTask[] = items.map((it) => ({
     key: it.key, sourceRow: null, name: it.name, category: it.category, zone: it.zone,

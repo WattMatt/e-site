@@ -5,7 +5,8 @@ import {
 } from './template'
 import { validateImportPlan } from './import/plan'
 import { criticalPath } from './cpm'
-import { makeWorkCalendar, saHolidaySet, isWorkingDate } from './calendar'
+import { makeWorkCalendar, saHolidaySet, isWorkingDate, nextWorkingDate } from './calendar'
+import { addCalendarDays } from './dates'
 
 const wcal = makeWorkCalendar('working', saHolidaySet(2026, 2027))
 const cal = makeWorkCalendar('calendar')
@@ -30,6 +31,22 @@ describe('instantiateScheduleTemplate', () => {
       )
       expect(cpm.ok && cpm.violations).toEqual([])
       expect(plan.tasks[0].start).toBe('2026-10-01')
+      // The critical chain runs THROUGH the milestones: nothing mid-programme gets float from a milestone.
+      if (!cpm.ok) throw new Error('cycle')
+      expect(cpm.critical.has('completion')).toBe(true)
+      expect(cpm.critical.has('handover')).toBe(true)
+      expect(cpm.critical.has('sseg_submit')).toBe(true)
+      expect(cpm.critical.has('design')).toBe(true)
+      expect(cpm.critical.has('survey')).toBe(true)
+      expect(cpm.totalFloat.get('sseg_submit')).toBe(0)
+    })
+    it(`${name} mode: an FS milestone sits ON its predecessor's finish, and its successor starts the next day`, () => {
+      const plan = instantiateScheduleTemplate(DEFAULT_SOLAR_SCHEDULE_TEMPLATE, '2026-10-01', c)
+      const by = (k: string) => plan.tasks.find((t) => t.key === k)!
+      expect(by('sseg_submit').start).toBe(by('design').end)
+      expect(by('completion').start).toBe(by('handover').end)
+      const next = c.mode === 'working' ? nextWorkingDate(c, addCalendarDays(by('sseg_submit').start, 1)) : addCalendarDays(by('sseg_submit').start, 1)
+      expect(by('sseg_approval').start).toBe(next)
     })
   }
   it('working mode starts every task on a working day', () => {

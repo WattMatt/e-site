@@ -4,8 +4,10 @@
  *
  * Units: calendar mode = days since the earliest start; working mode = working
  * days before the date since the earliest start (a non-working date shares the
- * unit of the next working day). S = unit(start); d = spanDays (0 for a
- * milestone); F = S + d (exclusive). Backward pass in reverse topological order:
+ * unit of the next working day). S = unit(start); d = spanDays; F = S + d
+ * (exclusive). A milestone sits at the END of its day, S = F = unit(date + 1),
+ * as MS Project places it: an FS milestone lands ON its predecessor's finish
+ * date and its successor starts the next (working) day, all with zero float. Backward pass in reverse topological order:
  *   LF(p) = min(projectFinish, bound per outgoing link p→s, lag L)
  *     FS: LS_s − L        SS: LS_s − L + d_p
  *     FF: LF_s − L        SF: LF_s − L + d_p
@@ -69,9 +71,10 @@ export function criticalPath(tasks: readonly CpmTask[], links: readonly Schedule
   const F = new Map<string, number>()
   for (const t of tasks) {
     const d = t.isMilestone ? 0 : spanDays(cal, t.start, t.end)
+    const s = t.isMilestone ? unit(addCalendarDays(t.start, 1)) : unit(t.start)
     dur.set(t.id, d)
-    S.set(t.id, unit(t.start))
-    F.set(t.id, unit(t.start) + d)
+    S.set(t.id, s)
+    F.set(t.id, s + d)
   }
   const projectFinish = Math.max(...F.values())
   const projectStart = Math.min(...S.values())

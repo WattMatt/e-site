@@ -32,10 +32,10 @@ describe('scheduleStats', () => {
     expect(s.completionPct).toBe(50)
     expect(s.weightedProgressPct).toBe(Math.round((10 * 100 + 2 * 50) / 12)) // 92
     expect(s.programmeDays).toBe(15)
-    // CPM (Part 1) gives a milestone zero duration: the critical path runs from
-    // the start of 1 Oct to the INSTANT of 15 Oct = 14 days, while
-    // programmeDays counts the inclusive span of dates = 15.
-    expect(s.criticalPathDays).toBe(14)
+    // A milestone sits at the END of its day, so the critical path runs from
+    // the start of 1 Oct to the end of 15 Oct = 15 days, the same inclusive
+    // span programmeDays counts.
+    expect(s.criticalPathDays).toBe(15)
   })
   it('empty schedule: nulls, not NaN', () => {
     const s = scheduleStats([], cal, null)
