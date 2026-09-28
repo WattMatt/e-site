@@ -193,7 +193,7 @@ export function TaskDialog({ mode, initial, owners, cal, canEdit, defaultStart, 
             </label>
             {initial?.awaitingSignOff && (
               <div style={{ color: 'var(--c-amber)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span>{canSignOff ? 'Done — awaiting your sign-off.' : 'Done — awaiting sign-off by the person who scheduled it.'}</span>
+                <span>{canSignOff ? 'Done — awaiting your sign-off. A sign-off cannot be undone.' : 'Done — awaiting sign-off by the person who scheduled it.'}</span>
                 {canSignOff && <button type="button" disabled={busy} onClick={() => void signOff()}>Sign off</button>}
               </div>
             )}

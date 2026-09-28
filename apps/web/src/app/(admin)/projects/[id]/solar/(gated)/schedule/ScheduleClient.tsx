@@ -182,7 +182,7 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
    * Run an entry forward (unless the gesture already did it) and record it for
    * undo. Returns null on success or the sentence explaining the refusal.
    */
-  async function perform(entry: HistoryEntry, opts: { alreadyDone?: boolean; quiet?: boolean } = {}): Promise<string | null> {
+  async function perform(entry: HistoryEntry, opts: { alreadyDone?: boolean; quiet?: boolean; notUndoable?: boolean } = {}): Promise<string | null> {
     if (busyRef.current) return 'Still saving the last change. Try again in a moment.'
     setMessage(null)
     setBusy(true)
@@ -194,7 +194,7 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
       if (!opts.quiet) setMessage(error)
       return error
     }
-    setHistory((h) => recordEntry(h, entry))
+    if (!opts.notUndoable) setHistory((h) => recordEntry(h, entry))
     return null
   }
 
@@ -218,6 +218,16 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
   // ── gestures ─────────────────────────────────────────────────────────────
   const update = (label: string, patches: TaskPatch[], quiet = false) =>
     perform(entryForUpdate(label, dataRef.current.tasks, patches), { quiet })
+
+  // A sign-off closes the work item, and a closed item cannot be re-opened by
+  // re-sending the previous status (the RPC treats "done" again as "stay
+  // closed"), so an undo entry would be a silent no-op. It is not recorded.
+  async function signOff(patch: TaskPatch): Promise<string | null> {
+    const ref = taskById(patch.id)?.ref ?? 'the task'
+    const err = await perform(entryForUpdate('Sign off', dataRef.current.tasks, [patch]), { quiet: true, notUndoable: true })
+    if (!err) setMessage(`Signed off ${ref}. A sign-off cannot be undone.`)
+    return err
+  }
 
   function onBarDrag(taskId: string, kind: BarDragKind, delta: number, segmentIndex: number | null) {
     const t = taskById(taskId)
@@ -470,7 +480,7 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
       {(dialog?.kind === 'task' || dialog?.kind === 'milestone') && (
         <TaskDialog key={`${dialog.kind}:${dialog.taskId ?? 'new'}`} mode={dialog.kind} initial={editing} owners={data.owners} cal={cal}
           canEdit={data.canEdit} defaultStart={data.today} viewerId={data.currentUserId}
-          onSignOff={(patch) => update('Sign off', [patch], true)}
+          onSignOff={signOff}
           onSubmit={onDialogSubmit} onDelete={(id) => void deleteTasks([id])} onClose={() => setDialog(null)} />
       )}
       {dialog?.kind === 'link' && (

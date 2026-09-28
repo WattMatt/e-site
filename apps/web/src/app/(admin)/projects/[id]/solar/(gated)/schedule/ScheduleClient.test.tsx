@@ -163,6 +163,19 @@ describe('ScheduleClient', () => {
     await waitFor(() => expect(h.update).toHaveBeenCalledWith({ projectId: P, patches: [{ id: 't1', status: 'done', expectedUpdatedAt: 'U7' }] }))
   })
 
+  it('a sign-off is not undoable: nothing enters the history and the message says so', async () => {
+    const start = data({ tasks: [task('t1', { status: 'done', awaitingSignOff: true, gatekeeperId: 'u1', updatedAt: 'U7' }), ...data().tasks.slice(1)] })
+    h.load.mockResolvedValue({ ok: true, data: start })
+    render(<ScheduleClient initial={start} />)
+    fireEvent.click(screen.getByRole('button', { name: 'SOLAR-1 Task t1' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign off' }))
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText('Signed off SOLAR-1. A sign-off cannot be undone.')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => { key('z', { ctrlKey: true }) })
+    expect(h.update).toHaveBeenCalledTimes(1)
+  })
+
   it('the owner filter lists the people who own tasks, including a former owner, not the eligible-picker list', async () => {
     const d = data({
       tasks: [task('t1'), task('t2', { ownerId: 'u7', ownerName: 'Cas Client' }), task('t3')],
