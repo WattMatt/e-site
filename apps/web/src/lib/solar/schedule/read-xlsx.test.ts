@@ -2,7 +2,7 @@
 process.env.TZ = 'Africa/Johannesburg'
 import { describe, it, expect } from 'vitest'
 import ExcelJS from 'exceljs'
-import { readXlsxTable } from './read-xlsx'
+import { readXlsxTable, XLSX_MAX_COLUMNS } from './read-xlsx'
 
 async function book(fill: (ws: ExcelJS.Worksheet) => void): Promise<Buffer> {
   const wb = new ExcelJS.Workbook()
@@ -30,5 +30,15 @@ describe('readXlsxTable', () => {
   it('stops at maxRows', async () => {
     const buf = await book((ws) => { for (let i = 0; i < 10; i++) ws.addRow([`r${i}`]) })
     expect(await readXlsxTable(buf, 3)).toEqual([['r0'], ['r1'], ['r2']])
+  })
+  it('reads at most the first 50 columns: a stray cell in column XFD cannot make it walk 16,384 columns per row', async () => {
+    const buf = await book((ws) => {
+      ws.addRow(['Task', 'Start'])
+      ws.addRow(['Design', '2026-10-01'])
+      ws.getCell(2, 16384).value = 'stray'
+    })
+    const rows = await readXlsxTable(buf)
+    expect(rows).toEqual([['Task', 'Start', ...Array(48).fill('')], ['Design', '2026-10-01', ...Array(48).fill('')]])
+    expect(Math.max(...rows.map((r) => r.length))).toBe(XLSX_MAX_COLUMNS)
   })
 })

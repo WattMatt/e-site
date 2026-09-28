@@ -10,7 +10,8 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const MAX_BYTES = 5 * 1024 * 1024
+/** Vercel refuses a request body over 4.5 MB before the route runs; 4 MB leaves room for the multipart envelope. */
+const MAX_BYTES = 4 * 1024 * 1024
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status })
 
 /**
@@ -34,7 +35,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const form = await req.formData().catch(() => null)
   const file = form?.get('file')
   if (!(file instanceof File)) return bad('Choose a file to import.')
-  if (file.size > MAX_BYTES) return bad('That file is larger than 5 MB.', 413)
+  if (file.size > MAX_BYTES) return bad('That file is larger than 4 MB. Remove unused sheets or columns, or save it as .csv, and try again.', 413)
   const name = file.name.toLowerCase()
   try {
     if (name.endsWith('.xml')) {

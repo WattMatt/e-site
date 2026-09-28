@@ -21,13 +21,20 @@ function cellText(v: ExcelJS.CellValue): string {
   return String(v)
 }
 
+/**
+ * Columns read per row. The import maps at most 17 fields; a stray cell far to
+ * the right (column XFD = 16,384) would otherwise make every row walk 16,384
+ * cells — 2,000 rows × 16,384 = 33M getCell calls.
+ */
+export const XLSX_MAX_COLUMNS = 50
+
 /** maxRows defaults to the header + 2,000 tasks + one more, so "too many" can be detected. */
 export async function readXlsxTable(buf: Buffer, maxRows = 2002): Promise<string[][]> {
   const wb = new ExcelJS.Workbook()
   await wb.xlsx.load(buf as unknown as ArrayBuffer)
   const ws = wb.worksheets[0]
   if (!ws) return []
-  const width = ws.columnCount
+  const width = Math.min(ws.columnCount, XLSX_MAX_COLUMNS)
   const rows: string[][] = []
   for (let r = 1; r <= Math.min(ws.rowCount, maxRows); r++) {
     const row = ws.getRow(r)

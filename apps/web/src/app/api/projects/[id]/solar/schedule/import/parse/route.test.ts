@@ -61,10 +61,11 @@ describe('POST import/parse', () => {
     expect(await errorOf(null)).toBe('Choose a file to import.')
     const many = ['Task,Start', ...Array.from({ length: 2001 }, (_, i) => `T${i},2026-10-01`)].join('\n')
     expect(await errorOf(new File([many], 'p.csv'))).toBe('At most 2,000 tasks can be imported at once.')
-    const big = new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'p.csv')
+    // Vercel refuses a request body over 4.5 MB before the route runs, so the cap is 4 MB.
+    const big = new File([new Uint8Array(4 * 1024 * 1024 + 1)], 'p.csv')
     const res = await POST(req(big) as never, ctx)
     expect(res.status).toBe(413)
-    expect((await res.json()).error).toBe('That file is larger than 5 MB.')
+    expect((await res.json()).error).toBe('That file is larger than 4 MB. Remove unused sheets or columns, or save it as .csv, and try again.')
   })
   it('a file that cannot be read is a sentence, not a stack trace', async () => {
     const res = await POST(req(new File(['not a zip'], 'p.xlsx')) as never, ctx)
