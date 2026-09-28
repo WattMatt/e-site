@@ -5,7 +5,7 @@
  * actions and the client.
  */
 import { z } from 'zod'
-import { GANTT_STATUSES, LINK_TYPES, isCalendarDate } from '@esite/shared'
+import { GANTT_STATUSES, LINK_TYPES, isCalendarDate, type ImportPlan } from '@esite/shared'
 
 const date = z.string().refine(isCalendarDate)
 const segment = z.object({ start: date, end: date })
@@ -78,4 +78,48 @@ export function toRpcPatch(p: TaskPatch): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, snake] of PATCH_KEYS) if (p[k] !== undefined) out[snake] = p[k]
   return out
+}
+
+/** An ImportPlan (template or file) → the create action's inputs; ownerIdFor resolves a task's hint. */
+export function planToInputs(plan: ImportPlan, ownerIdFor: (taskIndex: number) => string | null): { tasks: TaskInput[]; links: LinkInput[] } {
+  return {
+    tasks: plan.tasks.map((t, i) => ({
+      key: t.key, name: t.name, start: t.start, end: t.end, isMilestone: t.isMilestone, category: t.category, zone: t.zone,
+      ownerId: ownerIdFor(i), status: t.status, progress: t.progress, colour: t.colour, description: t.description, segments: t.segments,
+    })),
+    links: plan.links.map((l) => ({ from: l.fromKey, to: l.toKey, type: l.type, lagDays: l.lagDays })),
+  }
+}
+
+/**
+ * Owner as written in a file → member id (owner decision Q5): email
+ * (case-insensitive) first, then a UNIQUE full name. `owners` must be the
+ * Solar-ELIGIBLE list (solar.schedule_owner_candidates), so a client viewer or
+ * supplier named in a file is simply unmatched — never sent to the database.
+ * An unmatched task gets null, which the create RPC resolves to the project's
+ * default owner (falling back to the importer, who holds Solar Edit).
+ */
+export function resolveOwnerHints(
+  hints: ReadonlyArray<string | null>,
+  owners: ReadonlyArray<{ id: string; name: string; email: string }>,
+): { ids: Array<string | null>; unmatched: string[] } {
+  const byEmail = new Map(owners.filter((o) => o.email.trim()).map((o) => [o.email.trim().toLowerCase(), o.id]))
+  const byName = new Map<string, string[]>()
+  for (const o of owners) {
+    const k = o.name.trim().toLowerCase()
+    if (!k) continue
+    byName.set(k, [...(byName.get(k) ?? []), o.id])
+  }
+  const unmatched = new Set<string>()
+  const ids = hints.map((h) => {
+    if (!h || !h.trim()) return null
+    const k = h.trim().toLowerCase()
+    const e = byEmail.get(k)
+    if (e) return e
+    const n = byName.get(k)
+    if (n && n.length === 1) return n[0]
+    unmatched.add(h.trim())
+    return null
+  })
+  return { ids, unmatched: [...unmatched] }
 }

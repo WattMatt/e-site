@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import type { Metadata } from 'next'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { OWNER_ADMIN, readSolarOrgSettings, solarSettingsToForm } from '@esite/shared'
+import { DEFAULT_SOLAR_SCHEDULE_TEMPLATE, OWNER_ADMIN, readScheduleTemplate, readSolarOrgSettings, solarSettingsToForm } from '@esite/shared'
 import { createClient } from '@/lib/supabase/server'
 import { requireRolePage } from '@/lib/auth/require-role'
 import { Card, CardBody, CardHeader } from '@/components/ui/Card'
 import { SolarSettingsForm } from './SolarSettingsForm'
+import { ScheduleTemplateEditor } from './ScheduleTemplateEditor'
 
 export const dynamic = 'force-dynamic'
 export const metadata: Metadata = { title: 'Solar defaults' }
@@ -28,6 +29,13 @@ export default async function SolarSettingsPage() {
     .schema('solar').from('org_settings').select('settings, updated_at')
     .eq('organisation_id', ctx.organisationId).maybeSingle()
   const row = data as { settings?: unknown; updated_at?: string } | null
+  const { data: tpl } = await supabase
+    .schema('solar').from('schedule_templates').select('content, updated_at')
+    .eq('organisation_id', ctx.organisationId).maybeSingle()
+  const tplRow = tpl as { content?: unknown; updated_at?: string } | null
+  // An invalid stored template shows the standard programme but keeps the row's
+  // updated_at, so saving overwrites it rather than conflicting.
+  const orgItems = readScheduleTemplate(tplRow?.content ?? null)
 
   return (
     <div className="animate-fadeup" style={{ maxWidth: 960 }}>
@@ -43,6 +51,13 @@ export default async function SolarSettingsPage() {
         </div>
       </div>
       <SolarSettingsForm initial={solarSettingsToForm(readSolarOrgSettings(row?.settings ?? null))} updatedAt={row?.updated_at ?? null} />
+      <div style={{ marginTop: 16 }}>
+        <ScheduleTemplateEditor
+          initialItems={orgItems ?? DEFAULT_SOLAR_SCHEDULE_TEMPLATE}
+          updatedAt={tplRow?.updated_at ?? null}
+          isDefault={orgItems === null}
+        />
+      </div>
       <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
         {LATER.map((s) => (
           <Card key={s.title}>
