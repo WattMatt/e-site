@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   SOLAR_TABS, visibleSolarTabs, siteReadiness, computeSolarReadiness, toSiteReadinessInput,
-  isInSouthAfrica, LATER_PHASE_REASON, yieldReadiness, financialsReadiness,
+  isInSouthAfrica, LATER_PHASE_REASON, yieldReadiness, financialsReadiness, reportsReadiness,
 } from './readiness'
 
 const full = { latitude: -26.1, longitude: 28.05, licenseeName: 'City Power', nmdKva: 500 }
@@ -12,8 +12,8 @@ describe('tabs', () => {
       'overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials', 'reports', 'schedule', 'operations',
     ])
   })
-  it('Overview, Site & Supply, Yield & Scenarios and Financials are built (Phase 4b)', () => {
-    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'yield', 'financials'])
+  it('Overview, Site & Supply, Yield & Scenarios, Financials (Phase 4b) and Reports & Proposal (Phase 6) are built', () => {
+    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'yield', 'financials', 'reports'])
   })
   it('hides Tariff and Financials below Edit + financials, and Operations for everyone', () => {
     expect(visibleSolarTabs('edit').map((t) => t.slug)).not.toContain('tariff')
@@ -60,6 +60,7 @@ describe('computeSolarReadiness', () => {
     expect(steps[0]).toMatchObject({ slug: 'site', status: 'green', live: true })
     for (const s of steps.slice(1)) {
       if (s.slug === 'yield') expect(s).toMatchObject({ status: 'grey', reason: 'No cases yet', live: true })
+      else if (s.slug === 'reports') expect(s).toMatchObject({ status: 'grey', reason: 'Feasibility reports need Edit + financials access', live: true })
       else expect(s).toMatchObject({ status: 'grey', reason: LATER_PHASE_REASON, live: false })
     }
   })
@@ -115,5 +116,20 @@ describe('computeSolarReadiness with Phase 4b inputs', () => {
   })
   it('an Edit user never gets a financials step', () => {
     expect(computeSolarReadiness(null, 'edit').some((s) => s.slug === 'financials')).toBe(false)
+  })
+})
+
+describe('Reports readiness (Phase 6)', () => {
+  it('Reports & Proposal is a built tab', () => {
+    expect(SOLAR_TABS.find((t) => t.slug === 'reports')?.built).toBe(true)
+  })
+  it('green only when a feasibility report exists for the selected case’s current run', () => {
+    expect(reportsReadiness({ hasCurrentFeasibility: true })).toEqual({ status: 'green', reason: 'A feasibility report exists for the selected case’s current run' })
+    expect(reportsReadiness({ hasCurrentFeasibility: false }).status).toBe('grey')
+    expect(reportsReadiness(null)).toEqual({ status: 'grey', reason: 'Feasibility reports need Edit + financials access' })
+  })
+  it('computeSolarReadiness makes the Reports step live', () => {
+    const steps = computeSolarReadiness(null, 'edit_financials', { reports: { hasCurrentFeasibility: true } })
+    expect(steps.find((s) => s.slug === 'reports')).toMatchObject({ live: true, status: 'green' })
   })
 })

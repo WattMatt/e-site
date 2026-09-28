@@ -17,3 +17,13 @@ describe('describeSolarAuditEvent', () => {
     expect(describeSolarAuditEvent('case_run_finished', {})).toEqual({ text: 'case run finished', target: null })
   })
 })
+
+describe('report and proposal verbs (Phase 6)', () => {
+  it('describes each and links to the Reports tab', () => {
+    expect(describeSolarAuditEvent('report_generated', { kind: 'feasibility', version: 3 })).toEqual({ text: 'Feasibility report v3 generated', target: 'reports' })
+    expect(describeSolarAuditEvent('proposal_issued', { version: 2 })).toEqual({ text: 'Proposal v2 issued', target: 'reports' })
+    expect(describeSolarAuditEvent('proposal_accepted', { version: 2 })).toEqual({ text: 'Proposal v2 accepted by the client', target: 'reports' })
+    expect(describeSolarAuditEvent('proposal_declined', { version: 1 })).toEqual({ text: 'Proposal v1 declined by the client', target: 'reports' })
+    expect(describeSolarAuditEvent('proposal_withdrawn', { version: 1 }).target).toBe('reports')
+  })
+})
