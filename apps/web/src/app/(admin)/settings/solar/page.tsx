@@ -14,13 +14,11 @@ export const metadata: Metadata = { title: 'Solar defaults' }
 type AnyClient = SupabaseClient<any, any, any>
 
 const LATER = [
-  { title: 'Rate card', body: 'R/Wp by size band, battery and inverter rates, BOS, fees, PM, contingency and margin — with the financial model.' },
   { title: 'Load densities', body: 'W/m² per tenant category and archetype mapping — with the load modelling tab.' },
-  { title: 'Equipment catalogue', body: 'Modules, inverters and batteries (add, edit, retire, import) — with the PV layout tool.' },
   { title: 'Branding for Solar reports', body: 'Solar-specific disclaimer and terms — with feasibility reports and proposals.' },
 ]
 
-/** /settings/solar (spec §11) — org owners/admins. A skeleton: three sections live, four later. */
+/** /settings/solar (spec §11) — org owners/admins. Rate card + finance/opex/loss defaults live; equipment on its own page; two sections later. */
 export default async function SolarSettingsPage() {
   const ctx = await requireRolePage(OWNER_ADMIN)
   const supabase = (await createClient()) as unknown as AnyClient
@@ -42,6 +40,10 @@ export default async function SolarSettingsPage() {
           <p className="page-subtitle">Every new case copies these. A case keeps its own copy, so changing them never alters past results.</p>
         </div>
       </div>
+      <p style={{ fontSize: 13, marginBottom: 16 }}>
+        <Link href="/settings/solar/equipment">Equipment catalogue →</Link>{' '}
+        Modules, inverters and batteries (add, edit, retire, import from CSV).
+      </p>
       <SolarSettingsForm initial={solarSettingsToForm(readSolarOrgSettings(row?.settings ?? null))} updatedAt={row?.updated_at ?? null} />
       <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
         {LATER.map((s) => (
