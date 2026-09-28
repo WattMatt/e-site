@@ -9,6 +9,7 @@ import type {
   SsegRule, Tariff, TariffCategory, TariffMetering, TariffSeason, TariffStructure, TariffUnit, TouOrAll, VatBasis, YearState,
 } from '../types'
 import type { TariffStore, YearMeta } from './ingest-core'
+import type { ExistingRegistry, RegistrySeedPlan } from './registry'
 
 type Row = Record<string, unknown>
 const CHUNK = 500
@@ -171,5 +172,33 @@ export function createSupabaseTariffStore(url: string, serviceKey: string): Tari
         locator: rule.locator,
       }), 'sseg_rule insert')
     },
+  }
+}
+
+function serviceClient(url: string, serviceKey: string): SupabaseClient {
+  return createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+}
+
+/** Read-only: the live licensee registry, for planning a seed. */
+export async function readLicenseeRegistry(url: string, serviceKey: string): Promise<ExistingRegistry> {
+  const t = serviceClient(url, serviceKey).schema('tariffs')
+  const lic = check(await t.from('licensee').select('id,name'), 'licensee read')
+  const ali = check(await t.from('licensee_alias').select('alias,licensee_id'), 'licensee_alias read')
+  return {
+    licensees: ((lic.data ?? []) as Row[]).map((r) => ({ id: r.id as string, name: r.name as string })),
+    aliases: ((ali.data ?? []) as Row[]).map((r) => ({ alias: r.alias as string, licenseeId: r.licensee_id as string })),
+  }
+}
+
+/** Service-role writes for a registry seed plan: inserts and alias additions only, never deletes. */
+export async function applyLicenseeRegistrySeed(url: string, serviceKey: string, plan: RegistrySeedPlan): Promise<void> {
+  const t = serviceClient(url, serviceKey).schema('tariffs')
+  for (const e of plan.insert) {
+    const r = check(await t.from('licensee').insert({ name: e.name, kind: e.kind, province: e.province }).select('id').single(), `licensee ${e.name}`)
+    const id = (r.data as Row).id as string
+    check(await t.from('licensee_alias').insert(e.aliases.map((alias) => ({ alias, licensee_id: id }))), `aliases for ${e.name}`)
+  }
+  for (const x of plan.addAliases) {
+    check(await t.from('licensee_alias').insert(x.aliases.map((alias) => ({ alias, licensee_id: x.licenseeId }))), `aliases for ${x.name}`)
   }
 }
