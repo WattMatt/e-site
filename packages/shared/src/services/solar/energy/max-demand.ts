@@ -4,7 +4,8 @@
  * The hour's net PV/battery contribution (load − import, negative while grid-charging) is
  * spread evenly across that hour's sub-intervals and subtracted from the measured sub-hourly
  * load — a documented, conservative approximation. The averaged hourly profile's peak is never
- * used as MD.
+ * used as MD. `sub` must be on the same basis as `flows.load` (e.g. both after the case load
+ * adjustment) — `simulateCase` guarantees this.
  */
 import { HOURS_PER_YEAR, monthOfHour } from '../time'
 

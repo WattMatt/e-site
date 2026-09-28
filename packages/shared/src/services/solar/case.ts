@@ -13,6 +13,7 @@ import { ENGINE_VERSION } from './version'
 import { HOURS_PER_YEAR, assert8760, monthlySums } from './time'
 import { simulatePv, type PvResult, type PvSystem } from './pv/simulate-pv'
 import { energyBalance, type BatterySpec, type EnergyBalance, type ExportSettings, type TouPeriod } from './energy/energy-balance'
+import { subHourlyAfterSolar, type SubHourlyLoad } from './energy/max-demand'
 import type { WeatherYear } from './weather/reference-year'
 import { year1Bills, type BillCalculator, type Year1Bills } from './finance/bill-calculator'
 import { runFinance, type FinanceInput, type FinanceResult } from './finance/cashflow'
@@ -27,6 +28,19 @@ export interface CaseInput {
   battery: BatterySpec | null
   export: ExportSettings
   touPeriods?: readonly TouPeriod[]
+  /**
+   * Measured sub-hourly site load (spec §2.6), when the meter data has it. Maximum demand is
+   * taken from this, never from the averaged hourly profile. Same basis as `load` (before the
+   * case load adjustment, which is applied to both).
+   */
+  subHourlyLoad?: SubHourlyLoad
+}
+
+/** Sub-hourly grid import before solar, with PV + battery, and with PV only — the MD inputs of the bills. */
+export interface SubHourlyImports {
+  before: SubHourlyLoad
+  after: SubHourlyLoad
+  afterPvOnly: SubHourlyLoad
 }
 
 export interface MonthlyEnergy {
@@ -46,6 +60,8 @@ export interface CaseResult {
   /** Same case without the battery — the bill engine prices both to split the saving. */
   balancePvOnly: EnergyBalance
   monthly: MonthlyEnergy
+  /** Present only when the input carried measured sub-hourly load. */
+  subHourly?: SubHourlyImports
 }
 
 export function simulateCase(input: CaseInput, weather: { id: string; year: WeatherYear }): CaseResult {
@@ -59,6 +75,21 @@ export function simulateCase(input: CaseInput, weather: { id: string; year: Weat
   const common = { pvAc: pv.pAc, load, loadAdjustment: input.loadAdjustment, export: input.export, touPeriods: input.touPeriods }
   const balance = energyBalance({ ...common, battery: input.battery })
   const balancePvOnly = input.battery ? energyBalance({ ...common, battery: null }) : balance
+  let subHourly: SubHourlyImports | undefined
+  if (input.subHourlyLoad) {
+    // The hourly balance runs on the ADJUSTED load, so the measured sub-hourly load is put on the
+    // same basis before the hour's PV/battery contribution is subtracted from it.
+    const k = 1 + input.loadAdjustment
+    const before: SubHourlyLoad = {
+      intervalMin: input.subHourlyLoad.intervalMin,
+      kw: Float64Array.from(input.subHourlyLoad.kw, (v) => Math.max(0, v) * k),
+    }
+    subHourly = {
+      before,
+      after: subHourlyAfterSolar(before, balance),
+      afterPvOnly: subHourlyAfterSolar(before, balancePvOnly),
+    }
+  }
   return {
     engineVersion: ENGINE_VERSION,
     inputsHash: hash,
@@ -73,6 +104,7 @@ export function simulateCase(input: CaseInput, weather: { id: string; year: Weat
       importKwh: monthlySums(balance.import),
       exportKwh: monthlySums(balance.export),
     },
+    subHourly,
   }
 }
 
@@ -86,7 +118,7 @@ export interface FinancialsResult {
 
 export function runFinancials(result: CaseResult, fin: FinanceInput, bills: BillCalculator): FinancialsResult {
   if (result.balance.load.length !== HOURS_PER_YEAR) throw new Error('case result is not on the 8760 time base')
-  const y1 = year1Bills(bills, result.balance, result.balancePvOnly)
+  const y1 = year1Bills(bills, result.balance, result.balancePvOnly, result.subHourly)
   const energy = {
     year1PvKwh: result.pv.annual.acKwh,
     // Delivered = generated − curtailed (export limit / export not allowed): the PPA billing base.

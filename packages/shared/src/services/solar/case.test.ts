@@ -82,6 +82,46 @@ describe('simulateCase', () => {
   })
 })
 
+describe('sub-hourly maximum demand reaches the bill (spec §4, §2.6)', () => {
+  // Measured 30-min load: the hourly profile, with a 90 kW half-hour spike every day at 12:00.
+  const kw = Float64Array.from({ length: 8760 * 2 }, (_, i) => {
+    const hr = Math.floor(i / 2) % 24
+    const base = hr >= 7 && hr < 19 ? 60 : 15
+    return hr === 12 && i % 2 === 0 ? 90 : base
+  })
+  const seen: (import('./energy/max-demand').SubHourlyLoad | undefined)[] = []
+  const spy = {
+    monthlyBills: (fl: Parameters<typeof stubBillCalculator.monthlyBills>[0]) => {
+      seen.push(fl.subHourlyImport)
+      return stubBillCalculator.monthlyBills(fl)
+    },
+  }
+  const r = simulateCase(input({ subHourlyLoad: { intervalMin: 30, kw }, loadAdjustment: 0.1 }), weather)
+  runFinancials(r, fin, spy)
+
+  it('passes before / after / after-PV-only sub-hourly import to the BillCalculator', () => {
+    expect(seen).toHaveLength(3)
+    const [before, after, afterPv] = seen
+    expect(before!.intervalMin).toBe(30)
+    // the case load adjustment applies to the measured sub-hourly load too
+    expect(before!.kw[24]).toBeCloseTo(90 * 1.1, 9)
+    expect(Math.max(...after!.kw)).toBeLessThan(Math.max(...before!.kw))
+    expect(after!.kw.length).toBe(8760 * 2)
+    expect(afterPv!.kw.length).toBe(8760 * 2)
+  })
+
+  it('the spike survives solar: MD falls by the hour\'s average offset, not to the hourly mean', () => {
+    const h = 12 + 24 * 180 // a midwinter noon
+    const offset = r.balance.load[h]! - r.balance.import[h]!
+    expect(r.subHourly!.after.kw[2 * h]).toBeCloseTo(Math.max(0, 90 * 1.1 - offset), 9)
+  })
+
+  it('without measured sub-hourly data nothing is invented', () => {
+    const n = simulateCase(input(), weather)
+    expect(n.subHourly).toBeUndefined()
+  })
+})
+
 describe('runFinancials through the BillCalculator seam (stub until Phase 2a)', () => {
   const r = simulateCase(input(), weather)
   const out = runFinancials(r, fin, stubBillCalculator)
