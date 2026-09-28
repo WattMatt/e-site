@@ -2,3 +2,4 @@
 export * from './fmt'
 export * from './offer'
 export * from './proposal-draft'
+export * from './finance-options'
