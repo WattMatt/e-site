@@ -95,6 +95,10 @@ describe('Financials readiness (§2.3)', () => {
     expect(financialsReadiness({ capexZar: 5e6, hasModel: true, usingOrgDefaults: true })).toEqual({ status: 'amber', reason: 'Using org defaults — review the capex' })
     expect(financialsReadiness({ capexZar: 5e6, hasModel: true, usingOrgDefaults: false })).toEqual({ status: 'green', reason: 'Capex and a finance model are set' })
   })
+  it('a selected case with no saved financials is amber "using org defaults" (spec 01 §2.3), not grey', () => {
+    expect(financialsReadiness({ capexZar: 0, hasModel: true, usingOrgDefaults: true, saved: false }))
+      .toEqual({ status: 'amber', reason: 'Using org defaults — review the capex' })
+  })
 })
 
 describe('computeSolarReadiness with Phase 4b inputs', () => {

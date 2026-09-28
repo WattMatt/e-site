@@ -15,7 +15,8 @@ export function FinancialResults({ projectId, caseId, view }: { projectId: strin
   const rows: Array<[string, (c: Column) => string]> = [
     ['Capex (excl. VAT)', () => rand(view.capex.exclVatZar)],
     ['Upfront (this party)', (c) => rand(c.upfrontZar)],
-    ['Year-1 saving', () => rand(view.year1.savingZar)],
+    // Per party: owner bill saving, client saving net of PPA/lease payments, investor income.
+    ['Year 1 (this party)', (c) => `${rand(c.year1.zar)} (${c.year1.label.replace('Year-1 ', '')})`],
     ['Simple payback', (c) => years(c.simplePaybackYears)],
     ['Discounted payback', (c) => years(c.discountedPaybackYears)],
     ['IRR', (c) => (c.irr === null ? 'n/a' : pct(c.irr))],

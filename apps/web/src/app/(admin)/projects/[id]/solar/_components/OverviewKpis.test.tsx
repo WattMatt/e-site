@@ -22,6 +22,14 @@ describe('OverviewKpis (§2.2, §2.4)', () => {
     expect(screen.queryByLabelText('Change selected case')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Generate feasibility report' })).toBeNull()
   })
+  it('runs exist but no case is selected: points at choosing the selected case, not "no case has been run"', () => {
+    const { rerender } = render(<OverviewKpis projectId="p1" level="edit" kpis={null} selectable={selectable} selectedCaseId={null} studyUpdatedAt="T0" stale={false} />)
+    expect(screen.queryByText(/No case has been run yet/)).toBeNull()
+    expect(screen.getByText('Choose the selected case — reports and proposals use it.')).toBeTruthy()
+    expect(screen.getByText('Use Change selected case below.')).toBeTruthy()
+    rerender(<OverviewKpis projectId="p1" level="view" kpis={null} selectable={selectable} selectedCaseId={null} studyUpdatedAt="T0" stale={false} />)
+    expect(screen.getByRole('link', { name: 'Open Yield & Scenarios' }).getAttribute('href')).toBe('/projects/p1/solar/yield')
+  })
   it('Edit with no completed runs: the selected-case control is disabled with its reason', () => {
     render(<OverviewKpis projectId="p1" level="edit" kpis={null} selectable={[]} selectedCaseId={null} studyUpdatedAt="T0" stale={false} />)
     expect((screen.getByLabelText('Change selected case') as HTMLSelectElement).disabled).toBe(true)

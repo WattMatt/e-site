@@ -75,9 +75,22 @@ export async function latestMoney(user: AnyClient, caseIds: string[]): Promise<M
   return m
 }
 
-const moneyOf = (fin: Row | undefined): CompareMoney | null => {
-  if (!fin) return null
-  const v = fin.results?.finance?.models?.[0]?.views?.[0]
+/**
+ * The ONE view a headline figure is read from (Overview KPIs, case card, Compare): the cash purchase's
+ * owner view when cash is modelled; otherwise the first model's owner (debt) or client (PPA/lease) view —
+ * the site owner's side. Never an investor view: its IRR/NPV is the funder's return, not the client's.
+ */
+export function headlineView(models: Row[] | undefined): Row | undefined {
+  const all = models ?? []
+  const cash = all.find((m) => m.model === 'cash')
+  const pick = (m: Row | undefined) => ((m?.views ?? []) as Row[]).find((v) => v.view === 'owner' || v.view === 'client')
+  return pick(cash) ?? all.map(pick).find(Boolean)
+}
+
+/** Money for a case card / Compare column — only when the stored result priced the case's LATEST succeeded run. */
+const moneyOf = (fin: Row | undefined, latestOkRunId: string | undefined): CompareMoney | null => {
+  if (!fin || !latestOkRunId || fin.case_run_id !== latestOkRunId) return null
+  const v = headlineView(fin.results?.finance?.models)
   const b = fin.results?.year1Bills
   if (!v || !b) return null
   return { year1SavingZar: b.beforeZar - b.afterZar, irr: v.irr ?? null, npvZar: v.npvZar, simplePaybackYears: v.simplePaybackYears ?? null }
@@ -120,7 +133,7 @@ export async function loadYieldPageData(user: AnyClient, svc: AnyClient, project
     const st = statusOf(latest.get(r.id), lastOk, c.ok ? c.ctx.currentHash : null)
     const cfg = parseCaseConfig(r.config)
     const out = lastOk ? await outputsFor(lastOk.id) : null
-    const m = moneyOf(money.get(r.id))
+    const m = moneyOf(money.get(r.id), lastOk?.id)
     cases.push({
       id: r.id, name: r.name, pvSource: r.pv_source, updatedAt: r.updated_at,
       dcKwp: cfg.ok ? cfg.config.pv.dcKwp : 0, acKw: cfg.ok ? cfg.config.pv.acKw : 0,
@@ -180,7 +193,7 @@ export async function loadYieldPageData(user: AnyClient, svc: AnyClient, project
       const lastOk = ok.get(id)
       const out = lastOk ? await outputsFor(lastOk.id) : null
       if (!out) continue
-      compare.push({ caseId: id, name: rows.find((r) => r.id === id)!.name, kpis: out.kpis, monthlyPvKwh: out.monthly.map((m) => m.pvKwh), money: moneyOf(money.get(id)) })
+      compare.push({ caseId: id, name: rows.find((r) => r.id === id)!.name, kpis: out.kpis, monthlyPvKwh: out.monthly.map((m) => m.pvKwh), money: moneyOf(money.get(id), lastOk?.id) })
     }
   }
 
@@ -217,7 +230,9 @@ export async function loadSolarReadinessExtra(user: AnyClient, svc: AnyClient, p
     const row = Array.isArray(data) ? (data[0] as Row | undefined) : undefined
     const fin = row ? parseFinanceConfig(row.config) : null
     const cfg = parseCaseConfig(sel.config)
-    if (fin?.ok && cfg.ok) {
+    // No saved row: the Financials tab opens on the org defaults (spec 01 §2.3 amber, not grey).
+    if (!row) financials = { capexZar: 0, hasModel: true, usingOrgDefaults: true, saved: false }
+    else if (fin?.ok && cfg.ok) {
       const m = fin.fin.models
       financials = {
         capexZar: capexTotals(fin.fin.capex, cfg.config.pv.dcKwp).exclVatZar,
@@ -254,7 +269,7 @@ export async function loadHeadlineKpis(user: AnyClient, projectId: string, level
   let money: HeadlineKpis['money'] = null
   if (level === 'edit_financials') {
     const fin = (await latestMoney(user, [selectedCaseId])).get(selectedCaseId)
-    const v = fin?.results?.finance?.models?.[0]?.views?.[0]
+    const v = headlineView(fin?.results?.finance?.models)
     const b = fin?.results?.year1Bills
     if (fin && v && b && fin.case_run_id === lastOk.id) {
       money = { billBeforeZar: b.beforeZar, billAfterZar: b.afterZar, savingZar: b.beforeZar - b.afterZar, simplePaybackYears: v.simplePaybackYears ?? null, irr: v.irr ?? null, npvZar: v.npvZar, lcoeZarPerKwh: fin.results.finance.lcoeZarPerKwh ?? null }

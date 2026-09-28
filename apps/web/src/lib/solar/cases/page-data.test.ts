@@ -96,6 +96,34 @@ describe('loadYieldPageData', () => {
   })
 })
 
+describe('money on the right run and the right view', () => {
+  it('B3: a financial result on an OLDER run is not shown as the case’s money (card or compare)', async () => {
+    const t = { ...tables, 'solar.case_run_financials': [{ ...tables['solar.case_run_financials'][0]!, case_run_id: 'r0-older' }] }
+    const svc = fakeSupabase({ tables: { 'solar.org_settings': [] } }).client
+    const d = await loadYieldPageData(fakeSupabase({ tables: t }).client as never, svc as never, P, 'edit_financials', { compare: 'c1,c2' })
+    expect(d.cases[0]!.year1SavingZar).toBeNull()
+    expect(d.compare![0]!.money).toBeNull()
+  })
+  it('B4: the headline view is chosen deliberately — cash owner if present, else the owner/client view, never an investor view', async () => {
+    const res = (models: unknown[]) => ({ ...tables, 'solar.case_run_financials': [{ case_id: 'c1', case_run_id: 'r1', created_at: 'T', results: { year1Bills: { beforeZar: 1e6, afterZar: 6e5 }, finance: { lcoeZarPerKwh: 0.9, models } } }] })
+    const ppa = { model: 'ppa', views: [{ view: 'investor', npvZar: 9e9, irr: 0.9, simplePaybackYears: 1 }, { view: 'client', npvZar: 3e5, irr: null, simplePaybackYears: null }] }
+    const cash = { model: 'cash', views: [{ view: 'owner', npvZar: 2e6, irr: 0.2, simplePaybackYears: 5 }] }
+    const k1 = await loadHeadlineKpis(fakeSupabase({ tables: res([ppa, cash]) }).client as never, P, 'edit_financials', 'c1')
+    expect(k1!.money).toMatchObject({ npvZar: 2e6, irr: 0.2 })
+    const k2 = await loadHeadlineKpis(fakeSupabase({ tables: res([ppa]) }).client as never, P, 'edit_financials', 'c1')
+    expect(k2!.money).toMatchObject({ npvZar: 3e5, irr: null })
+    const svc = fakeSupabase({ tables: { 'solar.org_settings': [] } }).client
+    const d = await loadYieldPageData(fakeSupabase({ tables: res([ppa]) }).client as never, svc as never, P, 'edit_financials', { compare: 'c1,c2' })
+    expect(d.compare![0]!.money).toMatchObject({ npvZar: 3e5 })
+  })
+  it('B5: the selected case with no saved financials reads as "using org defaults" at edit_financials', async () => {
+    const x = await loadSolarReadinessExtra(fakeSupabase({ tables: { ...tables, 'solar.case_financials': [] } }).client as never, {} as never, P, 'edit_financials')
+    expect(x.financials).toEqual({ capexZar: 0, hasModel: true, usingOrgDefaults: true, saved: false })
+    const below = await loadSolarReadinessExtra(fakeSupabase({ tables: { ...tables, 'solar.case_financials': [] } }).client as never, {} as never, P, 'edit')
+    expect(below.financials).toBeNull()
+  })
+})
+
 describe('loadSolarReadinessExtra + loadHeadlineKpis', () => {
   it('reports the selected case status and flags stale', async () => {
     h.ctx.mockImplementation(async () => ({ ok: true, ctx: { build: { ok: true }, currentHash: H2, weather: null, config: cfg } }))

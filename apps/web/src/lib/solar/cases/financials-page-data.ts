@@ -24,7 +24,10 @@ const TORNADO_LABEL: Record<string, string> = { capex: 'Capex', tariffEscalation
 
 export interface CashflowRowView { year: number; energyKwh: number; billBeforeZar: number; billAfterZar: number; savingZar: number; opexZar: number; replacementZar: number; taxZar: number; financeZar: number; netZar: number; cumulativeZar: number }
 export interface FinancialModelColumn {
-  key: string; label: string; upfrontZar: number; npvZar: number; irr: number | null
+  key: string; label: string
+  /** This party's year-1 figure: owner = bill saving; PPA/lease client = saving − payments; investor = income. */
+  year1: { label: 'Year-1 saving' | 'Year-1 net saving' | 'Year-1 income'; zar: number }
+  upfrontZar: number; npvZar: number; irr: number | null
   simplePaybackYears: number | null; discountedPaybackYears: number | null; cumulativeZar: number; rows: CashflowRowView[]
 }
 export interface FinancialResultsView {
@@ -50,10 +53,19 @@ export interface FinancialsPageData {
 }
 
 /** Stored case_run_financials row → display view. Year-1 saving = stored bill before − stored bill after. */
+/** Year-1 figure for one model/view, from the engine's own first cashflow row (CashflowRow). */
+function year1Of(view: string, rows: CashflowRowView[]): FinancialModelColumn['year1'] {
+  const r = rows[0]
+  const saving = r?.savingZar ?? 0, finance = r?.financeZar ?? 0
+  if (view === 'investor') return { label: 'Year-1 income', zar: -finance }        // financeZar < 0 = received
+  if (view === 'client') return { label: 'Year-1 net saving', zar: saving - finance } // PPA / lease payments paid
+  return { label: 'Year-1 saving', zar: saving }
+}
+
 export function resultsView(row: Row): FinancialResultsView {
   const r = row.results
   const columns: FinancialModelColumn[] = ((r.finance?.models ?? []) as Row[]).flatMap((m) => ((m.views ?? []) as Row[]).map((v) => ({
-    key: `${m.model}-${v.view}`, label: `${MODEL_LABEL[m.model] ?? m.model} — ${v.view}`,
+    key: `${m.model}-${v.view}`, label: `${MODEL_LABEL[m.model] ?? m.model} — ${v.view}`, year1: year1Of(v.view, (v.rows ?? []) as CashflowRowView[]),
     upfrontZar: v.upfrontZar, npvZar: v.npvZar, irr: v.irr ?? null, simplePaybackYears: v.simplePaybackYears ?? null, discountedPaybackYears: v.discountedPaybackYears ?? null,
     cumulativeZar: (v.rows as CashflowRowView[]).at(-1)?.cumulativeZar ?? 0, rows: v.rows as CashflowRowView[],
   })))

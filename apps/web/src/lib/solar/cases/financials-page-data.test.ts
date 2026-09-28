@@ -57,6 +57,21 @@ describe('loadFinancialsPageData', () => {
     // JSON only — the page hands this to client components.
     expect(JSON.parse(JSON.stringify(d))).toEqual(d)
   })
+  it('B4: each column carries ITS party’s year-1 figure — owner saving, client net of payments, investor income', async () => {
+    const r1 = (savingZar: number, financeZar: number) => ({ year: 1, energyKwh: 1, billBeforeZar: 0, billAfterZar: 0, savingZar, opexZar: 0, replacementZar: 0, taxZar: 0, financeZar, netZar: 0, cumulativeZar: 0 })
+    const v = (view: string, row: unknown) => ({ view, upfrontZar: 0, npvZar: 1, irr: null, simplePaybackYears: null, discountedPaybackYears: null, rows: [row] })
+    const models = [
+      { model: 'cash', views: [v('owner', r1(262_800, 0))] },
+      { model: 'ppa', views: [v('client', r1(262_800, 180_000)), v('investor', r1(0, -180_000))] },
+    ]
+    const t = tables({ 'solar.case_run_financials': [{ ...tables()['solar.case_run_financials']![0] as object, results: { ...results, finance: { ...results.finance, models } } }] })
+    const d = await loadFinancialsPageData(fakeSupabase({ tables: t }).client as never, fakeSupabase({ tables: { 'solar.org_settings': [] } }).client as never, P, undefined)
+    expect(d.results!.columns.map((c) => [c.key, c.year1])).toEqual([
+      ['cash-owner', { label: 'Year-1 saving', zar: 262_800 }],
+      ['ppa-client', { label: 'Year-1 net saving', zar: 82_800 }],
+      ['ppa-investor', { label: 'Year-1 income', zar: 180_000 }],
+    ])
+  })
   it('a changed saved config makes the stored financials stale', async () => {
     const changed = { ...fin, analysis: { ...fin.analysis, discountRatePct: 12 } }
     const d = await loadFinancialsPageData(fakeSupabase({ tables: tables({ 'solar.case_financials': [{ case_id: 'c1', config: changed, updated_at: 'F2' }] }) }).client as never, fakeSupabase({}).client as never, P, 'c1')

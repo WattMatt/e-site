@@ -26,6 +26,7 @@ export function OverviewKpis({ projectId, level, kpis, selectable, selectedCaseI
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const e = kpis?.energy
+  const noRuns = selectable.length === 0
   const m = canMoney ? kpis?.money ?? null : null
   const items: Array<[string, string]> = e ? [
     ['PV size', `${num(e.dcKwp)} kWp / ${num(e.acKw)} kW`],
@@ -43,12 +44,15 @@ export function OverviewKpis({ projectId, level, kpis, selectable, selectedCaseI
       ['LCOE', m.lcoeZarPerKwh === null ? 'n/a' : `R ${num(m.lcoeZarPerKwh, 2)}/kWh`],
     ] as Array<[string, string]> : []),
   ] : []
-  const noRuns = selectable.length === 0
   return (
     <Card>
       <CardHeader><span className="data-panel-title">{`Headline results${kpis ? ` — ${kpis.caseName}` : ''}`}</span></CardHeader>
       <CardBody>
-        {!kpis
+        {!kpis && !noRuns
+          // Runs exist but nothing is selected: the fix is choosing, not running.
+          ? <EmptyState icon={BarChart3} dense title="Choose the selected case — reports and proposals use it."
+              action={canWrite ? <span>Use Change selected case below.</span> : <Link href={`/projects/${projectId}/solar/yield`}>Open Yield & Scenarios</Link>} />
+          : !kpis
           ? <EmptyState icon={BarChart3} dense title="No case has been run yet — start at Site & Supply." action={<Link href={`/projects/${projectId}/solar/site`}>Go to Site & Supply</Link>} />
           : <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, margin: 0 }}>
               {items.map(([k, v]) => <div key={k}><dt style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>{k}</dt><dd style={{ margin: 0, fontWeight: 600 }}>{v}</dd></div>)}

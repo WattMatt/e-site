@@ -98,9 +98,14 @@ export function yieldReadiness(y: YieldReadinessInput): { status: ReadinessStatu
   }
 }
 
-export interface FinancialsReadinessInput { capexZar: number; hasModel: boolean; usingOrgDefaults: boolean }
+export interface FinancialsReadinessInput {
+  capexZar: number; hasModel: boolean; usingOrgDefaults: boolean
+  /** false = the selected case has no saved financials row: the tab opens on the org defaults (§2.3 amber). */
+  saved?: boolean
+}
 export function financialsReadiness(f: FinancialsReadinessInput | null): { status: ReadinessStatus; reason: string } {
   if (!f) return { status: 'grey', reason: 'No financials yet' }
+  if (f.saved === false) return { status: 'amber', reason: 'Using org defaults — review the capex' }
   if (!(f.capexZar > 0) || !f.hasModel) return { status: 'amber', reason: 'Add capex and choose a finance model' }
   if (f.usingOrgDefaults) return { status: 'amber', reason: 'Using org defaults — review the capex' }
   return { status: 'green', reason: 'Capex and a finance model are set' }
