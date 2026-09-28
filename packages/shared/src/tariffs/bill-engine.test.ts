@@ -148,6 +148,25 @@ describe('engine rules', () => {
     expect(bill.notModelled).toHaveLength(2)
   })
 
+  it('floors an actual-MD demand charge at the NMD (spec §5.4: max(chargeable MD, NMD))', () => {
+    const t = makeTariff({ name: 'md', structure: 'flat', charges: [
+      makeCharge({ component: 'demand', unit: 'R_per_kVA_month', amountExclVat: 100, demandBasis: 'actual_md' }),
+    ] })
+    expect(costMonth(t, usage({ maxDemandKva: 80, nmdKva: 120 })).totalExclVat).toBe(12000)
+    expect(costMonth(t, usage({ maxDemandKva: 150, nmdKva: 120 })).totalExclVat).toBe(15000)
+    expect(costMonth(t, usage({ maxDemandKva: 80 })).totalExclVat).toBe(8000)
+  })
+
+  it('lists a day-type-specific charge as not modelled rather than billing it on every day', () => {
+    const t = makeTariff({ name: 'weekday', structure: 'flat', charges: [
+      makeCharge({ component: 'energy', unit: 'R_per_kWh', amountExclVat: 2 }),
+      makeCharge({ component: 'ancillary', unit: 'c_per_kWh', amountExclVat: 10, dayType: 'weekday' }),
+    ] })
+    const bill = costMonth(t, usage({ kwh: 100 }))
+    expect(bill.notModelled.map((n) => n.chargeIndex)).toEqual([1])
+    expect(bill.totalExclVat).toBe(200)
+  })
+
   it('charges reactive energy only above 30% of active energy', () => {
     const t = makeTariff({ name: 'reactive', structure: 'flat', charges: [
       makeCharge({ component: 'reactive', unit: 'c_per_kVArh', amountExclVat: 40 }),

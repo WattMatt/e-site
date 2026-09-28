@@ -100,6 +100,18 @@ describe('carry-forward and the financial-year reset', () => {
     expect(capped.credit.earned).toBe(100)
   })
 
+  it('resets the balance when a months list skips over the financial-year end (no June present)', () => {
+    const [may, aug] = costPeriod(flat, [month(5, 100, 500), month(8, 100, 0)], { sseg: municipalFlat })
+    expect(may.credit.carriedOut).toBe(300)
+    expect(aug.credit.carriedIn).toBe(0)
+  })
+
+  it('caps flat crediting by value when the rule says value_per_tou_period', () => {
+    const r = costMonth(flat, month(1, 100, 500), { sseg: { ...netBillingRule('municipal', { touExport: false }), capRule: 'value_per_tou_period' } })
+    // 500 kWh x R1 = R500 is capped at the R200 of energy imported.
+    expect(r.credit.earned).toBe(200)
+  })
+
   it('forfeits every month when the rule carries nothing forward', () => {
     const [a, b] = costPeriod(flat, [month(1, 100, 500), month(2, 100, 0)], { sseg: { ...municipalFlat, carryForward: 'none' } })
     expect(a.credit.forfeited).toBe(300)

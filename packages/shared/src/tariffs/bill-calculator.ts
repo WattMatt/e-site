@@ -48,12 +48,25 @@ export interface HourlyCostOptions extends CostOptions {
   demandForMonth?: (month: number) => Partial<MonthDemandInputs>
 }
 
-/** Twelve bills from separate hourly import and export series, credit carried Jan..Dec. */
+/**
+ * Twelve bills (returned January..December) from separate hourly import and
+ * export series. Net-billing credit is settled in the distributor's financial
+ * year: with an SSEG rule the twelve months are costed from the month after
+ * `fyEndMonth` (April for Eskom, July for municipal), so a balance carried out
+ * of December reaches January-March instead of being dropped, and is forfeited
+ * only at the financial-year end (spec 02 §5.7).
+ */
 export function costHourly(tariff: Tariff, flows: Pick<HourlyGridFlows, 'importKwh' | 'exportKwh'>, opts: HourlyCostOptions): MonthlyBill[] {
   const { calendar, year, holidays, demandForMonth, ...cost } = opts
   const months = aggregateHourly({ importKwh: flows.importKwh, exportKwh: flows.exportKwh, calendar, year, holidays })
     .map((m) => ({ ...m, ...(demandForMonth ? demandForMonth(m.month) : {}) }))
-  return costPeriod(tariff, months, cost)
+  const fyEnd = cost.sseg?.fyEndMonth ?? 12
+  const start = fyEnd % 12
+  // The wrapped months sit in the next calendar year of the same financial year.
+  const ordered = [...months.slice(start), ...months.slice(0, start).map((m) => ({ ...m, year: m.year + 1 }))]
+  return costPeriod(tariff, ordered, cost)
+    .map((b) => ({ ...b, year }))
+    .sort((a, b) => a.month - b.month)
 }
 
 export const DEFAULT_REFERENCE_YEAR = 2025

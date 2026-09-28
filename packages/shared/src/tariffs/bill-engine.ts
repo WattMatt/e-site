@@ -156,7 +156,8 @@ function demandQuantity(c: Charge, u: MonthUsage): { qty: number | null; basis: 
     case 'nmd':
       return { qty: u.nmdKva ?? null, basis: 'NMD' }
     case 'actual_md':
-      return { qty: u.maxDemandKva ?? null, basis: 'maximum demand' }
+      // Spec §5.4: max(chargeable MD, NMD) where an NMD is known.
+      return { qty: u.maxDemandKva == null ? null : Math.max(u.maxDemandKva, u.nmdKva ?? 0), basis: 'maximum demand' }
     case 'peak_window_md':
       return { qty: u.peakWindowMdKva ?? null, basis: 'peak/standard-window maximum demand' }
     default:
@@ -278,9 +279,11 @@ function settleCredit(
     if (exported > 0 && rate === null) {
       res.warnings.push(`No flat export rate in the ${usage.season} season: ${exported} kWh not credited.`)
     } else if (exported > 0 && rate !== null) {
-      const kwh = sseg.capRule === 'energy_charges' ? exported : Math.min(exported, sumTouKwh(usage.importKwh))
+      const kwh = sseg.capRule === 'kwh_per_tou_period' ? Math.min(exported, sumTouKwh(usage.importKwh)) : exported
+      let value = kwh * rate
+      if (sseg.capRule === 'value_per_tou_period') value = Math.min(value, sumTouKwh(importValue))
       res.creditedTotalKwh = kwh
-      res.earned = roundCents(kwh * rate)
+      res.earned = roundCents(value)
     }
   }
 
@@ -300,7 +303,12 @@ function settleCredit(
 export function costMonth(tariff: Tariff, usage: MonthUsage, opts: CostOptions = {}): MonthlyBill {
   const ctx: Ctx = { usage, lines: [], notModelled: [], energyValueByPeriod: zeroTouKwh() }
   const total = sumTouKwh(usage.importKwh)
-  const applicable: Indexed[] = tariff.charges.map((c, i) => ({ c, i })).filter(({ c }) => seasonMatches(c, usage.season))
+  const inSeason: Indexed[] = tariff.charges.map((c, i) => ({ c, i })).filter(({ c }) => seasonMatches(c, usage.season))
+  // Day-type-specific charges need daily usage split by day type; never bill them on every day (spec §5.9).
+  for (const { c, i } of inSeason) {
+    if (c.dayType !== 'all') ctx.notModelled.push({ chargeIndex: i, component: c.component, reason: `${c.dayType}-only charges are not modelled` })
+  }
+  const applicable = inSeason.filter(({ c }) => c.dayType === 'all')
 
   costEnergy(ctx, applicable.filter(({ c }) => c.component === 'energy'))
   for (const { c, i } of applicable) {
@@ -337,11 +345,25 @@ export function costMonth(tariff: Tariff, usage: MonthUsage, opts: CostOptions =
   }
 }
 
-/** Consecutive months with the credit balance carried between them (FY-end reset by month number). */
+/** The start year of the financial year a month belongs to, for a year ending in `fyEndMonth`. */
+export function financialYearOf(year: number, month: number, fyEndMonth: number): number {
+  return month > fyEndMonth ? year : year - 1
+}
+
+/**
+ * Consecutive months with the credit balance carried between them. The balance
+ * is forfeited at the FY-end month and also whenever the list moves into a new
+ * financial year without passing through that month (a gap or a jump).
+ */
 export function costPeriod(tariff: Tariff, months: readonly MonthUsage[], opts: CostOptions = {}): MonthlyBill[] {
   const bills: MonthlyBill[] = []
   let carry = opts.creditIn ?? 0
+  const fyEnd = opts.sseg?.fyEndMonth ?? null
+  let prevFy: number | null = null
   for (const m of months) {
+    const fy = fyEnd === null ? null : financialYearOf(m.year, m.month, fyEnd)
+    if (prevFy !== null && fy !== prevFy) carry = 0
+    prevFy = fy
     const bill = costMonth(tariff, m, { ...opts, creditIn: carry })
     bills.push(bill)
     carry = bill.credit.carriedOut

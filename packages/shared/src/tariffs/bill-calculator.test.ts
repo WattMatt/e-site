@@ -35,6 +35,28 @@ describe('hourly adapter (Phase 4a BillCalculator seam)', () => {
     for (const m of out) expect(m.exportCreditUsedZar).toBeGreaterThanOrEqual(0)
   })
 
+  it('settles the year in the distributor financial year, so Oct-Dec credit reaches Jan-Mar (Eskom) and nothing is dropped', () => {
+    // Import 1 kWh/h all year; export 10 kWh at noon in November only -> 300 kWh credit at R1, far above November's energy.
+    const exportNov = Float64Array.from({ length: N }, (_, h) => (h >= 7296 && h < 8016 && h % 24 === 12 ? 10 : 0))
+    const eskomFlat = { ...netBillingRule('eskom', { touExport: false }), capRule: 'energy_charges' as const }
+    const bills = costHourly(flat, { importKwh, exportKwh: exportNov }, { calendar: CAL, year: 2025, sseg: eskomFlat })
+    expect(bills.map((b) => b.month)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    const nov = bills[10]
+    const dec = bills[11]
+    const jan = bills[0]
+    expect(nov.credit.earned).toBe(300)
+    // November energy is 720 kWh x R2 = R1,440 > R300, so it is all used in November itself.
+    expect(nov.credit.used).toBe(300)
+    // A carry that crosses December must survive into January for Eskom (FY ends in March).
+    const big = Float64Array.from({ length: N }, (_, h) => (h >= 7296 && h < 8016 ? 10 : 0))
+    const b2 = costHourly(flat, { importKwh, exportKwh: big }, { calendar: CAL, year: 2025, sseg: eskomFlat })
+    expect(b2[10].credit.carriedOut).toBeGreaterThan(0)
+    expect(b2[11].credit.carriedIn).toBe(b2[10].credit.carriedOut)
+    expect(b2[0].credit.carriedIn).toBe(b2[11].credit.carriedOut)
+    expect(b2[0].credit.used).toBeGreaterThan(0)
+    expect(dec.credit.forfeited + jan.credit.forfeited).toBe(0)
+  })
+
   it('refuses series that are not 8760 hours', () => {
     const calc = createBillCalculator(flat, CAL)
     expect(() => calc.monthlyBills({ importKwh: new Float64Array(10), exportKwh })).toThrow(RangeError)
