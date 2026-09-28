@@ -9,6 +9,8 @@ import {
   ORG_ADDON_DUPLICATE_EVENT,
   ORG_ADDON_UNMATCHED_EVENT,
   nextAddonPeriodEnd,
+  planCodeOf,
+  solarPlanCode,
   subscriptionCodeOf,
 } from '@/lib/paystack/org-addon'
 
@@ -216,6 +218,56 @@ const ADDON_COLUMNS =
 
 function addonTable(supabase: Client) {
   return (supabase as any).schema('billing').from('org_addon_subscriptions')
+}
+
+/**
+ * Find the org add-on row a Paystack event belongs to: by subscription code,
+ * else by customer code — but ONLY when the event's plan is the Solar plan, so
+ * a tier-plan event from the same payer is never mistaken for Solar.
+ * `solarPlan` tells the caller the event IS a Solar-plan event even when no
+ * row matched, so it can refuse to let the event fall into a tier branch.
+ * More than one row for one customer code (one person paying for two orgs)
+ * is ambiguous: no row, never a guess.
+ */
+async function findOrgAddon(
+  supabase: Client,
+  codes: { subscriptionCode?: string; customerCode?: string; planCode?: string },
+): Promise<{ row: AddonRow | null; solarPlan: boolean; error: PgError }> {
+  if (codes.subscriptionCode) {
+    const { data, error } = await addonTable(supabase)
+      .select(ADDON_COLUMNS)
+      .eq('paystack_subscription_code', codes.subscriptionCode)
+      .maybeSingle()
+    if (error) return { row: null, solarPlan: false, error: error as PgError }
+    if (data) return { row: data as AddonRow, solarPlan: true, error: null }
+  }
+
+  const plan = solarPlanCode()
+  const solarPlan = !!plan && codes.planCode === plan
+  if (!solarPlan || !codes.customerCode) return { row: null, solarPlan, error: null }
+
+  const { data, error } = await addonTable(supabase)
+    .select(ADDON_COLUMNS)
+    .eq('paystack_customer_code', codes.customerCode)
+    .eq('feature_key', 'solar')
+    .maybeSingle()
+  if (error) {
+    if ((error as PgError)?.code === 'PGRST116') {
+      console.warn(`Paystack webhook: customer ${codes.customerCode} holds several Solar subscriptions; not guessing`)
+      return { row: null, solarPlan, error: null }
+    }
+    return { row: null, solarPlan, error: error as PgError }
+  }
+  return { row: (data as AddonRow | null) ?? null, solarPlan, error: null }
+}
+
+/** A failed renewal: active → past_due. Never resurrects a cancelled/refunded row. */
+async function markOrgAddonPastDue(supabase: Client, row: AddonRow): Promise<PgError> {
+  const { error } = await addonTable(supabase)
+    .update({ status: 'past_due' })
+    .eq('id', row.id)
+    .eq('status', 'active')
+  return (error as PgError) ?? null
 }
 
 /**
@@ -667,6 +719,35 @@ export async function POST(req: NextRequest) {
     const subCode = data.subscription?.subscription_code as string | undefined
     const renewalPlanCode = (data.plan?.plan_code ?? data.plan_object?.plan_code) as string | undefined
 
+    // Branch C0: an org add-on (Solar) renewal. Must run BEFORE the tier
+    // lookup below, which matches on customer_code — the same Paystack
+    // customer often pays both the tier plan and Solar, and would have this
+    // charge booked as a tier renewal (flipping that subscription 'active').
+    const addonRenewal = await findOrgAddon(supabase, {
+      subscriptionCode: subscriptionCodeOf(data),
+      customerCode,
+      planCode: planCodeOf(data),
+    })
+    if (addonRenewal.error) return storageFailure('org_addon renewal lookup', addonRenewal.error)
+    if (addonRenewal.row) {
+      return applyOrgAddonCharge(supabase, {
+        orgId: addonRenewal.row.organisation_id,
+        existing: addonRenewal.row,
+        data,
+        firstCharge: false,
+      })
+    }
+    if (addonRenewal.solarPlan) {
+      const logged = await logPaymentEvent(supabase, {
+        eventType: ORG_ADDON_UNMATCHED_EVENT,
+        reference: data.reference,
+        amountKobo: data.amount,
+        payload: { reason: 'Solar-plan charge matched no subscription', customer_code: customerCode ?? null },
+      })
+      if (logged.error) return storageFailure('org_addon unmatched log', logged.error)
+      return ok()
+    }
+
     const renewalSub = (await (async () => {
       for (const [col, val] of [
         ['paystack_subscription_code', subCode],
@@ -810,6 +891,29 @@ export async function POST(req: NextRequest) {
         .update(mvPatch)
         .eq('paystack_subscription_code', subscriptionCode)
       if (mvErr) return storageFailure('MV renewal update', mvErr)
+      return ok()
+    }
+
+    // Not an org or MV subscription — try the org add-on (Solar).
+    const addon = await findOrgAddon(supabase, { subscriptionCode })
+    if (addon.error) return storageFailure('org_addon invoice lookup', addon.error)
+    if (addon.row) {
+      if (paid) {
+        const { error: addonErr } = await addonTable(supabase)
+          .update({
+            status: 'active',
+            current_period_end: nextAddonPeriodEnd(
+              addon.row.current_period_end,
+              inv.paid_at as string | undefined,
+              nextPaymentDate,
+            ),
+          })
+          .eq('id', addon.row.id)
+        if (addonErr) return storageFailure('org_addon renewal update', addonErr)
+      } else {
+        const failErr = await markOrgAddonPastDue(supabase, addon.row)
+        if (failErr) return storageFailure('org_addon past_due', failErr)
+      }
       return ok()
     }
 
@@ -987,6 +1091,25 @@ export async function POST(req: NextRequest) {
         .eq('paystack_customer_code', customerCode)
         .eq('paystack_plan_code', planCode)
       if (error) console.error('Webhook subscription.create error:', error)
+    }
+
+    // Org add-on (Solar): bind the Paystack subscription code the first
+    // charge usually does not carry, so not_renew/disable/invoice.update can
+    // find the row by code. Status is NOT touched — creating a subscription is
+    // not payment, and must not resurrect a refunded row.
+    const addon = await findOrgAddon(supabase, {
+      subscriptionCode: sub.subscription_code,
+      customerCode,
+      planCode,
+    })
+    if (addon.error) return storageFailure('org_addon subscription.create lookup', addon.error)
+    if (addon.row) {
+      const patch: Record<string, unknown> = { paystack_subscription_code: sub.subscription_code }
+      if (sub.next_payment_date) {
+        patch.current_period_end = nextAddonPeriodEnd(addon.row.current_period_end, null, sub.next_payment_date)
+      }
+      const { error: bindErr } = await addonTable(supabase).update(patch).eq('id', addon.row.id)
+      if (bindErr) return storageFailure('org_addon subscription.create', bindErr)
     }
   }
 
