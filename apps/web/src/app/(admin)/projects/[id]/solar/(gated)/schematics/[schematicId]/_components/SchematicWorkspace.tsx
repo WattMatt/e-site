@@ -77,8 +77,12 @@ export function SchematicWorkspace({ projectId, view, canEdit }: { projectId: st
     setHistory((h) => historyCommit(h, next))
     setLive(null)
     setDirty(true)
-    void setDraft(draftKey, { doc: next, basedOn: version })
-  }, [draftKey, version])
+  }, [])
+  // The draft follows history.present — new edits, undo and redo alike — while there are unsaved changes.
+  useEffect(() => {
+    if (!canEdit || !dirty) return
+    void setDraft(draftKey, { doc: history.present, basedOn: version })
+  }, [canEdit, dirty, draftKey, history.present, version])
   const fail = useCallback((text: string) => setMsg({ ok: false, text }), [])
 
   const onPress = useCallback((e: PressEvent) => {
@@ -106,8 +110,11 @@ export function SchematicWorkspace({ projectId, view, canEdit }: { projectId: st
     else { setSelectedCard(null); setSelectedLine(null) }
   }, [canEdit, tool, connectFrom, doc, draft, view.externalLines, commit, fail])
 
-  const undo = useCallback(() => { setLive(null); setHistory((h) => historyUndo(h)); setDirty(true) }, [])
-  const redo = useCallback(() => { setLive(null); setHistory((h) => historyRedo(h)); setDirty(true) }, [])
+  // Nothing to undo / redo is a no-op: it must not mark the schematic dirty (⌘Z works with the button disabled).
+  const canUndo = history.past.length > 0
+  const canRedo = history.future.length > 0
+  const undo = useCallback(() => { if (!canUndo) return; setLive(null); setHistory((h) => historyUndo(h)); setDirty(true) }, [canUndo])
+  const redo = useCallback(() => { if (!canRedo) return; setLive(null); setHistory((h) => historyRedo(h)); setDirty(true) }, [canRedo])
   const del = useCallback(() => {
     if (selectedCard) { commit(removeCard(doc, selectedCard)); setSelectedCard(null) }
     else if (selectedLine) { commit(removeLine(doc, selectedLine)); setSelectedLine(null) }
