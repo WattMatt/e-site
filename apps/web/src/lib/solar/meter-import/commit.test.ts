@@ -227,4 +227,13 @@ describe('commitMeterFile: register and skip', () => {
     expect(state.filePatches.at(-1)?.patch).toEqual({ status: 'skipped', skip_reason: 'Duplicate of the bulk meter' })
     expect(state.raw[ctx.file.storage_path]).toBeDefined()
   })
+  it('skip on an already-imported file is a 409 and changes nothing', async () => {
+    const { repo, state, ctx } = setup(A_TEXT)
+    await commitMeterFile(repo, ctx, body({}))
+    const patches = state.filePatches.length
+    await expect(commitMeterFile(repo, ctx, CommitBodySchema.parse({ mode: 'skip', fileId: '9c1a98b5-6ef3-4388-865f-417d3f5d7465', reason: 'Changed my mind' })))
+      .rejects.toMatchObject({ status: 409, body: { error: 'already_imported' } })
+    expect(state.files[0].status).toBe('accepted')
+    expect(state.filePatches).toHaveLength(patches)
+  })
 })

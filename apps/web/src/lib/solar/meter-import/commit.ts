@@ -148,6 +148,8 @@ function selectChannels(outcome: SeriesOutcome, body: SeriesBody): Array<{ chann
 
 export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext, body: CommitBody, opts: { chunkSize?: number } = {}): Promise<Record<string, unknown>> {
   if (body.mode === 'skip') {
+    // An imported file's readings are live data; skipping it would only relabel the file.
+    if (ctx.file.status === 'accepted') throw new CommitError(409, { error: 'already_imported' })
     await repo.updateFile(ctx.file.id, { status: 'skipped', skip_reason: body.reason })
     await repo.audit(ctx.projectId, 'meter_file_skipped', { file_id: ctx.file.id, reason: body.reason })
     return { skipped: true }
