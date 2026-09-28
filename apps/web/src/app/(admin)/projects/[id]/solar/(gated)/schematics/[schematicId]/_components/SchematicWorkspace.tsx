@@ -184,7 +184,8 @@ export function SchematicWorkspace({ projectId, view, canEdit }: { projectId: st
     setMsg(null)
     const r = await setIncludeInLoadAction({ projectId, meterId, include })
     if ('error' in r) { fail(r.error); return }
-    setMeters((ms) => ms.map((x) => (x.id === meterId ? { ...x, included: include } : x)))
+    // Excluding one meter excludes its tenant: every card of that tenant takes the returned state.
+    setMeters((ms) => ms.map((x) => (x.id in r.included ? { ...x, included: r.included[x.id] ?? null } : x.id === meterId ? { ...x, included: include } : x)))
     setMsg({ ok: true, text: `${m.label} ${include ? 'included in' : 'excluded from'} the site load — rebuild the site profile to apply.` })
   }
 

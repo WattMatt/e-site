@@ -84,8 +84,27 @@ describe('schematic actions', () => {
   it('include-in-load needs a tenant link; including writes a metered basis with this meter', async () => {
     const { calls } = setup()
     expect(await setIncludeInLoadAction({ projectId: P, meterId: 'm1', include: true })).toEqual({ error: 'Link this meter to a tenant first (Load → Meters → Details).' })
-    expect(await setIncludeInLoadAction({ projectId: P, meterId: 'm2', include: true })).toEqual({ ok: true })
+    expect(await setIncludeInLoadAction({ projectId: P, meterId: 'm2', include: true })).toEqual({ ok: true, nodeId: 'n1', included: { m2: true } })
     expect(callsTo(calls, 'solar.tenant_load_basis', 'insert')[0].payload).toEqual({ study_id: 's1', node_id: 'n1', source: 'metered', meters: [{ meter_id: 'm2', weight: 1 }] })
+  })
+
+  it('include-in-load edits the tenant row on the version it read; a concurrent change or a racing insert is refused', async () => {
+    const withRow = {
+      ...tables,
+      'solar.study_meters': [...tables['solar.study_meters']!, { study_id: 's1', meter_id: 'm3' }],
+      'solar.meters': [...tables['solar.meters']!, { id: 'm3', label: 'Pep 2', kind: 'tenant', node_id: 'n1' }, { id: 'mX', label: 'Other study', kind: 'tenant', node_id: 'n1' }],
+      'solar.tenant_load_basis': [{ id: 'b1', study_id: 's1', node_id: 'n1', source: 'metered', meters: [{ meter_id: 'm3', weight: 1 }], updated_at: 'B0' }],
+    }
+    const { calls } = setup({ tables: withRow, writes: { 'solar.tenant_load_basis:update': { data: [{ id: 'b1' }] } } })
+    // Excluding one meter excludes the tenant: every meter of that tenant in this study reports the new state.
+    expect(await setIncludeInLoadAction({ projectId: P, meterId: 'm2', include: false })).toEqual({ ok: true, nodeId: 'n1', included: { m2: false, m3: false } })
+    expect(callsTo(calls, 'solar.tenant_load_basis', 'update')[0].filters).toEqual([['eq', 'id', 'b1'], ['eq', 'updated_at', 'B0']])
+    setup({ tables: withRow, writes: { 'solar.tenant_load_basis:update': { data: [{ id: 'b1' }] } } })
+    expect(await setIncludeInLoadAction({ projectId: P, meterId: 'm2', include: true })).toEqual({ ok: true, nodeId: 'n1', included: { m2: true, m3: true } })
+    setup({ tables: withRow, writes: { 'solar.tenant_load_basis:update': { data: [] } } })
+    expect(await setIncludeInLoadAction({ projectId: P, meterId: 'm2', include: true })).toEqual({ error: STALE })
+    setup({ writes: { 'solar.tenant_load_basis:insert': { data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } } } })
+    expect(await setIncludeInLoadAction({ projectId: P, meterId: 'm2', include: true })).toEqual({ error: STALE })
   })
 
   it('meter stub: a library meter linked to this study', async () => {

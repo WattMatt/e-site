@@ -22,6 +22,7 @@ vi.mock('next/dynamic', () => ({
           <span key={c.meterId}>
             <button type="button" onClick={() => p.onPress({ kind: 'card', id: c.meterId, x: c.x, y: c.y, shift: false })}>{`card-${c.meterId}`}</button>
             <button type="button" onClick={() => p.onToggleInclude(c.meterId)}>{`include-${c.meterId}`}</button>
+            <span>{`included-${c.meterId}:${String(p.meters.get(c.meterId)?.included)}`}</span>
           </span>
         ))}
       </div>
@@ -46,7 +47,7 @@ const view: EditorView = {
 beforeEach(() => {
   vi.clearAllMocks()
   h.save.mockResolvedValue({ ok: true, updatedAt: 'U1' })
-  h.include.mockResolvedValue({ ok: true })
+  h.include.mockResolvedValue({ ok: true, nodeId: 'n1', included: { B: false } })
   h.getDraft.mockResolvedValue(null)
   h.setDraft.mockResolvedValue(undefined)
   h.clearDraft.mockResolvedValue(undefined)
@@ -118,6 +119,21 @@ describe('SchematicWorkspace', () => {
     await userEvent.click(screen.getByText('include-B'))
     expect(h.include).toHaveBeenCalledWith({ projectId: 'p1', meterId: 'B', include: false })
     expect((await screen.findByRole('status')).textContent).toContain('Pep excluded from the site load')
+  })
+  it('include-in-load: sibling cards of the same tenant follow the returned state', async () => {
+    const twin: EditorView = {
+      ...view,
+      doc: { cards: [...view.doc.cards, { meterId: 'E', x: 800, y: 0, w: 180, h: 64, colour: null }], lines: [] },
+      meters: [...view.meters, { id: 'E', label: 'Pep 2', kind: 'tenant', tenantLabel: '12 · Pep', nodeId: 'n1', included: true }],
+    }
+    h.include.mockResolvedValueOnce({ ok: true, nodeId: 'n1', included: { B: false, E: false } })
+    render(<SchematicWorkspace projectId="p1" view={twin} canEdit />)
+    expect(screen.getByText('included-E:true')).toBeTruthy()
+    await userEvent.click(screen.getByText('include-B'))
+    expect(await screen.findByText('included-E:false')).toBeTruthy()
+    expect(screen.getByText('included-B:false')).toBeTruthy()
+    await userEvent.click(screen.getByText('include-E'))
+    expect(h.include).toHaveBeenLastCalledWith({ projectId: 'p1', meterId: 'E', include: true })
   })
   it('offers a draft saved against this version', async () => {
     h.getDraft.mockResolvedValue({ basedOn: 'U0', doc: { cards: [...view.doc.cards, { meterId: 'C', x: 9, y: 9, w: 180, h: 64, colour: null }], lines: [] } })

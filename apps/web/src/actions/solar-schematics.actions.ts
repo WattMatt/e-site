@@ -169,7 +169,13 @@ export async function createMeterStubAction(input: { projectId: string; label: s
   return { ok: true, meter: m }
 }
 
-export async function setIncludeInLoadAction(input: { projectId: string; meterId: string; include: boolean }): Promise<{ ok: true } | Err> {
+/**
+ * Include / exclude a meter's tenant in the site load. The tenant row is read-modify-written ON THE
+ * VERSION READ (a concurrent Tenants-tab edit is refused, not overwritten; a racing first insert is
+ * refused too). Returns the include state of EVERY meter of that tenant in this study, because
+ * excluding one meter excludes the tenant — sibling cards on the canvas must follow.
+ */
+export async function setIncludeInLoadAction(input: { projectId: string; meterId: string; include: boolean }): Promise<{ ok: true; nodeId: string; included: Record<string, boolean | null> } | Err> {
   const { supabase, userId } = await ctx(input.projectId)
   if (!userId) return { error: 'You are not signed in.' }
   const study = await studyOf(supabase, input.projectId)
@@ -180,19 +186,33 @@ export async function setIncludeInLoadAction(input: { projectId: string; meterId
   const nodeId = (meter as { node_id?: string | null } | null)?.node_id
   if (!nodeId) return { error: 'Link this meter to a tenant first (Load → Meters → Details).' }
   const t = () => supabase.schema('solar').from('tenant_load_basis')
-  const { data: row } = await t().select('id, source, meters').eq('study_id', study.id).eq('node_id', nodeId).maybeSingle()
-  const b = row as { id: string; source: string; meters: Array<{ meter_id: string; weight: number }> } | null
-  let res
-  if (input.include) {
-    const meters = b ? (b.meters.some((m) => m.meter_id === input.meterId) ? b.meters : [...b.meters, { meter_id: input.meterId, weight: 1 }]) : [{ meter_id: input.meterId, weight: 1 }]
-    res = b ? await t().update({ source: 'metered', meters }).eq('id', b.id) : await t().insert({ study_id: study.id, node_id: nodeId, source: 'metered', meters })
-  } else {
-    res = b ? await t().update({ source: 'excluded' }).eq('id', b.id) : await t().insert({ study_id: study.id, node_id: nodeId, source: 'excluded', meters: [] })
+  const { data: row } = await t().select('id, source, meters, updated_at').eq('study_id', study.id).eq('node_id', nodeId).maybeSingle()
+  const b = row as { id: string; source: string; meters: Array<{ meter_id: string; weight: number }>; updated_at: string } | null
+  const source = input.include ? 'metered' : 'excluded'
+  const meters = input.include
+    ? (b ? (b.meters.some((m) => m.meter_id === input.meterId) ? b.meters : [...b.meters, { meter_id: input.meterId, weight: 1 }]) : [{ meter_id: input.meterId, weight: 1 }])
+    : (b ? b.meters : [])
+  const res = b
+    ? await t().update(input.include ? { source, meters } : { source }).eq('id', b.id).eq('updated_at', b.updated_at).select('id')
+    : await t().insert({ study_id: study.id, node_id: nodeId, source, meters }).select('id')
+  if (res.error) return { error: res.error.code === '23505' ? STALE_MESSAGE : human(res.error) }
+  if (!Array.isArray(res.data) || res.data.length === 0) return { error: STALE_MESSAGE }
+
+  // Every meter of this tenant that is in this study, with its state after the write.
+  const [{ data: siblings }, { data: links }] = await Promise.all([
+    supabase.schema('solar').from('meters').select('id').eq('node_id', nodeId),
+    supabase.schema('solar').from('study_meters').select('meter_id').eq('study_id', study.id),
+  ])
+  const inStudy = new Set(((links ?? []) as Array<{ meter_id: string }>).map((l) => l.meter_id))
+  const included: Record<string, boolean | null> = {}
+  for (const s of (siblings ?? []) as Array<{ id: string }>) {
+    if (!inStudy.has(s.id)) continue
+    included[s.id] = source === 'excluded' ? false : meters.some((m) => m.meter_id === s.id)
   }
-  if (res.error) return { error: human(res.error) }
+  included[input.meterId] = input.include
   await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: input.include ? 'meter_included_in_load' : 'meter_excluded_from_load', objectRef: { meterId: input.meterId, nodeId } })
   revalidatePath(`/projects/${input.projectId}/solar/load`)
-  return { ok: true }
+  return { ok: true, nodeId, included }
 }
 
 const MAX_CROP_PX = 20_000
