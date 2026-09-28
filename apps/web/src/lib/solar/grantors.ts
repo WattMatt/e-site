@@ -36,6 +36,19 @@ export function grantorDisplayNames(grantors: SolarGrantor[]): string[] {
   return [...new Set(names)]
 }
 
+/**
+ * A user's email for a Solar decision notice (owner default 4: decisions reach
+ * the requester by bell AND email). Service client: profiles is own-row-only.
+ * Callers use it only AFTER their own grantor gate, and only for the person the
+ * decision is about.
+ */
+export async function profileEmail(userId: string): Promise<string | null> {
+  const svc = createServiceClient() as unknown as AnyClient
+  const { data } = await svc.from('profiles').select('email').eq('id', userId).maybeSingle()
+  const email = (data as { email?: string | null } | null)?.email?.trim()
+  return email || null
+}
+
 /** A user's display name for notification text. */
 export async function profileName(userId: string): Promise<string> {
   const svc = createServiceClient() as unknown as AnyClient

@@ -6,10 +6,12 @@ const h = vi.hoisted(() => ({
   audit: vi.fn(async () => {}),
   emit: vi.fn(async () => {}),
   revalidate: vi.fn(),
+  profileEmail: vi.fn(async (id: string) => `${id}@x.test`),
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient }))
 vi.mock('@/lib/solar/notify', () => ({ notifySolarUsers: h.notify }))
 vi.mock('@/lib/solar/audit', () => ({ recordSolarAudit: h.audit }))
+vi.mock('@/lib/solar/grantors', () => ({ profileEmail: h.profileEmail }))
 vi.mock('@/lib/analytics/product-events', () => ({ emitProductEvent: h.emit }))
 vi.mock('next/cache', () => ({ revalidatePath: h.revalidate }))
 
@@ -58,8 +60,9 @@ describe('setSolarMemberLevelAction', () => {
       .resolves.toEqual({ ok: true, updatedAt: 'T1' })
     expect(callsTo(calls, 'solar.project_access', 'insert')[0].payload).toEqual({ project_id: P, user_id: 'u2', level: 'edit' })
     expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: ADMIN, verb: 'access_granted', objectRef: { user_id: 'u2', level: 'edit' } })
-    expect(h.notify).toHaveBeenCalledWith(['u2'], [], expect.objectContaining({
-      type: 'solar_access_changed', body: 'You now have Edit access to Solar on Kings Mall.', email: false,
+    // Owner default 4: an access decision reaches the person by bell AND email.
+    expect(h.notify).toHaveBeenCalledWith(['u2'], ['u2@x.test'], expect.objectContaining({
+      type: 'solar_access_changed', body: 'You now have Edit access to Solar on Kings Mall.', email: true,
     }))
     expect(h.emit).toHaveBeenCalledWith(expect.objectContaining({ event: 'solar_access_changed', projectId: P }))
   })
@@ -102,16 +105,16 @@ describe('decideSolarRequestAction', () => {
     const upd = callsTo(calls, 'solar.access_requests', 'update')[0]
     expect(upd.payload).toEqual({ status: 'approved', approved_level: 'view' })
     expect(upd.filters).toEqual(expect.arrayContaining([['eq', 'id', 'r1'], ['eq', 'status', 'pending']]))
-    expect(h.notify).toHaveBeenCalledWith(['u3'], [], expect.objectContaining({
-      type: 'solar_access_changed', title: 'Your Solar access request was approved',
+    expect(h.notify).toHaveBeenCalledWith(['u3'], ['u3@x.test'], expect.objectContaining({
+      type: 'solar_access_changed', title: 'Your Solar access request was approved', email: true,
     }))
   })
 
   it('declines with an optional reason carried to the requester and the audit trail', async () => {
     setup({ tables: { 'solar.access_requests': [pending] } })
     await expect(decideSolarRequestAction({ requestId: 'r1', decision: 'decline', reason: ' Not on this job ' })).resolves.toEqual({ ok: true })
-    expect(h.notify).toHaveBeenCalledWith(['u3'], [], expect.objectContaining({
-      type: 'solar_access_declined',
+    expect(h.notify).toHaveBeenCalledWith(['u3'], ['u3@x.test'], expect.objectContaining({
+      type: 'solar_access_declined', email: true,
       body: 'Your request for Solar access on Kings Mall was declined. Reason: Not on this job',
     }))
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({

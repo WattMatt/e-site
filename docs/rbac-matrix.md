@@ -141,7 +141,7 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `decideSolarRequestAction` | `solar_is_grantor(request's project)`; conditioned on `status = 'pending'` | guard: only a grantor decides; approval writes the grant, never above the requester's maximum |
 | `copySolarAccessFromProjectAction` | `solar_is_grantor` on **both** projects; same organisation | per-row `project_access_bind` — refusals are counted as skipped |
 
-> Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions to the requester (bell).
+> Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions (approve / decline / level set on the panel) to the person concerned (bell + email; owner default 2026-09-28). Email honours the suppression list; there is no per-project Solar email toggle yet.
 
 ## Client portal (`apps/web/src/app/(portal)/portal/*`)
 

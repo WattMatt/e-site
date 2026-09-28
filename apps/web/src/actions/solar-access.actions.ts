@@ -14,6 +14,7 @@ import { createClient } from '@/lib/supabase/server'
 import { isSolarAccessLevel, SOLAR_LEVEL_LABELS } from '@esite/shared'
 import { notifySolarUsers } from '@/lib/solar/notify'
 import { recordSolarAudit } from '@/lib/solar/audit'
+import { profileEmail } from '@/lib/solar/grantors'
 import { ALREADY_ANSWERED, STALE_MESSAGE, humanSolarError } from '@/lib/solar/errors'
 import { emitProductEvent } from '@/lib/analytics/product-events'
 
@@ -33,6 +34,17 @@ async function grantorCheck(supabase: AnyClient, projectId: string): Promise<{ u
   const { data, error } = await supabase.rpc('solar_is_grantor', { p_project_id: projectId })
   if (error || data !== true) return { error: NOT_GRANTOR }
   return { userId: user.id }
+}
+
+/**
+ * Owner default 4 (2026-09-28): an access decision reaches the person it is
+ * about by bell AND email — the same channels a request reaches the admins by.
+ * notifySolarUsers filters the suppression list; there is no per-project Solar
+ * email toggle (project_settings toggles are per module).
+ */
+async function recipientEmails(userId: string): Promise<string[]> {
+  const email = await profileEmail(userId)
+  return email ? [email] : []
 }
 
 async function projectName(supabase: AnyClient, projectId: string): Promise<string> {
@@ -84,7 +96,7 @@ export async function setSolarMemberLevelAction(input: {
 
   const name = await projectName(supabase, projectId)
   await recordSolarAudit({ projectId, actorId: gate.userId, verb, objectRef: { user_id: userId, level } })
-  await notifySolarUsers([userId], [], {
+  await notifySolarUsers([userId], await recipientEmails(userId), {
     type: 'solar_access_changed',
     projectId,
     projectName: name,
@@ -93,7 +105,7 @@ export async function setSolarMemberLevelAction(input: {
       ? `You now have ${SOLAR_LEVEL_LABELS[level]} access to Solar on ${name}.`
       : `Your Solar access on ${name} was removed.`,
     route: `/projects/${projectId}/solar`,
-    email: false,
+    email: true,
   })
   await emitProductEvent({ actorId: gate.userId, projectId, event: 'solar_access_changed', properties: { level, via: 'panel' } })
   revalidatePath(accessPath(projectId))
@@ -138,7 +150,7 @@ export async function decideSolarRequestAction(input: {
     verb: approve ? 'access_request_approved' : 'access_request_declined',
     objectRef: { request_id: r.id, user_id: r.requester_id, level: approvedLevel, ...(!approve && reason ? { reason } : {}) },
   })
-  await notifySolarUsers([r.requester_id], [], approve
+  await notifySolarUsers([r.requester_id], await recipientEmails(r.requester_id), approve
     ? {
         type: 'solar_access_changed',
         projectId: r.project_id,
@@ -148,7 +160,7 @@ export async function decideSolarRequestAction(input: {
           ? `You now have ${SOLAR_LEVEL_LABELS[approvedLevel]} access to Solar on ${name}.`
           : `Your Solar request on ${name} was approved.`,
         route: `/projects/${r.project_id}/solar`,
-        email: false,
+        email: true,
       }
     : {
         type: 'solar_access_declined',
@@ -157,7 +169,7 @@ export async function decideSolarRequestAction(input: {
         title: 'Your Solar access request was declined',
         body: `Your request for Solar access on ${name} was declined.${reason ? ` Reason: ${reason}` : ''}`,
         route: `/projects/${r.project_id}/solar`,
-        email: false,
+        email: true,
       })
   if (approvedLevel) {
     await emitProductEvent({ actorId: gate.userId, projectId: r.project_id, event: 'solar_access_changed', properties: { level: approvedLevel, via: 'request' } })
