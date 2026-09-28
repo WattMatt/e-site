@@ -53,6 +53,13 @@ describe('MeterComparison', () => {
     expect(screen.getByRole('alert').textContent).toMatch(/Spar could not be loaded/)
   })
 
+  it('a meter with no active-power channel is named for THAT reason, not as a load failure', async () => {
+    fetchMock.mockImplementation(async (url: string) => (String(url).includes('/m2/') ? { ok: false, status: 422, json: async () => ({ error: 'no_active_power', code: 'no_active_power' }) } : ok('kW')))
+    const { container } = render(<MeterComparison projectId="p1" meters={[mk('m1', 'Pep'), mk('m2', 'Spar'), mk('m3', 'KFC')]} onClose={vi.fn()} />)
+    await waitFor(() => expect(seriesPaths(container)).toBe(2))
+    expect(screen.getByText('Spar has no active-power channel to compare — it is left out.')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
   it('a fetch that THROWS (network) is named and left out like a refused one', async () => {
     fetchMock.mockImplementation(async (url: string) => { if (String(url).includes('/m1/')) throw new TypeError('Failed to fetch'); return ok('kW') })
     const { container } = render(<MeterComparison projectId="p1" meters={[mk('m1', 'Pep'), mk('m2', 'Spar')]} onClose={vi.fn()} />)

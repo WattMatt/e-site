@@ -16,7 +16,7 @@ import { sast, type SeriesBody } from './MeterSeriesChart'
 const DAY = 86_400_000
 const PRESETS: Array<[string, number]> = [['Year', 365 * DAY], ['Month', 31 * DAY], ['Week', 7 * DAY]]
 
-type Outcome = { meter: MeterView; colour: string } & ({ ok: true; body: SeriesBody } | { ok: false })
+type Outcome = { meter: MeterView; colour: string } & ({ ok: true; body: SeriesBody } | { ok: false; noActivePower?: boolean })
 
 /** Window end = the latest period end among the selected meters (so the most recent data is in view). */
 function latestEnd(meters: MeterView[]): number {
@@ -38,7 +38,10 @@ export function MeterComparison({ projectId, meters, onClose }: { projectId: str
       const colour = SERIES_COLOURS[i % SERIES_COLOURS.length]
       try {
         const r = await fetch(`/api/projects/${projectId}/solar/meters/${meter.id}/series?${q}`)
-        if (!r.ok) return { meter, colour, ok: false }
+        if (!r.ok) {
+          const e = r.status === 422 ? ((await r.json().catch(() => null)) as { code?: string } | null) : null
+          return { meter, colour, ok: false, noActivePower: e?.code === 'no_active_power' }
+        }
         return { meter, colour, ok: true, body: (await r.json()) as SeriesBody }
       } catch {
         return { meter, colour, ok: false }
@@ -51,7 +54,8 @@ export function MeterComparison({ projectId, meters, onClose }: { projectId: str
 
   const plan = useMemo(() => {
     if (!outcomes) return null
-    const failed = outcomes.filter((o) => !o.ok).map((o) => o.meter.label)
+    const failed = outcomes.filter((o) => !o.ok && !o.noActivePower).map((o) => o.meter.label)
+    const noPower = outcomes.filter((o) => !o.ok && o.noActivePower).map((o) => o.meter.label)
     const loaded = outcomes.filter((o): o is Outcome & { ok: true; body: SeriesBody } => o.ok)
     const empty = loaded.filter((o) => !o.body.extent || o.body.buckets.every((b) => b.mean === null)).map((o) => o.meter.label)
     const withData = loaded.filter((o) => !empty.includes(o.meter.label))
@@ -68,7 +72,7 @@ export function MeterComparison({ projectId, meters, onClose }: { projectId: str
       colour: o.colour,
       points: o.body.buckets.map((b) => ({ x: (b.t0 + b.t1) / 2, y: b.mean })),
     }))
-    return { failed, empty, otherUnit, unit, series }
+    return { failed, noPower, empty, otherUnit, unit, series }
   }, [outcomes])
 
   const long = range.to - range.from <= 14 * DAY
@@ -90,6 +94,9 @@ export function MeterComparison({ projectId, meters, onClose }: { projectId: str
               {plan.failed.map((l) => `${l} could not be loaded`).join('; ')} — left out of the chart. Try again, or open the meter to check its data.
             </p>
           )}
+          {plan.noPower.map((l) => (
+            <p key={l} style={{ fontSize: 12, margin: '0 0 4px', color: 'var(--c-text-mid)' }}>{l} has no active-power channel to compare — it is left out.</p>
+          ))}
           {plan.otherUnit.map((o) => (
             <p key={o.label} style={{ fontSize: 12, margin: '0 0 4px', color: 'var(--c-text-mid)' }}>
               {o.label} is left out: its readings are in {o.unit}; this overlay is in {plan.unit}. Only meters measured in the same unit can be drawn on one axis.

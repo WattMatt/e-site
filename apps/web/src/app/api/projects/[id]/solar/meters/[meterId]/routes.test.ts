@@ -46,6 +46,12 @@ describe('meter series', () => {
     expect(body.gaps).toEqual([{ from: readings[5].tsEnd - 1_800_000, to: readings[5].tsEnd }])
     expect(body.channel).toMatchObject({ id: 'c1', unit: 'kW' })
   })
+  it('422 no_active_power (not 404) when the meter has no primary channel and none was asked for', async () => {
+    h.load.mockResolvedValue({ studyId: 's1', meter: { id: M, label: 'Shop 12' }, channels: [{ ...CH, quantity: 'energy', is_primary: false }], picked: { primary: [], kva: [], pv: null } })
+    const res = await series(new Request('http://x/series'), ctx)
+    expect(res.status).toBe(422)
+    expect(await res.json()).toEqual({ error: 'no_active_power', code: 'no_active_power' })
+  })
   it('refuses a channel of another meter', async () => {
     expect((await series(new Request('http://x/series?channel=zz'), ctx)).status).toBe(404)
   })

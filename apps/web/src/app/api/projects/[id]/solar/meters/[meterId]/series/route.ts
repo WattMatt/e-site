@@ -27,7 +27,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const sm = await loadStudyMeter(supabase, projectId, meterId)
   if (!sm) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const url = new URL(req.url)
-  const channelId = url.searchParams.get('channel') ?? sm.picked.primary[0]?.id ?? null
+  const asked = url.searchParams.get('channel')
+  // No channel asked for and no active-power primary: a property of the meter, not a missing resource —
+  // distinguishable so the comparison can say so (the drawer still reads any !ok as "could not be loaded").
+  if (asked === null && !sm.picked.primary[0]) return NextResponse.json({ error: 'no_active_power', code: 'no_active_power' }, { status: 422 })
+  const channelId = asked ?? sm.picked.primary[0]?.id ?? null
   const channel = sm.channels.find((c) => c.id === channelId)
   if (!channel) return NextResponse.json({ error: 'not_found' }, { status: 404 })
 
