@@ -63,6 +63,12 @@ export interface BuildSiteLoadInput {
   bills: MonthlyBills | null
   densities?: Partial<Record<ShopCategory, number>>
 }
+/**
+ * `key` is what an acknowledgement (solar.load_check_acks) is matched on. It must change whenever the
+ * finding materially changes — a key that stays constant while its message changes (e.g. the count of
+ * unassigned tenants) would carry an old acknowledgement onto a new finding. So site-wide checks carry
+ * their count / percentage in the key, and per-row checks carry the row id.
+ */
 export interface LoadCheck { key: string; severity: 'error' | 'warning' | 'info'; message: string; meterId?: string; nodeId?: string }
 export interface TenantSummary {
   nodeId: string
@@ -260,7 +266,7 @@ function evaluateTenants(
     }
   }
   if (e.unassigned > 0) {
-    checks.push({ key: 'unassigned_tenants', severity: 'warning', message: `${e.unassigned} tenant(s) have no load basis yet; they are synthesised from the tenant schedule until you choose.` })
+    checks.push({ key: `unassigned_tenants:${e.unassigned}`, severity: 'warning', message: `${e.unassigned} tenant(s) have no load basis yet; they are synthesised from the tenant schedule until you choose.` })
   }
   return e
 }
@@ -292,7 +298,7 @@ export function buildSiteLoad(input: BuildSiteLoadInput): BuildSiteLoadResult {
   }
   const t = evaluateTenants(input, year, covered, common.window, meterById, checks)
   if (t.metered > 0 && !common.meetsThreshold) {
-    checks.push({ key: 'common_window', severity: 'warning', message: `Only ${Math.round(common.share * 100)} % of metered tenants share 12 months of data (80 % needed); uncovered months are synthesised.` })
+    checks.push({ key: `common_window:${Math.round(common.share * 100)}`, severity: 'warning', message: `Only ${Math.round(common.share * 100)} % of metered tenants share 12 months of data (80 % needed); uncovered months are synthesised.` })
   }
 
   // Bulk vs Σ metered tenants (any basis; a bulk meter need not be confirmed to be reconciled).
@@ -364,7 +370,7 @@ export function buildSiteLoad(input: BuildSiteLoadInput): BuildSiteLoadResult {
       for (let h = 0; h < HOURS_PER_YEAR; h++) series[h] += s1[h]
       resolutionMin = resolutionMin === null ? p.intervalMin : Math.min(resolutionMin, p.intervalMin)
     }
-    if (confirmedBulk.length > 1) checks.push({ key: 'multiple_bulk', severity: 'info', message: `${confirmedBulk.length} bulk meters are confirmed points of supply; the site series is their sum.` })
+    if (confirmedBulk.length > 1) checks.push({ key: `multiple_bulk:${confirmedBulk.length}`, severity: 'info', message: `${confirmedBulk.length} bulk meters are confirmed points of supply; the site series is their sum.` })
     const single = confirmedBulk.length === 1 ? confirmedBulk[0] : null
     const md = single
       ? monthlyMaxDemand({

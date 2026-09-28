@@ -72,7 +72,27 @@ describe('buildSiteLoad — S2 (sum of tenants)', () => {
     expect(r.basis).toBe('S3')
     expect(r.coverage.unassigned).toBe(1)
     expect(total(r.series)).toBeGreaterThan(0)
-    expect(r.checks.some((c) => c.key === 'unassigned_tenants')).toBe(true)
+    expect(r.checks.some((c) => c.key.startsWith('unassigned_tenants'))).toBe(true)
+  })
+
+  it('check keys carry the count, so an acknowledgement does not survive a changed message', () => {
+    const key = (r: ReturnType<typeof buildSiteLoad>, prefix: string) => r.checks.find((c) => c.key.startsWith(prefix))?.key
+    const one = buildSiteLoad(base({ tenants: [tenant('t1', { source: 'unassigned' })] }))
+    const two = buildSiteLoad(base({ tenants: [tenant('t1', { source: 'unassigned' }), tenant('t2', { source: 'unassigned' })] }))
+    const oneAgain = buildSiteLoad(base({ tenants: [tenant('t1', { source: 'unassigned' })] }))
+    expect(key(one, 'unassigned_tenants')).toBe('unassigned_tenants:1')
+    expect(key(two, 'unassigned_tenants')).toBe('unassigned_tenants:2')
+    expect(key(oneAgain, 'unassigned_tenants')).toBe(key(one, 'unassigned_tenants'))
+
+    const short = (id: string) => meter(id, 10, { primary: { readings: readings('2025-01-01', 120, 30, 10), intervalMin: 30 } })
+    const metered = (ids: string[]) => ids.map((id) => tenant(`t-${id}`, { meters: [{ meterId: id, weight: 1 }] }))
+    const half = buildSiteLoad(base({ meters: [meter('a', 10), short('b')], tenants: metered(['a', 'b']) }))
+    const third = buildSiteLoad(base({ meters: [meter('a', 10), short('b'), short('c')], tenants: metered(['a', 'b', 'c']) }))
+    const halfKey = key(half, 'common_window')
+    const thirdKey = key(third, 'common_window')
+    expect(halfKey).toMatch(/^common_window:\d+$/)
+    expect(thirdKey).toMatch(/^common_window:\d+$/)
+    expect(halfKey).not.toBe(thirdKey)
   })
 
   it('S3 design maximum demand applies the diversity factor to the peak only', () => {
