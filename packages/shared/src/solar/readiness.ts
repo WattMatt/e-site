@@ -95,7 +95,10 @@ export function loadReadiness(i: LoadReadinessInput | null): { status: Readiness
   if (!i) return { status: 'grey', reason: 'Not started' }
   if (i.failingAcceptedImports > 0) return { status: 'red', reason: `${i.failingAcceptedImports} accepted import(s) carry a validation error` }
   if (!i.hasSiteLoad) return { status: 'amber', reason: 'No site profile built yet' }
-  if (i.unassignedTenants > 0) return { status: 'amber', reason: `Load: ${i.unassignedTenants} of ${i.totalTenants} tenants unassigned` }
+  // Tenant assignment only feeds the build under S2/S3 (null = S2). S1 reads the bulk meter and S4
+  // scales monthly bills, so unassigned tenants there change nothing and must not hold the dot amber.
+  const tenantsMatter = i.basis === null || i.basis === 'S2' || i.basis === 'S3'
+  if (tenantsMatter && i.unassignedTenants > 0) return { status: 'amber', reason: `Load: ${i.unassignedTenants} of ${i.totalTenants} tenants unassigned` }
   const synthesised = i.basis === 'S3' || i.basis === 'S4'
   if (!synthesised && !i.fullYearFromData) return { status: 'amber', reason: 'Meter data covers less than 12 months' }
   if (i.stale) return { status: 'amber', reason: 'Inputs changed since the profile was built — rebuild it' }

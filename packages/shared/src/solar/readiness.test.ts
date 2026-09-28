@@ -85,6 +85,10 @@ describe('loadReadiness (spec §2.3)', () => {
   it('amber when inputs changed since the build', () => expect(loadReadiness({ ...ok, stale: true }).status).toBe('amber'))
   it('amber when nothing is built yet', () => expect(loadReadiness({ ...ok, hasSiteLoad: false }).reason).toBe('No site profile built yet'))
   it('green otherwise', () => expect(loadReadiness(ok).status).toBe('green'))
+  it('unassigned tenants do not hold the dot amber under S1 (bulk meter)', () => expect(loadReadiness({ ...ok, basis: 'S1', unassignedTenants: 2 }).status).toBe('green'))
+  it('unassigned tenants do not hold the dot amber under S4 (monthly bills)', () => expect(loadReadiness({ ...ok, basis: 'S4', fullYearFromData: false, unassignedTenants: 2 }).status).toBe('green'))
+  it('unassigned tenants hold the dot amber under S3', () => expect(loadReadiness({ ...ok, basis: 'S3', unassignedTenants: 2 }).reason).toBe('Load: 2 of 14 tenants unassigned'))
+  it('an unset basis is S2: unassigned tenants hold the dot amber', () => expect(loadReadiness({ ...ok, basis: null, unassignedTenants: 2 }).status).toBe('amber'))
 })
 
 describe('schematicsReadiness (spec §2.3)', () => {

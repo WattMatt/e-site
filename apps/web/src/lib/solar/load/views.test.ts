@@ -69,4 +69,25 @@ describe('load views', () => {
     const r = await loadLoadReadiness(client(), P)
     expect(r).toMatchObject({ load: { hasSiteLoad: true, unassignedTenants: 1, totalTenants: 2, basis: 'S2' } })
   })
+  const allAssigned = () => fakeSupabase({ tables: { ...tables, 'solar.tenant_load_basis': [
+    ...tables['solar.tenant_load_basis'],
+    { id: 'b2', study_id: 's1', node_id: 'n2', source: 'vacant', meters: [], archetype: null, density_override_w_m2: null, updated_at: 'B0' },
+  ] } }).client as never
+  it('readiness stale uses the same hash comparison as the Site profile banner (dot and banner agree)', async () => {
+    const r = await loadLoadReadiness(allAssigned(), P)
+    const v = await loadProfileView(allAssigned(), P)
+    expect(r.load?.stale).toBe(true)
+    expect(r.load?.stale).toBe(v.siteLoad?.stale)
+    expect(h.gather).toHaveBeenCalledWith(expect.anything(), P, { readReadings: false })
+  })
+  it('readiness is not stale when the recomputed hash matches the stored one', async () => {
+    h.gather.mockResolvedValue({ ok: true, inputsHash: 'h1' })
+    const r = await loadLoadReadiness(allAssigned(), P)
+    expect(r.load?.stale).toBe(false)
+  })
+  it('readiness skips the staleness gather when an earlier rule already holds the dot amber', async () => {
+    const r = await loadLoadReadiness(client(), P) // S2 with one unassigned tenant
+    expect(r.load?.unassignedTenants).toBe(1)
+    expect(h.gather).not.toHaveBeenCalled()
+  })
 })

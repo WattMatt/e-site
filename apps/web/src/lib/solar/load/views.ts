@@ -6,7 +6,7 @@ import 'server-only'
  * Nothing here computes load: charts come from siteProfileCharts over the STORED series.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { computeBoDate, loadSettingsFormFromRow, type LoadReadinessInput, type SchematicsReadinessInput } from '@esite/shared'
+import { computeBoDate, loadReadiness, loadSettingsFormFromRow, type LoadReadinessInput, type SchematicsReadinessInput } from '@esite/shared'
 import {
   autoMatchMeters, CATEGORY_ARCHETYPE, DEFAULT_DENSITY_W_PER_M2, siteProfileCharts, type BulkReconciliation, type LoadCheck,
   type MdMonth, type ParentReconciliation, type SiteLoadCoverage, type TenantSummary,
@@ -168,6 +168,16 @@ export async function loadTenantsView(supabase: AnyClient, projectId: string): P
   }
 }
 
+/**
+ * The ONE staleness rule: the stored inputs hash vs one recomputed from rows + per-channel summaries
+ * (no readings read). The Site profile banner and the Load tab dot both call this, so they cannot
+ * disagree.
+ */
+async function siteLoadIsStale(supabase: AnyClient, projectId: string, storedHash: string): Promise<boolean> {
+  const g = await gatherLoadInputs(supabase, projectId, { readReadings: false })
+  return g.ok ? g.inputsHash !== storedHash : false
+}
+
 export async function loadProfileView(supabase: AnyClient, projectId: string): Promise<ProfileView> {
   const s = await study(supabase, projectId)
   const { form, bills } = loadSettingsFormFromRow(s as unknown as Record<string, unknown> | null)
@@ -181,11 +191,7 @@ export async function loadProfileView(supabase: AnyClient, projectId: string): P
     if (x.firstTs === null || x.lastTs === null) continue
     for (let y = new Date(x.firstTs).getUTCFullYear(); y <= new Date(x.lastTs).getUTCFullYear(); y++) years.add(y)
   }
-  let stale = false
-  if (sl) {
-    const g = await gatherLoadInputs(supabase, projectId, { readReadings: false })
-    stale = g.ok ? g.inputsHash !== sl.inputs_hash : false
-  }
+  const stale = sl ? await siteLoadIsStale(supabase, projectId, sl.inputs_hash) : false
   const { data: metered } = await supabase.schema('solar').from('tenant_load_basis').select('id').eq('study_id', s.id).eq('source', 'metered').limit(1)
   const diversityApplies = sl ? sl.basis === 'S3' : form.loadBasis === 'S2' && !(Array.isArray(metered) && metered.length > 0)
   return {
@@ -227,7 +233,11 @@ export async function loadChecksView(supabase: AnyClient, projectId: string): Pr
   }
 }
 
-/** For the gated layout's tab dots (spec §2.3). Cheap: no summaries, no readings; staleness is shown on the Site profile tab. */
+/**
+ * For the gated layout's tab dots (spec §2.3). Staleness uses the Site profile banner's rule
+ * (`siteLoadIsStale`: rows + channel summaries, no readings). It is the last rule in `loadReadiness`,
+ * so it is only computed when the dot would otherwise be green — an amber/red dot never pays for it.
+ */
 export async function loadLoadReadiness(supabase: AnyClient, projectId: string): Promise<{ load: LoadReadinessInput | null; schematics: SchematicsReadinessInput | null }> {
   const s = await study(supabase, projectId)
   if (!s) return { load: null, schematics: null }
@@ -243,17 +253,19 @@ export async function loadLoadReadiness(supabase: AnyClient, projectId: string):
   const { data: cards } = schematicIds.length ? await supabase.schema('solar').from('schematic_cards').select('meter_id').in('schematic_id', schematicIds) : { data: [] }
   const studyMeterIds = new Set(((links ?? []) as Array<{ meter_id: string }>).map((l) => l.meter_id))
   const placed = new Set(((cards ?? []) as Array<{ meter_id: string }>).map((c) => c.meter_id).filter((id) => studyMeterIds.has(id)))
+  const load: LoadReadinessInput = {
+    hasSiteLoad: sl !== null,
+    stale: false,
+    basis: sl?.basis ?? s.load_basis,
+    fullYearFromData: sl?.coverage.fullYearFromData ?? false,
+    unassignedTenants: nodes.filter((n) => !assigned.has(n.id)).length,
+    totalTenants: nodes.length,
+    // An accepted import cannot carry an error: commit refuses one (3a commit.ts `unresolved_errors`).
+    failingAcceptedImports: 0,
+  }
+  if (sl && loadReadiness(load).status === 'green') load.stale = await siteLoadIsStale(supabase, projectId, sl.inputs_hash)
   return {
-    load: {
-      hasSiteLoad: sl !== null,
-      stale: false,
-      basis: sl?.basis ?? s.load_basis,
-      fullYearFromData: sl?.coverage.fullYearFromData ?? false,
-      unassignedTenants: nodes.filter((n) => !assigned.has(n.id)).length,
-      totalTenants: nodes.length,
-      // An accepted import cannot carry an error: commit refuses one (3a commit.ts `unresolved_errors`).
-      failingAcceptedImports: 0,
-    },
+    load,
     schematics: { waived: s.schematic_waived, schematics: schematicIds.length, studyMeters: studyMeterIds.size, placedMeters: placed.size },
   }
 }
