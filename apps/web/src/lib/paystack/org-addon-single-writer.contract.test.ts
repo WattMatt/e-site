@@ -28,6 +28,10 @@ const ROOTS = ['apps/web/src', 'packages/shared/src', 'apps/mobile/src', 'apps/m
 
 const ALLOWED = new Set<string>([
   'apps/web/src/app/api/paystack/webhook/route.ts', // the single writer
+  // READER ONLY (Phase 1C): the Solar Access panel's subscription card SELECTs
+  // status + current_period_end through the grantor's own session (RLS:
+  // owner/admin of the org). It never inserts, updates or deletes.
+  'apps/web/src/lib/solar/access-panel.ts',
 ])
 
 /** Drop block and line comments so prose about the table is not a hit. */
