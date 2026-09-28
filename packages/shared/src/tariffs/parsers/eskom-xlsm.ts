@@ -124,9 +124,17 @@ function familyOf(title: string): string {
   return title.replace(/\s*[–-]\s*(non-)?local authority.*$/i, '').replace(/\s+/g, ' ').trim()
 }
 
-function demandBasisFor(component: Charge['component'], unit: TariffUnit): DemandBasis | null {
+/**
+ * Owner decision (2026-09-28, resolving default 6): on Eskom TOU tariffs the NETWORK DEMAND
+ * charge in R/kVA is billed on chargeable demand = the highest demand in peak and standard
+ * periods (peak_window_md); network access/capacity, GCC and the other per-kVA charges on
+ * utilised capacity. A network demand charge printed in c/kWh (Homeflex) is a per-kWh adder.
+ */
+export function demandBasisFor(component: Charge['component'], unit: TariffUnit): DemandBasis | null {
   if (unit !== 'R_per_kVA_month' && unit !== 'R_per_kW_month') return component === 'network_capacity' ? 'nmd' : null
-  return component === 'demand' ? 'actual_md' : 'utilised_capacity'
+  if (component === 'demand') return 'actual_md'
+  if (component === 'network_demand') return 'peak_window_md'
+  return 'utilised_capacity'
 }
 
 export function parseEskomSheet(g: Grid, opts: { fileSha256: string }): { accs: Acc[]; issues: TariffIssue[] } {

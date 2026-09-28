@@ -52,6 +52,50 @@ export function touPeriodAt(cal: Pick<TouCalendar, 'windows'>, season: BillingSe
   return hit ? hit.period : 'off_peak'
 }
 
+export interface MonthDemand {
+  month: number
+  /** Highest average kW over one interval, any period. */
+  maxKw: number
+  /** Highest average kW over one interval in PEAK or STANDARD periods (off-peak excluded). */
+  peakWindowMaxKw: number
+}
+
+/**
+ * Monthly maximum demand from interval kWh over the reference year (29 Feb
+ * dropped; interval 0 starts 1 Jan 00:00 SAST): demand = kWh x 60/interval.
+ * Hourly data (60) gives hourly-average demand; 30- or 15-minute data is what
+ * a utility meter integrates over, so prefer it when present.
+ */
+export function monthlyDemand(input: {
+  kwh: ArrayLike<number>
+  intervalMinutes: number
+  calendar: TouCalendar
+  year: number
+  holidays?: ReadonlySet<string>
+}): MonthDemand[] {
+  const { intervalMinutes: step } = input
+  if (!(step > 0) || 1440 % step !== 0) throw new RangeError(`intervalMinutes ${step} must divide a day`)
+  const perDay = 1440 / step
+  if (input.kwh.length !== 365 * perDay) throw new RangeError(`kwh has ${input.kwh.length} intervals, expected ${365 * perDay}`)
+  const out: MonthDemand[] = []
+  let k = 0
+  for (let m = 1; m <= 12; m++) {
+    const season = seasonForMonth(m, input.calendar)
+    let maxKw = 0
+    let peakWindowMaxKw = 0
+    for (let d = 1; d <= REFERENCE_MONTH_DAYS[m - 1]; d++) {
+      const dayType = dayTypeOf(input.year, m, d, input.holidays, input.calendar)
+      for (let i = 0; i < perDay; i++, k++) {
+        const kw = (input.kwh[k] * 60) / step
+        if (kw > maxKw) maxKw = kw
+        if (kw > peakWindowMaxKw && touPeriodAt(input.calendar, season, dayType, i * step) !== 'off_peak') peakWindowMaxKw = kw
+      }
+    }
+    out.push({ month: m, maxKw, peakWindowMaxKw })
+  }
+  return out
+}
+
 /**
  * 8760 hourly kWh (interval-ending averages, hour 0 = 1 Jan 00:00-01:00 SAST)
  * into twelve TOU-split months. Maximum demand needs sub-hourly data and is

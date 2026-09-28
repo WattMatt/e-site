@@ -49,6 +49,10 @@ describe.skipIf(!DIR)('real source books', () => {
     expect(hf1?.charges.filter((c) => c.component === 'energy')).toHaveLength(6)
     expect(hf1?.exportTariffCode).toBe('GOHF101N')
     expect(parsed.lossFactors.filter((f) => f.kind === 'tx')).toHaveLength(4)
+    // Megaflex: network demand [R/kVA/m] on peak-window demand, network capacity on utilised capacity.
+    const me = parsed.tariffs.find((t) => t.code === 'Me01N')
+    expect(me?.charges.find((c) => c.component === 'network_demand')?.demandBasis).toBe('peak_window_md')
+    expect(me?.charges.find((c) => c.component === 'network_capacity')?.demandBasis).toBe('utilised_capacity')
     const vat = parsed.tariffs.flatMap((t) => validateTariff(t)).filter((i) => i.code === 'vat_pair')
     expect(vat).toEqual([])
   }, 120_000)

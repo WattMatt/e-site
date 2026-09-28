@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateHourly, dayTypeOf, seasonForMonth, touPeriodAt, type TouCalendar, type TouWindow } from './tou'
+import { aggregateHourly, dayTypeOf, monthlyDemand, seasonForMonth, touPeriodAt, type TouCalendar, type TouWindow } from './tou'
 import type { BillingSeason, TouPeriod } from './types'
 
 const w = (season: BillingSeason, startMinute: number, endMinute: number, period: TouPeriod): TouWindow => ({
@@ -31,6 +31,20 @@ describe('seasons, day types and windows', () => {
     expect(touPeriodAt(CAL, 'low', 'weekday', 12 * 60)).toBe('standard')
     expect(touPeriodAt(CAL, 'low', 'weekday', 23 * 60)).toBe('off_peak')
     expect(touPeriodAt(CAL, 'low', 'saturday', 7 * 60)).toBe('off_peak')
+  })
+})
+
+describe('monthlyDemand (peak-window maximum demand)', () => {
+  it('finds overall and peak+standard-window maximum demand per month from hourly or 30-min kWh', () => {
+    const hourly = new Float64Array(8760).fill(10)
+    hourly[3 * 24 + 2] = 100 // Sat 4 Jan 02:00: off-peak spike
+    hourly[5 * 24 + 7] = 60 //  Mon 6 Jan 07:00: weekday peak
+    const [jan] = monthlyDemand({ kwh: hourly, intervalMinutes: 60, calendar: CAL, year: 2025 })
+    expect(jan).toEqual({ month: 1, maxKw: 100, peakWindowMaxKw: 60 })
+    const half = new Float64Array(17520).fill(5)
+    half[2 * (5 * 24 + 7)] = 50 // Mon 6 Jan 07:00-07:30: 50 kWh in half an hour = 100 kW
+    expect(monthlyDemand({ kwh: half, intervalMinutes: 30, calendar: CAL, year: 2025 })[0]).toEqual({ month: 1, maxKw: 100, peakWindowMaxKw: 100 })
+    expect(() => monthlyDemand({ kwh: new Float64Array(10), intervalMinutes: 30, calendar: CAL, year: 2025 })).toThrow(RangeError)
   })
 })
 

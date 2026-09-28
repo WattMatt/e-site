@@ -10,7 +10,7 @@
  * priced correctly.
  */
 import { costPeriod, type CostOptions, type MonthlyBill } from './bill-engine'
-import { aggregateHourly, type TouCalendar } from './tou'
+import { aggregateHourly, monthlyDemand, type TouCalendar } from './tou'
 import type { MonthUsage, Tariff } from './types'
 
 export interface HourlyGridFlows {
@@ -19,10 +19,19 @@ export interface HourlyGridFlows {
   /** 8760 hourly kWh exported to the grid. */
   exportKwh: ArrayLike<number>
   /**
-   * Sub-hourly import for maximum demand (4a `subHourlyImport`). Accepted for
-   * shape compatibility; demand is taken from `demandForMonth` for now.
+   * Sub-hourly import for maximum demand (4a `subHourlyImport`): kWh per
+   * interval over the reference year. When present it, not the hourly series,
+   * sets maximum demand and peak-window demand (a meter integrates over 30 or
+   * 15 minutes, so hourly averages understate demand).
    */
-  subHourlyImport?: unknown
+  subHourlyImport?: SubHourlyKwh
+}
+
+export interface SubHourlyKwh {
+  /** Interval length; must divide a day (e.g. 30 or 15). */
+  intervalMinutes: number
+  /** 365 x 1440/intervalMinutes kWh values (29 Feb dropped). */
+  kwh: ArrayLike<number>
 }
 
 export interface TariffMonthlySummary {
@@ -45,7 +54,10 @@ export interface HourlyCostOptions extends CostOptions {
   /** Reference year for day types (the 8760 year drops 29 Feb). */
   year: number
   holidays?: ReadonlySet<string>
+  /** Explicit per-month inputs (NMD, amps, kVArh...); a value given here wins over the one derived from the series. */
   demandForMonth?: (month: number) => Partial<MonthDemandInputs>
+  /** kVA = kW / powerFactor for demand derived from the import series. Default 1 (no reactive data). */
+  powerFactor?: number
 }
 
 /**
@@ -56,10 +68,25 @@ export interface HourlyCostOptions extends CostOptions {
  * of December reaches January-March instead of being dropped, and is forfeited
  * only at the financial-year end (spec 02 §5.7).
  */
-export function costHourly(tariff: Tariff, flows: Pick<HourlyGridFlows, 'importKwh' | 'exportKwh'>, opts: HourlyCostOptions): MonthlyBill[] {
-  const { calendar, year, holidays, demandForMonth, ...cost } = opts
+export function costHourly(tariff: Tariff, flows: HourlyGridFlows, opts: HourlyCostOptions): MonthlyBill[] {
+  const { calendar, year, holidays, demandForMonth, powerFactor = 1, ...cost } = opts
+  if (!(powerFactor > 0 && powerFactor <= 1)) throw new RangeError(`powerFactor ${powerFactor} must be in (0, 1]`)
+  // Maximum demand and peak-window (peak + standard) demand from the import series: the
+  // sub-hourly series when given, else hourly averages. Owner decision 2026-09-28: Eskom
+  // network demand [R/kVA] is billed on peak-window demand.
+  const demand = monthlyDemand({
+    kwh: flows.subHourlyImport?.kwh ?? flows.importKwh,
+    intervalMinutes: flows.subHourlyImport?.intervalMinutes ?? 60,
+    calendar, year, holidays,
+  })
   const months = aggregateHourly({ importKwh: flows.importKwh, exportKwh: flows.exportKwh, calendar, year, holidays })
-    .map((m) => ({ ...m, ...(demandForMonth ? demandForMonth(m.month) : {}) }))
+    .map((m, k) => ({
+      ...m,
+      maxDemandKw: demand[k].maxKw,
+      maxDemandKva: demand[k].maxKw / powerFactor,
+      peakWindowMdKva: demand[k].peakWindowMaxKw / powerFactor,
+      ...(demandForMonth ? demandForMonth(m.month) : {}),
+    }))
   const fyEnd = cost.sseg?.fyEndMonth ?? 12
   const start = fyEnd % 12
   // The wrapped months sit in the next calendar year of the same financial year.

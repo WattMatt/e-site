@@ -62,3 +62,44 @@ describe('hourly adapter (Phase 4a BillCalculator seam)', () => {
     expect(() => calc.monthlyBills({ importKwh: new Float64Array(10), exportKwh })).toThrow(RangeError)
   })
 })
+
+describe('golden (hand-computed): Megaflex-like month, network demand on PEAK-WINDOW demand', () => {
+  // Weekday peak 06-08 and 17-20, standard 08-17 and 20-22; weekends off-peak (synthetic, not Eskom's).
+  const w = (season: 'high' | 'low', s: number, e: number, period: 'peak' | 'standard') => ({ season, dayType: 'weekday' as const, startMinute: s, endMinute: e, period })
+  const TOU_CAL: TouCalendar = {
+    highSeasonMonths: [6, 7, 8], holidayTreatedAs: 'sunday', source: 'assumed_eskom',
+    windows: (['high', 'low'] as const).flatMap((s) => [w(s, 360, 480, 'peak'), w(s, 480, 1020, 'standard'), w(s, 1020, 1200, 'peak'), w(s, 1200, 1320, 'standard')]),
+  }
+  const tou = (t: 'peak' | 'standard' | 'off_peak', cents: number) => makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: cents, tou: t })
+  const megaflexLike = makeTariff({ name: 'Megaflex-like', structure: 'tou', charges: [
+    tou('peak', 300), tou('standard', 150), tou('off_peak', 100),
+    makeCharge({ component: 'network_demand', unit: 'R_per_kVA_month', amountExclVat: 48.41, demandBasis: 'peak_window_md' }),
+    makeCharge({ component: 'network_capacity', unit: 'R_per_kVA_month', amountExclVat: 39.22, demandBasis: 'utilised_capacity' }),
+  ] })
+  // 10 kWh every hour; an OFF-PEAK spike of 100 kWh (Sat 4 Jan 02:00) and a PEAK hour of 60 kWh (Mon 6 Jan 07:00).
+  const hourly = new Float64Array(N).fill(10)
+  hourly[3 * 24 + 2] = 100
+  hourly[5 * 24 + 7] = 60
+  const opts = { calendar: TOU_CAL, year: 2025, demandForMonth: () => ({ nmdKva: 80 }) }
+
+  it('hourly: peak-window MD 60 kVA (overall MD 100 is off-peak) -> R18,071.60', () => {
+    // Energy: peak 23x5x10+50 = 1,200 kWh x R3 = 3,600; standard 23x11x10 = 2,530 x R1.50 = 3,795;
+    //         off-peak 7,580-1,200-2,530 = 3,850 x R1 = 3,850 -> 11,245.00
+    // Network demand 60 kVA x 48.41 = 2,904.60 (not 100 x 48.41 = 4,841.00)
+    // Network capacity max(NMD 80, MD 100) = 100 x 39.22 = 3,922.00
+    const [jan] = costHourly(megaflexLike, { importKwh: hourly, exportKwh: new Float64Array(N) }, opts)
+    expect(jan.energyCharges).toBe(11245)
+    expect(jan.lines.find((l) => l.component === 'network_demand')).toMatchObject({ quantity: 60, amount: 2904.6 })
+    expect(jan.lines.find((l) => l.component === 'network_capacity')).toMatchObject({ quantity: 100 })
+    expect(jan.totalExclVat).toBe(18071.6)
+  })
+
+  it('sub-hourly (30-min) data takes precedence for demand: 50 kWh in 07:00-07:30 = 100 kW -> R20,008.00', () => {
+    const half = new Float64Array(2 * N).fill(5)
+    half[2 * (3 * 24 + 2)] = 50; half[2 * (3 * 24 + 2) + 1] = 50 // Sat 02:00 hour = 100 kWh (100 kW both halves)
+    half[2 * (5 * 24 + 7)] = 50; half[2 * (5 * 24 + 7) + 1] = 10 // Mon 07:00 hour = 60 kWh, first half 100 kW
+    const calc = createBillCalculator(megaflexLike, TOU_CAL, undefined, { year: 2025, demandForMonth: () => ({ nmdKva: 80 }) })
+    const [jan] = calc.monthlyBills({ importKwh: hourly, exportKwh: new Float64Array(N), subHourlyImport: { intervalMinutes: 30, kwh: half } })
+    expect(jan.totalZar).toBe(20008) // 11,245 + 100 x 48.41 + 100 x 39.22
+  })
+})

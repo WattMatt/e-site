@@ -4,7 +4,7 @@ import { netBillingRule } from '../net-billing-rules'
 import { validateTariff } from '../validators'
 import type { MonthUsage, Tariff } from '../types'
 import { gridFromCells, gridFromFixture, type CellFixture } from './grid'
-import { parseEskomWorkbook } from './eskom-xlsm'
+import { demandBasisFor, parseEskomWorkbook } from './eskom-xlsm'
 import hf25 from '../__fixtures__/eskom-2025-homeflex.cells.json'
 import go25 from '../__fixtures__/eskom-2025-gen-offset.cells.json'
 import lf25 from '../__fixtures__/eskom-2025-loss-factors.cells.json'
@@ -111,5 +111,17 @@ describe('Eskom 2026/27 workbook (same layout)', () => {
     const hf1 = byCode(parsed.tariffs, 'HF101N')
     const go = byCode(parsed.tariffs, 'GOHF101N')
     expect(costMonth(hf1, { ...july(150), year: 2026 }, { exportTariff: go, sseg: netBillingRule('eskom') }).totalExclVat).toBe(2366.21)
+  })
+})
+
+describe('Eskom demand bases (owner decision on default 6, 2026-09-28)', () => {
+  it('network demand in R/kVA is billed on peak-window demand; access/capacity, GCC and others on utilised capacity', () => {
+    expect(demandBasisFor('network_demand', 'R_per_kVA_month')).toBe('peak_window_md')
+    expect(demandBasisFor('network_capacity', 'R_per_kVA_month')).toBe('utilised_capacity')
+    expect(demandBasisFor('gcc', 'R_per_kVA_month')).toBe('utilised_capacity')
+    expect(demandBasisFor('transmission_network', 'R_per_kVA_month')).toBe('utilised_capacity')
+    expect(demandBasisFor('demand', 'R_per_kVA_month')).toBe('actual_md')
+    // Homeflex prints network demand in c/kWh: a per-kWh adder, no demand basis.
+    expect(demandBasisFor('network_demand', 'c_per_kWh')).toBeNull()
   })
 })
