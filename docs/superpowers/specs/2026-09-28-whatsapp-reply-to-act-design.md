@@ -249,7 +249,31 @@ Each test must be able to fail, and the refusal tests are mutation-proven.
 
 ---
 
-## 9. Open items for the owner
+## 9. Plan-time amendments (2026-09-28, from reading the code)
+
+Where this section disagrees with §§1–8, **this section wins**.
+
+1. **The spine is empty and has no UI.** Production has 0 `projects.work_items`, the snag/RFI/inspection mirrors ship in item 3 ([#193](https://github.com/WattMatt/e-site/pull/193), unapplied), and no web page renders a work item. The owner chose to build on the spine now and gate go-live on #193. So the plan also builds a minimal item page (`/projects/[id]/items/[ref]`) and a `/wa/[itemId]` redirect as the "Open in E-Site" target.
+2. **Mark done must act through the source module for mirrored items.** #193's `map_source_status` projects status FROM the source (snag `resolved` → `answered`, `signed_off` → `closed`; RFI `responded` → `answered`), so a spine-side status write on a mirror is overwritten by the next source write. Mark done therefore dispatches on type:
+   - **manual `task`:** a spine transition.
+   - **`snag`:** `resolved` when the assignee has sent a close-out photo, `signed_off` when the gatekeeper does.
+   - **`rfi`:** Mark done prompts for the answer, and the next text becomes an `rfi_responses` row with status `responded`.
+   - **All other types:** a link out to E-Site.
+   Snag and RFI are Phase 2 of the plan, after #193 applies.
+3. **"Act as the user" means RLS evaluates, not a mirror of RLS.** The `wa_*` functions are SECURITY DEFINER but **owned by a dedicated `whatsapp_actor` role**: NOLOGIN, no BYPASSRLS, and a member of `authenticated`. Each one sets `request.jwt.claims` to the user first. The table's real policies, `auth.uid()`-based helpers and the transition guard then run exactly as they do for that user on the web. There is no hand-copied rule set to drift, so §2.3's parity contract test is replaced by behavioural impersonation assertions and a mutation that re-owns the function to `postgres`.
+4. **Two edge functions, not three.** The contract suite forbids rebuilding function-to-function auth, and Meta's webhook carries no JWT to forward. The functions are:
+   - `whatsapp-webhook` (`--no-verify-jwt`, HMAC): stores the message and processes it inline with `EdgeRuntime.waitUntil`.
+   - `whatsapp-worker` (gateway JWT plus `requireServiceRole`): drains the outbox and retries stuck inbound rows. A per-minute cron runs it, and web actions kick it for OTP and opt-in sends.
+5. **"Wrong item" redacts and does not move.** Tapping it redacts the note or attachment and replies "Removed from {ref}; swipe-reply on the right card to attach it there." Moving across projects would need a storage copy and re-binding, with no benefit over a re-send.
+6. **No image header and no re-compression.** A template image header must always carry an image, so the cards are text with three buttons. WhatsApp already compresses photos, so the edge stores the received JPEG as-is.
+7. **Personal linking lives on `/settings/account`**, which is reachable by every signed-in user. The admin view is `/settings/whatsapp` (`OWNER_ADMIN`).
+8. **Placeholder emails for externals** are `wa-<uuid>@wa.e-site.live`. It is a domain we control that has no MX record. `auth-email-hook` refuses to send to it, so the platform mailer can never bounce off it.
+9. **Pure logic has one source.** `packages/shared/src/whatsapp/core.ts` (no imports) is canonical. A sync script copies it to `apps/edge-functions/supabase/functions/_shared/whatsapp/core.ts`, and a contract test asserts the two are byte-identical.
+10. **The fold message is a sixth template**, `esite_items_waiting`, because a daily-cap overflow is business-initiated.
+11. **No per-recipient email fallback.** WhatsApp is additive: every existing `notify_*_email` sender keeps running whether or not WhatsApp delivers, so a fallback would send the same person the same email twice. Policy errors surface on Settings → WhatsApp and at the admin alert address instead.
+12. **Removal is stricter on WhatsApp than on the web.** The spine lets an item's assignee keep acting after they lose project membership (the `assignee_id = auth.uid()` arm). The `wa_*` functions additionally require an effective project role, which is what §3.3 promised.
+
+## 10. Open items for the owner
 1. Which live project goes first in stage 2.
 2. The WM admin email address that receives template or policy alerts.
 3. Whether client viewers should ever act via WhatsApp. In v1 they are refused, which matches the `00161` write block.
