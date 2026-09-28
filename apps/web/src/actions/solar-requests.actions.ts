@@ -26,6 +26,28 @@ const NOTE_MAX = 500
 const rank = (l: SolarAccessLevel): number => SOLAR_ACCESS_LEVELS.indexOf(l)
 const lockedPath = (projectId: string) => `/projects/${projectId}/solar/locked`
 
+/**
+ * Security review: a requester could withdraw and re-ask in a loop and email
+ * every owner/admin each time. The bell always rings; the EMAIL waits until
+ * the same person has not raised the same kind of request (on this project
+ * for access, anywhere in the org for subscribe) within the cooldown.
+ * Reads the requester's OWN rows (RLS: requester_id = auth.uid()).
+ */
+const EMAIL_COOLDOWN_MS = 30 * 60 * 1000
+
+async function askedRecently(
+  supabase: AnyClient,
+  r: { userId: string; kind: 'access' | 'subscribe'; projectId: string; organisationId: string; newId: string | null },
+): Promise<boolean> {
+  const since = new Date(Date.now() - EMAIL_COOLDOWN_MS).toISOString()
+  let q = supabase.schema('solar').from('access_requests').select('id')
+    .eq('requester_id', r.userId).eq('kind', r.kind).gte('created_at', since)
+  q = r.kind === 'access' ? q.eq('project_id', r.projectId) : q.eq('organisation_id', r.organisationId)
+  const { data, error } = await q
+  if (error) return false
+  return ((data ?? []) as Array<{ id: string }>).some((row) => row.id !== r.newId)
+}
+
 async function notifyGrantors(organisationId: string, actorId: string, n: SolarNotice): Promise<void> {
   const grantors = (await listSolarGrantors(organisationId)).filter((g) => g.userId !== actorId)
   await notifySolarUsers(
@@ -78,11 +100,14 @@ export async function requestSolarAccessAction(input: {
     kind: 'access',
     requested_level: level,
     note: note || null,
-  }).select('requested_level')
+  }).select('id, requested_level')
   if (error) return { error: humanSolarError(error) }
   // The notice names what the database stored (the guard may still clamp).
-  const storedRaw = Array.isArray(inserted) ? (inserted[0] as { requested_level?: unknown } | undefined)?.requested_level : undefined
-  const stored = isSolarAccessLevel(storedRaw) ? storedRaw : level
+  const row = Array.isArray(inserted) ? (inserted[0] as { id?: string; requested_level?: unknown } | undefined) : undefined
+  const stored = isSolarAccessLevel(row?.requested_level) ? row.requested_level : level
+  const quiet = await askedRecently(supabase, {
+    userId: ctx.userId, kind: 'access', projectId: ctx.projectId, organisationId: ctx.organisationId, newId: row?.id ?? null,
+  })
 
   const who = await profileName(ctx.userId)
   await notifyGrantors(ctx.organisationId, ctx.userId, {
@@ -92,7 +117,7 @@ export async function requestSolarAccessAction(input: {
     title: `${who} asked for Solar access`,
     body: `${who} asked for ${SOLAR_LEVEL_LABELS[stored]} access to Solar on ${ctx.projectName}.${note ? ` Note: "${note}"` : ''}`,
     route: `/projects/${ctx.projectId}/solar/access`,
-    email: true,
+    email: !quiet,
   })
   await emitProductEvent({ actorId: ctx.userId, projectId: ctx.projectId, event: 'solar_access_requested', properties: { level: stored } })
   revalidatePath(lockedPath(ctx.projectId))
@@ -107,15 +132,19 @@ export async function askAdminToSubscribeAction(projectId: string): Promise<Sola
   // One open request per user per ORG (the DB index is per project).
   if (ctx.state.requestedAt) return { error: 'You have already asked — the admins have been told.' }
 
-  const { error } = await supabase.schema('solar').from('access_requests').insert({
+  const { data: inserted, error } = await supabase.schema('solar').from('access_requests').insert({
     project_id: ctx.projectId,
     organisation_id: ctx.organisationId,
     requester_id: ctx.userId,
     kind: 'subscribe',
     requested_level: null,
     note: null,
-  })
+  }).select('id')
   if (error) return { error: humanSolarError(error) }
+  const newId = Array.isArray(inserted) ? ((inserted[0] as { id?: string } | undefined)?.id ?? null) : null
+  const quiet = await askedRecently(supabase, {
+    userId: ctx.userId, kind: 'subscribe', projectId: ctx.projectId, organisationId: ctx.organisationId, newId,
+  })
 
   const who = await profileName(ctx.userId)
   await notifyGrantors(ctx.organisationId, ctx.userId, {
@@ -124,8 +153,9 @@ export async function askAdminToSubscribeAction(projectId: string): Promise<Sola
     projectName: ctx.projectName,
     title: `${who} would like Solar for ${ctx.projectName}`,
     body: `${who} would like Solar for ${ctx.projectName}. One subscription covers every project in your organisation.`,
-    route: lockedPath(ctx.projectId),
-    email: true,
+    // Grantors answer subscribe requests on the Access panel (owner default 3).
+    route: `/projects/${ctx.projectId}/solar/access`,
+    email: !quiet,
   })
   await emitProductEvent({ actorId: ctx.userId, projectId: ctx.projectId, event: 'solar_subscribe_requested' })
   revalidatePath(lockedPath(ctx.projectId))

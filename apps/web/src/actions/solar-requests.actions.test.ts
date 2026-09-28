@@ -187,3 +187,46 @@ describe('withdrawSolarRequestAction', () => {
     await expect(withdrawSolarRequestAction(P)).resolves.toEqual({ error: 'There was no request waiting — reload the page.' })
   })
 })
+
+// Security review Important 2: withdraw + re-request in a loop must not flood
+// every owner/admin with email. The bell still goes; email waits 30 minutes.
+describe('email cooldown for requests to admins', () => {
+  const recent = () => new Date(Date.now() - 5 * 60 * 1000).toISOString()
+
+  it('a repeat access request within 30 minutes rings the bell but sends no email', async () => {
+    const { client } = fakeSupabase({
+      userId: U,
+      tables: { 'solar.access_requests': [{ id: 'old', project_id: P, requester_id: U, kind: 'access', status: 'withdrawn', created_at: recent() }] },
+      writes: { 'solar.access_requests:insert': { data: [{ id: 'new', requested_level: 'view' }] } },
+    })
+    h.createClient.mockResolvedValue(client)
+    h.loadSolarEntry.mockResolvedValue(ctx({ kind: 'request_access', maxLevel: 'view' }))
+    await expect(requestSolarAccessAction({ projectId: P, level: 'view' })).resolves.toEqual({ ok: true })
+    expect(h.notify).toHaveBeenCalledWith(['admin-1'], ['ann@x.test'], expect.objectContaining({ email: false }))
+  })
+
+  it('an old request (outside the window) does not suppress the email', async () => {
+    const { client } = fakeSupabase({
+      userId: U,
+      tables: { 'solar.access_requests': [{ id: 'old', project_id: P, requester_id: U, kind: 'access', status: 'withdrawn', created_at: '2020-01-01T00:00:00.000Z' }] },
+      writes: { 'solar.access_requests:insert': { data: [{ id: 'new', requested_level: 'view' }] } },
+    })
+    h.createClient.mockResolvedValue(client)
+    h.loadSolarEntry.mockResolvedValue(ctx({ kind: 'request_access', maxLevel: 'view' }))
+    await requestSolarAccessAction({ projectId: P, level: 'view' })
+    expect(h.notify).toHaveBeenCalledWith(['admin-1'], ['ann@x.test'], expect.objectContaining({ email: true }))
+  })
+
+  it('a repeat "ask an admin" anywhere in the org within 30 minutes sends no email', async () => {
+    const { client } = fakeSupabase({
+      userId: U,
+      tables: { 'solar.access_requests': [{ id: 'old', project_id: 'p-other', organisation_id: ORG, requester_id: U, kind: 'subscribe', status: 'withdrawn', created_at: recent() }] },
+      writes: { 'solar.access_requests:insert': { data: [{ id: 'new' }] } },
+    })
+    h.createClient.mockResolvedValue(client)
+    h.loadSolarEntry.mockResolvedValue(ctx({ kind: 'ask_admin', requestedAt: null }))
+    await expect(askAdminToSubscribeAction(P)).resolves.toEqual({ ok: true })
+    // Spec review M2: the admins handle subscribe requests on the Access panel.
+    expect(h.notify).toHaveBeenCalledWith(['admin-1'], ['ann@x.test'], expect.objectContaining({ email: false, route: `/projects/${P}/solar/access` }))
+  })
+})
