@@ -47,6 +47,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (sha !== m[3]) return NextResponse.json({ error: 'sha256_mismatch', expected: m[3], actual: sha }, { status: 400 })
 
   const existing = await repo.fileBySha(orgId, sha)
+  if (existing && existing.project_id !== projectId) {
+    // meter_files is unique per (org, sha256), so these bytes cannot get a row of their own here, and
+    // parse/commit only act on this project's files: returning the other project's id would dead-end.
+    // Say where the data already lives (the meters it feeds, as far as the caller's RLS lets them
+    // read) so the dialog can offer "Same data as <meter> at <site>". Linking that meter into this
+    // study is Phase 3b's Copy-from-library, not this route.
+    const meters = await repo.metersForFile(existing.id)
+    return NextResponse.json({ error: 'duplicate_in_other_project', fileId: existing.id, meters }, { status: 409 })
+  }
   if (existing) return NextResponse.json({ fileId: existing.id, duplicate: true, status: existing.status }, { status: 200 })
   const row = await repo.insertFile({
     project_id: projectId, organisation_id: orgId, sha256: sha, size_bytes: bytes.byteLength,

@@ -76,4 +76,18 @@ describe('POST /api/projects/[id]/solar/meter-files', () => {
     expect(r2.status).toBe(200)
     expect(await r2.json()).toEqual({ fileId, duplicate: true, status: 'uploaded' })
   })
+  it('409 duplicate_in_other_project when the same bytes came in through ANOTHER project of the org', async () => {
+    const f = fake.current as ReturnType<typeof createFakeRepo>
+    const OTHER = '3b241101-e2bb-4255-8caf-4136c566a962'
+    f.state.files.push({ id: 'f-other', organisation_id: ORG, project_id: OTHER, sha256: sha, size_bytes: bytes.byteLength, storage_path: `${ORG}/${OTHER}/${sha}.csv`, original_name: 'a.csv', status: 'accepted' })
+    f.state.meters.push({ id: 'm-other', organisation_id: ORG, label: 'TENANT-7', site_label: 'SITE Q', serials: [], kind: 'tenant' })
+    f.state.hashes.push({ organisation_id: ORG, body_hash: 'h', meter_id: 'm-other', file_id: 'f-other' })
+    const r = await call({ storagePath: path, originalName: 'a.csv' })
+    expect(r.status).toBe(409)
+    expect(await r.json()).toEqual({
+      error: 'duplicate_in_other_project', fileId: 'f-other',
+      meters: [{ meterId: 'm-other', label: 'TENANT-7', siteLabel: 'SITE Q' }],
+    })
+    expect(f.state.files).toHaveLength(1)
+  })
 })

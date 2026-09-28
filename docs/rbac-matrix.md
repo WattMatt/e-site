@@ -259,7 +259,7 @@ Everything is written with the caller's client, so the `solar` RLS policies (002
 
 | Endpoint | Needs | Writes |
 |---|---|---|
-| `POST /api/projects/[id]/solar/meter-files` | Solar Edit | `solar.meter_files` (path must be `<org>/<project>/<sha256>.<ext>`; the sha is recomputed from the stored bytes) |
+| `POST /api/projects/[id]/solar/meter-files` | Solar Edit | `solar.meter_files` (path must be `<org>/<project>/<sha256>.<ext>`; the sha is recomputed from the stored bytes; the same bytes already registered through ANOTHER project of the org are `409 duplicate_in_other_project` with that file id and the meters it feeds, as far as the caller's RLS lets them read) |
 | `POST /api/projects/[id]/solar/meter-files/parse` | Solar Edit | `solar.meter_import_reports`, `solar.meter_files` (detected facts, status) |
 | `POST /api/projects/[id]/solar/meter-files/commit` | Solar Edit | `solar.meters`, `meter_channels`, readings via `solar.write_readings`, `meter_series_hashes`, `study_meters`, `meter_register`, `audit_events` |
 
