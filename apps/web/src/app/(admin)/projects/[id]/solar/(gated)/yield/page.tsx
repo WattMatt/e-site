@@ -7,6 +7,7 @@ import { StaleBanner } from '../../_components/StaleBanner'
 import { CaseList } from './CaseList'
 import { CaseEditor } from './CaseEditor'
 import { RunResults } from './RunResults'
+import { CompareView } from './CompareView'
 
 export const dynamic = 'force-dynamic'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,6 +29,7 @@ export default async function SolarYieldPage({ params, searchParams }: { params:
     <div style={{ display: 'grid', gap: 16 }}>
       {selected?.status === 'stale' && <StaleBanner projectId={id} caseId={selected.id} caseName={selected.name} canRun={level !== 'view'} />}
       <CaseList projectId={id} level={level} cases={data.cases} studyUpdatedAt={data.studyUpdatedAt} openCaseId={data.editor?.caseId ?? null} />
+      {data.compare && <CompareView columns={data.compare} showMoney={level === 'edit_financials'} />}
       {data.editor && (
         <>
           {/* Keyed on the case and its saved version: a refresh after Save (or opening another case) remounts the draft. */}
