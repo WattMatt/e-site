@@ -201,6 +201,10 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
     // demote one this commit leaves out altogether.
     const newPrimary = selected.find((s) => s.isPrimary)?.channel.spec.sourceColumn ?? null
     for (const c of storedChannels) if (c.is_primary && c.source_column !== newPrimary) await repo.demoteChannel(c.id)
+    // A stored channel this commit EXCLUDES is emptied too (its row stays, so nothing that references it
+    // -- e.g. meters.existing_pv_channel_id -- is touched): its old readings must not feed anything.
+    const keep = new Set(selected.map((s) => s.channel.spec.sourceColumn))
+    for (const c of storedChannels) if (!keep.has(c.source_column)) await repo.clearChannelReadings(c.id)
     // A re-commit REPLACES a stored channel's readings (write_readings only upserts, so a changed
     // timestamp set would leave stale rows and fail the read-back forever). The channel row is kept.
     const stored = new Set(storedChannels.map((c) => c.id))

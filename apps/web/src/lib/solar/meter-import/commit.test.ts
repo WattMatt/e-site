@@ -210,6 +210,16 @@ describe('commitMeterFile: the primary channel', () => {
     await commitMeterFile(repo, ctx, body({ channels: [{ sourceColumn: 'p14', include: false }, { sourceColumn: 'q14', include: true, isPrimary: true }] }))
     expect(state.channels.filter((c) => c.is_primary).map((c) => c.source_column)).toEqual(['q14'])
   })
+  it('a stored channel the re-commit excludes keeps its row but loses its readings (the re-commit REPLACES)', async () => {
+    const { repo, state, ctx } = setup(A_LAG_TEXT)
+    await commitMeterFile(repo, ctx, body({}))
+    const q = state.channels.find((c) => c.source_column === 'q14')
+    expect(state.readings.get(q!.id)?.size).toBe(48)
+    await commitMeterFile(repo, ctx, body({ channels: [{ sourceColumn: 'q14', include: false }] }))
+    expect(state.channels.some((c) => c.id === q!.id)).toBe(true)
+    expect(state.readings.get(q!.id)?.size ?? 0).toBe(0)
+    expect(state.readings.get(state.channels.find((c) => c.source_column === 'p14')!.id)?.size).toBe(48)
+  })
 })
 
 describe('commitMeterFile: register and skip', () => {
