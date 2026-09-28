@@ -28,7 +28,7 @@ export default async function CalendarsPage({ searchParams }: { searchParams: Pr
   if (!selected) return <Card><CardBody><p style={{ fontSize: 13 }}>Add a licensee first.</p></CardBody></Card>
 
   const calQuery = (licenseeId: string) => t.from('tou_calendar')
-    .select('id, valid_from, valid_to, high_season_months, source, tou_window(season, day_type, start_minute, end_minute, period), holiday_rule(treated_as)')
+    .select('id, updated_at, valid_from, valid_to, high_season_months, source, tou_window(season, day_type, start_minute, end_minute, period), holiday_rule(treated_as)')
     .eq('licensee_id', licenseeId).order('valid_from', { ascending: false })
   const [{ data: cals }, eskomCals, { data: hols }] = await Promise.all([
     calQuery(selected.id),
@@ -53,7 +53,7 @@ export default async function CalendarsPage({ searchParams }: { searchParams: Pr
       {calendars.map((c) => {
         const holidayRule = (c.holiday_rule as { treated_as: 'saturday' | 'sunday' } | null)
         const editable: EditableCalendar = {
-          id: String(c.id), validFrom: String(c.valid_from), validTo: (c.valid_to as string | null) ?? '',
+          id: String(c.id), updatedAt: String(c.updated_at ?? ''), validFrom: String(c.valid_from), validTo: (c.valid_to as string | null) ?? '',
           highSeasonMonths: (c.high_season_months as number[]) ?? [], source: c.source as EditableCalendar['source'],
           holidayTreatedAs: holidayRule?.treated_as ?? '', windows: toWindows((c.tou_window ?? []) as Row[]),
         }

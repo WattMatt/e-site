@@ -12,7 +12,7 @@ vi.mock('@/lib/solar/tariff/effective-tariff', () => ({ loadEffectiveTariff: h.e
 import {
   selectSolarTariffAction, saveSolarExportRuleAction, createSolarTariffOverrideAction, revertSolarTariffOverrideAction,
   editSolarOverrideChargeAction, recordSolarBillCheckAction, reportTariffErrorAction, saveSolarEscalationAction,
-  deleteSolarBillCheckAction, getSolarTariffSourceUrlAction,
+  deleteSolarBillCheckAction, getSolarTariffSourceUrlAction, setStudyLicenseeAction,
 } from './solar-tariff.actions'
 import { fakeSupabase, callsTo, type FakeOptions } from '@/test/fake-supabase'
 import { EMPTY_BILL_CHECK_FORM, makeCharge, makeTariff } from '@esite/shared'
@@ -56,21 +56,38 @@ describe('solar tariff actions', () => {
       .toEqual({ error: 'Revert the project override before choosing another tariff.' })
   })
 
-  it('export rule manual: note mandatory; rates replaced; the rule saved last and conditioned', async () => {
+  it('export rule manual: note mandatory; rule + rates saved in ONE stale-guarded SQL call (no table writes)', async () => {
     const tables = { 'solar.studies': [{ id: 's1', project_id: P, tariff_id: T, updated_at: 'T1' }], 'tariffs.tariff': [{ id: T, export_tariff_id: null }] }
     setup({ tables })
     expect(await saveSolarExportRuleAction({ projectId: P, expectedUpdatedAt: 'T1',
       form: { method: 'manual', sourceNote: '', rates: [{ season: 'all', tou: 'all', unit: 'c_per_kWh', amount: '95' }] } }))
       .toEqual({ fieldErrors: { sourceNote: 'Say where this rate comes from (document and page)' } })
-    const f = setup({ tables, writes: { 'solar.studies:update': { data: [{ updated_at: 'T2' }] } } })
+    const rpc = vi.fn(async () => ({ data: 'T2', error: null }))
+    const f = setup({ tables }, rpc)
     expect(await saveSolarExportRuleAction({ projectId: P, expectedUpdatedAt: 'T1',
       form: { method: 'manual', sourceNote: 'Tshwane SSEG 2026/27 p4', rates: [{ season: 'all', tou: 'all', unit: 'c_per_kWh', amount: '95' }] } }))
       .toEqual({ ok: true, updatedAt: 'T2' })
-    const writes = f.calls.filter((c) => c.op !== 'select').map((c) => `${c.table}:${c.op}`)
-    expect(writes).toEqual(['solar.study_export_rates:delete', 'solar.study_export_rates:insert', 'solar.studies:update'])
-    expect(callsTo(f.calls, 'solar.study_export_rates', 'insert')[0].payload).toEqual([
-      { study_id: 's1', season: 'all', tou: 'all', unit: 'c_per_kWh', amount_excl_vat: 95, source_note: 'Tshwane SSEG 2026/27 p4' },
-    ])
+    expect(f.calls.filter((c) => c.op !== 'select')).toHaveLength(0)
+    expect(rpc).toHaveBeenCalledWith('save_export_rule', {
+      p_project_id: P, p_expected_updated_at: 'T1',
+      p_rule: expect.objectContaining({ method: 'manual', sourceNote: 'Tshwane SSEG 2026/27 p4' }),
+      p_rates: [{ season: 'all', tou: 'all', unit: 'c_per_kWh', amount_excl_vat: 95 }],
+    })
+  })
+
+  it('export rule: a study that moved between the read and the save (40001 from SQL) is stale, and not audited', async () => {
+    const tables = { 'solar.studies': [{ id: 's1', project_id: P, tariff_id: T, updated_at: 'T1' }], 'tariffs.tariff': [{ id: T, export_tariff_id: null }] }
+    setup({ tables }, vi.fn(async () => ({ data: null, error: { code: '40001', message: 'solar.save_export_rule: stale' } })))
+    expect(await saveSolarExportRuleAction({ projectId: P, expectedUpdatedAt: 'T1', form: { method: 'none', sourceNote: '', rates: [] } })).toEqual({ error: STALE })
+    expect(h.audit).not.toHaveBeenCalled()
+  })
+
+  it('licensee link: the audit row carries the licensee actually stored (a pinned tariff overrides the request)', async () => {
+    const L = '33333333-3333-3333-3333-333333333333'
+    const f = setup({ writes: { 'solar.studies:update': { data: [{ updated_at: 'T2', licensee_id: 'l-from-tariff' }] } } })
+    expect(await setStudyLicenseeAction({ projectId: P, licenseeId: L, expectedUpdatedAt: 'T1' })).toEqual({ ok: true, updatedAt: 'T2' })
+    expect(callsTo(f.calls, 'solar.studies', 'update')[0].payload).toEqual({ licensee_id: L })
+    expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'tariff_licensee_linked', objectRef: { licenseeId: 'l-from-tariff' } })
   })
 
   it('export rule: a stale study is refused before anything is written', async () => {
@@ -119,10 +136,16 @@ describe('solar tariff actions', () => {
   })
 
   it('bill check delete: scoped to the project; audited without amounts', async () => {
-    const f = setup()
+    const f = setup({ writes: { 'solar.bill_checks:delete': { data: [{ id: 'b1' }] } } })
     expect(await deleteSolarBillCheckAction({ projectId: P, id: 'b1' })).toEqual({ ok: true })
     expect(callsTo(f.calls, 'solar.bill_checks', 'delete')[0].filters).toEqual([['eq', 'id', 'b1'], ['eq', 'project_id', P]])
     expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'bill_check_deleted', objectRef: { billCheckId: 'b1' } })
+  })
+
+  it('bill check delete: nothing deleted (gone, or hidden by RLS) writes no audit row', async () => {
+    setup({ writes: { 'solar.bill_checks:delete': { data: [] } } })
+    expect(await deleteSolarBillCheckAction({ projectId: P, id: 'b1' })).toEqual({ error: 'That bill check no longer exists. Reload the page.' })
+    expect(h.audit).not.toHaveBeenCalled()
   })
 
   it('report a tariff error: note required; inserted through the caller session', async () => {

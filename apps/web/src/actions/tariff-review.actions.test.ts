@@ -83,12 +83,26 @@ describe('tariff review actions', () => {
     expect(callsTo(calls, 'tariffs.tariff_year', 'update')[0]).toMatchObject({ payload: { state: 'published' }, filters: [['eq', 'id', 'y1'], ['eq', 'state', 'in_review']] })
   })
 
-  it('SSEG rule: inserts when none exists, updates otherwise', async () => {
-    const f = admin({ tables: { 'tariffs.tariff_year': [{ id: 'y1', licensee_id: 'l1', state: 'in_review' }] } })
-    expect(await saveSsegRuleAction({ yearId: 'y1', form: EMPTY_SSEG_FORM })).toEqual({ ok: true })
+  it('SSEG rule: inserts when none was loaded; updates conditioned on the updated_at the form loaded', async () => {
+    const f = admin({ tables: { 'tariffs.tariff_year': [{ id: 'y1', licensee_id: 'l1', state: 'in_review' }] },
+      writes: { 'tariffs.sseg_rule:insert': { data: [{ id: 's1', updated_at: 'U1' }] } } })
+    expect(await saveSsegRuleAction({ yearId: 'y1', expectedUpdatedAt: null, form: EMPTY_SSEG_FORM })).toEqual({ ok: true, updatedAt: 'U1' })
     expect(callsTo(f.calls, 'tariffs.sseg_rule', 'insert')[0].payload).toMatchObject({ tariff_year_id: 'y1', licensee_id: 'l1', crediting: 'net_billing_tou' })
-    const g = admin({ tables: { 'tariffs.tariff_year': [{ id: 'y1', licensee_id: 'l1', state: 'in_review' }], 'tariffs.sseg_rule': [{ id: 's1', tariff_year_id: 'y1' }] } })
-    expect(await saveSsegRuleAction({ yearId: 'y1', form: EMPTY_SSEG_FORM })).toEqual({ ok: true })
-    expect(callsTo(g.calls, 'tariffs.sseg_rule', 'update')).toHaveLength(1)
+    const g = admin({ tables: { 'tariffs.tariff_year': [{ id: 'y1', licensee_id: 'l1', state: 'in_review' }] },
+      writes: { 'tariffs.sseg_rule:update': { data: [{ id: 's1', updated_at: 'U2' }] } } })
+    expect(await saveSsegRuleAction({ yearId: 'y1', expectedUpdatedAt: 'U1', form: EMPTY_SSEG_FORM })).toEqual({ ok: true, updatedAt: 'U2' })
+    expect(callsTo(g.calls, 'tariffs.sseg_rule', 'update')[0].filters).toEqual([['eq', 'tariff_year_id', 'y1'], ['eq', 'updated_at', 'U1']])
+  })
+
+  it('SSEG rule: a rule someone else saved (or created) since the form loaded is refused as stale', async () => {
+    admin({ tables: { 'tariffs.tariff_year': [{ id: 'y1', licensee_id: 'l1', state: 'in_review' }] },
+      writes: { 'tariffs.sseg_rule:update': { data: [] } } })
+    expect(await saveSsegRuleAction({ yearId: 'y1', expectedUpdatedAt: 'U1', form: EMPTY_SSEG_FORM }))
+      .toEqual({ error: 'Someone else changed this SSEG rule. Reload to see their version.' })
+    admin({ tables: { 'tariffs.tariff_year': [{ id: 'y1', licensee_id: 'l1', state: 'in_review' }] },
+      writes: { 'tariffs.sseg_rule:insert': { error: { code: '23505', message: 'duplicate key value violates unique constraint' } } } })
+    expect(await saveSsegRuleAction({ yearId: 'y1', expectedUpdatedAt: null, form: EMPTY_SSEG_FORM }))
+      .toEqual({ error: 'Someone else changed this SSEG rule. Reload to see their version.' })
+    expect(h.revalidate).not.toHaveBeenCalled()
   })
 })

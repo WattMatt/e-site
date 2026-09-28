@@ -5,6 +5,7 @@
  * Dry run (apply=false) writes nothing; apply lands years in_review, never
  * published (D-03). PDFs need poppler and run as tariffs.ingest_job instead.
  */
+import { createHash } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildIngestPlan, createSupabaseTariffStore, runIngest, summariseIngestReport, type ParserName } from '@esite/shared/tariffs/ingest'
@@ -70,6 +71,10 @@ export async function POST(req: Request) {
   const dl = await svc.storage.from('tariff-sources').download(doc.storage_path)
   if (dl.error || !dl.data) return NextResponse.json({ error: 'Could not read the stored file. Try again.' }, { status: 502 })
   const bytes = new Uint8Array(await (dl.data as Blob).arrayBuffer())
+  // The registered sha256 is the provenance every ingested charge cites: never parse other bytes under it.
+  if (createHash('sha256').update(bytes).digest('hex') !== doc.sha256.toLowerCase()) {
+    return NextResponse.json({ error: 'The stored file no longer matches the checksum it was registered with. Upload it again as a new document.' }, { status: 409 })
+  }
 
   try {
     const plan = await buildIngestPlan({

@@ -8,6 +8,8 @@ import { validateCalendarForm, type CalendarForm, type CalendarWindowForm } from
 
 export interface EditableCalendar {
   id: string
+  /** The row's updated_at as loaded: the save is refused if someone else saved since. */
+  updatedAt: string
   validFrom: string
   validTo: string
   highSeasonMonths: number[]
@@ -28,6 +30,7 @@ export function CalendarEditor({ licenseeId, calendar, eskomWindows }: {
     highSeasonMonths: calendar?.highSeasonMonths ?? [6, 7, 8], source: calendar?.source ?? 'published',
     holidayTreatedAs: calendar?.holidayTreatedAs ?? 'sunday', windows: calendar?.windows ?? [],
   })
+  const [updatedAt, setUpdatedAt] = useState<string | null>(calendar?.updatedAt ?? null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -83,11 +86,11 @@ export function CalendarEditor({ licenseeId, calendar, eskomWindows }: {
           const check = validateCalendarForm(f)
           if ('errors' in check) return setErrors(check.errors)
           setErrors({}); setBusy(true)
-          const r = await saveTouCalendarAction({ calendarId: calendar?.id ?? null, form: f })
+          const r = await saveTouCalendarAction({ calendarId: calendar?.id ?? null, expectedUpdatedAt: calendar ? updatedAt : null, form: f })
           setBusy(false)
           if ('fieldErrors' in r) setErrors(r.fieldErrors)
           else if ('error' in r) setMsg(r.error)
-          else { setMsg('Saved.'); router.refresh() }
+          else { setUpdatedAt(r.updatedAt); setMsg('Saved.'); router.refresh() }
         }}>Save calendar</Button>
         {msg && <span role="status">{msg}</span>}
       </div>

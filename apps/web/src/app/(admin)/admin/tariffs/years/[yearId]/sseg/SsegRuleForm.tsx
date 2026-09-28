@@ -6,11 +6,12 @@ import { Button } from '@/components/ui/Button'
 import { saveSsegRuleAction } from '@/actions/tariff-review.actions'
 import type { SsegForm } from '@/lib/tariffs/sseg-form'
 
-export function SsegRuleForm({ yearId, initial, editable, documents }: {
-  yearId: string; initial: SsegForm; editable: boolean; documents: Array<{ id: string; title: string }>
+export function SsegRuleForm({ yearId, initial, initialUpdatedAt, editable, documents }: {
+  yearId: string; initial: SsegForm; initialUpdatedAt: string | null; editable: boolean; documents: Array<{ id: string; title: string }>
 }) {
   const router = useRouter()
   const [f, setF] = useState(initial)
+  const [updatedAt, setUpdatedAt] = useState<string | null>(initialUpdatedAt)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const sel = (k: keyof SsegForm, opts: readonly string[]) => (
@@ -39,11 +40,11 @@ export function SsegRuleForm({ yearId, initial, editable, documents }: {
       {editable && <div>
         <Button isLoading={busy} onClick={async () => {
           setBusy(true); setMsg(null)
-          const r = await saveSsegRuleAction({ yearId, form: f })
+          const r = await saveSsegRuleAction({ yearId, expectedUpdatedAt: updatedAt, form: f })
           setBusy(false)
           if ('fieldErrors' in r) setMsg({ ok: false, text: Object.values(r.fieldErrors).join(' ') })
           else if ('error' in r) setMsg({ ok: false, text: r.error })
-          else { setMsg({ ok: true, text: 'Saved.' }); router.refresh() }
+          else { setUpdatedAt(r.updatedAt); setMsg({ ok: true, text: 'Saved.' }); router.refresh() }
         }}>Save SSEG rule</Button>
       </div>}
       {msg && <p role={msg.ok ? 'status' : 'alert'} style={{ color: msg.ok ? 'var(--c-green)' : 'var(--c-red)' }}>{msg.text}</p>}

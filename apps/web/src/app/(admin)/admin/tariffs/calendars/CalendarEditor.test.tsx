@@ -20,14 +20,14 @@ describe('CalendarEditor', () => {
     expect((screen.getByLabelText('Hours come from') as HTMLSelectElement).value).toBe('assumed_eskom')
     fireEvent.change(screen.getByLabelText('Valid from'), { target: { value: '2025-07-01' } })
     await user.click(screen.getByRole('button', { name: 'Save calendar' }))
-    expect(h.save).toHaveBeenCalledWith({ calendarId: null, form: expect.objectContaining({
+    expect(h.save).toHaveBeenCalledWith({ calendarId: null, expectedUpdatedAt: null, form: expect.objectContaining({
       licenseeId: LIC, source: 'assumed_eskom', validFrom: '2025-07-01',
       windows: [{ season: 'high', dayType: 'weekday', start: '06:00', end: '08:00', period: 'peak' }],
     }) })
   })
   it('shows an overlap before saving, and does not save', async () => {
     const user = userEvent.setup()
-    render(<CalendarEditor licenseeId={LIC} calendar={{ id: 'cal1', validFrom: '2025-04-01', validTo: '', highSeasonMonths: [6, 7, 8], source: 'published', holidayTreatedAs: 'sunday',
+    render(<CalendarEditor licenseeId={LIC} calendar={{ id: 'cal1', updatedAt: 'U1', validFrom: '2025-04-01', validTo: '', highSeasonMonths: [6, 7, 8], source: 'published', holidayTreatedAs: 'sunday',
       windows: [
         { season: 'high', dayType: 'weekday', start: '06:00', end: '09:00', period: 'peak' },
         { season: 'high', dayType: 'weekday', start: '08:00', end: '10:00', period: 'standard' },
@@ -35,5 +35,16 @@ describe('CalendarEditor', () => {
     await user.click(screen.getByRole('button', { name: 'Save calendar' }))
     expect(screen.getByText('High season weekday: 06:00-09:00 overlaps 08:00-10:00')).toBeDefined()
     expect(h.save).not.toHaveBeenCalled()
+  })
+  it('saves an existing calendar against the updated_at it loaded, then against the one the save returned', async () => {
+    const user = userEvent.setup()
+    h.save.mockResolvedValueOnce({ ok: true, id: 'cal1', updatedAt: 'U2' }).mockResolvedValueOnce({ error: 'Someone else changed this calendar. Reload to see their version.' })
+    render(<CalendarEditor licenseeId={LIC} calendar={{ id: 'cal1', updatedAt: 'U1', validFrom: '2025-04-01', validTo: '', highSeasonMonths: [6, 7, 8],
+      source: 'published', holidayTreatedAs: 'sunday', windows: [{ season: 'high', dayType: 'weekday', start: '06:00', end: '09:00', period: 'peak' }] }} eskomWindows={[]} />)
+    await user.click(screen.getByRole('button', { name: 'Save calendar' }))
+    expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ calendarId: 'cal1', expectedUpdatedAt: 'U1' }))
+    await user.click(screen.getByRole('button', { name: 'Save calendar' }))
+    expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ calendarId: 'cal1', expectedUpdatedAt: 'U2' }))
+    expect(await screen.findByText('Someone else changed this calendar. Reload to see their version.')).toBeDefined()
   })
 })

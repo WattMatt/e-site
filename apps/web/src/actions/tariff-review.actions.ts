@@ -123,8 +123,15 @@ export async function publishTariffYearAction(input: { yearId: string }): Promis
   return { ok: true }
 }
 
-export async function saveSsegRuleAction(input: { yearId: string; form: SsegForm }): Promise<
-  Ok | { fieldErrors: Partial<Record<SsegField, string>> }
+const SSEG_STALE = 'Someone else changed this SSEG rule. Reload to see their version.'
+
+/**
+ * Stale-guarded on tariffs.sseg_rule.updated_at (00213): an update is
+ * conditioned on the value the form loaded, and a create (nothing loaded)
+ * collides with UNIQUE (tariff_year_id) if someone created one meanwhile.
+ */
+export async function saveSsegRuleAction(input: { yearId: string; expectedUpdatedAt: string | null; form: SsegForm }): Promise<
+  { ok: true; updatedAt: string } | { error: string } | { fieldErrors: Partial<Record<SsegField, string>> }
 > {
   const gate = await requirePlatformTariffAdmin()
   if (!gate.ok) return { error: gate.error }
@@ -134,12 +141,12 @@ export async function saveSsegRuleAction(input: { yearId: string; form: SsegForm
   const { data: y } = await t.from('tariff_year').select('id, licensee_id, state').eq('id', input.yearId).maybeSingle()
   const year = y as { id: string; licensee_id: string; state: string } | null
   if (!year) return { error: 'That tariff year does not exist.' }
-  const { data: existing } = await t.from('sseg_rule').select('id').eq('tariff_year_id', year.id).limit(1)
-  const id = (existing as Array<{ id: string }> | null)?.[0]?.id
-  const res = id
-    ? await t.from('sseg_rule').update(v.row).eq('id', id).select('id')
-    : await t.from('sseg_rule').insert({ ...v.row, tariff_year_id: year.id, licensee_id: year.licensee_id }).select('id')
-  if (res.error) return { error: humanTariffError(res.error) }
+  const res = input.expectedUpdatedAt
+    ? await t.from('sseg_rule').update(v.row).eq('tariff_year_id', year.id).eq('updated_at', input.expectedUpdatedAt).select('id, updated_at')
+    : await t.from('sseg_rule').insert({ ...v.row, tariff_year_id: year.id, licensee_id: year.licensee_id }).select('id, updated_at')
+  if (res.error) return { error: res.error.code === '23505' ? SSEG_STALE : humanTariffError(res.error) }
+  const saved = (Array.isArray(res.data) ? res.data[0] : null) as { updated_at?: string } | null
+  if (!saved) return { error: SSEG_STALE }
   done(`/admin/tariffs/years/${year.id}`)
-  return { ok: true }
+  return { ok: true, updatedAt: String(saved.updated_at ?? '') }
 }

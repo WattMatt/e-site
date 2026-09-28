@@ -40,13 +40,14 @@ function refresh(projectId: string): void {
   revalidatePath(`/projects/${projectId}/solar`, 'layout')
 }
 
-async function updateStudy(supabase: AnyClient, projectId: string, expectedUpdatedAt: string, patch: Row):
-  Promise<{ ok: true; updatedAt: string } | { error: string }> {
+async function updateStudy(supabase: AnyClient, projectId: string, expectedUpdatedAt: string, patch: Row, readBack = 'updated_at'):
+  Promise<{ ok: true; updatedAt: string; row: Row } | { error: string }> {
   const { data, error } = await supabase.schema('solar').from('studies').update(patch)
-    .eq('project_id', projectId).eq('updated_at', expectedUpdatedAt).select('updated_at')
+    .eq('project_id', projectId).eq('updated_at', expectedUpdatedAt).select(readBack)
   if (error) return { error: humanSolarTariffError(error) }
   if (!Array.isArray(data) || data.length === 0) return { error: STALE_MESSAGE }
-  return { ok: true, updatedAt: String((data[0] as Row).updated_at ?? '') }
+  const row = data[0] as unknown as Row
+  return { ok: true, updatedAt: String(row.updated_at ?? ''), row }
 }
 
 // ── Licensee link (when the Site & Supply name matches nothing in the library)
@@ -55,11 +56,13 @@ export async function setStudyLicenseeAction(input: { projectId: string; license
   const g = await gate(input.projectId)
   if ('error' in g) return g
   if (!UUID.test(input.licenseeId)) return { error: 'Choose a supply authority from the library.' }
-  const r = await updateStudy(g.supabase, input.projectId, input.expectedUpdatedAt, { licensee_id: input.licenseeId })
+  const r = await updateStudy(g.supabase, input.projectId, input.expectedUpdatedAt, { licensee_id: input.licenseeId }, 'updated_at, licensee_id')
   if ('error' in r) return r
-  await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'tariff_licensee_linked', objectRef: { licenseeId: input.licenseeId } })
+  // A pinned tariff decides the licensee (studies_tariff_guard): log what was stored, not what was asked for.
+  const stored = (r.row.licensee_id ?? null) as string | null
+  await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'tariff_licensee_linked', objectRef: { licenseeId: stored } })
   refresh(input.projectId)
-  return r
+  return { ok: true, updatedAt: r.updatedAt }
 }
 
 // ── Tariff pin ──────────────────────────────────────────────────────────────
@@ -72,7 +75,7 @@ export async function selectSolarTariffAction(input: { projectId: string; tariff
   if ('error' in r) return r
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'tariff_selected', objectRef: { tariffId: input.tariffId } })
   refresh(input.projectId)
-  return r
+  return { ok: true, updatedAt: r.updatedAt }
 }
 
 // ── Export / SSEG rule ──────────────────────────────────────────────────────
@@ -86,6 +89,7 @@ export async function saveSolarExportRuleAction(input: { projectId: string; form
   if (!study) return { error: 'Save Site & Supply first.' }
   if (String(study.updated_at) !== input.expectedUpdatedAt) return { error: STALE_MESSAGE }
   // The linked method is decided from the pinned tariff, never from the client.
+  // (A tariff change after this read moves updated_at, so the save below is refused as stale.)
   let hasLinked = false
   if (study.tariff_id) {
     const { data: t } = await g.supabase.schema('tariffs').from('tariff').select('export_tariff_id').eq('id', String(study.tariff_id)).maybeSingle()
@@ -93,19 +97,15 @@ export async function saveSolarExportRuleAction(input: { projectId: string; form
   }
   const v = validateExportRuleForm(input.form, hasLinked)
   if ('errors' in v) return { fieldErrors: v.errors }
-  const del = await solar.from('study_export_rates').delete().eq('study_id', String(study.id))
-  if (del.error) return { error: humanSolarTariffError(del.error) }
-  if (v.rates.length > 0) {
-    const ins = await solar.from('study_export_rates').insert(v.rates.map((r) => ({
-      study_id: String(study.id), season: r.season, tou: r.tou, unit: r.unit, amount_excl_vat: r.amountExclVat, source_note: v.rule.sourceNote,
-    })))
-    if (ins.error) return { error: humanSolarTariffError(ins.error) }
-  }
-  const r = await updateStudy(g.supabase, input.projectId, input.expectedUpdatedAt, { export_rule: v.rule })
-  if ('error' in r) return r
+  // One transaction: lock the study, re-check updated_at, replace the rates, set the rule (00213).
+  const { data, error } = await solar.rpc('save_export_rule', {
+    p_project_id: input.projectId, p_expected_updated_at: input.expectedUpdatedAt, p_rule: v.rule,
+    p_rates: v.rates.map((r) => ({ season: r.season, tou: r.tou, unit: r.unit, amount_excl_vat: r.amountExclVat })),
+  })
+  if (error) return { error: humanSolarTariffError(error) }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'export_rule_saved', objectRef: { method: v.rule.method } })
   refresh(input.projectId)
-  return r
+  return { ok: true, updatedAt: String(data ?? '') }
 }
 
 // ── Escalation path (D-07) ──────────────────────────────────────────────────
@@ -125,7 +125,7 @@ export async function saveSolarEscalationAction(input: { projectId: string; form
   if ('error' in r) return r
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'escalation_saved', objectRef: { years: Object.keys(v.overrides).length } })
   refresh(input.projectId)
-  return r
+  return { ok: true, updatedAt: r.updatedAt }
 }
 
 // ── Project override (D-10) ─────────────────────────────────────────────────
@@ -231,8 +231,9 @@ export async function recordSolarBillCheckAction(input: { projectId: string; for
 export async function deleteSolarBillCheckAction(input: { projectId: string; id: string }): Promise<{ ok: true } | { error: string }> {
   const g = await gate(input.projectId)
   if ('error' in g) return g
-  const { error } = await g.supabase.schema('solar').from('bill_checks').delete().eq('id', input.id).eq('project_id', input.projectId)
+  const { data, error } = await g.supabase.schema('solar').from('bill_checks').delete().eq('id', input.id).eq('project_id', input.projectId).select('id')
   if (error) return { error: humanSolarTariffError(error) }
+  if (!Array.isArray(data) || data.length === 0) return { error: 'That bill check no longer exists. Reload the page.' }
   await recordSolarAudit({ projectId: input.projectId, actorId: g.userId, verb: 'bill_check_deleted', objectRef: { billCheckId: input.id } })
   refresh(input.projectId)
   return { ok: true }

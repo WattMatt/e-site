@@ -21,15 +21,20 @@ const SHA_OF_ABC = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f200
 
 function storageFake(bytes = new TextEncoder().encode('abc')) {
   const removed: string[][] = []
-  const storage = {
-    from: () => ({
-      createSignedUploadUrl: vi.fn(async (path: string) => ({ data: { path, token: 'tok', signedUrl: 'https://x' }, error: null })),
-      download: vi.fn(async () => ({ data: new Blob([bytes]), error: null })),
-      remove: vi.fn(async (paths: string[]) => { removed.push(paths); return { data: [], error: null } }),
-      createSignedUrl: vi.fn(async () => ({ data: { signedUrl: 'https://signed' }, error: null })),
-    }),
+  const bucket = {
+    createSignedUploadUrl: vi.fn(async (path: string, _o?: unknown) => ({ data: { path, token: 'tok', signedUrl: 'https://x' }, error: null })),
+    download: vi.fn(async () => ({ data: new Blob([bytes]), error: null })),
+    remove: vi.fn(async (paths: string[]) => { removed.push(paths); return { data: [], error: null } }),
+    createSignedUrl: vi.fn(async () => ({ data: { signedUrl: 'https://signed' }, error: null })),
   }
-  return { storage, removed }
+  const storage = { from: () => bucket }
+  return { storage, removed, bucket }
+}
+
+/** The service client: storage plus table reads (who else references a storage path). */
+function service(s: ReturnType<typeof storageFake>, tables: Record<string, Array<Record<string, unknown>>> = {}) {
+  const f = fakeSupabase({ userId: null, tables })
+  return { storage: s.storage, schema: f.client.schema }
 }
 
 function admin(extra: Parameters<typeof fakeSupabase>[0] = {}) {
@@ -73,22 +78,43 @@ describe('tariff library actions', () => {
     expect(await createSourceUploadAction(meta)).toEqual({ error: 'This file is already in the library as "Old".' })
     admin()
     const s = storageFake()
-    h.svc.mockReturnValue({ storage: s.storage })
+    h.svc.mockReturnValue(service(s))
     expect(await createSourceUploadAction(meta)).toEqual({ ok: true, path: `2026-27/${SHA_OF_ABC}.pdf`, token: 'tok' })
+    // Never upsert: an object already stored cannot be silently replaced under a registered checksum.
+    expect(s.bucket.createSignedUploadUrl).toHaveBeenCalledWith(`2026-27/${SHA_OF_ABC}.pdf`, { upsert: false })
+    // A leftover unregistered object at this path (an upload whose register never ran) is cleared first.
+    expect(s.removed).toEqual([[`2026-27/${SHA_OF_ABC}.pdf`]])
+  })
+
+  it('upload URL: never clears an object a registered document points at', async () => {
+    admin()
+    const s = storageFake()
+    h.svc.mockReturnValue(service(s, { 'tariffs.source_document': [{ id: 'd9', storage_path: `2026-27/${SHA_OF_ABC}.pdf` }] }))
+    expect(await createSourceUploadAction(meta)).toEqual({ error: 'This file is already in the library.' })
+    expect(s.removed).toEqual([])
+    expect(s.bucket.createSignedUploadUrl).not.toHaveBeenCalled()
   })
 
   it('register: recomputes the checksum server-side; a mismatch deletes the object and inserts nothing', async () => {
     const fake = admin()
     const bad = storageFake(new TextEncoder().encode('not abc'))
-    h.svc.mockReturnValue({ storage: bad.storage })
+    h.svc.mockReturnValue(service(bad))
     expect(await registerSourceDocumentAction(meta)).toEqual({ error: 'The uploaded file does not match its checksum. Upload it again.' })
     expect(bad.removed).toEqual([[`2026-27/${SHA_OF_ABC}.pdf`]])
     expect(callsTo(fake.calls, 'tariffs.source_document', 'insert')).toHaveLength(0)
   })
 
+  it('register: a mismatch never deletes an object that an already-registered document points at', async () => {
+    admin()
+    const bad = storageFake(new TextEncoder().encode('not abc'))
+    h.svc.mockReturnValue(service(bad, { 'tariffs.source_document': [{ id: 'd9', storage_path: `2026-27/${SHA_OF_ABC}.pdf` }] }))
+    expect(await registerSourceDocumentAction(meta)).toEqual({ error: 'The uploaded file does not match its checksum. Upload it again.' })
+    expect(bad.removed).toEqual([])
+  })
+
   it('register: inserts the document through the admin session', async () => {
     const fake = admin({ writes: { 'tariffs.source_document:insert': { data: [{ id: 'd1' }] } } })
-    h.svc.mockReturnValue({ storage: storageFake().storage })
+    h.svc.mockReturnValue(service(storageFake()))
     expect(await registerSourceDocumentAction(meta)).toEqual({ ok: true, id: 'd1' })
     expect(callsTo(fake.calls, 'tariffs.source_document', 'insert')[0].payload).toMatchObject({
       kind: 'nersa_decision', title: 'Probe RfD', financial_year: '2026/27', status: 'nersa_approved',

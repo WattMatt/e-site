@@ -92,6 +92,13 @@ function firstError(e: Partial<Record<SourceMetaField, string>>): string | null 
   return v ?? null
 }
 
+/** Read with the service client: the answer must not depend on what the caller can see. */
+async function pathIsRegistered(svc: AnyClient, path: string): Promise<boolean> {
+  const { data, error } = await svc.schema('tariffs').from('source_document').select('id').eq('storage_path', path).limit(1)
+  if (error) return true   // unknown: treat as registered, so nothing is deleted
+  return Array.isArray(data) && data.length > 0
+}
+
 export async function createSourceUploadAction(m: SourceMeta): Promise<{ ok: true; path: string; token: string } | { error: string }> {
   const gate = await requirePlatformTariffAdmin()
   if (!gate.ok) return { error: gate.error }
@@ -103,7 +110,11 @@ export async function createSourceUploadAction(m: SourceMeta): Promise<{ ok: tru
   if (dup) return { error: `This file is already in the library as "${dup.title}".` }
   const path = sourceStoragePath({ financialYear: m.financialYear.trim() || null, sha256: m.sha256, fileName: m.fileName })
   const svc = createServiceClient() as unknown as AnyClient
-  const { data, error } = await svc.storage.from(BUCKET).createSignedUploadUrl(path, { upsert: true })
+  if (await pathIsRegistered(svc, path)) return { error: 'This file is already in the library.' }
+  // Whatever sits at this path belongs to no document (an upload whose register never ran): clear it,
+  // then sign WITHOUT upsert so a stored object can never be replaced under its registered checksum.
+  await svc.storage.from(BUCKET).remove([path])
+  const { data, error } = await svc.storage.from(BUCKET).createSignedUploadUrl(path, { upsert: false })
   if (error || !data) return { error: 'Could not prepare the upload. Try again.' }
   return { ok: true, path, token: data.token }
 }
@@ -120,7 +131,8 @@ export async function registerSourceDocumentAction(m: SourceMeta): Promise<{ ok:
   const bytes = new Uint8Array(await (blob as Blob).arrayBuffer())
   const sha = createHash('sha256').update(bytes).digest('hex')
   if (sha !== m.sha256) {
-    await svc.storage.from(BUCKET).remove([path])
+    // Only an object no document points at may be removed.
+    if (!(await pathIsRegistered(svc, path))) await svc.storage.from(BUCKET).remove([path])
     return { error: 'The uploaded file does not match its checksum. Upload it again.' }
   }
   const { data, error } = await gate.supabase.schema('tariffs').from('source_document').insert({

@@ -75,6 +75,14 @@ export function summariseIngestReport(r: IngestReport): IngestReportSummary {
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
+export const SOURCE_CHECKSUM_MISMATCH = 'The stored file no longer matches the checksum it was registered with. Upload it again as a new document.'
+
+/** Hex sha256 via Web Crypto (Node 18+ and browsers; no node:crypto import in a shared module). */
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>)
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 export async function runIngestJob(job: IngestJob, deps: IngestJobDeps): Promise<IngestJobOutcome> {
   const src = await deps.loadSource(job.sourceDocumentId)
   if (!src) return { status: 'failed', report: null, runId: null, error: 'The source document no longer exists.' }
@@ -83,6 +91,10 @@ export async function runIngestJob(job: IngestJob, deps: IngestJobDeps): Promise
     bytes = await deps.download(src.storagePath)
   } catch (e) {
     return { status: 'failed', report: null, runId: null, error: `Could not download the source: ${messageOf(e)}` }
+  }
+  // The registered sha256 is the provenance every ingested charge cites: never parse other bytes under it.
+  if ((await sha256Hex(bytes)) !== src.sha256.toLowerCase()) {
+    return { status: 'failed', report: null, runId: null, error: SOURCE_CHECKSUM_MISMATCH }
   }
   let pdfText: string | undefined
   if (job.parser === 'rfd_pdf') {

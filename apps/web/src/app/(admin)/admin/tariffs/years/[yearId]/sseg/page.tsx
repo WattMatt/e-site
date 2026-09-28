@@ -22,6 +22,7 @@ export default async function SsegPage({ params }: { params: Promise<{ yearId: s
       <CardHeader><span className="data-panel-title">SSEG rule — {year.licensee?.name ?? ''} {year.financial_year}</span></CardHeader>
       <CardBody>
         <SsegRuleForm yearId={year.id} initial={ssegFormFromRow(rule as Record<string, unknown> | null)}
+          initialUpdatedAt={((rule as { updated_at?: string } | null)?.updated_at) ?? null}
           editable={year.state === 'ingesting' || year.state === 'in_review'}
           documents={((docs ?? []) as Array<{ id: string; title: string }>)} />
       </CardBody>

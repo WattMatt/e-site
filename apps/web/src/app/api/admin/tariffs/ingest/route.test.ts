@@ -10,11 +10,13 @@ vi.mock('@esite/shared/tariffs/ingest', () => ({
   summariseIngestReport: (r: { status: string }) => ({ status: r.status, runId: null, years: [] }),
 }))
 
+import { createHash } from 'node:crypto'
 import { POST } from './route'
 import { fakeSupabase } from '@/test/fake-supabase'
 import { NextResponse } from 'next/server'
 
-const DOC = { id: 'd1', storage_path: '2026-27/abc.xlsx', sha256: 'a'.repeat(64), url: null, retrieved_at: null }
+const BYTES = new Uint8Array([1, 2])
+const DOC = { id: 'd1', storage_path: '2026-27/abc.xlsx', sha256: createHash('sha256').update(BYTES).digest('hex'), url: null, retrieved_at: null }
 const req = (body: unknown) => new Request('http://x/api/admin/tariffs/ingest', { method: 'POST', body: JSON.stringify(body) })
 const body = { sourceDocumentId: 'd1', parser: 'province_xlsx', financialYear: '2026/27', licenseeName: '', createLicensees: false, apply: false }
 
@@ -27,11 +29,20 @@ beforeEach(() => {
 function admin(tables: Record<string, Array<Record<string, unknown>>> = { 'tariffs.source_document': [DOC] }) {
   const fake = fakeSupabase({ userId: 'a1', tables })
   h.gate.mockResolvedValue({ ok: true, supabase: fake.client, userId: 'a1' })
-  h.svc.mockReturnValue({ storage: { from: () => ({ download: async () => ({ data: new Blob([new Uint8Array([1, 2])]), error: null }) }) } })
+  h.svc.mockReturnValue({ storage: { from: () => ({ download: async () => ({ data: new Blob([BYTES]), error: null }) }) } })
   return fake
 }
 
 describe('POST /api/admin/tariffs/ingest', () => {
+  it('refuses a stored file whose bytes no longer hash to the registered sha256, before parsing', async () => {
+    admin()
+    h.svc.mockReturnValue({ storage: { from: () => ({ download: async () => ({ data: new Blob([new Uint8Array([9, 9, 9])]), error: null }) }) } })
+    const res = await POST(req(body))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'The stored file no longer matches the checksum it was registered with. Upload it again as a new document.' })
+    expect(h.build).not.toHaveBeenCalled()
+    expect(h.run).not.toHaveBeenCalled()
+  })
   it('returns the gate response for a non-admin (404) and does nothing', async () => {
     h.gate.mockResolvedValue({ ok: false, response: NextResponse.json({ error: 'Not found' }, { status: 404 }) })
     const res = await POST(req(body))

@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { runIngestJob, summariseIngestReport, type IngestJob } from './job-runner'
 import { createMemoryTariffStore } from './memory-store'
 
 const FIX = join(__dirname, '../__fixtures__/city-power-rfd-2026-27.excerpt.txt')
-const SHA = 'b'.repeat(64)
+const PDF_BYTES = new Uint8Array([37, 80, 68, 70])
+const SHA = createHash('sha256').update(PDF_BYTES).digest('hex')
 const job = (over: Partial<IngestJob> = {}): IngestJob => ({
   id: 'job-1', sourceDocumentId: 'doc-1', parser: 'rfd_pdf', financialYear: '2026/27',
   licenseeName: 'City Power', createLicensees: false, requestedBy: 'u-1', ...over,
@@ -16,7 +18,7 @@ describe('runIngestJob', () => {
     const store = createMemoryTariffStore({ licensees: [{ name: 'City Power', kind: 'metro', aliases: ['CITY POWER'] }] })
     const out = await runIngestJob(job(), {
       loadSource: async () => ({ storagePath: `2026-27/${SHA}.pdf`, fileName: 'city-power.pdf', sha256: SHA, url: null, retrievedAt: null }),
-      download: async () => new Uint8Array([37, 80, 68, 70]),
+      download: async () => PDF_BYTES,
       pdfToText: async () => readFileSync(FIX, 'utf8'),
       store,
     })
@@ -26,6 +28,20 @@ describe('runIngestJob', () => {
     expect(out.report?.years[0].action).toBe('create')
     expect(out.report?.years[0].tariffs).toBeGreaterThan(0)
     expect([...store.state.years.values()][0]).toMatchObject({ financialYear: '2026/27', state: 'in_review' })
+  })
+  it('stored bytes that no longer hash to the registered sha256 fail the job before anything is parsed or written', async () => {
+    const store = createMemoryTariffStore({ licensees: [{ name: 'City Power', kind: 'metro', aliases: ['CITY POWER'] }] })
+    let parsed = false
+    const out = await runIngestJob(job(), {
+      loadSource: async () => ({ storagePath: `2026-27/${SHA}.pdf`, fileName: 'city-power.pdf', sha256: SHA, url: null, retrievedAt: null }),
+      download: async () => new Uint8Array([37, 80, 68, 70, 0]),
+      pdfToText: async () => { parsed = true; return readFileSync(FIX, 'utf8') },
+      store,
+    })
+    expect(out).toEqual({ status: 'failed', report: null, runId: null,
+      error: 'The stored file no longer matches the checksum it was registered with. Upload it again as a new document.' })
+    expect(parsed).toBe(false)
+    expect(store.state.writes).toEqual([])
   })
   it('a missing source document fails the job with a sentence', async () => {
     const out = await runIngestJob(job(), {
@@ -37,7 +53,7 @@ describe('runIngestJob', () => {
     const store = createMemoryTariffStore({ licensees: [{ name: 'City Power', kind: 'metro', aliases: ['CITY POWER'] }] })
     const out = await runIngestJob(job(), {
       loadSource: async () => ({ storagePath: 'p', fileName: 'f.pdf', sha256: SHA, url: null, retrievedAt: null }),
-      download: async () => new Uint8Array([1]),
+      download: async () => PDF_BYTES,
       pdfToText: async () => { throw new Error('pdftotext: not found') },
       store,
     })
