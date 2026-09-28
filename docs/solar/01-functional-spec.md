@@ -24,26 +24,43 @@ The as-built behaviour of WM Solar (every tab and button, with `file:line`) is i
 
 ### 0.1 Roles (E-Site roles, resolved per project by `user_effective_project_role`)
 
-| Constant (new, in `packages/shared/src/types/index.ts`) | Members | Meaning in Solar |
+Access to Solar is decided in two layers, both checked on every page, action, API route and RLS policy
+(`app/api/*` sits outside `(admin)/layout.tsx`, so the page gate is never the only gate):
+
+**Layer 1 — org subscription [D-01, D-02].** The project's organisation must hold an active Solar
+subscription (R1,999/year excl. VAT, org-wide, all projects). Inactive (never bought, lapsed, cancelled,
+refunded, charged back) ⇒ **hidden but kept**: the tab shows the locked screen (§1.2), all Solar data is
+retained untouched and returns on resubscribe. WM-Consulting internal bypass as for other features.
+
+**Layer 2 — per-user project access [D-04].** Within a subscribed org, a user sees Solar content on a
+project only if granted a level on that project:
+
+| Level | Can |
+|---|---|
+| **View** | Read Overview, Site & Supply, Load (kW/kWh only), Schematics, Layout, Yield, Schedule, Operations (no rand values); download technical reports |
+| **Edit** | View + change inputs, import data, draw layouts, create/run cases, edit the schedule |
+| **Edit + financials** | Edit + Tariff and Financials tabs, every rand value, feasibility reports, proposals (draft/issue/withdraw) |
+
+- **Grantors:** org **owners** and org **admins** of the project's organisation (they hold Edit + financials
+  implicitly on every project of their org and cannot be demoted by a grant).
+- Grants are made on the **Access** panel (§1.3) or by approving a request.
+- `requireEffectiveRole(...).ok` still applies first (a user must be a project member); suppliers and
+  client_viewers cannot be granted Solar access. Clients see only issued proposals via secure link (§9.4).
+- Constants in `packages/shared`: `SOLAR_GRANTOR_ROLES = OWNER_ADMIN`; levels `view | edit | edit_financials`.
+
+**Legend used in every control table below:** "tech-read" / `SOLAR_TECH_READ_ROLES` = **View** level or
+higher; "write" / `SOLAR_WRITE_ROLES` = **Edit** or higher; "cost-view" / `COST_VIEW_ROLES` = **Edit +
+financials**; `OWNER_ADMIN` = org owner/admin. Rand values never render for View or Edit users.
+
+### 0.2 What each user sees
+
+| Situation | Sidebar | Page |
 |---|---|---|
-| `SOLAR_WRITE_ROLES` | owner, admin, project_manager | Edit every Solar input, run simulations, generate reports, issue proposals |
-| `SOLAR_TECH_READ_ROLES` | SOLAR_WRITE_ROLES + contractor, inspector | See Site, Load (without R values), Layout, Yield. **[D-04]** |
-| `COST_VIEW_ROLES` (existing) | owner, admin, project_manager | See Tariff, Financials, any rand value, financial reports |
-| `OWNER_ADMIN` (existing) | owner, admin | Buy the add-on; delete Solar data; change org Solar defaults |
-| supplier | — | No Solar access |
-| client_viewer | — | No admin-app access (bounced to `/portal` by `(admin)/layout.tsx`); sees only an **issued proposal** through the portal (§10.4) |
-
-Every server action and API route re-checks role **and** entitlement; the page gate is never the only
-gate (`app/api/*` sits outside `(admin)/layout.tsx`). `requireEffectiveRole` returns an object — every
-call site checks `.ok`.
-
-### 0.2 Entitlement states (per project) — see `03-data-model-and-security.md §2`
-
-| State | How it arises | What the user sees |
-|---|---|---|
-| **Locked** | No active unlock row for the project, and no org-wide Solar subscription | Sidebar item "Solar" with a lock badge. Every `/solar/*` route redirects to `/solar/unlock`. |
-| **Unlocked** | Active `billing.project_feature_unlocks(project_id, 'solar')` row, or org Solar subscription active **[D-01]**, or WM-Consulting internal org bypass | Full module per role |
-| **Revoked** | Refund/chargeback sets `revoked_at` | **Read-only**: all tabs render, every mutating control is disabled with tooltip "Solar was refunded for this project — contact an owner/admin to re-activate". Existing reports stay downloadable. **[D-02]** |
+| Org not subscribed; user is owner/admin | "Solar" with lock badge | Locked screen with **Subscribe** (§1.2) |
+| Org not subscribed; any other member | "Solar" with lock badge | Locked screen: "Solar is not active for <org>" + **Ask an admin to subscribe** (sends a request notification) |
+| Subscribed; user has no grant | "Solar" with lock badge | Access screen: **Request access** (optional note, requested level) (§1.2) |
+| Subscribed; request pending | "Solar" with clock badge | "Request sent to <names> on <date>" + **Withdraw request** |
+| Subscribed; user granted | "Solar" | Module at the granted level; controls above the level are hidden, not disabled |
 
 ### 0.3 Common page chrome (all gated Solar pages)
 
@@ -54,7 +71,7 @@ call site checks `.ok`.
 | Tab bar: Overview · Site & Supply · Load · Schematics · Tariff · Layout · Yield & Scenarios · Financials · Reports & Proposal · Schedule · Operations | Link tabs (`?`-free URLs: `/solar/overview`, `/solar/site`, `/solar/load`, `/solar/schematics`, `/solar/tariff`, `/solar/layout`, `/solar/yield`, `/solar/financials`, `/solar/reports`, `/solar/schedule`, `/solar/operations`) | Move between steps of the study | Plain navigation; no auto-save on tab change (each tab saves explicitly — WM's "save on tab change" is dropped). Unsaved-changes guard: browser `beforeunload` + in-app confirm "Discard unsaved changes?" | Tariff + Financials hidden for roles outside `COST_VIEW_ROLES`. Operations hidden until **[D-12]** Phase 7 ships |
 | Status dot on each tab | Indicator (grey = not started, amber = incomplete, green = complete, red = blocking error) | Show readiness at a glance | Computed server-side by `getSolarReadiness(projectId)` from the rules in §2.3 — **no hard-coded statuses** (WM shipped six constants). Tooltip = the exact rule outcome, e.g. "Load: 2 of 14 tenants unassigned" | All roles |
 | "Stale" banner | Banner | Tell the user that results no longer match inputs | Shown on Yield, Financials and Reports when the selected case's stored `inputs_hash` ≠ hash of current inputs (engine spec §1.3). Button **Re-run selected case** (same as Yield → Run) | Button: `SOLAR_WRITE_ROLES` |
-| Read-only banner | Banner | Explain why controls are disabled | Shown when entitlement = Revoked, or role ∉ `SOLAR_WRITE_ROLES` ("You can view this study; only owners, admins and project managers can change it") | — |
+| View-only banner | Banner | Explain the user's level | Shown for View-level users: "You have view access — ask an admin for edit access" + **Request edit access** | — |
 
 ### 0.4 Rules that apply to every control
 
@@ -76,25 +93,36 @@ call site checks `.ok`.
 
 ---
 
-## 1. Entry points and the unlock page
+## 1. Entry points, locked screen and access
 
 ### 1.1 Sidebar entry
 
 | Control | Type | Purpose | Behaviour | Roles |
 |---|---|---|---|---|
-| **Solar** (lucide `Sun` icon) in `projectNav(id)` (`Sidebar.tsx:71-90`), placed after "Medium Voltage" | Nav link | Open the Solar module for this project | → `/projects/[id]/solar` → redirects to `/solar/overview` (unlocked) or `/solar/unlock` (locked). Lock badge when Locked, computed per **project** (the layout must receive the project id; today lock flags are per primary org) | Visible to `SOLAR_TECH_READ_ROLES`; hidden for supplier. Always visible even when locked (JBCC UX) |
+| **Solar** (lucide `Sun` icon) in `projectNav(id)` (`Sidebar.tsx:71-90`), placed after "Medium Voltage" | Nav link | Open the Solar module for this project | → `/projects/[id]/solar` → `/solar/overview` when subscribed and granted, otherwise `/solar/locked`. Badge computed per **project and user** (the layout must receive the project id; today lock flags are per primary org) | **Always visible** to every project member except supplier and client_viewer [D-04b] |
 
-### 1.2 `/projects/[id]/solar/unlock` (outside the `(gated)` group so the redirect cannot loop)
+### 1.2 `/projects/[id]/solar/locked` (outside the `(gated)` group so the redirect cannot loop)
 
-Purpose: explain the add-on and let an owner/admin buy it for this project.
+Purpose: tell the user why Solar is locked and give them the one action that unlocks it.
 
 | Control | Type | Purpose | Behaviour | Data | Roles / enabled | States |
 |---|---|---|---|---|---|---|
-| Feature summary card | Static content | Tell the buyer what they get | Lists: tariff library access, meter-data load modelling, PV layout on project drawings, yield & battery simulation, financial model, branded feasibility report, client proposal with e-acceptance, (Phase 7) operations monitoring | — | All with access | — |
-| Price line | Text | Show the price | Reads `FEATURE_PRICES.solar` (`model: 'project'`, amount **[D-01]**), VAT statement | `billing.service.ts` | — | — |
-| **Unlock Solar for this project** | Primary button | Start payment | `POST /api/paystack/project-feature-unlock {projectId, featureKey:'solar'}` → Paystack `transaction/initialize` with metadata `{type:'project_feature_unlock', feature_key:'solar', project_id, org_id (derived from the project), return_to:'/projects/[id]/solar'}` → browser redirected to Paystack | Writes nothing until the webhook | `OWNER_ADMIN` of the **project's** org. Others see "Ask an owner or admin to unlock Solar" instead of the button | 409 "Already unlocked" → auto-redirect to overview; rate-limited 5/min; Paystack error → "Payment could not start — try again" |
-| **Subscribe for all projects** | Secondary button | Org-wide option | Only rendered if **[D-01]** chooses to offer an org subscription. `POST /api/paystack/solar-subscribe` (MV-subscription pattern keyed on org) | — | `OWNER_ADMIN` | — |
-| Return handling | — | After Paystack | `GET /api/paystack/callback` shows "Payment received — activating Solar…" and polls `has_project_feature` for up to 30 s; the **webhook** is the only writer of the unlock row | `billing.project_feature_unlocks` | — | Timeout → "We have not received confirmation from Paystack yet. This page will update when it arrives." |
+| Feature summary card | Static content | Tell the user what Solar does | Lists: tariff library, meter-data load modelling, schematics, PV layout on project drawings with 3D, yield & battery simulation, financial model (cash/debt/PPA/lease), feasibility reports, client proposals with e-acceptance, schedule, operations | — | All | — |
+| Price line | Text | Show the price | "R1,999 per year excl. VAT for your whole organisation — every project" from `FEATURE_PRICES.solar` | `billing.service.ts` | Shown when org not subscribed | — |
+| **Subscribe** | Primary button | Start the org subscription | `POST /api/paystack/solar-subscribe` (org derived from the **project**) → Paystack recurring plan (annual) with metadata `{type:'org_addon_subscription', feature_key:'solar', org_id, return_to}` | Writes nothing until the webhook | `OWNER_ADMIN` of the project's org | 409 already active → redirect; rate-limited 5/min; Paystack error → "Payment could not start — try again" |
+| **Ask an admin to subscribe** | Button | Non-admins prompt the decision | Sends a notification (bell + email) to the org's owners/admins: "<name> would like Solar for <project>"; one open request per user per org | `solar.access_requests(kind='subscribe')` | Non-admin members when not subscribed | Already asked → "Requested on <date>" |
+| **Request access** | Button + dialog (requested level, optional note) | Ask for a grant on this project | Notifies the org's owners/admins with **Approve (level)** / **Decline** actions | `solar.access_requests(kind='access')` | Members of a subscribed org without a grant | Pending → **Withdraw request** |
+| Return handling | — | After Paystack | Callback shows "Payment received — activating Solar…" and polls the subscription state for up to 30 s; the **webhook** is the only writer | `billing.org_addon_subscriptions` | — | Timeout → "We have not received confirmation from Paystack yet. This page will update when it arrives." |
+
+### 1.3 Access panel — `/projects/[id]/solar/access` (grantors only)
+
+| Control | Type | Purpose | Behaviour | Data | Roles |
+|---|---|---|---|---|---|
+| Members table | Table: member, E-Site role, Solar level (None/View/Edit/Edit + financials), granted by, granted on | See who has Solar access | Lists every project member except suppliers and client viewers | `solar.project_access` | Org owner/admin |
+| Level select per member | Select | Grant, change or remove access | Saves immediately with audit event; the member is notified | same | Org owner/admin |
+| Requests list | List: requester, requested level, note, date + **Approve as…** / **Decline** | Handle requests | Approve writes the grant and notifies; Decline records a reason (optional) and notifies | `solar.access_requests` | Org owner/admin |
+| **Copy access from project** | Button | Reuse a team's grants | Pick another project of the org → copies levels for members present on both | — | Org owner/admin |
+| Subscription card | Status, renewal date, **Manage subscription** (→ org billing settings) | Visibility of the org subscription | — | billing | Org owner/admin |
 
 ---
 
@@ -410,7 +438,7 @@ selected (or chosen) case.
 | Case select | Select | Financials are per case (stored with the case) |
 | **Capex** | Line-item table: category (modules, inverters, mounting, DC BOS, AC BOS, battery, grid connection/protection, civils, labour, design & professional fees, project management, contingency), qty, unit, rate, amount; **Add line**, **Delete line**, **Apply org rate card** (fills R/Wp, R/kWh defaults from org settings §11), **Import BOM from layout** | Totals: excl. VAT; VAT shown separately; R/Wp (**correct scale**: capex ÷ DC Wp) |
 | **Opex** | O&M (R/kWp/yr or % of capex, default from org), insurance (% of capex **per year** — no ×12 **[D-05]**), monitoring/data (R/yr), inverter replacement (year, % of inverter cost), battery replacement (year, % of battery cost), escalation of opex (%/yr, default CPI) | — |
-| **Finance model** | Select: *Cash purchase* / *Debt-financed* (loan %, rate, term, grace) / *PPA* (tariff R/kWh, escalation, term — for a third-party-owned view) / *Lease* **[D-15]** | Changes cashflow composition |
+| **Finance models** | Checkboxes — any combination, each with its own inputs and its own results column: *Cash purchase*; *Debt-financed* (loan %, interest rate, term, grace months); *PPA* (starting tariff R/kWh, escalation %/yr, term, buy-out option; client-view savings = avoided grid cost − PPA payments; investor-view IRR on the capex); *Lease / rent-to-own* (monthly payment, escalation, term, residual/transfer value) **[D-15]** | Changes cashflow composition |
 | **Analysis settings** | Analysis period (default 25 y), discount rate (default org WACC **[D-07]**), tariff escalation (from Tariff tab), load growth (from Load), tax treatment (Section 12B accelerated allowance toggle, company tax rate) **[D-16]** | — |
 | **Run financials** | Button | Pure computation on stored energy results (no re-simulation needed) — fast |
 | Results | KPI: capex, year-1 saving, simple payback, discounted payback, IRR, NPV, LCOE, cumulative saving; Cashflow table (year rows: energy saving, export income, demand saving, opex, replacements, debt service, tax, net, cumulative); cashflow chart | **Download XLSX** (every assumption + year table) |
@@ -612,11 +640,11 @@ in a side table.
 
 | Control | Type | Purpose | Behaviour | Roles |
 |---|---|---|---|---|
-| Portfolio table | Table: project, location, supply authority, status (study / proposal issued / accepted / operating), selected-case kWp, year-1 saving (cost-view only), last activity | See every Solar project in the org | Only projects the user can access **and** that are unlocked; locked projects listed under "Available to unlock" for owner/admin | Any role with access |
+| Portfolio table | Table: project, location, supply authority, status (study / proposal issued / accepted / operating), selected-case kWp, year-1 saving (Edit + financials only), last activity | See every Solar project in the org | Only projects where the user holds a Solar grant (owners/admins see all); when the org is not subscribed the page shows the subscribe screen (§1.2) | Any member with a grant |
 | Map | Map with project markers | Geographic overview | Marker popups built with text nodes (WM injected HTML — XSS) | same |
 | Filters | Status, province, supply authority | Narrow the list | — | same |
 | **Open** | Row action | Go to the project's Solar Overview | — | same |
-| **Unlock Solar** | Row action (locked projects) | Buy for that project | → project unlock page | OWNER_ADMIN |
+| **Manage access** | Row action | Open the project's Access panel | → §1.3 | OWNER_ADMIN |
 | Portfolio KPIs | Stats | Totals: kWp designed, kWp proposed, kWp operating, generation YTD vs guarantee | cost-view for rand values | same |
 
 ---

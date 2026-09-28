@@ -194,8 +194,8 @@ Applied **once**, in the cashflow (not also in the hourly model).
 
 ### 3.7 Validation targets (tests)
 - For 5 SA reference sites (Johannesburg, Pretoria, Cape Town, Durban, Upington) × 3 orientations the
-  engine's specific yield must be within ±3 % of PVGIS PVcalc for identical loss inputs, and within
-  ±5 % of a PVsyst report the owner supplies **[D-19]**.
+  engine's specific yield must be within ±3 % of PVGIS PVcalc for identical loss inputs. Public references
+  only — no PVsyst dependency **[D-19]**.
 - The WM static curve (≈ 2,346 kWh/kWp everywhere) must fail this test — it is the regression guard.
 
 ---
@@ -273,8 +273,9 @@ Given a tariff (charges with canonical units), its TOU calendar and public holid
 - The **10 golden tariff cases** in `as-is/09 §7.2` (hand-computed bills from the source books) run as unit
   tests of normaliser + engine; cases 2, 3, 7 and 10 exercise the exact defects of WM's seed (missing
   Standard period, off-peak tagged as peak, 100× unit error).
-- 3–5 real bills (one Eskom Megaflex/Miniflex, one municipal TOU business, one municipal block domestic,
-  one landlord resale) reproduced within ±2 % from their meter data **[D-19]**.
+- Eskom's own worked examples / Tariff Comparison Tool outputs for Megaflex, Miniflex and Homeflex
+  reproduced within ±1 % (public references only **[D-19]**). Real customer bills can be added later via the
+  Tariff tab's bill check, but no release gate depends on them.
 
 **Optional — wheeling scenario (only if off-site PV is in scope, [D-26]):** Option 1: full tariff bill −
 wheeled kWh × (TOU WEPS/avoided-cost rate excl. losses), wheeled kWh capped per TOU period (Wheeling Rules

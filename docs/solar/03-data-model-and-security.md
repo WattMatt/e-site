@@ -13,9 +13,9 @@ claimed **at apply time** after checking the ledger, `origin/main` and open-PR f
 
 | Schema | Holds | Exposure |
 |---|---|---|
-| `solar` (new) | Per-project study data: studies, meters, readings, layouts, cases, runs, proposals, operations | New exposed schema → needs the `00126` checklist: GRANT USAGE + default privileges to `authenticated`, `service_role` (**no anon**), add to `config.toml [api].schemas`, **PATCH production PostgREST `db_schema` via the Management API**, `NOTIFY pgrst`. Without the PATCH, REST returns `PGRST002` indefinitely. **[D-22]** alternative: put tables in `projects` to avoid the PATCH. |
-| `tariffs` (new) | Platform reference data: licensees, source documents, tariff years, tariffs, charges, TOU calendars, SSEG rules | Same checklist. Read by every authenticated user whose org has any Solar entitlement **[D-03]**; written only by the service role and platform tariff admins through the review workflow. |
-| `billing` (existing) | `project_feature_unlocks` (new), optional `org_addon_subscriptions` (new) | Existing schema |
+| `solar` (new) | Per-project study data: studies, meters, readings, layouts, cases, runs, proposals, operations | New exposed schema → needs the `00126` checklist: GRANT USAGE + default privileges to `authenticated`, `service_role` (**no anon**), add to `config.toml [api].schemas`, **PATCH production PostgREST `db_schema` via the Management API**, `NOTIFY pgrst`. Without the PATCH, REST returns `PGRST002` indefinitely. Decided **[D-22]**. |
+| `tariffs` (new) | Platform reference data: licensees, source documents, tariff years, tariffs, charges, TOU calendars, SSEG rules | Same checklist. Read by users whose org has an active Solar subscription **[D-03b]**; written only by the service role and E-Site platform tariff admins through the review workflow **[D-03]**. |
+| `billing` (existing) | `org_addon_subscriptions` (new) | Existing schema |
 | `projects` (existing) | `reports` rows for new kinds | Existing |
 
 Large meter readings volume (≈ 17,520 rows per channel-year at 30 min; a 40-tenant mall ≈ 1.4 M
@@ -24,43 +24,66 @@ in Storage with only hourly aggregates in Postgres. Decision gate at Phase 3 wit
 
 ---
 
-## 2. Entitlement (per project)
+## 2. Entitlement — org subscription + per-user project access (decisions D-01, D-02, D-04)
 
 ### 2.1 Tables
 ```sql
-billing.project_feature_unlocks (
-  id uuid pk, organisation_id uuid not null,          -- bound to the project's org by BEFORE trigger
-  project_id uuid not null references projects.projects on delete cascade,
+billing.org_addon_subscriptions (
+  id uuid pk, organisation_id uuid not null references public.organisations,
   feature_key text not null check (feature_key in ('solar')),
-  paystack_reference text unique not null,
-  amount_paid_kobo bigint not null,
-  unlocked_at timestamptz not null default now(), unlocked_by uuid,
-  notes text, revoked_at timestamptz, revoked_reason text)
-unique (project_id, feature_key) where revoked_at is null
--- RLS: SELECT for user_has_project_access(project_id); no client writes (service role only)
-```
-Optional org-wide subscription **[D-01]**: `billing.org_addon_subscriptions(organisation_id, feature_key,
-status, paystack_subscription_code, current_period_end)` on the MV-subscription pattern.
+  status text not null check (status in ('active','non_renewing','past_due','cancelled','refunded')),
+  paystack_subscription_code text unique, paystack_customer_code text,
+  amount_kobo bigint not null,                        -- 199900 = R1,999/yr excl. VAT
+  current_period_end timestamptz not null,
+  started_at, cancelled_at, refunded_at, updated_at)
+unique (organisation_id, feature_key)
+-- RLS: SELECT for org owner/admin only (00187 billing read gate); writes service role (webhook) only
 
-### 2.2 Helper
-`public.has_project_feature(p_project_id uuid, p_feature_key text) returns boolean` — SECURITY DEFINER,
-`SET search_path = ''`, true when (active unlock row) OR (active org add-on subscription for the project's
-org) OR (project's org = WM-Consulting internal bypass, consistent with `has_feature`). `REVOKE ALL FROM
-PUBLIC, anon; GRANT EXECUTE TO authenticated, service_role`. `@verify`: `anon_execute_absent`, plus a
-`behaviour` directive proving a locked project returns false.
+solar.project_access (
+  project_id uuid references projects.projects on delete cascade, user_id uuid,
+  organisation_id uuid not null,                      -- bound from the project by BEFORE trigger
+  level text not null check (level in ('view','edit','edit_financials')),
+  granted_by uuid not null, granted_at timestamptz not null default now(),
+  primary key (project_id, user_id))
+-- writes: org owner/admin of the project's org only; suppliers/client_viewers cannot be granted (trigger)
+
+solar.access_requests (
+  id uuid pk, project_id uuid, organisation_id uuid, requester_id uuid,
+  kind text check (kind in ('access','subscribe')), requested_level text, note text,
+  status text check (status in ('pending','approved','declined','withdrawn')),
+  decided_by uuid, decided_at timestamptz, created_at timestamptz)
+unique (project_id, requester_id, kind) where status = 'pending'
+```
+
+### 2.2 Helpers (SECURITY DEFINER, `SET search_path = ''`, `REVOKE ALL FROM PUBLIC, anon`, `GRANT EXECUTE TO authenticated, service_role`)
+- `public.org_has_solar(p_org uuid) → boolean`: active subscription with `current_period_end > now()`
+  (status `active` or `non_renewing`), OR the WM-Consulting internal bypass (consistent with `has_feature`).
+- `solar.access_level(p_project uuid) → text` (`null|view|edit|edit_financials`): NULL unless
+  `org_has_solar(project's org)`; `edit_financials` for org owner/admin of the project's org; otherwise the
+  caller's `project_access.level`, and only while the caller is an active project member.
+- `solar.can_view(p)`, `solar.can_edit(p)`, `solar.can_see_money(p)` thin wrappers.
+- `@verify`: `anon_execute_absent` for all; `behaviour` directives proving (a) a lapsed org returns NULL,
+  (b) a member without a grant returns NULL, (c) an org admin returns `edit_financials`.
 
 ### 2.3 Enforcement points (all four, not just the page)
-1. `projects/[id]/solar/(gated)/layout.tsx`: role gate (`requireEffectiveRole(... SOLAR_TECH_READ_ROLES).ok`) then
-   `requireProjectFeature(projectId,'solar','/projects/[id]/solar/unlock')`.
-2. Every server action and `app/api/projects/[id]/solar/*` route re-checks role + entitlement.
-3. **Database:** RESTRICTIVE write policies on every `solar.*` table include `has_project_feature(project_id,'solar')`
-   (split per verb — a RESTRICTIVE `FOR ALL` also narrows reads, the `00205` lesson). Reads stay allowed
-   when revoked (read-only state, **[D-02]**).
-4. Purchase: `POST /api/paystack/project-feature-unlock` (org derived from the **project**; caller must be
-   `OWNER_ADMIN` of that org; 409 when active); webhook branch `metadata.type === 'project_feature_unlock'`
-   (idempotent on `paystack_reference`, duplicate-purchase handling as today), refund/reversal branch sets
-   `revoked_at`; callback allow-list gains the type; `FEATURE_PRICES.solar = {model:'project', amountKobo:[D-01]}`
-   and the existing org unlock route must **reject** `model:'project'` keys.
+1. `projects/[id]/solar/(gated)/layout.tsx`: `requireEffectiveRole(...).ok` (project member, not supplier/
+   client_viewer) then `solar.access_level` — NULL ⇒ redirect `/solar/locked` (outside the group).
+2. Every server action and `app/api/projects/[id]/solar/*` route re-checks the level it needs
+   (`view` / `edit` / `edit_financials`).
+3. **Database:** every `solar.*` table: PERMISSIVE SELECT `solar.can_view(project_id)`; money-bearing tables
+   (financials, proposals, tariff overrides, bill checks, case finance results) SELECT `solar.can_see_money`;
+   writes one RESTRICTIVE policy **per verb** on `solar.can_edit` (or `can_see_money` for money tables).
+   Lapsed/refunded ⇒ helpers return NULL ⇒ **hidden but kept** (no reads, no writes; rows untouched).
+   Never a RESTRICTIVE `FOR ALL` (it narrows reads too — the `00205` lesson).
+4. Purchase: `POST /api/paystack/solar-subscribe` (org from the **project**; caller `OWNER_ADMIN` of that
+   org; 409 when active) → Paystack recurring **annual** plan `PAYSTACK_PLAN_SOLAR_ANNUAL`; webhook
+   branches `charge.success` (first + renewal → `active`, extend `current_period_end`),
+   `subscription.not_renew` (→ `non_renewing`), `subscription.disable` (→ `cancelled`), refund/reversal
+   (→ `refunded`); callback allow-list gains `org_addon_subscription`;
+   `FEATURE_PRICES.solar = {model:'org_subscription', interval:'annual', amountKobo:199900}` and the existing
+   one-time unlock route **rejects** subscription-model keys.
+5. Tariff library (`tariffs.*`) SELECT requires `org_has_solar(caller's org)` or
+   `is_platform_tariff_admin()`; writes only service role + platform admins through the review queue (D-03).
 
 ---
 
@@ -105,20 +128,19 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 | `audit_events` | study_id, verb, object_ref, actor, at | Append-only; feeds Overview activity |
 
 ### 3.1 RLS pattern (every `solar.*` table with project scope)
-- **SELECT** (PERMISSIVE): `user_has_project_access(project_id)` AND
-  `coalesce(user_effective_project_role(project_id),'') in (SOLAR_TECH_READ_ROLES)`; financial columns are
-  not split by RLS — cost-bearing tables (`cases.finance`, `case_runs.outputs` money fields, proposals,
-  tariff overrides, bill checks) get a RESTRICTIVE SELECT requiring `COST_VIEW_ROLES`, or the money is
-  moved into separate `*_financial` tables **[D-04]** (preferred: separate tables, simpler to prove).
-- **INSERT / UPDATE / DELETE**: one RESTRICTIVE policy **per verb** requiring
-  `user_effective_project_role(project_id) in (SOLAR_WRITE_ROLES)` AND `has_project_feature(project_id,'solar')`,
-  plus a PERMISSIVE policy per verb on `user_has_project_access` (the `00200` shape).
-- Org library tables (`meters`, `meter_files`, `equipment` with org_id): access by
-  `organisation_id = any(get_user_org_ids())` for SELECT; writes by org role in `SOLAR_WRITE_ROLES`.
+- **SELECT** (PERMISSIVE): `solar.can_view(project_id)`. Money is kept in **separate tables**
+  (`case_financials`, `case_run_financials`, `proposals`, `tariff_overrides`, `bill_checks`) whose SELECT is
+  `solar.can_see_money(project_id)` — simpler to prove than column rules.
+- **INSERT / UPDATE / DELETE**: a PERMISSIVE policy per verb on `solar.can_view` plus one RESTRICTIVE policy
+  **per verb** on `solar.can_edit` (money tables: `solar.can_see_money`) — the `00200` shape.
+- Org library tables (`meters`, `meter_files`, `meter_register`, `equipment` with org_id): SELECT when
+  `org_has_solar(organisation_id)` and the caller is a member of that org with a Solar grant on any of its
+  projects (or owner/admin); writes by the same with Edit level.
 - Append-only tables: SELECT + INSERT policies only.
-- **Impersonation assertions** (red first, then green) for: contractor reads layout but not finance;
-  client_viewer reads nothing; a user from another org reads nothing; revoked project refuses writes but
-  allows reads; service role bypass holds.
+- **Impersonation assertions** (red first, then green): View user reads layout, cannot write, sees no money;
+  Edit user writes inputs, sees no money; Edit + financials sees money; member without a grant reads nothing;
+  client_viewer and supplier read nothing even if a grant row is forged; user from another org reads nothing;
+  **lapsed subscription ⇒ nobody reads or writes, rows unchanged**; service-role bypass holds.
 
 ### 3.2 Storage buckets (private; signed URLs only)
 `solar-meter-raw` (raw meter exports, path `<org>/<project>/<sha256>.<ext>`), `solar-runs` (8760 outputs),

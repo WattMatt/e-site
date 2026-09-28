@@ -1,33 +1,74 @@
-# E-Site Solar — Open Decisions (owner)
+# E-Site Solar — Decision Log
 
-Each decision has a **proposed default** that will be built unless changed. **P0** = needed before Phase 1 starts.
+All decisions below were taken by the owner on **2026-09-28**, top-down in one session. Each "Build rule"
+is what the specs now say. A change to any of these is a new decision recorded here with its date.
 
-| ID | P0? | Question | Proposed default | Why it matters |
-|---|---|---|---|---|
-| D-01 | ✅ | Pricing model and amount: per-project one-time, per-project annual, org-wide subscription, or both? | Per-project one-time unlock (price TBD by owner) **plus** optional org annual subscription later | Drives tables, Paystack flows, sidebar lock. Also resolve Pro R999 vs R1,499 inconsistency first |
-| D-02 | ✅ | What happens after a refund/chargeback? | Read-only (data and reports stay visible, no edits/runs) | Avoids destroying client work |
-| D-03 | ✅ | Who maintains the tariff library, and who may read it? | Platform tariff admins = WM-Consulting owner/admin (new `is_platform_tariff_admin()`); read by any org with ≥ 1 Solar entitlement | Reference data is shared across all customers |
-| D-04 | ✅ | Can contractors/inspectors see Solar technical tabs (no money)? | Yes: Site, Load (kW/kWh only), Layout, Yield; money in separate tables gated to COST_VIEW_ROLES | Shapes RLS and table split |
-| D-05 | ✅ | Insurance: WM computes capex × rate × 12. Is the input a monthly or annual %? | Annual % of capex, no ×12, default 0.5 % | WM figures overstated insurance 12× |
-| D-06 | | Load archetype shapes and W/m² densities per category — use GCR densities, WM shop types, or a WM-supplied table? | Seed from GCR densities + 8 archetypes; owner reviews | Synthesised load quality |
-| D-07 | ✅ | Financial defaults: discount rate, escalation path, O&M, CPI | 11 % / 9 %→7 %→CPI+1 % / R150/kWp/yr / 5 % | Every IRR/NPV |
-| D-08 | | External providers: geocoding (Google vs Mapbox), satellite imagery (Mapbox static + licence/attribution), Solcast licence | Keep the web app's providers, all server-side: Mapbox/Google geocoding, Mapbox static satellite, GSA + PVGIS for resource; Solcast only for the 7-day operations forecast and only if the licence is commercial | Cost and licensing |
-| D-09 | | Default export limit and hosting-capacity warning threshold | Warn when PV AC > 75 % of transformer kVA (NRS 097-2-3 simplified); export limit defaults to NMD | Grid-connection advice |
-| D-10 | | Support landlord/private resale tariffs (embedded networks) in v1? | Yes, via project tariff override | Most WM malls are resale sites |
-| D-11 | | Row-spacing rule and near-shading method | No inter-row shading 09:00–15:00 on 21 June; obstruction horizon shading on beam | Layout counts and yield |
-| D-12 | ✅ | When should Operations (generation, monthly reports, handover, forecast) ship? | Phase 7, after the design workflow ships (it is a web feature, so it is in scope) | Sequencing |
-| D-13 | — | ~~Keep a 3D preview?~~ | **Resolved:** carried (web feature) | — |
-| D-14 | | Model load-shedding avoided-cost value? | Optional separate line, not in base IRR | Credibility of headline IRR |
-| D-15 | | Finance models in v1: cash, debt, PPA, lease? | Cash + debt in v1; PPA in v1.1; lease later | Proposal types |
-| D-16 | | Tax: include Section 12B and company tax? VAT treatment? | Toggle, default off; results excl. VAT | Commercial clients' real returns |
-| D-17 | | AI-written proposal narrative? | Optional, server-side, saved as editable text | Cost, review burden |
-| D-18 | | Client access to proposals: E-Site portal login or public token link? Allow a question thread? | Public expiring token link (no login) + portal listing for existing client users; questions via email reply | Client friction vs control |
-| D-19 | ✅* | Validation references (PVsyst reports, real bills + meter data); PAN/OND import? | Owner supplies 2–3 PVsyst reports and 3–5 bills; PAN/OND import in P4 if cheap | Engine acceptance |
-| D-20 | | Schedule tasks: store as E-Site work items (type `solar_task`, visible in My Work) or as Solar-only rows? | Work items + Gantt side table | Tasks show up across E-Site |
-| D-21 | — | ~~Drop the Schematics editor?~~ | **Resolved:** carried (web feature) | — |
-| D-22 | ✅ | New `solar` + `tariffs` schemas (needs PostgREST PATCH) or tables in `projects`? | New schemas (clean boundaries, entitlement RLS) | Migration/ops risk |
-| D-23 | | Meter readings: Postgres table (partitioned) or Parquet in Storage + aggregates? | Postgres, decided by the P3 volume test | Cost/performance |
-| D-24 | ✅ | Contain the live WM Solar exposure now (rotate keys/token, JWT on, drop anon policies), and who does it? | Yes, this week, as a separate task from E-Site | Live client data exposed |
-| D-27 | | The PnP SCADA downloads in `006. METER CSV` are largely mis-filed (one series under 121 filenames; Kuruman holds no Kuruman meters). Re-download those sites before using them as study data? | Yes — re-download per site with the serial list; the import's identity panel blocks duplicates meanwhile | Wrong-site load data would silently corrupt studies |
-| D-26 | | Model off-site PV / wheeling (Eskom Gen-wheeling, third-party network charges)? | Not in v1; engine hook specified (engine §5) | Scope |
-| D-25 | ✅ | Which Supabase project is WM Solar production, and should existing data migrate into E-Site? | Migrate only meter raw files and signed proposals (as PDFs); re-run studies in E-Site | Phase 8 scope |
+## 1. Live WM Solar (outside E-Site)
+
+| ID | Decision | Build rule / action | Status |
+|---|---|---|---|
+| D-25 | Live WM Solar production database = **`lyctmmqndqegptzkajhz`** ("Mattheus Power"; 48 projects, 810 tenants, 182 meters, 23 simulations, 3 proposals, 3 users). `zhhcwtftckdwfoactkea` (Lovable) is not in the account | — | Confirmed |
+| D-24 | **Contain now, all steps** | Done 2026-09-28: 168 anon/public policies → authenticated, anon write grants revoked, RLS on `tariff_uploads`, `tariff-uploads` + `project-schematics` private, signup disabled, `verify_jwt` on all 34 functions. Verified from outside (anon reads 0 rows, writes 401, functions 401, signup 422); data intact. Restore: `WM_Solar_Web/_containment-2026-09-28/`. Accepted breakage: client share links, schematic images | **Done** — owner to confirm signed-in use still works |
+| D-28 | **Rotate the service-role key** (shipped in iOS TestFlight builds) | Plan first (key rotation + Vercel env + redeploy of wm-solar.vercel.app), owner approves before execution | Pending plan |
+| D-25b | **Migrate nothing** into E-Site | WM Solar stays as a read-only archive; Phase 8 reduces to archiving | Decided |
+
+## 2. Commercial
+
+| ID | Decision | Build rule |
+|---|---|---|
+| D-01 | **Org-wide annual subscription, R1,999 per year excl. VAT**, unlocks Solar on every project of the org. No per-project purchase | `FEATURE_PRICES.solar = {model:'org_subscription', interval:'annual', amountKobo:199900}`; MV-subscription pattern keyed on the **org** (`billing.org_addon_subscriptions`); Paystack recurring plan; renew/cancel/refund webhooks |
+| D-02 | Refund, chargeback, lapse or cancel → **hidden but kept** | Module locks (tab visible with lock, content hidden); all data retained; everything returns on resubscribe. RLS denies reads and writes while inactive |
+
+## 3. Access
+
+| ID | Decision | Build rule |
+|---|---|---|
+| D-03 | Tariff library maintained **by E-Site as an application process**: auto-ingest and automatic checks, **E-Site platform admin approves** each year before publishing | Platform role `is_platform_tariff_admin()` (E-Site staff), ingestion jobs + review queue; customers never edit reference data |
+| D-03b | Library readable by **subscribed orgs only** | Read policy on `tariffs.*` = caller's org has an active Solar subscription (or is a platform admin) |
+| D-04 | Solar access **granted per user by the project owner** | New `solar.project_access(project_id, user_id, level)`; levels **View / Edit / Edit + financials**; grantors = **org owner and org admin** of the project's org |
+| D-04b | Users without access **still see the Solar tab** | Locked tab with two actions: **Request access** (notifies org owners/admins, who approve with a level) and, if the org is not subscribed, **Subscribe** (visible to owner/admin; others see "Ask an admin to subscribe") |
+
+## 4. Scope and timing
+
+| ID | Decision | Build rule |
+|---|---|---|
+| D-12 | Operations tab **after the design workflow** | Phase 7 |
+| D-20 | Schedule tasks are **E-Site work items** (type `solar_task`) + Gantt side table | Functional §14 |
+| D-26 | **No wheeling / off-site PV in v1** | Engine hook and Eskom loss/wheeling tables kept for later |
+| D-13, D-21 | 3D view and Schematics **carried** (web features) | Functional §6.3, §13 |
+
+## 5. Architecture
+
+| ID | Decision | Build rule |
+|---|---|---|
+| D-22 | **New `solar` + `tariffs` schemas** | Full new-schema checklist incl. PostgREST `db_schema` PATCH |
+| D-23 | Meter readings storage **decided by a Phase 3 volume test** | Default partitioned Postgres table; switch to compressed files + aggregates only if it underperforms at ≥ 2 M rows |
+
+## 6. Numbers and proposals
+
+| ID | Decision | Build rule |
+|---|---|---|
+| D-05 | Insurance = **annual % of capex, default 0.5 %**, no ×12 | Engine §6 |
+| D-07 | Defaults: **discount 11 %, CPI 5 %, tariff escalation 9 % → 7 % by year 10 → CPI + 1 %, O&M R150/kWp/yr, 25-year analysis** | Org settings seed |
+| D-16 | **Excl. VAT; company tax + Section 12B optional toggle, default off** | Engine §6 |
+| D-15 | **All four finance options in v1** — cash, debt-financed, PPA, lease/rent-to-own — **selectable per proposal** (one or several offered side by side) | Functional §8, §9.3 |
+| D-14 | Load-shedding value = **separate line, not in IRR** | Engine §6 |
+| D-10 | Landlord resale tariffs **via project override** in v1 | Functional §5 |
+| D-18 | Clients open proposals by **secure expiring link, no login**; portal users also see them in the portal | Functional §9.4 |
+| D-17 | **Optional AI narrative button**, editable, saved | Functional §9.3 |
+
+## 7. Data and providers
+
+| ID | Decision | Build rule / action |
+|---|---|---|
+| D-29 | **2026/27 tariffs: Claude downloads** NERSA 2026/27 municipal decision + province books and Eskom 2026/27 schedule from official sources, after the owner approves the download list | Pending download list |
+| D-27 | **PnP SCADA: owner signs in to the PnP portal in the browser pane; Claude downloads per site by serial list (list approved first), files into a clean per-site folder, validates**; ingestion into E-Site waits for the Phase 3 importer. (Claude never types the password.) | Pending owner sign-in |
+| D-19 | Validation against **public references only**: PVGIS PVcalc (5 sites × 3 orientations, ±3 %) and the 10 hand-computed tariff cases; no PVsyst/real-bill dependency | Engine §3.7, §5 |
+| D-08 | Providers: **keep WM's set** — Mapbox (maps, geocoding, satellite roof capture), PVGIS + Global Solar Atlas; Solcast 7-day forecast only if the licence is commercial | All server-side |
+| D-11 | Row spacing: **no inter-row shade 09:00–15:00 on 21 June** | Engine §3.1 |
+| D-09 | Grid-connection warning when **PV AC > 75 % of transformer/mini-sub rating** (warning only) | Functional §3.2 |
+| D-06 | Synthesised load **seeded from GCR kW/m² densities + 8 archetypes**, owner reviews the table once | Engine §2.4 |
+
+## Still open (small, non-blocking)
+- Solcast licence type (commercial or not) — decides whether the forecast panel ships.
+- Owner review of the seeded density/archetype table (Phase 3).

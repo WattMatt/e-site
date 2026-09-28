@@ -23,41 +23,48 @@ P2, P3, P5 and P5b can run in parallel after P1. P4 needs P2 + P3 (P5 optional: 
 
 | # | Item | Why it blocks |
 |---|---|---|
-| 0.1 | Make `005. NERSA TARIFFS` and `006. METER CSV` (at least the 29 summaries + YARONA, SEGONYANA, WHITE RIVER, KURUMAN MALL) **available offline** in Dropbox | Parsers and golden fixtures cannot be written against placeholders (gap D1, D2) |
-| 0.2 | Supply the 2026/27 NERSA municipal decision + province books and Eskom 2026/27 schedule (or approve downloading them) | Library would launch a year stale (D3) |
-| 0.3 | Answer the **P0 decisions** in `06-open-decisions.md` (D-01, D-02, D-03, D-04, D-05, D-07, D-12, D-22, D-24, D-25) | Pricing, access, schema shape, scope |
-| 0.4 | Provide validation references: 2–3 PVsyst reports for WM projects, 3–5 real electricity bills with the matching meter data (D-19) | Engine acceptance tests |
-| 0.5 | **Separately from E-Site:** decide containment for the live WM Solar exposure (gap section A) — rotate the iOS service-role key and the GitHub token, turn on JWT verification, drop anon policies | Live risk independent of this build |
+| 0.1 | ~~Make both Dropbox folders available offline~~ | **Done 2026-09-28**; both analysed (as-is/09, /10) |
+| 0.2 | ~~Answer the P0 decisions~~ | **Done 2026-09-28** — see `06-open-decisions.md` (decision log) |
+| 0.3 | ~~Contain the live WM Solar exposure~~ | **Done 2026-09-28** (D-24) |
+| 0.4 | Rotate the WM Solar service-role key (D-28) — plan, owner approval, execute | Live risk; independent of the build |
+| 0.5 | Download the 2026/27 NERSA municipal books + decision and Eskom 2026/27 schedule (D-29) — download list approved by owner first | Library would launch a year stale; P2 can start on 2025/26 meanwhile |
+| 0.6 | PnP SCADA re-download (D-27) — owner signs in to the portal; per-site serial list approved; files filed per site and validated | Only blocks using the PnP sites as study data; not the build |
+| 0.7 | Confirm whether the Solcast licence is commercial | Decides whether the forecast panel ships (P7) |
 
-Exit: folders readable, decisions recorded, references received.
-
-## P1 — Entitlement, schema skeleton, empty module (≈ 5 days)
+## P1 — Subscription, access control, schema skeleton, empty module (≈ 7 days)
 
 Deliverables
-- `FEATURE_PRICES.solar` (`model:'project'`), `billing.project_feature_unlocks`, `has_project_feature()`,
-  `POST /api/paystack/project-feature-unlock`, webhook/callback/refund branches; org unlock route rejects project-model keys.
-- `solar` schema (or `projects`, D-22) with `studies`, `audit_events`, grants, PostgREST PATCH, `@verify` blocks.
-- Role constants `SOLAR_WRITE_ROLES`, `SOLAR_TECH_READ_ROLES`; sidebar **Solar** entry with per-project lock.
-- `solar/unlock` page; `solar/(gated)/layout.tsx`; Overview with readiness engine (all steps grey); Site & Supply tab (§3) complete.
-- `/settings/solar` skeleton (org defaults JSON + editor for rate card and finance defaults).
+- `FEATURE_PRICES.solar = {model:'org_subscription', interval:'annual', amountKobo:199900}`;
+  `billing.org_addon_subscriptions`; Paystack annual plan `PAYSTACK_PLAN_SOLAR_ANNUAL`;
+  `POST /api/paystack/solar-subscribe`; webhook branches (first charge, renewal, not_renew, disable,
+  refund/reversal); callback type; one-time unlock route rejects subscription keys.
+- `solar` schema with `studies`, `project_access`, `access_requests`, `audit_events`; helpers
+  `org_has_solar`, `solar.access_level`, `can_view/can_edit/can_see_money`; grants; PostgREST PATCH; `@verify` blocks.
+- Sidebar **Solar** entry always visible with per-project/per-user badge; `solar/locked` screen (Subscribe /
+  Ask an admin / Request access / Withdraw); **Access panel** (grant levels, approve/decline requests, copy
+  access from project); request/approval notifications (new types, full `notifications_type_check` re-declaration).
+- `solar/(gated)/layout.tsx`; Overview with readiness engine (all steps grey); Site & Supply tab (§3) complete.
+- `/settings/solar` skeleton seeded with the decided defaults (D-05, D-07, D-16).
 - `docs/rbac-matrix.md` rows.
 Verification
-- Impersonation assertions: locked project refuses solar writes; contractor reads Site but not write; other-org user reads nothing; revoked = read-only.
-- Paystack **test-mode** purchase end to end on a throwaway org (not WM — the WM bypass hides the paywall); refund revokes.
-- Owner walk: sidebar → locked → unlock (test mode) → Overview → Site & Supply save.
+- Impersonation assertions (data §3.1) red first, then green — including **lapsed ⇒ hidden, rows unchanged**.
+- Paystack **test-mode** annual subscription end to end on a throwaway org (not WM — the WM bypass hides the
+  paywall); renewal, cancel and refund webhooks replayed; lapse hides and resubscribe restores.
+- Owner walk: non-subscribed org → locked → subscribe (test mode) → member requests access → admin approves
+  as View → member sees no money and cannot edit → upgraded to Edit + financials.
 
 ## P2 — Tariff library (≈ 10–12 days; parallel)
 
 Deliverables
 - `tariffs` schema (data §4), `tariff-sources` bucket, holiday reuse.
-- Parsers: NERSA province compendium XLSX (2025/26 **and** 2026/27), Eskom schedule XLSX (2025/26, 2026/27). AI-assisted PDF extraction (server-side, org key, draft-only) for metro books.
-- Automatic checks, YoY diff, `/admin/tariffs` review UI with source crops, publish/supersede.
-- TOU calendars (Eskom 2025/26+ windows incl. Sunday standard; municipal per book), SSEG rules where published.
-- **Bill engine** (engine §5) in `@esite/shared` with the 3–5 real-bill tests.
-- Tariff tab (§5) incl. overrides, escalation, bill check. Due-year cron.
+- Parsers written fresh per province layout (as-is/09 §7): NERSA province compendium XLSX (2025/26 **and** 2026/27), Eskom official xlsm (2025/26, 2026/27, incl. Homeflex, Gen-offset, loss factors). AI-assisted PDF extraction (server-side, platform key, draft-only) for metro books.
+- E-Site-run application process (D-03): scheduled acquisition, automatic checks, YoY diff, `/admin/tariffs` review queue with source crops; **E-Site platform admin approves** before publish/supersede.
+- TOU calendars (Eskom 2025/26+ windows incl. Sunday standard; municipal flagged `assumed_eskom`), Eskom SSEG/Gen-offset linkage, net-billing rules with carry-forward.
+- **Bill engine** (engine §5) in `@esite/shared` with the 10 golden tariff cases + Eskom public worked examples.
+- Tariff tab (§5) incl. resale overrides (D-10), escalation, bill check, user-supplied municipal export rate with provenance. Due-year cron.
 Verification
-- Every charge in the published 2026/27 year has a source locator; spot-check 30 random charges against the source (owner or delegate).
-- Bill tests within ±2 %; unit test proving c/kWh vs R/kWh cannot be confused (unit NOT NULL + conversion test).
+- Every charge in the published year has a source locator; spot-check 30 random charges against the source.
+- 10 golden cases exact; Eskom examples within ±1 %; unit test proving c/kWh vs R/kWh cannot be confused; net-billing carry-forward and FY-end reset tests.
 
 ## P3 — Load + Schematics (≈ 14 days; parallel)
 
@@ -68,7 +75,7 @@ Deliverables
 - Site-profile builder (engine §2) incl. reference-year alignment, MD; charts; meter comparison overlay; CSV exports; Checks sub-tab.
 - Schematics tab (functional §13): diagrams from project drawings (all pages), meter cards, connections, include-in-load toggle, reconciliation + double-count guard, sheet export; `solar.schematic_*` in `isAnnotated()`.
 Verification
-- Golden fixtures (as-is/10 §6.4 list + synthetic set): 30-min kWh vs kW same energy; cumulative with rollover; blanks → NULL; decimal comma; `24:00`; 15-min; solar meter export channel.
+- Golden fixtures (as-is/10 §6.4 list + synthetic set): formats A/B/C; A interval-beginning vs B/C interval-ending; 30-min kWh vs kW same energy; `Calc` zeros → missing; body-hash duplicates across sites caught; cumulative with rollover; blanks → NULL; `24:00`; daily files excluded; PV generation on the import channel.
 - One real mall (e.g. YARONA): Σ tenants vs bulk reconciliation shown; owner confirms the profile shape looks right.
 
 ## P4 — Engine, Yield & Scenarios, Financials (≈ 12–15 days)
@@ -78,7 +85,8 @@ Deliverables
 - Cases UI (§7), run route (`maxDuration` set), immutable runs with inputs hash + Stale banner, compare.
 - Financials tab (§8), equipment catalogue (modules/inverters/batteries) with seed data.
 Verification
-- ±3 % of PVGIS PVcalc at 5 reference sites × 3 orientations; ±5 % of supplied PVsyst reports; WM static-curve regression test fails as intended.
+- ±3 % of PVGIS PVcalc at 5 reference sites × 3 orientations (public references only, D-19); WM static-curve regression test fails as intended.
+- All four finance models (cash, debt, PPA, lease) produce their own cashflow and KPIs side by side (D-15); 12B toggle off by default (D-16); insurance 0.5 %/yr with no ×12 (D-05).
 - Financial model matches an independent XLSX to 4 s.f.
 - Every KPI on every tab traced to one `case_runs` row (test asserts no client-side computation of displayed results).
 
@@ -123,12 +131,11 @@ handover checklist linked to E-Site Documents, 7-day Solcast forecast panel (if 
 Verification: re-importing the same generation file changes nothing; a month straddling a year boundary
 books to the right year; monthly report v2 leaves v1 untouched.
 
-## P8 — WM Solar data migration and retirement (≈ 3–5 days; only if D-25 says migrate)
+## P8 — WM Solar retirement (≈ 1 day; no data migration, D-25b)
 
-Supervised script (not an edge function): chosen projects → E-Site projects mapping; meter raw files
-re-imported through the P3 pipeline (not copied from WM's jsonb); simulations **not** migrated (numbers
-are wrong — re-run in E-Site); signed proposals archived as PDFs with their acceptance evidence. Then
-freeze WM Solar read-only and retire.
+Nothing moves into E-Site. Once E-Site Solar is live: export the 3 WM proposals as PDFs for the record,
+set the WM Solar database read-only (revoke authenticated writes), point `wm-solar.vercel.app` at a notice
+page linking to E-Site, and keep the database as an archive.
 
 ---
 
@@ -139,4 +146,6 @@ freeze WM Solar read-only and retire.
 - CLAUDE.md "Current state" + Obsidian `sessions.md` updated at the end of each session.
 
 ## Rough total
-P1–P6 incl. P5b ≈ 71–80 build-days; P7 + P8 ≈ 13–15 more. The critical path is P0 data access → P2/P3 → P4.
+P1–P6 incl. P5b ≈ 73–82 build-days (P1 grew by the access-grant model); P7 ≈ 10 and P8 ≈ 1 more.
+The critical path is P1 → P2/P3 → P4 → P6. Owner actions still pending: D-28 key rotation, D-29 2026/27
+download list, D-27 PnP sign-in, Solcast licence.
