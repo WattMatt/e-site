@@ -67,7 +67,8 @@ export interface WorkItemTypeSpec {
 }
 
 /**
- * Appendix A(b), Q1 rows only. `instruction` (Q2), `approval` (Q3) and
+ * Appendix A(b), Q1 rows plus registered add-on rows (`solar_task`, 00212).
+ * `instruction` (Q2), `approval` (Q3) and
  * `valuation` (Q4) are registered by the migration of the quarter that first
  * creates rows of them — they are NOT listed here as headroom.
  *
@@ -84,6 +85,9 @@ export const WORK_ITEM_TYPES = [
   { key: 'form_action',    label: 'Form action',      sourceTable: 'field.site_forms',             sourceColumn: null,              defaultDays: 3,  calendar: 'site',   gatekeeperRule: 'project_pm',       writeRoles: FORMS_FIELD_ROLES,  sortOrder: 6 },
   { key: 'order_followup', label: 'Order follow-up',  sourceTable: 'structure.node_orders',        sourceColumn: null,              defaultDays: 10, calendar: 'office', gatekeeperRule: 'project_pm',       writeRoles: ORG_WRITE_ROLES,    sortOrder: 7 },
   { key: 'task',           label: 'Task',             sourceTable: null,                           sourceColumn: null,              defaultDays: 5,  calendar: 'office', gatekeeperRule: 'creator',          writeRoles: MARKUP_WRITE_ROLES, sortOrder: 8 },
+  // Solar add-on (00212): the Schedule tab's Gantt tasks (D-20). Sourceless —
+  // solar.schedule_tasks.work_item_id points back at the item.
+  { key: 'solar_task',     label: 'Solar task',       sourceTable: null,                           sourceColumn: null,              defaultDays: 5,  calendar: 'office', gatekeeperRule: 'creator',          writeRoles: MARKUP_WRITE_ROLES, sortOrder: 20 },
 ] as const satisfies readonly WorkItemTypeSpec[]
 
 /** The closed union of registered type keys — narrowed from WORK_ITEM_TYPES via
@@ -122,6 +126,7 @@ export const REF_PREFIXES: Readonly<Record<WorkItemTypeKey, string>> = {
   form_action: 'FORM',
   order_followup: 'ORD',
   task: 'TASK',
+  solar_task: 'SOLAR',
 }
 
 export function refPrefix(key: string): string {
@@ -152,6 +157,7 @@ export const STATE_LABELS: Readonly<
   form_action: {    triage: 'Needs an owner', open: 'To complete', answered: 'Submitted',                 closed: 'Accepted', void: 'Withdrawn' },
   order_followup: { triage: 'Needs an owner', open: 'Chasing',     answered: 'Supplier replied',          closed: 'Resolved', void: 'Dropped' },
   task: {           triage: 'Needs an owner', open: 'To do',       answered: 'Done — awaiting the creator', closed: 'Done',   void: 'Dropped' },
+  solar_task: {     triage: 'Needs an owner', open: 'Planned',     answered: 'Done — awaiting sign-off',  closed: 'Done',     void: 'Removed' },
 }
 
 export function stateLabel(key: string, status: WorkItemStatus): string {
