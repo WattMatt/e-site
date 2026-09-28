@@ -29,10 +29,13 @@ export function MetersPanel({ projectId, view, canEdit, openMeterId }: { project
   const pickedMeters = picked.map((id) => view.meters.find((m) => m.id === id)).filter((m): m is NonNullable<typeof m> => !!m)
   const compareMeters = (comparing ?? []).map((id) => view.meters.find((m) => m.id === id)).filter((m): m is NonNullable<typeof m> => !!m)
 
+  // Picks are pruned against the meters on screen: a meter removed from the study (refresh) no longer
+  // holds a slot, and the limit counts only the visible picks.
+  const visible = (id: string) => view.meters.some((m) => m.id === id)
   function togglePick(id: string, on: boolean) {
-    if (!on) { setPicked((p) => p.filter((x) => x !== id)); setPickNote(null); return }
-    if (picked.length >= MAX_COMPARE) { setPickNote(`You can compare at most ${MAX_COMPARE} meters at a time — untick one first.`); return }
-    setPicked((p) => [...p, id])
+    if (!on) { setPicked((p) => p.filter((x) => x !== id && visible(x))); setPickNote(null); return }
+    if (pickedMeters.length >= MAX_COMPARE) { setPickNote(`You can compare at most ${MAX_COMPARE} meters at a time — untick one first.`); return }
+    setPicked((p) => [...p.filter(visible), id])
     setPickNote(null)
   }
 

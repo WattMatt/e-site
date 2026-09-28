@@ -67,6 +67,17 @@ describe('MetersPanel', () => {
       expect(box(4).checked).toBe(true)
       expect(screen.getByText(/at most 4 meters/)).toBeTruthy()
     })
+    it('a picked meter that left the study (refresh) no longer counts toward the limit', async () => {
+      const { rerender } = render(<MetersPanel projectId="p1" canEdit={false} openMeterId={null} view={five} />)
+      for (const i of [1, 2, 3, 4]) await userEvent.click(box(i))
+      rerender(<MetersPanel projectId="p1" canEdit={false} openMeterId={null} view={{ ...five, meters: [2, 3, 4, 5].map(m) }} />)
+      expect(compare().textContent).toContain('(3)')
+      await userEvent.click(box(5))
+      expect(box(5).checked).toBe(true)
+      expect(screen.queryByText(/at most 4 meters/)).toBeNull()
+      await userEvent.click(compare())
+      expect(screen.getByTestId('comparison').textContent).toBe('m2,m3,m4,m5')
+    })
     it('ticking a meter does not open its drawer; Compare shows one overlay of the selected meters (View level too)', async () => {
       render(<MetersPanel projectId="p1" canEdit={false} openMeterId={null} view={five} />)
       await userEvent.click(box(2))
