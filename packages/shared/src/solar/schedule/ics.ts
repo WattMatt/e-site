@@ -14,7 +14,7 @@ export interface IcsTask {
   ownerName: string | null
 }
 
-const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n')
+const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r\n|\r|\n/g, '\\n')
 const compact = (d: CalendarDate) => d.replace(/-/g, '')
 const p2 = (n: number) => String(n).padStart(2, '0')
 

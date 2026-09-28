@@ -40,4 +40,9 @@ describe('buildScheduleIcs', () => {
     expect(ics.endsWith('END:VCALENDAR\r\n')).toBe(true)
     expect(ics.split('\r\n').every((l) => !l.includes('\n'))).toBe(true)
   })
+  it('a lone CR (old Mac line ending) is escaped too, never a bare CR in the file', () => {
+    const x = buildScheduleIcs({ calendarName: 'P', tasks: [task({ description: 'one\rtwo\r\nthree\nfour' })], now })
+    expect(unfold(x)).toContain('one\\ntwo\\nthree\\nfour')
+    expect(x.replace(/\r\n/g, '').includes('\r')).toBe(false)
+  })
 })
