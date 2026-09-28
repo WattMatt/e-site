@@ -83,6 +83,13 @@ describe('SchematicsList', () => {
     expect(h.waive).toHaveBeenCalledWith({ projectId: 'p1', waived: true, expectedUpdatedAt: 'T0' })
     expect(await screen.findByText(/Marked "No schematic required"/)).toBeTruthy()
   })
+  it('the waiver follows a refreshed study version (another Load-page control saved the same row)', async () => {
+    const { rerender } = render(<SchematicsList projectId="p1" view={view} canEdit />)
+    rerender(<SchematicsList projectId="p1" view={{ ...view, studyUpdatedAt: 'T6', waived: true }} canEdit />)
+    expect(screen.getByText(/Marked "No schematic required"/)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'A schematic is required' }))
+    expect(h.waive).toHaveBeenCalledWith({ projectId: 'p1', waived: false, expectedUpdatedAt: 'T6' })
+  })
   it('a refused waiver shows the reason and keeps the state', async () => {
     h.waive.mockResolvedValue({ error: 'Someone else changed this — reload to see their version.' })
     render(<SchematicsList projectId="p1" view={view} canEdit />)

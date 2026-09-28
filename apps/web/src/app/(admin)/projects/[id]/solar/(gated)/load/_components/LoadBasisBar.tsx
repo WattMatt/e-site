@@ -5,16 +5,21 @@
  * changes the series (spec §4.5 "Saving recomputes solar.site_load").
  */
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { LOAD_BASIS_OPTIONS, type LoadBasisChoice } from '@esite/shared'
 import { saveLoadBasisAction } from '@/actions/solar-load.actions'
 import { useRebuild } from '@/lib/solar/load/use-rebuild'
+import { useResyncedState } from '@/lib/solar/use-resynced-state'
 import { RebuildStatus } from './RebuildStatus'
 
 export function LoadBasisBar({ projectId, basis, updatedAt, canEdit, hint }: {
   projectId: string; basis: LoadBasisChoice | ''; updatedAt: string | null; canEdit: boolean; hint: string | null
 }) {
-  const [value, setValue] = useState<LoadBasisChoice | ''>(basis)
-  const [version, setVersion] = useState(updatedAt)
+  const router = useRouter()
+  // This bar stays mounted across ?tab=, while the settings / common-area / waiver editors save the
+  // same study row: re-seed from the refreshed props so the next change carries the current version.
+  const [value, setValue] = useResyncedState<LoadBasisChoice | ''>(basis, updatedAt)
+  const [version, setVersion] = useResyncedState(updatedAt, updatedAt)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { state, run } = useRebuild(projectId)
@@ -37,6 +42,7 @@ export function LoadBasisBar({ projectId, basis, updatedAt, canEdit, hint }: {
           setSaving(false)
           if ('error' in r) { setValue(prev); setError(r.error); return }
           setVersion(r.updatedAt)
+          router.refresh()
           await run()
         }}>
         {value === '' && <option value="">Choose…</option>}

@@ -87,6 +87,15 @@ describe('TenantsPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save allowance' }))
     expect(h.common).toHaveBeenCalledWith({ projectId: 'p1', commonAreaPct: 7.5, expectedUpdatedAt: 'T0' })
   })
+  it('saving the allowance refreshes; a refreshed study version is what the next allowance save sends', async () => {
+    const { rerender } = render(<TenantsPanel projectId="p1" view={view} canEdit />)
+    await userEvent.click(screen.getByRole('button', { name: 'Save allowance' }))
+    expect(h.refresh).toHaveBeenCalled()
+    rerender(<TenantsPanel projectId="p1" view={{ ...view, studyUpdatedAt: 'T4', commonAreaPct: 8 }} canEdit />)
+    expect((screen.getByLabelText('Common-area allowance (%)') as HTMLInputElement).value).toBe('8')
+    await userEvent.click(screen.getByRole('button', { name: 'Save allowance' }))
+    expect(h.common).toHaveBeenLastCalledWith({ projectId: 'p1', commonAreaPct: 8, expectedUpdatedAt: 'T4' })
+  })
   it('empty state points to the Tenant Schedule; View users see values, no controls', () => {
     const { unmount } = render(<TenantsPanel projectId="p1" view={{ ...view, tenants: [] }} canEdit />)
     expect(screen.getByText(/No tenants in the tenant schedule/)).toBeTruthy()

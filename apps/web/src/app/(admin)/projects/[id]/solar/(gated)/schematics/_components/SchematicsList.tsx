@@ -11,6 +11,7 @@ import { deleteSchematicsAction, setSchematicWaivedAction } from '@/actions/sola
 import { useArmedConfirm } from '@/app/(admin)/projects/[id]/solar/_components/useArmedConfirm'
 import { SavedReportsPanel } from '@/components/reports/SavedReportsPanel'
 import type { SchematicsListView } from '@/lib/solar/schematics/view-types'
+import { useResyncedState } from '@/lib/solar/use-resynced-state'
 import { AddSchematicDialog } from './AddSchematicDialog'
 import { ReplaceDrawingDialog } from './ReplaceDrawingDialog'
 
@@ -21,8 +22,9 @@ export function SchematicsList({ projectId, view, canEdit }: { projectId: string
   const [adding, setAdding] = useState(false)
   const [replacing, setReplacing] = useState<{ id: string; updatedAt: string } | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [waived, setWaived] = useState(view.waived)
-  const [version, setVersion] = useState(view.studyUpdatedAt)
+  // The waiver lives on the study row the Load page also saves: re-seed on its version.
+  const [waived, setWaived] = useResyncedState(view.waived, view.studyUpdatedAt)
+  const [version, setVersion] = useResyncedState(view.studyUpdatedAt, view.studyUpdatedAt)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const confirmDel = useArmedConfirm()

@@ -4,10 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { EMPTY_BILLS_FORM } from '@esite/shared'
 import { siteProfileCharts, HOURS_PER_YEAR } from '@esite/shared/solar-load'
 
-const h = vi.hoisted(() => ({ save: vi.fn(), run: vi.fn(async () => true) }))
+const h = vi.hoisted(() => ({ save: vi.fn(), run: vi.fn(async () => true), refresh: vi.fn() }))
 vi.mock('@/actions/solar-load.actions', () => ({ saveLoadSettingsAction: h.save }))
 vi.mock('@/lib/solar/load/use-rebuild', async (orig) => ({ ...(await orig<object>()), useRebuild: () => ({ state: { running: false, message: null, error: null, done: null }, run: h.run }) }))
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh }) }))
 import { SiteProfilePanel } from './SiteProfilePanel'
 import type { ProfileView } from '@/lib/solar/load/view-types'
 
@@ -48,6 +48,32 @@ describe('SiteProfilePanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save and rebuild' }))
     expect(h.save).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1', expectedUpdatedAt: 'T0', form: expect.objectContaining({ referenceYear: '2024' }) }))
     expect(h.run).toHaveBeenCalled()
+  })
+  it('a save refreshes the page; a refreshed study version is what the next save sends', async () => {
+    const { rerender } = render(<SiteProfilePanel projectId="p1" view={view} canEdit />)
+    await userEvent.selectOptions(screen.getByLabelText('Reference year'), '2024')
+    await userEvent.click(screen.getByRole('button', { name: 'Save and rebuild' }))
+    expect(h.refresh).toHaveBeenCalled()
+    // The Load basis bar (or the Tenants tab) then saved the same study row → T7.
+    rerender(<SiteProfilePanel projectId="p1" view={{ ...view, studyUpdatedAt: 'T7', form: { ...view.form, referenceYear: '2024' } }} canEdit />)
+    await userEvent.selectOptions(screen.getByLabelText('Reference year'), '2025')
+    await userEvent.click(screen.getByRole('button', { name: 'Save and rebuild' }))
+    expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedUpdatedAt: 'T7', form: expect.objectContaining({ referenceYear: '2025' }) }))
+  })
+  it('unsaved edits survive a refresh that only moved the version (another control saved), and the save uses the new version', async () => {
+    const { rerender } = render(<SiteProfilePanel projectId="p1" view={view} canEdit />)
+    await userEvent.type(screen.getByLabelText('Load growth'), '2')
+    rerender(<SiteProfilePanel projectId="p1" view={{ ...view, studyUpdatedAt: 'T8', form: { ...view.form, loadBasis: 'S4', commonAreaPct: '9' } }} canEdit />)
+    expect((screen.getByLabelText('Load growth') as HTMLInputElement).value).toBe('2')
+    await userEvent.click(screen.getByRole('button', { name: 'Save and rebuild' }))
+    expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedUpdatedAt: 'T8', form: expect.objectContaining({ loadGrowthPct: '2' }) }))
+  })
+  it('the bills section follows the SAVED basis prop, not the form copy', () => {
+    const { rerender } = render(<SiteProfilePanel projectId="p1" view={view} canEdit />)
+    expect(screen.queryByLabelText('January kWh')).toBeNull()
+    // The bar saved S4; the refreshed view carries it (same study version seen by this panel is irrelevant).
+    rerender(<SiteProfilePanel projectId="p1" view={{ ...view, studyUpdatedAt: 'T9', form: { ...view.form, loadBasis: 'S4' } }} canEdit />)
+    expect(screen.getByLabelText('January kWh')).toBeTruthy()
   })
   it('a refused save shows the field sentence and does not rebuild', async () => {
     h.save.mockResolvedValueOnce({ fieldErrors: { loadGrowthPct: 'Load growth must be between -10 and 20 %/yr' } })

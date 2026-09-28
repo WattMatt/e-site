@@ -45,10 +45,13 @@ export function useRebuild(projectId: string) {
           else { ok = true; setState({ running: false, message: rebuildMessage(e), error: null, done: { basis: e.basis, referenceYear: e.referenceYear, checks: e.checks } }) }
         }
       }
-      if (ok) router.refresh()
-      else setState((s) => (s.error ? s : { running: false, message: null, done: null, error: 'The site profile could not be built — try again.' }))
+      if (!ok) setState((s) => (s.error ? s : { running: false, message: null, done: null, error: 'The site profile could not be built — try again.' }))
     } catch {
       setState({ running: false, message: null, done: null, error: 'The site profile could not be built — check your connection and try again.' })
+    } finally {
+      // Refresh on failure too: the save that preceded the rebuild (or a partial rebuild) may have moved
+      // the study version, and every editor on the page re-seeds its version from the refreshed props.
+      router.refresh()
     }
     return ok
   }, [projectId, router])

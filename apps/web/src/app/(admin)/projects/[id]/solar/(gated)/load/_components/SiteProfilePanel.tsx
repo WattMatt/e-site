@@ -5,6 +5,7 @@
  * monthly bills (basis S4) are energy (kWh) and billed demand (kVA) only.
  */
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { MONTH_NAMES, type BillsForm, type LoadSettingsField, type LoadSettingsForm } from '@esite/shared'
 import { saveLoadSettingsAction } from '@/actions/solar-load.actions'
 import { useSolarDirtyGuard } from '@/lib/solar/dirty-store'
@@ -30,7 +31,11 @@ function Kpi({ label, value }: { label: string; value: string }) {
   )
 }
 
+/** The fields this panel owns (not the basis — the bar — nor the allowance — the Tenants tab). */
+const ownedKey = (v: ProfileView) => JSON.stringify([v.form.referenceYear, v.form.loadGrowthPct, v.form.diversityFactor, v.bills])
+
 export function SiteProfilePanel({ projectId, view, canEdit }: { projectId: string; view: ProfileView; canEdit: boolean }) {
+  const router = useRouter()
   const [form, setForm] = useState<LoadSettingsForm>(view.form)
   const [bills, setBills] = useState<BillsForm>(view.bills)
   const [version, setVersion] = useState(view.studyUpdatedAt)
@@ -38,6 +43,16 @@ export function SiteProfilePanel({ projectId, view, canEdit }: { projectId: stri
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [seen, setSeen] = useState({ version: view.studyUpdatedAt, owned: ownedKey(view) })
+  if (seen.version !== view.studyUpdatedAt) {
+    // The study row moved (our save, the Load basis bar, the allowance, the waiver). Take its version.
+    // Unsaved edits survive when only OTHER controls' fields moved; if this panel's own fields changed
+    // underneath, the refreshed row wins (someone else edited these settings).
+    const owned = ownedKey(view)
+    setSeen({ version: view.studyUpdatedAt, owned })
+    setVersion(view.studyUpdatedAt)
+    if (!dirty || owned !== seen.owned) { setForm(view.form); setBills(view.bills); setDirty(false) }
+  }
   const { state, run } = useRebuild(projectId)
   useSolarDirtyGuard(dirty)
   const set = <K extends keyof LoadSettingsForm>(k: K, v: LoadSettingsForm[K]) => { setForm((f) => ({ ...f, [k]: v })); setDirty(true) }
@@ -60,6 +75,7 @@ export function SiteProfilePanel({ projectId, view, canEdit }: { projectId: stri
     if ('error' in r) { setError(r.error); return }
     setVersion(r.updatedAt)
     setDirty(false)
+    router.refresh()
     await run()
   }
 
@@ -92,7 +108,8 @@ export function SiteProfilePanel({ projectId, view, canEdit }: { projectId: stri
         )}
       </section>
 
-      {form.loadBasis === 'S4' && (
+      {/* The SAVED basis (the bar owns it), never this panel's copy. */}
+      {view.form.loadBasis === 'S4' && (
         <section aria-label="Monthly bills" style={{ fontSize: 13 }}>
           <h3 style={{ fontSize: 13, margin: '0 0 6px' }}>Monthly bills (basis S4)</h3>
           <label>Daily shape{' '}

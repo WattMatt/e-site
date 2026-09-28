@@ -102,8 +102,9 @@ export function TenantsPanel({ projectId, view, canEdit }: { projectId: string; 
   const [auto, setAuto] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [common, setCommon] = useState(String(view.commonAreaPct))
-  const [commonVersion, setCommonVersion] = useState(view.studyUpdatedAt)
+  // The study row is shared with the Load basis bar and the settings: re-seed on its version.
+  const [common, setCommon] = useResyncedState(String(view.commonAreaPct), view.studyUpdatedAt)
+  const [commonVersion, setCommonVersion] = useResyncedState(view.studyUpdatedAt, view.studyUpdatedAt)
   const [notice, setNotice] = useState<string | null>(null)
   const vacant = view.tenants.filter((t) => t.vacant && t.basis?.source !== 'excluded')
   const confirmVacant = useArmedConfirm()
@@ -136,7 +137,7 @@ export function TenantsPanel({ projectId, view, canEdit }: { projectId: string; 
             const r = await saveCommonAreaAction({ projectId, commonAreaPct: pct, expectedUpdatedAt: commonVersion })
             setBusy(false)
             if ('error' in r) setError(r.error)
-            else { setCommonVersion(r.updatedAt); setNotice('Common-area allowance saved. Rebuild the site profile to use it.') }
+            else { setCommonVersion(r.updatedAt); setNotice('Common-area allowance saved. Rebuild the site profile to use it.'); router.refresh() }
           }}>Save allowance</button>
         </div>
       )}
