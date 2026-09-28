@@ -7,7 +7,7 @@ import { EMPTY_SCHEDULE_FILTERS } from '@esite/shared'
 function props(over: Partial<ScheduleToolbarProps> = {}): ScheduleToolbarProps {
   return {
     canEdit: true, zoom: 'week', onZoom: vi.fn(), search: '', onSearch: vi.fn(), filters: EMPTY_SCHEDULE_FILTERS, onFilters: vi.fn(),
-    owners: [{ id: 'u1', name: 'Ann Smith', email: 'a@x' }], colours: ['#3b82f6', '#ef4444'],
+    owners: [{ id: 'u1', name: 'Ann Smith' }], colours: ['#3b82f6', '#ef4444'],
     presets: [{ id: 'f1', name: 'Late', filters: { ...EMPTY_SCHEDULE_FILTERS, statuses: ['in_progress'] } }],
     onApplyPreset: vi.fn(), onSavePreset: vi.fn(async () => null), onDeletePreset: vi.fn(),
     show: { links: true, milestones: true, split: true }, onShow: vi.fn(), groupBy: 'none', onGroupBy: vi.fn(),
