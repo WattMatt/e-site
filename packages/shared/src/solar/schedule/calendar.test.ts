@@ -1,7 +1,7 @@
 process.env.TZ = 'Africa/Johannesburg'
 import { describe, it, expect } from 'vitest'
 import {
-  saHolidaySet, makeWorkCalendar, isWeekendDate, isWorkingDate, spanDays, endForDuration,
+  saHolidaySet, saHolidays, makeWorkCalendar, isWeekendDate, isWorkingDate, spanDays, endForDuration,
   shiftDate, signedShift, nextWorkingDate,
 } from './calendar'
 
@@ -66,5 +66,21 @@ describe('shiftDate and signedShift', () => {
     expect(signedShift(working, '2026-09-28', '2026-09-23')).toBe(-2)
     expect(signedShift(calendar, '2026-09-23', '2026-09-28')).toBe(5)
     expect(signedShift(calendar, '2026-09-23', '2026-09-23')).toBe(0)
+  })
+})
+
+describe('saHolidays — looked up lazily per year', () => {
+  it('a task in a year nobody asked for still skips its holidays (Freedom Day and Workers’ Day 2028)', () => {
+    const cal = makeWorkCalendar('working', saHolidays())
+    // Mon 24 Apr 2028 + 5 working days: 24, 25, 26, (Thu 27 Freedom Day), 28, (weekend), (Mon 1 May Workers’ Day), Tue 2 May.
+    expect(endForDuration(cal, '2028-04-24', 5)).toBe('2028-05-02')
+    expect(spanDays(cal, '2028-04-24', '2028-05-02')).toBe(5)
+  })
+  it('works for a far year and for 2026 alike', () => {
+    const h = saHolidays()
+    expect(h.has('2045-12-16')).toBe(true)
+    expect(h.has('2045-12-17')).toBe(false)
+    expect(h.has('2026-09-24')).toBe(true)
+    expect(h.has('not-a-date')).toBe(false)
   })
 })

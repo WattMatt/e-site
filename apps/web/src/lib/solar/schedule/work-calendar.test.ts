@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest'
+import { endForDuration } from '@esite/shared'
 import { scheduleCalendar } from './work-calendar'
 
 describe('scheduleCalendar', () => {
+  it('a task added in a later year skips that year’s holidays too', () => {
+    const cal = scheduleCalendar('working', ['2026-10-01'], '2026-09-28')
+    expect(endForDuration(cal, '2028-04-24', 5)).toBe('2028-05-02')
+    expect(cal.holidays.has('2031-04-27')).toBe(true)
+  })
   it('uses the settings mode and covers the years the schedule spans, plus one each side', () => {
     const cal = scheduleCalendar('working', ['2026-12-20', '2027-01-10'], '2026-09-28')
     expect(cal.mode).toBe('working')

@@ -1,7 +1,11 @@
-/** The WorkCalendar a schedule is measured in: its mode + SA holidays for every year it touches (±1). Client-safe. */
-import { makeWorkCalendar, saHolidaySet, type CalendarDate, type DurationMode, type WorkCalendar } from '@esite/shared'
+/** The WorkCalendar a schedule is measured in: its mode + SA holidays for any year, looked up lazily. Client-safe. */
+import { makeWorkCalendar, saHolidays, type CalendarDate, type DurationMode, type WorkCalendar } from '@esite/shared'
 
-export function scheduleCalendar(mode: DurationMode, dates: readonly CalendarDate[], today: CalendarDate): WorkCalendar {
-  const years = [...dates, today].map((d) => Number(d.slice(0, 4))).filter(Number.isFinite)
-  return makeWorkCalendar(mode, saHolidaySet(Math.min(...years) - 1, Math.max(...years) + 1))
+/**
+ * `dates` and `today` are kept in the signature for existing callers; the
+ * holidays no longer depend on them, so a task added or imported in a later
+ * year still skips that year's holidays.
+ */
+export function scheduleCalendar(mode: DurationMode, _dates: readonly CalendarDate[], _today: CalendarDate): WorkCalendar {
+  return makeWorkCalendar(mode, saHolidays())
 }

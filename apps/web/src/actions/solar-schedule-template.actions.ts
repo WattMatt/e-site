@@ -19,7 +19,7 @@ import { planToInputs, toRpcTask } from '@/lib/solar/schedule/inputs'
 import { STALE_MESSAGE } from '@/lib/solar/errors'
 import {
   DEFAULT_SOLAR_SCHEDULE_TEMPLATE, OWNER_ADMIN, SCHEDULE_TEMPLATE_VERSION, instantiateScheduleTemplate, isCalendarDate,
-  makeWorkCalendar, readScheduleTemplate, saHolidaySet, validateScheduleTemplate, type ScheduleTemplateItem,
+  makeWorkCalendar, readScheduleTemplate, saHolidays, validateScheduleTemplate, type ScheduleTemplateItem,
 } from '@esite/shared'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,9 +39,8 @@ export async function applyScheduleTemplateAction(input: { projectId: string; st
   ])
   if (tplErr) return { error: humanScheduleError(tplErr) }
   const items = readScheduleTemplate(stored) ?? DEFAULT_SOLAR_SCHEDULE_TEMPLATE
-  const year = Number(input.start.slice(0, 4))
   const mode = (settings as { duration_mode?: string } | null)?.duration_mode === 'working' ? 'working' : 'calendar'
-  const plan = instantiateScheduleTemplate(items, input.start, makeWorkCalendar(mode, saHolidaySet(year, year + 3)))
+  const plan = instantiateScheduleTemplate(items, input.start, makeWorkCalendar(mode, saHolidays()))
   const { tasks, links } = planToInputs(plan, () => null)
 
   const { error } = await supabase.schema('solar').rpc('schedule_create_tasks', {

@@ -12,9 +12,14 @@ import { addCalendarDays, calendarDateFromUtc, daysBetween, weekdayOf, type Cale
 export const DURATION_MODES = ['calendar', 'working'] as const
 export type DurationMode = (typeof DURATION_MODES)[number]
 
+/** Anything that can answer "is this date a public holiday?" — a Set, or saHolidays(). */
+export interface HolidayLookup {
+  has(d: CalendarDate): boolean
+}
+
 export interface WorkCalendar {
   readonly mode: DurationMode
-  readonly holidays: ReadonlySet<CalendarDate>
+  readonly holidays: HolidayLookup
 }
 
 const LIMIT = 40_000 // ~110 years of days; a loop that runs longer is a bug
@@ -27,7 +32,29 @@ export function saHolidaySet(fromYear: number, toYear: number): Set<CalendarDate
   return out
 }
 
-export function makeWorkCalendar(mode: DurationMode, holidays: ReadonlySet<CalendarDate> = new Set()): WorkCalendar {
+/**
+ * SA public holidays for ANY year, computed the first time a date in that year
+ * is asked about and memoised. A schedule's calendar must not depend on which
+ * years it happened to contain when it was built: a task added or imported in
+ * a later year would otherwise ignore that year's holidays.
+ */
+export function saHolidays(): HolidayLookup {
+  const byYear = new Map<number, Set<CalendarDate>>()
+  return {
+    has(d: CalendarDate): boolean {
+      const y = Number(d.slice(0, 4))
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !Number.isInteger(y)) return false
+      let set = byYear.get(y)
+      if (!set) {
+        set = saHolidaySet(y, y)
+        byYear.set(y, set)
+      }
+      return set.has(d)
+    },
+  }
+}
+
+export function makeWorkCalendar(mode: DurationMode, holidays: HolidayLookup = new Set<CalendarDate>()): WorkCalendar {
   return { mode, holidays }
 }
 
