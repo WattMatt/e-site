@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  addLine, anchorOf, historyCommit, historyInit, historyRedo, historyUndo, linePoints, moveCard, placeCard, removeCard,
+  addLine, anchorOf, historyCommit, historyInit, historyRedo, historyUndo, includeToggleActive, linePoints, moveCard, placeCard, removeCard,
   removeLine, resizeCard, setWaypoints, snapCard, toSavePayload, type SchematicDoc,
 } from './editor'
 
@@ -71,5 +71,14 @@ describe('schematic editor', () => {
     const d = (addLine(withTwo(), { fromMeterId: 'A', toMeterId: 'B', waypoints: [1, 2], lineType: 'supply' }, []) as { doc: SchematicDoc }).doc
     expect(toSavePayload(d).lines).toEqual([{ fromMeterId: 'A', toMeterId: 'B', waypoints: [1, 2], lineType: 'supply' }])
     expect(toSavePayload(d).cards[0]).toEqual({ meterId: 'A', x: 0, y: 0, w: 180, h: 64, colour: null })
+  })
+})
+
+describe('includeToggleActive', () => {
+  it('the include circle toggles only with the Select tool on an editable canvas — in Connect / Place a press on it is a press on the card', () => {
+    expect(includeToggleActive(true, 'select')).toBe(true)
+    expect(includeToggleActive(true, 'connect')).toBe(false)
+    expect(includeToggleActive(true, 'place')).toBe(false)
+    expect(includeToggleActive(false, 'select')).toBe(false)
   })
 })

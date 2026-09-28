@@ -12,7 +12,7 @@ import type Konva from 'konva'
 import { isPrimaryDrawPress, isTouchEvent } from '@/app/(admin)/projects/[id]/floor-plans/[planId]/canvas-input'
 import { backingSize, useSheetImage } from '@/lib/sheet/use-sheet-image'
 import { useSheetViewport } from '@/lib/sheet/use-sheet-viewport'
-import { linePoints, type SchematicDoc } from '@/lib/solar/schematics/editor'
+import { includeToggleActive, linePoints, type SchematicDoc } from '@/lib/solar/schematics/editor'
 import type { EditorMeter, EditorView } from '@/lib/solar/schematics/view-types'
 
 export type Tool = 'select' | 'place' | 'connect'
@@ -160,8 +160,8 @@ export const SchematicCanvas = forwardRef<CanvasHandle, SchematicCanvasProps>(fu
                 <Text x={14} y={8} width={Math.max(10, c.w - 40)} text={m?.label ?? 'Meter'} fontSize={16} fill="#0f172a" ellipsis wrap="none" />
                 <Text x={14} y={30} width={Math.max(10, c.w - 20)} text={`${m?.kind ?? ''}${m?.tenantLabel ? ` · ${m.tenantLabel}` : ''}`} fontSize={12} fill="#475569" ellipsis wrap="none" />
                 <Circle x={c.w - 14} y={14} radius={8} fill={m?.included === true ? '#16a34a' : m?.included === false ? '#e2e8f0' : '#f8fafc'} stroke="#64748b" strokeWidth={1}
-                  onMouseDown={(e) => { e.cancelBubble = true; if (p.editable) p.onToggleInclude(c.meterId) }}
-                  onTouchStart={(e) => { e.cancelBubble = true; if (p.editable) p.onToggleInclude(c.meterId) }} />
+                  onMouseDown={(e) => { if (!includeToggleActive(p.editable, p.tool)) return; e.cancelBubble = true; p.onToggleInclude(c.meterId) }}
+                  onTouchStart={(e) => { if (!includeToggleActive(p.editable, p.tool)) return; e.cancelBubble = true; p.onToggleInclude(c.meterId) }} />
                 {p.editable && p.selectedCard === c.meterId && (
                   <Rect x={c.w - 6} y={c.h - 6} width={12} height={12} fill="#d97706" draggable
                     onMouseDown={(e) => { e.cancelBubble = true }}

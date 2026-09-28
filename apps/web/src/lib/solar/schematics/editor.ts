@@ -120,3 +120,12 @@ export function historyRedo<T>(h: History<T>): History<T> {
   if (h.future.length === 0) return h
   return { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
 }
+
+/**
+ * The card's include-in-load circle toggles only with the Select tool on an editable canvas. With
+ * Connect or Place active, a press on the circle is a press on the card (pick it as a line end),
+ * never a silent include/exclude write.
+ */
+export function includeToggleActive(editable: boolean, tool: 'select' | 'place' | 'connect'): boolean {
+  return editable && tool === 'select'
+}
