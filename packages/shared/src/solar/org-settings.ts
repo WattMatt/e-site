@@ -38,7 +38,7 @@ export const SOLAR_SETTING_FIELDS: readonly SolarSettingField[] = [
   { key: 'escalation_after_cpi_plus_pct', section: 'finance', label: 'Tariff escalation after year 10 (CPI plus)', unit: '%', kind: 'number', min: -5, max: 20, defaultValue: 1, source: 'D-07' },
   { key: 'analysis_years', section: 'finance', label: 'Analysis period', unit: 'years', kind: 'number', min: 1, max: 40, defaultValue: 25, source: 'D-07' },
   // Owner default 5 (2026-09-28): 27 % — the South African company income tax rate.
-  { key: 'tax_rate_pct', section: 'finance', label: 'Company tax rate', unit: '%', kind: 'number', min: 0, max: 60, defaultValue: 27, source: 'owner default, SA company rate' },
+  { key: 'tax_rate_pct', section: 'finance', label: 'Company tax rate', unit: '%', kind: 'number', min: 0, max: 60, defaultValue: 27 },
   { key: 'section_12b_default', section: 'finance', label: 'Section 12B allowance on by default', unit: '', kind: 'boolean', defaultValue: false, source: 'D-16' },
   { key: 'om_r_per_kwp_yr', section: 'opex', label: 'O&M', unit: 'R/kWp/yr', kind: 'number', min: 0, max: 10000, defaultValue: 150, source: 'D-07' },
   { key: 'insurance_pct_of_capex', section: 'opex', label: 'Insurance (annual, of capex)', unit: '%', kind: 'number', min: 0, max: 10, defaultValue: 0.5, source: 'D-05' },
