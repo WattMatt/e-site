@@ -26,7 +26,7 @@ export const SOLAR_TABS: readonly SolarTab[] = [
   { slug: 'site',       label: 'Site & Supply',      built: true,  financial: false, hidden: false },
   { slug: 'load',       label: 'Load',               built: false, financial: false, hidden: false },
   { slug: 'schematics', label: 'Schematics',         built: false, financial: false, hidden: false },
-  { slug: 'tariff',     label: 'Tariff',             built: false, financial: true,  hidden: false },
+  { slug: 'tariff',     label: 'Tariff',             built: true,  financial: true,  hidden: false },
   { slug: 'layout',     label: 'Layout',             built: false, financial: false, hidden: false },
   { slug: 'yield',      label: 'Yield & Scenarios',  built: false, financial: false, hidden: false },
   { slug: 'financials', label: 'Financials',         built: false, financial: true,  hidden: false },
