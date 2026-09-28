@@ -13,7 +13,8 @@
     "./tariffs/parsers": "./src/tariffs/parsers/index.ts",
     "./tariffs/ingest": "./src/tariffs/ingest/index.ts",
     "./meter-data": "./src/meter-data/index.ts",
-    "./solar-load": "./src/services/solar/load/index.ts"
+    "./solar-load": "./src/services/solar/load/index.ts",
+    "./solar-cases": "./src/solar/cases/index.ts"
   },
   "scripts": {
     "lint": "eslint . --ext .ts",
