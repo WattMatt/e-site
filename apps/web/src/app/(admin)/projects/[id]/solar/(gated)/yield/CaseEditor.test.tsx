@@ -81,6 +81,30 @@ describe('CaseEditor', () => {
     fireEvent.click(screen.getByLabelText('Export allowed'))
     expect((screen.getByLabelText('Export earns credit') as HTMLInputElement).disabled).toBe(true)
   })
+  it.each([
+    ['no_credit', 250, { exportAllowed: true, exportLimitKw: 250, exportCredited: false }],
+    ['net_billing', null, { exportAllowed: true, exportLimitKw: null, exportCredited: true }],
+    ['zero_export', null, { exportAllowed: false, exportLimitKw: null, exportCredited: true }],
+  ] as const)('turning Override on seeds the export fields from the inherited study export (%s)', async (mode, limitKw, expected) => {
+    h.save.mockResolvedValue({ ok: true, updatedAt: 'T2' })
+    // The case config carries the opposite of what the study says, so an unseeded override would show.
+    const stale = { ...cfg, grid: { ...cfg.grid, overrideExport: false, exportAllowed: mode === 'zero_export', exportLimitKw: 999, exportCredited: mode !== 'net_billing' ? true : false } }
+    render(<CaseEditor projectId="p1" level="edit" data={data({ config: stale, studyExport: { mode, limitKw } })} equipment={equipment} />)
+    fireEvent.click(screen.getByLabelText('Override for this case'))
+    expect((screen.getByLabelText('Export allowed') as HTMLInputElement).checked).toBe(expected.exportAllowed)
+    fireEvent.click(screen.getByRole('button', { name: 'Save case' }))
+    await waitFor(() => expect(h.save).toHaveBeenCalled())
+    expect(h.save.mock.calls[0]![0].config.grid).toMatchObject({ overrideExport: true, ...expected })
+  })
+  it('turning Override off and on again with no inherited mode keeps what was entered', async () => {
+    h.save.mockResolvedValue({ ok: true, updatedAt: 'T2' })
+    const own = { ...cfg, grid: { ...cfg.grid, overrideExport: false, exportAllowed: true, exportLimitKw: 42, exportCredited: false } }
+    render(<CaseEditor projectId="p1" level="edit" data={data({ config: own, studyExport: { mode: null, limitKw: null } })} equipment={equipment} />)
+    fireEvent.click(screen.getByLabelText('Override for this case'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save case' }))
+    await waitFor(() => expect(h.save).toHaveBeenCalled())
+    expect(h.save.mock.calls[0]![0].config.grid).toMatchObject({ overrideExport: true, exportAllowed: true, exportLimitKw: 42, exportCredited: false })
+  })
   it('picking a module stores the catalogue snapshot', async () => {
     h.save.mockResolvedValue({ ok: true, updatedAt: 'T2' })
     render(<CaseEditor projectId="p1" level="edit" data={data()} equipment={equipment} />)

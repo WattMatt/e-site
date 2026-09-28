@@ -16,8 +16,8 @@ describe('CaseList', () => {
     expect(screen.getByText('500.0 kWp · 400.0 kW AC')).toBeTruthy()
     expect(screen.getByText('Stale')).toBeTruthy()
     expect(screen.getByText('800.0 MWh/yr')).toBeTruthy()
-    expect(screen.getByText('Year-1 saving R 400 000')).toBeTruthy()
-    expect(screen.getAllByText(/Year-1 saving/)).toHaveLength(1)
+    expect(screen.getByText('Year-1 bill saving R 400 000')).toBeTruthy()
+    expect(screen.getAllByText(/Year-1 bill saving/)).toHaveLength(1)
     expect(screen.getByText('Selected')).toBeTruthy()
   })
   it('View users see no write controls', () => {

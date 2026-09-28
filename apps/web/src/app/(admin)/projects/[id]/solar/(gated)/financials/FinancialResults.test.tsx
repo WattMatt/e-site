@@ -10,7 +10,7 @@ const view: FinancialResultsView = {
   year1: { billBeforeZar: 876_000, billAfterZar: 613_200, savingZar: 262_800, exportCreditUsedZar: 0 },
   lcoeZarPerKwh: 0.95,
   columns: [
-    { key: 'cash-owner', label: 'Cash purchase — owner', year1: { label: 'Year-1 saving', zar: 262_800 }, upfrontZar: 1_200_000, npvZar: 900_000, irr: 0.21, simplePaybackYears: 4.6, discountedPaybackYears: 6.2, cumulativeZar: 3_500_000, rows: [row(1, 241_800, -958_200), row(2, 250_000, -708_200)] },
+    { key: 'cash-owner', label: 'Cash purchase — owner', year1: { label: 'Year-1 bill saving', zar: 262_800 }, upfrontZar: 1_200_000, npvZar: 900_000, irr: 0.21, simplePaybackYears: 4.6, discountedPaybackYears: 6.2, cumulativeZar: 3_500_000, rows: [row(1, 241_800, -958_200), row(2, 250_000, -708_200)] },
     { key: 'ppa-client', label: 'PPA — client', year1: { label: 'Year-1 net saving', zar: 82_800 }, upfrontZar: 0, npvZar: 400_000, irr: null, simplePaybackYears: null, discountedPaybackYears: null, cumulativeZar: 1_000_000, rows: [row(1, 50_000, 50_000)] },
   ],
   tornado: { title: 'NPV sensitivity (Cash purchase — owner), ±20 %', baseNpvZar: 900_000, bars: [{ variable: 'capex', label: 'Capex', lowNpvZar: 1_140_000, highNpvZar: 660_000, spreadZar: 480_000 }] },
@@ -24,7 +24,7 @@ describe('FinancialResults', () => {
     expect(screen.getByText('21.0 %')).toBeTruthy()
     expect(screen.getAllByText('n/a').length).toBeGreaterThanOrEqual(1)
     // Each column shows ITS party's year-1 figure (not the gross saving copied into every column).
-    expect(screen.getByText('R 262 800 (saving)')).toBeTruthy()
+    expect(screen.getByText('R 262 800 (bill saving)')).toBeTruthy()
     expect(screen.getByText('R 82 800 (net saving)')).toBeTruthy()
     expect(screen.queryAllByText('R 262 800')).toHaveLength(0)
     expect(screen.getAllByText('R 0.95/kWh')).toHaveLength(2)

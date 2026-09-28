@@ -44,7 +44,7 @@ function Card({ c, projectId, canWrite, studyUpdatedAt, ticked, onTick, open }: 
       <span>{`${num(c.dcKwp)} kWp · ${num(c.acKw)} kW AC`}</span>
       {c.batteryKwh !== null && <span>{`Battery ${num(c.batteryKwh)} kWh`}</span>}
       {c.annualPvKwh !== null && <span>{`${mwh(c.annualPvKwh)}/yr`}</span>}
-      {c.year1SavingZar !== null && <span>{`Year-1 saving ${rand(c.year1SavingZar)}`}</span>}
+      {c.year1SavingZar !== null && <span>{`Year-1 bill saving ${rand(c.year1SavingZar)}`}</span>}
       {c.lastRunAt && <span style={{ fontSize: 12, color: 'var(--c-text-dim)' }}>Last run {sastDateTime(c.lastRunAt)}</span>}
       {canWrite && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>

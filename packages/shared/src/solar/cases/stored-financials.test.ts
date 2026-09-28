@@ -47,7 +47,8 @@ describe('runStoredFinancials', () => {
     const credited = runStoredFinancials({ ...e, hourly }, fin, stubBillCalculator)
     const noCredit = runStoredFinancials({ ...e, hourly, exportCredited: false }, fin, stubBillCalculator)
     const zeroExport = runStoredFinancials({ ...e, hourly: { ...hourly, export: zero, exportPvOnly: zero } }, fin, stubBillCalculator)
-    expect(noCredit.year1Bills).toEqual(zeroExport.year1Bills)
+    // The WHOLE result, so the tornado's export-rate bar (priced through withExportRateScaled) is covered too.
+    expect(noCredit).toEqual(zeroExport)
     expect(noCredit.year1Bills.exportCreditUsedZar).toBe(0)
     expect(noCredit.year1Bills.afterZar).toBeGreaterThan(credited.year1Bills.afterZar)
     expect(runStoredFinancials({ ...e, hourly, exportCredited: true }, fin, stubBillCalculator)).toEqual(credited)

@@ -37,7 +37,7 @@ describe('OverviewKpis (§2.2, §2.4)', () => {
   })
   it('energy KPIs for everyone; rand values only with money', () => {
     const { rerender } = render(<OverviewKpis projectId="p1" level="edit_financials" kpis={kpis} selectable={selectable} selectedCaseId="c1" studyUpdatedAt="T0" stale={false} />)
-    for (const t of ['500.0 kWp / 400.0 kW', '845.0 MWh (1 690 kWh/kWp)', '83.0 %', '58.0 %', '140.0 MWh', 'R 1 000 000 → R 600 000', 'R 400 000', '4.6 years', '21.0 %', 'R 2 000 000', 'R 0.95/kWh']) expect(screen.getByText(t)).toBeTruthy()
+    for (const t of ['500.0 kWp / 400.0 kW', '845.0 MWh (1 690 kWh/kWp)', '83.0 %', '58.0 %', '140.0 MWh', 'R 1 000 000 → R 600 000', 'R 400 000', 'Year-1 bill saving', '4.6 years', '21.0 %', 'R 2 000 000', 'R 0.95/kWh']) expect(screen.getByText(t)).toBeTruthy()
     rerender(<OverviewKpis projectId="p1" level="edit" kpis={{ ...kpis, money: null }} selectable={selectable} selectedCaseId="c1" studyUpdatedAt="T0" stale={false} />)
     expect(screen.queryByText('R 400 000')).toBeNull()
     expect(screen.queryByText('IRR')).toBeNull()

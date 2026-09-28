@@ -67,7 +67,7 @@ describe('loadFinancialsPageData', () => {
     const t = tables({ 'solar.case_run_financials': [{ ...tables()['solar.case_run_financials']![0] as object, results: { ...results, finance: { ...results.finance, models } } }] })
     const d = await loadFinancialsPageData(fakeSupabase({ tables: t }).client as never, fakeSupabase({ tables: { 'solar.org_settings': [] } }).client as never, P, undefined)
     expect(d.results!.columns.map((c) => [c.key, c.year1])).toEqual([
-      ['cash-owner', { label: 'Year-1 saving', zar: 262_800 }],
+      ['cash-owner', { label: 'Year-1 bill saving', zar: 262_800 }],
       ['ppa-client', { label: 'Year-1 net saving', zar: 82_800 }],
       ['ppa-investor', { label: 'Year-1 income', zar: 180_000 }],
     ])

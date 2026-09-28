@@ -100,6 +100,13 @@ describe('duplicateSolarCaseAction', () => {
     await duplicateSolarCaseAction({ projectId: P, caseId: C })
     expect(callsTo(u.calls, 'solar.case_financials', 'insert')[0]!.payload).toEqual({ case_id: 'c3', config: { version: 1 } })
   })
+  it('a copy whose equipment has left the catalogue (cases_bind 23514) → pick-again sentence, not the generic one', async () => {
+    setup({
+      tables: { 'solar.cases': [{ id: C, study_id: S, project_id: P, name: 'Base', config: cfg }], 'solar.case_financials': [] },
+      writes: { 'solar.cases:insert': { error: { code: '23514', message: 'solar.cases: the module is not in this organisation\'s catalogue' } } },
+    })
+    expect(await duplicateSolarCaseAction({ projectId: P, caseId: C })).toEqual({ error: 'Pick the module again — it is not in your catalogue.' })
+  })
   it('an unknown case → sentence', async () => {
     setup()
     expect(await duplicateSolarCaseAction({ projectId: P, caseId: 'nope' })).toEqual({ error: 'Case not found.' })

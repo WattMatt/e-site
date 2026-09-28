@@ -13,11 +13,11 @@ describe('CompareView', () => {
     const cols = [col('a', 'Base', 500, { year1SavingZar: 400_000, irr: 0.2, npvZar: 2e6, simplePaybackYears: 5 }), col('b', 'Big', 800, null)]
     const { rerender, container } = render(<CompareView columns={cols} showMoney />)
     expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['KPI', 'Base', 'Big'])
-    expect(screen.getByText('Year-1 saving')).toBeTruthy()
+    expect(screen.getByText('Year-1 bill saving')).toBeTruthy()
     expect(screen.getByText('R 400 000')).toBeTruthy()
     expect(screen.getAllByText('Run financials first')).toHaveLength(4)
     rerender(<CompareView columns={cols} showMoney={false} />)
-    expect(screen.queryByText('Year-1 saving')).toBeNull()
+    expect(screen.queryByText('Year-1 bill saving')).toBeNull()
     expect(container.textContent).not.toMatch(/R \d/)
     expect(screen.getByRole('img', { name: 'Monthly PV energy by case' })).toBeTruthy()
     expect(container.querySelectorAll('rect[data-bar]')).toHaveLength(24)

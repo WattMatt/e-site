@@ -22,6 +22,21 @@ const grid = { display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, 
 const dim = { fontSize: 12, color: 'var(--c-text-dim)' } as const
 const alert = { color: 'var(--c-red, #dc2626)', fontSize: 12 } as const
 
+/**
+ * The export fields an override STARTS from: what the study already says (mirrors build-input's
+ * non-override branch), so turning Override on changes nothing until the user edits a field. Without
+ * this a "Yes (no credit)" study became credited export the moment Override was ticked.
+ * No inherited mode → keep whatever the case already carries.
+ */
+function inheritedExport(study: CaseEditorData['studyExport']): Partial<CaseConfig['grid']> {
+  switch (study.mode) {
+    case 'zero_export': return { exportAllowed: false, exportLimitKw: null, exportCredited: true }
+    case 'no_credit': return { exportAllowed: true, exportLimitKw: study.limitKw, exportCredited: false }
+    case 'net_billing': return { exportAllowed: true, exportLimitKw: study.limitKw, exportCredited: true }
+    default: return {}
+  }
+}
+
 export function CaseEditor({ projectId, level, data, equipment }: { projectId: string; level: SolarAccessLevel; data: CaseEditorData; equipment: EquipmentOptions }) {
   const router = useRouter()
   const ro = level === 'view'
@@ -195,7 +210,7 @@ export function CaseEditor({ projectId, level, data, equipment }: { projectId: s
 
       <Section title="Grid / export">
         <span>{`Inherited: ${data.studyExport.mode ? (EXPORT_MODE[data.studyExport.mode] ?? data.studyExport.mode) : 'not set'}${data.studyExport.limitKw !== null ? `, export limit ${num(data.studyExport.limitKw, 0)} kW` : ''}`}</span>
-        <Check label="Override for this case" checked={g.overrideExport} disabled={ro} onChange={(v) => set('grid', { overrideExport: v })} />
+        <Check label="Override for this case" checked={g.overrideExport} disabled={ro} onChange={(v) => set('grid', v && !g.overrideExport ? { overrideExport: true, ...inheritedExport(data.studyExport) } : { overrideExport: v })} />
         {g.overrideExport && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
           <Check label="Export allowed" checked={g.exportAllowed} disabled={ro} onChange={(v) => set('grid', { exportAllowed: v })} />
           <NumField label="Export limit" unit="kW" value={g.exportLimitKw} disabled={ro || !g.exportAllowed} error={err('grid.exportLimitKw')} onChange={(v) => set('grid', { exportLimitKw: v })} />

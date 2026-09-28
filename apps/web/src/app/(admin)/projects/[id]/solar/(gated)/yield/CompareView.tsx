@@ -23,7 +23,7 @@ const ENERGY: Row[] = [
   ['Peak demand after', (c) => kw(c.kpis.peakDemandAfterKw)],
 ]
 const MONEY: Row[] = [
-  ['Year-1 saving', (c) => (c.money ? rand(c.money.year1SavingZar) : NO_FIN)],
+  ['Year-1 bill saving', (c) => (c.money ? rand(c.money.year1SavingZar) : NO_FIN)],
   ['IRR', (c) => (c.money ? (c.money.irr === null ? 'n/a' : pct(c.money.irr)) : NO_FIN)],
   ['NPV', (c) => (c.money ? rand(c.money.npvZar) : NO_FIN)],
   ['Simple payback', (c) => (c.money ? years(c.money.simplePaybackYears) : NO_FIN)],

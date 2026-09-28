@@ -37,7 +37,7 @@ export function OverviewKpis({ projectId, level, kpis, selectable, selectedCaseI
     ['Export', mwh(e.exportKwh)],
     ...(m ? [
       ['Year-1 bill before → after (excl. VAT)', `${rand(m.billBeforeZar)} → ${rand(m.billAfterZar)}`],
-      ['Year-1 saving', rand(m.savingZar)],
+      ['Year-1 bill saving', rand(m.savingZar)],
       ['Simple payback', years(m.simplePaybackYears)],
       ['IRR', m.irr === null ? 'n/a' : pct(m.irr)],
       ['NPV', rand(m.npvZar)],
