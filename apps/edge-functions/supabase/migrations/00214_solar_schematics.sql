@@ -59,6 +59,7 @@
 -- function: solar.channel_readings(uuid[], timestamptz, timestamptz)
 -- function: solar.channel_summaries(uuid[])
 -- function: public.solar_save_schematic(uuid, timestamptz, jsonb, jsonb)
+-- function: public.user_can_read_report_kind(uuid, text)
 -- trigger: schematics_bind ON solar.schematics
 -- trigger: schematics_propagate_anchor ON solar.schematics
 -- trigger: schematic_cards_bind ON solar.schematic_cards
