@@ -8,6 +8,7 @@ import {
   ORG_ADDON_CHARGE_EVENT,
   ORG_ADDON_DUPLICATE_EVENT,
   ORG_ADDON_UNMATCHED_EVENT,
+  ORG_ADDON_PRIOR_PERIOD_REFUND_EVENT,
   nextAddonPeriodEnd,
   planCodeOf,
   solarPlanCode,
@@ -268,6 +269,80 @@ async function markOrgAddonPastDue(supabase: Client, row: AddonRow): Promise<PgE
     .eq('id', row.id)
     .eq('status', 'active')
   return (error as PgError) ?? null
+}
+
+/**
+ * Refund or lost chargeback on a Solar charge → 'refunded'. Hidden but kept
+ * (D-02): the helpers stop answering, every solar.* row stays untouched, and
+ * a new first charge restores the lot. The org comes from the payment-event
+ * row the charge branch wrote (the subscription table stores no references).
+ *
+ * Owner default (Phase 1B): only a refund of the charge that funded the
+ * CURRENT period — the row's `last_event_id`, i.e. the latest successful
+ * Solar charge applied — locks Solar. Refunding an older year's charge is
+ * logged against the org (ORG_ADDON_PRIOR_PERIOD_REFUND_EVENT) and changes no
+ * status: the current year was paid for separately. The `last_event_id`
+ * match is repeated in the UPDATE, so a renewal applied between the read and
+ * the write makes the refund change nothing rather than lock a fresh year.
+ * The `.select('id')` makes the admin notification fire only when a row
+ * actually changed, so a re-delivered refund notifies nobody.
+ */
+async function refundOrgAddonForReference(
+  supabase: Client,
+  reference: string,
+  how: string,
+  sourceEvent: string,
+): Promise<{ error: PgError }> {
+  const { data: charge, error: lookupErr } = await (supabase as any)
+    .schema('billing')
+    .from('payment_events')
+    .select('organisation_id')
+    .eq('event_type', ORG_ADDON_CHARGE_EVENT)
+    .eq('paystack_reference', reference)
+    .maybeSingle()
+  if (lookupErr) return { error: lookupErr as PgError }
+  const orgId = (charge as { organisation_id?: string | null } | null)?.organisation_id
+  if (!orgId) return { error: null }
+
+  const { data: row, error: readErr } = await addonTable(supabase)
+    .select(ADDON_COLUMNS)
+    .eq('organisation_id', orgId)
+    .eq('feature_key', 'solar')
+    .maybeSingle()
+  if (readErr) return { error: readErr as PgError }
+  const current = (row as AddonRow | null) ?? null
+  if (!current) return { error: null }
+
+  if (current.last_event_id !== reference) {
+    console.info(
+      `Paystack webhook: Solar charge ${reference} ${how} for org ${orgId} did not fund the current period ` +
+        `(current charge ${current.last_event_id ?? 'none'}); status unchanged`,
+    )
+    return logPaymentEvent(supabase, {
+      eventType: ORG_ADDON_PRIOR_PERIOD_REFUND_EVENT,
+      reference,
+      organisationId: orgId,
+      payload: { how, source_event: sourceEvent, current_charge: current.last_event_id, status: current.status },
+    })
+  }
+
+  const { data: changed, error: updErr } = await addonTable(supabase)
+    .update({ status: 'refunded', refunded_at: new Date().toISOString() })
+    .eq('id', current.id)
+    .eq('last_event_id', reference)
+    .neq('status', 'refunded')
+    .select('id')
+  if (updErr) return { error: updErr as PgError }
+  if (!Array.isArray(changed) || changed.length === 0) return { error: null }
+
+  return notifyOrgAdmins(supabase, orgId, {
+    type: 'billing_refund_processed',
+    title: 'Solar paused — payment refunded',
+    body:
+      `The Solar subscription payment ${reference} was ${how}. Solar is now locked on every ` +
+      `project of this organisation. All Solar data is kept and returns if you subscribe again.`,
+    data: { reference, feature_key: 'solar' },
+  })
 }
 
 /**
@@ -1010,6 +1085,9 @@ export async function POST(req: NextRequest) {
       .eq('paystack_reference', reference)
     if (seatRevokeErr) return storageFailure('feature-seat revoke', seatRevokeErr)
 
+    const addonRefund = await refundOrgAddonForReference(supabase, reference, 'refunded', event.event)
+    if (addonRefund.error) return storageFailure('org_addon refund', addonRefund.error)
+
     return ok()
   }
 
@@ -1053,6 +1131,16 @@ export async function POST(req: NextRequest) {
         data: { reference, event: event.event },
       })
       if (notified.error) return storageFailure('dispute notification', notified.error)
+    }
+
+    // A chargeback the merchant LOST ('merchant-accepted') is money gone back
+    // to the cardholder: Solar goes to 'refunded' (D-02), under the same
+    // current-period rule as a refund. An opened or merchant-won dispute takes
+    // nothing away. ⚠ UNVERIFIED: confirm the charge.dispute.resolve payload's
+    // `resolution` values in Paystack test mode before relying on this.
+    if (event.event === 'charge.dispute.resolve' && data.resolution === 'merchant-accepted') {
+      const addonChargeback = await refundOrgAddonForReference(supabase, reference, 'charged back', event.event)
+      if (addonChargeback.error) return storageFailure('org_addon chargeback', addonChargeback.error)
     }
 
     return ok()

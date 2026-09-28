@@ -1138,3 +1138,148 @@ describe('org add-on — not_renew / disable', () => {
     expect(res.status).toBe(500)
   })
 })
+
+describe('org add-on — refund / chargeback → refunded (D-02: hidden but kept)', () => {
+  // The refunded charge is the one that funded the CURRENT period: the row's
+  // last_event_id is its reference (owner default — see the prior-period tests).
+  const solarCharge = {
+    'billing.payment_events.select': { data: { organisation_id: SOLAR_ORG }, error: null },
+    [`${ADDON}.select`]: { data: addonRow({ last_event_id: REF }), error: null },
+    'public.user_organisations.select': { data: [{ user_id: 'u-owner' }], error: null },
+  }
+
+  const refundProcessed = {
+    event: 'refund.processed',
+    data: { status: 'processed', amount: 199900, transaction_reference: REF },
+  }
+
+  it('finds the org through the charge payment-event and marks the row refunded', async () => {
+    serviceClientRef.value = makeClient({
+      ...solarCharge,
+      [`${ADDON}.update`]: { data: [{ id: 'oas-1' }], error: null },
+    })
+    const res = await POST(signedReq(refundProcessed))
+    expect(res.status).toBe(200)
+    const lookup = serviceClientRef.value.of('billing.payment_events.select')
+    expect(lookup[0].filters).toEqual(
+      expect.arrayContaining([
+        ['eq', 'event_type', 'charge.success.org_addon_subscription'],
+        ['eq', 'paystack_reference', REF],
+      ]),
+    )
+    expect(serviceClientRef.value.of(`${ADDON}.select`)[0].filters).toEqual(
+      expect.arrayContaining([
+        ['eq', 'organisation_id', SOLAR_ORG],
+        ['eq', 'feature_key', 'solar'],
+      ]),
+    )
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload.status).toBe('refunded')
+    expect(upd[0].payload.refunded_at).toEqual(expect.any(String))
+    expect(upd[0].filters).toEqual(
+      expect.arrayContaining([
+        ['eq', 'id', 'oas-1'],
+        // Re-checked in the UPDATE itself: a renewal applied between the read
+        // and the write moves last_event_id on, and the refund then changes nothing.
+        ['eq', 'last_event_id', REF],
+        ['neq', 'status', 'refunded'],
+      ]),
+    )
+  })
+
+  it('tells the org owners/admins once, and says the data is kept', async () => {
+    serviceClientRef.value = makeClient({
+      ...solarCharge,
+      [`${ADDON}.update`]: { data: [{ id: 'oas-1' }], error: null },
+    })
+    await POST(signedReq(refundProcessed))
+    const note = serviceClientRef.value.of('public.notifications.insert')
+    expect(note).toHaveLength(1)
+    expect(note[0].payload[0]).toMatchObject({ type: 'billing_refund_processed', organisation_id: SOLAR_ORG })
+    expect(note[0].payload[0].body).toMatch(/kept/i)
+  })
+
+  it('a duplicate refund delivery changes no row and notifies nobody', async () => {
+    serviceClientRef.value = makeClient({
+      ...solarCharge,
+      [`${ADDON}.update`]: { data: [], error: null }, // already refunded → 0 rows
+    })
+    const res = await POST(signedReq(refundProcessed))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of('public.notifications.insert')).toHaveLength(0)
+  })
+
+  it('refunding an OLDER year’s charge is logged against the org but does not lock the current, paid year', async () => {
+    serviceClientRef.value = makeClient({
+      ...solarCharge,
+      // The row has since been renewed by a later charge.
+      [`${ADDON}.select`]: { data: addonRow({ last_event_id: 'ref_renew_2027' }), error: null },
+      [`${ADDON}.update`]: { data: [{ id: 'oas-1' }], error: null },
+    })
+    const res = await POST(signedReq(refundProcessed))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+    expect(serviceClientRef.value.of('public.notifications.insert')).toHaveLength(0)
+    const prior = serviceClientRef.value
+      .of('billing.payment_events.upsert')
+      .filter((c: any) => c.payload.event_type === 'refund.org_addon_subscription.prior_period')
+    expect(prior).toHaveLength(1)
+    expect(prior[0].payload).toMatchObject({ paystack_reference: REF, organisation_id: SOLAR_ORG })
+  })
+
+  it('a refund for a reference that was never a Solar charge touches no add-on row', async () => {
+    serviceClientRef.value = makeClient() // payment_events lookup → null
+    await POST(signedReq(refundProcessed))
+    expect(serviceClientRef.value.of(`${ADDON}.select`)).toHaveLength(0)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('refund.pending takes nothing away', async () => {
+    serviceClientRef.value = makeClient({ ...solarCharge })
+    await POST(signedReq({ ...refundProcessed, event: 'refund.pending' }))
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('a failed revoke 500s so Paystack retries', async () => {
+    serviceClientRef.value = makeClient({
+      ...solarCharge,
+      [`${ADDON}.update`]: { data: null, error: { code: '08006', message: 'connection failure' } },
+    })
+    const res = await POST(signedReq(refundProcessed))
+    expect(res.status).toBe(500)
+  })
+
+  it('a failed subscription read 500s so Paystack retries', async () => {
+    serviceClientRef.value = makeClient({
+      ...solarCharge,
+      [`${ADDON}.select`]: { data: null, error: { code: '08006', message: 'connection failure' } },
+    })
+    const res = await POST(signedReq(refundProcessed))
+    expect(res.status).toBe(500)
+  })
+
+  it('a chargeback the merchant lost (dispute resolved merchant-accepted) → refunded', async () => {
+    serviceClientRef.value = makeClient({
+      ...solarCharge,
+      [`${ADDON}.update`]: { data: [{ id: 'oas-1' }], error: null },
+    })
+    const res = await POST(signedReq({
+      event: 'charge.dispute.resolve',
+      data: { status: 'resolved', resolution: 'merchant-accepted', transaction: { reference: REF, amount: 199900 } },
+    }))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)[0].payload.status).toBe('refunded')
+  })
+
+  it('an OPENED dispute, or one the merchant won, takes nothing away', async () => {
+    for (const ev of [
+      { event: 'charge.dispute.create', data: { status: 'awaiting-merchant-feedback', transaction: { reference: REF } } },
+      { event: 'charge.dispute.resolve', data: { status: 'resolved', resolution: 'declined', transaction: { reference: REF } } },
+    ]) {
+      serviceClientRef.value = makeClient({ ...solarCharge, [`${ADDON}.update`]: { data: [{ id: 'oas-1' }], error: null } })
+      await POST(signedReq(ev))
+      expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+    }
+  })
+})

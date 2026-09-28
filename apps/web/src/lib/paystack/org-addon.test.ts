@@ -5,6 +5,7 @@ import {
   ORG_ADDON_CHARGE_EVENT,
   ORG_ADDON_DUPLICATE_EVENT,
   ORG_ADDON_UNMATCHED_EVENT,
+  ORG_ADDON_PRIOR_PERIOD_REFUND_EVENT,
   solarPlanCode,
   planCodeOf,
   subscriptionCodeOf,
@@ -16,9 +17,15 @@ describe('constants', () => {
     expect(ORG_ADDON_METADATA_TYPE).toBe('org_addon_subscription')
   })
 
-  it('keeps the three payment-event types distinct — a refund lookup keys on the first only', () => {
-    const all = [ORG_ADDON_CHARGE_EVENT, ORG_ADDON_DUPLICATE_EVENT, ORG_ADDON_UNMATCHED_EVENT]
-    expect(new Set(all).size).toBe(3)
+  it('keeps the payment-event types distinct — a refund lookup keys on the first only', () => {
+    const all = [
+      ORG_ADDON_CHARGE_EVENT,
+      ORG_ADDON_DUPLICATE_EVENT,
+      ORG_ADDON_UNMATCHED_EVENT,
+      ORG_ADDON_PRIOR_PERIOD_REFUND_EVENT,
+    ]
+    expect(new Set(all).size).toBe(4)
+    expect(ORG_ADDON_PRIOR_PERIOD_REFUND_EVENT).toBe('refund.org_addon_subscription.prior_period')
     expect(ORG_ADDON_CHARGE_EVENT).toBe('charge.success.org_addon_subscription')
   })
 })

@@ -25,6 +25,13 @@ export const ORG_ADDON_DUPLICATE_EVENT = 'charge.success.org_addon_subscription.
 /** A Solar charge the webhook could not place (unknown org, unknown add-on, no matching row). */
 export const ORG_ADDON_UNMATCHED_EVENT = 'charge.success.org_addon_subscription.unmatched'
 
+/**
+ * A refund or lost chargeback of a Solar charge that did NOT fund the current
+ * period (an older year's charge). Owner default (Phase 1B): logged against
+ * the org, but the current, separately paid year is not locked.
+ */
+export const ORG_ADDON_PRIOR_PERIOD_REFUND_EVENT = 'refund.org_addon_subscription.prior_period'
+
 /** The Paystack plan code for the Solar annual plan, read at call time. */
 export function solarPlanCode(
   env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
