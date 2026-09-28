@@ -26,6 +26,7 @@ is what the specs now say. A change to any of these is a new decision recorded h
 | D-03 | Tariff library maintained **by E-Site as an application process**: auto-ingest and automatic checks, **E-Site platform admin approves** each year before publishing | Platform role `is_platform_tariff_admin()` (E-Site staff), ingestion jobs + review queue; customers never edit reference data |
 | D-03b | Library readable by **subscribed orgs only** | Read policy on `tariffs.*` = caller's org has an active Solar subscription (or is a platform admin) |
 | D-04 | Solar access **granted per user by the project owner** | New `solar.project_access(project_id, user_id, level)`; levels **View / Edit / Edit + financials**; grantors = **org owner and org admin** of the project's org |
+| D-04c | **External project members** (active on the project, from another organisation) are eligible for **View only**; client viewers and suppliers never | `solar.user_max_grant_level` caps grants, requests and resolved level (2026-09-28) |
 | D-04b | Users without access **still see the Solar tab** | Locked tab with two actions: **Request access** (notifies org owners/admins, who approve with a level) and, if the org is not subscribed, **Subscribe** (visible to owner/admin; others see "Ask an admin to subscribe") |
 
 ## 4. Scope and timing
