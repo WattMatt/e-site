@@ -126,11 +126,12 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `/projects/[id]/solar/locked` | W — **Subscribe** (unsubscribed) | → overview | → overview | → overview | W — **Ask an admin to subscribe** (unsubscribed) / **Request access** (subscribed) / **Withdraw** | W — **Request access** (View) / **Withdraw** | → `/projects/[id]` |
 | `/projects/[id]/solar/overview` | W | W | W | R | → locked | → locked | → locked |
 | `/projects/[id]/solar/site` | W | W | W | R (values as text, no Save) | → locked | → locked | → locked |
+| `/projects/[id]/solar/tariff` | W | W | → locked (tab hidden) | → locked (tab hidden) | → locked | → locked | → locked |
 | `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
 
 > Grantors reach `/solar/access` from a **Manage access** link in the gated chrome and on the locked screen's Subscribe row; nobody else sees the link.
 >
-> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview and Site & Supply have **no route** in Phase 1 — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12).
+> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview, Site & Supply and Tariff (Phase 2b) have **no route** yet — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials and their pages call `requireSolarLevel(…, 'edit_financials')`; Operations is hidden for everyone until Phase 7 (D-12).
 
 ### Solar server actions
 
@@ -147,8 +148,45 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `copySolarAccessFromProjectAction` | `solar_is_grantor` on **both** projects; same organisation | per-row `project_access_bind` — refusals are counted as skipped |
 | `saveSolarSiteAction` (`solar-site.actions.ts`) | `requireSolarLevel(project, 'edit')` (lower levels are redirected to `/solar/locked`); `expectedUpdatedAt` stale guard | `studies_insert_authz` / `studies_update_authz` (RESTRICTIVE, `solar_can_edit`); `studies_bind` binds the org and refuses a PoC node from another project |
 | `saveSolarOrgSettingsAction` (`solar-settings.actions.ts`) | `requireRole(active org, OWNER_ADMIN)`; `expectedUpdatedAt` stale guard | `00208` `org_settings_*` policies (owner/admin of the row's org); no DELETE policy or grant; bind trigger pins the org and `updated_by` |
+| `selectSolarTariffAction`, `setStudyLicenseeAction` (`solar-tariff.actions.ts`) | `requireSolarLevel(project, 'edit_financials')`; `expectedUpdatedAt` stale guard | `00213` `studies_tariff_guard` (a changed `licensee_id`/`tariff_id`/`tariff_override_id`/`export_rule`/`escalation` needs `solar_can_see_money`, `42501`; only a published/superseded tariff may be pinned; `licensee_id` rebound to the tariff's licensee; an override must belong to this study and tariff) + 00207 `studies_update_authz` |
+| `saveSolarExportRuleAction` | `edit_financials`; stale guard checked BEFORE any write; the linked method is decided from the pinned tariff server-side | `studies_export_rule_shape` (manual needs a source note); `solar.study_export_rates` money policies (SELECT and every write on `solar_can_see_money`, parent bound by `money_row_bind`) |
+| `saveSolarEscalationAction` | `edit_financials`; years validated against the org analysis period | `studies_tariff_guard`, `studies_escalation_shape` |
+| `createSolarTariffOverrideAction`, `revertSolarTariffOverrideAction` | `edit_financials` | `solar.create_tariff_override` / `solar.revert_tariff_override` (SECURITY INVOKER, row-locked, `40001` on a stale timestamp); `tariff_overrides_*` money policies |
+| `editSolarOverrideChargeAction` | `edit_financials`; row `updated_at` stale guard; unit compatible with the component and ingestion plausibility ranges | `tariff_override_charges_guard` (a changed rate needs a reason, stamps `edited_by`), `override_charge_edit_has_reason` |
+| `recordSolarBillCheckAction`, `deleteSolarBillCheckAction` | `edit_financials`; costed server-side with the bill engine on the effective (override or published) tariff | `solar.bill_checks` money policies (no UPDATE policy or grant: a record, not a draft) |
+| `reportTariffErrorAction` | `edit_financials`; non-blank note ≤ 2000 | `tariffs.error_report_insert` (`solar_can_see_money(project)` AND the tariff is readable); `error_report_bind` forces reporter = caller, status = open |
+| `getSolarTariffSourceUrlAction` | `edit_financials`; the source row read through the caller's session (00209 reader policy) | 10-minute signed URL minted by the service client AFTER the gate (`tariff-sources` is private, no `storage.objects` policy) |
 
 > Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions (approve / decline / level set on the panel) to the person concerned (bell + email; owner default 2026-09-28). Email honours the suppression list; there is no per-project Solar email toggle yet.
+>
+> Phase 2b tariff actions write `solar.audit_events` with ids only (`tariffId`, `licenseeId`, `chargeId`, `billCheckId`, `billingMonth`, `method`, and a count of escalation years) — never a rand amount, because View users read the activity feed. They emit **no** `product_events` rows (plan D2b-8: widening `product_events_event_check` again would collide with sibling Solar migrations).
+
+## Platform tariff library (`apps/web/src/app/(admin)/admin/tariffs/*`, D-03)
+
+Not an org role at all: the gate is `public.is_platform_tariff_admin()` (00209), an explicit allow-list (`public.platform_tariff_admins`, written by the service role only). Everyone else — org owners included — gets **404** (the route is not advertised); the sidebar shows "Tariff library" only to allow-listed users. The layout, every page, every action and the API route each ask the database.
+
+| Route | Platform tariff admin | Everyone else |
+|---|---|---|
+| `/admin/tariffs` (overview: years in review, open reports, queued PDF ingests, due-year alerts, **Check … years now**) | W | 404 |
+| `/admin/tariffs/licensees` (registry + aliases) | W | 404 |
+| `/admin/tariffs/sources` (upload, dry run / apply, queue PDF ingest) | W | 404 |
+| `/admin/tariffs/years`, `/years/[yearId]` (review queue, checks, publish), `/years/[yearId]/diff`, `/years/[yearId]/sseg` | W (draft years); R (published / superseded) | 404 |
+| `/admin/tariffs/calendars` (TOU calendars, holiday treatment) | W | 404 |
+| `/admin/tariffs/reports` (reported tariff errors) | W | 404 |
+
+| Action / route | Gate | DB layer that decides |
+|---|---|---|
+| `saveLicenseeAction`, `addLicenseeAliasAction`, `removeLicenseeAliasAction` (`tariff-library.actions.ts`) | `requirePlatformTariffAdmin` | 00209 admin write policies; `licensee_alias_normalised` |
+| `createSourceUploadAction` → browser `uploadToSignedUrl` → `registerSourceDocumentAction` | admin; refuses a sha256 already in the library | server re-downloads and re-hashes; a mismatch deletes the object; `source_document` inserted through the admin session (00209 policy; `source_document_guard` pins sha/path) |
+| `POST /api/admin/tariffs/ingest` | `requirePlatformTariffAdminAPI` (401/404); workbooks only (PDF → 400) | 2a's `runIngest` through the service-role store; years land `in_review`, never published; Eskom apply needs a stored Rules PDF (409) |
+| `queueIngestJobAction` | admin | `tariffs.ingest_job_insert` (admin); `ingest_job_bind` forces status = queued, requester = caller; no UPDATE/DELETE grant — only the service-role worker (`scripts/tariffs/ingest-worker.ts`, `tariffs.claim_ingest_job()`) moves a job |
+| `approveChargeAction`, `editChargeAction`, `rejectChargeAction`, `deleteTariffAction` (`tariff-review.actions.ts`) | admin | 00209 `year_child_guard` (draft years only), `charge_review_bind` (stamp = caller, now), `invalidate_year_validation` |
+| `validateTariffYearAction` | admin | `tariffs.year_content_fingerprint` then `tariffs.record_year_validation` (service role only; refuses `40001` if the content moved) |
+| `publishTariffYearAction` | admin | 00209 `tariff_year_guard` (charges on every tariff, inferred units reviewed, validated with 0 blocking, signed-in admin; supersedes the previous year) |
+| `saveSsegRuleAction` | admin | 00209 `sseg_rule` admin policies + `year_child_guard` |
+| `saveTouCalendarAction` (`tariff-calendar.actions.ts`) | admin | 00209 admin policies on `tou_calendar`, `tou_window`, `holiday_rule` |
+| `runDueYearCheckAction` | admin | `tariffs.record_due_year_alerts` (service role only; the same function the 1 April / 1 July cron runs) |
+| `resolveErrorReportAction`, `getTariffSourceUrlAdminAction` | admin | `error_report_update` (admin; only status + resolution note are grantable; `error_report_bind` stamps the resolver); signed URL via the service client after the gate |
 
 ## Client portal (`apps/web/src/app/(portal)/portal/*`)
 
@@ -223,6 +261,7 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 | `POST /api/paystack/feature-seat` | W | W | — | — | — | — | — |¹³
 | `POST /api/paystack/mv-subscribe` | W | W | W | W | W | W | W |¹⁴
 | `POST /api/paystack/solar-subscribe` | W | W | — | — | — | — | — |¹⁶
+| `POST /api/admin/tariffs/ingest` | — | — | — | — | — | — | — | platform tariff admin only (404 otherwise; not an org role) — see "Platform tariff library" |
 | `POST /api/webhooks/resend` | n/a — public webhook, Svix/standardwebhooks HMAC-SHA256 over the raw body; writes only as service_role; bypassed in `middleware.ts` by exact path |
 | `POST /api/paystack/webhook` | n/a — public webhook, HMAC-SHA512 over the raw body; was never listed here and was 307'd to `/login` until `SIGNED_WEBHOOK_PATHS` |
 | `POST /api/notifications/dispatch` | bearer-token; not session-gated — **not yet audited** |
