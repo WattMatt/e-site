@@ -67,6 +67,7 @@ membership.
 | `/cable-schedule/sans` | R | R | R | R | R | R | R |
 | `/settings` | W | W | — | — | — | — | — |
 | `/settings/billing` | W | W | — | — | — | — | — |
+| `/settings/solar` | W | W | — | — | — | — | — |
 | `/settings/users` | W | W | — | — | — | — | — |
 | `/settings/branding` | W | W | — | — | — | — | — |
 | `/settings/organisation` | W | W | ? | — | — | — | — |
@@ -124,6 +125,7 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `/projects/[id]/solar` (redirect) | → overview (subscribed) / → locked | → overview | → overview | → overview | → locked | → locked | → locked → project |
 | `/projects/[id]/solar/locked` | W — **Subscribe** (unsubscribed) | → overview | → overview | → overview | W — **Ask an admin to subscribe** (unsubscribed) / **Request access** (subscribed) / **Withdraw** | W — **Request access** (View) / **Withdraw** | → `/projects/[id]` |
 | `/projects/[id]/solar/overview` | W | W | W | R | → locked | → locked | → locked |
+| `/projects/[id]/solar/site` | W | W | W | R (values as text, no Save) | → locked | → locked | → locked |
 | `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
 
 > Grantors reach `/solar/access` from a **Manage access** link in the gated chrome and on the locked screen's Subscribe row; nobody else sees the link.
@@ -143,6 +145,8 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `decideSolarRequestAction` | `solar_is_grantor(request's project)`; `kind = 'access'` only; conditioned on `status = 'pending'` | guard: only a grantor decides; approval writes the grant, never above the requester's maximum |
 | `markSubscribeRequestDoneAction` | `solar_is_grantor(request's project)`; request is `kind = 'subscribe'`; conditioned on `status = 'pending'` (owner default 3: the Access panel lists the org's subscribe requests; once subscribed they show under "Resolved") | guard: only a grantor decides; `approved_level` forced NULL for a subscribe request |
 | `copySolarAccessFromProjectAction` | `solar_is_grantor` on **both** projects; same organisation | per-row `project_access_bind` — refusals are counted as skipped |
+| `saveSolarSiteAction` (`solar-site.actions.ts`) | `requireSolarLevel(project, 'edit')` (lower levels are redirected to `/solar/locked`); `expectedUpdatedAt` stale guard | `studies_insert_authz` / `studies_update_authz` (RESTRICTIVE, `solar_can_edit`); `studies_bind` binds the org and refuses a PoC node from another project |
+| `saveSolarOrgSettingsAction` (`solar-settings.actions.ts`) | `requireRole(active org, OWNER_ADMIN)`; `expectedUpdatedAt` stale guard | `00208` `org_settings_*` policies (owner/admin of the row's org); no DELETE policy or grant; bind trigger pins the org and `updated_by` |
 
 > Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions (approve / decline / level set on the panel) to the person concerned (bell + email; owner default 2026-09-28). Email honours the suppression list; there is no per-project Solar email toggle yet.
 
