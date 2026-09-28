@@ -19,7 +19,7 @@ import { planModuleBlock } from '@/lib/solar/block-plan'
 import { getDraft, setDraft, clearDraft } from '@/lib/sheet/draft-store'
 import { useSolarDirtyGuard } from '@/lib/solar/dirty-store'
 import type { LayoutEditorData } from '@/lib/solar/layout-loader'
-import { applySaveResult, draftOffer, LAYERS, visibleObjects, type LayoutDraft } from '@/lib/solar/layout-editor-state'
+import { applySaveResult, draftOffer, exportBlockedBy, LAYERS, pruneSelection, restoreDraft, visibleObjects, type LayoutDraft } from '@/lib/solar/layout-editor-state'
 import { EMPTY_SELECTION, type ExportJpeg, type LayoutTool, type Selection } from './SolarCanvas'
 import { LayoutToolbar } from './LayoutToolbar'
 import { PropertiesPanel } from './PropertiesPanel'
@@ -84,9 +84,9 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
   useEffect(() => {
     // Never overwrite a draft the user has not yet restored or discarded.
     if (!canEdit || !draftChecked || restorable) return
-    const t = setTimeout(() => { if (dirty) void setDraft<Draft>(draftKey, { objects, basedOn: updatedAt, savedAt: new Date().toISOString() }) }, 500)
+    const t = setTimeout(() => { if (dirty) void setDraft<Draft>(draftKey, { objects, base: saved, basedOn: updatedAt, savedAt: new Date().toISOString() }) }, 500)
     return () => clearTimeout(t)
-  }, [objects, dirty, draftKey, updatedAt, canEdit, draftChecked, restorable])
+  }, [objects, saved, dirty, draftKey, updatedAt, canEdit, draftChecked, restorable])
 
   const roofs = objects.filter((o): o is RoofObject => o.kind === 'roof')
   const obstructions = objects.filter((o): o is ObstructionObject => o.kind === 'obstruction')
@@ -115,6 +115,7 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
     setHist((h) => ({ ...h, present: applySaveResult(sent, h.present, res.pixelsPerMeter).present }))
     setUpdatedAt(res.updatedAt)
     await clearDraft(draftKey)
+    setRestorable(null) // the stored draft is gone; a later Restore would revert this save
     setMessage('Saved.')
   }
 
@@ -164,6 +165,8 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
   }
 
   async function exportSheet() {
+    const blocked = exportBlockedBy(hiddenLayers)
+    if (blocked) { setMessage(blocked); return }
     const shot = await exporterRef.current?.()
     if (!shot) { setMessage('The sheet is not ready yet.'); return }
     const res = await exportLayoutSheetAction({ projectId: data.projectId, layoutId: data.layout.id, jpegBase64: shot.jpegBase64, crop: shot.crop })
@@ -220,8 +223,8 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
       {!calibrated && <p role="alert">This sheet has no scale yet. <a href={`/projects/${data.projectId}/solar/layout/sources/${data.source.id}`}>Calibrate it</a> before drawing.</p>}
       {restorable && (
         <p role="status">Unsaved changes from {new Date(restorable.draft.savedAt).toLocaleString('en-ZA')} were found
-          {restorable.stale ? ' — they were made on an older version of this layout; restoring puts them on top of the current one' : ''}.{' '}
-          <button type="button" onClick={() => { commit(restorable.draft.objects); setRestorable(null) }}>Restore</button>{' '}
+          {restorable.stale ? ' — they were made on an older version of this layout; restoring replays your changes over the current version, keeping everyone else’s' : ''}.{' '}
+          <button type="button" onClick={() => { commit(restoreDraft(restorable.draft, saved)); setRestorable(null) }}>Restore</button>{' '}
           <button type="button" onClick={() => { void clearDraft(draftKey); setRestorable(null) }}>Discard</button>
         </p>
       )}
@@ -258,11 +261,12 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
             <legend style={{ fontSize: 13, fontWeight: 600 }}>Layers</legend>
             {LAYERS.map((l) => (
               <label key={l.key} style={{ display: 'block' }}>
-                <input type="checkbox" checked={!hiddenLayers.has(l.key)} onChange={() => setHiddenLayers((h) => {
-                  const n = new Set(h)
+                <input type="checkbox" checked={!hiddenLayers.has(l.key)} onChange={() => {
+                  const n = new Set(hiddenLayers)
                   if (n.has(l.key)) n.delete(l.key); else n.add(l.key)
-                  return n
-                })} /> {l.label}
+                  setHiddenLayers(n)
+                  setSelection((sel) => pruneSelection(sel, visibleObjects(objects, n)))
+                }} /> {l.label}
               </label>
             ))}
           </fieldset>

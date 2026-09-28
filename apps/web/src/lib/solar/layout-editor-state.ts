@@ -3,9 +3,11 @@
  * kept out of the component so they are unit-tested (the component itself is
  * Konva-bound and untested, like RouteCanvas).
  */
-import { diffObjects, type LayoutObject, type LayoutObjectKind } from '@esite/shared'
+import { applyObjectDelta, diffObjects, type LayoutObject, type LayoutObjectKind } from '@esite/shared'
+import type { Selection } from '@/app/(admin)/projects/[id]/solar/(gated)/layout/_components/SolarCanvas'
 
-export type LayoutDraft = { objects: LayoutObject[]; basedOn: string; savedAt: string }
+/** `base` = the saved object list the draft's edits were made against (absent on drafts written before it existed). */
+export type LayoutDraft = { objects: LayoutObject[]; base?: LayoutObject[]; basedOn: string; savedAt: string }
 
 /**
  * Fold a save's result into the editor. `sent` is the object list the save was
@@ -60,4 +62,28 @@ export function uniqueCopyName(name: string, existing: string[]): string {
     const c = `${base} (copy ${i})`
     if (!taken.has(c.toLowerCase())) return c
   }
+}
+
+/**
+ * The object list a Restore produces. The draft's OWN edits (base → objects)
+ * are replayed onto the CURRENT server objects, so a colleague's additions and
+ * changes the user never touched survive. A wholesale replace would silently
+ * delete and roll back their work and defeat the stale-save refusal.
+ */
+export function restoreDraft(draft: LayoutDraft, serverObjects: LayoutObject[]): LayoutObject[] {
+  if (!draft.base) return draft.objects
+  const d = diffObjects(draft.base, draft.objects)
+  return applyObjectDelta(serverObjects, d.upserts, d.deletes, null)
+}
+
+/** An exported sheet must show every layer its legend and summary count; null when nothing is hidden. */
+export function exportBlockedBy(hidden: ReadonlySet<string>): string | null {
+  const names = LAYERS.filter((l) => hidden.has(l.key)).map((l) => l.label)
+  return names.length ? `Show every layer before exporting the sheet (hidden: ${names.join(', ')}).` : null
+}
+
+/** Keep only what is still visible selected, so a hidden object cannot be moved, rotated or deleted unseen. */
+export function pruneSelection(sel: Selection, visible: LayoutObject[]): Selection {
+  const ids = new Set(visible.map((o) => o.id))
+  return { ids: sel.ids.filter((id) => ids.has(id)), modules: sel.modules.filter((m) => ids.has(m.arrayId)) }
 }

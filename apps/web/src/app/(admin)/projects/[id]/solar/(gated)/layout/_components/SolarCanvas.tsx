@@ -135,6 +135,8 @@ export function SolarCanvas(p: SolarCanvasProps) {
   function onDown(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
     if (!isPrimaryDrawPress(e.evt) || vp.panningRef.current) return
     if (isTouchEvent(e.evt) && vp.touchCountRef.current > 1) return
+    // A pair left pending by a lift outside the stage must not fire on a later press.
+    pendingPair.current = null
     const pt = pointer(e)
     if (!pt) return
     lenBeforeTouch.current = isTouchEvent(e.evt) ? draft.length : null

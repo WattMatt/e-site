@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applySaveResult, draftOffer, uniqueCopyName, visibleObjects, LAYERS } from './layout-editor-state'
+import { applySaveResult, draftOffer, exportBlockedBy, pruneSelection, restoreDraft, uniqueCopyName, visibleObjects, LAYERS } from './layout-editor-state'
 import type { LayoutObject } from '@esite/shared'
 
 const inv = (id: string, x: number, ppm: number | null = null): LayoutObject =>
@@ -54,5 +54,37 @@ describe('uniqueCopyName (review fix: a second Duplicate does not collide)', () 
     expect(uniqueCopyName('A', ['A'])).toBe('A (copy)')
     expect(uniqueCopyName('A', ['A', 'A (copy)'])).toBe('A (copy 2)')
     expect(uniqueCopyName('A', ['A', 'a (COPY)', 'A (copy 2)'])).toBe('A (copy 3)')
+  })
+})
+
+describe('restoreDraft (re-review fix: a stale draft is REBASED, never a wholesale replace)', () => {
+  it('draft base {a}, draft {a′}, server {a, b} → {a′, b} — a colleague’s b survives', () => {
+    const base = [inv('a', 1)]
+    const draft = { objects: [inv('a', 5)], base, basedOn: 'T0', savedAt: 'S' }
+    const r = restoreDraft(draft, [inv('a', 1), inv('b', 2)])
+    expect(r.map((o) => [o.id, (o.geometry as { x: number }).x])).toEqual([['a', 5], ['b', 2]])
+  })
+  it('an object the user deleted in the draft is deleted; one the colleague changed and the user did not touch keeps the colleague’s value', () => {
+    const base = [inv('a', 1), inv('c', 3)]
+    const draft = { objects: [inv('c', 3)], base, basedOn: 'T0', savedAt: 'S' }
+    const r = restoreDraft(draft, [inv('a', 1), inv('c', 9)])
+    expect(r.map((o) => [o.id, (o.geometry as { x: number }).x])).toEqual([['c', 9]])
+  })
+  it('a legacy draft with no base falls back to the draft objects', () => {
+    expect(restoreDraft({ objects: [inv('a', 5)], basedOn: 'T0', savedAt: 'S' }, [inv('a', 1)]).map((o) => o.id)).toEqual(['a'])
+  })
+})
+
+describe('exportBlockedBy (re-review fix: an export never silently omits a hidden layer)', () => {
+  it('names the hidden layers', () => {
+    expect(exportBlockedBy(new Set())).toBeNull()
+    expect(exportBlockedBy(new Set(['arrays', 'strings']))).toBe('Show every layer before exporting the sheet (hidden: Arrays, Strings).')
+  })
+})
+
+describe('pruneSelection (re-review fix: hidden objects cannot stay selected)', () => {
+  it('drops ids and modules that are no longer visible', () => {
+    const visible = [inv('a', 1)]
+    expect(pruneSelection({ ids: ['a', 'b'], modules: [{ arrayId: 'z', index: 0 }] }, visible)).toEqual({ ids: ['a'], modules: [] })
   })
 })

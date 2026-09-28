@@ -15,7 +15,7 @@ import { requireSolarLevel } from '@/lib/solar/access'
 import { recordSolarAudit } from '@/lib/solar/audit'
 import { STALE_MESSAGE } from '@/lib/solar/errors'
 import { humanLayoutError } from '@/lib/solar/layout-errors'
-import { scaleForSource } from '@/lib/solar/layout-loader'
+import { parseStoredObjects, scaleForSource, type StoredObjectRow } from '@/lib/solar/layout-loader'
 import {
   applyObjectDelta, cloneLayoutObjects, layoutSummary, moduleSpecError, storedSummary, validateObjectInput,
   type LayoutModuleSpec, type LayoutObject,
@@ -132,8 +132,8 @@ async function saveCore(
   supabase: AnyClient, ctx: SaveContext, expectedUpdatedAt: string, upserts: LayoutObject[], deletes: string[],
 ): Promise<{ updatedAt: string } | { error: string }> {
   const { data: current } = await supabase.schema('solar').from('layout_objects').select('id, kind, geometry, props, pixels_per_meter').eq('layout_id', ctx.layoutId)
-  const saved = ((current ?? []) as Array<{ id: string; kind: string; geometry: unknown; props: unknown; pixels_per_meter: number | string | null }>)
-    .map((o) => ({ id: o.id, kind: o.kind, geometry: o.geometry, props: o.props, pixelsPerMeter: o.pixels_per_meter == null ? null : Number(o.pixels_per_meter) }) as LayoutObject)
+  // Malformed rows (a direct PostgREST write) are skipped, not allowed to break every later save.
+  const saved = parseStoredObjects((current ?? []) as StoredObjectRow[])
   const final = applyObjectDelta(saved, upserts, deletes, await sheetScale(supabase, ctx.roofSourceId))
   const summary = storedSummary(layoutSummary(final, { tMinC: ctx.tMinC, tAmbMaxC: ctx.tAmbMaxC }))
   const { data, error } = await supabase.rpc('solar_save_layout_objects', {
@@ -204,8 +204,8 @@ export async function duplicateLayoutAction(input: { projectId: string; layoutId
   const row = Array.isArray(created) ? (created[0] as { id: string; updated_at: string } | undefined) : undefined
   if (!row) return { error: 'Nothing was created — reload and try again.' }
   const { data: objs } = await supabase.schema('solar').from('layout_objects').select('id, kind, geometry, props, pixels_per_meter').eq('layout_id', input.layoutId)
-  const copies = cloneLayoutObjects(((objs ?? []) as Array<{ id: string; kind: string; geometry: unknown; props: unknown }>)
-    .map((o) => ({ id: o.id, kind: o.kind, geometry: o.geometry, props: o.props, pixelsPerMeter: null }) as LayoutObject), randomUUID)
+  const copies = cloneLayoutObjects(parseStoredObjects((objs ?? []) as StoredObjectRow[])
+    .map((o) => ({ ...o, pixelsPerMeter: null }) as LayoutObject), randomUUID)
   if (copies.length > 0) {
     const res = await saveCore(supabase,
       { layoutId: row.id, roofSourceId: String(s.roof_source_id), tMinC: Number(s.design_t_min_c), tAmbMaxC: Number(s.design_t_amb_max_c) },
