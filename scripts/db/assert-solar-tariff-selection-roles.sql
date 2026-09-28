@@ -32,6 +32,17 @@ DECLARE
   v_sup      UUID := gen_random_uuid();   -- supplier (never eligible)
   v_foreign  UUID := gen_random_uuid();   -- admin of the other subscribed org
   v_tadmin   UUID := gen_random_uuid();   -- platform tariff admin (allow-list row, no org)
+  v_leaver   UUID := gen_random_uuid();   -- a reporter whose auth user is later deleted (no other rows)
+  v_c25e     UUID;                        -- v_t25's energy charge
+  v_c25b     UUID;                        -- v_t25b's energy charge (another tariff)
+  v_oc2      UUID;
+  v_ov3      UUID;
+  v_rep2     UUID;
+  v_cal      UUID;
+  v_calj     JSONB;
+  v_ss       UUID;
+  v_upd2     TIMESTAMPTZ;
+  v_ok       BOOLEAN;
   v_lic      UUID;
   v_lic2     UUID;
   v_src      UUID;
@@ -55,7 +66,7 @@ DECLARE
 BEGIN
   -- ── Fixtures (as postgres) ────────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES (v_org, 'tsel-probe-org'), (v_org2, 'tsel-probe-org-2');
-  FOREACH u IN ARRAY ARRAY[v_admin, v_fin, v_edit, v_view, v_client, v_sup, v_foreign, v_tadmin] LOOP
+  FOREACH u IN ARRAY ARRAY[v_admin, v_fin, v_edit, v_view, v_client, v_sup, v_foreign, v_tadmin, v_leaver] LOOP
     INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password,
                             email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
     VALUES (u, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -95,6 +106,8 @@ BEGIN
          (v_t25, 'basic', 'R_per_month', 400, 'stated_excl', 'parser', v_src, '{"page": 3}'),
          (v_t25b, 'energy', 'c_per_kWh', 260, 'stated_excl', 'parser', v_src, '{}');
   UPDATE tariffs.tariff_year SET validated_at = now(), validation_blocking = 0 WHERE id = v_y25;
+  SELECT id INTO v_c25e FROM tariffs.charge WHERE tariff_id = v_t25 AND component = 'energy';
+  SELECT id INTO v_c25b FROM tariffs.charge WHERE tariff_id = v_t25b AND component = 'energy';
   INSERT INTO tariffs.tariff_year (licensee_id, financial_year, effective_from, effective_to, state)
   VALUES (v_lic, '2026/27', '2026-07-01', '2027-06-30', 'in_review') RETURNING id INTO v_y26;
   INSERT INTO tariffs.tariff (tariff_year_id, name, category, metering, structure)
@@ -206,6 +219,48 @@ BEGIN
   SELECT count(*) INTO v_n FROM solar.study_export_rates WHERE study_id = v_study AND project_id = v_project AND organisation_id = v_org;
   INSERT INTO _r VALUES ('export_rate_project_bound_from_study', v_n = 1);
 
+  -- The export rule and its rates save in ONE transaction (solar.save_export_rule).
+  BEGIN
+    PERFORM solar.save_export_rule(v_project, '2000-01-01'::timestamptz,
+      '{"version": 1, "method": "manual", "sourceNote": "stale"}'::jsonb,
+      '[{"season": "all", "tou": "all", "unit": "c_per_kWh", "amount_excl_vat": 1}]'::jsonb);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN serialization_failure THEN INSERT INTO _r VALUES ('export_rule_stale_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('export_rule_stale_REFUSED', false);
+  END;
+  SELECT count(*) INTO v_n FROM solar.study_export_rates WHERE study_id = v_study;
+  SELECT count(*) = 1 AND v_n = 1 INTO v_ok FROM solar.study_export_rates WHERE study_id = v_study AND amount_excl_vat = 95;
+  INSERT INTO _r VALUES ('export_rule_stale_left_rates_unchanged', v_ok);
+  BEGIN
+    SELECT updated_at INTO v_upd FROM solar.studies WHERE id = v_study;
+    v_upd2 := solar.save_export_rule(v_project, v_upd,
+      '{"version": 1, "method": "manual", "sourceNote": "City SSEG schedule 2026/27 p5"}'::jsonb,
+      '[{"season": "all", "tou": "all", "unit": "c_per_kWh", "amount_excl_vat": 90}]'::jsonb);
+    SELECT count(*) INTO v_n FROM solar.study_export_rates WHERE study_id = v_study;
+    v_ok := v_n = 1
+      AND EXISTS (SELECT 1 FROM solar.study_export_rates WHERE study_id = v_study AND amount_excl_vat = 90
+                    AND source_note = 'City SSEG schedule 2026/27 p5' AND project_id = v_project)
+      AND EXISTS (SELECT 1 FROM solar.studies WHERE id = v_study
+                    AND export_rule->>'sourceNote' = 'City SSEG schedule 2026/27 p5' AND updated_at = v_upd2);
+  EXCEPTION WHEN OTHERS THEN v_ok := false;
+  END;
+  INSERT INTO _r VALUES ('fin_save_export_rule_atomic', v_ok);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_edit::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT updated_at INTO v_upd FROM solar.studies WHERE id = v_study;
+  BEGIN
+    PERFORM solar.save_export_rule(v_project, v_upd, '{"version": 1, "method": "none"}'::jsonb, '[]'::jsonb);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('edit_save_export_rule_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('edit_save_export_rule_REFUSED', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_fin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+
   -- Override: stale expected timestamp refused, then created with every charge copied.
   BEGIN
     PERFORM solar.create_tariff_override(v_project, '2000-01-01'::timestamptz);
@@ -234,6 +289,50 @@ BEGIN
    WHERE id = v_oc;
   SELECT count(*) INTO v_n FROM solar.tariff_override_charges WHERE id = v_oc AND edited_by = v_fin AND edited_at IS NOT NULL;
   INSERT INTO _r VALUES ('override_edit_stamped_to_caller', v_n = 1);
+  -- Provenance: a row claiming a base charge of ANOTHER tariff, or a changed rate, is an edit and needs a reason.
+  BEGIN
+    INSERT INTO solar.tariff_override_charges (override_id, project_id, organisation_id, base_charge_id, component, unit, amount_excl_vat, vat_basis)
+    VALUES (v_ov, v_project, v_org, v_c25b, 'energy', 'c_per_kWh', 260, 'stated_excl');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('override_insert_foreign_base_charge_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('override_insert_foreign_base_charge_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.tariff_override_charges (override_id, project_id, organisation_id, base_charge_id, component, unit, amount_excl_vat, vat_basis)
+    VALUES (v_ov, v_project, v_org, v_c25e, 'energy', 'c_per_kWh', 111, 'stated_excl');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('override_insert_altered_rate_without_reason_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('override_insert_altered_rate_without_reason_REFUSED', false);
+  END;
+  -- An unedited copy is accepted, carries no reason, and its source comes from the base charge (then rolled back).
+  BEGIN
+    INSERT INTO solar.tariff_override_charges (override_id, project_id, organisation_id, base_charge_id, component, unit, amount_excl_vat, vat_basis,
+                                               source_locator, reason)
+    VALUES (v_ov, v_project, v_org, v_c25e, 'energy', 'c_per_kWh', 250, 'stated_excl', '{"page": 99}', 'forged')
+    RETURNING id INTO v_oc2;
+    SELECT count(*) = 1 INTO v_ok FROM solar.tariff_override_charges
+     WHERE id = v_oc2 AND edited_at IS NULL AND reason IS NULL AND source_locator->>'page' = '3';
+    RAISE EXCEPTION 'undo' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN raise_exception THEN NULL;
+    WHEN OTHERS THEN v_ok := false;
+  END;
+  INSERT INTO _r VALUES ('override_insert_unedited_copy_bound_to_base', v_ok);
+  -- The reason and source change only with the rate.
+  UPDATE solar.tariff_override_charges SET reason = 'rewritten later', source_locator = '{"page": 99}' WHERE id = v_oc;
+  SELECT count(*) INTO v_n FROM solar.tariff_override_charges
+   WHERE id = v_oc AND reason = 'Landlord resale rate per lease cl. 14' AND source_locator->>'page' = '3';
+  INSERT INTO _r VALUES ('override_reason_and_source_frozen_without_rate_change', v_n = 1);
+  -- A row leaves only with its override (revert), never on its own.
+  BEGIN
+    DELETE FROM solar.tariff_override_charges WHERE id = v_oc;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('override_charge_delete_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('override_charge_delete_REFUSED', false);
+  END;
   BEGIN
     UPDATE solar.studies SET tariff_id = v_t25b WHERE id = v_study;
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
@@ -255,10 +354,12 @@ BEGIN
   END;
 
   INSERT INTO solar.bill_checks (study_id, project_id, billing_month, import_kwh_standard, actual_total_excl_vat,
-                                 modelled_total_excl_vat, difference_pct, engine_version, tariff_id)
-  VALUES (v_study, v_project2, '2026-03-01', 1000, 3000, 2900, -3.333, 'probe', v_t25);
+                                 modelled_total_excl_vat, difference_pct, engine_version, tariff_id, tariff_override_id)
+  VALUES (v_study, v_project2, '2026-03-01', 1000, 3000, 2900, -3.333, 'probe', v_t25b, v_ov2);
   SELECT count(*) INTO v_n FROM solar.bill_checks WHERE study_id = v_study AND project_id = v_project AND created_by = v_fin;
   INSERT INTO _r VALUES ('fin_bill_check_bound_and_stamped', v_n = 1);
+  SELECT count(*) INTO v_n FROM solar.bill_checks WHERE study_id = v_study AND tariff_id = v_t25 AND tariff_override_id = v_ov;
+  INSERT INTO _r VALUES ('bill_check_tariff_and_override_bound_from_study', v_n = 1);
   BEGIN
     INSERT INTO solar.bill_checks (study_id, billing_month, import_kwh_standard, actual_total_excl_vat,
                                    modelled_total_excl_vat, difference_pct, engine_version)
@@ -313,6 +414,18 @@ BEGIN
   INSERT INTO _r VALUES ('revert_deletes_override', v_n = 0);
   SELECT count(*) INTO v_n FROM solar.studies WHERE id = v_study AND tariff_override_id IS NULL AND tariff_id = v_t25;
   INSERT INTO _r VALUES ('revert_keeps_published_pin', v_n = 1);
+  -- An unlinked (orphan) override for the study cannot block a new one forever.
+  BEGIN
+    INSERT INTO solar.tariff_overrides (study_id, project_id, organisation_id, base_tariff_id)
+    VALUES (v_study, v_project, v_org, v_t25) RETURNING id INTO v_oc2;
+    SELECT updated_at INTO v_upd FROM solar.studies WHERE id = v_study;
+    v_ov3 := solar.create_tariff_override(v_project, v_upd);
+    SELECT count(*) INTO v_n FROM solar.tariff_overrides WHERE study_id = v_study;
+    v_ok := v_n = 1 AND v_ov3 <> v_oc2
+      AND EXISTS (SELECT 1 FROM solar.studies WHERE id = v_study AND tariff_override_id = v_ov3);
+  EXCEPTION WHEN OTHERS THEN v_ok := false;
+  END;
+  INSERT INTO _r VALUES ('create_override_replaces_orphan', v_ok);
   RESET ROLE;
 
   -- ── 6. Platform tariff admin: reads + resolves reports, queues jobs ───────
@@ -351,6 +464,65 @@ BEGIN
     WHEN raise_exception THEN INSERT INTO _r VALUES ('tariff_admin_record_validation_REFUSED', false);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('tariff_admin_record_validation_REFUSED', false);
   END;
+  -- TOU calendars save in ONE transaction (tariffs.save_tou_calendar), stale-guarded.
+  BEGIN
+    v_calj := tariffs.save_tou_calendar(NULL, NULL,
+      jsonb_build_object('licensee_id', v_lic, 'valid_from', '2025-07-01', 'valid_to', NULL,
+                         'high_season_months', jsonb_build_array(6, 7, 8), 'source', 'assumed_eskom'),
+      '[{"season": "high", "day_type": "weekday", "start_minute": 360, "end_minute": 540, "period": "peak"}]'::jsonb, 'sunday');
+    v_cal := (v_calj->>'id')::uuid;
+    v_ok := (SELECT count(*) FROM tariffs.tou_window WHERE calendar_id = v_cal) = 1
+      AND EXISTS (SELECT 1 FROM tariffs.holiday_rule WHERE calendar_id = v_cal AND treated_as = 'sunday')
+      AND EXISTS (SELECT 1 FROM tariffs.tou_calendar WHERE id = v_cal AND updated_at = (v_calj->>'updated_at')::timestamptz);
+  EXCEPTION WHEN OTHERS THEN v_ok := false;
+  END;
+  INSERT INTO _r VALUES ('tariff_admin_creates_calendar', v_ok);
+  BEGIN
+    PERFORM tariffs.save_tou_calendar(v_cal, '2000-01-01'::timestamptz,
+      jsonb_build_object('licensee_id', v_lic, 'valid_from', '2025-07-01', 'high_season_months', jsonb_build_array(6, 7, 8), 'source', 'assumed_eskom'),
+      '[]'::jsonb, NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN serialization_failure THEN INSERT INTO _r VALUES ('calendar_save_stale_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('calendar_save_stale_REFUSED', false);
+  END;
+  SELECT count(*) INTO v_n FROM tariffs.tou_window WHERE calendar_id = v_cal;
+  INSERT INTO _r VALUES ('calendar_stale_left_windows', v_n = 1);
+  BEGIN
+    v_upd := (v_calj->>'updated_at')::timestamptz;
+    v_calj := tariffs.save_tou_calendar(v_cal, v_upd,
+      jsonb_build_object('licensee_id', v_lic, 'valid_from', '2025-07-01', 'high_season_months', jsonb_build_array(6, 7, 8), 'source', 'assumed_eskom'),
+      '[{"season": "high", "day_type": "weekday", "start_minute": 360, "end_minute": 540, "period": "peak"},
+        {"season": "low", "day_type": "weekday", "start_minute": 420, "end_minute": 600, "period": "peak"}]'::jsonb, NULL);
+    v_ok := (SELECT count(*) FROM tariffs.tou_window WHERE calendar_id = v_cal) = 2
+      AND NOT EXISTS (SELECT 1 FROM tariffs.holiday_rule WHERE calendar_id = v_cal)
+      AND (v_calj->>'updated_at')::timestamptz > v_upd;
+  EXCEPTION WHEN OTHERS THEN v_ok := false;
+  END;
+  INSERT INTO _r VALUES ('tariff_admin_saves_calendar_replacing_windows', v_ok);
+  -- SSEG rule rows carry updated_at so the admin save is stale-guarded.
+  BEGIN
+    INSERT INTO tariffs.sseg_rule (tariff_year_id, licensee_id, crediting, carry_forward, fy_end_month, cap_rule)
+    VALUES (v_y26, v_lic, 'net_billing_tou', 'none', 6, 'kwh_per_tou_period') RETURNING id INTO v_ss;
+    SELECT updated_at INTO v_upd FROM tariffs.sseg_rule WHERE id = v_ss;
+    UPDATE tariffs.sseg_rule SET max_kva = 500 WHERE id = v_ss;
+    v_ok := EXISTS (SELECT 1 FROM tariffs.sseg_rule WHERE id = v_ss AND updated_at > v_upd);
+  EXCEPTION WHEN OTHERS THEN v_ok := false;
+  END;
+  INSERT INTO _r VALUES ('sseg_rule_updated_at_bumps', v_ok);
+  RESET ROLE;
+  -- A customer (reads calendars) cannot save one.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_fin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM tariffs.save_tou_calendar(v_cal, (v_calj->>'updated_at')::timestamptz,
+      jsonb_build_object('licensee_id', v_lic, 'valid_from', '2025-07-01', 'high_season_months', jsonb_build_array(6, 7, 8), 'source', 'assumed_eskom'),
+      '[]'::jsonb, NULL);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('non_admin_save_calendar_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('non_admin_save_calendar_REFUSED', false);
+  END;
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', '', true);
 
@@ -377,7 +549,17 @@ BEGIN
   INSERT INTO _r VALUES ('service_role_reads_bill_checks', v_n = 1);
   RESET ROLE;
 
-  -- ── 8. Due-year monitor (cron runs as postgres) ───────────────────────────
+  -- ── 8. Deleting a reporter's auth user keeps the report (FK SET NULL) ─────
+  INSERT INTO tariffs.error_report (tariff_id, project_id, note, reporter_id)
+  VALUES (v_t25, v_project, 'filed by someone who later leaves', v_leaver) RETURNING id INTO v_rep2;
+  BEGIN
+    DELETE FROM auth.users WHERE id = v_leaver;
+    SELECT count(*) = 1 INTO v_ok FROM tariffs.error_report WHERE id = v_rep2 AND reporter_id IS NULL;
+  EXCEPTION WHEN OTHERS THEN v_ok := false;
+  END;
+  INSERT INTO _r VALUES ('reporter_user_delete_keeps_report', v_ok);
+
+  -- ── 8b. Due-year monitor (cron runs as postgres) ──────────────────────────
   v_n := tariffs.record_due_year_alerts('municipal', DATE '2026-07-02');
   SELECT count(*) INTO v_n FROM tariffs.due_year_alert
    WHERE licensee_id = v_lic AND missing_financial_year = '2026/27' AND latest_published_fy = '2025/26' AND resolved_at IS NULL;

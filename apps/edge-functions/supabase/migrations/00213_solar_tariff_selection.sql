@@ -31,6 +31,12 @@
 --                  content it actually checked.
 --   solar.create_tariff_override / solar.revert_tariff_override — atomic,
 --                  stale-guarded, SECURITY INVOKER (RLS decides).
+--   solar.save_export_rule — the export rule and its manual rates in one
+--                  transaction, stale-guarded, SECURITY INVOKER.
+--   tariffs.tou_calendar.updated_at, tariffs.sseg_rule.updated_at (bumped by
+--                  tariffs.touch_updated_at) + tariffs.save_tou_calendar — the
+--                  calendar, its windows and holiday rule in one transaction,
+--                  stale-guarded, SECURITY INVOKER (00209's admin RLS decides).
 --
 -- WHO. Money rows (the four solar tables): read and written at Edit +
 -- financials only (solar_can_see_money). Studies' tariff columns: written at
@@ -92,6 +98,21 @@
 -- function: tariffs.year_content_fingerprint(uuid)
 -- function: tariffs.record_year_validation(uuid, integer, text)
 -- function: tariffs.record_due_year_alerts(text, date)
+-- function: solar.tariff_override_charges_delete_guard()
+-- function: solar.save_export_rule(uuid, timestamptz, jsonb, jsonb)
+-- function: tariffs.touch_updated_at()
+-- function: tariffs.save_tou_calendar(uuid, timestamptz, jsonb, jsonb, text)
+-- column: tariffs.tou_calendar.updated_at
+-- column: tariffs.sseg_rule.updated_at
+-- trigger: tariff_override_charges_delete_guard ON solar.tariff_override_charges
+-- trigger: tou_calendar_touch ON tariffs.tou_calendar
+-- trigger: sseg_rule_touch ON tariffs.sseg_rule
+-- grant_absent: anon EXECUTE ON solar.save_export_rule(uuid, timestamptz, jsonb, jsonb)
+-- grant_absent: anon EXECUTE ON tariffs.save_tou_calendar(uuid, timestamptz, jsonb, jsonb, text)
+-- grant_present: authenticated EXECUTE ON solar.save_export_rule(uuid, timestamptz, jsonb, jsonb)
+-- grant_present: authenticated EXECUTE ON tariffs.save_tou_calendar(uuid, timestamptz, jsonb, jsonb, text)
+-- sql: (SELECT NOT p.prosecdef FROM pg_proc p WHERE p.oid = 'tariffs.save_tou_calendar(uuid, timestamptz, jsonb, jsonb, text)'::regprocedure)
+-- sql: (SELECT NOT p.prosecdef FROM pg_proc p WHERE p.oid = 'solar.save_export_rule(uuid, timestamptz, jsonb, jsonb)'::regprocedure)
 -- trigger: studies_tariff_guard ON solar.studies
 -- trigger: tariff_overrides_bind ON solar.tariff_overrides
 -- trigger: tariff_override_charges_bind ON solar.tariff_override_charges
@@ -313,6 +334,7 @@ DECLARE
     v_project  UUID;
     v_org      UUID;
     v_tariff   UUID;
+    v_override UUID;
 BEGIN
     IF TG_TABLE_NAME = 'tariff_override_charges' THEN
         IF TG_OP = 'UPDATE' AND (NEW.override_id <> OLD.override_id OR NEW.base_charge_id IS DISTINCT FROM OLD.base_charge_id) THEN
@@ -323,13 +345,20 @@ BEGIN
         IF TG_OP = 'UPDATE' AND NEW.study_id <> OLD.study_id THEN
             RAISE EXCEPTION 'solar.%: study_id is immutable', TG_TABLE_NAME USING ERRCODE = '42501';
         END IF;
-        SELECT s.project_id, s.organisation_id, s.tariff_id INTO v_project, v_org, v_tariff FROM solar.studies s WHERE s.id = NEW.study_id;
+        SELECT s.project_id, s.organisation_id, s.tariff_id, s.tariff_override_id INTO v_project, v_org, v_tariff, v_override
+          FROM solar.studies s WHERE s.id = NEW.study_id;
     END IF;
     IF v_project IS NULL THEN
         RAISE EXCEPTION 'solar.%: parent row not found', TG_TABLE_NAME USING ERRCODE = '23503';
     END IF;
     NEW.project_id := v_project;
     NEW.organisation_id := v_org;
+    -- A bill check records the tariff the study costs with, never a client's claim
+    -- (a forged tariff_override_id could otherwise point at another project's override).
+    IF TG_TABLE_NAME = 'bill_checks' THEN
+        NEW.tariff_id := v_tariff;
+        NEW.tariff_override_id := v_override;
+    END IF;
 
     IF TG_TABLE_NAME = 'tariff_overrides' THEN
         IF TG_OP = 'UPDATE' AND NEW.base_tariff_id <> OLD.base_tariff_id THEN
@@ -365,18 +394,34 @@ CREATE TRIGGER bill_checks_bind BEFORE INSERT ON solar.bill_checks
     FOR EACH ROW EXECUTE FUNCTION solar.money_row_bind();
 
 -- A changed rate (or an added row) carries a reason; the stamp is the caller.
+-- An INSERT is an unedited copy only when base_charge_id is a charge of the
+-- override's base tariff AND every rate column equals it; the copy's source
+-- then comes from that charge and it carries no reason. On UPDATE the reason
+-- and the source change only together with the rate.
 CREATE OR REPLACE FUNCTION solar.tariff_override_charges_guard()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
 DECLARE
     v_changed BOOLEAN;
+    v_base    RECORD;
 BEGIN
-    v_changed := TG_OP = 'INSERT' AND NEW.base_charge_id IS NULL
-        OR TG_OP = 'UPDATE' AND
+    IF TG_OP = 'INSERT' THEN
+        SELECT c.source_locator || jsonb_build_object('source_document_id', c.source_document_id) AS locator INTO v_base
+          FROM tariffs.charge c JOIN solar.tariff_overrides o ON o.base_tariff_id = c.tariff_id
+         WHERE c.id = NEW.base_charge_id AND o.id = NEW.override_id
+           AND (c.component, c.season, c.tou, c.day_type, c.block_min_kwh, c.block_max_kwh, c.block_basis,
+                c.unit, c.demand_basis, c.amount_excl_vat, c.vat_rate, c.vat_basis)
+               IS NOT DISTINCT FROM
+               (NEW.component, NEW.season, NEW.tou, NEW.day_type, NEW.block_min_kwh, NEW.block_max_kwh, NEW.block_basis,
+                NEW.unit, NEW.demand_basis, NEW.amount_excl_vat, NEW.vat_rate, NEW.vat_basis);
+        v_changed := NOT FOUND;
+    ELSE
+        v_changed :=
            (NEW.component, NEW.season, NEW.tou, NEW.day_type, NEW.block_min_kwh, NEW.block_max_kwh, NEW.block_basis,
             NEW.unit, NEW.demand_basis, NEW.amount_excl_vat, NEW.vat_rate, NEW.vat_basis)
            IS DISTINCT FROM
            (OLD.component, OLD.season, OLD.tou, OLD.day_type, OLD.block_min_kwh, OLD.block_max_kwh, OLD.block_basis,
             OLD.unit, OLD.demand_basis, OLD.amount_excl_vat, OLD.vat_rate, OLD.vat_basis);
+    END IF;
     IF v_changed THEN
         IF length(btrim(coalesce(NEW.reason, ''))) = 0 THEN RAISE EXCEPTION 'solar.tariff_override_charges: a changed rate needs a reason' USING ERRCODE = '23514'; END IF;  -- [mutation-probe M3]
         NEW.edited_at := NOW();
@@ -384,9 +429,13 @@ BEGIN
     ELSIF TG_OP = 'UPDATE' THEN
         NEW.edited_at := OLD.edited_at;
         NEW.edited_by := OLD.edited_by;
+        NEW.reason := OLD.reason;
+        NEW.source_locator := OLD.source_locator;
     ELSE
         NEW.edited_at := NULL;
         NEW.edited_by := NULL;
+        NEW.reason := NULL;
+        NEW.source_locator := v_base.locator;
     END IF;
     RETURN NEW;
 END $$;
@@ -394,6 +443,23 @@ REVOKE ALL ON FUNCTION solar.tariff_override_charges_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.tariff_override_charges_guard() FROM anon;
 CREATE TRIGGER tariff_override_charges_guard BEFORE INSERT OR UPDATE ON solar.tariff_override_charges
     FOR EACH ROW EXECUTE FUNCTION solar.tariff_override_charges_guard();
+
+-- A row leaves only with its override (revert, or deleting the override: the
+-- FK cascade runs inside the RI trigger, so pg_trigger_depth() > 1). A signed-in
+-- caller deleting one row directly would drop a published charge from the
+-- project copy with no reason recorded. The service path (auth.uid() NULL) may.
+CREATE OR REPLACE FUNCTION solar.tariff_override_charges_delete_guard()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF auth.uid() IS NOT NULL AND pg_trigger_depth() <= 1 THEN
+        RAISE EXCEPTION 'solar.tariff_override_charges: a rate leaves the project copy only when the override is reverted' USING ERRCODE = '42501';
+    END IF;
+    RETURN OLD;
+END $$;
+REVOKE ALL ON FUNCTION solar.tariff_override_charges_delete_guard() FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.tariff_override_charges_delete_guard() FROM anon;
+CREATE TRIGGER tariff_override_charges_delete_guard BEFORE DELETE ON solar.tariff_override_charges
+    FOR EACH ROW EXECUTE FUNCTION solar.tariff_override_charges_delete_guard();
 
 -- ── 4. RLS on the money tables (the 00200 shape, SELECT on see_money) ───────
 ALTER TABLE solar.tariff_overrides ENABLE ROW LEVEL SECURITY;
@@ -463,6 +529,9 @@ BEGIN
     IF v_study.tariff_override_id IS NOT NULL THEN
         RAISE EXCEPTION 'solar.create_tariff_override: the study already has an override' USING ERRCODE = '23505';
     END IF;
+    -- An unlinked override for this study (a direct insert that was never
+    -- attached) would block UNIQUE (study_id) forever: it is nobody's copy.
+    DELETE FROM solar.tariff_overrides WHERE study_id = v_study.id;
     INSERT INTO solar.tariff_overrides (study_id, project_id, organisation_id, base_tariff_id)
     VALUES (v_study.id, p_project_id, '00000000-0000-0000-0000-000000000000', v_study.tariff_id)
     RETURNING id INTO v_id;
@@ -494,6 +563,34 @@ BEGIN
     UPDATE solar.studies SET tariff_override_id = NULL WHERE id = v_study.id;
     DELETE FROM solar.tariff_overrides WHERE id = v_study.tariff_override_id;
 END $$;
+
+-- The export rule and its manual rates in ONE transaction: the study row is
+-- locked, the expected timestamp checked, the rates replaced and the rule set.
+-- INVOKER: the money gates and studies_tariff_guard decide (an Edit user's
+-- rate insert and rule write are refused 42501). Returns the new updated_at.
+CREATE OR REPLACE FUNCTION solar.save_export_rule(p_project_id UUID, p_expected_updated_at TIMESTAMPTZ, p_rule JSONB, p_rates JSONB)
+RETURNS TIMESTAMPTZ LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE
+    v_study  RECORD;
+    v_upd    TIMESTAMPTZ;
+BEGIN
+    SELECT id, updated_at INTO v_study FROM solar.studies WHERE project_id = p_project_id FOR UPDATE;
+    IF v_study.id IS NULL THEN
+        RAISE EXCEPTION 'solar.save_export_rule: no study for this project' USING ERRCODE = 'P0002';
+    END IF;
+    IF v_study.updated_at IS DISTINCT FROM p_expected_updated_at THEN
+        RAISE EXCEPTION 'solar.save_export_rule: stale' USING ERRCODE = '40001';
+    END IF;
+    DELETE FROM solar.study_export_rates WHERE study_id = v_study.id;
+    INSERT INTO solar.study_export_rates (study_id, project_id, organisation_id, season, tou, unit, amount_excl_vat, source_note)
+    SELECT v_study.id, p_project_id, '00000000-0000-0000-0000-000000000000', r.season, r.tou, r.unit, r.amount_excl_vat, p_rule->>'sourceNote'
+      FROM jsonb_to_recordset(coalesce(p_rates, '[]'::jsonb)) AS r(season TEXT, tou TEXT, unit TEXT, amount_excl_vat NUMERIC);
+    UPDATE solar.studies SET export_rule = p_rule WHERE id = v_study.id RETURNING updated_at INTO v_upd;
+    RETURN v_upd;
+END $$;
+REVOKE ALL ON FUNCTION solar.save_export_rule(uuid, timestamptz, jsonb, jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.save_export_rule(uuid, timestamptz, jsonb, jsonb) FROM anon;
+GRANT EXECUTE ON FUNCTION solar.save_export_rule(uuid, timestamptz, jsonb, jsonb) TO authenticated, service_role;
 
 REVOKE ALL ON FUNCTION solar.create_tariff_override(uuid, timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.create_tariff_override(uuid, timestamptz) FROM anon;
@@ -529,8 +626,11 @@ BEGIN
         NEW.created_at := NOW();
         RETURN NEW;
     END IF;
-    IF (NEW.tariff_id, NEW.project_id, NEW.reporter_id, NEW.note, NEW.created_at)
-       IS DISTINCT FROM (OLD.tariff_id, OLD.project_id, OLD.reporter_id, OLD.note, OLD.created_at) THEN
+    -- reporter_id may only go to NULL: that is the FK's ON DELETE SET NULL when
+    -- the reporter's auth user is deleted (clients hold no UPDATE on the column).
+    IF (NEW.tariff_id, NEW.project_id, NEW.note, NEW.created_at)
+       IS DISTINCT FROM (OLD.tariff_id, OLD.project_id, OLD.note, OLD.created_at)
+       OR (NEW.reporter_id IS DISTINCT FROM OLD.reporter_id AND NEW.reporter_id IS NOT NULL) THEN
         RAISE EXCEPTION 'tariffs.error_report: only the status and resolution note change' USING ERRCODE = '42501';
     END IF;
     IF NEW.status = 'open' THEN
@@ -632,7 +732,7 @@ RETURNS TEXT LANGUAGE sql STABLE SET search_path = '' AS $$
                     FROM tariffs.charge c JOIN tariffs.tariff t ON t.id = c.tariff_id WHERE t.tariff_year_id = p_year_id), '')
         || '#' || coalesce((SELECT string_agg((to_jsonb(l) - 'created_at')::text, '|' ORDER BY l.id)
                     FROM tariffs.loss_factor l WHERE l.tariff_year_id = p_year_id), '')
-        || '#' || coalesce((SELECT string_agg((to_jsonb(s) - 'created_at')::text, '|' ORDER BY s.id)
+        || '#' || coalesce((SELECT string_agg((to_jsonb(s) - 'created_at' - 'updated_at')::text, '|' ORDER BY s.id)
                     FROM tariffs.sseg_rule s WHERE s.tariff_year_id = p_year_id), ''));
 $$;
 
@@ -657,6 +757,76 @@ BEGIN
         RAISE EXCEPTION 'tariffs.record_year_validation: % is not a draft year', p_year_id USING ERRCODE = '23514';
     END IF;
 END $$;
+
+-- ── 8b. Stale guards for the admin calendar and SSEG saves ──────────────────
+-- Additive columns; a row's updated_at moves on every UPDATE (clock_timestamp,
+-- so two saves inside one transaction still differ).
+ALTER TABLE tariffs.tou_calendar ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE tariffs.sseg_rule ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE OR REPLACE FUNCTION tariffs.touch_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    NEW.updated_at := clock_timestamp();
+    RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION tariffs.touch_updated_at() FROM PUBLIC;
+REVOKE ALL ON FUNCTION tariffs.touch_updated_at() FROM anon;
+CREATE TRIGGER tou_calendar_touch BEFORE UPDATE ON tariffs.tou_calendar
+    FOR EACH ROW EXECUTE FUNCTION tariffs.touch_updated_at();
+CREATE TRIGGER sseg_rule_touch BEFORE UPDATE ON tariffs.sseg_rule
+    FOR EACH ROW EXECUTE FUNCTION tariffs.touch_updated_at();
+
+-- A TOU calendar, its windows and its holiday rule in ONE transaction. NULL id
+-- creates; otherwise the calendar is locked and the expected timestamp checked
+-- (40001 when it moved). INVOKER: 00209's admin-only write policies decide; the
+-- explicit check gives a non-admin the named refusal instead of a silent no-op.
+-- Returns {id, updated_at}.
+CREATE OR REPLACE FUNCTION tariffs.save_tou_calendar(p_calendar_id UUID, p_expected_updated_at TIMESTAMPTZ,
+                                                     p_calendar JSONB, p_windows JSONB, p_holiday TEXT)
+RETURNS JSONB LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE
+    v_id      UUID;
+    v_upd     TIMESTAMPTZ;
+    v_months  INT[];
+BEGIN
+    IF NOT public.is_platform_tariff_admin() THEN
+        RAISE EXCEPTION 'tariffs.save_tou_calendar: only platform tariff admins edit calendars' USING ERRCODE = '42501';
+    END IF;
+    v_months := ARRAY(SELECT jsonb_array_elements_text(coalesce(p_calendar->'high_season_months', '[]'::jsonb))::int);
+    IF p_calendar_id IS NULL THEN
+        INSERT INTO tariffs.tou_calendar (licensee_id, valid_from, valid_to, high_season_months, source)
+        VALUES ((p_calendar->>'licensee_id')::uuid, (p_calendar->>'valid_from')::date, nullif(p_calendar->>'valid_to', '')::date,
+                v_months, p_calendar->>'source')
+        RETURNING id INTO v_id;
+    ELSE
+        SELECT c.updated_at INTO v_upd FROM tariffs.tou_calendar c WHERE c.id = p_calendar_id FOR UPDATE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'tariffs.save_tou_calendar: that calendar no longer exists' USING ERRCODE = 'P0002';
+        END IF;
+        IF v_upd IS DISTINCT FROM p_expected_updated_at THEN
+            RAISE EXCEPTION 'tariffs.save_tou_calendar: stale' USING ERRCODE = '40001';
+        END IF;
+        UPDATE tariffs.tou_calendar
+           SET licensee_id = (p_calendar->>'licensee_id')::uuid, valid_from = (p_calendar->>'valid_from')::date,
+               valid_to = nullif(p_calendar->>'valid_to', '')::date, high_season_months = v_months, source = p_calendar->>'source'
+         WHERE id = p_calendar_id;
+        v_id := p_calendar_id;
+        DELETE FROM tariffs.tou_window WHERE calendar_id = v_id;
+    END IF;
+    INSERT INTO tariffs.tou_window (calendar_id, season, day_type, start_minute, end_minute, period)
+    SELECT v_id, w.season, w.day_type, w.start_minute, w.end_minute, w.period
+      FROM jsonb_to_recordset(coalesce(p_windows, '[]'::jsonb)) AS w(season TEXT, day_type TEXT, start_minute INT, end_minute INT, period TEXT);
+    DELETE FROM tariffs.holiday_rule WHERE calendar_id = v_id;
+    IF p_holiday IS NOT NULL THEN
+        INSERT INTO tariffs.holiday_rule (calendar_id, treated_as) VALUES (v_id, p_holiday);
+    END IF;
+    SELECT c.updated_at INTO v_upd FROM tariffs.tou_calendar c WHERE c.id = v_id;
+    RETURN jsonb_build_object('id', v_id, 'updated_at', v_upd);
+END $$;
+REVOKE ALL ON FUNCTION tariffs.save_tou_calendar(uuid, timestamptz, jsonb, jsonb, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION tariffs.save_tou_calendar(uuid, timestamptz, jsonb, jsonb, text) FROM anon;
+GRANT EXECUTE ON FUNCTION tariffs.save_tou_calendar(uuid, timestamptz, jsonb, jsonb, text) TO authenticated, service_role;
 
 -- ── 9. Due-year monitor ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tariffs.due_year_alert (
