@@ -74,3 +74,16 @@ is what the specs now say. A change to any of these is a new decision recorded h
 - Owner review of the seeded density/archetype table (Phase 3).
 - Owner to confirm WM Solar still works when signed in (after containment + key rotation).
 - PnP per-meter data route (parked, D-27).
+
+## Backlog — meter import (Phase 3a review, deferred)
+- **Concurrent first commits.** Two first commits of the same file running at once can each mint a meter
+  (the file→meter binding is read, then written, with nothing unique on it), and two register commits of
+  one summary can both insert their rows. Needs a unique key (e.g. one series-hash row per file) or the
+  whole commit moved into a single RPC.
+- **Wild-timestamp outliers in series gap-filling.** A single stray timestamp far outside a file's range
+  stretches the timeline and the gap-fill window around it; outliers should be flagged and dropped first.
+- **Generic-path detection samples the first 50 rows only** (timestamp column, date order, decimal
+  comma); a file whose early rows are unrepresentative can be mis-detected.
+- **`auth.uid() IS NULL` service path** in `solar.write_readings` / `solar.clear_channel_readings` skips the
+  Edit check by design (service role and migrations); `anon` has no EXECUTE. Worth a comment in the
+  function bodies stating that, so nobody "fixes" it into a hole or a lock-out.
