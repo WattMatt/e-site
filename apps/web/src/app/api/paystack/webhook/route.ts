@@ -435,7 +435,17 @@ async function applyOrgAddonCharge(
     boundSubscriptionLive(existing)
   const duplicatePurchase = !alreadyApplied && ((firstCharge && live) || foreignSubscription)
 
-  if (!alreadyApplied && !duplicatePurchase) {
+  // A renewal charge may revive a refunded/cancelled row only when it pays for
+  // time beyond the stored end (the invoice.update rule): a replayed OLD
+  // charge is booked, but does not undo the refund or cancel.
+  const staleRevival =
+    !firstCharge &&
+    !!existing &&
+    (existing.status === 'refunded' || existing.status === 'cancelled') &&
+    !!existing.current_period_end &&
+    new Date(nextAddonPeriodEnd(null, paidAt)).getTime() <= new Date(existing.current_period_end).getTime()
+
+  if (!alreadyApplied && !duplicatePurchase && !staleRevival) {
     const periodEnd = nextAddonPeriodEnd(existing?.current_period_end, paidAt)
     if (existing) {
       const patch: Record<string, unknown> = {
@@ -823,11 +833,17 @@ export async function POST(req: NextRequest) {
         .maybeSingle()
       if (readErr) return storageFailure('org_addon read', readErr)
 
+      // Defensive: if Paystack repeats initialize-time metadata on a renewal,
+      // a charge carrying the row's OWN bound subscription code is a renewal
+      // of it, never a second purchase.
+      const row = (existing as AddonRow | null) ?? null
+      const chargeSub = subscriptionCodeOf(data)
+      const isRenewal = !!chargeSub && !!row?.paystack_subscription_code && row.paystack_subscription_code === chargeSub
       return applyOrgAddonCharge(supabase, {
         orgId,
-        existing: (existing as AddonRow | null) ?? null,
+        existing: row,
         data,
-        firstCharge: true,
+        firstCharge: !isRenewal,
       })
     }
 
@@ -1387,11 +1403,16 @@ export async function POST(req: NextRequest) {
           `${addon.row.id} (${addon.row.paystack_subscription_code}); not re-binding`,
       )
     } else if (addon.row && /^[A-Za-z0-9_-]+$/.test(newCode)) {
+      const oldCode = addon.row.paystack_subscription_code
       const patch: Record<string, unknown> = { paystack_subscription_code: newCode }
-      if (sub.next_payment_date) {
+      // Only an ACTIVE row's period may follow next_payment_date here. On any
+      // other row (an ended non_renewing / cancelled / refunded binding being
+      // taken over) moving the end forward would grant access from an event
+      // that is not a payment, and turn the real first charge into a
+      // "duplicate". The charge that follows sets the period.
+      if (sub.next_payment_date && addon.row.status === 'active' && !(oldCode && oldCode !== newCode)) {
         patch.current_period_end = nextAddonPeriodEnd(addon.row.current_period_end, null, sub.next_payment_date)
       }
-      const oldCode = addon.row.paystack_subscription_code
       const bind = addonTable(supabase).update(patch).eq('id', addon.row.id)
       // Unbound or already ours: guard against a concurrent bind. Bound to an
       // ENDED subscription (not foreign, see boundSubscriptionLive): take it
