@@ -287,6 +287,32 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 >
 > ⚠ `public.user_has_mv_access` opens with an unconditional **WM-Consulting bypass** — every active member of `dddddddd-0000-0000-0000-000000000001` passes with no subscription and no accepted disclaimer. That is why production shows 0 MV subscriptions alongside 131 cached results, and why a "works for me" report from a WM account proves nothing about the paywall. `lib/mv-access.ts` used to claim "no owner bypass"; corrected.
 
+### Solar meter data API (Phase 3a)
+
+Gated by `requireSolarLevelAPI(…, 'edit')` (JSON 401/403): the caller needs **Solar Edit** on the project,
+i.e. an org owner/admin of the project's org (always `edit_financials`) or a user holding an `edit` /
+`edit_financials` grant in `solar.project_access`, with the org's Solar subscription live. Suppliers and
+client viewers can never hold a grant (00207); external project members are capped at View and are refused.
+Everything is written with the caller's client, so the `solar` RLS policies (00210) apply as well.
+
+| Endpoint | Needs | Writes |
+|---|---|---|
+| `POST /api/projects/[id]/solar/meter-files` | Solar Edit | `solar.meter_files` (path must be `<org>/<project>/<sha256>.<ext>`; the sha is recomputed from the stored bytes; the same bytes already registered through ANOTHER project of the org are `409 duplicate_in_other_project` with that file id and the meters it feeds, as far as the caller's RLS lets them read) |
+| `POST /api/projects/[id]/solar/meter-files/parse` | Solar Edit | `solar.meter_import_reports`, `solar.meter_files` (detected facts, status) |
+| `POST /api/projects/[id]/solar/meter-files/commit` | Solar Edit | `solar.meters`, `meter_channels`, readings via `solar.write_readings` (a re-commit first empties the file's stored channels via `solar.clear_channel_readings`, same Edit gate), `meter_series_hashes`, `study_meters`, `meter_register`, `audit_events` |
+
+Parse and commit re-read the raw object from the path recorded on the file row, so before parsing they re-prove it (`lib/solar/meter-import/raw-file.ts`): the recorded path must be exactly `<project org>/<row project>/<row sha256>.<csv|txt|xlsx|xls>` (else `raw_path_invalid`, nothing downloaded) and the downloaded bytes must hash to the recorded sha256 (else `sha256_mismatch`, nothing parsed or written). No route uses the service-role key; Storage is read with the caller's client.
+
+Storage bucket `solar-meter-raw` (private): read needs the path's org in the caller's library audience (`solar.library_orgs('view')`) **and** Solar View on the path's project (`solar.raw_path_allowed(name, 'view')`), so an external View member cannot read a raw object; upload needs Solar Edit on the path's project; no update or delete.
+
+**Meter library reads (RLS, 00210).** An org-library member (`solar.library_orgs('view')`: active in the org, live Solar subscription, a Solar grant on any of the org's projects, or owner/admin) reads every library table. **External project members with a View grant** (owner decision 2, 2026-09-28) are outside the library, but may read the `solar.meters`, `solar.meter_channels` and `solar.meter_readings` of meters **linked** through `solar.study_meters` to a study on a project where `solar_can_view` holds (`solar.linked_meter_ids()` / `solar.linked_channel_ids()`; a revoked grant, a lapse or an unlink hides them again). They never read `meter_files`, `meter_register`, `meter_import_reports`, `meter_series_hashes` or a raw object, never see unlinked library meters, and write nothing.
+
+| Reader | Library meters / channels / readings | Linked meters / channels / readings | Files, register, reports, hashes | Raw objects |
+|---|---|---|---|---|
+| Org library member (View+) | yes | yes | yes | yes, with View on the path's project |
+| External project member, Solar View on the project | no | yes (read only) | no | no |
+| Member without a grant, client viewer, supplier, other org | no | no | no | no |
+
 ## Server actions (`apps/web/src/actions/*`)
 
 Read-only actions require project access (any project member). Write/export actions are gated to `ORG_WRITE_ROLES` (owner / admin / project_manager) via `requireEffectiveRole`, enforced in-app on top of RLS.
