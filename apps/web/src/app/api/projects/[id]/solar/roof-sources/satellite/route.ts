@@ -40,7 +40,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!solarLevelAllows(level, 'edit')) return NextResponse.json({ error: 'You do not have Solar edit access on this project.' }, { status: 403 })
   if (!rateLimit(`solar-satellite:${user.id}`, 5, 60_000)) return NextResponse.json({ error: 'Too many captures — wait a minute.' }, { status: 429 })
 
-  let body: { zoom?: unknown } = {}
+  let body: { zoom?: unknown }
   try { body = (await req.json()) as { zoom?: unknown } } catch { body = {} }
   const zoom = clampSatelliteZoom(Number(body.zoom ?? SATELLITE_CAPTURE.defaultZoom) || SATELLITE_CAPTURE.defaultZoom)
 
