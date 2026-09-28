@@ -69,6 +69,9 @@ DECLARE
   i          INT;
   v_users    UUID[];
   v_labels   TEXT[];
+  v_ids      UUID[];                      -- non-solar work items on project 3 (18b control)
+  v_sol      UUID[];                      -- solar_task work items (18b / 15)
+  v_exp2     INT;
 BEGIN
   -- ── Fixtures (as postgres) ────────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES (v_org, 'solar-schedule-probe'), (v_org2, 'solar-schedule-probe-2');
@@ -563,6 +566,94 @@ BEGIN
   INSERT INTO _r VALUES ('view_user_sees_every_solar_work_item', v_n = v_exp AND v_exp >= 7);
   RESET ROLE;
 
+  -- ── 18b. I1 follow-through: a solar_task's EVENTS and WATCHERS are Solar data
+  -- 00196's work_item_events_select / work_item_watchers_select / _insert gate
+  -- on projects.user_can_read_work_item() — a definer, row_security-off helper
+  -- that repeats 00196's permissive predicate, so section 18's RESTRICTIVE
+  -- SELECT on work_items never reached them. Expected non-solar counts are
+  -- that very helper evaluated as postgres with the user's claim.
+  SELECT array_agg(id) INTO v_ids FROM projects.work_items WHERE project_id = v_project3 AND item_type <> 'solar_task';
+  SELECT array_agg(id) INTO v_sol FROM projects.work_items WHERE project_id = v_project3 AND item_type = 'solar_task';
+  SELECT count(*) INTO v_exp FROM projects.work_item_events WHERE work_item_id = ANY (v_sol);
+  SELECT count(*) INTO v_n2 FROM projects.work_item_events WHERE work_item_id = v_w1;
+  INSERT INTO _r VALUES ('fixture_solar_events_and_watchers_exist', v_exp >= 7 AND v_n2 >= 1
+    AND EXISTS (SELECT 1 FROM projects.work_item_watchers WHERE work_item_id = v_w2 AND user_id = v_con)
+    AND EXISTS (SELECT 1 FROM projects.work_item_events WHERE work_item_id = ANY (v_ids)));
+  FOR i IN 1..4 LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_users[i]::text, 'role', 'authenticated')::text, true);
+    SELECT count(*) INTO v_exp2 FROM projects.work_item_events
+     WHERE work_item_id = ANY (v_ids) AND projects.user_can_read_work_item(work_item_id);
+    SELECT count(*) INTO v_n FROM projects.work_item_watchers
+     WHERE work_item_id = ANY (v_ids) AND projects.user_can_read_work_item(work_item_id);
+    SET LOCAL ROLE authenticated;
+    INSERT INTO _r SELECT v_labels[i] || '_non_solar_events_and_watchers_unchanged',
+      v_exp2 >= 1 AND (SELECT count(*) FROM projects.work_item_events WHERE work_item_id = ANY (v_ids)) = v_exp2
+      AND (SELECT count(*) FROM projects.work_item_watchers WHERE work_item_id = ANY (v_ids)) = v_n;
+    RESET ROLE;
+  END LOOP;
+  -- supplier: nothing of any solar item, and cannot follow one.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_supplier::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r SELECT 'supplier_sees_no_solar_events_or_watchers',
+    (SELECT count(*) FROM projects.work_item_events WHERE work_item_id = ANY (v_sol)) = 0
+    AND (SELECT count(*) FROM projects.work_item_watchers WHERE work_item_id = ANY (v_sol)) = 0;
+  BEGIN
+    INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_w2, v_supplier, 'manual');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('supplier_watch_solar_item_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('supplier_watch_solar_item_REFUSED', false);
+  END;
+  RESET ROLE;
+  -- no-grant member: only the events of the item they are assigned (s1).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_nogrant::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r SELECT 'nogrant_sees_only_own_solar_item_events',
+    (SELECT count(*) FROM projects.work_item_events WHERE work_item_id = ANY (v_sol)) = v_n2
+    AND (SELECT count(*) FROM projects.work_item_events WHERE work_item_id = v_w1) = v_n2
+    AND (SELECT count(*) FROM projects.work_item_watchers WHERE work_item_id = ANY (v_sol) AND work_item_id <> v_w1) = 0;
+  BEGIN
+    INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_w2, v_nogrant, 'manual');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('nogrant_watch_solar_item_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('nogrant_watch_solar_item_REFUSED', false);
+  END;
+  -- A contractor is in solar_task's write set, so 00196's DELETE policy would let
+  -- them drop someone else's watch; hidden rows match nothing. Rolled back by ZZ001.
+  BEGIN
+    DELETE FROM projects.work_item_watchers WHERE work_item_id = v_w2 AND user_id = v_con;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'ZZ001';
+  EXCEPTION
+    WHEN SQLSTATE 'ZZ001' THEN INSERT INTO _r VALUES ('nogrant_cannot_drop_a_solar_items_watcher', v_n = 0);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('nogrant_cannot_drop_a_solar_items_watcher', false);
+  END;
+  -- CONTROL: the same member may still follow a non-solar item (rolled back).
+  BEGIN
+    INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_plain, v_nogrant, 'manual');
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'ZZ001';
+  EXCEPTION
+    WHEN SQLSTATE 'ZZ001' THEN INSERT INTO _r VALUES ('nogrant_may_still_watch_a_plain_task', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('nogrant_may_still_watch_a_plain_task', false);
+  END;
+  RESET ROLE;
+  -- View user: every solar item's events and watchers, and may follow one.
+  SELECT count(*) INTO v_exp2 FROM projects.work_item_watchers WHERE work_item_id = ANY (v_sol);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_viewer::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r SELECT 'view_user_sees_every_solar_event_and_watcher',
+    (SELECT count(*) FROM projects.work_item_events WHERE work_item_id = ANY (v_sol)) = v_exp
+    AND (SELECT count(*) FROM projects.work_item_watchers WHERE work_item_id = ANY (v_sol)) = v_exp2 AND v_exp2 >= 1;
+  BEGIN
+    INSERT INTO projects.work_item_watchers (work_item_id, user_id, reason) VALUES (v_w2, v_viewer, 'manual');
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'ZZ001';
+  EXCEPTION
+    WHEN SQLSTATE 'ZZ001' THEN INSERT INTO _r VALUES ('view_user_may_watch_a_solar_item', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('view_user_may_watch_a_solar_item', false);
+  END;
+  RESET ROLE;
+
   -- ── 19. C1: without Solar Edit a work-item write is a status move by the holder, nothing else
   -- v_nogrant: contractor (in solar_task write_roles), NO grant, assignee of s1.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_nogrant::text, 'role', 'authenticated')::text, true);
@@ -872,11 +963,21 @@ BEGIN
     WHEN OTHERS THEN INSERT INTO _r VALUES ('lapsed_editor_direct_rename_REFUSED', false);
   END;
   RESET ROLE;
-  -- I1 under lapse: a View user sees no solar work items at all.
+  -- I1 under lapse: a View user sees no solar work items at all, nor their
+  -- events; the assignee still sees their own item's events (ids as postgres).
+  SELECT array_agg(id) INTO v_sol FROM projects.work_items WHERE project_id IN (v_project, v_project3) AND item_type = 'solar_task';
+  SELECT count(*) INTO v_exp2 FROM projects.work_item_events WHERE work_item_id = v_wn1;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_viewer::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   SELECT count(*) INTO v_n FROM projects.work_items WHERE project_id IN (v_project, v_project3) AND item_type = 'solar_task';
   INSERT INTO _r VALUES ('lapsed_view_user_sees_no_solar_work_items', v_n = 0);
+  SELECT count(*) INTO v_n FROM projects.work_item_events WHERE work_item_id = ANY (v_sol);
+  INSERT INTO _r VALUES ('lapsed_view_user_sees_no_solar_events', v_n = 0 AND cardinality(v_sol) >= 2);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO v_n FROM projects.work_item_events WHERE work_item_id = v_wn1;
+  INSERT INTO _r VALUES ('lapsed_assignee_sees_own_solar_item_events', v_n = v_exp2 AND v_exp2 >= 1);
   RESET ROLE;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;

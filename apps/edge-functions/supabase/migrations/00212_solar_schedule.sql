@@ -46,6 +46,11 @@
 --      skips void items. Create takes an optional per-task "gatekeeper_id"
 --      (Undo of a delete keeps the original sign-off), honoured only when
 --      schedule_owner_is_eligible(); otherwise the caller signs off.
+--      DELIBERATE: the DB cannot tell an Undo from any other create, so ANY
+--      editor may name another eligible member as the sign-off person. The
+--      named member takes the gatekeeper seat (who alone closes); the naming
+--      editor gains no ability to close. Undo uses it to restore the
+--      original creator.
 --      schedule_owner_candidates returns email only to an editor.
 --   6a. schedule_tasks and schedule_segments are READ-ONLY to clients: no
 --      INSERT/UPDATE/DELETE grant, SELECT policy only. The RPCs are the only
@@ -84,6 +89,19 @@
 --      OR solar_can_view(project) OR the reader is its assignee / gatekeeper.
 --      Other item types are untouched (asserted per user against 00196's
 --      predicate).
+--  9a. …AND SO ARE ITS EVENTS AND WATCHERS (re-review). 00196's
+--      work_item_events_select / work_item_watchers_select / _insert call
+--      projects.user_can_read_work_item() (definer, row_security off), which
+--      9 cannot reach. solar.work_item_visible(id) (definer, EXECUTE to
+--      authenticated because the policies call it) carries 9's arms, and
+--      RESTRICTIVE policies per verb narrow SELECT on work_item_events and
+--      SELECT / INSERT / DELETE on work_item_watchers (no UPDATE policy or
+--      grant exists there). The spine helper is NOT redeclared. A watcher
+--      without Solar View sees none of a solar_task's events. PR #193 (00202)
+--      checked 2026-09-29: it declares no policy on either table, does not
+--      touch user_can_read_work_item(), writes events/watchers only through
+--      the spine's definer triggers, and its backfill's departed-watcher
+--      DELETE runs as the migration role — none of it is subject to these.
 --  10. A VOID FROM ANY PATH REMOVES THE BAR (review Spec-I2).
 --      work_items_solar_void_cleanup_trg (AFTER UPDATE OF status, on the move
 --      INTO void) deletes the side row; segments/links cascade, baseline rows
@@ -173,6 +191,14 @@
 -- trigger: work_items_solar_void_cleanup_trg ON projects.work_items
 -- policy: work_items_solar_select_authz ON projects.work_items RESTRICTIVE
 -- sql: (SELECT p.polcmd = 'r' AND pg_get_expr(p.polqual, p.polrelid) LIKE '%solar_can_view%' FROM pg_policy p WHERE p.polrelid = 'projects.work_items'::regclass AND p.polname = 'work_items_solar_select_authz')
+-- function: solar.work_item_visible(uuid)
+-- grant_absent: anon EXECUTE ON solar.work_item_visible(uuid)
+-- grant_present: authenticated EXECUTE ON solar.work_item_visible(uuid)
+-- policy: work_item_events_solar_select_authz ON projects.work_item_events RESTRICTIVE
+-- policy: work_item_watchers_solar_select_authz ON projects.work_item_watchers RESTRICTIVE
+-- policy: work_item_watchers_solar_insert_authz ON projects.work_item_watchers RESTRICTIVE
+-- policy: work_item_watchers_solar_delete_authz ON projects.work_item_watchers RESTRICTIVE
+-- sql: (SELECT count(*) = 4 FROM pg_policy p WHERE p.polrelid IN ('projects.work_item_events'::regclass, 'projects.work_item_watchers'::regclass) AND NOT p.polpermissive AND p.polcmd <> '*' AND coalesce(pg_get_expr(p.polqual, p.polrelid), '') || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') LIKE '%work_item_visible%')
 -- policy: schedule_tasks_select ON solar.schedule_tasks PERMISSIVE
 -- policy: schedule_segments_select ON solar.schedule_segments PERMISSIVE
 -- sql: (SELECT count(*) = 0 FROM pg_policy p WHERE p.polrelid IN ('solar.schedule_tasks'::regclass, 'solar.schedule_segments'::regclass) AND p.polcmd <> 'r')
@@ -853,6 +879,63 @@ CREATE POLICY work_items_solar_select_authz ON projects.work_items
            OR public.solar_can_view(project_id)
            OR assignee_id = auth.uid()
            OR gatekeeper_id = auth.uid());
+
+-- ── 6b. …and so are its EVENTS and WATCHERS (re-review; header item 9a) ────
+-- 00196's work_item_events_select, work_item_watchers_select and
+-- work_item_watchers_insert gate on projects.user_can_read_work_item(), a
+-- SECURITY DEFINER, row_security-off helper repeating 00196's permissive
+-- predicate — it reads work_items itself, so 6's RESTRICTIVE SELECT never
+-- reaches it. Without this a supplier or a no-grant member (or anyone while
+-- the subscription is lapsed) read every SOLAR-n event (status moves, actors,
+-- due dates) and could INSERT themselves as a watcher on any solar_task.
+-- The spine helper is NOT redeclared (PR #193 or a later migration could
+-- overwrite it); solar.work_item_visible() answers 6's question for one work
+-- item id and RESTRICTIVE policies, one per verb, narrow the permissive ones.
+-- Same arms as 6: not a solar_task, or Solar View, or the caller is its
+-- assignee / gatekeeper. A watcher WITHOUT Solar View therefore sees none of
+-- a solar_task's events (00196's watcher arm is not honoured for this type,
+-- exactly as 6 does not honour it for the row itself).
+--   * DELETE is covered too, the caller's own row always removable. It has no
+--     observable effect today — 00196's DELETE policy looks the item up in
+--     work_items under RLS, which 6 already hides — and holds if that lookup
+--     ever moves into a definer helper.
+--   * work_item_watchers has no UPDATE policy (grant revoked in 00196) and
+--     work_item_events takes no client writes, so nothing else needs covering.
+--   * An unknown id, or any non-solar item, answers TRUE: only solar_task rows
+--     are narrowed; the permissive policy still decides everything else.
+--   * EXECUTE is granted to authenticated because the policies call it in the
+--     caller's session; it says only whether THIS caller may see an item.
+CREATE OR REPLACE FUNCTION solar.work_item_visible(p_work_item_id UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = '' SET row_security = off AS $$
+    SELECT NOT EXISTS (
+        SELECT 1 FROM projects.work_items wi
+         WHERE wi.id = p_work_item_id
+           AND wi.item_type = 'solar_task'
+           AND NOT COALESCE(public.solar_can_view(wi.project_id)
+                            OR wi.assignee_id = auth.uid()
+                            OR wi.gatekeeper_id = auth.uid(), false));
+$$;
+REVOKE ALL ON FUNCTION solar.work_item_visible(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.work_item_visible(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION solar.work_item_visible(uuid) TO authenticated, service_role;
+
+DROP POLICY IF EXISTS work_item_events_solar_select_authz ON projects.work_item_events;
+CREATE POLICY work_item_events_solar_select_authz ON projects.work_item_events
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (solar.work_item_visible(work_item_id));
+DROP POLICY IF EXISTS work_item_watchers_solar_select_authz ON projects.work_item_watchers;
+CREATE POLICY work_item_watchers_solar_select_authz ON projects.work_item_watchers
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (solar.work_item_visible(work_item_id));
+DROP POLICY IF EXISTS work_item_watchers_solar_insert_authz ON projects.work_item_watchers;
+CREATE POLICY work_item_watchers_solar_insert_authz ON projects.work_item_watchers
+    AS RESTRICTIVE FOR INSERT TO authenticated
+    WITH CHECK (solar.work_item_visible(work_item_id));
+DROP POLICY IF EXISTS work_item_watchers_solar_delete_authz ON projects.work_item_watchers;
+CREATE POLICY work_item_watchers_solar_delete_authz ON projects.work_item_watchers
+    AS RESTRICTIVE FOR DELETE TO authenticated
+    USING (user_id = auth.uid() OR solar.work_item_visible(work_item_id));
 
 -- ── 7. Grants (the schema's default privileges granted everything; narrow them) ─
 GRANT SELECT ON solar.schedule_tasks, solar.schedule_segments TO authenticated;
