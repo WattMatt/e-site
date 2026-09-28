@@ -8,7 +8,8 @@ describe('ReadinessChecklist', () => {
     render(<ReadinessChecklist projectId="p1" steps={computeSolarReadiness(null, 'edit')} />)
     expect(screen.getByRole('link', { name: 'Site & Supply' }).getAttribute('href')).toBe('/projects/p1/solar/site')
     expect(screen.queryByRole('link', { name: 'Load' })).toBeNull()
-    expect(screen.getAllByText('Not started — available in a later phase').length).toBe(6)
-    expect(screen.getByText('Not started')).toBeDefined()
+    expect(screen.getByRole('link', { name: 'Schedule' }).getAttribute('href')).toBe('/projects/p1/solar/schedule')
+    expect(screen.getAllByText('Not started — available in a later phase').length).toBe(5)
+    expect(screen.getAllByText('Not started').length).toBe(2) // Site & Supply and Schedule
   })
 })

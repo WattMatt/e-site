@@ -31,7 +31,7 @@ export const SOLAR_TABS: readonly SolarTab[] = [
   { slug: 'yield',      label: 'Yield & Scenarios',  built: false, financial: false, hidden: false },
   { slug: 'financials', label: 'Financials',         built: false, financial: true,  hidden: false },
   { slug: 'reports',    label: 'Reports & Proposal', built: false, financial: false, hidden: false },
-  { slug: 'schedule',   label: 'Schedule',           built: false, financial: false, hidden: false },
+  { slug: 'schedule',   label: 'Schedule',           built: true,  financial: false, hidden: false },
   { slug: 'operations', label: 'Operations',         built: false, financial: false, hidden: true },
 ]
 
@@ -97,11 +97,32 @@ export function toSiteReadinessInput(row: Record<string, unknown> | null | undef
   }
 }
 
-export function computeSolarReadiness(site: SiteReadinessInput | null, level: SolarAccessLevel): ReadinessStep[] {
+export interface ReadinessExtras {
+  /** Live solar.schedule_tasks rows on the project; null/undefined = not loaded. */
+  scheduleTaskCount?: number | null
+}
+
+/**
+ * Schedule (functional spec §1.3): green with at least one task — start, end
+ * and owner are NOT NULL in 00212, so any task qualifies — grey with none.
+ * The red "dependency cycle" case cannot arise (00212 refuses loops at write
+ * time), so it is not modelled.
+ */
+export function scheduleReadiness(count: number | null | undefined): { status: ReadinessStatus; reason: string } {
+  if (!count) return { status: 'grey', reason: 'Not started' }
+  return { status: 'green', reason: `${count} ${count === 1 ? 'task' : 'tasks'} scheduled` }
+}
+
+export function computeSolarReadiness(
+  site: SiteReadinessInput | null,
+  level: SolarAccessLevel,
+  extras: ReadinessExtras = {},
+): ReadinessStep[] {
   return visibleSolarTabs(level)
     .filter((t): t is SolarTab & { slug: Exclude<SolarTabSlug, 'overview'> } => t.slug !== 'overview')
     .map((t) => {
       if (t.slug === 'site') return { slug: t.slug, label: t.label, live: true, ...siteReadiness(site) }
+      if (t.slug === 'schedule') return { slug: t.slug, label: t.label, live: true, ...scheduleReadiness(extras.scheduleTaskCount) }
       return { slug: t.slug, label: t.label, live: false, status: 'grey' as const, reason: LATER_PHASE_REASON }
     })
 }
