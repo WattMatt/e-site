@@ -38,6 +38,7 @@ DECLARE
   v_meter3  UUID;   -- second v_org meter (for link/delete tests)
   v_meter4  UUID;   -- v_org meter never linked to a study, with a channel and readings (decision 2)
   v_ch4     UUID;   -- its channel
+  v_ch5     UUID;   -- a second channel on v_meter4, emptied by the editor through clear_channel_readings
   v_ch      UUID;
   v_rep     UUID;
   v_org_out UUID;
@@ -89,6 +90,10 @@ BEGIN
                                     interval_min, tz_convention, parser_version)
   VALUES (v_meter4, 'p14', 'active_power', 'import', 'kW', 'kW', 30, 'begin', '3a.1') RETURNING id INTO v_ch4;
   PERFORM solar.write_readings(v_ch4, v_ts[1:2], ARRAY[4, 5]::float8[], ARRAY[0, 0]::smallint[]);
+  INSERT INTO solar.meter_channels (meter_id, source_column, quantity, direction, source_unit, unit,
+                                    interval_min, tz_convention, parser_version)
+  VALUES (v_meter4, 'q14', 'reactive_power', 'import', 'kvar', 'kvar', 30, 'begin', '3a.1') RETURNING id INTO v_ch5;
+  PERFORM solar.write_readings(v_ch5, v_ts, ARRAY[1, 2, 3]::float8[], ARRAY[0, 0, 0]::smallint[]);
   -- A raw object in the private bucket at the canonical path (for the storage read policy).
   INSERT INTO storage.objects (bucket_id, name) VALUES ('solar-meter-raw', v_org || '/' || v_p || '/' || v_sha || '.csv');
 
@@ -170,6 +175,18 @@ BEGIN
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('direct_readings_insert_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('direct_readings_insert_REFUSED', false);
+  END;
+  -- A re-commit REPLACES a channel's readings: the editor empties it through solar.clear_channel_readings
+  -- (the channel row, and anything pointing at it, is kept).
+  BEGIN
+    SELECT solar.clear_channel_readings(v_ch5) INTO v_n;
+    INSERT INTO _r VALUES ('editor_clears_own_channel_readings',
+      v_n = 3
+      AND (SELECT count(*) FROM solar.meter_readings WHERE channel_id = v_ch5) = 0
+      AND (SELECT count(*) FROM solar.meter_channels WHERE id = v_ch5) = 1
+      AND (SELECT count(*) FROM solar.meter_readings WHERE channel_id = v_ch4) = 2);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('editor_clears_own_channel_readings', false);
   END;
 
   -- ── 4. Study-scoped tables (editor) ──
@@ -287,6 +304,13 @@ BEGIN
     WHEN OTHERS THEN INSERT INTO _r VALUES ('viewer_write_readings_REFUSED', false);
   END;
   BEGIN
+    PERFORM solar.clear_channel_readings(v_ch);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('viewer_clear_readings_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('viewer_clear_readings_REFUSED', false);
+  END;
+  BEGIN
     INSERT INTO solar.study_meters (study_id, meter_id) VALUES (v_study, v_meter3);
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION
@@ -329,6 +353,13 @@ BEGIN
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('foreign_write_readings_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('foreign_write_readings_REFUSED', false);
+  END;
+  BEGIN
+    PERFORM solar.clear_channel_readings(v_ch);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('foreign_clear_readings_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('foreign_clear_readings_REFUSED', false);
   END;
   RESET ROLE;
 
@@ -405,6 +436,13 @@ BEGIN
   EXCEPTION
     WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('ext_write_readings_linked_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('ext_write_readings_linked_REFUSED', false);
+  END;
+  BEGIN
+    PERFORM solar.clear_channel_readings(v_ch);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('ext_clear_readings_linked_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('ext_clear_readings_linked_REFUSED', false);
   END;
   BEGIN
     INSERT INTO solar.study_meters (study_id, meter_id) VALUES (v_study, v_meter4);

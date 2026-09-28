@@ -58,6 +58,11 @@ export interface ChannelRow {
   coverage_only: boolean
   parser_version: string
 }
+export interface ExistingChannel {
+  id: string
+  source_column: string
+  is_primary: boolean
+}
 export interface FileMeter {
   meterId: string
   label: string
@@ -89,7 +94,11 @@ export interface MeterImportRepo {
   acceptReport(reportId: string): Promise<void>
   getMeter(meterId: string): Promise<MeterRow | null>
   insertMeter(row: NewMeter): Promise<MeterRow>
+  /** Channels already stored for this (meter, file). */
+  channelsForFile(meterId: string, fileId: string): Promise<ExistingChannel[]>
   upsertChannel(row: ChannelRow): Promise<string>
+  /** Empty a channel's readings (solar.clear_channel_readings; Edit on its library). Returns rows removed. */
+  clearChannelReadings(channelId: string): Promise<number>
   writeReadings(channelId: string, chunk: { ts: string[]; value: Array<number | null>; quality: number[] }): Promise<number>
   countReadings(channelId: string): Promise<number>
   insertSeriesHash(row: { organisation_id: string; body_hash: string; meter_id: string; file_id: string }): Promise<void>
@@ -197,9 +206,19 @@ export function createMeterImportRepo(supabase: AnyClient): MeterImportRepo {
     async insertMeter(row) {
       return must(await solar().from('meters').insert(row).select(METER_COLS).single(), 'insert meter') as MeterRow
     },
+    async channelsForFile(meterId, fileId) {
+      const r = await solar().from('meter_channels').select('id, source_column, is_primary').eq('meter_id', meterId).eq('file_id', fileId)
+      if (r.error) throw new Error(`channels for file: ${r.error.message}`)
+      return (r.data ?? []) as ExistingChannel[]
+    },
     async upsertChannel(row) {
       const r = await solar().from('meter_channels').upsert(row, { onConflict: 'meter_id,file_id,source_column' }).select('id').single()
       return (must(r, 'upsert channel') as { id: string }).id
+    },
+    async clearChannelReadings(channelId) {
+      const r = await solar().rpc('clear_channel_readings', { p_channel_id: channelId })
+      if (r.error) throw new Error(`clear channel readings: ${r.error.message}`)
+      return Number(r.data)
     },
     async writeReadings(channelId, chunk) {
       const r = await solar().rpc('write_readings', { p_channel_id: channelId, p_ts_end: chunk.ts, p_value: chunk.value, p_quality: chunk.quality })

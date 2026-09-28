@@ -181,6 +181,9 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
   const results: Array<{ channelId: string; sourceColumn: string; readings: number }> = []
   if (!sameBodyLink) {
     const chunk = opts.chunkSize ?? READING_CHUNK
+    // A re-commit REPLACES a stored channel's readings (write_readings only upserts, so a changed
+    // timestamp set would leave stale rows and fail the read-back forever). The channel row is kept.
+    const stored = new Set((await repo.channelsForFile(meter.id, ctx.file.id)).map((c) => c.id))
     for (const { channel, isPrimary } of selectChannels(outcome, body)) {
       let readings = channel.readings
       for (const sc of (body.scaleCorrections ?? []).filter((s) => s.sourceColumn === channel.spec.sourceColumn)) {
@@ -194,6 +197,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
         interval_min: channel.intervalMin, is_cumulative: channel.isCumulative, tz_convention: outcome.report.tsConvention ?? 'end',
         is_primary: isPrimary, coverage_only: channel.coverageOnly, parser_version: METER_PARSER_VERSION,
       })
+      if (stored.has(channelId)) await repo.clearChannelReadings(channelId)
       let written = 0
       for (let i = 0; i < readings.length; i += chunk) {
         const part = readings.slice(i, i + chunk)

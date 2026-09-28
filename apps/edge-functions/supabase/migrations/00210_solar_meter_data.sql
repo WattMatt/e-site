@@ -69,6 +69,7 @@
 -- function: solar.library_orgs(text)
 -- function: solar.raw_path_allowed(text, text)
 -- function: solar.write_readings(uuid, timestamptz[], double precision[], smallint[])
+-- function: solar.clear_channel_readings(uuid)
 -- function: solar.meter_files_bind()
 -- function: solar.meters_bind()
 -- function: solar.meter_series_hashes_bind()
@@ -161,6 +162,8 @@
 -- grant_absent: anon EXECUTE ON solar.library_orgs(text)
 -- grant_absent: anon EXECUTE ON solar.raw_path_allowed(text, text)
 -- grant_absent: anon EXECUTE ON solar.write_readings(uuid, timestamptz[], double precision[], smallint[])
+-- grant_absent: anon EXECUTE ON solar.clear_channel_readings(uuid)
+-- grant_present: authenticated EXECUTE ON solar.clear_channel_readings(uuid)
 -- grant_absent: anon EXECUTE ON solar.try_uuid(text)
 -- anon_execute_absent: ALL prosecdef functions in solar
 -- sql: (SELECT c.relkind = 'p' FROM pg_class c WHERE c.oid = 'solar.meter_readings'::regclass)
@@ -472,6 +475,29 @@ BEGIN
     INSERT INTO solar.meter_readings AS r (channel_id, organisation_id, ts_end, value, quality)
     SELECT p_channel_id, v_org, u.t, u.v, u.q FROM unnest(p_ts_end, p_value, p_quality) AS u(t, v, q)
     ON CONFLICT (channel_id, ts_end) DO UPDATE SET value = EXCLUDED.value, quality = EXCLUDED.quality;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RETURN v_n;
+END $$;
+
+-- Empty one channel's readings, so a re-commit of its file REPLACES them: write_readings only
+-- upserts, so a re-parse with a different timestamp set (another convention or date order) would
+-- otherwise leave the old rows beside the new ones. Deleting and recreating the CHANNEL instead is
+-- not equivalent: meters.existing_pv_channel_id references it ON DELETE SET NULL, so a meter's chosen
+-- PV channel would silently vanish. Gated exactly like write_readings (Edit on the channel's library).
+CREATE OR REPLACE FUNCTION solar.clear_channel_readings(p_channel_id UUID)
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    v_org UUID;
+    v_n   INTEGER;
+BEGIN
+    SELECT organisation_id INTO v_org FROM solar.meter_channels WHERE id = p_channel_id;
+    IF v_org IS NULL THEN
+        RAISE EXCEPTION 'solar.clear_channel_readings: channel % not found', p_channel_id USING ERRCODE = '23503';
+    END IF;
+    IF auth.uid() IS NOT NULL AND NOT (v_org = ANY (solar.library_orgs('edit'))) THEN
+        RAISE EXCEPTION 'solar.clear_channel_readings: no Edit access to this meter library' USING ERRCODE = '42501';
+    END IF;
+    DELETE FROM solar.meter_readings WHERE channel_id = p_channel_id;
     GET DIAGNOSTICS v_n = ROW_COUNT;
     RETURN v_n;
 END $$;
@@ -811,6 +837,9 @@ GRANT EXECUTE ON FUNCTION solar.raw_path_allowed(text, text) TO authenticated, s
 REVOKE ALL ON FUNCTION solar.write_readings(uuid, timestamptz[], double precision[], smallint[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.write_readings(uuid, timestamptz[], double precision[], smallint[]) FROM anon;
 GRANT EXECUTE ON FUNCTION solar.write_readings(uuid, timestamptz[], double precision[], smallint[]) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION solar.clear_channel_readings(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.clear_channel_readings(uuid) FROM anon;
+GRANT EXECUTE ON FUNCTION solar.clear_channel_readings(uuid) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION solar.meter_files_bind() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.meter_files_bind() FROM anon;
 REVOKE ALL ON FUNCTION solar.meters_bind() FROM PUBLIC;

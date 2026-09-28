@@ -90,6 +90,14 @@ export function createFakeRepo(seed: Partial<FakeState> = {}): { repo: MeterImpo
       state.channels.push(c)
       return c.id
     },
+    async channelsForFile(meterId, fileId) {
+      return state.channels.filter((c) => c.meter_id === meterId && c.file_id === fileId).map((c) => ({ id: c.id, source_column: c.source_column, is_primary: c.is_primary }))
+    },
+    async clearChannelReadings(channelId) {
+      const n = state.readings.get(channelId)?.size ?? 0
+      state.readings.delete(channelId)
+      return n
+    },
     async writeReadings(channelId, chunk) {
       const m = state.readings.get(channelId) ?? new Map()
       chunk.ts.forEach((t, i) => m.set(t, { value: chunk.value[i], quality: chunk.quality[i] }))

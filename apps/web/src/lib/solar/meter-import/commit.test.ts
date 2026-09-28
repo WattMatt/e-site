@@ -149,6 +149,19 @@ describe('commitMeterFile: a re-commit resolves to the meter this file already f
     expect(state.channels).toHaveLength(1)
   })
 
+  it('a re-commit with a changed timestamp convention REPLACES the channel readings (no stale rows, no 500)', async () => {
+    const g = setup('Time,kW\n13/02/2025 00:00,1\n13/02/2025 00:30,2\n13/02/2025 01:00,3\n', 'g.csv')
+    await commitMeterFile(g.repo, g.ctx, body({ options: { tsConvention: 'end', units: { kW: 'kW' } } }))
+    const before = [...(g.state.readings.get(g.state.channels[0].id)?.keys() ?? [])].sort()
+    const out = await commitMeterFile(g.repo, g.ctx, body({ options: { tsConvention: 'begin', units: { kW: 'kW' } } }))
+    expect(out).toMatchObject({ channels: [{ sourceColumn: 'kW', readings: 3 }] })
+    expect(g.state.channels).toHaveLength(1)
+    const after = [...(g.state.readings.get(g.state.channels[0].id)?.keys() ?? [])].sort()
+    expect(after).toHaveLength(3)
+    // begin -> each interval ends 30 min later than under 'end'
+    expect(after).toEqual(before.map((t) => new Date(Date.parse(t) + 1_800_000).toISOString()))
+  })
+
   it('naming a DIFFERENT existing meter for an imported file is a 409 naming the recorded meter', async () => {
     const { repo, state, ctx } = setup(A_TEXT)
     const first = (await commitMeterFile(repo, ctx, body({}))) as { meterId: string }
