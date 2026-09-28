@@ -23,6 +23,23 @@ describe('CloudImportDialog', () => {
     expect(h.parse).toHaveBeenCalledWith('p1', ['f1'])
     expect(onReviews).toHaveBeenCalledWith([{ fileId: 'f1' }])
   })
+  it('sends the folder trail from the mapped root when browsing and importing from a sub-folder', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(json({ rootFolderId: 'root', rootPath: '/Meters', items: [{ id: 'd', name: 'Sub', type: 'folder' }] }))
+      .mockResolvedValueOnce(json({ rootFolderId: 'root', rootPath: '/Meters', items: [{ id: 's', name: 's.csv', type: 'file', size: 10 }] }))
+      .mockResolvedValueOnce(json({ results: [{ name: 's.csv', fileId: 'f1', duplicate: false }] }))
+    render(<CloudImportDialog projectId="p1" onReviews={vi.fn()} onClose={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: /Sub/ }))
+    await userEvent.click(await screen.findByLabelText('s.csv'))
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/projects/p1/solar/cloud-files?trail=d')
+    await userEvent.click(screen.getByRole('button', { name: 'Import 1 file' }))
+    expect(JSON.parse(String((fetchMock.mock.calls[2][1] as RequestInit).body))).toEqual({ items: [{ id: 's', name: 's.csv', trail: ['d'] }] })
+  })
+  it('a folder outside the mapped root reads as a sentence', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json({ error: 'outside_mapped_folder', message: "That folder is outside this project's mapped cloud folder." }, 403))
+    render(<CloudImportDialog projectId="p1" onReviews={vi.fn()} onClose={vi.fn()} />)
+    expect((await screen.findByRole('alert')).textContent).toContain("outside this project's mapped cloud folder")
+  })
   it('says so when the project has no mapped folder', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(json({ error: 'no_mapping' }, 404))
     render(<CloudImportDialog projectId="p1" onReviews={vi.fn()} onClose={vi.fn()} />)

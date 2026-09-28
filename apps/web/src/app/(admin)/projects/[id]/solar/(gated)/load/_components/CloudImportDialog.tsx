@@ -13,29 +13,33 @@ interface Item { id: string; name: string; type: 'file' | 'folder'; size: number
 export function CloudImportDialog({ projectId, onReviews, onClose }: { projectId: string; onReviews: (r: ReviewModel[]) => void; onClose: () => void }) {
   const [stack, setStack] = useState<Array<{ id: string | null; name: string }>>([{ id: null, name: 'Mapped folder' }])
   const [items, setItems] = useState<Item[]>([])
-  const [picked, setPicked] = useState<Map<string, string>>(new Map())
+  // id → name + the trail of folder ids (from the mapped root) it was picked in; the server re-proves it.
+  const [picked, setPicked] = useState<Map<string, { name: string; trail: string[] }>>(new Map())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState<string[]>([])
-  const folder = stack[stack.length - 1]
+  const trail = stack.slice(1).map((f) => f.id as string)
+  const trailKey = trail.join('/')
 
-  const load = useCallback(async (folderId: string | null) => {
+  const load = useCallback(async (path: string[]) => {
     setBusy(true)
     setError(null)
-    const res = await fetch(`/api/projects/${projectId}/solar/cloud-files${folderId ? `?folderId=${encodeURIComponent(folderId)}` : ''}`)
+    const q = path.map((id) => `trail=${encodeURIComponent(id)}`).join('&')
+    const res = await fetch(`/api/projects/${projectId}/solar/cloud-files${q ? `?${q}` : ''}`)
     const body = await res.json().catch(() => ({}))
     setBusy(false)
-    if (!res.ok) { setError(loadErrorMessage(body.error === 'no_mapping' ? 'no_mapping' : 'commit_failed')); return }
+    if (!res.ok) { setError(loadErrorMessage(body.error === 'no_mapping' || body.error === 'outside_mapped_folder' ? body.error : 'commit_failed')); return }
     setItems(body.items as Item[])
   }, [projectId])
-  useEffect(() => { void load(folder.id) }, [folder.id, load])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- trailKey is the trail's identity
+  useEffect(() => { void load(trail) }, [trailKey, load])
 
   async function doImport() {
     setBusy(true)
     setError(null)
     const res = await fetch(`/api/projects/${projectId}/solar/cloud-files/import`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ items: [...picked].map(([id, name]) => ({ id, name })) }),
+      body: JSON.stringify({ items: [...picked].map(([id, p]) => (p.trail.length > 0 ? { id, name: p.name, trail: p.trail } : { id, name: p.name })) }),
     })
     const body = await res.json().catch(() => ({ results: [] }))
     const ids: string[] = []
@@ -80,7 +84,7 @@ export function CloudImportDialog({ projectId, onReviews, onClose }: { projectId
                 <button type="button" onClick={() => setStack([...stack, { id: it.id, name: it.name }])} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>📁 {it.name}</button>
               ) : (
                 <label><input type="checkbox" aria-label={it.name} checked={picked.has(it.id)} disabled={!picked.has(it.id) && picked.size >= 20}
-                  onChange={(e) => setPicked((p) => { const n = new Map(p); if (e.target.checked) n.set(it.id, it.name); else n.delete(it.id); return n })} /> {it.name}{it.size ? ` · ${sizeLabel(it.size)}` : ''}</label>
+                  onChange={(e) => setPicked((p) => { const n = new Map(p); if (e.target.checked) n.set(it.id, { name: it.name, trail }); else n.delete(it.id); return n })} /> {it.name}{it.size ? ` · ${sizeLabel(it.size)}` : ''}</label>
               )}
             </li>
           ))}

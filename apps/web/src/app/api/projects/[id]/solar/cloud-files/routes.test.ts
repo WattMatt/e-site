@@ -46,6 +46,26 @@ describe('GET cloud-files', () => {
     expect(body.items.map((i: { id: string }) => i.id)).toEqual(['d', 'a'])
     expect(body.rootPath).toBe('/Meters')
   })
+  it('lists a sub-folder only when its trail from the mapped root is proven by listing each parent', async () => {
+    const tree: Record<string, Array<{ id: string; name: string; type: 'file' | 'folder' }>> = {
+      root: [{ id: 'd', name: 'Sub', type: 'folder' }],
+      d: [{ id: 'e', name: 'Deeper', type: 'folder' }],
+      e: [{ id: 'z', name: 'z.csv', type: 'file' }],
+    }
+    h.list.mockImplementation(async ({ folderId }: { folderId: string }) => ({ items: tree[folderId] ?? [] }))
+    const res = await GET(new Request('http://x/cloud-files?trail=d&trail=e'), ctx)
+    expect(res.status).toBe(200)
+    expect((await res.json()).items.map((i: { id: string }) => i.id)).toEqual(['z'])
+  })
+  it('403 with a sentence for a folder outside the mapped root (a bare id, or a trail that does not hold)', async () => {
+    h.list.mockImplementation(async ({ folderId }: { folderId: string }) => ({ items: folderId === 'root' ? [{ id: 'd', name: 'Sub', type: 'folder' }] : [{ id: 'secret.csv', name: 'secret.csv', type: 'file' }] }))
+    for (const q of ['?folderId=id:elsewhere', '?trail=id:elsewhere', '?trail=d&trail=id:elsewhere', '?folderId=id:elsewhere&trail=d']) {
+      const res = await GET(new Request(`http://x/cloud-files${q}`), ctx)
+      expect(res.status, q).toBe(403)
+      expect(await res.json(), q).toEqual({ error: 'outside_mapped_folder', message: "That folder is outside this project's mapped cloud folder." })
+    }
+    expect(h.list).not.toHaveBeenCalledWith(expect.objectContaining({ folderId: 'id:elsewhere' }), expect.anything())
+  })
   it('404 no_mapping when the project has no cloud folder', async () => {
     h.project.current = { organisation_id: ORG, cloud_storage_connection_id: null, cloud_storage_folder_id: null }
     expect((await GET(new Request('http://x/cloud-files'), ctx)).status).toBe(404)
@@ -53,6 +73,37 @@ describe('GET cloud-files', () => {
 })
 
 describe('POST cloud-files/import', () => {
+  beforeEach(() => {
+    h.list.mockImplementation(async ({ folderId }: { folderId: string }) => ({
+      items: folderId === 'root'
+        ? [{ id: 'a', name: 'a.csv', type: 'file' }, { id: 'x', name: 'x.pdf', type: 'file' }, { id: 'y', name: 'y.csv', type: 'file' }, { id: 'd', name: 'Sub', type: 'folder' }]
+        : folderId === 'd' ? [{ id: 's', name: 's.xlsx', type: 'file' }] : [],
+    }))
+  })
+  it('refuses a file that is not a child of the mapped root (or of the trail it claims)', async () => {
+    const body = await (await POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ items: [{ id: 'id:elsewhere', name: 'e.csv' }, { id: 's', name: 's.xlsx' }, { id: 's', name: 's.xlsx', trail: ['id:other'] }] }) }), ctx)).json()
+    expect(body.results).toEqual([
+      { name: 'e.csv', error: 'outside_mapped_folder' },
+      { name: 's.xlsx', error: 'outside_mapped_folder' },
+      { name: 's.xlsx', error: 'outside_mapped_folder' },
+    ])
+    expect(h.download).not.toHaveBeenCalled()
+  })
+  it('imports a file in a sub-folder when its trail holds', async () => {
+    h.download.mockResolvedValue({ bytes, filename: 's.xlsx' })
+    const body = await (await POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ items: [{ id: 's', name: 's.xlsx', trail: ['d'] }] }) }), ctx)).json()
+    expect(body.results[0].fileId).toBeTruthy()
+  })
+  it('the extension comes from the provider, never the client: a "csv" that is really a pdf is refused', async () => {
+    h.download.mockResolvedValue({ bytes, filename: 'x.pdf' })
+    const body = await (await POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ items: [{ id: 'x', name: 'x.csv' }] }) }), ctx)).json()
+    expect(body.results).toEqual([{ name: 'x.csv', error: 'not_a_meter_file' }])
+    // Listed as a csv, downloaded as a pdf (renamed between list and download): still refused, nothing stored.
+    h.download.mockResolvedValue({ bytes, filename: 'a.pdf' })
+    const again = await (await POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ items: [{ id: 'a', name: 'a.csv' }] }) }), ctx)).json()
+    expect(again.results).toEqual([{ name: 'a.csv', error: 'not_a_meter_file' }])
+    expect(h.upload).not.toHaveBeenCalled()
+  })
   it('copies the bytes to <org>/<project>/<sha>.<ext> and registers them', async () => {
     h.download.mockResolvedValue({ bytes, filename: 'a.csv' })
     const res = await POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ items: [{ id: 'a', name: 'a.csv' }] }) }), ctx)

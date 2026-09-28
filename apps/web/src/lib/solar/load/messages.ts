@@ -27,6 +27,10 @@ export const LOAD_MESSAGES: Record<string, string> = {
   not_a_register: 'This file is not a meter register.',
   sheet_not_found: 'That sheet is no longer in the workbook.',
   stale: 'Someone else changed this — reload to see their version.',
+  outside_mapped_folder: "That file or folder is outside this project's mapped cloud folder.",
+  not_a_meter_file: 'Only .csv, .txt, .xlsx and .xls files can be imported as meter data.',
+  cloud_download_failed: 'The file could not be read from the cloud folder — try again.',
+  storage_upload_failed: 'The file could not be stored — try again.',
 }
 export function loadErrorMessage(code: string | null | undefined): string {
   return (code && LOAD_MESSAGES[code]) || 'Something went wrong — try again.'
