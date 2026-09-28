@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   createClient: vi.fn(),
   requireSolarLevel: vi.fn(),
   redirect: vi.fn((p: string) => { throw new Error(`REDIRECT:${p}`) }),
+  loadReadiness: vi.fn(async (_s: unknown, _p: string): Promise<unknown> => ({ load: null, schematics: null })),
 }))
 vi.mock('next/navigation', () => ({
   redirect: (p: string) => h.redirect(p),
@@ -14,6 +15,7 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient }))
 vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel }))
 vi.mock('@/actions/solar-requests.actions', () => ({ requestSolarAccessAction: vi.fn() }))
+vi.mock('@/lib/solar/load/views', () => ({ loadLoadReadiness: h.loadReadiness }))
 
 import SolarGatedLayout from './layout'
 import { fakeSupabase } from '@/test/fake-supabase'
@@ -67,5 +69,18 @@ describe('Solar gated layout — Manage access link', () => {
     render(await SolarGatedLayout(args))
     expect(screen.queryByRole('button', { name: 'Request edit access' })).toBeNull()
     expect(screen.getByText('You have view access. Members from outside the organisation can have View only.')).toBeDefined()
+  })
+})
+
+describe('Solar gated layout — Load readiness dot', () => {
+  it('the Load tab dot reflects the Load aggregate', async () => {
+    setup(false, 'edit')
+    h.loadReadiness.mockResolvedValueOnce({
+      load: { hasSiteLoad: false, stale: false, basis: 'S2', fullYearFromData: false, unassignedTenants: 3, totalTenants: 3, failingAcceptedImports: 1 },
+      schematics: null,
+    })
+    render(await SolarGatedLayout(args))
+    expect(h.loadReadiness).toHaveBeenCalledWith(expect.anything(), 'p1')
+    expect(screen.getByLabelText(/1 accepted import\(s\) carry a validation error/)).toBeDefined()
   })
 })

@@ -126,6 +126,7 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `/projects/[id]/solar/locked` | W — **Subscribe** (unsubscribed) | → overview | → overview | → overview | W — **Ask an admin to subscribe** (unsubscribed) / **Request access** (subscribed) / **Withdraw** | W — **Request access** (View) / **Withdraw** | → `/projects/[id]` |
 | `/projects/[id]/solar/overview` | W | W | W | R | → locked | → locked | → locked |
 | `/projects/[id]/solar/site` | W | W | W | R (values as text, no Save) | → locked | → locked | → locked |
+| `/projects/[id]/solar/load` (Meters · Tenants · Site profile · Checks; the Meters sub-tab's 2–4 meter comparison overlay) | W | W | W | R (kW/kWh only — no rand value anywhere on the tab, the S4 monthly bills are kWh/kVA; charts, meter drawer, comparison overlay and CSV downloads open; no import, save, rebuild, remove or acknowledge — those controls are hidden) | → locked | → locked | → locked |
 | `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
 
 > Grantors reach `/solar/access` from a **Manage access** link in the gated chrome and on the locked screen's Subscribe row; nobody else sees the link.
@@ -147,6 +148,10 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `copySolarAccessFromProjectAction` | `solar_is_grantor` on **both** projects; same organisation | per-row `project_access_bind` — refusals are counted as skipped |
 | `saveSolarSiteAction` (`solar-site.actions.ts`) | `requireSolarLevel(project, 'edit')` (lower levels are redirected to `/solar/locked`); `expectedUpdatedAt` stale guard | `studies_insert_authz` / `studies_update_authz` (RESTRICTIVE, `solar_can_edit`); `studies_bind` binds the org and refuses a PoC node from another project |
 | `saveSolarOrgSettingsAction` (`solar-settings.actions.ts`) | `requireRole(active org, OWNER_ADMIN)`; `expectedUpdatedAt` stale guard | `00208` `org_settings_*` policies (owner/admin of the row's org); no DELETE policy or grant; bind trigger pins the org and `updated_by` |
+| `ensureSolarStudyAction`, `saveLoadBasisAction`, `saveLoadSettingsAction`, `saveCommonAreaAction` (`solar-load.actions.ts`) | `requireSolarLevel(project, 'edit')`; `expectedUpdatedAt` stale guard | `studies_*_authz` (RESTRICTIVE, `solar_can_edit`); CHECKs on `load_growth_pct`, `monthly_bills`, `diversity_factor`, `common_area_pct` (00210/00214) |
+| `updateStudyMeterAction`, `removeStudyMeterAction`, `searchLibraryMetersAction`, `linkLibraryMetersAction`, `confirmRegisterRowAction` | Solar Edit; the meter must be linked to THIS project's study; `expectedUpdatedAt` on meter edits; remove is a two-step inline confirm, "also delete from library" offered only to grantors and only when no other study links the meter | library RLS (`solar.library_orgs('edit')`; deleting a library meter needs `'admin'` = org owner/admin); `study_meters_*_authz`; `meters_bind` refuses a node/parent of another org |
+| `saveTenantBasisAction`, `applyAutoMatchAction`, `excludeVacantAction` | Solar Edit; meters must be study meters; node must be a `tenant_db` of this project; weights > 0; `expectedUpdatedAt` on a tenant row edit; exclude vacant is a two-step inline confirm | `tenant_load_basis_*_authz` + `tenant_load_basis_check` (same-org meters, weight > 0) |
+| `acknowledgeCheckAction`, `unacknowledgeCheckAction` | Solar Edit | `load_check_acks_*_authz` (00214); `acknowledged_by` stamped by trigger; no UPDATE grant |
 
 > Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions (approve / decline / level set on the panel) to the person concerned (bell + email; owner default 2026-09-28). Email honours the suppression list; there is no per-project Solar email toggle yet.
 
@@ -287,19 +292,23 @@ W = view + edit; R = view only; — = denied (route redirects to `/dashboard`).
 >
 > ⚠ `public.user_has_mv_access` opens with an unconditional **WM-Consulting bypass** — every active member of `dddddddd-0000-0000-0000-000000000001` passes with no subscription and no accepted disclaimer. That is why production shows 0 MV subscriptions alongside 131 cached results, and why a "works for me" report from a WM account proves nothing about the paywall. `lib/mv-access.ts` used to claim "no owner bypass"; corrected.
 
-### Solar meter data API (Phase 3a)
+### Solar meter data API (Phase 3a, Load tab 3b-i)
 
-Gated by `requireSolarLevelAPI(…, 'edit')` (JSON 401/403): the caller needs **Solar Edit** on the project,
+Gated by `requireSolarLevelAPI(…, 'edit')` (JSON 401/403) unless the row says **Solar View** (read-only chart / CSV routes): the caller needs **Solar Edit** on the project,
 i.e. an org owner/admin of the project's org (always `edit_financials`) or a user holding an `edit` /
 `edit_financials` grant in `solar.project_access`, with the org's Solar subscription live. Suppliers and
 client viewers can never hold a grant (00207); external project members are capped at View and are refused.
 Everything is written with the caller's client, so the `solar` RLS policies (00210) apply as well.
 
-| Endpoint | Needs | Writes |
+| Endpoint | Needs | Writes / reads |
 |---|---|---|
 | `POST /api/projects/[id]/solar/meter-files` | Solar Edit | `solar.meter_files` (path must be `<org>/<project>/<sha256>.<ext>`; the sha is recomputed from the stored bytes; the same bytes already registered through ANOTHER project of the org are `409 duplicate_in_other_project` with that file id and the meters it feeds, as far as the caller's RLS lets them read) |
 | `POST /api/projects/[id]/solar/meter-files/parse` | Solar Edit | `solar.meter_import_reports`, `solar.meter_files` (detected facts, status) |
 | `POST /api/projects/[id]/solar/meter-files/commit` | Solar Edit | `solar.meters`, `meter_channels`, readings via `solar.write_readings` (a re-commit first empties the file's stored channels via `solar.clear_channel_readings`, same Edit gate), `meter_series_hashes`, `study_meters`, `meter_register`, `audit_events` |
+| `POST /api/projects/[id]/solar/site-load/rebuild` | Solar Edit | `solar.site_load` (one row per study; NDJSON progress; generic error line, never a raw message) |
+| `GET /api/projects/[id]/solar/site-load/csv?chart=` | Solar View | reads `solar.site_load` (kW/kWh only) |
+| `GET /api/projects/[id]/solar/meters/[meterId]/series` · `/heatmap` · `/csv` | Solar View; the meter must be linked to this project's study (404 otherwise) | reads through `solar.channel_readings` / `solar.channel_summaries` (SECURITY INVOKER — `meter_readings_select` decides, incl. the linked-meter arm). `series` also feeds the Meters sub-tab's **comparison overlay** (2–4 meters, one call per meter over the same window, each downsampled server-side) — no separate route, so the overlay can show nothing the caller could not open meter by meter |
+| `GET /api/projects/[id]/solar/cloud-files` · `POST …/cloud-files/import` | Solar Edit; project must have a cloud mapping | connection read through RLS; bytes copied into `solar-meter-raw` with the caller's client (bucket insert policy), then registered like a browser upload |
 
 Parse and commit re-read the raw object from the path recorded on the file row, so before parsing they re-prove it (`lib/solar/meter-import/raw-file.ts`): the recorded path must be exactly `<project org>/<row project>/<row sha256>.<csv|txt|xlsx|xls>` (else `raw_path_invalid`, nothing downloaded) and the downloaded bytes must hash to the recorded sha256 (else `sha256_mismatch`, nothing parsed or written). No route uses the service-role key; Storage is read with the caller's client.
 

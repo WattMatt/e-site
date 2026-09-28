@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { loadSolarActivity } from '@/lib/solar/activity'
+import { loadLoadReadiness } from '@/lib/solar/load/views'
 import { computeSolarReadiness, toSiteReadinessInput } from '@esite/shared'
 import { ReadinessChecklist } from '../../_components/ReadinessChecklist'
 import { StudyHeader } from '../../_components/StudyHeader'
@@ -19,11 +20,12 @@ export default async function SolarOverviewPage({ params }: { params: Promise<{ 
   const supabase = (await createClient()) as unknown as AnyClient
   const level = await requireSolarLevel(id, 'view', supabase)
 
-  const [{ data: project }, { data: study }, { data: isGrantor }, activity] = await Promise.all([
+  const [{ data: project }, { data: study }, { data: isGrantor }, activity, loadReady] = await Promise.all([
     supabase.schema('projects').from('projects').select('name, address, city, province').eq('id', id).maybeSingle(),
     supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva').eq('project_id', id).maybeSingle(),
     supabase.rpc('solar_is_grantor', { p_project_id: id }),
     loadSolarActivity(id, supabase),
+    loadLoadReadiness(supabase, id),
   ])
   const p = (project ?? {}) as { name?: string; address?: string | null; city?: string | null; province?: string | null }
   const address = [p.address, p.city, p.province].filter((v): v is string => Boolean(v && v.trim())).join(', ') || null
@@ -32,7 +34,7 @@ export default async function SolarOverviewPage({ params }: { params: Promise<{ 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <StudyHeader projectName={p.name ?? ''} address={address} supplyAuthority={licensee} />
-      <ReadinessChecklist projectId={id} steps={computeSolarReadiness(toSiteReadinessInput(study), level)} />
+      <ReadinessChecklist projectId={id} steps={computeSolarReadiness(toSiteReadinessInput(study), level, { load: loadReady.load, schematics: loadReady.schematics })} />
       <OverviewKpis projectId={id} level={level} />
       <ActivityList projectId={id} items={activity} isGrantor={isGrantor === true} />
     </div>

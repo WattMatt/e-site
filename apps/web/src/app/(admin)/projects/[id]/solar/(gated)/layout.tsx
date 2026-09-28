@@ -3,6 +3,7 @@ import Link from 'next/link'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
+import { loadLoadReadiness } from '@/lib/solar/load/views'
 import { computeSolarReadiness, toSiteReadinessInput } from '@esite/shared'
 import { SolarTabBar } from '../_components/SolarTabBar'
 import { ViewOnlyBanner } from '../_components/ViewOnlyBanner'
@@ -32,10 +33,11 @@ export default async function SolarGatedLayout({
   if (!user) redirect('/login')
 
   const level = await requireSolarLevel(id, 'view', supabase)
-  const [{ data: project }, { data: study }, grantorRes] = await Promise.all([
+  const [{ data: project }, { data: study }, grantorRes, loadReady] = await Promise.all([
     supabase.schema('projects').from('projects').select('name, organisation_id').eq('id', id).maybeSingle(),
     supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva').eq('project_id', id).maybeSingle(),
     supabase.rpc('solar_is_grantor', { p_project_id: id }),
+    loadLoadReadiness(supabase, id),
   ])
   // Owner default 1 (2026-09-28): grantors get a way to the Access panel from
   // the module chrome. Hidden (not disabled) for everyone else; the panel's
@@ -50,7 +52,7 @@ export default async function SolarGatedLayout({
       .eq('user_id', user.id).eq('organisation_id', orgId).eq('is_active', true).limit(1)
     isOwnOrgMember = Array.isArray(membership) && membership.length > 0
   }
-  const readiness = computeSolarReadiness(toSiteReadinessInput(study), level)
+  const readiness = computeSolarReadiness(toSiteReadinessInput(study), level, { load: loadReady.load, schematics: loadReady.schematics })
 
   return (
     <div className="animate-fadeup">
