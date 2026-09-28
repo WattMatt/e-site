@@ -8,6 +8,7 @@ vi.mock('@/lib/solar/schedule/loader', () => ({ loadScheduleData: h.load }))
 vi.mock('@/lib/solar/schedule/render-schedule-pdf', () => ({ renderSchedulePdf: h.pdf }))
 
 import { GET } from './route'
+import { ScheduleLoadError } from '@/lib/solar/schedule/load-error'
 
 const P = '11111111-1111-4111-8111-111111111111'
 const call = (format: string, id = P) => GET(new Request('http://x') as never, { params: Promise.resolve({ id, format }) })
@@ -71,5 +72,13 @@ describe('GET schedule export', () => {
     const res = await call('pdf')
     expect(res.status).toBe(500)
     expect((await res.json()).error).toBe('The export could not be produced. Try again.')
+  })
+  it('a failed read is a 500 with a sentence, never an empty file', async () => {
+    for (const f of ['xlsx', 'ics', 'pdf']) {
+      h.load.mockRejectedValueOnce(new ScheduleLoadError('solar.schedule_tasks', 'timeout'))
+      const res = await call(f)
+      expect(res.status).toBe(500)
+      expect((await res.json()).error).toBe('The schedule could not be loaded, so nothing was exported. Try again.')
+    }
   })
 })

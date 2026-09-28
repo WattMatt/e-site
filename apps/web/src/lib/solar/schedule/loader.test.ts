@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
-import { loadScheduleData } from './loader'
-import { fakeSupabase } from '@/test/fake-supabase'
+import { loadScheduleData, SCHEDULE_LOAD_ERROR } from './loader'
+import { fakeSupabase, callsTo } from '@/test/fake-supabase'
 
 const P = 'p1'
 function fake() {
@@ -16,11 +16,11 @@ function fake() {
         { id: 't4', project_id: P, work_item_id: 'w4', category: '', zone: '', start_date: '2026-10-10', end_date: '2026-10-12', progress: 0, colour: '#3b82f6', sort_order: 4, is_milestone: false, gantt_status: 'not_started', description: '', updated_at: 'U4' },
       ],
       'projects.work_items': [
-        { id: 'w1', ref: 'SOLAR-1', title: 'Design', status: 'open', assignee_id: 'u1' },
-        { id: 'w2', ref: 'SOLAR-2', title: 'SSEG submitted', status: 'closed', assignee_id: 'u9' },
-        { id: 'w3', ref: 'SOLAR-3', title: 'Removed', status: 'void', assignee_id: 'u1' },
+        { id: 'w1', project_id: P, item_type: 'solar_task', ref: 'SOLAR-1', title: 'Design', status: 'open', assignee_id: 'u1' },
+        { id: 'w2', project_id: P, item_type: 'solar_task', ref: 'SOLAR-2', title: 'SSEG submitted', status: 'closed', assignee_id: 'u9' },
+        { id: 'w3', project_id: P, item_type: 'solar_task', ref: 'SOLAR-3', title: 'Removed', status: 'void', assignee_id: 'u1' },
         // Owned before Cas became a client viewer: still named on the bar, never offered in the picker.
-        { id: 'w4', ref: 'SOLAR-4', title: 'Trenching', status: 'open', assignee_id: 'u7' },
+        { id: 'w4', project_id: P, item_type: 'solar_task', ref: 'SOLAR-4', title: 'Trenching', status: 'open', assignee_id: 'u7' },
       ],
       // Members the picker must NOT offer (Q4): a client viewer and a supplier.
       'projects.project_members': [
@@ -94,5 +94,58 @@ describe('loadScheduleData', () => {
   it('View level cannot edit', async () => {
     const { client } = fake()
     expect((await loadScheduleData(P, client as never, 'view', '2026-09-28')).canEdit).toBe(false)
+  })
+
+  it('reads work items by project and type, never by a giant id list', async () => {
+    const { client, calls } = fake()
+    await loadScheduleData(P, client as never, 'edit', '2026-09-28')
+    const wi = callsTo(calls, 'projects.work_items', 'select')
+    expect(wi.length).toBeGreaterThan(0)
+    for (const c of wi) {
+      expect(c.filters.some(([op]) => op === 'in')).toBe(false)
+      expect(c.filters).toEqual(expect.arrayContaining([['eq', 'project_id', P], ['eq', 'item_type', 'solar_task']]))
+    }
+  })
+
+  it('pages past PostgREST max_rows: 1,500 tasks, segments and links all load', async () => {
+    const N = 1500
+    const ids = Array.from({ length: N }, (_, i) => i)
+    const f = fakeSupabase({
+      userId: 'u1',
+      maxRows: 1000,
+      tables: {
+        'solar.schedule_tasks': ids.map((i) => ({ id: `t${i}`, project_id: P, work_item_id: `w${i}`, category: '', zone: '', start_date: '2026-10-01', end_date: '2026-10-02', progress: 0, colour: '#3b82f6', sort_order: i, is_milestone: false, gantt_status: 'not_started', description: '', updated_at: 'U' })),
+        'projects.work_items': ids.map((i) => ({ id: `w${i}`, project_id: P, item_type: 'solar_task', ref: `SOLAR-${i}`, title: `T${i}`, status: 'open', assignee_id: 'u1' })),
+        'solar.schedule_segments': ids.flatMap((i) => [
+          { id: `s${i}a`, project_id: P, task_id: `t${i}`, start_date: '2026-10-01', end_date: '2026-10-01' },
+          { id: `s${i}b`, project_id: P, task_id: `t${i}`, start_date: '2026-10-02', end_date: '2026-10-02' },
+        ]),
+        'solar.schedule_dependencies': ids.slice(1).map((i) => ({ id: `d${i}`, project_id: P, predecessor_task_id: `t${i - 1}`, successor_task_id: `t${i}`, link_type: 'FS', lag_days: 0 })),
+      },
+      rpc: { 'solar.schedule_owner_candidates': { data: [{ user_id: 'u1', full_name: 'Ann Smith', email: 'ann@x.co.za' }], error: null } },
+    })
+    const d = await loadScheduleData(P, f.client as never, 'edit', '2026-09-28')
+    expect(d.tasks).toHaveLength(N)
+    expect(d.tasks.every((t) => t.segments.length === 2)).toBe(true)
+    expect(d.links).toHaveLength(N - 1)
+  })
+
+  for (const table of ['solar.schedule_tasks', 'projects.work_items', 'solar.schedule_segments', 'solar.schedule_dependencies', 'solar.schedule_baselines', 'solar.schedule_settings', 'solar.schedule_filter_presets', 'projects.projects', 'public.profiles']) {
+    it(`a failed read of ${table} is a sentence, never an empty schedule`, async () => {
+      const f = fakeSupabase({
+        userId: 'u1',
+        tables: {
+          'solar.schedule_tasks': [{ id: 't1', project_id: P, work_item_id: 'w1', category: '', zone: '', start_date: '2026-10-01', end_date: '2026-10-02', progress: 0, colour: '#3b82f6', sort_order: 1, is_milestone: false, gantt_status: 'not_started', description: '', updated_at: 'U' }],
+          'projects.work_items': [{ id: 'w1', project_id: P, item_type: 'solar_task', ref: 'SOLAR-1', title: 'T', status: 'open', assignee_id: 'u9' }],
+        },
+        selectErrors: { [table]: { message: 'upstream request timeout' } },
+      })
+      await expect(loadScheduleData(P, f.client as never, 'edit', '2026-09-28')).rejects.toThrow(SCHEDULE_LOAD_ERROR)
+    })
+  }
+
+  it('a failed owner-candidates read is a sentence too', async () => {
+    const f = fakeSupabase({ userId: 'u1', rpc: { 'solar.schedule_owner_candidates': { data: null, error: { message: 'boom' } } } })
+    await expect(loadScheduleData(P, f.client as never, 'edit', '2026-09-28')).rejects.toThrow(SCHEDULE_LOAD_ERROR)
   })
 })

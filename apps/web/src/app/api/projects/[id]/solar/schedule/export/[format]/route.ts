@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { getSolarAccessLevel } from '@/lib/solar/access'
 import { loadScheduleData } from '@/lib/solar/schedule/loader'
+import { ScheduleLoadError } from '@/lib/solar/schedule/load-error'
 import { scheduleCalendar } from '@/lib/solar/schedule/work-calendar'
 import { exportScheduleXlsx } from '@/lib/solar/schedule/export-xlsx'
 import { renderSchedulePdf } from '@/lib/solar/schedule/render-schedule-pdf'
@@ -51,6 +52,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       tasks: data.tasks.map((t) => ({ id: t.id, ref: t.ref, name: t.name, start: t.start, end: t.end, isMilestone: t.isMilestone, description: t.description, status: t.status, ownerName: t.ownerName })),
     })
   } catch (err) {
+    if (err instanceof ScheduleLoadError) {
+      console.error('[solar-schedule-export] load failed', { project: id, format, source: err.source, detail: err.detail })
+      return NextResponse.json({ error: 'The schedule could not be loaded, so nothing was exported. Try again.' }, { status: 500 })
+    }
     console.error('[solar-schedule-export] render failed', { project: id, format, err: String(err) })
     return NextResponse.json({ error: 'The export could not be produced. Try again.' }, { status: 500 })
   }

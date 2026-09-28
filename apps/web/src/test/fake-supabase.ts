@@ -25,6 +25,7 @@ export interface FakeCall {
   op: 'select' | 'insert' | 'update' | 'delete'
   payload?: unknown
   filters: Filter[]
+  range?: [number, number]
 }
 
 export interface FakeOptions {
@@ -32,6 +33,10 @@ export interface FakeOptions {
   rpc?: Record<string, FakeResult | ((args: Record<string, unknown>) => FakeResult)>
   tables?: Record<string, Array<Record<string, unknown>>>
   writes?: Record<string, Partial<FakeResult>>
+  /** A SELECT on `schema.table` resolves to this error (no data). */
+  selectErrors?: Record<string, FakeError>
+  /** PostgREST's max_rows: every SELECT returns at most this many rows (after .range()). */
+  maxRows?: number
 }
 
 export function fakeSupabase(opts: FakeOptions = {}) {
@@ -47,12 +52,16 @@ export function fakeSupabase(opts: FakeOptions = {}) {
             : (val as unknown[]).includes(row[col]))
 
   function builder(table: string) {
-    const state: { op: FakeCall['op']; payload?: unknown; filters: Filter[]; limit?: number } = { op: 'select', filters: [] }
+    const state: { op: FakeCall['op']; payload?: unknown; filters: Filter[]; limit?: number; range?: [number, number] } = { op: 'select', filters: [] }
     const run = (): Promise<FakeResult> => {
-      calls.push({ table, op: state.op, payload: state.payload, filters: [...state.filters] })
+      calls.push({ table, op: state.op, payload: state.payload, filters: [...state.filters], ...(state.range ? { range: state.range } : {}) })
       if (state.op === 'select') {
+        const err = opts.selectErrors?.[table]
+        if (err) return Promise.resolve({ data: null, error: err })
         let rows = (opts.tables?.[table] ?? []).filter((r) => matches(r, state.filters))
+        if (state.range) rows = rows.slice(state.range[0], state.range[1] + 1)
         if (state.limit !== undefined) rows = rows.slice(0, state.limit)
+        if (opts.maxRows !== undefined) rows = rows.slice(0, opts.maxRows)
         return Promise.resolve({ data: rows, error: null })
       }
       const w = opts.writes?.[`${table}:${state.op}`]
@@ -72,6 +81,7 @@ export function fakeSupabase(opts: FakeOptions = {}) {
       gte: (c: string, v: unknown) => { state.filters.push(['gte', c, v]); return b },
       order: () => b,
       limit: (n: number) => { state.limit = n; return b },
+      range: (from: number, to: number) => { state.range = [from, to]; return b },
       maybeSingle: first,
       single: first,
       then: (res: (v: FakeResult) => unknown, rej?: (e: unknown) => unknown) => run().then(res, rej),

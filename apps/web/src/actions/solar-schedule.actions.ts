@@ -14,6 +14,7 @@ import { requireSolarLevel } from '@/lib/solar/access'
 import { recordSolarAudit } from '@/lib/solar/audit'
 import { STALE_MESSAGE } from '@/lib/solar/errors'
 import { loadScheduleData } from '@/lib/solar/schedule/loader'
+import { SCHEDULE_LOAD_ERROR, ScheduleLoadError } from '@/lib/solar/schedule/load-error'
 import { humanScheduleError } from '@/lib/solar/schedule/errors'
 import {
   BAD_TASK, LinkInputSchema, TaskInputSchema, TaskPatchSchema, toRpcPatch, toRpcTask,
@@ -35,7 +36,13 @@ async function session(projectId: string, need: 'view' | 'edit') {
 
 export async function loadScheduleAction(input: { projectId: string }): Promise<{ ok: true; data: ScheduleData } | Fail> {
   const { supabase, level } = await session(input.projectId, 'view')
-  return { ok: true, data: await loadScheduleData(input.projectId, supabase, level, sastToday()) }
+  try {
+    return { ok: true, data: await loadScheduleData(input.projectId, supabase, level, sastToday()) }
+  } catch (err) {
+    if (!(err instanceof ScheduleLoadError)) throw err
+    console.error('[solar-schedule] load failed', { project: input.projectId, source: err.source, detail: err.detail })
+    return { error: SCHEDULE_LOAD_ERROR }
+  }
 }
 
 export async function createScheduleTasksAction(input: {

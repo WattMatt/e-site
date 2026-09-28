@@ -7,6 +7,8 @@ vi.mock('@/lib/solar/schedule/loader', () => ({ loadScheduleData: h.load }))
 vi.mock('./ScheduleClient', () => ({ ScheduleClient: (p: unknown) => { h.client(p); return null } }))
 
 import Page from './page'
+import { ScheduleLoadError, SCHEDULE_LOAD_ERROR } from '@/lib/solar/schedule/load-error'
+import { render, screen } from '@testing-library/react'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -27,5 +29,11 @@ describe('Schedule page', () => {
     h.level.mockRejectedValueOnce(new Error('NEXT_REDIRECT'))
     await expect(Page({ params: Promise.resolve({ id: 'p1' }) })).rejects.toThrow('NEXT_REDIRECT')
     expect(h.load).not.toHaveBeenCalled()
+  })
+  it('a failed read shows a sentence, never an empty schedule the template could be applied on top of', async () => {
+    h.load.mockRejectedValueOnce(new ScheduleLoadError('projects.work_items', 'timeout'))
+    render(await Page({ params: Promise.resolve({ id: 'p1' }) }))
+    expect(screen.getByRole('alert').textContent).toBe(SCHEDULE_LOAD_ERROR)
+    expect(h.client).not.toHaveBeenCalled()
   })
 })

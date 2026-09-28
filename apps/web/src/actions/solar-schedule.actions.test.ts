@@ -10,6 +10,7 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient }))
 vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel }))
 vi.mock('@/lib/solar/audit', () => ({ recordSolarAudit: h.audit }))
 vi.mock('@/lib/solar/schedule/loader', () => ({ loadScheduleData: h.load }))
+import { ScheduleLoadError, SCHEDULE_LOAD_ERROR } from '@/lib/solar/schedule/load-error'
 
 import {
   loadScheduleAction, createScheduleTasksAction, updateScheduleTasksAction, deleteScheduleTasksAction, reorderScheduleTasksAction,
@@ -34,6 +35,14 @@ function setup(extra: Partial<FakeOptions> = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireSolarLevel.mockResolvedValue('edit')
+})
+
+describe('loadScheduleAction — failed read', () => {
+  it('returns the sentence instead of throwing or an empty schedule', async () => {
+    setup()
+    h.load.mockRejectedValueOnce(new ScheduleLoadError('solar.schedule_tasks', 'timeout'))
+    await expect(loadScheduleAction({ projectId: P })).resolves.toEqual({ error: SCHEDULE_LOAD_ERROR })
+  })
 })
 
 describe('loadScheduleAction', () => {

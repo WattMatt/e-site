@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
 import { loadScheduleData } from '@/lib/solar/schedule/loader'
+import { SCHEDULE_LOAD_ERROR, ScheduleLoadError } from '@/lib/solar/schedule/load-error'
 import { sastToday } from '@esite/shared'
 import { ScheduleClient } from './ScheduleClient'
 
@@ -21,6 +22,14 @@ export default async function SolarSchedulePage({ params }: { params: Promise<{ 
   const { id } = await params
   const supabase = (await createClient()) as unknown as AnyClient
   const level = await requireSolarLevel(id, 'view', supabase)
-  const data = await loadScheduleData(id, supabase, level, sastToday())
+  let data
+  try {
+    data = await loadScheduleData(id, supabase, level, sastToday())
+  } catch (err) {
+    if (!(err instanceof ScheduleLoadError)) throw err
+    console.error('[solar-schedule] load failed', { project: id, source: err.source, detail: err.detail })
+    // Never an empty schedule: an editor could apply the template on top of the real programme.
+    return <p role="alert" style={{ padding: 16, color: 'var(--c-red, #b91c1c)' }}>{SCHEDULE_LOAD_ERROR}</p>
+  }
   return <ScheduleClient initial={data} />
 }
