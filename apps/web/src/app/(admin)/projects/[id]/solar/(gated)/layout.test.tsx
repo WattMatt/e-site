@@ -69,3 +69,21 @@ describe('Solar gated layout — Manage access link', () => {
     expect(screen.getByText('You have view access. Members from outside the organisation can have View only.')).toBeDefined()
   })
 })
+
+describe('Solar gated layout — Tariff readiness', () => {
+  it('the Tariff dot is live and amber when a tariff is pinned without an export rule', async () => {
+    const { client } = fakeSupabase({
+      userId: 'u1',
+      rpc: { solar_is_grantor: { data: true, error: null } },
+      tables: {
+        'projects.projects': [{ id: 'p1', name: 'Kings Mall', organisation_id: 'org-1' }],
+        'solar.studies': [{ project_id: 'p1', latitude: -26, longitude: 28, licensee_name: 'X', nmd_kva: 500, tariff_id: 't1', export_rule: null }],
+      },
+    })
+    h.createClient.mockResolvedValue(client)
+    h.requireSolarLevel.mockResolvedValue('edit_financials')
+    render(await SolarGatedLayout(args))
+    expect(screen.getByRole('link', { name: /Tariff/ })).toBeDefined()
+    expect(screen.getByTitle('Missing: export credit rule')).toBeDefined()
+  })
+})

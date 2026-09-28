@@ -26,6 +26,27 @@ export function describeSolarAuditEvent(
       return { text: 'Subscription request marked done', target: 'access' }
     case 'site_saved':
       return { text: 'Site & Supply saved', target: 'site' }
+    // Phase 2b Tariff tab: sentences only, never an amount (View users read the feed).
+    case 'tariff_selected':
+      return { text: 'Tariff chosen', target: null }
+    case 'tariff_licensee_linked':
+      return { text: 'Supply authority linked to the tariff library', target: null }
+    case 'tariff_override_created':
+      return { text: 'Project tariff override created', target: null }
+    case 'tariff_override_row_edited':
+      return { text: 'Project tariff rate changed', target: null }
+    case 'tariff_override_reverted':
+      return { text: 'Reverted to the published tariff', target: null }
+    case 'export_rule_saved':
+      return { text: 'Export credit rule saved', target: null }
+    case 'escalation_saved':
+      return { text: 'Tariff escalation path saved', target: null }
+    case 'bill_check_recorded':
+      return { text: typeof ref.billingMonth === 'string' ? `Bill check recorded (${ref.billingMonth})` : 'Bill check recorded', target: null }
+    case 'bill_check_deleted':
+      return { text: 'Bill check deleted', target: null }
+    case 'tariff_error_reported':
+      return { text: 'Tariff error reported to the library', target: null }
     default:
       return { text: verb.replace(/_/g, ' '), target: null }
   }

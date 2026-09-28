@@ -3,7 +3,7 @@ import Link from 'next/link'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevel } from '@/lib/solar/access'
-import { computeSolarReadiness, toSiteReadinessInput } from '@esite/shared'
+import { computeSolarReadiness, toSiteReadinessInput, toTariffReadinessInput, withTariffReadiness } from '@esite/shared'
 import { SolarTabBar } from '../_components/SolarTabBar'
 import { ViewOnlyBanner } from '../_components/ViewOnlyBanner'
 
@@ -34,7 +34,7 @@ export default async function SolarGatedLayout({
   const level = await requireSolarLevel(id, 'view', supabase)
   const [{ data: project }, { data: study }, grantorRes] = await Promise.all([
     supabase.schema('projects').from('projects').select('name, organisation_id').eq('id', id).maybeSingle(),
-    supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva').eq('project_id', id).maybeSingle(),
+    supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva, tariff_id, export_rule').eq('project_id', id).maybeSingle(),
     supabase.rpc('solar_is_grantor', { p_project_id: id }),
   ])
   // Owner default 1 (2026-09-28): grantors get a way to the Access panel from
@@ -50,7 +50,10 @@ export default async function SolarGatedLayout({
       .eq('user_id', user.id).eq('organisation_id', orgId).eq('is_active', true).limit(1)
     isOwnOrgMember = Array.isArray(membership) && membership.length > 0
   }
-  const readiness = computeSolarReadiness(toSiteReadinessInput(study), level)
+  // tariff_id / export_rule hold no rand value (the manual export RATE lives in
+  // the money table), so this select is safe at View; the tariff step itself
+  // exists only at Edit + financials (visibleSolarTabs).
+  const readiness = withTariffReadiness(computeSolarReadiness(toSiteReadinessInput(study), level), toTariffReadinessInput(study))
 
   return (
     <div className="animate-fadeup">
