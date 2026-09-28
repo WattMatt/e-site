@@ -135,6 +135,15 @@ describe('solar tariff actions', () => {
     expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'bill_check_recorded', objectRef: { billingMonth: '2026-03' } })
   })
 
+  it('bill check: a tariff or override change while the bill was checked is refused as stale, not recorded', async () => {
+    setup({ writes: { 'solar.bill_checks:insert': { error: { code: '23514', message: "solar.bill_checks: the study's tariff changed while the bill was being checked" } } } })
+    h.effective.mockResolvedValue({ studyId: 's1', tariffId: T, overrideId: 'o1', nmdKva: null, highSeasonMonths: null,
+      tariff: makeTariff({ name: 'Flat', structure: 'flat', charges: [makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 250 })] }) })
+    expect(await recordSolarBillCheckAction({ projectId: P, form: { ...EMPTY_BILL_CHECK_FORM, month: '2026-03', totalKwh: '1000', actualTotal: '2700' } }))
+      .toEqual({ error: STALE })
+    expect(h.audit).not.toHaveBeenCalled()
+  })
+
   it('bill check delete: scoped to the project; audited without amounts', async () => {
     const f = setup({ writes: { 'solar.bill_checks:delete': { data: [{ id: 'b1' }] } } })
     expect(await deleteSolarBillCheckAction({ projectId: P, id: 'b1' })).toEqual({ ok: true })

@@ -43,6 +43,7 @@ DECLARE
   v_ss       UUID;
   v_upd2     TIMESTAMPTZ;
   v_ok       BOOLEAN;
+  v_ok2      BOOLEAN;
   v_lic      UUID;
   v_lic2     UUID;
   v_src      UUID;
@@ -232,6 +233,15 @@ BEGIN
   SELECT count(*) INTO v_n FROM solar.study_export_rates WHERE study_id = v_study;
   SELECT count(*) = 1 AND v_n = 1 INTO v_ok FROM solar.study_export_rates WHERE study_id = v_study AND amount_excl_vat = 95;
   INSERT INTO _r VALUES ('export_rule_stale_left_rates_unchanged', v_ok);
+  SELECT updated_at INTO v_upd FROM solar.studies WHERE id = v_study;
+  BEGIN
+    PERFORM solar.save_export_rule(v_project, v_upd, '{"version": 1, "method": "none"}'::jsonb,
+      '[{"season": "all", "tou": "all", "unit": "c_per_kWh", "amount_excl_vat": 1}]'::jsonb);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('export_rule_rates_without_manual_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('export_rule_rates_without_manual_REFUSED', false);
+  END;
   BEGIN
     SELECT updated_at INTO v_upd FROM solar.studies WHERE id = v_study;
     v_upd2 := solar.save_export_rule(v_project, v_upd,
@@ -285,10 +295,22 @@ BEGIN
     WHEN raise_exception THEN INSERT INTO _r VALUES ('override_edit_without_reason_REFUSED', false);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('override_edit_without_reason_REFUSED', false);
   END;
-  UPDATE solar.tariff_override_charges SET amount_excl_vat = 199, reason = 'Landlord resale rate per lease cl. 14', edited_by = v_admin
+  UPDATE solar.tariff_override_charges SET amount_excl_vat = 199, reason = 'Landlord resale rate per lease cl. 14', edited_by = v_admin,
+                                           source_locator = '{"page": 77}'
    WHERE id = v_oc;
   SELECT count(*) INTO v_n FROM solar.tariff_override_charges WHERE id = v_oc AND edited_by = v_fin AND edited_at IS NOT NULL;
   INSERT INTO _r VALUES ('override_edit_stamped_to_caller', v_n = 1);
+  SELECT count(*) INTO v_n FROM solar.tariff_override_charges WHERE id = v_oc AND source_locator->>'page' = '3';
+  INSERT INTO _r VALUES ('override_edit_source_bound_to_base', v_n = 1);
+  -- The same base charge cannot be copied twice into one override (double counting).
+  BEGIN
+    INSERT INTO solar.tariff_override_charges (override_id, project_id, organisation_id, base_charge_id, component, unit, amount_excl_vat, vat_basis)
+    VALUES (v_ov, v_project, v_org, v_c25e, 'energy', 'c_per_kWh', 250, 'stated_excl');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN unique_violation THEN INSERT INTO _r VALUES ('duplicate_unedited_copy_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('duplicate_unedited_copy_REFUSED', false);
+  END;
   -- Provenance: a row claiming a base charge of ANOTHER tariff, or a changed rate, is an edit and needs a reason.
   BEGIN
     INSERT INTO solar.tariff_override_charges (override_id, project_id, organisation_id, base_charge_id, component, unit, amount_excl_vat, vat_basis)
@@ -306,25 +328,51 @@ BEGIN
     WHEN check_violation THEN INSERT INTO _r VALUES ('override_insert_altered_rate_without_reason_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('override_insert_altered_rate_without_reason_REFUSED', false);
   END;
-  -- An unedited copy is accepted, carries no reason, and its source comes from the base charge (then rolled back).
+  -- On a fresh override (study2's, replaced inside a rolled-back block): an unedited copy carries no
+  -- reason and its source comes from the base charge; an edited copy's source does too.
   BEGIN
+    UPDATE solar.studies SET tariff_override_id = NULL WHERE id = v_study2;
+    DELETE FROM solar.tariff_overrides WHERE id = v_ov2;
+    INSERT INTO solar.tariff_overrides (study_id, project_id, organisation_id, base_tariff_id)
+    VALUES (v_study2, v_project2, v_org, v_t25) RETURNING id INTO v_ov3;
     INSERT INTO solar.tariff_override_charges (override_id, project_id, organisation_id, base_charge_id, component, unit, amount_excl_vat, vat_basis,
                                                source_locator, reason)
-    VALUES (v_ov, v_project, v_org, v_c25e, 'energy', 'c_per_kWh', 250, 'stated_excl', '{"page": 99}', 'forged')
+    VALUES (v_ov3, v_project2, v_org, v_c25e, 'energy', 'c_per_kWh', 250, 'stated_excl', '{"page": 99}', 'forged')
     RETURNING id INTO v_oc2;
     SELECT count(*) = 1 INTO v_ok FROM solar.tariff_override_charges
      WHERE id = v_oc2 AND edited_at IS NULL AND reason IS NULL AND source_locator->>'page' = '3';
+    INSERT INTO solar.tariff_override_charges (override_id, project_id, organisation_id, base_charge_id, component, unit, amount_excl_vat, vat_basis,
+                                               source_locator, reason)
+    SELECT v_ov3, v_project2, v_org, c.id, 'basic', 'R_per_month', 450, 'stated_excl', '{"page": 99}', 'Landlord basic'
+      FROM tariffs.charge c WHERE c.tariff_id = v_t25 AND c.component = 'basic'
+    RETURNING id INTO v_oc2;
+    SELECT count(*) = 1 INTO v_ok2 FROM solar.tariff_override_charges
+     WHERE id = v_oc2 AND edited_at IS NOT NULL AND source_locator->>'page' = '3';
     RAISE EXCEPTION 'undo' USING ERRCODE = 'P0001';
   EXCEPTION
     WHEN raise_exception THEN NULL;
-    WHEN OTHERS THEN v_ok := false;
+    WHEN OTHERS THEN v_ok := false; v_ok2 := false;
   END;
+  INSERT INTO _r VALUES ('override_insert_edited_source_bound_to_base', v_ok2);
   INSERT INTO _r VALUES ('override_insert_unedited_copy_bound_to_base', v_ok);
-  -- The reason and source change only with the rate.
-  UPDATE solar.tariff_override_charges SET reason = 'rewritten later', source_locator = '{"page": 99}' WHERE id = v_oc;
+  -- The reason and source change only with the rate: an edit of either alone is refused, never a silent no-op.
+  BEGIN
+    UPDATE solar.tariff_override_charges SET reason = 'rewritten later' WHERE id = v_oc;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('override_reason_only_edit_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('override_reason_only_edit_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE solar.tariff_override_charges SET source_locator = '{"page": 99}' WHERE id = v_oc;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('override_source_only_edit_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('override_source_only_edit_REFUSED', false);
+  END;
   SELECT count(*) INTO v_n FROM solar.tariff_override_charges
    WHERE id = v_oc AND reason = 'Landlord resale rate per lease cl. 14' AND source_locator->>'page' = '3';
-  INSERT INTO _r VALUES ('override_reason_and_source_frozen_without_rate_change', v_n = 1);
+  INSERT INTO _r VALUES ('override_reason_and_source_unchanged_after_refusals', v_n = 1);
   -- A row leaves only with its override (revert), never on its own.
   BEGIN
     DELETE FROM solar.tariff_override_charges WHERE id = v_oc;
@@ -354,12 +402,46 @@ BEGIN
   END;
 
   INSERT INTO solar.bill_checks (study_id, project_id, billing_month, import_kwh_standard, actual_total_excl_vat,
-                                 modelled_total_excl_vat, difference_pct, engine_version, tariff_id, tariff_override_id)
-  VALUES (v_study, v_project2, '2026-03-01', 1000, 3000, 2900, -3.333, 'probe', v_t25b, v_ov2);
+                                 modelled_total_excl_vat, difference_pct, engine_version, tariff_id)
+  VALUES (v_study, v_project2, '2026-03-01', 1000, 3000, 2900, -3.333, 'probe', v_t25);
   SELECT count(*) INTO v_n FROM solar.bill_checks WHERE study_id = v_study AND project_id = v_project AND created_by = v_fin;
   INSERT INTO _r VALUES ('fin_bill_check_bound_and_stamped', v_n = 1);
   SELECT count(*) INTO v_n FROM solar.bill_checks WHERE study_id = v_study AND tariff_id = v_t25 AND tariff_override_id = v_ov;
   INSERT INTO _r VALUES ('bill_check_tariff_and_override_bound_from_study', v_n = 1);
+  BEGIN
+    INSERT INTO solar.bill_checks (study_id, billing_month, import_kwh_standard, actual_total_excl_vat,
+                                   modelled_total_excl_vat, difference_pct, engine_version, tariff_id, tariff_override_id)
+    VALUES (v_study, '2026-04-01', 1000, 3000, 2900, -3.333, 'probe', v_t25, v_ov2);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('bill_check_forged_override_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('bill_check_forged_override_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.bill_checks (study_id, billing_month, import_kwh_standard, actual_total_excl_vat,
+                                   modelled_total_excl_vat, difference_pct, engine_version, tariff_id)
+    VALUES (v_study, '2026-04-01', 1000, 3000, 2900, -3.333, 'probe', v_t25b);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('bill_check_other_tariff_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('bill_check_other_tariff_REFUSED', false);
+  END;
+  -- An override missing some of the tariff's charges cannot be linked (REST path around create_tariff_override).
+  BEGIN
+    UPDATE solar.studies SET tariff_override_id = NULL WHERE id = v_study2;
+    DELETE FROM solar.tariff_overrides WHERE id = v_ov2;
+    INSERT INTO solar.tariff_overrides (study_id, project_id, organisation_id, base_tariff_id)
+    VALUES (v_study2, v_project2, v_org, v_t25) RETURNING id INTO v_ov3;
+    INSERT INTO solar.tariff_override_charges (override_id, project_id, organisation_id, base_charge_id, component, unit, amount_excl_vat, vat_basis)
+    VALUES (v_ov3, v_project2, v_org, v_c25e, 'energy', 'c_per_kWh', 250, 'stated_excl');
+    UPDATE solar.studies SET tariff_override_id = v_ov3 WHERE id = v_study2;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('link_incomplete_override_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('link_incomplete_override_REFUSED', false);
+  END;
+  SELECT count(*) INTO v_n FROM solar.studies WHERE id = v_study2 AND tariff_override_id = v_ov2;
+  INSERT INTO _r VALUES ('refused_link_left_study2_override', v_n = 1);
   BEGIN
     INSERT INTO solar.bill_checks (study_id, billing_month, import_kwh_standard, actual_total_excl_vat,
                                    modelled_total_excl_vat, difference_pct, engine_version)

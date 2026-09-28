@@ -105,6 +105,7 @@
 -- column: tariffs.tou_calendar.updated_at
 -- column: tariffs.sseg_rule.updated_at
 -- trigger: tariff_override_charges_delete_guard ON solar.tariff_override_charges
+-- index: tariff_override_charges_one_copy_per_base ON solar.tariff_override_charges
 -- trigger: tou_calendar_touch ON tariffs.tou_calendar
 -- trigger: sseg_rule_touch ON tariffs.sseg_rule
 -- grant_absent: anon EXECUTE ON solar.save_export_rule(uuid, timestamptz, jsonb, jsonb)
@@ -225,6 +226,8 @@ CREATE TABLE IF NOT EXISTS solar.tariff_override_charges (
 );
 ALTER TABLE solar.tariff_override_charges ADD CONSTRAINT override_charge_edit_has_reason CHECK (edited_at IS NULL OR length(btrim(coalesce(reason, ''))) > 0);  -- [mutation-probe M3]
 CREATE INDEX IF NOT EXISTS tariff_override_charges_override_idx ON solar.tariff_override_charges (override_id);
+-- One row per base charge per override (an added row, base_charge_id NULL, stays distinct).
+CREATE UNIQUE INDEX IF NOT EXISTS tariff_override_charges_one_copy_per_base ON solar.tariff_override_charges (override_id, base_charge_id);
 
 CREATE TABLE IF NOT EXISTS solar.study_export_rates (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -314,6 +317,17 @@ BEGIN
         RAISE EXCEPTION 'solar.studies: the project override belongs to another study or tariff; revert it first'
             USING ERRCODE = '23514';
     END IF;
+    -- A newly linked override must copy every charge of the tariff (create_tariff_override
+    -- inserts them before linking); a partial copy would silently drop charges from the costing.
+    IF NEW.tariff_override_id IS NOT NULL
+       AND (TG_OP = 'INSERT' OR NEW.tariff_override_id IS DISTINCT FROM OLD.tariff_override_id)
+       AND EXISTS (SELECT 1 FROM tariffs.charge c
+                    WHERE c.tariff_id = NEW.tariff_id
+                      AND NOT EXISTS (SELECT 1 FROM solar.tariff_override_charges oc
+                                       WHERE oc.override_id = NEW.tariff_override_id AND oc.base_charge_id = c.id)) THEN
+        RAISE EXCEPTION 'solar.studies: the project override is missing some of the tariff''s charges; create it again'
+            USING ERRCODE = '23514';
+    END IF;
     RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION solar.studies_tariff_guard() FROM PUBLIC;
@@ -355,7 +369,13 @@ BEGIN
     NEW.organisation_id := v_org;
     -- A bill check records the tariff the study costs with, never a client's claim
     -- (a forged tariff_override_id could otherwise point at another project's override).
+    -- A supplied id that is not the study's is refused (the action supplies the ids it costed
+    -- on, so a tariff or override change mid-check is a refusal, not a mislabelled record).
     IF TG_TABLE_NAME = 'bill_checks' THEN
+        IF (NEW.tariff_id IS NOT NULL AND NEW.tariff_id IS DISTINCT FROM v_tariff)
+           OR (NEW.tariff_override_id IS NOT NULL AND NEW.tariff_override_id IS DISTINCT FROM v_override) THEN
+            RAISE EXCEPTION 'solar.bill_checks: the study''s tariff changed while the bill was being checked' USING ERRCODE = '23514';
+        END IF;
         NEW.tariff_id := v_tariff;
         NEW.tariff_override_id := v_override;
     END IF;
@@ -394,26 +414,39 @@ CREATE TRIGGER bill_checks_bind BEFORE INSERT ON solar.bill_checks
     FOR EACH ROW EXECUTE FUNCTION solar.money_row_bind();
 
 -- A changed rate (or an added row) carries a reason; the stamp is the caller.
--- An INSERT is an unedited copy only when base_charge_id is a charge of the
--- override's base tariff AND every rate column equals it; the copy's source
--- then comes from that charge and it carries no reason. On UPDATE the reason
--- and the source change only together with the rate.
+-- base_charge_id, when given, must be a charge of the override's base tariff.
+-- An INSERT is an unedited copy only when every rate column equals that charge
+-- (no reason kept). Every row's source is the base charge's locator ('{}' for
+-- an added row), never the client's. On UPDATE the reason and the source
+-- change only together with the rate: alone they are refused, not ignored.
 CREATE OR REPLACE FUNCTION solar.tariff_override_charges_guard()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
 DECLARE
-    v_changed BOOLEAN;
-    v_base    RECORD;
+    v_changed  BOOLEAN;
+    v_same     BOOLEAN := false;
+    v_locator  JSONB := '{}'::jsonb;
 BEGIN
-    IF TG_OP = 'INSERT' THEN
-        SELECT c.source_locator || jsonb_build_object('source_document_id', c.source_document_id) AS locator INTO v_base
-          FROM tariffs.charge c JOIN solar.tariff_overrides o ON o.base_tariff_id = c.tariff_id
-         WHERE c.id = NEW.base_charge_id AND o.id = NEW.override_id
-           AND (c.component, c.season, c.tou, c.day_type, c.block_min_kwh, c.block_max_kwh, c.block_basis,
+    -- The base charge, read only within the override's base tariff; its locator is the row's source.
+    IF NEW.base_charge_id IS NOT NULL THEN
+        SELECT c.source_locator || jsonb_build_object('source_document_id', c.source_document_id),
+               (c.component, c.season, c.tou, c.day_type, c.block_min_kwh, c.block_max_kwh, c.block_basis,
                 c.unit, c.demand_basis, c.amount_excl_vat, c.vat_rate, c.vat_basis)
                IS NOT DISTINCT FROM
                (NEW.component, NEW.season, NEW.tou, NEW.day_type, NEW.block_min_kwh, NEW.block_max_kwh, NEW.block_basis,
-                NEW.unit, NEW.demand_basis, NEW.amount_excl_vat, NEW.vat_rate, NEW.vat_basis);
-        v_changed := NOT FOUND;
+                NEW.unit, NEW.demand_basis, NEW.amount_excl_vat, NEW.vat_rate, NEW.vat_basis)
+          INTO v_locator, v_same
+          FROM tariffs.charge c JOIN solar.tariff_overrides o ON o.base_tariff_id = c.tariff_id
+         WHERE c.id = NEW.base_charge_id AND o.id = NEW.override_id;
+        IF NOT FOUND THEN
+            IF TG_OP = 'INSERT' THEN
+                RAISE EXCEPTION 'solar.tariff_override_charges: the base charge is not a charge of the override''s tariff' USING ERRCODE = '23514';
+            END IF;
+            v_locator := '{}'::jsonb;
+            v_same := false;
+        END IF;
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        v_changed := NOT v_same;
     ELSE
         v_changed :=
            (NEW.component, NEW.season, NEW.tou, NEW.day_type, NEW.block_min_kwh, NEW.block_max_kwh, NEW.block_basis,
@@ -426,16 +459,18 @@ BEGIN
         IF length(btrim(coalesce(NEW.reason, ''))) = 0 THEN RAISE EXCEPTION 'solar.tariff_override_charges: a changed rate needs a reason' USING ERRCODE = '23514'; END IF;  -- [mutation-probe M3]
         NEW.edited_at := NOW();
         NEW.edited_by := COALESCE(auth.uid(), NEW.edited_by);
+        NEW.source_locator := v_locator;
     ELSIF TG_OP = 'UPDATE' THEN
+        IF (NEW.reason, NEW.source_locator) IS DISTINCT FROM (OLD.reason, OLD.source_locator) THEN
+            RAISE EXCEPTION 'solar.tariff_override_charges: the reason and source change only with the rate' USING ERRCODE = '23514';
+        END IF;
         NEW.edited_at := OLD.edited_at;
         NEW.edited_by := OLD.edited_by;
-        NEW.reason := OLD.reason;
-        NEW.source_locator := OLD.source_locator;
     ELSE
         NEW.edited_at := NULL;
         NEW.edited_by := NULL;
         NEW.reason := NULL;
-        NEW.source_locator := v_base.locator;
+        NEW.source_locator := v_locator;
     END IF;
     RETURN NEW;
 END $$;
@@ -580,6 +615,9 @@ BEGIN
     END IF;
     IF v_study.updated_at IS DISTINCT FROM p_expected_updated_at THEN
         RAISE EXCEPTION 'solar.save_export_rule: stale' USING ERRCODE = '40001';
+    END IF;
+    IF p_rule->>'method' IS DISTINCT FROM 'manual' AND jsonb_array_length(coalesce(p_rates, '[]'::jsonb)) > 0 THEN
+        RAISE EXCEPTION 'solar.save_export_rule: rates are entered only for a manual export rule' USING ERRCODE = '23514';
     END IF;
     DELETE FROM solar.study_export_rates WHERE study_id = v_study.id;
     INSERT INTO solar.study_export_rates (study_id, project_id, organisation_id, season, tou, unit, amount_excl_vat, source_note)
