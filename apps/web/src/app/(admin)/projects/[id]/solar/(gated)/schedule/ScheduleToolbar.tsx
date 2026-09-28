@@ -3,14 +3,15 @@
  * Schedule header and toolbar (spec §14.1). Controls that need Edit are NOT
  * rendered below Edit (hidden, not disabled). Every callback is a client-side
  * function owned by ScheduleClient; nothing here crosses the server → client
- * boundary. Owner options are the loader's Solar-eligible `owners` (Q4).
+ * boundary. The owner filter lists whoever owns a task (a former owner's tasks
+ * stay findable); assigning an owner is eligible-only and lives elsewhere (Q4).
  */
 import type { RefObject } from 'react'
 import {
   SCHEDULE_GROUP_BYS, SCHEDULE_GROUP_BY_LABELS, SCHEDULE_ZOOMS,
   type DurationMode, type ScheduleFilters, type ScheduleGroupBy, type ScheduleZoom,
 } from '@esite/shared'
-import type { ScheduleBaselineSummary, ScheduleOwner, SchedulePreset, ScheduleSettingsView } from '@/lib/solar/schedule/types'
+import type { ScheduleBaselineSummary, SchedulePreset, ScheduleSettingsView } from '@/lib/solar/schedule/types'
 import { FilterPopover } from './FilterPopover'
 import { BaselineMenu } from './BaselineMenu'
 import { SettingsMenu } from './SettingsMenu'
@@ -26,8 +27,8 @@ export interface ScheduleToolbarProps {
   onSearch: (s: string) => void
   filters: ScheduleFilters
   onFilters: (f: ScheduleFilters) => void
-  /** ScheduleData.owners — Solar-eligible people only. */
-  owners: ScheduleOwner[]
+  /** For the owner FILTER: everyone who owns a task on this schedule, eligible or not. */
+  owners: Array<{ id: string; name: string }>
   /** Colours in use on the schedule's tasks. */
   colours: string[]
   presets: SchedulePreset[]

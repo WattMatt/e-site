@@ -1,14 +1,15 @@
 'use client'
 /**
  * Filters popover (spec §14.1): status, owner, colour; presets saved to the
- * database per user. Owner options are exactly the `owners` prop — the
- * loader's Solar-eligible list (owner decision Q4), never raw members. Colour
+ * database per user. Owner options are exactly the `owners` prop — the people
+ * who own a task on the schedule, eligible or not, so a former owner's tasks
+ * can still be found (assigning stays eligible-only, Q4). Colour
  * options are the colours IN USE (WM offered 8 fixed ones, so 12 of its 20
  * import colours could not be filtered).
  */
 import { useState } from 'react'
 import { EMPTY_SCHEDULE_FILTERS, GANTT_STATUSES, GANTT_STATUS_LABELS, filterCount, type ScheduleFilters } from '@esite/shared'
-import type { ScheduleOwner, SchedulePreset } from '@/lib/solar/schedule/types'
+import type { SchedulePreset } from '@/lib/solar/schedule/types'
 import { useArmedConfirm } from '../../_components/useArmedConfirm'
 import { POPOVER } from './popover-style'
 
@@ -29,7 +30,7 @@ function PresetRow({ p, onApply, onDelete }: { p: SchedulePreset; onApply: (id: 
 export interface FilterPopoverProps {
   filters: ScheduleFilters
   onFilters: (f: ScheduleFilters) => void
-  owners: ScheduleOwner[]
+  owners: Array<{ id: string; name: string }>
   colours: string[]
   presets: SchedulePreset[]
   onApplyPreset: (id: string) => void

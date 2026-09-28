@@ -132,6 +132,12 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
     ...data.tasks.map((t) => [t.ownerId, t.ownerName] as [string, string]),
     ...data.owners.map((o) => [o.id, o.name] as [string, string]),
   ]), [data.tasks, data.owners])
+  // Filter by anyone who OWNS a task, eligible or not (a former owner's tasks must
+  // stay findable). The picker for assigning stays eligible-only (data.owners).
+  const filterOwners = useMemo(() => {
+    const ids = [...new Set(data.tasks.map((t) => t.ownerId).filter(Boolean))]
+    return ids.map((id) => ({ id, name: ownerNames.get(id) ?? id })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [data.tasks, ownerNames])
   const taskById = (id: string) => dataRef.current.tasks.find((t) => t.id === id)
 
   // ── the executor: every op goes through the same actions as the original gesture ─
@@ -365,7 +371,7 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
       <ScheduleToolbar
         canEdit={data.canEdit} zoom={zoom} onZoom={setZoom}
         search={filters.search} onSearch={(s) => setFilters((f) => ({ ...f, search: s }))} filters={filters} onFilters={setFilters}
-        owners={data.owners} colours={colours} presets={data.presets}
+        owners={filterOwners} colours={colours} presets={data.presets}
         onApplyPreset={(id) => { const p = data.presets.find((x) => x.id === id); if (p) setFilters(p.filters) }}
         onSavePreset={async (name) => { const r = await saveFilterPresetAction({ projectId: P, name, filters }); if ('error' in r) return r.error; await refresh(); return null }}
         onDeletePreset={async (id) => { const r = await deleteFilterPresetAction({ projectId: P, presetId: id }); if ('error' in r) setMessage(r.error); else await refresh() }}

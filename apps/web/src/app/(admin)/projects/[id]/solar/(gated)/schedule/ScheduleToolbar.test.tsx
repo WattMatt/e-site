@@ -58,12 +58,12 @@ describe('ScheduleToolbar', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Dependencies' }))
     expect(p.onShow).toHaveBeenCalledWith({ links: false, milestones: true, split: true })
   })
-  it('filters: colours in use, eligible owners only, save a preset to the database, apply one', async () => {
+  it('filters: colours in use, the owners passed in, save a preset to the database, apply one', async () => {
     const p = props({ filters: { ...EMPTY_SCHEDULE_FILTERS, statuses: ['done'] } })
     render(<ScheduleToolbar {...p} />)
     fireEvent.click(screen.getByRole('button', { name: 'Filters (1)' }))
     expect(screen.getByRole('checkbox', { name: '#ef4444' })).toBeTruthy()
-    // The owner list is exactly the `owners` prop (the loader's Solar-eligible list, Q4).
+    // The owner list is exactly the `owners` prop (whoever owns a task; ScheduleClient builds it).
     expect(screen.getAllByRole('checkbox').filter((c) => c.getAttribute('data-owner') !== null)).toHaveLength(1)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Ann Smith' }))
     expect(p.onFilters).toHaveBeenCalledWith({ ...EMPTY_SCHEDULE_FILTERS, statuses: ['done'], ownerIds: ['u1'] })

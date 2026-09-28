@@ -157,6 +157,19 @@ describe('ScheduleClient', () => {
     await waitFor(() => expect(h.update).toHaveBeenCalledWith({ projectId: P, patches: [{ id: 't1', status: 'done', expectedUpdatedAt: 'U7' }] }))
   })
 
+  it('the owner filter lists the people who own tasks, including a former owner, not the eligible-picker list', async () => {
+    const d = data({
+      tasks: [task('t1'), task('t2', { ownerId: 'u7', ownerName: 'Cas Client' }), task('t3')],
+      owners: [{ id: 'u1', name: 'Ann', email: 'a@x' }, { id: 'u2', name: 'Bob', email: 'b@x' }],
+    })
+    render(<ScheduleClient initial={d} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    const dlg = screen.getByRole('dialog', { name: 'Filters' })
+    const offered = within(dlg).getAllByRole('checkbox').filter((c) => c.getAttribute('data-owner') !== null).map((c) => c.getAttribute('data-owner'))
+    expect(offered.sort()).toEqual(['u1', 'u7'])
+    expect(within(dlg).getByRole('checkbox', { name: 'Cas Client' })).toBeTruthy()
+  })
+
   it('removing a link resolves its id from the CURRENT links, before and after undo re-creates it', async () => {
     render(<ScheduleClient initial={data()} />)
     fireEvent.click(await stub('stub open link t1 t2'))
