@@ -101,11 +101,43 @@ describe('solar-load actions', () => {
       .toEqual({ error: 'That meter is not in this study.' })
   })
 
-  it('applyAutoMatchAction appends meters, links meters to their tenant, and counts', async () => {
-    const { calls } = setup({ writes: { 'solar.tenant_load_basis:update': { data: [{ id: 'b1' }] } } })
-    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2' }] })).toEqual({ ok: true, applied: 1 })
-    expect(callsTo(calls, 'solar.meters', 'update')[0]).toMatchObject({ payload: { node_id: 'n1' }, filters: [['eq', 'id', 'm2']] })
+  it('applyAutoMatchAction appends meters, links meters to their tenant on the meter version read, and counts', async () => {
+    const { calls } = setup({ writes: { 'solar.tenant_load_basis:update': { data: [{ id: 'b1' }] }, 'solar.meters:update': { data: [{ id: 'm2' }] } } })
+    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2' }] })).toEqual({ ok: true, applied: 1, staleMeters: 0 })
+    expect(callsTo(calls, 'solar.meters', 'update')[0]).toMatchObject({ payload: { node_id: 'n1' }, filters: [['eq', 'id', 'm2'], ['eq', 'updated_at', 'M0']] })
     expect(callsTo(calls, 'solar.tenant_load_basis', 'update')[0].filters).toContainEqual(['eq', 'updated_at', 'B0'])
+  })
+
+  it('applyAutoMatchAction counts a meter link only when its row changed', async () => {
+    setup({ writes: { 'solar.tenant_load_basis:update': { data: [{ id: 'b1' }] }, 'solar.meters:update': { data: [] } } })
+    expect(await applyAutoMatchAction({ projectId: P, pairs: [{ nodeId: 'n1', meterId: 'm2' }] })).toEqual({ ok: true, applied: 0, staleMeters: 1 })
+  })
+
+  it('excludeVacantAction pins each tenant row, reports stale ones, keeps their meters, and counts only what landed', async () => {
+    const tables = {
+      ...base,
+      'structure.nodes': [
+        { id: 'n1', project_id: P, kind: 'tenant_db', shop_number: '12', name: 'VACANT' },
+        { id: 'n2', project_id: P, kind: 'tenant_db', shop_number: '13', name: 'Vacant unit' },
+        { id: 'n3', project_id: P, kind: 'tenant_db', shop_number: '14', name: 'Vacant' },
+        { id: 'n4', project_id: P, kind: 'tenant_db', shop_number: '15', name: 'Pep' },
+      ],
+      'solar.tenant_load_basis': [
+        { id: 'b1', study_id: 's1', node_id: 'n1', source: 'metered', meters: [{ meter_id: 'm1', weight: 1 }], updated_at: 'B0' },
+        { id: 'b2', study_id: 's1', node_id: 'n2', source: 'synthesised', meters: [], updated_at: 'B9' },
+      ],
+    }
+    const { calls } = setup({
+      tables,
+      writes: { 'solar.tenant_load_basis:update': (c) => ({ data: c.filters.some(([, col, v]) => col === 'updated_at' && v === 'B9') ? [] : [{ id: 'x' }] }) },
+    })
+    const r = await excludeVacantAction({ projectId: P, nodeIds: ['n1', 'n2', 'n3', 'n4'] })
+    // n1 lands (pinned on B0), n2 changed underneath → reported, n3 inserted, n4 is not vacant → never touched.
+    expect(r).toEqual({ ok: true, count: 2, stale: ['13 Vacant unit'], notVacant: 1 })
+    const ups = callsTo(calls, 'solar.tenant_load_basis', 'update')
+    expect(ups[0]).toMatchObject({ payload: { source: 'excluded' }, filters: [['eq', 'study_id', 's1'], ['eq', 'node_id', 'n1'], ['eq', 'updated_at', 'B0']] })
+    expect(ups.map((u) => u.filters.find((f) => f[1] === 'node_id')?.[2])).toEqual(['n1', 'n2'])
+    expect(callsTo(calls, 'solar.tenant_load_basis', 'insert').map((c) => (c.payload as { node_id: string }).node_id)).toEqual(['n3'])
   })
 
   it('read-modify-write of a tenant assignment refuses a concurrent edit (auto-match and remove)', async () => {
@@ -117,10 +149,12 @@ describe('solar-load actions', () => {
     expect(callsTo(r.calls, 'solar.study_meters', 'delete')).toHaveLength(0)
   })
 
-  it('excludeVacantAction excludes each node and reports the count', async () => {
-    const { calls } = setup()
-    expect(await excludeVacantAction({ projectId: P, nodeIds: ['n1'] })).toEqual({ ok: true, count: 1 })
-    expect(callsTo(calls, 'solar.tenant_load_basis', 'update')[0].payload).toEqual({ source: 'excluded', meters: [] })
+  it('excludeVacantAction: a racing first insert is reported stale, not an error', async () => {
+    setup({
+      tables: { ...base, 'structure.nodes': [{ id: 'n5', project_id: P, kind: 'tenant_db', shop_number: null, name: 'VACANT' }] },
+      writes: { 'solar.tenant_load_basis:insert': { data: null, error: { code: '23505', message: 'duplicate' } } },
+    })
+    expect(await excludeVacantAction({ projectId: P, nodeIds: ['n5'] })).toEqual({ ok: true, count: 0, stale: ['VACANT'], notVacant: 0 })
   })
 
   it('acknowledgeCheckAction records the key and note', async () => {

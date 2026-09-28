@@ -152,3 +152,8 @@ export type RebuildEvent =
   | { type: 'progress'; stage: 'reading' | 'building' | 'saving'; done: number; total: number }
   | { type: 'done'; siteLoadId: string; basis: string; referenceYear: number; checks: number }
   | { type: 'error'; code: string; message: string }
+
+/** A tenant-schedule row that names itself vacant (the Tenants tab's "Exclude vacant", re-checked by the action). */
+export function isVacantTenant(n: { shop_name?: string | null; name?: string | null }): boolean {
+  return /\bvacant\b/i.test(`${n.shop_name ?? ''} ${n.name ?? ''}`)
+}

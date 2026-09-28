@@ -125,7 +125,11 @@ export function TenantsPanel({ projectId, view, canEdit }: { projectId: string; 
                 const r = await excludeVacantAction({ projectId, nodeIds: vacant.map((t) => t.nodeId) })
                 setBusy(false)
                 if ('error' in r) setError(r.error)
-                else { setNotice(`${r.count} vacant tenant${r.count === 1 ? '' : 's'} excluded.`); router.refresh() }
+                else {
+                  const left = r.stale.length > 0 ? ` Changed by someone else since you loaded the page, so left as they are: ${r.stale.join(', ')} — review them after the reload.` : ''
+                  setNotice(`${r.count} vacant tenant${r.count === 1 ? '' : 's'} excluded.${left}`)
+                  router.refresh()
+                }
               }}>{`Exclude ${vacant.length} vacant tenant${vacant.length === 1 ? '' : 's'}?`}</button>)}
           <label style={{ marginLeft: 'auto' }}>Common-area allowance{' '}
             <input aria-label="Common-area allowance (%)" inputMode="decimal" value={common} onChange={(e) => setCommon(e.target.value)} style={{ width: 60 }} /> %
@@ -160,7 +164,8 @@ export function TenantsPanel({ projectId, view, canEdit }: { projectId: string; 
           setBusy(false)
           if ('error' in r) { setError(r.error); return }
           setAuto(false)
-          setNotice(`${r.applied} meter${r.applied === 1 ? '' : 's'} assigned. Rebuild the site profile to use them.`)
+          const stale = r.staleMeters > 0 ? ` ${r.staleMeters} meter${r.staleMeters === 1 ? ' was' : 's were'} changed by someone else and ${r.staleMeters === 1 ? 'was' : 'were'} not re-linked — check ${r.staleMeters === 1 ? 'it' : 'them'} on the Meters tab.` : ''
+          setNotice(`${r.applied} meter${r.applied === 1 ? '' : 's'} assigned. Rebuild the site profile to use them.${stale}`)
           router.refresh()
         }} />
       )}

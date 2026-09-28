@@ -31,7 +31,8 @@ export interface FakeOptions {
   userId?: string | null
   rpc?: Record<string, FakeResult | ((args: Record<string, unknown>) => FakeResult)>
   tables?: Record<string, Array<Record<string, unknown>>>
-  writes?: Record<string, Partial<FakeResult>>
+  /** A fixed result per `schema.table:op`, or a function of the call (e.g. 0 rows for one filter value). */
+  writes?: Record<string, Partial<FakeResult> | ((call: FakeCall) => Partial<FakeResult>)>
 }
 
 export function fakeSupabase(opts: FakeOptions = {}) {
@@ -49,13 +50,15 @@ export function fakeSupabase(opts: FakeOptions = {}) {
   function builder(table: string) {
     const state: { op: FakeCall['op']; payload?: unknown; filters: Filter[]; limit?: number } = { op: 'select', filters: [] }
     const run = (): Promise<FakeResult> => {
-      calls.push({ table, op: state.op, payload: state.payload, filters: [...state.filters] })
+      const call: FakeCall = { table, op: state.op, payload: state.payload, filters: [...state.filters] }
+      calls.push(call)
       if (state.op === 'select') {
         let rows = (opts.tables?.[table] ?? []).filter((r) => matches(r, state.filters))
         if (state.limit !== undefined) rows = rows.slice(0, state.limit)
         return Promise.resolve({ data: rows, error: null })
       }
-      const w = opts.writes?.[`${table}:${state.op}`]
+      const spec = opts.writes?.[`${table}:${state.op}`]
+      const w = typeof spec === 'function' ? spec(call) : spec
       const echo = state.op === 'delete' ? [] : Array.isArray(state.payload) ? state.payload : [state.payload]
       return Promise.resolve({ data: w?.data ?? echo, error: w?.error ?? null })
     }

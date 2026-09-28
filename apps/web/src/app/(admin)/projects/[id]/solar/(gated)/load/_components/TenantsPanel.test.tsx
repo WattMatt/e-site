@@ -22,8 +22,8 @@ const view: TenantsView = {
 beforeEach(() => {
   vi.clearAllMocks()
   h.save.mockResolvedValue({ ok: true, updatedAt: 'B1' })
-  h.apply.mockResolvedValue({ ok: true, applied: 1 })
-  h.vacant.mockResolvedValue({ ok: true, count: 1 })
+  h.apply.mockResolvedValue({ ok: true, applied: 1, staleMeters: 0 })
+  h.vacant.mockResolvedValue({ ok: true, count: 1, stale: [], notVacant: 0 })
   h.common.mockResolvedValue({ ok: true, updatedAt: 'T1' })
 })
 
@@ -79,6 +79,23 @@ describe('TenantsPanel', () => {
     expect(h.vacant).not.toHaveBeenCalled()
     await userEvent.click(screen.getByRole('button', { name: 'Exclude 1 vacant tenant?' }))
     expect(h.vacant).toHaveBeenCalledWith({ projectId: 'p1', nodeIds: ['n2'] })
+    expect((await screen.findByRole('status')).textContent).toBe('1 vacant tenant excluded.')
+  })
+  it('exclude vacant says which tenants changed underneath instead of claiming them', async () => {
+    h.vacant.mockResolvedValueOnce({ ok: true, count: 0, stale: ['13 VACANT'], notVacant: 0 })
+    render(<TenantsPanel projectId="p1" view={view} canEdit />)
+    await userEvent.click(screen.getByRole('button', { name: 'Exclude vacant (1)' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Exclude 1 vacant tenant?' }))
+    expect((await screen.findByRole('status')).textContent).toBe('0 vacant tenants excluded. Changed by someone else since you loaded the page, so left as they are: 13 VACANT — review them after the reload.')
+    expect(h.refresh).toHaveBeenCalled()
+  })
+  it('auto-match says when a meter link changed underneath', async () => {
+    h.apply.mockResolvedValueOnce({ ok: true, applied: 0, staleMeters: 1 })
+    render(<TenantsPanel projectId="p1" view={view} canEdit />)
+    await userEvent.click(screen.getByRole('button', { name: 'Auto-match meters' }))
+    await userEvent.click(screen.getByLabelText(/Pep meter → 12 · Pep/))
+    await userEvent.click(screen.getByRole('button', { name: 'Apply 1 pair' }))
+    expect((await screen.findByRole('status')).textContent).toBe('0 meters assigned. Rebuild the site profile to use them. 1 meter was changed by someone else and was not re-linked — check it on the Meters tab.')
   })
   it('common-area allowance saves on the study version', async () => {
     render(<TenantsPanel projectId="p1" view={view} canEdit />)

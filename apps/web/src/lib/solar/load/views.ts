@@ -16,7 +16,7 @@ import {
   type ChannelRow, type MeterRow, type StudyLoadRow, type TenantNodeRow,
 } from './gather'
 import { channelSummaries } from './readings'
-import type { AutoMatchView, ChecksView, MetersView, MeterView, ProfileView, TenantRowView, TenantsView } from './view-types'
+import { isVacantTenant, type AutoMatchView, type ChecksView, type MetersView, type MeterView, type ProfileView, type TenantRowView, type TenantsView } from './view-types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -56,7 +56,7 @@ async function studyMeters(supabase: AnyClient, studyId: string): Promise<{ mete
   ])
   return { meters: ((m.data ?? []) as MeterRow[]).sort((a, b) => a.label.localeCompare(b.label)), channels: (c.data ?? []) as ChannelRow[] }
 }
-const isVacant = (n: TenantNodeRow) => /\bvacant\b/i.test(`${n.shop_name ?? ''} ${n.name ?? ''}`)
+const isVacant = (n: TenantNodeRow) => isVacantTenant(n)
 
 export async function loadMetersView(supabase: AnyClient, projectId: string, isGrantor: boolean): Promise<MetersView> {
   const { data: project } = await supabase.schema('projects').from('projects').select('organisation_id, cloud_storage_connection_id, cloud_storage_folder_id').eq('id', projectId).maybeSingle()

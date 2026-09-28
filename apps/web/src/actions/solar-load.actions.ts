@@ -15,7 +15,7 @@ import { GENERIC_ERROR, STALE_MESSAGE } from '@/lib/solar/errors'
 import {
   EMPTY_BILLS_FORM, validateLoadSettings, type BillsForm, type LoadBasisChoice, type LoadSettingsField, type LoadSettingsForm,
 } from '@esite/shared'
-import { ARCHETYPE_OPTIONS, METER_KIND_OPTIONS, type MeterKind } from '@/lib/solar/load/view-types'
+import { ARCHETYPE_OPTIONS, METER_KIND_OPTIONS, isVacantTenant, type MeterKind } from '@/lib/solar/load/view-types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -285,7 +285,7 @@ export async function saveTenantBasisAction(input: {
   return { ok: true, updatedAt: res.data[0]?.updated_at as string }
 }
 
-export async function applyAutoMatchAction(input: { projectId: string; pairs: Array<{ nodeId: string; meterId: string }> }): Promise<Ok<{ applied: number }> | Err> {
+export async function applyAutoMatchAction(input: { projectId: string; pairs: Array<{ nodeId: string; meterId: string }> }): Promise<Ok<{ applied: number; staleMeters: number }> | Err> {
   const { supabase, userId } = await ctx(input.projectId)
   if (!userId) return { error: 'You are not signed in.' }
   const pairs = (input.pairs ?? []).slice(0, 500)
@@ -297,9 +297,12 @@ export async function applyAutoMatchAction(input: { projectId: string; pairs: Ar
   const { data: rows } = await solar().from('tenant_load_basis').select('node_id, meters, updated_at').eq('study_id', study.id)
   const existing = new Map(((rows ?? []) as Array<{ node_id: string; meters: Array<{ meter_id: string; weight: number }>; updated_at: string }>).map((r) => [r.node_id, r.meters]))
   const versions = new Map(((rows ?? []) as Array<{ node_id: string; updated_at: string }>).map((r) => [r.node_id, r.updated_at]))
+  const { data: meterRows } = await solar().from('meters').select('id, node_id, updated_at').in('id', [...new Set(pairs.map((p) => p.meterId))])
+  const meterVersion = new Map(((meterRows ?? []) as Array<{ id: string; node_id: string | null; updated_at: string }>).map((m) => [m.id, m]))
   const byNode = new Map<string, string[]>()
   for (const p of pairs) byNode.set(p.nodeId, [...(byNode.get(p.nodeId) ?? []), p.meterId])
   let applied = 0
+  let staleMeters = 0
   for (const [nodeId, meterIds] of byNode) {
     if (!(await projectNode(supabase, input.projectId, nodeId))) return { error: 'That tenant is not in this project.' }
     const have = existing.get(nodeId)
@@ -311,34 +314,56 @@ export async function applyAutoMatchAction(input: { projectId: string; pairs: Ar
     if (res.error) return { error: res.error.code === '23505' ? STALE_MESSAGE : human(res.error) }
     if (!Array.isArray(res.data) || res.data.length === 0) return { error: STALE_MESSAGE }
     for (const meterId of meterIds) {
-      const { error } = await solar().from('meters').update({ node_id: nodeId }).eq('id', meterId)
+      const m = meterVersion.get(meterId)
+      if (m?.node_id === nodeId) { applied++; continue }  // already linked: nothing to write
+      // Pinned on the meter's version: a concurrent Details edit is not overwritten, and only a
+      // row that actually changed is counted.
+      const { data, error } = await solar().from('meters').update({ node_id: nodeId }).eq('id', meterId).eq('updated_at', m?.updated_at ?? '').select('id')
       if (error) return { error: human(error) }
-      applied++
+      if (Array.isArray(data) && data.length > 0) applied++
+      else staleMeters++
     }
   }
   await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: 'meters_auto_matched', objectRef: { applied } })
   revalidatePath(path(input.projectId))
-  return { ok: true, applied }
+  return { ok: true, applied, staleMeters }
 }
 
-export async function excludeVacantAction(input: { projectId: string; nodeIds: string[] }): Promise<Ok<{ count: number }> | Err> {
+/**
+ * Exclude the vacant tenants the user saw. Re-checks vacancy server-side (a directly-invoked call
+ * cannot exclude a trading tenant), pins every existing row on the version read, and never clears a
+ * row's meters (source only — including it again restores them). A row changed since it was read is
+ * REPORTED, not overwritten; the count is what actually landed.
+ */
+export async function excludeVacantAction(input: { projectId: string; nodeIds: string[] }): Promise<Ok<{ count: number; stale: string[]; notVacant: number }> | Err> {
   const { supabase, userId } = await ctx(input.projectId)
   if (!userId) return { error: 'You are not signed in.' }
-  const nodeIds = [...new Set(input.nodeIds ?? [])].slice(0, 1000)
+  const nodeIds = [...new Set((input.nodeIds ?? []).filter((x) => typeof x === 'string'))].slice(0, 1000)
   const study = await studyOf(supabase, input.projectId)
   if (!study) return { error: 'Set up the study first — save Site & Supply or any Load setting.' }
+  if (nodeIds.length === 0) return { ok: true, count: 0, stale: [], notVacant: 0 }
   const solar = () => supabase.schema('solar')
-  const { data: rows } = await solar().from('tenant_load_basis').select('node_id').eq('study_id', study.id).in('node_id', nodeIds)
-  const have = new Set(((rows ?? []) as Array<{ node_id: string }>).map((r) => r.node_id))
-  for (const nodeId of nodeIds) {
-    const res = have.has(nodeId)
-      ? await solar().from('tenant_load_basis').update({ source: 'excluded', meters: [] }).eq('study_id', study.id).eq('node_id', nodeId)
-      : await solar().from('tenant_load_basis').insert({ study_id: study.id, node_id: nodeId, source: 'excluded', meters: [] })
-    if (res.error) return { error: human(res.error) }
+  const { data: nodeRows } = await supabase.schema('structure').from('nodes').select('id, shop_number, shop_name, name')
+    .in('id', nodeIds).eq('project_id', input.projectId).eq('kind', 'tenant_db')
+  const nodes = ((nodeRows ?? []) as Array<{ id: string; shop_number: string | null; shop_name: string | null; name: string | null }>).filter(isVacantTenant)
+  const label = (n: (typeof nodes)[number]) => `${n.shop_number ?? ''} ${n.shop_name ?? n.name ?? ''}`.trim()
+  const { data: rows } = await solar().from('tenant_load_basis').select('node_id, source, updated_at').eq('study_id', study.id).in('node_id', nodes.map((n) => n.id))
+  const have = new Map(((rows ?? []) as Array<{ node_id: string; source: string; updated_at: string }>).map((r) => [r.node_id, r]))
+  let count = 0
+  const stale: string[] = []
+  for (const n of nodes) {
+    const b = have.get(n.id)
+    if (b?.source === 'excluded') continue
+    const res = b
+      ? await solar().from('tenant_load_basis').update({ source: 'excluded' }).eq('study_id', study.id).eq('node_id', n.id).eq('updated_at', b.updated_at).select('id')
+      : await solar().from('tenant_load_basis').insert({ study_id: study.id, node_id: n.id, source: 'excluded', meters: [] }).select('id')
+    if (res.error && res.error.code !== '23505') return { error: human(res.error) }
+    if (res.error || !Array.isArray(res.data) || res.data.length === 0) { stale.push(label(n)); continue }
+    count++
   }
-  await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: 'vacant_tenants_excluded', objectRef: { count: nodeIds.length } })
+  if (count > 0) await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: 'vacant_tenants_excluded', objectRef: { count } })
   revalidatePath(path(input.projectId))
-  return { ok: true, count: nodeIds.length }
+  return { ok: true, count, stale, notVacant: nodeIds.length - nodes.length }
 }
 
 export async function acknowledgeCheckAction(input: { projectId: string; checkKey: string; note: string | null }): Promise<Ok | Err> {
