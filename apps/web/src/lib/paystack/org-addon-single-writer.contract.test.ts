@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
 /**
@@ -19,9 +19,15 @@ import { join, relative, resolve } from 'node:path'
  */
 
 const WEB_SRC = resolve(__dirname, '../..') // apps/web/src
+// Also the shared package (and mobile, when present): a writer added there is
+// just as much a second writer. Paths below are relative to the repo root.
+const REPO = resolve(WEB_SRC, '../../..')
+const ROOTS = ['apps/web/src', 'packages/shared/src', 'apps/mobile/src', 'apps/mobile/app']
+  .map((r) => join(REPO, r))
+  .filter((r) => existsSync(r))
 
 const ALLOWED = new Set<string>([
-  'app/api/paystack/webhook/route.ts', // the single writer
+  'apps/web/src/app/api/paystack/webhook/route.ts', // the single writer
 ])
 
 /** Drop block and line comments so prose about the table is not a hit. */
@@ -32,6 +38,7 @@ function code(src: string): string {
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
+    if (name === 'node_modules' || name.startsWith('.')) continue
     if (statSync(p).isDirectory()) walk(p, out)
     else if (/\.(ts|tsx)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name)) out.push(p)
   }
@@ -40,9 +47,10 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe('billing.org_addon_subscriptions — single writer', () => {
   it('is named only by the webhook route', () => {
-    const offenders = walk(WEB_SRC)
+    expect(ROOTS.length).toBeGreaterThanOrEqual(2) // web + shared at minimum
+    const offenders = ROOTS.flatMap((r) => walk(r))
       .filter((f) => code(readFileSync(f, 'utf8')).includes('org_addon_subscriptions'))
-      .map((f) => relative(WEB_SRC, f))
+      .map((f) => relative(REPO, f))
       .filter((f) => !ALLOWED.has(f))
     expect(offenders).toEqual([])
   })

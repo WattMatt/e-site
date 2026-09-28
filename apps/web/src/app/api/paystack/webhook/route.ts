@@ -227,39 +227,66 @@ function addonTable(supabase: Client) {
  * a tier-plan event from the same payer is never mistaken for Solar.
  * `solarPlan` tells the caller the event IS a Solar-plan event even when no
  * row matched, so it can refuse to let the event fall into a tier branch.
+ *
+ * `foreign` is set when the row was found by CUSTOMER code but is already
+ * bound to a DIFFERENT Paystack subscription than the one the event names —
+ * a duplicate purchase's second subscription, or an old subscription still
+ * live after a resubscribe. State-changing callers must ignore such a row
+ * (a disable of the duplicate must not end the live one; its create must not
+ * steal the binding); the renewal branch books its charge as a duplicate.
+ *
  * More than one row for one customer code (one person paying for two orgs)
- * is ambiguous: no row, never a guess.
+ * is ambiguous: no row, never a guess — unless `preferUnbound` (only
+ * subscription.create) and exactly one of them is still unbound, which is the
+ * row this new subscription belongs to.
  */
 async function findOrgAddon(
   supabase: Client,
-  codes: { subscriptionCode?: string; customerCode?: string; planCode?: string },
-): Promise<{ row: AddonRow | null; solarPlan: boolean; error: PgError }> {
+  codes: { subscriptionCode?: string; customerCode?: string; planCode?: string; preferUnbound?: boolean },
+): Promise<{ row: AddonRow | null; solarPlan: boolean; foreign: boolean; error: PgError }> {
   if (codes.subscriptionCode) {
     const { data, error } = await addonTable(supabase)
       .select(ADDON_COLUMNS)
       .eq('paystack_subscription_code', codes.subscriptionCode)
       .maybeSingle()
-    if (error) return { row: null, solarPlan: false, error: error as PgError }
-    if (data) return { row: data as AddonRow, solarPlan: true, error: null }
+    if (error) return { row: null, solarPlan: false, foreign: false, error: error as PgError }
+    if (data) return { row: data as AddonRow, solarPlan: true, foreign: false, error: null }
   }
 
   const plan = solarPlanCode()
   const solarPlan = !!plan && codes.planCode === plan
-  if (!solarPlan || !codes.customerCode) return { row: null, solarPlan, error: null }
+  if (!solarPlan || !codes.customerCode) return { row: null, solarPlan, foreign: false, error: null }
 
-  const { data, error } = await addonTable(supabase)
+  let { data, error } = await addonTable(supabase)
     .select(ADDON_COLUMNS)
     .eq('paystack_customer_code', codes.customerCode)
     .eq('feature_key', 'solar')
     .maybeSingle()
+  if (error && (error as PgError)?.code === 'PGRST116' && codes.preferUnbound) {
+    ;({ data, error } = await addonTable(supabase)
+      .select(ADDON_COLUMNS)
+      .eq('paystack_customer_code', codes.customerCode)
+      .eq('feature_key', 'solar')
+      .is('paystack_subscription_code', null)
+      .maybeSingle())
+  }
   if (error) {
     if ((error as PgError)?.code === 'PGRST116') {
-      console.warn(`Paystack webhook: customer ${codes.customerCode} holds several Solar subscriptions; not guessing`)
-      return { row: null, solarPlan, error: null }
+      console.error(
+        `[billing-alert] Paystack webhook: customer ${codes.customerCode} holds several Solar subscriptions; ` +
+          `not guessing — a person must place this event`,
+      )
+      return { row: null, solarPlan, foreign: false, error: null }
     }
-    return { row: null, solarPlan, error: error as PgError }
+    return { row: null, solarPlan, foreign: false, error: error as PgError }
   }
-  return { row: (data as AddonRow | null) ?? null, solarPlan, error: null }
+  const row = (data as AddonRow | null) ?? null
+  const foreign =
+    !!row &&
+    !!codes.subscriptionCode &&
+    !!row.paystack_subscription_code &&
+    row.paystack_subscription_code !== codes.subscriptionCode
+  return { row, solarPlan, foreign, error: null }
 }
 
 /** A failed renewal: active → past_due. Never resurrects a cancelled/refunded row. */
@@ -340,7 +367,9 @@ async function refundOrgAddonForReference(
     title: 'Solar paused — payment refunded',
     body:
       `The Solar subscription payment ${reference} was ${how}. Solar is now locked on every ` +
-      `project of this organisation. All Solar data is kept and returns if you subscribe again.`,
+      `project of this organisation. All Solar data is kept and returns if you subscribe again. ` +
+      `If the Paystack subscription is still active it will charge again at renewal — cancel it in ` +
+      `Paystack if Solar is no longer wanted.`,
     data: { reference, feature_key: 'solar' },
   })
 }
@@ -377,7 +406,17 @@ async function applyOrgAddonCharge(
     (existing.status === 'active' || existing.status === 'non_renewing') &&
     !!existing.current_period_end &&
     new Date(existing.current_period_end).getTime() > new Date(paidAt).getTime()
-  const duplicatePurchase = firstCharge && !alreadyApplied && live
+  // A RENEWAL from a Paystack subscription other than the one the row is bound
+  // to: the duplicate purchase's second subscription, or an old subscription
+  // still charging after a resubscribe. Absorbing it as a renewal would add no
+  // time (the period only moves forward) while the customer pays twice a year,
+  // silently. Book it as a duplicate and escalate it.
+  const foreignSubscription =
+    !firstCharge &&
+    !!existing?.paystack_subscription_code &&
+    !!subscriptionCode &&
+    existing.paystack_subscription_code !== subscriptionCode
+  const duplicatePurchase = !alreadyApplied && ((firstCharge && live) || foreignSubscription)
 
   if (!alreadyApplied && !duplicatePurchase) {
     const periodEnd = nextAddonPeriodEnd(existing?.current_period_end, paidAt)
@@ -397,8 +436,14 @@ async function applyOrgAddonCharge(
         patch.started_at = paidAt
         patch.cancelled_at = null
         patch.refunded_at = null
-      } else if (subscriptionCode) {
-        patch.paystack_subscription_code = subscriptionCode
+      } else {
+        if (subscriptionCode) patch.paystack_subscription_code = subscriptionCode
+        // A renewal charge (new money, new reference) reviving a refunded or
+        // cancelled row: D-02 restores it; the old end markers no longer apply.
+        if (existing.status === 'refunded' || existing.status === 'cancelled') {
+          patch.refunded_at = null
+          patch.cancelled_at = null
+        }
       }
       const { error } = await addonTable(supabase).update(patch).eq('id', existing.id)
       if (error) return storageFailure('org_addon renewal', error)
@@ -437,11 +482,20 @@ async function applyOrgAddonCharge(
     const notified = await notifyOrgAdmins(supabase, orgId, {
       type: 'billing_duplicate_charge',
       title: 'Duplicate payment received',
-      body:
-        `A second Solar subscription payment was taken (reference ${reference}) while Solar is ` +
-        `already active for this organisation. A refund is required, and the extra Paystack ` +
-        `subscription should be cancelled.`,
-      data: { reference, feature_key: 'solar', amount_kobo: amountKobo },
+      body: foreignSubscription
+        ? `A Solar payment (reference ${reference}) was taken by Paystack subscription ` +
+          `${subscriptionCode}, which is not this organisation's current Solar subscription ` +
+          `(${existing?.paystack_subscription_code}). The customer is being charged twice: refund it ` +
+          `and cancel subscription ${subscriptionCode} in Paystack.`
+        : `A second Solar subscription payment was taken (reference ${reference}) while Solar is ` +
+          `already active for this organisation. A refund is required, and the extra Paystack ` +
+          `subscription should be cancelled.`,
+      data: {
+        reference,
+        feature_key: 'solar',
+        amount_kobo: amountKobo,
+        ...(foreignSubscription ? { subscription_code: subscriptionCode } : {}),
+      },
     })
     if (notified.error) return storageFailure('duplicate-charge notification', notified.error)
   }
@@ -704,6 +758,28 @@ export async function POST(req: NextRequest) {
         return ok()
       }
 
+      // The metadata is trusted only because the HMAC is Paystack's — but a
+      // transaction can be initialised elsewhere (Inline/Popup with the public
+      // key) with arbitrary metadata and amount. A year of Solar is granted only
+      // for a ZAR charge on the Solar plan, or of at least the Solar price.
+      const planOk = !!solarPlanCode() && planCodeOf(data) === solarPlanCode()
+      const amountOk = typeof data.amount === 'number' && data.amount >= FEATURE_PRICES.solar.amountKobo
+      if (data.currency !== 'ZAR' || !(planOk || amountOk)) {
+        console.error(
+          `[billing-alert] Paystack webhook: Solar-metadata charge ${data.reference} is not a Solar-plan ZAR ` +
+            `charge (currency ${data.currency}, amount ${data.amount}, plan ${planCodeOf(data) ?? 'none'}); not granted`,
+        )
+        const logged = await logPaymentEvent(supabase, {
+          eventType: ORG_ADDON_UNMATCHED_EVENT,
+          reference: data.reference,
+          organisationId: null,
+          amountKobo: data.amount,
+          payload: { reason: 'not a Solar-plan ZAR charge', metadata, currency: data.currency ?? null, plan: planCodeOf(data) ?? null },
+        })
+        if (logged.error) return storageFailure('org_addon unmatched log', logged.error)
+        return ok()
+      }
+
       // An org that does not exist is a condition no retry can fix (the FK
       // insert would 23503 forever — a poison pill). Record the money, ack.
       const { data: org, error: orgErr } = await (supabase as any)
@@ -813,6 +889,10 @@ export async function POST(req: NextRequest) {
       })
     }
     if (addonRenewal.solarPlan) {
+      console.error(
+        `[billing-alert] Paystack webhook: Solar-plan charge ${data.reference} (customer ${customerCode ?? 'none'}) ` +
+          `matched no Solar subscription; logged, not granted`,
+      )
       const logged = await logPaymentEvent(supabase, {
         eventType: ORG_ADDON_UNMATCHED_EVENT,
         reference: data.reference,
@@ -1000,14 +1080,25 @@ export async function POST(req: NextRequest) {
             ? { status: 'active', current_period_end: invoicedEnd, cancelled_at: null, ...(reference ? { last_event_id: reference } : {}) }
             : null
           fromStatuses = ['cancelled']
+        } else if (row.status === 'non_renewing') {
+          // The customer chose not to renew. Only a paid invoice for a NEW,
+          // later period (they renewed after all) makes it 'active' again; a
+          // late invoice for an earlier charge must not undo the choice.
+          patch = extendsPeriod
+            ? { status: 'active', current_period_end: invoicedEnd, ...(reference ? { last_event_id: reference } : {}) }
+            : null
+          fromStatuses = ['non_renewing']
         } else {
           patch = {
             status: 'active',
             current_period_end: nextAddonPeriodEnd(row.current_period_end, inv.paid_at as string | undefined, nextPaymentDate),
           }
+          // The charge that funds a NEW period becomes the current charge, so a
+          // refund of it locks Solar even if its charge.success never matched.
+          if (reference && extendsPeriod) patch.last_event_id = reference
           // Guarded so a refund or cancel landing between the read and this
           // write is never overwritten.
-          fromStatuses = ['active', 'past_due', 'non_renewing']
+          fromStatuses = ['active', 'past_due']
         }
 
         if (!patch) {
@@ -1020,6 +1111,19 @@ export async function POST(req: NextRequest) {
         const { error: addonErr } =
           fromStatuses.length === 1 ? await query.eq('status', fromStatuses[0]) : await query.in('status', fromStatuses)
         if (addonErr) return storageFailure('org_addon renewal update', addonErr)
+
+        // Record the reference → org map a refund of this charge needs
+        // (idempotent with the one charge.success writes for the same reference).
+        if (reference && patch.last_event_id === reference) {
+          const logged = await logPaymentEvent(supabase, {
+            eventType: ORG_ADDON_CHARGE_EVENT,
+            reference,
+            organisationId: row.organisation_id,
+            amountKobo,
+            payload: { via: 'invoice.update', subscription_code: subscriptionCode, paid_at: inv.paid_at ?? null },
+          })
+          if (logged.error) return storageFailure('org_addon payment-event log', logged.error)
+        }
       } else {
         const failErr = await markOrgAddonPastDue(supabase, addon.row)
         if (failErr) return storageFailure('org_addon past_due', failErr)
@@ -1201,7 +1305,10 @@ export async function POST(req: NextRequest) {
       planCode: planCodeOf(data),
     })
     if (addonFailed.error) return storageFailure('org_addon failure lookup', addonFailed.error)
-    if (addonFailed.row) {
+    // A failure of a FOREIGN subscription (not the one the row is bound to)
+    // must not lock the live row; it is still a Solar-plan event, so it never
+    // reaches the tier lookup either (solarPlan below).
+    if (addonFailed.row && !addonFailed.foreign) {
       const failErr = await markOrgAddonPastDue(supabase, addonFailed.row)
       if (failErr) return storageFailure('org_addon past_due', failErr)
       return ok()
@@ -1243,18 +1350,34 @@ export async function POST(req: NextRequest) {
     // charge usually does not carry, so not_renew/disable/invoice.update can
     // find the row by code. Status is NOT touched — creating a subscription is
     // not payment, and must not resurrect a refunded row.
+    //
+    // It binds ONLY a row that is unbound or already bound to this very code:
+    // the second subscription of a duplicate purchase (or of one customer
+    // paying for two orgs) must never steal the live row's binding — a later
+    // disable of the duplicate would then end the real one. The same guard is
+    // repeated in the UPDATE so a concurrent bind cannot be overwritten.
+    const newCode = typeof sub.subscription_code === 'string' ? sub.subscription_code : ''
     const addon = await findOrgAddon(supabase, {
-      subscriptionCode: sub.subscription_code,
+      subscriptionCode: newCode || undefined,
       customerCode,
       planCode,
+      preferUnbound: true,
     })
     if (addon.error) return storageFailure('org_addon subscription.create lookup', addon.error)
-    if (addon.row) {
-      const patch: Record<string, unknown> = { paystack_subscription_code: sub.subscription_code }
+    if (addon.row && addon.foreign) {
+      console.warn(
+        `Paystack webhook subscription.create: ${newCode} is not the Solar subscription bound to row ` +
+          `${addon.row.id} (${addon.row.paystack_subscription_code}); not re-binding`,
+      )
+    } else if (addon.row && /^[A-Za-z0-9_-]+$/.test(newCode)) {
+      const patch: Record<string, unknown> = { paystack_subscription_code: newCode }
       if (sub.next_payment_date) {
         patch.current_period_end = nextAddonPeriodEnd(addon.row.current_period_end, null, sub.next_payment_date)
       }
-      const { error: bindErr } = await addonTable(supabase).update(patch).eq('id', addon.row.id)
+      const { error: bindErr } = await addonTable(supabase)
+        .update(patch)
+        .eq('id', addon.row.id)
+        .or(`paystack_subscription_code.is.null,paystack_subscription_code.eq.${newCode}`)
       if (bindErr) return storageFailure('org_addon subscription.create', bindErr)
     }
   }
@@ -1293,20 +1416,28 @@ export async function POST(req: NextRequest) {
       planCode: sub.plan?.plan_code,
     })
     if (addon.error) return storageFailure('org_addon cancel lookup', addon.error)
-    if (addon.row) {
-      const periodEnd = addon.row.current_period_end ? new Date(addon.row.current_period_end).getTime() : NaN
+    // A FOREIGN subscription (the duplicate the admins were told to cancel, or
+    // an old one outlived by a resubscribe) ending must not touch the live row.
+    if (addon.row && !addon.foreign) {
+      const row = addon.row
+      const periodEnd = row.current_period_end ? new Date(row.current_period_end).getTime() : NaN
       const stillPaidFor = Number.isFinite(periodEnd) && periodEnd > Date.now()
-      const { error: addonCancelErr } =
-        event.event === 'subscription.not_renew' || stillPaidFor
-          ? await addonTable(supabase)
-              .update({ status: 'non_renewing' })
-              .eq('id', addon.row.id)
-              .in('status', ['active', 'past_due'])
-          : await addonTable(supabase)
-              .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-              .eq('id', addon.row.id)
-              .in('status', ['active', 'non_renewing', 'past_due'])
-      if (addonCancelErr) return storageFailure('org_addon cancel', addonCancelErr)
+      // Only an ACTIVE row becomes 'non_renewing' (which the helper treats as
+      // live): a past_due row is locked (D6) and must never be unlocked by a
+      // not-renew or disable. not_renew leaves past_due alone; disable ends it.
+      let result: { error: unknown } | null = null
+      if (event.event === 'subscription.not_renew' || (stillPaidFor && row.status === 'active')) {
+        result = await addonTable(supabase)
+          .update({ status: 'non_renewing' })
+          .eq('id', row.id)
+          .eq('status', 'active')
+      } else if (event.event === 'subscription.disable') {
+        result = await addonTable(supabase)
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('id', row.id)
+          .in('status', ['active', 'non_renewing', 'past_due'])
+      }
+      if (result?.error) return storageFailure('org_addon cancel', result.error)
     }
   }
 

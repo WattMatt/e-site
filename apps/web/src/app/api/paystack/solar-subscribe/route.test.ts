@@ -106,7 +106,7 @@ describe('POST /api/paystack/solar-subscribe — configuration', () => {
     delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL
     const res = await POST(req({ project_id: PROJECT_ID }))
     expect(res.status).toBe(503)
-    expect((await res.json()).error).toMatch(/not configured/i)
+    expect((await res.json()).error).toBe('Solar subscription plan not configured')
     expect(getUserMock).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
   })
@@ -220,6 +220,19 @@ describe('POST /api/paystack/solar-subscribe — Paystack initialize', () => {
   it('writes NOTHING — no service client is ever created', async () => {
     await POST(req({ project_id: PROJECT_ID }))
     expect(serviceClientMock).not.toHaveBeenCalled()
+  })
+
+  it('400s when the account has no email — Paystack cannot initialise without one', async () => {
+    getUserMock.mockResolvedValue({ data: { user: { id: 'u-owner', email: null } }, error: null })
+    const res = await POST(req({ project_id: PROJECT_ID }))
+    expect(res.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('502s (not an unhandled 500) when the Paystack request throws', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNRESET'))
+    const res = await POST(req({ project_id: PROJECT_ID }))
+    expect(res.status).toBe(502)
   })
 
   it('502s when Paystack refuses', async () => {

@@ -113,6 +113,7 @@ function makeClient(responses: Record<string, any> = {}) {
       lt: filter('lt'),
       is: filter('is'),
       in: filter('in'),
+      or: filter('or'),
       limit: (_n: number) => api,
       order: (_c: string) => api,
       maybeSingle: () => settle(),
@@ -693,6 +694,7 @@ function solarFirstCharge(meta: Record<string, unknown> = {}) {
       reference: REF,
       amount: 199900,
       paid_at: PAID_AT,
+      currency: 'ZAR',
       customer: { customer_code: 'CUS_solar' },
       plan: { plan_code: SOLAR_PLAN },
       metadata: {
@@ -1004,7 +1006,21 @@ describe('org add-on — renewals', () => {
     expect(res.status).toBe(200)
     const upd = serviceClientRef.value.of(`${ADDON}.update`)
     expect(upd).toHaveLength(1)
-    expect(upd[0].payload).toEqual({ status: 'active', current_period_end: '2028-09-28T10:00:00.000Z' })
+    expect(upd[0].payload).toEqual({
+      status: 'active',
+      current_period_end: '2028-09-28T10:00:00.000Z',
+      // A renewal booked through invoice.update is refundable too (review, spec Minor 8).
+      last_event_id: RENEW_REF,
+    })
+    expect(
+      serviceClientRef.value.of('billing.payment_events.upsert').map((c: any) => c.payload),
+    ).toContainEqual(expect.objectContaining({
+      event_type: 'charge.success.org_addon_subscription',
+      paystack_reference: RENEW_REF,
+      organisation_id: SOLAR_ORG,
+    }))
+    // A non_renewing row is never flipped back by a paid invoice; neither is a refund/cancel racing it.
+    expect(upd[0].filters).toEqual(expect.arrayContaining([['in', 'status', ['active', 'past_due']]]))
   })
 
   it('invoice.update failed → past_due, only from active', async () => {
@@ -1080,7 +1096,7 @@ describe('org add-on — not_renew / disable', () => {
     expect(upd).toHaveLength(1)
     expect(upd[0].payload).toEqual({ status: 'non_renewing' })
     expect(upd[0].filters).toEqual(
-      expect.arrayContaining([['eq', 'id', 'oas-1'], ['in', 'status', ['active', 'past_due']]]),
+      expect.arrayContaining([['eq', 'id', 'oas-1'], ['eq', 'status', 'active']]),
     )
   })
 
@@ -1094,7 +1110,7 @@ describe('org add-on — not_renew / disable', () => {
     expect(upd).toHaveLength(1)
     expect(upd[0].payload).toEqual({ status: 'non_renewing' })
     expect(upd[0].filters).toEqual(
-      expect.arrayContaining([['eq', 'id', 'oas-1'], ['in', 'status', ['active', 'past_due']]]),
+      expect.arrayContaining([['eq', 'id', 'oas-1'], ['eq', 'status', 'active']]),
     )
   })
 
@@ -1444,5 +1460,215 @@ describe('org add-on — invoice.update never resurrects without a genuinely new
       cancelled_at: null,
     })
     expect(upd[0].filters).toEqual(expect.arrayContaining([['eq', 'id', 'oas-1'], ['eq', 'status', 'cancelled']]))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Review fixes (Phase 1B code + spec reviews)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('org add-on — review: a foreign Paystack subscription never re-binds or moves the row (I-1)', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  /** Code lookup misses; the customer + Solar-plan fallback finds the row bound to SUB_solar. */
+  const boundRowByCustomer = {
+    [`${ADDON}.select`]: (ctx: any) =>
+      ctx.filters.some((f: any) => f[1] === 'paystack_customer_code')
+        ? { data: addonRow({ paystack_subscription_code: 'SUB_solar', current_period_end: '2099-01-01T00:00:00.000Z' }), error: null }
+        : { data: null, error: null },
+    'public.user_organisations.select': { data: [{ user_id: 'u-owner' }], error: null },
+  }
+
+  it('subscription.create for a DIFFERENT subscription does not overwrite the bound code', async () => {
+    serviceClientRef.value = makeClient(boundRowByCustomer)
+    const res = await POST(signedReq({
+      event: 'subscription.create',
+      data: {
+        subscription_code: 'SUB_dup',
+        customer: { customer_code: 'CUS_solar' },
+        plan: { plan_code: SOLAR_PLAN },
+        next_payment_date: '2100-01-01T00:00:00.000Z',
+      },
+    }))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('subscription.create binds only a row whose code is still null (guarded in the UPDATE too)', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: (ctx: any) =>
+        ctx.filters.some((f: any) => f[1] === 'paystack_customer_code')
+          ? { data: addonRow({ paystack_subscription_code: null }), error: null }
+          : { data: null, error: null },
+    })
+    await POST(signedReq({
+      event: 'subscription.create',
+      data: { subscription_code: 'SUB_new', customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN } },
+    }))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].filters).toEqual(
+      expect.arrayContaining([['or', 'paystack_subscription_code.is.null,paystack_subscription_code.eq.SUB_new', undefined]]),
+    )
+  })
+
+  it.each(['subscription.disable', 'subscription.not_renew'])(
+    '%s of the DUPLICATE subscription leaves the live row alone',
+    async (ev) => {
+      serviceClientRef.value = makeClient(boundRowByCustomer)
+      const res = await POST(signedReq({
+        event: ev,
+        data: { subscription_code: 'SUB_dup', customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN } },
+      }))
+      expect(res.status).toBe(200)
+      expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+    },
+  )
+
+  it('a renewal charge from a superseded/duplicate subscription is booked as a DUPLICATE, not absorbed (I-2)', async () => {
+    serviceClientRef.value = makeClient(boundRowByCustomer)
+    const res = await POST(signedReq({
+      event: 'charge.success',
+      data: {
+        reference: 'ref_old_sub',
+        amount: 199900,
+        currency: 'ZAR',
+        paid_at: '2027-09-28T09:59:00.000Z',
+        metadata: 0,
+        customer: { customer_code: 'CUS_solar' },
+        plan: { plan_code: SOLAR_PLAN },
+        subscription: { subscription_code: 'SUB_old' },
+      },
+    }))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+    expect(serviceClientRef.value.of('billing.payment_events.upsert')[0].payload.event_type).toBe(
+      'charge.success.org_addon_subscription.duplicate',
+    )
+    const note = serviceClientRef.value.of('public.notifications.insert')
+    expect(note).toHaveLength(1)
+    expect(note[0].payload[0].body).toMatch(/SUB_old/)
+    expect(recordInvoiceMock.mock.calls[0][2].description).toMatch(/DUPLICATE/)
+  })
+})
+
+describe('org add-on — review: one Paystack customer, two orgs (I-3)', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  it('subscription.create with an ambiguous customer binds the single still-unbound row', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: (ctx: any) => {
+        if (ctx.filters.some((f: any) => f[0] === 'is' && f[1] === 'paystack_subscription_code')) {
+          return { data: addonRow({ id: 'oas-2', organisation_id: 'org-2', paystack_subscription_code: null }), error: null }
+        }
+        if (ctx.filters.some((f: any) => f[1] === 'paystack_customer_code')) {
+          return { data: null, error: { code: 'PGRST116', message: 'multiple rows' } }
+        }
+        return { data: null, error: null }
+      },
+    })
+    await POST(signedReq({
+      event: 'subscription.create',
+      data: { subscription_code: 'SUB_org2', customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN } },
+    }))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toMatchObject({ paystack_subscription_code: 'SUB_org2' })
+    expect(upd[0].filters).toEqual(expect.arrayContaining([['eq', 'id', 'oas-2']]))
+  })
+
+  it('an ambiguous RENEWAL is never guessed onto either org', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: (ctx: any) =>
+        ctx.filters.some((f: any) => f[1] === 'paystack_customer_code')
+          ? { data: null, error: { code: 'PGRST116', message: 'multiple rows' } }
+          : { data: null, error: null },
+    })
+    const res = await POST(signedReq({
+      event: 'charge.success',
+      data: {
+        reference: 'ref_amb', amount: 199900, currency: 'ZAR', metadata: 0,
+        customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN },
+      },
+    }))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+    expect(serviceClientRef.value.of('billing.payment_events.upsert')[0].payload.event_type).toBe(
+      'charge.success.org_addon_subscription.unmatched',
+    )
+  })
+})
+
+describe('org add-on — review: a first charge must be for the Solar plan, in ZAR (I-4)', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  function firstCharge(over: Record<string, unknown>) {
+    const ev = solarFirstCharge()
+    return { ...ev, data: { ...ev.data, ...over } }
+  }
+
+  it('an R1 charge on another plan carrying Solar metadata grants nothing and is logged', async () => {
+    serviceClientRef.value = makeClient({ ...orgExists })
+    const res = await POST(signedReq(firstCharge({ amount: 100, plan: { plan_code: 'PLN_other' } })))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.insert`)).toHaveLength(0)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+    expect(recordInvoiceMock).not.toHaveBeenCalled()
+    expect(serviceClientRef.value.of('billing.payment_events.upsert')[0].payload.event_type).toBe(
+      'charge.success.org_addon_subscription.unmatched',
+    )
+  })
+
+  it('a non-ZAR charge grants nothing', async () => {
+    serviceClientRef.value = makeClient({ ...orgExists })
+    await POST(signedReq(firstCharge({ currency: 'USD' })))
+    expect(serviceClientRef.value.of(`${ADDON}.insert`)).toHaveLength(0)
+  })
+
+  it('a full-price ZAR charge whose payload omits the plan still grants', async () => {
+    serviceClientRef.value = makeClient({ ...orgExists })
+    await POST(signedReq(firstCharge({ plan: undefined })))
+    expect(serviceClientRef.value.of(`${ADDON}.insert`)).toHaveLength(1)
+  })
+})
+
+describe('org add-on — review: past_due and non_renewing transitions (minors)', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  it('disable on a PAST_DUE row goes to cancelled, never back to live non_renewing', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: { data: addonRow({ status: 'past_due', current_period_end: '2099-01-01T00:00:00.000Z' }), error: null },
+    })
+    await POST(signedReq({
+      event: 'subscription.disable',
+      data: { subscription_code: 'SUB_solar', customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN } },
+    }))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload.status).toBe('cancelled')
+  })
+
+  it('a renewal charge.success reviving a refunded row clears refunded_at', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: {
+        data: addonRow({ status: 'refunded', last_event_id: 'ref_old', current_period_end: '2027-09-28T10:00:00.000Z' }),
+        error: null,
+      },
+    })
+    await POST(signedReq({
+      event: 'charge.success',
+      data: {
+        reference: 'ref_renew_x', amount: 199900, currency: 'ZAR', paid_at: '2027-09-28T09:59:00.000Z', metadata: 0,
+        customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN },
+        subscription: { subscription_code: 'SUB_solar' },
+      },
+    }))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toMatchObject({ status: 'active', refunded_at: null, cancelled_at: null })
   })
 })

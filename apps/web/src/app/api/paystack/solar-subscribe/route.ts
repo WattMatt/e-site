@@ -92,6 +92,11 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Paystack cannot initialise a transaction without an email address.
+  if (!user.email) {
+    return NextResponse.json({ error: 'Your account has no email address to bill' }, { status: 400 })
+  }
+
   const site = process.env.NEXT_PUBLIC_SITE_URL
   // Owner default (Phase 1B): the payer returns to the project's Solar LOCKED
   // page flagged payment=received — it renders outside the gated group, so it
@@ -114,19 +119,24 @@ export async function POST(req: NextRequest) {
     },
   }
 
-  const response = await fetch('https://api.paystack.co/transaction/initialize', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${PAYSTACK_SECRET}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(initBody),
-  })
-
-  const body = await response.json()
+  let body: { status?: boolean; message?: string; data?: { authorization_url?: string } }
+  try {
+    const response = await fetch('https://api.paystack.co/transaction/initialize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${PAYSTACK_SECRET}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(initBody),
+    })
+    body = await response.json()
+  } catch (err) {
+    console.error('solar-subscribe: Paystack initialize failed:', err)
+    return NextResponse.json({ error: 'Could not reach Paystack. Please try again.' }, { status: 502 })
+  }
   if (!body.status) {
     return NextResponse.json({ error: body.message ?? 'Paystack error' }, { status: 502 })
   }
 
-  return NextResponse.json({ authorization_url: body.data.authorization_url })
+  return NextResponse.json({ authorization_url: body.data?.authorization_url })
 }
