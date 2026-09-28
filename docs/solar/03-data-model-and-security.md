@@ -31,10 +31,12 @@ in Storage with only hourly aggregates in Postgres. Decision gate at Phase 3 wit
 billing.org_addon_subscriptions (
   id uuid pk, organisation_id uuid not null references public.organisations,
   feature_key text not null check (feature_key in ('solar')),
-  status text not null check (status in ('active','non_renewing','past_due','cancelled','refunded')),
+  status text not null default 'pending'
+    check (status in ('pending','active','non_renewing','past_due','cancelled','refunded')),
   paystack_subscription_code text unique, paystack_customer_code text,
   amount_kobo bigint not null,                        -- 199900 = R1,999/yr excl. VAT
-  current_period_end timestamptz not null,
+  current_period_end timestamptz,            -- required unless status = 'pending' (CHECK)
+  last_event_id text,                         -- webhook idempotency
   started_at, cancelled_at, refunded_at, updated_at)
 unique (organisation_id, feature_key)
 -- RLS: SELECT for org owner/admin only (00187 billing read gate); writes service role (webhook) only
@@ -43,7 +45,8 @@ solar.project_access (
   project_id uuid references projects.projects on delete cascade, user_id uuid,
   organisation_id uuid not null,                      -- bound from the project by BEFORE trigger
   level text not null check (level in ('view','edit','edit_financials')),
-  granted_by uuid not null, granted_at timestamptz not null default now(),
+  granted_by uuid,                            -- bound to the caller by trigger; NULL only on service-path writes
+  granted_at timestamptz not null default now(),
   primary key (project_id, user_id))
 -- writes: org owner/admin of the project's org only; suppliers/client_viewers cannot be granted (trigger)
 
@@ -55,13 +58,19 @@ solar.access_requests (
 unique (project_id, requester_id, kind) where status = 'pending'
 ```
 
-### 2.2 Helpers (SECURITY DEFINER, `SET search_path = ''`, `REVOKE ALL FROM PUBLIC, anon`, `GRANT EXECUTE TO authenticated, service_role`)
+### 2.2 Helpers (in `public`, so PostgREST RPC reaches them; SECURITY DEFINER, `SET search_path = ''`, `REVOKE ALL FROM PUBLIC, anon`, `GRANT EXECUTE TO authenticated, service_role`) — as built in migration 00207
 - `public.org_has_solar(p_org uuid) → boolean`: active subscription with `current_period_end > now()`
   (status `active` or `non_renewing`), OR the WM-Consulting internal bypass (consistent with `has_feature`).
-- `solar.access_level(p_project uuid) → text` (`null|view|edit|edit_financials`): NULL unless
-  `org_has_solar(project's org)`; `edit_financials` for org owner/admin of the project's org; otherwise the
-  caller's `project_access.level`, and only while the caller is an active project member.
-- `solar.can_view(p)`, `solar.can_edit(p)`, `solar.can_see_money(p)` thin wrappers.
+  Answers only for the service/definer path or an active member of that org (no cross-org oracle).
+- `public.solar_is_grantor(p_project uuid)`: caller is an active owner/admin of the project's org.
+- `public.solar_access_level(p_project uuid) → text` (`null|view|edit|edit_financials`): NULL unless
+  `org_has_solar(project's org)`; `edit_financials` for org owner/admin of the project's org; NULL unless
+  `user_has_project_access` (active org membership, 00204) and the effective role is not client_viewer/supplier;
+  otherwise the caller's `project_access.level`.
+- `public.solar_can_view(p)`, `public.solar_can_edit(p)`, `public.solar_can_see_money(p)` thin wrappers.
+- **One eligibility rule** for requesting and being granted access: active member of the project's org whose
+  effective project role is non-null and not client_viewer/supplier (org-level PMs without a project row qualify).
+- Approval never silently downgrades an existing grant (highest level wins); grantors downgrade explicitly.
 - `@verify`: `anon_execute_absent` for all; `behaviour` directives proving (a) a lapsed org returns NULL,
   (b) a member without a grant returns NULL, (c) an org admin returns `edit_financials`.
 
