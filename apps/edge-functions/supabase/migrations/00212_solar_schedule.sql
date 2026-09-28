@@ -41,7 +41,17 @@
 --      work-item change still passes the spine's triggers, including
 --      work_items_transition_guard() with auth.uid() = the caller (depth 1),
 --      so the spine's governance holds exactly as for any other type.
---      solar.schedule_reorder / _save_baseline are SECURITY INVOKER (RLS decides).
+--      solar.schedule_reorder is DEFINER too (Edit gate, scoped to its project);
+--      solar.schedule_save_baseline is SECURITY INVOKER (RLS decides) and
+--      skips void items. Create takes an optional per-task "gatekeeper_id"
+--      (Undo of a delete keeps the original sign-off), honoured only when
+--      schedule_owner_is_eligible(); otherwise the caller signs off.
+--      schedule_owner_candidates returns email only to an editor.
+--   6a. schedule_tasks and schedule_segments are READ-ONLY to clients: no
+--      INSERT/UPDATE/DELETE grant, SELECT policy only. The RPCs are the only
+--      writers, so the work item, due date, segment fit and status stay in
+--      step. schedule_dependencies keeps direct writes (the link editor).
+--      schedule_segments_bind takes the per-project advisory lock.
 --   7. OWNER ELIGIBILITY (owner decision Q4, 2026-09-28). A solar_task owner
 --      (work_items.assignee_id) must be SOLAR-ELIGIBLE: an active project
 --      member whose effective project role (00107) is neither client_viewer
@@ -59,6 +69,33 @@
 --      client_viewer MAY hold other item types — is unchanged for them.
 --      The trigger sorts after work_items_assert_membership_trg ('a' < 's'),
 --      so a non-member is still refused by the spine's sentence first.
+--   8. SOLAR EDIT GOVERNS THE WORK ITEM (review C1). work_items_solar_edit_guard_trg
+--      (BEFORE UPDATE, WHEN OLD.item_type = 'solar_task') → solar.
+--      schedule_work_item_edit_guard(): with a JWT and without
+--      solar_can_edit(project) the only write is a status move by the
+--      assignee or gatekeeper, never to 'void'; any other column change →
+--      SQLSTATE 42501 + a sentence. The spine's write_roles alone (e.g. a
+--      contractor with no grant, a View grant, or a lapsed subscription) no
+--      longer reach a solar_task's title, due date, owner or void. BEFORE-row
+--      order on work_items: assert_membership → solar_edit_guard →
+--      solar_owner_guard → transition_guard.
+--   9. SOLAR_TASK ROWS ARE SOLAR DATA (review I1). work_items_solar_select_authz:
+--      RESTRICTIVE FOR SELECT on projects.work_items — item_type <> 'solar_task'
+--      OR solar_can_view(project) OR the reader is its assignee / gatekeeper.
+--      Other item types are untouched (asserted per user against 00196's
+--      predicate).
+--  10. A VOID FROM ANY PATH REMOVES THE BAR (review Spec-I2).
+--      work_items_solar_void_cleanup_trg (AFTER UPDATE OF status, on the move
+--      INTO void) deletes the side row; segments/links cascade, baseline rows
+--      keep their snapshot with task_id NULL.
+--  11. OWNER DECISION Q2 (write_roles = MARKUP_WRITE_ROLES), as built: an
+--      own-org INSPECTOR with Solar Edit is NOT in the write set, so the
+--      spine refuses them work-item governance. Moving a task they neither
+--      created nor sign off saves the Gantt dates but leaves the work item's
+--      due_date unchanged (the update RPC skips the mirror rather than trip
+--      the spine's (a4)); deleting a task they do not hold is refused whole
+--      with the spine's sentence "Only the project team, or whoever is
+--      holding SOLAR-n, can drop it." (P0001). Asserted, not an accident.
 --
 -- No DOCX anywhere (owner decision Q7): nothing here enumerates export formats.
 --
@@ -66,11 +103,17 @@
 -- source_status becomes immutable to client sessions and trigger-depth > 1
 -- writes bypass it. Nothing here writes source_status and every work-item write
 -- here runs at depth 1, so behaviour is identical before and after #193.
+-- #193's other work_items triggers (work_items_assignment_writeback_ins/_upd,
+-- AFTER) and its projection functions are SECURITY DEFINER with row_security
+-- off and act only on sourced types, so neither section 8's guard (no
+-- pg_trigger_depth() bypass needed: no trigger writes a solar_task) nor
+-- section 9's RESTRICTIVE SELECT (definer, row_security off) changes them.
 --
 -- 00207's schema-wide @verify directives are re-checked on every deploy and
 -- this migration conforms: FORCE RLS on every new relkind 'r' table; no
 -- RESTRICTIVE policy covering SELECT anywhere in solar (restrictive policies
--- here are per write verb only); every SECURITY DEFINER function in solar has
+-- in solar are per write verb only; the one RESTRICTIVE SELECT this file adds
+-- is on projects.work_items, item 9, and is deliberate); every SECURITY DEFINER function in solar has
 -- EXECUTE revoked from PUBLIC and anon.
 --
 -- No new schema, so no PostgREST db_schema PATCH (solar is exposed since 00207).
@@ -123,15 +166,30 @@
 -- trigger: schedule_templates_bind ON solar.schedule_templates
 -- trigger: work_items_solar_owner_guard_trg ON projects.work_items
 -- sql: (SELECT p.prosrc LIKE '%''client_viewer''%''supplier''%' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'solar' AND p.proname = 'schedule_owner_is_eligible')
+-- function: solar.schedule_work_item_edit_guard()
+-- trigger: work_items_solar_edit_guard_trg ON projects.work_items
+-- sql: (SELECT p.prosrc LIKE '%solar_can_edit%' AND p.prosrc LIKE '%''42501''%' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'solar' AND p.proname = 'schedule_work_item_edit_guard')
+-- function: solar.schedule_work_item_void_cleanup()
+-- trigger: work_items_solar_void_cleanup_trg ON projects.work_items
+-- policy: work_items_solar_select_authz ON projects.work_items RESTRICTIVE
+-- sql: (SELECT p.polcmd = 'r' AND pg_get_expr(p.polqual, p.polrelid) LIKE '%solar_can_view%' FROM pg_policy p WHERE p.polrelid = 'projects.work_items'::regclass AND p.polname = 'work_items_solar_select_authz')
 -- policy: schedule_tasks_select ON solar.schedule_tasks PERMISSIVE
--- policy: schedule_tasks_insert ON solar.schedule_tasks PERMISSIVE
--- policy: schedule_tasks_update ON solar.schedule_tasks PERMISSIVE
--- policy: schedule_tasks_delete ON solar.schedule_tasks PERMISSIVE
--- policy: schedule_tasks_insert_authz ON solar.schedule_tasks RESTRICTIVE
--- policy: schedule_tasks_update_authz ON solar.schedule_tasks RESTRICTIVE
--- policy: schedule_tasks_delete_authz ON solar.schedule_tasks RESTRICTIVE
+-- policy: schedule_segments_select ON solar.schedule_segments PERMISSIVE
+-- sql: (SELECT count(*) = 0 FROM pg_policy p WHERE p.polrelid IN ('solar.schedule_tasks'::regclass, 'solar.schedule_segments'::regclass) AND p.polcmd <> 'r')
+-- grant_absent: authenticated INSERT ON solar.schedule_tasks
+-- grant_absent: authenticated UPDATE ON solar.schedule_tasks
+-- grant_absent: authenticated DELETE ON solar.schedule_tasks
+-- grant_absent: authenticated INSERT ON solar.schedule_segments
+-- grant_absent: authenticated UPDATE ON solar.schedule_segments
+-- grant_absent: authenticated DELETE ON solar.schedule_segments
+-- sql: (SELECT p.prosecdef AND p.prosrc LIKE '%schedule_assert_editor%' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'solar' AND p.proname = 'schedule_reorder')
+-- sql: (SELECT p.prosrc LIKE '%pg_advisory_xact_lock%' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'solar' AND p.proname = 'schedule_segments_bind')
+-- sql: (SELECT p.prosrc LIKE '%status <> ''void''%' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'solar' AND p.proname = 'schedule_save_baseline')
+-- sql: (SELECT p.prosrc LIKE '%gatekeeper_id%schedule_owner_is_eligible%' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'solar' AND p.proname = 'schedule_create_tasks')
+-- sql: (SELECT p.prosrc LIKE '%solar_can_edit%email%' FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'solar' AND p.proname = 'schedule_owner_candidates')
+-- grant_absent: authenticated EXECUTE ON solar.schedule_work_item_edit_guard()
+-- grant_absent: authenticated EXECUTE ON solar.schedule_work_item_void_cleanup()
 -- policy: schedule_dependencies_insert_authz ON solar.schedule_dependencies RESTRICTIVE
--- policy: schedule_segments_insert_authz ON solar.schedule_segments RESTRICTIVE
 -- policy: schedule_baselines_insert_authz ON solar.schedule_baselines RESTRICTIVE
 -- policy: schedule_baseline_tasks_insert_authz ON solar.schedule_baseline_tasks RESTRICTIVE
 -- policy: schedule_settings_update_authz ON solar.schedule_settings RESTRICTIVE
@@ -397,6 +455,9 @@ BEGIN
     END IF;
     NEW.project_id := v_project;
     NEW.organisation_id := v_org;
+    -- The same per-project lock the link bind and the RPCs take (review M3):
+    -- two concurrent segment writes cannot both pass the overlap check below.
+    PERFORM pg_advisory_xact_lock(hashtextextended('solar.schedule:' || v_project::text, 0));
     IF NEW.start_date < v_start OR NEW.end_date > v_end THEN
         RAISE EXCEPTION 'solar.schedule_segments: a segment must lie inside its task' USING ERRCODE = '23514';
     END IF;
@@ -564,6 +625,78 @@ CREATE TRIGGER work_items_solar_owner_guard_trg
     FOR EACH ROW WHEN (NEW.item_type = 'solar_task')
     EXECUTE FUNCTION solar.schedule_work_item_owner_guard();
 
+-- ── 5c. Solar Edit governs a solar_task's work item (review C1) ──────────────
+-- The spine's work_items_update / _update_gate (00196 §9) admit the TYPE's
+-- write set, so a contractor with no Solar grant (or a View grant, or while the
+-- org's subscription has lapsed) could rename, void, re-date or reassign a
+-- SOLAR-n item over PostgREST, bypassing solar_can_edit. Without Solar Edit the
+-- ONLY write left is a STATUS move by the item's current assignee or
+-- gatekeeper (My Work's "done"/"sign off"), never to 'void'. Everything else is
+-- refused with SQLSTATE 42501 and a sentence.
+--   * Compared as the whole row minus the columns the spine itself writes on a
+--     transition: closed_at / closed_by / last_activity_at are stamped or
+--     restored by work_items_transition_guard(), which fires AFTER this one
+--     ('solar_e' < 't'), and ball_in_court_id is generated. void_reason is
+--     compared, so a void row's reason cannot be edited without Edit either.
+--   * The definer RPCs pass because auth.uid() there is the calling editor.
+--   * Service role / migrations (auth.uid() IS NULL) pass.
+--   * No pg_trigger_depth() bypass: nothing writes a solar_task from inside a
+--     trigger (PR #193's projections touch only sourced types), so every write
+--     is judged — a bypass here would be an unused door.
+-- Sorts after work_items_assert_membership_trg ('a' < 's') and before
+-- work_items_solar_owner_guard_trg ('solar_e' < 'solar_o'), so a no-Edit
+-- reassignment gets THIS sentence, not SOL01.
+CREATE OR REPLACE FUNCTION solar.schedule_work_item_edit_guard()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    v_actor UUID := auth.uid();
+    v_spine CONSTANT TEXT[] := ARRAY['status', 'closed_at', 'closed_by', 'last_activity_at', 'ball_in_court_id'];
+BEGIN
+    IF v_actor IS NULL OR public.solar_can_edit(OLD.project_id) THEN
+        RETURN NEW;
+    END IF;
+    IF (pg_catalog.to_jsonb(NEW) - v_spine) IS DISTINCT FROM (pg_catalog.to_jsonb(OLD) - v_spine) THEN
+        RAISE EXCEPTION 'Changing % needs Edit access to Solar on this project. Without it you can only move a task you hold to its next step.', OLD.ref
+            USING ERRCODE = '42501';
+    END IF;
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+        IF NEW.status = 'void' THEN
+            RAISE EXCEPTION 'Removing % from the programme needs Edit access to Solar on this project.', OLD.ref
+                USING ERRCODE = '42501';
+        END IF;
+        IF v_actor IS DISTINCT FROM OLD.assignee_id AND v_actor IS DISTINCT FROM OLD.gatekeeper_id THEN
+            RAISE EXCEPTION 'Only the person % is assigned to, or whoever signs it off, can move it along without Edit access to Solar.', OLD.ref
+                USING ERRCODE = '42501';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS work_items_solar_edit_guard_trg ON projects.work_items;
+CREATE TRIGGER work_items_solar_edit_guard_trg
+    BEFORE UPDATE ON projects.work_items
+    FOR EACH ROW WHEN (OLD.item_type = 'solar_task')
+    EXECUTE FUNCTION solar.schedule_work_item_edit_guard();
+
+-- ── 5d. A void from ANY path removes the bar (review Spec-I2) ───────────────
+-- schedule_remove_tasks voids and deletes in one go, but an editor can also
+-- drop a SOLAR-n item from My Work (a plain work_items UPDATE). Without this
+-- the side row outlived its item: still drawn, still counted by the
+-- readiness step, still snapshotted by the next baseline. AFTER UPDATE OF
+-- status, only on the transition INTO void: segments and links cascade;
+-- baseline rows keep their snapshot with task_id SET NULL (history kept).
+-- Void is terminal (00196 §12 (c)), so there is no un-void to restore from.
+CREATE OR REPLACE FUNCTION solar.schedule_work_item_void_cleanup()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+    DELETE FROM solar.schedule_tasks WHERE work_item_id = NEW.id;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS work_items_solar_void_cleanup_trg ON projects.work_items;
+CREATE TRIGGER work_items_solar_void_cleanup_trg
+    AFTER UPDATE OF status ON projects.work_items
+    FOR EACH ROW WHEN (NEW.item_type = 'solar_task' AND NEW.status = 'void' AND OLD.status IS DISTINCT FROM 'void')
+    EXECUTE FUNCTION solar.schedule_work_item_void_cleanup();
+
 REVOKE ALL ON FUNCTION solar.schedule_tasks_bind() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.schedule_tasks_bind() FROM anon;
 REVOKE ALL ON FUNCTION solar.schedule_segments_bind() FROM PUBLIC;
@@ -582,6 +715,12 @@ REVOKE ALL ON FUNCTION solar.schedule_owner_is_eligible(uuid, uuid) FROM authent
 GRANT EXECUTE ON FUNCTION solar.schedule_owner_is_eligible(uuid, uuid) TO service_role;
 REVOKE ALL ON FUNCTION solar.schedule_work_item_owner_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.schedule_work_item_owner_guard() FROM anon;
+REVOKE ALL ON FUNCTION solar.schedule_work_item_edit_guard() FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.schedule_work_item_edit_guard() FROM anon;
+REVOKE ALL ON FUNCTION solar.schedule_work_item_edit_guard() FROM authenticated;
+REVOKE ALL ON FUNCTION solar.schedule_work_item_void_cleanup() FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.schedule_work_item_void_cleanup() FROM anon;
+REVOKE ALL ON FUNCTION solar.schedule_work_item_void_cleanup() FROM authenticated;
 
 -- ── 6. RLS: SELECT permissive on solar_can_view; each write verb = permissive
 --      membership + RESTRICTIVE solar_can_edit (00207 / 00200 shape). ──────────
@@ -614,36 +753,19 @@ CREATE POLICY schedule_settings_insert_authz ON solar.schedule_settings AS RESTR
 CREATE POLICY schedule_settings_update_authz ON solar.schedule_settings AS RESTRICTIVE FOR UPDATE TO authenticated
     USING (public.solar_can_edit(project_id)) WITH CHECK (public.solar_can_edit(project_id));
 
--- tasks, segments, dependencies: full verb set
+-- tasks and segments: READ ONLY to clients (review I6). Every write goes
+-- through the definer RPCs (section 8), which keep the work item, its due
+-- date, the segment fit and the gantt status in step. A direct DELETE left a
+-- live SOLAR-n with no bar; a direct end_date skipped the due-date mirror and
+-- the segment re-fit; a direct gantt_status never closed the item. The web
+-- writes neither table directly (grep apps/web: reads only).
 CREATE POLICY schedule_tasks_select ON solar.schedule_tasks FOR SELECT TO authenticated
     USING (public.solar_can_view(project_id));
-CREATE POLICY schedule_tasks_insert ON solar.schedule_tasks FOR INSERT TO authenticated
-    WITH CHECK (public.user_has_project_access(project_id));
-CREATE POLICY schedule_tasks_update ON solar.schedule_tasks FOR UPDATE TO authenticated
-    USING (public.user_has_project_access(project_id)) WITH CHECK (public.user_has_project_access(project_id));
-CREATE POLICY schedule_tasks_delete ON solar.schedule_tasks FOR DELETE TO authenticated
-    USING (public.user_has_project_access(project_id));
-CREATE POLICY schedule_tasks_insert_authz ON solar.schedule_tasks AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (public.solar_can_edit(project_id));
-CREATE POLICY schedule_tasks_update_authz ON solar.schedule_tasks AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (public.solar_can_edit(project_id)) WITH CHECK (public.solar_can_edit(project_id));
-CREATE POLICY schedule_tasks_delete_authz ON solar.schedule_tasks AS RESTRICTIVE FOR DELETE TO authenticated
-    USING (public.solar_can_edit(project_id));
-
 CREATE POLICY schedule_segments_select ON solar.schedule_segments FOR SELECT TO authenticated
     USING (public.solar_can_view(project_id));
-CREATE POLICY schedule_segments_insert ON solar.schedule_segments FOR INSERT TO authenticated
-    WITH CHECK (public.user_has_project_access(project_id));
-CREATE POLICY schedule_segments_update ON solar.schedule_segments FOR UPDATE TO authenticated
-    USING (public.user_has_project_access(project_id)) WITH CHECK (public.user_has_project_access(project_id));
-CREATE POLICY schedule_segments_delete ON solar.schedule_segments FOR DELETE TO authenticated
-    USING (public.user_has_project_access(project_id));
-CREATE POLICY schedule_segments_insert_authz ON solar.schedule_segments AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (public.solar_can_edit(project_id));
-CREATE POLICY schedule_segments_update_authz ON solar.schedule_segments AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (public.solar_can_edit(project_id)) WITH CHECK (public.solar_can_edit(project_id));
-CREATE POLICY schedule_segments_delete_authz ON solar.schedule_segments AS RESTRICTIVE FOR DELETE TO authenticated
-    USING (public.solar_can_edit(project_id));
+
+-- dependencies: full verb set (the link editor writes them directly; the bind
+-- trigger refuses self, cross-project and loops on INSERT and UPDATE)
 
 CREATE POLICY schedule_dependencies_select ON solar.schedule_dependencies FOR SELECT TO authenticated
     USING (public.solar_can_view(project_id));
@@ -710,9 +832,32 @@ CREATE POLICY schedule_templates_update ON solar.schedule_templates FOR UPDATE T
     WITH CHECK (EXISTS (SELECT 1 FROM public.user_organisations uo WHERE uo.user_id = auth.uid()
                      AND uo.organisation_id = schedule_templates.organisation_id AND uo.is_active AND uo.role IN ('owner', 'admin')));
 
+-- ── 6b. A SOLAR-n work item is Solar data (review I1) ──────────────────────
+-- 00196's work_items_select admits every project member except a client
+-- viewer — suppliers, members with no Solar grant, and everyone while the
+-- org's Solar subscription has lapsed. 00207's rule is that they never see
+-- Solar data. RESTRICTIVE and FOR SELECT ONLY (a RESTRICTIVE FOR ALL would
+-- also narrow the write verbs' visibility in ways 00196 did not intend —
+-- 00205/00206). Every non-solar row passes the first arm untouched, so no
+-- other item type's visibility moves (asserted per user against 00196's own
+-- predicate). A person the item is assigned to, or who signs it off, keeps it
+-- in My Work regardless of grant. Definer paths (the RPCs, PR #193's
+-- projections: SECURITY DEFINER, row_security off, sourced types only) and
+-- service_role are not subject to it. Because UPDATE applies SELECT policies
+-- to the rows it reads, a no-grant member's UPDATE of a solar item they do not
+-- hold matches nothing — 5c is the refusal for the items they can see.
+DROP POLICY IF EXISTS work_items_solar_select_authz ON projects.work_items;
+CREATE POLICY work_items_solar_select_authz ON projects.work_items
+    AS RESTRICTIVE FOR SELECT TO authenticated
+    USING (item_type <> 'solar_task'
+           OR public.solar_can_view(project_id)
+           OR assignee_id = auth.uid()
+           OR gatekeeper_id = auth.uid());
+
 -- ── 7. Grants (the schema's default privileges granted everything; narrow them) ─
-GRANT SELECT, INSERT, UPDATE, DELETE ON solar.schedule_tasks, solar.schedule_segments,
-    solar.schedule_dependencies, solar.schedule_filter_presets TO authenticated;
+GRANT SELECT ON solar.schedule_tasks, solar.schedule_segments TO authenticated;
+REVOKE INSERT, UPDATE, DELETE ON solar.schedule_tasks, solar.schedule_segments FROM authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON solar.schedule_dependencies, solar.schedule_filter_presets TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON solar.schedule_settings, solar.schedule_templates TO authenticated;
 REVOKE DELETE ON solar.schedule_settings, solar.schedule_templates FROM authenticated;
 GRANT SELECT, INSERT, DELETE ON solar.schedule_baselines TO authenticated;
@@ -771,6 +916,12 @@ END $$;
 -- owner → the spine's resolver chain; a pick that is not Solar-eligible (a
 -- client-viewer triage owner is legal for the spine) falls back to the
 -- creator, who holds Solar Edit and is therefore eligible by 00207's rule.
+-- Gatekeeper (review Spec-I4): an optional per-task "gatekeeper_id" — sent by
+-- Undo of a delete so sign-off stays with the ORIGINAL creator (Q1) instead of
+-- whoever pressed Undo. Honoured only when solar.schedule_owner_is_eligible()
+-- (active member, not client_viewer / supplier); otherwise the caller, as for
+-- every other create. A task created "done" closes only when the caller IS the
+-- gatekeeper; with someone else's seat it waits for their sign-off (answered).
 -- Returns {key: task_id}.
 CREATE OR REPLACE FUNCTION solar.schedule_create_tasks(
     p_project_id UUID, p_tasks JSONB, p_links JSONB DEFAULT '[]'::jsonb, p_replace BOOLEAN DEFAULT false)
@@ -785,6 +936,7 @@ DECLARE
     s         JSONB;
     v_name    TEXT;
     v_owner   UUID;
+    v_gk      UUID;
     v_start   DATE;
     v_end     DATE;
     v_ms      BOOLEAN;
@@ -839,11 +991,15 @@ BEGIN
                 v_owner := v_uid;
             END IF;
         END IF;
+        v_gk := NULLIF(t->>'gatekeeper_id', '')::uuid;
+        IF v_gk IS NULL OR NOT solar.schedule_owner_is_eligible(p_project_id, v_gk) THEN
+            v_gk := v_uid;
+        END IF;
         v_sort := v_sort + 1;
 
         INSERT INTO projects.work_items
             (organisation_id, project_id, item_type, origin, title, status, assignee_id, gatekeeper_id, due_date, created_by)
-        VALUES (v_org, p_project_id, 'solar_task', 'manual', left(v_name, 300), 'open', v_owner, v_uid, v_end, v_uid)
+        VALUES (v_org, p_project_id, 'solar_task', 'manual', left(v_name, 300), 'open', v_owner, v_gk, v_end, v_uid)
         RETURNING id INTO v_wi;
 
         INSERT INTO solar.schedule_tasks
@@ -866,8 +1022,8 @@ BEGIN
         END IF;
 
         IF v_status = 'done' THEN
-            -- The creator is the gatekeeper (gatekeeper_rule = 'creator'), so the guard admits the close.
-            UPDATE projects.work_items SET status = 'closed' WHERE id = v_wi;
+            -- Only the gatekeeper closes (00196 §12 (d)); anyone else hands it for sign-off.
+            UPDATE projects.work_items SET status = CASE WHEN v_gk = v_uid THEN 'closed' ELSE 'answered' END WHERE id = v_wi;
         END IF;
         v_map := v_map || jsonb_build_object(COALESCE(NULLIF(t->>'key', ''), v_task::text), v_task);
     END LOOP;
@@ -1026,17 +1182,25 @@ BEGIN
 END $$;
 
 -- Reorder: sort_order = position in p_ids (the FULL list — WM renumbered only the
--- filtered rows and collided). INVOKER: RLS (solar_can_edit on UPDATE) decides.
+-- filtered rows and collided). DEFINER since review I6 (clients hold no UPDATE
+-- on schedule_tasks): the Edit gate is schedule_assert_editor, and only rows
+-- of p_project_id move — an id from another project is ignored.
 CREATE OR REPLACE FUNCTION solar.schedule_reorder(p_project_id UUID, p_ids UUID[])
-RETURNS INTEGER LANGUAGE sql SECURITY INVOKER SET search_path = '' AS $$
-    WITH o AS (SELECT u.id, u.ord FROM unnest(p_ids) WITH ORDINALITY AS u(id, ord)),
-         upd AS (UPDATE solar.schedule_tasks t SET sort_order = o.ord::int
-                   FROM o WHERE t.id = o.id AND t.project_id = p_project_id AND t.sort_order <> o.ord::int
-                 RETURNING 1)
-    SELECT count(*)::int FROM upd;
-$$;
+RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_n INTEGER;
+BEGIN
+    PERFORM solar.schedule_assert_editor(p_project_id);
+    PERFORM pg_advisory_xact_lock(hashtextextended('solar.schedule:' || p_project_id::text, 0));
+    WITH o AS (SELECT u.id, u.ord FROM unnest(p_ids) WITH ORDINALITY AS u(id, ord))
+    UPDATE solar.schedule_tasks t SET sort_order = o.ord::int
+      FROM o WHERE t.id = o.id AND t.project_id = p_project_id AND t.sort_order <> o.ord::int;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RETURN v_n;
+END $$;
 
--- Save the current programme as a baseline. INVOKER: RLS decides (Edit to insert).
+-- Save the current programme as a baseline. INVOKER: RLS decides (Edit to
+-- insert). Voided items are excluded (belt and braces: 5d already removed
+-- their side rows).
 CREATE OR REPLACE FUNCTION solar.schedule_save_baseline(p_project_id UUID, p_name TEXT, p_description TEXT)
 RETURNS UUID LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE v_id UUID; v_mode TEXT;
@@ -1048,17 +1212,19 @@ BEGIN
     INSERT INTO solar.schedule_baseline_tasks (baseline_id, task_id, work_item_ref, name, start_date, end_date, is_milestone, sort_order)
     SELECT v_id, t.id, wi.ref, wi.title, t.start_date, t.end_date, t.is_milestone, t.sort_order
       FROM solar.schedule_tasks t JOIN projects.work_items wi ON wi.id = t.work_item_id
-     WHERE t.project_id = p_project_id;
+     WHERE t.project_id = p_project_id AND wi.status <> 'void';
     RETURN v_id;
 END $$;
 
 -- Owner picker: Solar-eligible members of the project (Q4: active, effective
 -- role neither client_viewer nor supplier — the same rule the write path
 -- enforces), visible to anyone who can view the schedule; empty for everyone else.
+-- email only for an EDITOR (review M12): a View user may be external, and
+-- only the editor paths (owner picker in the dialog, import matching) use it.
 CREATE OR REPLACE FUNCTION solar.schedule_owner_candidates(p_project_id UUID)
 RETURNS TABLE (user_id UUID, full_name TEXT, email TEXT)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
-    SELECT p.id, p.full_name, p.email
+    SELECT p.id, p.full_name, CASE WHEN public.solar_can_edit(p_project_id) THEN p.email END
       FROM public.profiles p
      WHERE public.solar_can_view(p_project_id)
        AND p.id IN (

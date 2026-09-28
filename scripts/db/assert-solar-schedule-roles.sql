@@ -14,6 +14,20 @@
 -- client_viewer nor supplier. Refused with SQLSTATE 'SOL01' on every path that
 -- sets work_items.assignee_id (create RPC, update RPC, a direct UPDATE), and
 -- the no-owner resolver chain skips an ineligible pick (section 5b).
+--
+-- Review round (sections 16-25 + lapse additions in 15), on project 3:
+--   C1  without Solar Edit a solar_task work item takes only a status move by
+--       its assignee/gatekeeper (42501 otherwise), also under lapse;
+--   I1  solar_task rows invisible to suppliers / no-grant members / everyone
+--       lapsed (assignee keeps their own); every non-solar row's visibility is
+--       compared per user with 00196's own predicate evaluated as postgres;
+--   I6  no direct INSERT/UPDATE/DELETE on schedule_tasks / schedule_segments;
+--       reorder is Edit-gated and project-scoped;
+--   Spec-I2  a My Work void removes the side row; baselines exclude it, older
+--       baselines keep it with task_id NULL;  Spec-I4  create's gatekeeper_id;
+--   I2  inspector-with-Edit behaviour (owner decision Q2) as documented in
+--       00212 item 11;  M2  link UPDATE loop;  Spec-8  p_replace atomicity and
+--       direct reassign to a supplier;  M12  candidate emails only for editors.
 
 CREATE TEMP TABLE _r (k text, v boolean) ON COMMIT DROP;
 GRANT ALL ON _r TO authenticated, anon, service_role;
@@ -33,6 +47,14 @@ DECLARE
   v_supplier UUID := gen_random_uuid();   -- supplier, project member
   v_foreign  UUID := gen_random_uuid();   -- admin of another org
   v_outsider UUID := gen_random_uuid();   -- contractor of the org, NOT on the project
+  v_insp     UUID := gen_random_uuid();   -- own-org inspector, EDIT grant on project 3 (I2: not in write_roles)
+  v_project3 UUID := gen_random_uuid();   -- review-round project (sections 16-22)
+  v_plain    UUID;                        -- a plain 'task' work item on project 3 (I1 control)
+  v_s1 UUID; v_s2 UUID; v_s3 UUID; v_s4 UUID; v_n1 UUID;
+  v_w1 UUID; v_w2 UUID; v_w3 UUID; v_w4 UUID; v_wn1 UUID;
+  v_l2       UUID;
+  v_exp      INT;
+  v_n2       INT;
   v_map      JSONB;
   v_a        UUID;
   v_b        UUID;
@@ -50,7 +72,7 @@ DECLARE
 BEGIN
   -- ── Fixtures (as postgres) ────────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES (v_org, 'solar-schedule-probe'), (v_org2, 'solar-schedule-probe-2');
-  FOREACH u IN ARRAY ARRAY[v_admin, v_pm, v_con, v_viewer, v_nogrant, v_client, v_supplier, v_foreign, v_outsider] LOOP
+  FOREACH u IN ARRAY ARRAY[v_admin, v_pm, v_con, v_viewer, v_nogrant, v_client, v_supplier, v_foreign, v_outsider, v_insp] LOOP
     INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password,
                             email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
     VALUES (u, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -61,15 +83,25 @@ BEGIN
     (v_con, v_org, 'contractor', TRUE), (v_viewer, v_org, 'contractor', TRUE),
     (v_nogrant, v_org, 'contractor', TRUE), (v_client, v_org, 'client_viewer', TRUE),
     (v_supplier, v_org, 'supplier', TRUE),
-    (v_outsider, v_org, 'contractor', TRUE), (v_foreign, v_org2, 'admin', TRUE);
+    (v_outsider, v_org, 'contractor', TRUE), (v_foreign, v_org2, 'admin', TRUE),
+    (v_insp, v_org, 'inspector', TRUE);
   INSERT INTO projects.projects (id, organisation_id, name, created_by) VALUES
-    (v_project, v_org, 'solar-schedule-probe', v_admin), (v_project2, v_org, 'solar-schedule-probe-2', v_admin);
+    (v_project, v_org, 'solar-schedule-probe', v_admin), (v_project2, v_org, 'solar-schedule-probe-2', v_admin),
+    (v_project3, v_org, 'solar-schedule-probe-3', v_admin);
   INSERT INTO projects.project_members (project_id, user_id, organisation_id, role, is_active) VALUES
     (v_project, v_con, v_org, 'contractor', TRUE), (v_project, v_viewer, v_org, 'contractor', TRUE),
     (v_project, v_nogrant, v_org, 'contractor', TRUE), (v_project, v_client, v_org, 'client_viewer', TRUE),
     (v_project, v_supplier, v_org, 'supplier', TRUE),
     (v_project2, v_con, v_org, 'contractor', TRUE), (v_project2, v_nogrant, v_org, 'contractor', TRUE),
-    (v_project2, v_client, v_org, 'client_viewer', TRUE), (v_project2, v_supplier, v_org, 'supplier', TRUE);
+    (v_project2, v_client, v_org, 'client_viewer', TRUE), (v_project2, v_supplier, v_org, 'supplier', TRUE),
+    (v_project3, v_con, v_org, 'contractor', TRUE), (v_project3, v_viewer, v_org, 'contractor', TRUE),
+    (v_project3, v_nogrant, v_org, 'contractor', TRUE), (v_project3, v_client, v_org, 'client_viewer', TRUE),
+    (v_project3, v_supplier, v_org, 'supplier', TRUE), (v_project3, v_insp, v_org, 'inspector', TRUE);
+  -- I1 control: a plain 'task' on project 3, seeded as postgres before any
+  -- impersonation. Its visibility must not change for anyone.
+  INSERT INTO projects.work_items (organisation_id, project_id, item_type, origin, title, status, assignee_id, gatekeeper_id, due_date, created_by)
+  VALUES (v_org, v_project3, 'task', 'manual', 'Plain task', 'open', v_con, v_admin, DATE '2026-11-20', v_admin)
+  RETURNING id INTO v_plain;
   INSERT INTO billing.org_addon_subscriptions (organisation_id, feature_key, status, amount_kobo, current_period_end)
   VALUES (v_org, 'solar', 'active', 199900, now() + interval '1 year');
 
@@ -84,7 +116,8 @@ BEGIN
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   INSERT INTO solar.project_access (project_id, user_id, level) VALUES
-    (v_project, v_con, 'edit'), (v_project, v_viewer, 'view'), (v_project2, v_con, 'edit');
+    (v_project, v_con, 'edit'), (v_project, v_viewer, 'view'), (v_project2, v_con, 'edit'),
+    (v_project3, v_con, 'edit'), (v_project3, v_viewer, 'view'), (v_project3, v_insp, 'edit');
   RESET ROLE;
 
   -- ── 1. Registry ────────────────────────────────────────────────────────────
@@ -203,14 +236,16 @@ BEGIN
     END;
   END LOOP;
   -- Reassigning with a direct UPDATE of the work item (My Work / PostgREST path).
-  BEGIN
-    UPDATE projects.work_items SET assignee_id = v_client WHERE id = v_qwi;
-    GET DIAGNOSTICS v_n = ROW_COUNT;
-    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
-  EXCEPTION
-    WHEN SQLSTATE 'SOL01' THEN INSERT INTO _r VALUES ('direct_reassign_to_client_REFUSED', true);
-    WHEN OTHERS THEN INSERT INTO _r VALUES ('direct_reassign_to_client_REFUSED', false);
-  END;
+  FOR i IN 1..2 LOOP
+    BEGIN
+      UPDATE projects.work_items SET assignee_id = v_users[i] WHERE id = v_qwi;
+      GET DIAGNOSTICS v_n = ROW_COUNT;
+      RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+    EXCEPTION
+      WHEN SQLSTATE 'SOL01' THEN INSERT INTO _r VALUES ('direct_reassign_to_' || v_labels[i] || '_REFUSED', true);
+      WHEN OTHERS THEN INSERT INTO _r VALUES ('direct_reassign_to_' || v_labels[i] || '_REFUSED', false);
+    END;
+  END LOOP;
   BEGIN
     PERFORM solar.schedule_update_tasks(v_project2, jsonb_build_array(jsonb_build_object('id', v_q, 'owner_id', v_pm)));
     INSERT INTO _r SELECT 'reassign_owner_pm_accepted', EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_qwi AND assignee_id = v_pm);
@@ -255,16 +290,19 @@ BEGIN
   END;
 
   -- ── 7. Segments stay inside their task and never overlap ──────────────────
+  -- Through the create RPC (the only door since direct segment writes are
+  -- revoked, I6); a refused create rolls back whole, so project 1's counts hold.
   BEGIN
-    INSERT INTO solar.schedule_segments (task_id, start_date, end_date) VALUES (v_b, DATE '2026-10-01', DATE '2026-10-06');
+    PERFORM solar.schedule_create_tasks(v_project, '[{"key":"so","name":"Seg outside","start":"2026-10-06","end":"2026-10-08",
+      "segments":[{"start":"2026-10-01","end":"2026-10-06"},{"start":"2026-10-07","end":"2026-10-08"}]}]'::jsonb, '[]'::jsonb, false);
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION
     WHEN check_violation THEN INSERT INTO _r VALUES ('segment_outside_task_REFUSED', true);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('segment_outside_task_REFUSED', false);
   END;
   BEGIN
-    INSERT INTO solar.schedule_segments (task_id, start_date, end_date) VALUES (v_b, DATE '2026-10-06', DATE '2026-10-07');
-    INSERT INTO solar.schedule_segments (task_id, start_date, end_date) VALUES (v_b, DATE '2026-10-07', DATE '2026-10-08');
+    PERFORM solar.schedule_create_tasks(v_project, '[{"key":"sv","name":"Seg overlap","start":"2026-10-06","end":"2026-10-08",
+      "segments":[{"start":"2026-10-06","end":"2026-10-07"},{"start":"2026-10-07","end":"2026-10-08"}]}]'::jsonb, '[]'::jsonb, false);
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION
     WHEN check_violation THEN INSERT INTO _r VALUES ('segment_overlap_REFUSED', true);
@@ -339,12 +377,21 @@ BEGIN
   SET LOCAL ROLE authenticated;
   SELECT count(*) INTO v_n FROM solar.schedule_tasks WHERE project_id = v_project;
   INSERT INTO _r VALUES ('viewer_reads_tasks', v_n = 3);
-  UPDATE solar.schedule_tasks SET progress = 50 WHERE project_id = v_project;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
-  INSERT INTO _r VALUES ('viewer_update_affects_nothing', v_n = 0);
-  DELETE FROM solar.schedule_tasks WHERE project_id = v_project;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
-  INSERT INTO _r VALUES ('viewer_delete_affects_nothing', v_n = 0);
+  -- I6: nobody holds direct write privileges on schedule_tasks any more.
+  BEGIN
+    UPDATE solar.schedule_tasks SET progress = 50 WHERE project_id = v_project;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('viewer_direct_task_update_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('viewer_direct_task_update_REFUSED', false);
+  END;
+  BEGIN
+    DELETE FROM solar.schedule_tasks WHERE project_id = v_project;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('viewer_direct_task_delete_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('viewer_direct_task_delete_REFUSED', false);
+  END;
   BEGIN
     PERFORM solar.schedule_save_baseline(v_project, 'Viewer baseline', NULL);
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
@@ -441,12 +488,398 @@ BEGIN
   END;
   RESET ROLE;
 
+  -- ═══ Review round (sections 16-23), all on project 3 ══════════════════════
+  -- ── 16. Fixtures: four tasks by the editor; s2 is split ──────────────────
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_map := solar.schedule_create_tasks(v_project3, jsonb_build_array(
+      jsonb_build_object('key', 's1', 'name', 'Nogrant-owned', 'start', '2026-11-02', 'end', '2026-11-06', 'owner_id', v_nogrant),
+      jsonb_build_object('key', 's2', 'name', 'Split task', 'start', '2026-11-02', 'end', '2026-11-06', 'owner_id', v_con,
+        'segments', '[{"start":"2026-11-02","end":"2026-11-03"},{"start":"2026-11-05","end":"2026-11-06"}]'::jsonb),
+      jsonb_build_object('key', 's3', 'name', 'To be voided', 'start', '2026-11-02', 'end', '2026-11-06', 'owner_id', v_con),
+      jsonb_build_object('key', 's4', 'name', 'Inspector target', 'start', '2026-11-02', 'end', '2026-11-06', 'owner_id', v_con)),
+    '[]'::jsonb, false);
+  RESET ROLE;
+  v_s1 := (v_map->>'s1')::uuid; v_s2 := (v_map->>'s2')::uuid; v_s3 := (v_map->>'s3')::uuid; v_s4 := (v_map->>'s4')::uuid;
+  SELECT work_item_id INTO v_w1 FROM solar.schedule_tasks WHERE id = v_s1;
+  SELECT work_item_id INTO v_w2 FROM solar.schedule_tasks WHERE id = v_s2;
+  SELECT work_item_id INTO v_w3 FROM solar.schedule_tasks WHERE id = v_s3;
+  SELECT work_item_id INTO v_w4 FROM solar.schedule_tasks WHERE id = v_s4;
+
+  -- ── 17. Spec-I4: create honours an ELIGIBLE gatekeeper (undo of a delete) ─
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    v_map := solar.schedule_create_tasks(v_project3, jsonb_build_array(
+        jsonb_build_object('key', 'g1', 'name', 'Undo PM', 'start', '2026-11-02', 'end', '2026-11-03', 'owner_id', v_con, 'gatekeeper_id', v_pm),
+        jsonb_build_object('key', 'g2', 'name', 'Undo client', 'start', '2026-11-02', 'end', '2026-11-03', 'owner_id', v_con, 'gatekeeper_id', v_client),
+        jsonb_build_object('key', 'g3', 'name', 'Undo done', 'start', '2026-11-02', 'end', '2026-11-03', 'owner_id', v_con, 'gatekeeper_id', v_pm, 'status', 'done')),
+      '[]'::jsonb, false);
+    INSERT INTO _r SELECT 'create_honours_eligible_gatekeeper', EXISTS (SELECT 1 FROM solar.schedule_tasks t
+      JOIN projects.work_items wi ON wi.id = t.work_item_id WHERE t.id = (v_map->>'g1')::uuid AND wi.gatekeeper_id = v_pm);
+    INSERT INTO _r SELECT 'create_ineligible_gatekeeper_falls_back_to_caller', EXISTS (SELECT 1 FROM solar.schedule_tasks t
+      JOIN projects.work_items wi ON wi.id = t.work_item_id WHERE t.id = (v_map->>'g2')::uuid AND wi.gatekeeper_id = v_con);
+    INSERT INTO _r SELECT 'create_done_with_other_gatekeeper_awaits_sign_off', EXISTS (SELECT 1 FROM solar.schedule_tasks t
+      JOIN projects.work_items wi ON wi.id = t.work_item_id
+     WHERE t.id = (v_map->>'g3')::uuid AND wi.gatekeeper_id = v_pm AND wi.status = 'answered' AND t.gantt_status = 'done');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('create_honours_eligible_gatekeeper', false), ('create_ineligible_gatekeeper_falls_back_to_caller', false),
+                          ('create_done_with_other_gatekeeper_awaits_sign_off', false);
+  END;
+  RESET ROLE;
+
+  -- ── 18. I1: solar_task rows are Solar data; every other item is unchanged ─
+  -- Expected non-solar count = 00196's work_items_select predicate evaluated
+  -- verbatim as postgres with the user's claim, so "unchanged" is measured
+  -- against the spine's rule, not against a number typed here.
+  v_users := ARRAY[v_supplier, v_nogrant, v_viewer, v_insp];
+  v_labels := ARRAY['supplier', 'nogrant', 'viewer', 'inspector'];
+  FOR i IN 1..4 LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', v_users[i]::text, 'role', 'authenticated')::text, true);
+    SELECT count(*) INTO v_exp FROM projects.work_items wi
+     WHERE wi.project_id = v_project3 AND wi.item_type <> 'solar_task'
+       AND ( ( public.user_has_project_access(wi.project_id)
+               AND COALESCE(public.user_effective_project_role(wi.project_id, auth.uid()), 'client_viewer') <> 'client_viewer' )
+             OR wi.assignee_id = auth.uid() OR wi.gatekeeper_id = auth.uid()
+             OR EXISTS (SELECT 1 FROM projects.work_item_watchers w WHERE w.work_item_id = wi.id AND w.user_id = auth.uid()));
+    SET LOCAL ROLE authenticated;
+    SELECT count(*) INTO v_n FROM projects.work_items WHERE project_id = v_project3 AND item_type <> 'solar_task';
+    INSERT INTO _r VALUES (v_labels[i] || '_non_solar_items_unchanged', v_n = v_exp AND v_exp >= 1);
+    RESET ROLE;
+  END LOOP;
+  SELECT count(*) INTO v_exp FROM projects.work_items WHERE project_id = v_project3 AND item_type = 'solar_task';
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_supplier::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO v_n FROM projects.work_items WHERE project_id = v_project3 AND item_type = 'solar_task';
+  INSERT INTO _r VALUES ('supplier_sees_no_solar_work_items', v_n = 0);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_nogrant::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*), count(*) FILTER (WHERE id = v_w1) INTO v_n, v_n2 FROM projects.work_items WHERE project_id = v_project3 AND item_type = 'solar_task';
+  INSERT INTO _r VALUES ('nogrant_sees_only_own_solar_work_item', v_n = 1 AND v_n2 = 1);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_viewer::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO v_n FROM projects.work_items WHERE project_id = v_project3 AND item_type = 'solar_task';
+  INSERT INTO _r VALUES ('view_user_sees_every_solar_work_item', v_n = v_exp AND v_exp >= 7);
+  RESET ROLE;
+
+  -- ── 19. C1: without Solar Edit a work-item write is a status move by the holder, nothing else
+  -- v_nogrant: contractor (in solar_task write_roles), NO grant, assignee of s1.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_nogrant::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    UPDATE projects.work_items SET title = 'Renamed without Edit' WHERE id = v_w1;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('noedit_assignee_rename_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('noedit_assignee_rename_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE projects.work_items SET status = 'void', void_reason = 'not needed' WHERE id = v_w1;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('noedit_assignee_void_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('noedit_assignee_void_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE projects.work_items SET due_date = due_date + 30 WHERE id = v_w1;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('noedit_assignee_due_date_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('noedit_assignee_due_date_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE projects.work_items SET assignee_id = v_con WHERE id = v_w1;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('noedit_assignee_reassign_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('noedit_assignee_reassign_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE projects.work_items SET priority = 'critical' WHERE id = v_w1;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('noedit_assignee_priority_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('noedit_assignee_priority_REFUSED', false);
+  END;
+  -- Positive control: the holder still moves their own task forward.
+  BEGIN
+    UPDATE projects.work_items SET status = 'answered' WHERE id = v_w1;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    INSERT INTO _r SELECT 'noedit_assignee_moves_own_task_forward', v_n = 1
+      AND EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_w1 AND status = 'answered' AND title = 'Nogrant-owned');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('noedit_assignee_moves_own_task_forward', false);
+  END;
+  -- A solar task they do not hold is not even visible to them (I1): nothing to write.
+  BEGIN
+    UPDATE projects.work_items SET title = 'Hijacked' WHERE id = v_w2;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    INSERT INTO _r VALUES ('noedit_nonholder_update_affects_nothing', v_n = 0);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('noedit_nonholder_update_affects_nothing', false);
+  END;
+  RESET ROLE;
+  -- v_viewer: contractor with a VIEW grant — sees s2 but may not write it.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_viewer::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    UPDATE projects.work_items SET title = 'Renamed at View' WHERE id = v_w2;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('view_user_rename_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('view_user_rename_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE projects.work_items SET status = 'answered' WHERE id = v_w2;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('view_user_moves_unheld_task_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('view_user_moves_unheld_task_REFUSED', false);
+  END;
+  RESET ROLE;
+  -- Positive controls: the editor renames through the RPC; the service path passes.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM solar.schedule_update_tasks(v_project3, jsonb_build_array(jsonb_build_object('id', v_s2, 'name', 'Split task renamed')));
+    INSERT INTO _r SELECT 'editor_renames_via_rpc', EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_w2 AND title = 'Split task renamed');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('editor_renames_via_rpc', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', '', true);
+  SET LOCAL ROLE service_role;
+  BEGIN
+    UPDATE projects.work_items SET priority = 'high' WHERE id = v_w2;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    INSERT INTO _r VALUES ('service_role_updates_solar_work_item', v_n = 1);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('service_role_updates_solar_work_item', false);
+  END;
+  RESET ROLE;
+
+  -- ── 20. I6: schedule_tasks / schedule_segments are written only by the RPCs
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    INSERT INTO solar.schedule_tasks (work_item_id, project_id, start_date, end_date) VALUES (v_plain, v_project3, DATE '2026-11-02', DATE '2026-11-03');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_direct_task_insert_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_direct_task_insert_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE solar.schedule_tasks SET end_date = end_date + 7 WHERE id = v_s4;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_direct_task_update_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_direct_task_update_REFUSED', false);
+  END;
+  BEGIN
+    DELETE FROM solar.schedule_tasks WHERE id = v_s4;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_direct_task_delete_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_direct_task_delete_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.schedule_segments (task_id, start_date, end_date) VALUES (v_s4, DATE '2026-11-02', DATE '2026-11-03');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_direct_segment_insert_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_direct_segment_insert_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE solar.schedule_segments SET end_date = start_date WHERE task_id = v_s2;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_direct_segment_update_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_direct_segment_update_REFUSED', false);
+  END;
+  BEGIN
+    DELETE FROM solar.schedule_segments WHERE task_id = v_s2;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('editor_direct_segment_delete_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('editor_direct_segment_delete_REFUSED', false);
+  END;
+  -- Reorder through the RPC: positions 1..4, so exactly four rows move.
+  BEGIN
+    SELECT solar.schedule_reorder(v_project3, ARRAY[v_s4, v_s3, v_s2, v_s1]) INTO v_n;
+    INSERT INTO _r SELECT 'editor_reorders_via_rpc', v_n = 4
+      AND EXISTS (SELECT 1 FROM solar.schedule_tasks WHERE id = v_s4 AND sort_order = 1);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('editor_reorders_via_rpc', false);
+  END;
+  -- A task id of ANOTHER project is ignored even by someone who can edit both.
+  BEGIN
+    SELECT sort_order INTO v_exp FROM solar.schedule_tasks WHERE id = v_q;
+    SELECT solar.schedule_reorder(v_project3, ARRAY[v_q]) INTO v_n;
+    INSERT INTO _r SELECT 'reorder_scoped_to_its_project', v_n = 0
+      AND EXISTS (SELECT 1 FROM solar.schedule_tasks WHERE id = v_q AND sort_order = v_exp);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('reorder_scoped_to_its_project', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_viewer::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM solar.schedule_reorder(v_project3, ARRAY[v_s1, v_s2]);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('viewer_reorder_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('viewer_reorder_REFUSED', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_insp::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM solar.schedule_reorder(v_project2, ARRAY[v_q]);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('reorder_of_project_without_edit_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('reorder_of_project_without_edit_REFUSED', false);
+  END;
+  RESET ROLE;
+
+  -- ── 21. M2: an UPDATE of an existing link may not close a loop ────────────
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO solar.schedule_dependencies (predecessor_task_id, successor_task_id) VALUES (v_s1, v_s4);
+  INSERT INTO solar.schedule_dependencies (predecessor_task_id, successor_task_id) VALUES (v_s4, v_s2) RETURNING id INTO v_l2;
+  BEGIN
+    UPDATE solar.schedule_dependencies SET successor_task_id = v_s1 WHERE id = v_l2;   -- s4 -> s1 with s1 -> s4
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('link_update_closing_loop_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('link_update_closing_loop_REFUSED', false);
+  END;
+
+  -- ── 22. Spec-I2: a void from outside the schedule (My Work) removes the bar ─
+  BEGIN
+    PERFORM solar.schedule_save_baseline(v_project3, 'P3 before void', NULL);
+    UPDATE projects.work_items SET status = 'void', void_reason = 'Dropped from My Work' WHERE id = v_w3;
+    PERFORM solar.schedule_save_baseline(v_project3, 'P3 after void', NULL);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('my_work_void_fixture', false);
+  END;
+  RESET ROLE;
+  INSERT INTO _r SELECT 'my_work_void_removes_side_row',
+    EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_w3 AND status = 'void')
+    AND NOT EXISTS (SELECT 1 FROM solar.schedule_tasks WHERE id = v_s3);
+  INSERT INTO _r SELECT 'baseline_after_void_excludes_task',
+    EXISTS (SELECT 1 FROM solar.schedule_baselines WHERE project_id = v_project3 AND name = 'P3 after void')
+    AND NOT EXISTS (SELECT 1 FROM solar.schedule_baseline_tasks bt JOIN solar.schedule_baselines b ON b.id = bt.baseline_id
+                     WHERE b.project_id = v_project3 AND b.name = 'P3 after void' AND bt.name = 'To be voided');
+  INSERT INTO _r SELECT 'earlier_baseline_keeps_voided_task', EXISTS (SELECT 1 FROM solar.schedule_baseline_tasks bt
+    JOIN solar.schedule_baselines b ON b.id = bt.baseline_id
+   WHERE b.project_id = v_project3 AND b.name = 'P3 before void' AND bt.name = 'To be voided' AND bt.task_id IS NULL);
+
+  -- ── 23. I2 (owner decision Q2): an own-org INSPECTOR with Solar Edit is NOT
+  -- in solar_task's write_roles (MARKUP_WRITE_ROLES), so the spine refuses them
+  -- work-item governance. Documented behaviour: moving a task they neither
+  -- created nor sign off saves the Gantt dates and leaves the work item's
+  -- due_date where it was (the RPC skips the mirror; the spine's (a4) would
+  -- refuse it); deleting a task they do not hold is refused whole, with the
+  -- spine's sentence.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_insp::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM solar.schedule_update_tasks(v_project3, jsonb_build_array(jsonb_build_object('id', v_s4, 'start', '2026-11-09', 'end', '2026-11-13')));
+    INSERT INTO _r VALUES ('inspector_move_ran', true);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('inspector_move_ran', false);
+  END;
+  BEGIN
+    PERFORM solar.schedule_delete_tasks(v_project3, ARRAY[v_s4]);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('inspector_delete_unheld_REFUSED_with_sentence', SQLERRM LIKE 'Only the project team, or whoever is holding SOLAR-%, can drop it.');
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('inspector_delete_unheld_REFUSED_with_sentence', false);
+  END;
+  RESET ROLE;
+  INSERT INTO _r SELECT 'inspector_move_saves_gantt_dates', EXISTS (SELECT 1 FROM solar.schedule_tasks
+    WHERE id = v_s4 AND start_date = DATE '2026-11-09' AND end_date = DATE '2026-11-13');
+  INSERT INTO _r SELECT 'inspector_move_leaves_due_date', EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_w4 AND due_date = DATE '2026-11-06');
+  INSERT INTO _r SELECT 'inspector_delete_refusal_is_atomic', EXISTS (SELECT 1 FROM solar.schedule_tasks t
+    JOIN projects.work_items wi ON wi.id = t.work_item_id WHERE t.id = v_s4 AND wi.status = 'open');
+
+  -- ── 24. M12: owner-picker emails only for editors ─────────────────────────
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_viewer::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*), count(*) FILTER (WHERE email IS NOT NULL) INTO v_n, v_n2 FROM solar.schedule_owner_candidates(v_project3);
+  INSERT INTO _r VALUES ('view_user_owner_candidates_without_email', v_n > 0 AND v_n2 = 0);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*), count(*) FILTER (WHERE email IS NOT NULL) INTO v_n, v_n2 FROM solar.schedule_owner_candidates(v_project3);
+  INSERT INTO _r VALUES ('editor_owner_candidates_with_email', v_n > 0 AND v_n2 = v_n);
+
+  -- ── 25. Spec-8: p_replace is one transaction ──────────────────────────────
+  SELECT count(*) INTO v_exp FROM solar.schedule_tasks WHERE project_id = v_project3;
+  SELECT count(*) INTO v_n2 FROM projects.work_items WHERE project_id = v_project3 AND item_type = 'solar_task' AND status = 'void';
+  BEGIN
+    PERFORM solar.schedule_create_tasks(v_project3, jsonb_build_array(
+        jsonb_build_object('key', 'n1', 'name', 'New one', 'start', '2026-12-01', 'end', '2026-12-02', 'owner_id', v_con),
+        jsonb_build_object('key', 'n2', 'name', '   ', 'start', '2026-12-01', 'end', '2026-12-02')),
+      '[]'::jsonb, true);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN invalid_parameter_value THEN INSERT INTO _r VALUES ('replace_with_failing_row_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('replace_with_failing_row_REFUSED', false);
+  END;
+  SELECT count(*) INTO v_n FROM solar.schedule_tasks WHERE project_id = v_project3;
+  INSERT INTO _r SELECT 'replace_failure_leaves_old_tasks', v_n = v_exp AND v_exp >= 6
+    AND (SELECT count(*) FROM projects.work_items WHERE project_id = v_project3 AND item_type = 'solar_task' AND status = 'void') = v_n2;
+  BEGIN
+    v_map := solar.schedule_create_tasks(v_project3, jsonb_build_array(
+        jsonb_build_object('key', 'n1', 'name', 'New one', 'start', '2026-12-01', 'end', '2026-12-02', 'owner_id', v_con)),
+      '[]'::jsonb, true);
+    v_n1 := (v_map->>'n1')::uuid;
+    SELECT work_item_id INTO v_wn1 FROM solar.schedule_tasks WHERE id = v_n1;
+    INSERT INTO _r SELECT 'replace_voids_old_and_inserts_new',
+      (SELECT count(*) FROM solar.schedule_tasks WHERE project_id = v_project3) = 1
+      AND NOT EXISTS (SELECT 1 FROM projects.work_items WHERE project_id = v_project3 AND item_type = 'solar_task'
+                       AND status <> 'void' AND id <> v_wn1)
+      AND EXISTS (SELECT 1 FROM projects.work_items WHERE id = v_wn1 AND status = 'open');
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('replace_voids_old_and_inserts_new', false);
+  END;
+  RESET ROLE;
+
   -- ── 15. Lapse = hidden but kept (D-02) ────────────────────────────────────
   UPDATE billing.org_addon_subscriptions SET current_period_end = now() - interval '1 day' WHERE organisation_id = v_org;
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
   SET LOCAL ROLE authenticated;
   SELECT count(*) INTO v_n FROM solar.schedule_tasks WHERE project_id = v_project;
   INSERT INTO _r VALUES ('lapsed_editor_reads_nothing', v_n = 0);
+  -- C1 under lapse: the Edit grant is dormant, so a direct rename of a task
+  -- they hold (visible to them as its assignee) is refused.
+  BEGIN
+    UPDATE projects.work_items SET title = 'Renamed while lapsed' WHERE id = v_wn1;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE EXCEPTION 'allowed (% rows)', v_n USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('lapsed_editor_direct_rename_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('lapsed_editor_direct_rename_REFUSED', false);
+  END;
+  RESET ROLE;
+  -- I1 under lapse: a View user sees no solar work items at all.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_viewer::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO v_n FROM projects.work_items WHERE project_id IN (v_project, v_project3) AND item_type = 'solar_task';
+  INSERT INTO _r VALUES ('lapsed_view_user_sees_no_solar_work_items', v_n = 0);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_con::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
   BEGIN
     PERFORM solar.schedule_create_tasks(v_project, '[{"key":"x","name":"X","start":"2026-10-01","end":"2026-10-01"}]'::jsonb, '[]'::jsonb, false);
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
