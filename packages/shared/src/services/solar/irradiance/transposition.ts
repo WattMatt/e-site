@@ -3,7 +3,8 @@
  *
  * Perez et al. 1990 ("Modeling daylight availability and irradiance components from direct and
  * global irradiance", Solar Energy 44(5)) with the "allsitescomposite1990" coefficient set, as
- * tabulated in pvlib-python `irradiance.py` (BSD-3-Clause). Hay & Davies 1980 is the fallback.
+ * tabulated in pvlib-python `irradiance.py` (BSD-3-Clause — full notice in ../THIRD_PARTY_NOTICES.md
+ * and in the legal comment of solar-position/spa.ts). Hay & Davies 1980 is the fallback.
  * Angles in degrees; azimuths clockwise from north (spec §3.2).
  */
 
