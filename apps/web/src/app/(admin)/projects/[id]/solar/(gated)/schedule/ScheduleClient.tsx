@@ -400,7 +400,9 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
 
       {data.canEdit && selCount > 0 && (del.armed ? (
         <div role="alertdialog" aria-label="Delete tasks" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 12 }}>
-          <span>{`Delete ${taskNoun(selCount)}? Their work items are closed and their links removed. Undo brings them back as new work items.`}</span>
+          <span>{selCount === 1
+            ? 'Delete 1 task? It is removed (voided) from the programme and from My Work, and its links are removed. Undo brings it back as a new work item.'
+            : `Delete ${taskNoun(selCount)}? They are removed (voided) from the programme and from My Work, and their links are removed. Undo brings them back as new work items.`}</span>
           <button type="button" onClick={() => { del.disarm(); void deleteTasks([...selected]) }}>{`Confirm: delete ${taskNoun(selCount)}`}</button>
           <button type="button" onClick={del.disarm}>Cancel</button>
         </div>

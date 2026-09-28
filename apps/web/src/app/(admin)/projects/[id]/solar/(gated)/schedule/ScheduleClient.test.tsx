@@ -113,6 +113,8 @@ describe('ScheduleClient', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select SOLAR-1' }))
     key('Delete')
     expect(h.del).not.toHaveBeenCalled()
+    // The RPC voids the work items: say so, not "closed" (closed means signed off).
+    expect(screen.getByText('Delete 1 task? It is removed (voided) from the programme and from My Work, and its links are removed. Undo brings it back as a new work item.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm: delete 1 task' }))
     await waitFor(() => expect(h.del).toHaveBeenCalledWith({ projectId: P, taskIds: ['t1'] }))
     await waitFor(() => expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(false))
