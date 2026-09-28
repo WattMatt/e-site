@@ -61,9 +61,9 @@ describe('guessImportMapping + mapImportTable', () => {
     ['2', 'Install', 'Installation', 'Roof A', '06/10/2026', '', '3', 'Bob', '', 'in progress', '', '1FS', '', ''],
     ['3', 'Go live', 'Handover', '', '2026-10-12', '', '', '', '', '', 'yes', '2FS+1d', '', ''],
   ]
-  it('maps synonyms, ignores the # column', () => {
+  it('maps synonyms, including the # column predecessors refer to', () => {
     const m = guessImportMapping(rows[0])
-    expect(m).toMatchObject({ name: 1, category: 2, zone: 3, start: 4, end: 5, duration: 6, owner: 7, progress: 8, status: 9, milestone: 10, predecessors: 11, notes: 12, colour: 13 })
+    expect(m).toMatchObject({ id: 0, name: 1, category: 2, zone: 3, start: 4, end: 5, duration: 6, owner: 7, progress: 8, status: 9, milestone: 10, predecessors: 11, notes: 12, colour: 13 })
   })
   it('builds a valid plan: duration → end, progress 100 → done, milestone, links by position', () => {
     const { plan, issues } = mapImportTable(rows, guessImportMapping(rows[0]), cal)
@@ -131,5 +131,48 @@ describe('parseMsProjectXml', () => {
     ])
     expect(issues).toEqual([{ row: null, message: '"Install" depends on a summary task in Project; that link was left out.' }])
     expect(validateImportPlan(plan)).toEqual([])
+  })
+})
+
+describe('predecessors resolve against the # column, not row position', () => {
+  const header = ['#', 'Task', 'Start', 'End', 'Predecessors']
+  const exported = [
+    header,
+    ['1', 'Survey', '2026-10-01', '2026-10-02', ''],
+    ['2', 'Design', '2026-10-05', '2026-10-09', '1FS'],
+    ['3', 'Unrelated', '2026-10-01', '2026-10-01', ''],
+    ['4', 'Install', '2026-10-12', '2026-10-16', '2FS+2d'],
+  ]
+  const linksByName = (rows: string[][]) => {
+    const { plan, issues } = mapImportTable(rows, guessImportMapping(rows[0]), cal)
+    expect(issues).toEqual([])
+    const name = new Map(plan.tasks.map((t) => [t.key, t.name]))
+    return plan.links.map((l) => [name.get(l.fromKey), name.get(l.toKey), l.type, l.lagDays])
+  }
+  it('sorting rows and deleting an unrelated one in Excel does not re-point any link', () => {
+    const before = linksByName(exported)
+    expect(before).toEqual([['Survey', 'Design', 'FS', 0], ['Design', 'Install', 'FS', 2]])
+    // Install moved to the top, Survey and Design swapped, "Unrelated" deleted.
+    const edited = [header, exported[4], exported[2], exported[1]]
+    expect(linksByName(edited)).toEqual(expect.arrayContaining(before))
+    expect(linksByName(edited)).toHaveLength(2)
+  })
+  it('a # used twice is an issue, and a link to it is not guessed', () => {
+    const dup = [header, ['1', 'A', '2026-10-01', '2026-10-01', ''], ['1', 'B', '2026-10-02', '2026-10-02', ''], ['2', 'C', '2026-10-03', '2026-10-03', '1']]
+    const { plan, issues } = mapImportTable(dup, guessImportMapping(dup[0]), cal)
+    expect(issues).toEqual([
+      { row: 3, message: 'Row 3: # 1 is also used on row 2. Give every row its own number.' },
+      { row: 4, message: 'Row 4: predecessor 1 is used by more than one row, so the link cannot be placed.' },
+    ])
+    expect(plan.links).toEqual([])
+  })
+  it('an unknown # is reported', () => {
+    const bad = [header, ['5', 'A', '2026-10-01', '2026-10-01', ''], ['6', 'B', '2026-10-02', '2026-10-02', '1']]
+    expect(mapImportTable(bad, guessImportMapping(bad[0]), cal).issues)
+      .toEqual([{ row: 3, message: 'Row 3: predecessor 1 is not a task in this file.' }])
+  })
+  it('with no # column, predecessors fall back to row position', () => {
+    const noId = exported.map((r) => r.slice(1))
+    expect(linksByName(noId)).toEqual([['Survey', 'Design', 'FS', 0], ['Design', 'Install', 'FS', 2]])
   })
 })

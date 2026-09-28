@@ -6,18 +6,19 @@ import type { GanttStatus } from '../status'
 import type { ImportIssue, ImportPlan, PlannedLink, PlannedTask } from './plan'
 
 export const IMPORT_FIELDS = [
-  'name', 'category', 'zone', 'start', 'end', 'duration', 'owner', 'progress', 'status', 'milestone', 'predecessors', 'notes', 'colour',
+  'id', 'name', 'category', 'zone', 'start', 'end', 'duration', 'owner', 'progress', 'status', 'milestone', 'predecessors', 'notes', 'colour',
 ] as const
 export type ImportField = (typeof IMPORT_FIELDS)[number]
 export type ImportMapping = Record<ImportField, number | null>
 
 export const IMPORT_FIELD_LABELS: Record<ImportField, string> = {
-  name: 'Task name', category: 'Category', zone: 'Zone', start: 'Start date', end: 'End date', duration: 'Duration (days)',
+  id: 'Row number (#) that predecessors refer to', name: 'Task name', category: 'Category', zone: 'Zone', start: 'Start date', end: 'End date', duration: 'Duration (days)',
   owner: 'Owner', progress: 'Progress %', status: 'Status', milestone: 'Milestone', predecessors: 'Predecessors',
   notes: 'Notes', colour: 'Colour',
 }
 
 const SYNONYMS: Record<ImportField, string[]> = {
+  id: ['#', 'id', 'no', 'no.', 'task id', 'row'],
   name: ['task', 'task name', 'name', 'activity', 'description of work'],
   category: ['category', 'phase', 'group'],
   zone: ['zone', 'area', 'location'],
@@ -117,6 +118,11 @@ export function mapImportTable(
   const issues: ImportIssue[] = []
   const tasks: PlannedTask[] = []
   const pending: Array<{ key: string; row: number; raw: string }> = []
+  // With a # column mapped, predecessor numbers refer to it — so sorting or
+  // deleting rows in Excel cannot re-point a link. Without one, row position.
+  const byId = new Map<string, { key: string; row: number }>()
+  const duplicateIds = new Set<string>()
+  const normId = (raw: string) => raw.trim().replace(/\.0+$/, '')
   let position = 0
   rows.forEach((r, i) => {
     if (i === 0 || r.every((c) => c.trim() === '')) return
@@ -152,6 +158,16 @@ export function mapImportTable(
       colour: /^#[0-9a-f]{6}$/.test(colourRaw) ? colourRaw : null,
       ownerHint: cell(r, 'owner') || null, description: cell(r, 'notes'), segments: [],
     })
+    if (mapping.id !== null) {
+      const id = normId(cell(r, 'id'))
+      if (id) {
+        const prior = byId.get(id)
+        if (prior) {
+          issues.push({ row: rowNo, message: `Row ${rowNo}: # ${id} is also used on row ${prior.row}. Give every row its own number.` })
+          duplicateIds.add(id)
+        } else byId.set(id, { key, row: rowNo })
+      }
+    }
     const pred = cell(r, 'predecessors')
     if (pred) pending.push({ key, row: rowNo, raw: pred })
   })
@@ -161,7 +177,11 @@ export function mapImportTable(
     const parsed = parsePredecessors(p.raw)
     if (!parsed) { issues.push({ row: p.row, message: `Row ${p.row}: predecessors "${p.raw}" should look like 3FS+2d, 5SS.` }); continue }
     for (const x of parsed) {
-      const from = `p${x.position}`
+      if (mapping.id !== null && duplicateIds.has(String(x.position))) {
+        issues.push({ row: p.row, message: `Row ${p.row}: predecessor ${x.position} is used by more than one row, so the link cannot be placed.` })
+        continue
+      }
+      const from = mapping.id !== null ? byId.get(String(x.position))?.key ?? '' : `p${x.position}`
       if (!keys.has(from)) { issues.push({ row: p.row, message: `Row ${p.row}: predecessor ${x.position} is not a task in this file.` }); continue }
       links.push({ fromKey: from, toKey: p.key, type: x.type, lagDays: x.lagDays })
     }

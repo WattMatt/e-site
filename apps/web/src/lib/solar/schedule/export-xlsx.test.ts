@@ -37,6 +37,21 @@ describe('exportScheduleXlsx', () => {
       { fromKey: 'p2', toKey: 'p3', type: 'SS', lagDays: 2 },
     ])
   })
+  it('round-trips after rows are sorted and an unrelated row is deleted in Excel: links keep their tasks', async () => {
+    const cal = makeWorkCalendar('calendar')
+    const d2: ScheduleData = { ...data, tasks: [...data.tasks, t('4', { name: 'Unrelated', start: '2026-10-01', end: '2026-10-01' })] }
+    const rows = await readXlsxTable(await exportScheduleXlsx(d2, cal))
+    const byName = (n: string) => rows.find((r) => r[1] === n)!
+    const edited = [rows[0], byName('Go live'), byName('Design, roof A'), byName('Install')] // sorted, "Unrelated" deleted
+    const { plan, issues } = mapImportTable(edited, guessImportMapping(edited[0]), cal)
+    expect(issues).toEqual([])
+    const name = new Map(plan.tasks.map((x) => [x.key, x.name]))
+    expect(plan.links.map((l) => [name.get(l.fromKey), name.get(l.toKey), l.type, l.lagDays])).toEqual(expect.arrayContaining([
+      ['Design, roof A', 'Install', 'FS', 0],
+      ['Install', 'Go live', 'SS', 2],
+    ]))
+    expect(plan.links).toHaveLength(2)
+  })
   it('marks the critical path and the float', async () => {
     const rows = await readXlsxTable(await exportScheduleXlsx(data, makeWorkCalendar('calendar')))
     const critical = rows[0].indexOf('Critical')
