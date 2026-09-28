@@ -7,6 +7,7 @@ import type { SolarActivityItem } from '@/lib/solar/activity-types'
 export function ActivityList({ projectId, items, isGrantor }: { projectId: string; items: SolarActivityItem[]; isGrantor: boolean }) {
   const hrefFor = (target: SolarActivityItem['target']): string | null => {
     if (target === 'site') return `/projects/${projectId}/solar/site`
+    if (target === 'schedule') return `/projects/${projectId}/solar/schedule`
     if (target === 'access' && isGrantor) return `/projects/${projectId}/solar/access`
     return null
   }
