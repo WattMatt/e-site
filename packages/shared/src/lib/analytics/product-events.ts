@@ -18,6 +18,12 @@ export const PRODUCT_EVENTS = [
   'cable_route_leg_saved',
   'cable_route_assigned',
   'cable_route_sheet_exported',
+  // Solar (00208).
+  'solar_subscribe_requested',
+  'solar_access_requested',
+  'solar_access_changed',
+  'solar_site_saved',
+  'solar_settings_saved',
 ] as const
 export type ProductEvent = (typeof PRODUCT_EVENTS)[number]
 

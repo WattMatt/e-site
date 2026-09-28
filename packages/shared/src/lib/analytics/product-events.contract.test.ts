@@ -39,6 +39,21 @@ function migrationContaining(needle: string): string {
   return sql
 }
 
+/**
+ * The LAST migration (by filename) containing `needle` — for a CHECK that is
+ * dropped and re-added by later migrations (00199, then 00208 …), the
+ * definition in force is the newest one.
+ */
+function lastMigrationContaining(needle: string): string {
+  const sources = readdirSync(MIGRATIONS)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()
+    .map((f) => stripLineComments(readFileSync(join(MIGRATIONS, f), 'utf8')))
+  const sql = [...sources].reverse().find((s) => s.includes(needle))
+  if (!sql) throw new Error(`No migration contains ${needle}`)
+  return sql
+}
+
 function checkValues(sql: string, column: string): string[] {
   const src = stripLineComments(sql)
   // Either the inline CHECK on the column at CREATE time, or a later named
@@ -53,7 +68,7 @@ function checkValues(sql: string, column: string): string[] {
 
 describe('product-event registry', () => {
   it('equals public.product_events.event CHECK in both directions', () => {
-    const sql = migrationContaining('ADD CONSTRAINT product_events_event_check')
+    const sql = lastMigrationContaining('ADD CONSTRAINT product_events_event_check')
     expect(checkValues(sql, 'event')).toEqual([...PRODUCT_EVENTS].sort())
   })
 })
