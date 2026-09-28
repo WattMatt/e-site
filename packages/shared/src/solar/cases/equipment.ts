@@ -68,7 +68,7 @@ export interface EquipmentCsvRow { kind: EquipmentKind; make: string; model: str
 export interface EquipmentCsvResult { rows: EquipmentCsvRow[]; errors: Array<{ line: number; message: string }> }
 
 export function parseEquipmentCsv(text: string): EquipmentCsvResult {
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim() !== '')
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l) => l.trim() !== '')
   const header = splitCsvLine(lines[0] ?? '')
   if (header.join(',') !== EQUIPMENT_CSV_HEADER.join(',')) {
     return { rows: [], errors: [{ line: 1, message: `The header must be exactly: ${EQUIPMENT_CSV_HEADER.join(',')}` }] }
