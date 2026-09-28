@@ -46,6 +46,14 @@
 -- table: solar.meter_channels
 -- table: solar.meter_import_reports
 -- table: solar.meter_readings
+-- table: solar.meter_readings_p0
+-- table: solar.meter_readings_p1
+-- table: solar.meter_readings_p2
+-- table: solar.meter_readings_p3
+-- table: solar.meter_readings_p4
+-- table: solar.meter_readings_p5
+-- table: solar.meter_readings_p6
+-- table: solar.meter_readings_p7
 -- table: solar.study_meters
 -- table: solar.tenant_load_basis
 -- table: solar.load_archetypes
