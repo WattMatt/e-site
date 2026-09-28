@@ -3,7 +3,21 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { requireRole, requireEffectiveRole } from '@/lib/auth/require-role'
 import { ORG_WRITE_ROLES } from '@esite/shared'
-import { readRolesForKind } from '@/lib/reports/report-kind-access'
+import { readRolesForKind, solarLevelForKind } from '@/lib/reports/report-kind-access'
+import { getSolarAccessLevel } from '@/lib/solar/access'
+import { solarLevelAllows } from '@esite/shared'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+const NO_SOLAR_ACCESS = 'You do not have Solar access on this project.'
+
+/** Solar kinds read on the caller's Solar level (00211 mirrors this in SQL). Null when allowed or not a Solar kind. */
+async function solarReadDenied(supabase: unknown, projectId: string, kind: string): Promise<string | null> {
+  const need = solarLevelForKind(kind)
+  if (!need) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const level = await getSolarAccessLevel(projectId, supabase as SupabaseClient<any, any, any>)
+  return solarLevelAllows(level, need) ? null : NO_SOLAR_ACCESS
+}
 
 const REPORTS_BUCKET = 'reports'
 const SIGNED_URL_TTL_SECONDS = 600 // 10 minutes
@@ -115,6 +129,8 @@ export async function listProjectReportsAction(
   source?: { table: string; id: string },
 ): Promise<ProjectReportRow[] | ErrResult> {
   const supabase = await createClient()
+  const solarDenied = await solarReadDenied(supabase, projectId, kind)
+  if (solarDenied) return { error: solarDenied }
 
   // Sensitive kinds carry more than the reader can see on screen — RLS alone
   // would let any project member list them (see report-kind-access.ts).
@@ -172,6 +188,8 @@ export async function getProjectReportUrlAction(
 
   const report = row as { storage_path: string; kind: string; version: number } | null
   if (!report) return { error: 'Not found' }
+  const solarDenied = await solarReadDenied(supabase, projectId, report.kind)
+  if (solarDenied) return { error: solarDenied }
 
   // The kind is only known once the row is read, so the gate runs here. After
   // migration 00183 the RESTRICTIVE policy already hides the row from an

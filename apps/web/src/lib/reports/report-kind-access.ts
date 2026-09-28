@@ -24,7 +24,7 @@
  * SELECT policy, so direct PostgREST is closed too — this module is the
  * application half of a defence that does not depend on it.
  */
-import { ORG_WRITE_ROLES, COST_VIEW_ROLES, type OrgRole } from '@esite/shared'
+import { ORG_WRITE_ROLES, COST_VIEW_ROLES, type OrgRole, type SolarAccessLevel } from '@esite/shared'
 
 /**
  * Kinds gated on READ, with the roles permitted to list and download them.
@@ -62,6 +62,24 @@ export const OPEN_READ_REPORT_KINDS: readonly string[] = [
   'cable_route_sheet',
 ]
 
+/**
+ * Kinds whose read follows the Solar module's own gate: the caller's per-user
+ * Solar level on the project (00207, decision D-04), not an E-Site role. A
+ * contractor with a View grant reads a layout sheet; a project manager with no
+ * grant does not. Mirrored in public.user_can_read_report_kind() (00211) and
+ * pinned by report-kind-access.contract.test.ts against the FINAL definition.
+ */
+export const SOLAR_READ_REPORT_KINDS: Readonly<Record<string, SolarAccessLevel>> = {
+  // A drawing crop with arrays, strings, a legend and a title block — no rand
+  // values, so View is enough (the Layout tab itself is tech-read).
+  solar_layout_sheet: 'view',
+}
+
+/** The Solar level required to read this kind, or null when it is not a Solar kind. */
+export function solarLevelForKind(kind: string): SolarAccessLevel | null {
+  return SOLAR_READ_REPORT_KINDS[kind] ?? null
+}
+
 /** Roles required to read this kind, or null when it is open to project members. */
 export function readRolesForKind(kind: string): readonly OrgRole[] | null {
   return REPORT_KIND_READ_ROLES[kind] ?? null
@@ -69,5 +87,5 @@ export function readRolesForKind(kind: string): readonly OrgRole[] | null {
 
 /** True when the kind has a recorded read policy (gated or explicitly open). */
 export function hasDeclaredReadPolicy(kind: string): boolean {
-  return kind in REPORT_KIND_READ_ROLES || OPEN_READ_REPORT_KINDS.includes(kind)
+  return kind in REPORT_KIND_READ_ROLES || OPEN_READ_REPORT_KINDS.includes(kind) || kind in SOLAR_READ_REPORT_KINDS
 }
