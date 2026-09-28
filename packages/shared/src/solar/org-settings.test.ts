@@ -56,4 +56,10 @@ describe('Solar org settings', () => {
     const form = solarSettingsToForm(solarOrgSettingDefaults())
     expect(validateSolarOrgSettings({ ...form, om_r_per_kwp_yr: '' }).values.om_r_per_kwp_yr).toBeNull()
   })
+
+  it('the row-spacing window must end after it starts', () => {
+    const form = solarSettingsToForm(solarOrgSettingDefaults())
+    const r = validateSolarOrgSettings({ ...form, row_spacing_shade_free_from_hour: '12', row_spacing_shade_free_to_hour: '12' })
+    expect(r.errors.row_spacing_shade_free_to_hour).toBe('Must be later than the start hour')
+  })
 })

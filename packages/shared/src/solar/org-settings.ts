@@ -112,5 +112,10 @@ export function validateSolarOrgSettings(form: SolarOrgSettingForm): { values: S
     }
     values[f.key] = n
   }
+  const from = values.row_spacing_shade_free_from_hour
+  const to = values.row_spacing_shade_free_to_hour
+  if (typeof from === 'number' && typeof to === 'number' && to <= from && !errors.row_spacing_shade_free_to_hour) {
+    errors.row_spacing_shade_free_to_hour = 'Must be later than the start hour'
+  }
   return { values, errors }
 }
