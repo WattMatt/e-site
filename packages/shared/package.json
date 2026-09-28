@@ -8,7 +8,9 @@
     ".": "./src/index.ts",
     "./placeholder-fill": "./src/lib/jbcc/placeholder-fill.ts",
     "./docx-letterhead": "./src/lib/jbcc/docx-letterhead.ts",
-    "./docx-preview": "./src/lib/jbcc/docx-html.ts"
+    "./docx-preview": "./src/lib/jbcc/docx-html.ts",
+    "./meter-data": "./src/meter-data/index.ts",
+    "./solar-load": "./src/services/solar/load/index.ts"
   },
   "scripts": {
     "lint": "eslint . --ext .ts",
