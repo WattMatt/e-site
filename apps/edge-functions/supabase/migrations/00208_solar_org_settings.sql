@@ -50,7 +50,7 @@
 -- constraint: notifications_type_check ON public.notifications
 -- sql: EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.notifications'::regclass AND conname = 'notifications_type_check' AND pg_get_constraintdef(oid) LIKE '%solar_subscribe_requested%' AND pg_get_constraintdef(oid) LIKE '%solar_access_requested%' AND pg_get_constraintdef(oid) LIKE '%solar_access_changed%' AND pg_get_constraintdef(oid) LIKE '%solar_access_declined%' AND pg_get_constraintdef(oid) LIKE '%billing_dispute_opened%' AND pg_get_constraintdef(oid) LIKE '%site_form_distributed%')
 -- constraint: product_events_event_check ON public.product_events
--- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_subscribe_requested%' AND pg_get_constraintdef(oid) LIKE '%solar_access_requested%' AND pg_get_constraintdef(oid) LIKE '%solar_access_changed%' AND pg_get_constraintdef(oid) LIKE '%solar_site_saved%' AND pg_get_constraintdef(oid) LIKE '%solar_settings_saved%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conname = 'product_events_event_check')
+-- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_subscribe_requested%' AND pg_get_constraintdef(oid) LIKE '%solar_access_requested%' AND pg_get_constraintdef(oid) LIKE '%solar_access_changed%' AND pg_get_constraintdef(oid) LIKE '%solar_site_saved%' AND pg_get_constraintdef(oid) LIKE '%solar_settings_saved%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
 -- behaviour: scripts/db/assert-solar-org-settings-roles.sql — every row ok
 -- @verify:end
 

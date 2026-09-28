@@ -163,7 +163,7 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
               const isJbcc = basePath === `/projects/${projectId}/jbcc`
               const isMv = basePath === `/projects/${projectId}/medium-voltage`
               if (basePath === `/projects/${projectId}/solar`) {
-                return <SolarNavItem key={href} projectId={projectId} active={active} />
+                return <SolarNavItem key={href} projectId={projectId} active={active} refreshKey={pathname} />
               }
               return (
                 <Link

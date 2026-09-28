@@ -16,6 +16,10 @@ describe('Solar org settings', () => {
       inverter_replacement_year: 12, inverter_replacement_pct: 60, battery_replacement_year: 10, battery_replacement_pct: 50,
       soiling_pct: 2, mismatch_pct: 1, dc_wiring_pct: 1.5, ac_wiring_pct: 1, lid_pct: 1.5, availability_pct: 99,
       albedo: 0.2, degradation_first_year_pct: 2, degradation_annual_pct: 0.5,
+      // Spec §11 Loss defaults also carry edge setback and the row-spacing rule
+      // (engine spec §3.1 setbacks; D-11 shade-free window on 21 June).
+      edge_setback_flat_m: 0.5, edge_setback_pitched_m: 0.3,
+      row_spacing_shade_free_from_hour: 9, row_spacing_shade_free_to_hour: 15,
     })
     expect(SOLAR_ORG_SETTINGS_VERSION).toBe(1)
     expect(new Set(SOLAR_SETTING_FIELDS.map((f) => f.key)).size).toBe(SOLAR_SETTING_FIELDS.length)

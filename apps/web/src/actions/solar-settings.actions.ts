@@ -12,7 +12,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getOrgContext } from '@/lib/auth-org'
 import { requireRole } from '@/lib/auth/require-role'
 import { emitProductEvent } from '@/lib/analytics/product-events'
-import { STALE_MESSAGE, humanSolarError } from '@/lib/solar/errors'
+import { GENERIC_ERROR, STALE_MESSAGE, humanSolarError } from '@/lib/solar/errors'
 import {
   OWNER_ADMIN, SOLAR_ORG_SETTINGS_VERSION, validateSolarOrgSettings, type SolarOrgSettingForm,
 } from '@esite/shared'
@@ -37,6 +37,8 @@ export async function saveSolarOrgSettingsAction(input: {
   const gate = await requireRole(supabase as never, ctx.organisationId, OWNER_ADMIN)
   if (!gate.ok) return { error: NOT_ADMIN }
 
+  // Directly invocable: a non-object form would throw inside the validator.
+  if (!input.form || typeof input.form !== 'object' || Array.isArray(input.form)) return { error: GENERIC_ERROR }
   const check = validateSolarOrgSettings(input.form)
   if (Object.keys(check.errors).length > 0) return { fieldErrors: check.errors }
   const settings = { version: SOLAR_ORG_SETTINGS_VERSION, values: check.values }

@@ -73,4 +73,11 @@ describe('saveSolarOrgSettingsAction', () => {
     setup({ writes: { 'solar.org_settings:insert': { error: { code: '23505', message: 'duplicate' } } } })
     await expect(saveSolarOrgSettingsAction({ form, expectedUpdatedAt: null })).resolves.toEqual({ error: STALE })
   })
+
+  it('a non-object form is refused with a sentence, never throws', async () => {
+    const { calls } = setup()
+    await expect(saveSolarOrgSettingsAction({ form: null as never, expectedUpdatedAt: null }))
+      .resolves.toEqual({ error: 'Something went wrong — try again.' })
+    expect(calls.filter((c) => c.op !== 'select')).toHaveLength(0)
+  })
 })

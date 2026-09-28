@@ -56,6 +56,10 @@ export const SOLAR_SETTING_FIELDS: readonly SolarSettingField[] = [
   { key: 'albedo', section: 'losses', label: 'Albedo', unit: '', kind: 'number', min: 0, max: 1, defaultValue: 0.2 },
   { key: 'degradation_first_year_pct', section: 'losses', label: 'First-year degradation', unit: '%', kind: 'number', min: 0, max: 20, defaultValue: 2 },
   { key: 'degradation_annual_pct', section: 'losses', label: 'Annual degradation', unit: '%/yr', kind: 'number', min: 0, max: 5, defaultValue: 0.5 },
+  { key: 'edge_setback_flat_m', section: 'losses', label: 'Edge setback, flat roof', unit: 'm', kind: 'number', min: 0, max: 20, defaultValue: 0.5, source: 'engine spec §3.1' },
+  { key: 'edge_setback_pitched_m', section: 'losses', label: 'Edge setback, pitched roof', unit: 'm', kind: 'number', min: 0, max: 20, defaultValue: 0.3, source: 'engine spec §3.1' },
+  { key: 'row_spacing_shade_free_from_hour', section: 'losses', label: 'Row spacing: no inter-row shade on 21 June from', unit: 'h', kind: 'number', min: 6, max: 12, defaultValue: 9, source: 'D-11' },
+  { key: 'row_spacing_shade_free_to_hour', section: 'losses', label: 'Row spacing: no inter-row shade on 21 June until', unit: 'h', kind: 'number', min: 12, max: 18, defaultValue: 15, source: 'D-11' },
 ]
 
 export type SolarOrgSettingValues = Record<string, number | boolean | null>

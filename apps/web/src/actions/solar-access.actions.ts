@@ -147,6 +147,15 @@ export async function decideSolarRequestAction(input: {
   if (!Array.isArray(data) || data.length === 0) return { error: ALREADY_ANSWERED }
 
   const name = await projectName(supabase, r.project_id)
+  // The guard keeps the higher of the existing and approved level, so tell the
+  // member what they now HOLD, not what was approved.
+  let heldLevel = approvedLevel
+  if (approvedLevel) {
+    const { data: grant } = await supabase.schema('solar').from('project_access').select('level')
+      .eq('project_id', r.project_id).eq('user_id', r.requester_id).maybeSingle()
+    const g = (grant as { level?: unknown } | null)?.level
+    if (isSolarAccessLevel(g)) heldLevel = g
+  }
   await recordSolarAudit({
     projectId: r.project_id,
     actorId: gate.userId,
@@ -159,8 +168,8 @@ export async function decideSolarRequestAction(input: {
         projectId: r.project_id,
         projectName: name,
         title: 'Your Solar access request was approved',
-        body: approvedLevel
-          ? `You now have ${SOLAR_LEVEL_LABELS[approvedLevel]} access to Solar on ${name}.`
+        body: heldLevel
+          ? `You now have ${SOLAR_LEVEL_LABELS[heldLevel]} access to Solar on ${name}.`
           : `Your Solar request on ${name} was approved.`,
         route: `/projects/${r.project_id}/solar`,
         email: true,

@@ -81,4 +81,11 @@ describe('saveSolarSiteAction', () => {
     await expect(saveSolarSiteAction({ projectId: P, form: { ...form, pocNodeId: 'n-x' }, expectedUpdatedAt: 'T1' }))
       .resolves.toEqual({ error: 'That board belongs to another project.' })
   })
+
+  // Review minor: a direct call with a malformed form must get a sentence, not a 500.
+  it('a form with missing or non-string fields is coerced, never throws', async () => {
+    setup({ writes: { 'solar.studies:insert': { data: [{ updated_at: 'T1' }] } } })
+    const res = await saveSolarSiteAction({ projectId: P, form: { latitude: -26.1, longitude: 28.05 } as never, expectedUpdatedAt: null })
+    expect(res).toEqual({ ok: true, updatedAt: 'T1' })
+  })
 })

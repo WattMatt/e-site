@@ -111,6 +111,16 @@ describe('decideSolarRequestAction', () => {
     }))
   })
 
+  // Review minor: the guard never lowers an existing grant, so the notice
+  // reads the level actually held after approval.
+  it('the approval notice names the level the member now holds', async () => {
+    setup({ tables: { 'solar.access_requests': [pending], 'solar.project_access': [{ project_id: P, user_id: 'u3', level: 'edit_financials' }] } })
+    await decideSolarRequestAction({ requestId: 'r1', decision: 'approve', level: 'view' })
+    expect(h.notify).toHaveBeenCalledWith(['u3'], ['u3@x.test'], expect.objectContaining({
+      body: 'You now have Edit + financials access to Solar on Kings Mall.',
+    }))
+  })
+
   it('declines with an optional reason carried to the requester and the audit trail', async () => {
     setup({ tables: { 'solar.access_requests': [pending] } })
     await expect(decideSolarRequestAction({ requestId: 'r1', decision: 'decline', reason: ' Not on this job ' })).resolves.toEqual({ ok: true })

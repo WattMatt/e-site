@@ -14,7 +14,7 @@ import { requireSolarLevel } from '@/lib/solar/access'
 import { recordSolarAudit } from '@/lib/solar/audit'
 import { STALE_MESSAGE, humanSolarError } from '@/lib/solar/errors'
 import { emitProductEvent } from '@/lib/analytics/product-events'
-import { validateSiteSupply, type SiteSupplyField, type SiteSupplyForm } from '@esite/shared'
+import { EMPTY_SITE_SUPPLY_FORM, validateSiteSupply, type SiteSupplyField, type SiteSupplyForm } from '@esite/shared'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = SupabaseClient<any, any, any>
@@ -35,7 +35,13 @@ export async function saveSolarSiteAction(input: {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'You are not signed in.' }
 
-  const check = validateSiteSupply(input.form)
+  // Server actions are directly invocable: coerce every field to a string so a
+  // malformed body gets validation sentences, never a TypeError / raw 500.
+  const raw = (input.form && typeof input.form === 'object' ? input.form : {}) as Record<string, unknown>
+  const form = Object.fromEntries(
+    (Object.keys(EMPTY_SITE_SUPPLY_FORM) as SiteSupplyField[]).map((k) => [k, raw[k] == null ? '' : String(raw[k])]),
+  ) as unknown as SiteSupplyForm
+  const check = validateSiteSupply(form)
   if (Object.keys(check.errors).length > 0) return { fieldErrors: check.errors }
 
   const studies = () => supabase.schema('solar').from('studies')

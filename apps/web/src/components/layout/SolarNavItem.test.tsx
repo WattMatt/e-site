@@ -36,4 +36,16 @@ describe('SolarNavItem', () => {
     expect(link.getAttribute('aria-current')).toBe('page')
     expect(screen.queryByLabelText('Solar is locked')).toBeNull()
   })
+
+  // Review minor: the badge must not stay stale after an approval/withdraw —
+  // the sidebar passes the pathname so each navigation re-reads it.
+  it('re-reads the badge when the refresh key (pathname) changes', async () => {
+    h.navState.mockResolvedValue('locked')
+    const { rerender } = render(<SolarNavItem projectId="p1" active={false} refreshKey="/projects/p1/solar/locked" />)
+    await waitFor(() => expect(h.navState).toHaveBeenCalledTimes(1))
+    h.navState.mockResolvedValue('open')
+    rerender(<SolarNavItem projectId="p1" active refreshKey="/projects/p1/solar/overview" />)
+    await waitFor(() => expect(h.navState).toHaveBeenCalledTimes(2))
+    expect(await screen.findByRole('link', { name: 'Solar' })).toBeDefined()
+  })
 })
