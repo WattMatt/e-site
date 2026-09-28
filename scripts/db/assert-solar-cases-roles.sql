@@ -446,6 +446,32 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     INSERT INTO _r VALUES ('admin_adds_equipment', false);
   END;
+  -- The case org's OWN catalogue row is accepted by cases_bind (not only platform rows), and the
+  -- snapshot is still rebuilt from it: a mutation narrowing the lookup to `organisation_id IS NULL`
+  -- would break every org-catalogue module while every refusal above stayed green.
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_edit::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  v_b := NULL;
+  BEGIN
+    UPDATE solar.cases SET config = jsonb_set(config, '{pv}', jsonb_build_object('module',
+        jsonb_build_object('equipmentId', v_eq, 'make', 'Forged', 'model', 'Forged', 'pmaxW', 9999, 'gammaPmaxPctPerC', 0)))
+     WHERE id = v_case
+    RETURNING config INTO v_cfg;
+    v_b := v_cfg #>> '{pv,module,equipmentId}' = v_eq::text
+      AND v_cfg #>> '{pv,module,make}' = 'Acme'
+      AND v_cfg #>> '{pv,module,model}' = 'M-600'
+      AND (v_cfg #>> '{pv,module,pmaxW}')::numeric = 600
+      AND (v_cfg #>> '{pv,module,gammaPmaxPctPerC}')::numeric = -0.34;
+    RAISE EXCEPTION 'undo' USING ERRCODE = 'P0002';   -- roll the probe edit back; v_b survives
+  EXCEPTION
+    WHEN no_data_found THEN NULL;
+    WHEN OTHERS THEN v_b := false;
+  END;
+  INSERT INTO _r VALUES ('editor_uses_own_org_equipment_rebuilt_from_catalogue', coalesce(v_b, false));
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
   BEGIN
     INSERT INTO solar.equipment (organisation_id, kind, make, model, specs)
     VALUES (v_org, 'module', 'Acme', 'M-bad', '{"gammaPmaxPctPerC":-0.34}');
