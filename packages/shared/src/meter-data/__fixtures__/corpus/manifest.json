@@ -3,7 +3,7 @@
     "id": "a-bulk",
     "file": "SITE YA, , BULK METER, .csv",
     "format": "A",
-    "source": "YARONA/YARONA, , BULK METER, .csv",
+    "source": "site-5f847ce9b8e6/370de3d9ba4bcb67.A",
     "sourceSha256": "b1edf1699104169191aed221358527365e4a7f63ed1d2d64cef80238403360d0",
     "window": [
       "2025-03-10",
@@ -16,7 +16,7 @@
     "id": "a-tenant",
     "file": "SITE YA, SHOP 050, TENANT-23, 3000.csv",
     "format": "A",
-    "source": "YARONA/YARONA, SHOP 050, SHOPRITE, 3000.csv",
+    "source": "site-5f847ce9b8e6/65967c2cc259b7c1.A",
     "sourceSha256": "83b6a4e2ac2bda3b8ffa0afac4f39de3a82d852f6cba6094dd44b9614973f4dd",
     "window": [
       "2025-03-10",
@@ -29,7 +29,7 @@
     "id": "a-check",
     "file": "SITE YA, , CHECK 1, .csv",
     "format": "A",
-    "source": "YARONA/YARONA, , CHECK 1, .csv",
+    "source": "site-5f847ce9b8e6/4b2d8e46d34aa99d.A",
     "sourceSha256": "a1846f33de401e35dd227a2b592ac3e0d13936f2dbc522c586a6e00822367e20",
     "window": [
       "2025-03-10",
@@ -42,7 +42,7 @@
     "id": "a-generator",
     "file": "SITE YA, , GENERATOR METER, .csv",
     "format": "A",
-    "source": "YARONA/YARONA, , GENERATOR METER, .csv",
+    "source": "site-5f847ce9b8e6/61180ef155591c2d.A",
     "sourceSha256": "400a4f86a295731cadc95f0ba4ac81e20c046cbfceffcd6a656be6e2db73f726",
     "window": [
       "2025-06-02",
@@ -55,7 +55,7 @@
     "id": "a-pv-240",
     "file": "SITE WR, , SOLAR PLANT 240, .csv",
     "format": "A",
-    "source": "WHITE RIVER/WHITE RIVER, , SOLAR PLANT 240, .csv",
+    "source": "site-6ecd81568957/f967b4c912e833dc.A",
     "sourceSha256": "802e1a1f85c618a0a86a9df4ddbadb450a23e4fae39d1e37558bbeaf0619d535",
     "window": [
       "2025-03-10",
@@ -68,7 +68,7 @@
     "id": "a-pv-360",
     "file": "SITE WR, , SOLAR PLANT 360, .csv",
     "format": "A",
-    "source": "WHITE RIVER/WHITE RIVER, , SOLAR PLANT 360, .csv",
+    "source": "site-6ecd81568957/31c0a2ae1cc1dd25.A",
     "sourceSha256": "67300a398718193780720ec5b7fd521e11326d4cb4c860c7d9e7dde492cf8830",
     "window": [
       "2025-03-10",
@@ -81,7 +81,7 @@
     "id": "a-pv-multi",
     "file": "SITE FV, , Solar, .csv",
     "format": "A",
-    "source": "Fourways Value Mart/Fourways Value Mart, , Solar, .csv",
+    "source": "site-02159ab53247/c98ab052191ec032.A",
     "sourceSha256": "4c67392922b8dcae6a65cf63f791907b753ba8aae2a4878a934c045e5b8100eb",
     "window": [
       "2025-03-10",
@@ -94,7 +94,7 @@
     "id": "a-reactive",
     "file": "SITE EV, 220, TENANT-31, 2067.csv",
     "format": "A",
-    "source": "Evaton/Evaton, 220, BOXER SUPERSTORES, 2067.csv",
+    "source": "site-4212b625d081/da2426d13ebd2e58.A",
     "sourceSha256": "d29469355650b9b0b68388a2d727cc6ef5645f94e1d6f360720149936b875dcc",
     "window": [
       "2025-03-10",
@@ -107,7 +107,7 @@
     "id": "a-volts-amps",
     "file": "SITE CY, 13, TENANT-41, 45.csv",
     "format": "A",
-    "source": "CITY CENTRE YORK/CITY CENTRE YORK, 13, REMY'S CLOTHING, 45.csv",
+    "source": "site-029eef041a13/34d2e548637b1519.A",
     "sourceSha256": "9f0fa1c7683a56992ca00ca4a9af486f9ea46dc96b9667c2938696607f7c6c71",
     "window": [
       "2025-03-10",
@@ -120,7 +120,7 @@
     "id": "a-energy-resets",
     "file": "SITE OX, , TENANT-51, .csv",
     "format": "A",
-    "source": "204 Oxford/204 Oxford, , NAKED COFFEE, .csv",
+    "source": "site-1c4f602e91f4/66c44632fbbc713f.A",
     "sourceSha256": "d0e8dfb381cf90abb027324f5a018ff642ee47b94676c7fe29737dd2f4862dbd",
     "window": [
       "2024-10-10",
@@ -133,7 +133,7 @@
     "id": "a-level-shift",
     "file": "SITE FW, 89, TENANT-61, 3127.csv",
     "format": "A",
-    "source": "FLAMWOOD WALK/FLAMWOOD WALK, 89, Checkers, 3127.csv",
+    "source": "site-2b76e0d1cb45/3dd06bb7d4c5f7d1.A",
     "sourceSha256": "a6e1cab29b6c10c5ebc793bf12f17814a2b0838214d7756a7d52f48f0366bd8f",
     "window": [
       "2024-10-06",
@@ -146,7 +146,7 @@
     "id": "a-hourly-negative",
     "file": "SITE VW, 12, TENANT-71, 4821.csv",
     "format": "A",
-    "source": "VILLAGE WALK/VILLAGE WALK, 12, SHOPRITE CHECKERS, 4821.csv",
+    "source": "site-856f019d84f6/e0e3fe5a81786d35.A",
     "sourceSha256": "574666d9dbcd1fe1006c80ec90d757edd92ae5bc6ede9c38857decacb7e4c7c1",
     "window": [
       "2024-12-27",
@@ -159,7 +159,7 @@
     "id": "a-tiny-negative",
     "file": "SITE TH, 3, TENANT-81, 1995.csv",
     "format": "A",
-    "source": "THAMBI/THAMBI, 3, Pick n Pay, 1995.csv",
+    "source": "site-131e7f7776ca/f704b904e728b979.A",
     "sourceSha256": "42d25a2392500849fd1c21e74c9661a2ed6cf38c914d942fe89411d525e764b2",
     "window": [
       "2024-06-03",
@@ -172,7 +172,7 @@
     "id": "a-empty",
     "file": "SITE EQ, , DB 37, .csv",
     "format": "A",
-    "source": "EQUINOX/EQUINOX, , DB 37, .csv",
+    "source": "site-24560dfb48f1/cd0d4c77feaf0e3b.A",
     "sourceSha256": "bae0933ec54abdb8b24fe5a4e072cd3b2f68996f128094b3b13e580364ec6a25",
     "window": null,
     "dataRows": 0,
@@ -182,7 +182,7 @@
     "id": "a-short",
     "file": "SITE MO, , TENANT-91, .csv",
     "format": "A",
-    "source": "MORONE (KAPANE) - KSC/MORONE (KAPANE) - KSC, , BEARES, .csv",
+    "source": "site-d494cbac42f6/54f4fb363b436e90.A",
     "sourceSha256": "8731ea56c7af35d091d927ef02956a9e28d08c064d4011b638d066194b6d0847",
     "window": null,
     "dataRows": 335,
@@ -192,7 +192,7 @@
     "id": "a-water",
     "file": "SITE BC, , BC1 - TENANT-92, .csv",
     "format": "A",
-    "source": "BIYELA CENTRE/BIYELA CENTRE, , BC1 - MICY'S CHANNEL BOUTIQE, .csv",
+    "source": "site-e3cdcac6991e/83ffb159b5600ae6.A",
     "sourceSha256": "35b073d2310e2c1700e3f87a3f9353b4147236615982b9aa508c97a9753093d5",
     "window": null,
     "dataRows": 166,
@@ -202,7 +202,7 @@
     "id": "a-vacant-1",
     "file": "SITE FL, SHOP 06, Vacant, 450 (2).csv",
     "format": "A",
-    "source": "FLAMWOOD VALUE/FLAMWOOD VALUE, SHOP 06, Vacant, 450 (2).csv",
+    "source": "site-7287c42af185/5352acbd3ac56a94.A",
     "sourceSha256": "301d9ce88aed3525562c8c98b4a7d47495739491f72862f9e29e8e19cc0b4da2",
     "window": [
       "2025-03-10",
@@ -215,7 +215,7 @@
     "id": "a-vacant-2",
     "file": "SITE FV, , SHOP 107 VACANT, .csv",
     "format": "A",
-    "source": "Fourways Value Mart/Fourways Value Mart, , SHOP 107 VACANT, .csv",
+    "source": "site-02159ab53247/caf6617114e62f70.A",
     "sourceSha256": "301d9ce88aed3525562c8c98b4a7d47495739491f72862f9e29e8e19cc0b4da2",
     "window": [
       "2025-03-10",
@@ -228,7 +228,7 @@
     "id": "a-twin-of-d",
     "file": "SITE RP, 27, TENANT-06, 525.csv",
     "format": "A",
-    "source": "RUSTENBURG PLAZA/RUSTENBURG PLAZA, 27, ABSA BANK LIMITED, 525.csv",
+    "source": "site-ce0f452ad0cb/de89b6022ed5ef4a.A",
     "sourceSha256": "4c7d70b58eecef143bb4fcce1f18cd5d2d5699617cc2e0d94a44c9b10a05ce03",
     "window": [
       "2025-03-10",
@@ -241,7 +241,7 @@
     "id": "d-escaped",
     "file": "RP - TENANT-06 525.csv",
     "format": "D",
-    "source": "RUSTENBURG PLAZA/_consolidated/RP - ABSA 525.csv",
+    "source": "site-ce0f452ad0cb/56d9620a95fbb6d1.D",
     "sourceSha256": "496e0bffc8ae0966a8a23973c015de8bff92ea93f4cc3af67453a066a6587387",
     "window": [
       "2025-03-10",
@@ -254,7 +254,7 @@
     "id": "b-virtual-calc",
     "file": "SITE SG, , 30182503_LOCAL MAIN, .csv",
     "format": "B",
-    "source": "SEGONYANA/SEGONYANA, , 36724754_LOCAL MAIN, .csv",
+    "source": "site-8029679f4046/961ac7e81b1febae.B",
     "sourceSha256": "e5f5b28f51967c5da2840477ca454ad1d3c0dbe68753dfa0b37057fd8ef64d18",
     "window": [
       "2025-10-01",
@@ -267,7 +267,7 @@
     "id": "b-misfiled",
     "file": "SITE SG, , 32700578_DB-26, .csv",
     "format": "B",
-    "source": "SEGONYANA/SEGONYANA, , 36338822_DB-26, .csv",
+    "source": "site-8029679f4046/d1d8f1a4c7d8ae04.B",
     "sourceSha256": "aa1301b143aad9d70dc3bac5d5cf576cbf8be82636ef082f423d78b4202cc290",
     "window": [
       "2025-10-01",
@@ -280,7 +280,7 @@
     "id": "b-shared-body-1",
     "file": "SITE MR, , Local Main, .csv",
     "format": "B",
-    "source": "MERINO MALL/MERINO MALL, , Local Main, .csv",
+    "source": "site-d830013fc427/fbaeb142f41c3ecc.B",
     "sourceSha256": "9c4581362e4b9bf3c967810ddfd4f8aa98ca8fa5f828238c1859d289fa30a42c",
     "window": [
       "2025-03-10",
@@ -293,7 +293,7 @@
     "id": "b-shared-body-2",
     "file": "SITE TS, 09, DB 09, .csv",
     "format": "B",
-    "source": "TOWN SQUARE/TOWN SQUARE, 09, DB 09, .csv",
+    "source": "site-2d26c699e0b1/1de0cf1b6460a260.B",
     "sourceSha256": "9c4581362e4b9bf3c967810ddfd4f8aa98ca8fa5f828238c1859d289fa30a42c",
     "window": [
       "2025-03-10",
@@ -306,7 +306,7 @@
     "id": "b-halfhourly",
     "file": "SITE PM, , Meter 31599070, .csv",
     "format": "B",
-    "source": "PRINCESS MKABAYI MALL/PRINCESS MKABAYI MALL, , Meter 35575535, .csv",
+    "source": "site-e9cf6a49caa9/1b3f94512446cd32.B",
     "sourceSha256": "6a98d6ab75ab096b5cd46454867673453f0c50f086818ab965d935d528b48982",
     "window": [
       "2025-03-10",
@@ -319,7 +319,7 @@
     "id": "b-daily",
     "file": "SITE PM, , Meter 39631688, .csv",
     "format": "B",
-    "source": "PRINCESS MKABAYI MALL/PRINCESS MKABAYI MALL, , Meter 36084823, .csv",
+    "source": "site-e9cf6a49caa9/6be7a716a603573a.B",
     "sourceSha256": "30bff6d97eff5482267e6cbaa729fb8fc117dad1b0055e750c32fec7480d8d11",
     "window": [
       "2025-03-10",
@@ -330,9 +330,9 @@
   },
   {
     "id": "b-seven-serials",
-    "file": "SITE RM, , E0400, .csv",
+    "file": "SITE RM, , E9001, .csv",
     "format": "B",
-    "source": "RUSTENBURG MALL/RUSTENBURG MALL, , E0400, .csv",
+    "source": "site-d6ffa4c80435/a0e443d32bf1d122.B",
     "sourceSha256": "e4280adbb9d3f2d8bfef142d9611c551fa7cfad3a600120dbc72f9fdfc408aca",
     "window": [
       "2025-03-10",
@@ -345,7 +345,7 @@
     "id": "c-energy",
     "file": "SITE TZ, , 01A TENANT-95, .csv",
     "format": "C",
-    "source": "THABAZIMBI/THABAZIMBI, , 01A Panarottis, .csv",
+    "source": "site-0465266003ff/428f3d42a50f69c6.C",
     "sourceSha256": "407eeb1a7986bc10a3d29643f135f2174d085e39f7036362c92dc8ccfb44c153",
     "window": [
       "2025-03-10",
@@ -358,7 +358,7 @@
     "id": "c-energy-2",
     "file": "SITE MR, , TENANT-96, .csv",
     "format": "C",
-    "source": "MERINO MALL/MERINO MALL, , Checkers, .csv",
+    "source": "site-d830013fc427/f2b71faf2094de76.C",
     "sourceSha256": "ef0ca65b7051493df56e31b3023bd54e0a0ff0c094a40461a128589dcc43c1cc",
     "window": [
       "2025-03-10",
@@ -369,9 +369,9 @@
   },
   {
     "id": "e-log",
-    "file": "SITE KM, , E2495, .csv",
+    "file": "SITE KM, , E9002, .csv",
     "format": "E",
-    "source": "KURUMAN MALL/KURUMAN MALL, , E2495, .csv",
+    "source": "site-3d3bb3d89d06/8290db891735a460.E",
     "sourceSha256": "8bfcf72daf4e262af433d96cfc80f1c5bdc5612b1e51d2a303e1e5470a8a6882",
     "window": null,
     "dataRows": 33,
@@ -381,7 +381,7 @@
     "id": "f-derived",
     "file": "SITE PD, , PDB_31815534_TENANT-97_22m2V, .csv",
     "format": "F",
-    "source": "PARKDENE/PARKDENE, , PDB_36506619_KFCDT_22m2V, .csv",
+    "source": "site-b535c62513b1/5460394984734387.F",
     "sourceSha256": "262870304c670054212cddf0b211294aa2e8d0c7645b38a75ce737c4bb4f215b",
     "window": null,
     "dataRows": 24,

@@ -95,9 +95,9 @@ describe('commitMeterFile: series', () => {
     await expect(commitMeterFile(generic.repo, generic.ctx, body({}))).rejects.toMatchObject({ status: 422, body: { error: 'unresolved_errors' } })
     const a = setup(A_TEXT)
     await expect(commitMeterFile(a.repo, a.ctx, body({ meter: { new: { label: 'x', kind: 'water' } } }))).rejects.toMatchObject({ status: 422, body: { error: 'water_is_not_load' } })
-    const b = setup(B2_TEXT, 'SITE RM, , E0400, .csv')
+    const b = setup(B2_TEXT, 'SITE RM, , E9001, .csv')
     await expect(commitMeterFile(b.repo, b.ctx, body({}))).rejects.toMatchObject({ status: 422, body: { error: 'multi_serial_meter_is_virtual' } })
-    await expect(commitMeterFile(b.repo, b.ctx, body({ meter: { new: { label: 'E0400', kind: 'virtual' } } }))).resolves.toBeTruthy()
+    await expect(commitMeterFile(b.repo, b.ctx, body({ meter: { new: { label: 'E9001', kind: 'virtual' } } }))).resolves.toBeTruthy()
     expect(b.state.meters[0].serials).toEqual(['30000001', '30000002'])
   })
 
@@ -172,8 +172,8 @@ describe('commitMeterFile: a re-commit resolves to the meter this file already f
   })
 
   it('a serial-bearing file re-committed with resolution none is not blocked by ITS OWN meter (no duplicate)', async () => {
-    const b = setup(B2_TEXT, 'SITE RM, , E0400, .csv')
-    const virt = { meter: { new: { label: 'E0400', kind: 'virtual' } } }
+    const b = setup(B2_TEXT, 'SITE RM, , E9001, .csv')
+    const virt = { meter: { new: { label: 'E9001', kind: 'virtual' } } }
     const first = (await commitMeterFile(b.repo, b.ctx, body(virt))) as { meterId: string }
     const second = (await commitMeterFile(b.repo, b.ctx, body(virt))) as { meterId: string }
     expect(second.meterId).toBe(first.meterId)
@@ -181,9 +181,9 @@ describe('commitMeterFile: a re-commit resolves to the meter this file already f
   })
 
   it('a serial-bearing file still conflicts with ANOTHER meter holding its serial', async () => {
-    const b = setup(B2_TEXT, 'SITE RM, , E0400, .csv')
+    const b = setup(B2_TEXT, 'SITE RM, , E9001, .csv')
     b.state.meters.push({ id: 'm7', organisation_id: 'org1', label: 'Old', site_label: null, serials: ['30000001'], kind: 'tenant' })
-    await expect(commitMeterFile(b.repo, b.ctx, body({ meter: { new: { label: 'E0400', kind: 'virtual' } } })))
+    await expect(commitMeterFile(b.repo, b.ctx, body({ meter: { new: { label: 'E9001', kind: 'virtual' } } })))
       .rejects.toMatchObject({ status: 409, body: { error: 'identity_conflict' } })
   })
 

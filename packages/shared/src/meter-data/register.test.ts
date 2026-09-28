@@ -7,10 +7,10 @@ const text = (b: Uint8Array) => decodeMeterText(b).text
 
 describe('siteKey', () => {
   it('drops MALL/SQUARE/CENTRE/PLAZA suffixes', () => {
-    expect(siteKey('Princess Mkabayi Mall')).toBe('PRINCESSMKABAYI')
-    expect(siteKey('PRINCESS MKABAYI MALL')).toBe('PRINCESSMKABAYI')
-    expect(siteKey('Town Square Mall')).toBe('TOWN')
-    expect(siteKey('Rustenburg')).toBe(siteKey('RUSTENBURG MALL'))
+    expect(siteKey('Delta Echo Mall')).toBe('DELTAECHO')
+    expect(siteKey('DELTA ECHO MALL')).toBe('DELTAECHO')
+    expect(siteKey('Alpha Square Mall')).toBe('ALPHA')
+    expect(siteKey('Foxtrot')).toBe(siteKey('FOXTROT MALL'))
     expect(siteKey('SITE PD')).toBe('SITEPD')
   })
 })
@@ -55,9 +55,9 @@ describe('downloader log (E)', () => {
     expect(new Set(rows.map((r) => r.mallName))).toContain('SITE TS')
   })
   it('parses the name shapes found in the corpus', () => {
-    const t = 'Serial,Name,Downloaded,Timestamp\n1,A ; DB 1 ; Town Square Mall,True,2026-02-01T17:16:14.4\n2,B ; Thabazimbi Square ; MDB - 2 ; Thabazimbi Square,False,\n3,Parkdene - 3 ; Parkdene,False,\n'
+    const t = 'Serial,Name,Downloaded,Timestamp\n1,A ; DB 1 ; Alpha Square Mall,True,2026-02-01T17:16:14.4\n2,B ; Bravo Square ; MDB - 2 ; Bravo Square,False,\n3,Charlie - 3 ; Charlie,False,\n'
     expect(parseDownloadLog(t).map((r) => [r.tenantName, r.mallName, r.downloaded])).toEqual([
-      ['A', 'Town Square Mall', true], ['B', 'Thabazimbi Square', false], ['Parkdene - 3', 'Parkdene', false],
+      ['A', 'Alpha Square Mall', true], ['B', 'Bravo Square', false], ['Charlie - 3', 'Charlie', false],
     ])
   })
 })
