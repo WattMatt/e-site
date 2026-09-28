@@ -21,7 +21,7 @@
 import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  EMPTY_SCHEDULE_FILTERS, SCHEDULE_ZOOMS, applyBarDrag, applyScheduleFilters, baselineVariance, buildScheduleRows, criticalPath,
+  EMPTY_SCHEDULE_FILTERS, SCHEDULE_ZOOMS, applyBarDrag, applyScheduleFilters, shiftSegmentsWorking, signedShift, baselineVariance, buildScheduleRows, criticalPath,
   fitSegments, formatCalendarDate, layoutGantt, linkKey, linkWouldCycle, moveSegment, ownerWorkload, reorderTaskIds, scheduleStats,
   type CalendarDate, type DurationMode, type GanttStatus, type LinkType, type ScheduleFilters, type ScheduleGroupBy, type ScheduleZoom,
 } from '@esite/shared'
@@ -228,9 +228,14 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
       void update('Move segment', [{ id: t.id, segments: segs }])
       return
     }
-    const span = applyBarDrag(t, kind === 'segment' ? 'move' : kind, delta)
+    const mode = kind === 'segment' ? 'move' : kind
+    const span = applyBarDrag(t, mode, delta, cal)
     const patch: TaskPatch = { id: t.id, start: span.start, end: span.end }
-    if (t.segments.length >= 2) patch.segments = fitSegments(t.segments, t, span)
+    if (t.segments.length >= 2) {
+      patch.segments = mode === 'move' && cal.mode === 'working'
+        ? shiftSegmentsWorking(cal, t.segments, signedShift(cal, t.start, span.start))
+        : fitSegments(t.segments, t, span)
+    }
     void update(kind === 'start' || kind === 'end' ? 'Resize task' : 'Move task', [patch])
   }
 

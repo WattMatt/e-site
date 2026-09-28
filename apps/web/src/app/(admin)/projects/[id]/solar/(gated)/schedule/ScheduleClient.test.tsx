@@ -85,6 +85,12 @@ describe('ScheduleClient', () => {
     await waitFor(() => expect(h.update).toHaveBeenLastCalledWith({ projectId: P, patches: [{ id: 't1', start: '2026-10-03', end: '2026-10-07', expectedUpdatedAt: 'U3' }] }))
   })
 
+  it('in working mode a drag keeps the working-day duration (Thu–Mon, 3 working days, +2 → Mon–Wed)', async () => {
+    render(<ScheduleClient initial={data({ settings: { durationMode: 'working', workloadThreshold: 2, updatedAt: null } })} />)
+    fireEvent.click(await stub('stub drag t1'))
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({ projectId: P, patches: [{ id: 't1', start: '2026-10-05', end: '2026-10-07', expectedUpdatedAt: 'U1' }] }))
+  })
+
   it('never sends an update without a token: if the task has gone, undo says so and clears the history', async () => {
     // Someone else deleted t1 meanwhile: the refresh after the drag no longer has it.
     h.load.mockResolvedValue({ ok: true, data: data({ tasks: data().tasks.slice(1), links: [] }) })

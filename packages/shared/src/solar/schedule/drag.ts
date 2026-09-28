@@ -5,13 +5,35 @@
  * made it impossible (as-is/06 B.3.7).
  */
 import { addCalendarDays, daysBetween, type CalendarDate } from './dates'
+import { endForDuration, isWorkingDate, shiftDate, spanDays, type WorkCalendar } from './calendar'
 import type { ScheduleSegment } from './rows'
 
 export type BarDragMode = 'move' | 'start' | 'end'
 export interface Span { start: CalendarDate; end: CalendarDate }
 
-export function applyBarDrag(span: Span, mode: BarDragMode, deltaDays: number): Span {
-  if (mode === 'move') return { start: addCalendarDays(span.start, deltaDays), end: addCalendarDays(span.end, deltaDays) }
+/** Snap to a working day, searching in the direction of the drag. */
+function snapWorking(cal: WorkCalendar, d: CalendarDate, dir: 1 | -1): CalendarDate {
+  let c = d
+  for (let i = 0; i < 400 && !isWorkingDate(cal, c); i++) c = addCalendarDays(c, dir)
+  return c
+}
+
+/**
+ * `deltaDays` is in calendar days (the pointer's travel). In working mode a
+ * MOVE keeps the task's working-day duration: the start snaps to a working day
+ * in the drag direction and the end is recomputed from it, so a Mon–Fri task
+ * dragged +1 becomes Tue–Mon, not Tue–Sat (4 working days).
+ */
+export function applyBarDrag(span: Span, mode: BarDragMode, deltaDays: number, cal?: WorkCalendar): Span {
+  if (mode === 'move') {
+    if (cal?.mode === 'working' && deltaDays !== 0) {
+      const start = snapWorking(cal, addCalendarDays(span.start, deltaDays), deltaDays > 0 ? 1 : -1)
+      if (span.start === span.end) return { start, end: start }
+      const days = spanDays(cal, span.start, span.end)
+      return days >= 1 ? { start, end: endForDuration(cal, start, days) } : { start, end: addCalendarDays(span.end, daysBetween(span.start, start)) }
+    }
+    return { start: addCalendarDays(span.start, deltaDays), end: addCalendarDays(span.end, deltaDays) }
+  }
   if (mode === 'start') {
     const s = addCalendarDays(span.start, deltaDays)
     return { start: s > span.end ? span.end : s, end: span.end }
@@ -22,6 +44,15 @@ export function applyBarDrag(span: Span, mode: BarDragMode, deltaDays: number): 
 
 export function segmentsSpan(segments: readonly ScheduleSegment[]): Span {
   return { start: segments[0].start, end: segments[segments.length - 1].end }
+}
+
+/** Working-mode move of a split task: every segment moves `n` working days and keeps its working length. */
+export function shiftSegmentsWorking(cal: WorkCalendar, segments: readonly ScheduleSegment[], n: number): ScheduleSegment[] {
+  return segments.map((s) => {
+    const start = shiftDate(cal, snapWorking(cal, s.start, 1), n)
+    const days = spanDays(cal, s.start, s.end)
+    return { start, end: days >= 1 ? endForDuration(cal, start, days) : start }
+  })
 }
 
 /** Keep segments consistent when the whole task is moved or resized. Fewer than two → no split. */
