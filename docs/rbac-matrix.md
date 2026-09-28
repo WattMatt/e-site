@@ -67,7 +67,7 @@ membership.
 | `/cable-schedule/sans` | R | R | R | R | R | R | R |
 | `/settings` | W | W | — | — | — | — | — |
 | `/settings/billing` | W | W | — | — | — | — | — |
-| `/settings/solar` | W | W | — | — | — | — | — |
+| `/settings/solar` (includes the org's Solar schedule template, `solar.schedule_templates`) | W | W | — | — | — | — | — |
 | `/settings/users` | W | W | — | — | — | — | — |
 | `/settings/branding` | W | W | — | — | — | — | — |
 | `/settings/organisation` | W | W | ? | — | — | — | — |
@@ -126,11 +126,16 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `/projects/[id]/solar/locked` | W — **Subscribe** (unsubscribed) | → overview | → overview | → overview | W — **Ask an admin to subscribe** (unsubscribed) / **Request access** (subscribed) / **Withdraw** | W — **Request access** (View) / **Withdraw** | → `/projects/[id]` |
 | `/projects/[id]/solar/overview` | W | W | W | R | → locked | → locked | → locked |
 | `/projects/[id]/solar/site` | W | W | W | R (values as text, no Save) | → locked | → locked | → locked |
+| `/projects/[id]/solar/schedule` | W | W | W | R (chart, filters, own presets, baselines compare, exports; no edit controls) | → locked | → locked | → locked |
+| `POST /api/projects/[id]/solar/schedule/import/parse` | Solar Edit | Solar Edit | Solar Edit | 403 | 403 | 403 | 403 |
+| `GET /api/projects/[id]/solar/schedule/export/[format]` (`xlsx`, `ics`, `pdf` — no Word, owner decision) | Solar View+ | Solar View+ | Solar View+ | Solar View+ | 403 | 403 | 403 |
 | `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
 
 > Grantors reach `/solar/access` from a **Manage access** link in the gated chrome and on the locked screen's Subscribe row; nobody else sees the link.
 >
-> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview and Site & Supply have **no route** in Phase 1 — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12).
+> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview, Site & Supply and Schedule have **no route** yet — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12).
+>
+> The two schedule API routes sit **outside** `(admin)/layout.tsx` and gate themselves with `getSolarAccessLevel` + `solarLevelAllows` (401 signed-out, 403 below the level). The parse route writes nothing (5 MB cap, `.csv`/`.xlsx`/MS Project `.xml`); the export route reads through the caller's session. Schedule task **owners** must be Solar-eligible (owner decision Q4, 2026-09-28): an active project member whose effective role is neither `client_viewer` nor `supplier` — enforced by `00212`'s `work_items_solar_owner_guard_trg` (SQLSTATE `SOL01`) on every path that sets `assignee_id` of a `solar_task` (create RPC, update RPC, direct PostgREST UPDATE), and the owner picker lists only `solar.schedule_owner_candidates`.
 
 ### Solar server actions
 
@@ -147,6 +152,17 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `copySolarAccessFromProjectAction` | `solar_is_grantor` on **both** projects; same organisation | per-row `project_access_bind` — refusals are counted as skipped |
 | `saveSolarSiteAction` (`solar-site.actions.ts`) | `requireSolarLevel(project, 'edit')` (lower levels are redirected to `/solar/locked`); `expectedUpdatedAt` stale guard | `studies_insert_authz` / `studies_update_authz` (RESTRICTIVE, `solar_can_edit`); `studies_bind` binds the org and refuses a PoC node from another project |
 | `saveSolarOrgSettingsAction` (`solar-settings.actions.ts`) | `requireRole(active org, OWNER_ADMIN)`; `expectedUpdatedAt` stale guard | `00208` `org_settings_*` policies (owner/admin of the row's org); no DELETE policy or grant; bind trigger pins the org and `updated_by` |
+| `loadScheduleAction` (`solar-schedule.actions.ts`) | `requireSolarLevel(project, 'view')` | RLS `schedule_*_select` (`solar_can_view`); presets = own rows only |
+| `createScheduleTasksAction` / `updateScheduleTasksAction` / `deleteScheduleTasksAction` | `requireSolarLevel(project, 'edit')`; zod; `expectedUpdatedAt` per task (a patch without one is refused) | `00212` RPCs `solar.schedule_create_tasks` / `_update_tasks` / `_delete_tasks` (SECURITY DEFINER; each re-checks `solar_can_edit`); the work-item spine's triggers (membership, ref `SOLAR-n`, due date, transition guard — only the gatekeeper closes, so "Done" by anyone else is `answered`, awaiting sign-off); `work_items_solar_owner_guard_trg` refuses a client_viewer/supplier owner. `work_items_insert_gate` still admits only `task` to client sessions, so a `solar_task` can be born only through the RPC |
+| `reorderScheduleTasksAction` | Edit | `solar.schedule_reorder` (INVOKER) → RLS `schedule_tasks_update_authz` |
+| `addScheduleLinkAction` / `updateScheduleLinkAction` / `removeScheduleLinkAction` (`solar-schedule-meta.actions.ts`) | Edit | RLS per verb (`solar_can_edit`); `schedule_dependencies_bind` refuses self, cross-project and loops |
+| `saveBaselineAction` / `deleteBaselineAction` | Edit | `solar.schedule_save_baseline` (INVOKER) + RLS; baseline rows keep removed tasks (`task_id` SET NULL) |
+| `loadBaselineTasksAction` | View | RLS `schedule_baseline_tasks_select` |
+| `saveFilterPresetAction` / `deleteFilterPresetAction` | **View** (filtering is reading) | RLS: own rows only (`user_id = auth.uid()`), bind trigger pins `user_id` |
+| `saveScheduleSettingsAction` | Edit; `expectedUpdatedAt` | RLS `schedule_settings_*` |
+| `applyScheduleTemplateAction` (`solar-schedule-template.actions.ts`) | Edit | `solar.schedule_org_template` (definer, re-checks Edit) + `schedule_create_tasks` |
+| `saveOrgScheduleTemplateAction` | `requireRole(active org, OWNER_ADMIN)` (`.ok`); `expectedUpdatedAt` | RLS `schedule_templates_*` (owner/admin of the row's org); no DELETE |
+| `commitScheduleImportAction` (`solar-schedule-import.actions.ts`) | Edit; re-validates the plan; owners matched only against eligible candidates (unmatched → default owner, listed back) | `schedule_create_tasks` (append or replace in ONE transaction) |
 
 > Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions (approve / decline / level set on the panel) to the person concerned (bell + email; owner default 2026-09-28). Email honours the suppression list; there is no per-project Solar email toggle yet.
 
