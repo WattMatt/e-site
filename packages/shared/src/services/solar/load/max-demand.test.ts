@@ -33,6 +33,16 @@ describe('monthlyMaxDemand (engine spec §2.6)', () => {
     if ('error' in r) throw new Error(r.error)
     expect(r.months[0].kva).toBeCloseTo(100 / 0.95, 9)
   })
+  it('a month with kW but no kVA falls back to kW / PF for that month (it is not dropped)', () => {
+    const kvaMarchOnly = readings(1 / 0.9).filter((r) => r.tsEnd < Date.UTC(2025, 2, 31, 22, 0))
+    const r = monthlyMaxDemand({ kw: readings(), kva: kvaMarchOnly, intervalMin: 30 })
+    if ('error' in r) throw new Error(r.error)
+    expect(r.months.map((m) => [m.month, m.source, m.powerFactor])).toEqual([
+      ['2025-03', 'measured_kva', null], ['2025-04', 'kw_over_pf', 0.95],
+    ])
+    expect(r.months[0].kva).toBeCloseTo(200 / 0.9, 9)
+    expect(r.months[1].kva).toBeCloseTo(100 / 0.95, 9)
+  })
   it('daily files cannot yield MD', () => {
     expect(monthlyMaxDemand({ kw: readings(), intervalMin: 1440 })).toEqual({ error: 'daily_interval' })
   })
@@ -43,6 +53,13 @@ describe('monthlyMaxDemand (engine spec §2.6)', () => {
     expect(r[0]).toMatchObject({ month: '2027-01', source: 'hourly_series' })
     expect(r[0].kva).toBeCloseTo(20, 9)
     expect(r[1].kva).toBeCloseTo(10 / 0.95, 9)
+  })
+  it('a month of the hourly series with no data has NO MD (null), not 0 kVA', () => {
+    const s = new Float64Array(8760).fill(10)
+    s.fill(Number.NaN, 31 * 24, 59 * 24) // February 2027 (28 days) all missing
+    const r = monthlyMaxDemandFromHourly(s, 2027)
+    expect(r[1]).toMatchObject({ month: '2027-02', kva: null })
+    expect(r[2].kva).toBeCloseTo(10 / 0.95, 9)
   })
 })
 
