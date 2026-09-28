@@ -29,7 +29,8 @@ const seriesPaths = (c: HTMLElement) => c.querySelectorAll('path[data-series]').
 describe('MeterComparison', () => {
   it('fetches the series route once per selected meter over the SAME window and draws one chart with N series', async () => {
     fetchMock.mockImplementation(async () => ok('kW'))
-    const meters = [mk('m1', 'Pep'), mk('m2', 'Spar'), mk('m3', 'KFC')]
+    // Different period ends (one unknown): the shared window ends at the LATEST of them, for every meter.
+    const meters = [mk('m1', 'Pep', '2025-12-31T22:00:00Z'), mk('m2', 'Spar', '2026-03-31T22:00:00Z'), mk('m3', 'KFC', null)]
     const { container } = render(<MeterComparison projectId="p1" meters={meters} onClose={vi.fn()} />)
     await waitFor(() => expect(seriesPaths(container)).toBe(3))
     expect(fetchMock).toHaveBeenCalledTimes(3)
@@ -37,10 +38,10 @@ describe('MeterComparison', () => {
     expect(urls.map((u) => u.pathname)).toEqual([
       '/api/projects/p1/solar/meters/m1/series', '/api/projects/p1/solar/meters/m2/series', '/api/projects/p1/solar/meters/m3/series',
     ])
-    const windows = urls.map((u) => `${u.searchParams.get('from')}|${u.searchParams.get('to')}`)
-    expect(new Set(windows).size).toBe(1)
-    expect(urls[0].searchParams.get('from')).toBeTruthy()
-    expect(urls[0].searchParams.get('to')).toBe('2025-12-31T22:00:00.000Z')
+    for (const u of urls) {
+      expect(u.searchParams.get('to'), u.pathname).toBe('2026-03-31T22:00:00.000Z')
+      expect(u.searchParams.get('from'), u.pathname).toBe(new Date(Date.parse('2026-03-31T22:00:00Z') - 365 * 86_400_000).toISOString())
+    }
     expect(container.querySelectorAll('svg[data-chart]').length).toBe(1)
     for (const l of ['Pep', 'Spar', 'KFC']) expect(screen.getByRole('button', { name: new RegExp(l) })).toBeTruthy()
   })
@@ -50,6 +51,27 @@ describe('MeterComparison', () => {
     const { container } = render(<MeterComparison projectId="p1" meters={[mk('m1', 'Pep'), mk('m2', 'Spar'), mk('m3', 'KFC')]} onClose={vi.fn()} />)
     await waitFor(() => expect(seriesPaths(container)).toBe(2))
     expect(screen.getByRole('alert').textContent).toMatch(/Spar could not be loaded/)
+  })
+
+  it('a fetch that THROWS (network) is named and left out like a refused one', async () => {
+    fetchMock.mockImplementation(async (url: string) => { if (String(url).includes('/m1/')) throw new TypeError('Failed to fetch'); return ok('kW') })
+    const { container } = render(<MeterComparison projectId="p1" meters={[mk('m1', 'Pep'), mk('m2', 'Spar')]} onClose={vi.fn()} />)
+    await waitFor(() => expect(seriesPaths(container)).toBe(1))
+    expect(screen.getByRole('alert').textContent).toMatch(/Pep could not be loaded/)
+  })
+
+  it('a meter with no readings in the window is named; when none has any, nothing is drawn and it says so', async () => {
+    const emptyBody = { ...body('kW'), extent: null, buckets: [] }
+    fetchMock.mockImplementation(async (url: string) => (String(url).includes('/m2/') ? { ok: true, json: async () => emptyBody } : ok('kW')))
+    const { container, unmount } = render(<MeterComparison projectId="p1" meters={[mk('m1', 'Pep'), mk('m2', 'Spar')]} onClose={vi.fn()} />)
+    await waitFor(() => expect(seriesPaths(container)).toBe(1))
+    expect(screen.getByText('No readings in this window: Spar.')).toBeTruthy()
+    unmount()
+    fetchMock.mockImplementation(async () => ({ ok: true, json: async () => emptyBody }))
+    const again = render(<MeterComparison projectId="p1" meters={[mk('m1', 'Pep'), mk('m2', 'Spar')]} onClose={vi.fn()} />)
+    expect(await screen.findByText('Nothing to draw for this window.')).toBeTruthy()
+    expect(screen.getByText('No readings in this window: Pep, Spar.')).toBeTruthy()
+    expect(again.container.querySelectorAll('svg[data-chart]').length).toBe(0)
   })
 
   it('only meters sharing one unit are overlaid; the others are named with the reason', async () => {
