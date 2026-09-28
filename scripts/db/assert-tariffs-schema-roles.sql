@@ -296,6 +296,47 @@ BEGIN
   END;
   SELECT count(*) INTO v_n FROM tariffs.ingest_run;
   INSERT INTO _r VALUES ('admin_reads_ingest_runs', v_n >= 1);
+
+  -- source documents: a file (sha256 + storage) or a URL-only reference (owner default 8)
+  INSERT INTO tariffs.source_document (licensee_id, kind, title, financial_year, status, url)
+  VALUES (v_lic, 'nersa_decision', 'Probe decision (URL only)', '2026/27', 'nersa_approved', 'https://example.invalid/decision');
+  SELECT count(*) INTO v_n FROM tariffs.source_document WHERE title = 'Probe decision (URL only)' AND sha256 IS NULL;
+  INSERT INTO _r VALUES ('url_only_source_document_accepted', v_n = 1);
+  BEGIN
+    INSERT INTO tariffs.source_document (kind, title, status) VALUES ('rules', 'Probe nothing', 'final');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('source_document_without_file_or_url_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('source_document_without_file_or_url_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('source_document_without_file_or_url_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO tariffs.source_document (kind, title, status, storage_path, url)
+    VALUES ('rules', 'Probe stored file without hash', 'final', 'reference/probe.pdf', 'https://example.invalid/r');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('stored_file_without_sha256_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('stored_file_without_sha256_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('stored_file_without_sha256_REFUSED', false);
+  END;
+  INSERT INTO tariffs.source_document (kind, title, status, storage_path, sha256)
+  VALUES ('rules', 'Probe rules file', 'final', 'reference/probe-rules.pdf', repeat('ab', 32));
+  BEGIN
+    UPDATE tariffs.source_document SET sha256 = repeat('cd', 32) WHERE title = 'Probe rules file';
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('source_document_sha256_change_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('source_document_sha256_change_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('source_document_sha256_change_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE tariffs.source_document SET sha256 = NULL, storage_path = NULL WHERE title = 'Probe rules file';
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('source_document_sha256_clear_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('source_document_sha256_clear_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('source_document_sha256_clear_REFUSED', false);
+  END;
   -- even an admin cannot add admins: the allow-list is service-role-only
   BEGIN
     INSERT INTO public.platform_tariff_admins (user_id) VALUES (v_sub);

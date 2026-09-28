@@ -75,6 +75,8 @@
 -- constraint: charge_inference_explained ON tariffs.charge
 -- constraint: licensee_alias_normalised ON tariffs.licensee_alias
 -- constraint: tariff_year_financial_year_format ON tariffs.tariff_year
+-- constraint: source_document_file_or_url ON tariffs.source_document
+-- constraint: source_document_stored_file_hashed ON tariffs.source_document
 -- policy: platform_tariff_admins_select_own ON public.platform_tariff_admins PERMISSIVE
 -- policy: licensee_select ON tariffs.licensee PERMISSIVE
 -- policy: licensee_alias_select ON tariffs.licensee_alias PERMISSIVE
@@ -211,11 +213,15 @@ CREATE TABLE IF NOT EXISTS tariffs.source_document (
     status          TEXT NOT NULL CHECK (status IN ('draft', 'final', 'nersa_approved')),
     published_on    DATE,
     storage_path    TEXT UNIQUE,
-    sha256          TEXT NOT NULL UNIQUE CONSTRAINT source_document_sha256_hex CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    -- NULL only for a URL-only reference (owner default 8: the Eskom 2026/27
+    -- increase page); a stored file always carries its hash.
+    sha256          TEXT UNIQUE CONSTRAINT source_document_sha256_hex CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'),
     page_count      INT CHECK (page_count > 0),
     url             TEXT,
     retrieved_at    TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT source_document_file_or_url CHECK (sha256 IS NOT NULL OR url IS NOT NULL),
+    CONSTRAINT source_document_stored_file_hashed CHECK (storage_path IS NULL OR sha256 IS NOT NULL)
 );
 
 CREATE TABLE IF NOT EXISTS tariffs.tariff_year (
@@ -538,7 +544,7 @@ END $$;
 CREATE OR REPLACE FUNCTION tariffs.source_document_guard()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
 BEGIN
-    IF NEW.sha256 <> OLD.sha256
+    IF (OLD.sha256 IS NOT NULL AND NEW.sha256 IS DISTINCT FROM OLD.sha256)
        OR (OLD.storage_path IS NOT NULL AND NEW.storage_path IS DISTINCT FROM OLD.storage_path) THEN
         RAISE EXCEPTION 'tariffs.source_document %: sha256 and storage_path are fixed once set', OLD.id
             USING ERRCODE = 'check_violation';

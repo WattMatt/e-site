@@ -9,15 +9,18 @@
  *
  * With NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY set, a dry run
  * reads the live registry (licensee aliases, existing years, the published
- * predecessor for YoY). Without them it uses an empty in-memory store.
+ * predecessor for YoY). Without them it uses an in-memory store seeded from
+ * the registry data file (--registry, default scripts/tariffs/data/licensee-registry.json).
+ * Seed the registry (seed-licensee-registry.ts) BEFORE the first --apply.
  * --apply requires both variables and uploads to the private tariff-sources
  * bucket; years land in 'in_review' and are never published from here.
  * rfd_pdf needs poppler's pdftotext on PATH (brew install poppler).
  */
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { basename } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { DEFAULT_REGISTRY, loadRegistry, RULES_PDF } from './registry-file.ts'
 import { buildIngestPlan } from '../../packages/shared/src/tariffs/ingest/build-plan.ts'
 import { runIngest, type ParserName } from '../../packages/shared/src/tariffs/ingest/ingest-core.ts'
 import { createMemoryTariffStore } from '../../packages/shared/src/tariffs/ingest/memory-store.ts'
@@ -57,12 +60,24 @@ async function main(): Promise<void> {
     }
   }
 
+  // Owner default 9: the Eskom SSEG rule cites the stored Net-Billing Rules PDF by sha256.
+  const rulesPath = arg('rules-pdf') ?? (process.env.TARIFF_SOURCE_DIR ? join(process.env.TARIFF_SOURCE_DIR, RULES_PDF) : undefined)
+  const netBillingRulesSha256 = parser === 'eskom_xlsm' && rulesPath && existsSync(rulesPath)
+    ? createHash('sha256').update(readFileSync(rulesPath)).digest('hex')
+    : null
+  if (parser === 'eskom_xlsm' && !netBillingRulesSha256) console.error('(no Net-Billing Rules PDF found: the SSEG rule will not cite it; pass --rules-pdf)')
+
   const plan = await buildIngestPlan({
     parser, fileName: basename(file), bytes, sha256, financialYear: fy, pdfText,
     licenseeName: arg('licensee'), url: arg('url') ?? null, retrievedAt: new Date().toISOString(),
+    netBillingRulesSha256,
   })
-  const store = url && key ? createSupabaseTariffStore(url, key) : createMemoryTariffStore()
-  if (!(url && key)) console.error('(no database credentials: dry run against an empty registry)')
+  // Without a database, dry-run against the reviewed registry data file (owner default 4) so
+  // licensee resolution is exercised exactly as it will be once the registry is seeded.
+  const store = url && key
+    ? createSupabaseTariffStore(url, key)
+    : createMemoryTariffStore({ licensees: loadRegistry(arg('registry') ?? DEFAULT_REGISTRY).map(({ name, kind, aliases }) => ({ name, kind, aliases })) })
+  if (!(url && key)) console.error('(no database credentials: dry run against the registry data file, no years)')
   const report = await runIngest(plan, store, { apply, createMissingLicensees: flag('create-licensees') })
 
   if (flag('json')) {

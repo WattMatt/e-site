@@ -9,6 +9,7 @@ import type {
   SsegRule, Tariff, TariffCategory, TariffMetering, TariffSeason, TariffStructure, TariffUnit, TouOrAll, VatBasis, YearState,
 } from '../types'
 import type { TariffStore, YearMeta } from './ingest-core'
+import type { ReferenceDocument } from './reference-documents'
 import type { ExistingRegistry, RegistrySeedPlan } from './registry'
 
 type Row = Record<string, unknown>
@@ -165,7 +166,15 @@ export function createSupabaseTariffStore(url: string, serviceKey: string): Tari
       }))), 'loss_factor insert')
     },
     async insertSsegRule(yearId, rule: SsegRule) {
+      // Owner default 9: cite the stored Rules document. It is seeded before ingestion; a missing one is an error, not a silent null.
+      let sourceDocumentId: string | null = null
+      if (rule.sourceDocumentSha256) {
+        const doc = check(await t().from('source_document').select('id').eq('sha256', rule.sourceDocumentSha256).maybeSingle(), 'rules document lookup')
+        if (!doc.data) throw new Error(`sseg_rule cites Rules document ${rule.sourceDocumentSha256} which is not seeded: run seed-licensee-registry.ts first`)
+        sourceDocumentId = (doc.data as Row).id as string
+      }
       check(await t().from('sseg_rule').insert({
+        source_document_id: sourceDocumentId,
         tariff_year_id: yearId, crediting: rule.crediting, carry_forward: rule.carryForward, fy_end_month: rule.fyEndMonth,
         cap_rule: rule.capRule, offsets: rule.offsets, forfeit_on_ownership_change: rule.forfeitOnOwnershipChange,
         max_kva: rule.maxKva, requires_tou: rule.requiresTou, requires_bidirectional_meter: rule.requiresBidirectionalMeter,
@@ -201,4 +210,35 @@ export async function applyLicenseeRegistrySeed(url: string, serviceKey: string,
   for (const x of plan.addAliases) {
     check(await t.from('licensee_alias').insert(x.aliases.map((alias) => ({ alias, licensee_id: x.licenseeId }))), `aliases for ${x.name}`)
   }
+}
+
+/** Is this reference document already recorded? By sha256 for a file, by (kind, url, financial year) for a URL-only one. */
+export async function referenceDocumentExists(url: string, serviceKey: string, doc: ReferenceDocument): Promise<boolean> {
+  const t = serviceClient(url, serviceKey).schema('tariffs')
+  const q = doc.sha256
+    ? t.from('source_document').select('id').eq('sha256', doc.sha256)
+    : t.from('source_document').select('id').eq('kind', doc.kind).eq('url', doc.url ?? '').is('sha256', null)
+  const r = check(await q.limit(1), 'reference document lookup')
+  return ((r.data as Row[] | null) ?? []).length > 0
+}
+
+/** Service-role write of one reference document (upload first when it is a file). Idempotent. */
+export async function insertReferenceDocument(url: string, serviceKey: string, doc: ReferenceDocument, bytes: Uint8Array | null): Promise<void> {
+  if (await referenceDocumentExists(url, serviceKey, doc)) return
+  const db = serviceClient(url, serviceKey)
+  if (doc.storagePath) {
+    if (!bytes) throw new Error(`${doc.title}: file bytes are required to upload ${doc.storagePath}`)
+    const up = await db.storage.from('tariff-sources').upload(doc.storagePath, bytes, { contentType: 'application/pdf', upsert: false })
+    if (up.error && !/exists|duplicate/i.test(up.error.message)) throw new Error(`upload ${doc.storagePath}: ${up.error.message}`)
+  }
+  let licenseeId: string | null = null
+  if (doc.licenseeAlias) {
+    const a = check(await db.schema('tariffs').from('licensee_alias').select('licensee_id').eq('alias', doc.licenseeAlias).maybeSingle(), 'alias lookup')
+    if (!a.data) throw new Error(`${doc.title}: licensee alias ${doc.licenseeAlias} is not seeded`)
+    licenseeId = (a.data as Row).licensee_id as string
+  }
+  check(await db.schema('tariffs').from('source_document').insert({
+    licensee_id: licenseeId, kind: doc.kind, title: doc.title, financial_year: doc.financialYear, status: doc.status,
+    storage_path: doc.storagePath, sha256: doc.sha256, page_count: doc.pageCount, url: doc.url, retrieved_at: new Date().toISOString(),
+  }), `reference document ${doc.title}`)
 }

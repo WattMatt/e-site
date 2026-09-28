@@ -5,6 +5,7 @@ import { parseProvinceWorkbook } from '../parsers/province-xlsx'
 import { parseRfdText } from '../parsers/rfd-text'
 import { loadWorkbookGrids } from '../parsers/xlsx-load'
 import type { IngestPlan, ParserName } from './ingest-core'
+import { ESKOM_APPROVED_INCREASE_PCT } from './reference-documents'
 
 export interface BuildPlanInput {
   parser: ParserName
@@ -18,6 +19,8 @@ export interface BuildPlanInput {
   licenseeName?: string
   url?: string | null
   retrievedAt?: string | null
+  /** sha256 of the stored Net-Billing Rules PDF the Eskom SSEG rule cites (owner default 9). */
+  netBillingRulesSha256?: string | null
 }
 
 const CONTENT_TYPES: Record<ParserName, string> = {
@@ -55,8 +58,10 @@ export async function buildIngestPlan(input: BuildPlanInput): Promise<IngestPlan
       source: { ...common, kind: 'eskom_schedule', title: `Eskom tariffs ${input.financialYear}: ${input.fileName}`, pageCount: null },
       years: [{
         licenseeName: 'Eskom', aliases: ['ESKOM', 'ESKOM HOLDINGS SOC LTD'], kind: 'eskom',
-        effectiveFrom: dates.from, effectiveTo: dates.to, approvedIncreasePct: null,
-        tariffs: parsed.tariffs, lossFactors: parsed.lossFactors, ssegRule: netBillingRule('eskom'),
+        // Owner default 8: the direct (non-local-authority) figure; unknown years stay null.
+        effectiveFrom: dates.from, effectiveTo: dates.to, approvedIncreasePct: ESKOM_APPROVED_INCREASE_PCT[input.financialYear]?.direct ?? null,
+        tariffs: parsed.tariffs, lossFactors: parsed.lossFactors,
+        ssegRule: netBillingRule('eskom', { rulesSha256: input.netBillingRulesSha256 ?? null }),
         issues: [
           ...parsed.issues,
           ...parsed.skippedSheets.map((s) => ({ code: 'sheet_skipped' as const, severity: 'warn' as const, message: `sheet "${s.sheet}" not parsed: ${s.reason}` })),

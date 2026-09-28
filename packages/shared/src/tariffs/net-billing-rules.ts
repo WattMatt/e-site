@@ -7,8 +7,9 @@ import type { SsegRule } from './types'
  * the distributor's financial year, credited kWh capped per TOU period at
  * import, 1,000 kVA ceiling, bidirectional TOU meter. §5.4 allows a flat
  * (non-TOU) export tariff where a distributor cannot do TOU.
+ * `rulesSha256` cites the stored Rules PDF (owner default 9).
  */
-export function netBillingRule(regime: TariffRegime, opts: { touExport?: boolean } = {}): SsegRule {
+export function netBillingRule(regime: TariffRegime, opts: { touExport?: boolean; rulesSha256?: string | null } = {}): SsegRule {
   const tou = opts.touExport ?? true
   return {
     crediting: tou ? 'net_billing_tou' : 'net_billing_flat',
@@ -21,5 +22,6 @@ export function netBillingRule(regime: TariffRegime, opts: { touExport?: boolean
     requiresTou: tou,
     requiresBidirectionalMeter: true,
     locator: { document: 'NERSA Net-Billing Rules for licensed distributors', approved: '2024-12-17', pages: '7-12' },
+    sourceDocumentSha256: opts.rulesSha256 ?? null,
   }
 }

@@ -34,6 +34,14 @@ describe('buildIngestPlan', () => {
     expect(y.ssegRule).toMatchObject({ crediting: 'net_billing_tou', fyEndMonth: 3 })
     expect(y.tariffs.find((t) => t.code === 'HF101N')?.exportTariffCode).toBe('GOHF101N')
   })
+  it('Eskom approved increase (owner default 8) and the Rules citation (default 9)', async () => {
+    const bytes = await workbook(hf25, go25, lf25)
+    const y26 = await buildIngestPlan({ parser: 'eskom_xlsm', fileName: 'e.xlsm', bytes, sha256: SHA, financialYear: '2026/27', netBillingRulesSha256: 'f'.repeat(64) })
+    expect(y26.years[0].approvedIncreasePct).toBe(8.76)
+    expect(y26.years[0].ssegRule?.sourceDocumentSha256).toBe('f'.repeat(64))
+    const y25 = await buildIngestPlan({ parser: 'eskom_xlsm', fileName: 'e.xlsm', bytes, sha256: SHA, financialYear: '2025/26' })
+    expect(y25.years[0].approvedIncreasePct).toBeNull()
+  })
   it('RfD PDF text: needs the licensee name, counts pages', async () => {
     const text = readFileSync(new URL('../__fixtures__/city-power-rfd-2026-27.excerpt.txt', import.meta.url), 'utf8')
     await expect(buildIngestPlan({ parser: 'rfd_pdf', fileName: 'x.pdf', bytes: new Uint8Array(), sha256: SHA, financialYear: '2026/27', pdfText: text })).rejects.toThrow(/licensee/)

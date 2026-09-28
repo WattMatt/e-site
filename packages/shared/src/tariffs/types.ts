@@ -150,6 +150,8 @@ export interface SsegRule {
   requiresTou: boolean
   requiresBidirectionalMeter: boolean
   locator: Record<string, string>
+  /** sha256 of the stored Net-Billing Rules document this rule cites (owner default 9); resolved to source_document_id on insert. */
+  sourceDocumentSha256?: string | null
 }
 
 export interface LossFactor {
