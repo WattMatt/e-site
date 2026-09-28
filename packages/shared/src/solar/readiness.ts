@@ -1,8 +1,9 @@
 /**
  * Solar tabs and readiness (spec §0.3 status dots, §2.3 readiness rules) —
- * the single source for the tab bar and the Overview checklist. Phase 1 has
- * ONE live rule (Site & Supply); every other step is grey "available in a
- * later phase". No statuses are hard-coded per project.
+ * the single source for the tab bar and the Overview checklist. Live rules:
+ * Site & Supply (Phase 1), Yield & Scenarios and Financials (Phase 4b), and
+ * Layout when the selected case uses a manual system size; every other step
+ * is grey "available in a later phase". No statuses are hard-coded per project.
  */
 import type { SolarAccessLevel } from './access'
 
@@ -28,8 +29,8 @@ export const SOLAR_TABS: readonly SolarTab[] = [
   { slug: 'schematics', label: 'Schematics',         built: false, financial: false, hidden: false },
   { slug: 'tariff',     label: 'Tariff',             built: false, financial: true,  hidden: false },
   { slug: 'layout',     label: 'Layout',             built: false, financial: false, hidden: false },
-  { slug: 'yield',      label: 'Yield & Scenarios',  built: false, financial: false, hidden: false },
-  { slug: 'financials', label: 'Financials',         built: false, financial: true,  hidden: false },
+  { slug: 'yield',      label: 'Yield & Scenarios',  built: true,  financial: false, hidden: false },
+  { slug: 'financials', label: 'Financials',         built: true,  financial: true,  hidden: false },
   { slug: 'reports',    label: 'Reports & Proposal', built: false, financial: false, hidden: false },
   { slug: 'schedule',   label: 'Schedule',           built: false, financial: false, hidden: false },
   { slug: 'operations', label: 'Operations',         built: false, financial: false, hidden: true },
@@ -80,6 +81,38 @@ export function siteReadiness(s: SiteReadinessInput | null): { status: Readiness
   return { status: 'green', reason: 'Coordinates, supply authority and NMD are set' }
 }
 
+export interface YieldReadinessInput {
+  caseCount: number
+  selectedCaseId: string | null
+  selectedStatus: 'not_run' | 'running' | 'done' | 'failed' | 'stale' | null
+}
+export function yieldReadiness(y: YieldReadinessInput): { status: ReadinessStatus; reason: string } {
+  if (y.caseCount === 0) return { status: 'grey', reason: 'No cases yet' }
+  if (!y.selectedCaseId) return { status: 'amber', reason: 'Cases exist but none is selected' }
+  switch (y.selectedStatus) {
+    case 'failed': return { status: 'red', reason: 'The selected case’s last run failed' }
+    case 'stale': return { status: 'amber', reason: 'The selected case is stale — re-run it' }
+    case 'running': return { status: 'amber', reason: 'The selected case is running' }
+    case 'done': return { status: 'green', reason: 'The selected case’s run is current' }
+    default: return { status: 'amber', reason: 'The selected case has not been run' }
+  }
+}
+
+export interface FinancialsReadinessInput { capexZar: number; hasModel: boolean; usingOrgDefaults: boolean }
+export function financialsReadiness(f: FinancialsReadinessInput | null): { status: ReadinessStatus; reason: string } {
+  if (!f) return { status: 'grey', reason: 'No financials yet' }
+  if (!(f.capexZar > 0) || !f.hasModel) return { status: 'amber', reason: 'Add capex and choose a finance model' }
+  if (f.usingOrgDefaults) return { status: 'amber', reason: 'Using org defaults — review the capex' }
+  return { status: 'green', reason: 'Capex and a finance model are set' }
+}
+
+export interface SolarReadinessExtra {
+  yield?: YieldReadinessInput
+  financials?: FinancialsReadinessInput | null
+  /** The selected case uses a manual system size (§2.3 Layout rule). */
+  layoutManual?: boolean
+}
+
 function num(v: unknown): number | null {
   if (v === null || v === undefined || v === '') return null
   const n = typeof v === 'number' ? v : Number(v)
@@ -97,11 +130,14 @@ export function toSiteReadinessInput(row: Record<string, unknown> | null | undef
   }
 }
 
-export function computeSolarReadiness(site: SiteReadinessInput | null, level: SolarAccessLevel): ReadinessStep[] {
+export function computeSolarReadiness(site: SiteReadinessInput | null, level: SolarAccessLevel, extra: SolarReadinessExtra = {}): ReadinessStep[] {
   return visibleSolarTabs(level)
     .filter((t): t is SolarTab & { slug: Exclude<SolarTabSlug, 'overview'> } => t.slug !== 'overview')
     .map((t) => {
       if (t.slug === 'site') return { slug: t.slug, label: t.label, live: true, ...siteReadiness(site) }
+      if (t.slug === 'yield') return { slug: t.slug, label: t.label, live: true, ...yieldReadiness(extra.yield ?? { caseCount: 0, selectedCaseId: null, selectedStatus: null }) }
+      if (t.slug === 'financials') return { slug: t.slug, label: t.label, live: true, ...financialsReadiness(extra.financials ?? null) }
+      if (t.slug === 'layout' && extra.layoutManual) return { slug: t.slug, label: t.label, live: t.built, status: 'green' as const, reason: 'The selected case uses a manual system size' }
       return { slug: t.slug, label: t.label, live: false, status: 'grey' as const, reason: LATER_PHASE_REASON }
     })
 }
