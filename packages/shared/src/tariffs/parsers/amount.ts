@@ -12,7 +12,7 @@ export interface ParsedAmount {
 
 /** "1 184,45" / "1,6464" / "1,787.81" → number. A single comma + 1-4 digits is a decimal comma. */
 export function parseNumberText(s: string): number | null {
-  let t = s.replace(/[\s ]/g, '')
+  let t = s.replace(/\s/g, '')
   if (!/^\d[\d,.]*$/.test(t)) return null
   if (t.includes(',') && t.includes('.')) t = t.replace(/,/g, '')
   else if (/^\d+,\d{1,4}$/.test(t)) t = t.replace(',', '.')
@@ -27,7 +27,7 @@ const AMOUNT = /^(R\s?)?(\d[\d ]*(?:[.,]\d+)?)\s*(.*)$/i
 export function parseAmount(raw: CellValue): ParsedAmount | null {
   if (raw === null) return null
   if (typeof raw === 'number') return Number.isFinite(raw) ? { value: raw, unitText: null, randPrefix: false, raw: String(raw) } : null
-  const s = raw.replace(/ /g, ' ').replace(/\s+/g, ' ').trim()
+  const s = raw.replace(/\s+/g, ' ').trim()
   const m = AMOUNT.exec(s)
   if (!m) return null
   const value = parseNumberText(m[2])

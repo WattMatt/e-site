@@ -11,7 +11,7 @@ const n = (s: string): number => Number(s.replace(/\s/g, ''))
 
 /** Half-open [min, max) kWh per month from a block label. "0-500 / 501-1000" is repaired later. */
 export function parseBlockRange(text: string): BlockRange | null {
-  const t = text.replace(/[‒-―−]/g, '-').replace(/ /g, ' ').toLowerCase()
+  const t = text.replace(/[‒-―−]/g, '-').replace(/\s/g, ' ').toLowerCase()
   const typo = /\d\s*wh\b/.test(t) && !/\d\s*kwh/.test(t)
   let m: RegExpExecArray | null
   if ((m = /first\s+(\d[\d ]*?)\s*kwh/.exec(t))) return { min: 0, max: n(m[1]), typo }

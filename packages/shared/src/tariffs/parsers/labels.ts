@@ -4,7 +4,7 @@ import type { ChargeComponent, TariffCategory, TariffMetering, TariffSeason, Tar
 /** Bullets used by the Cape Town sheet ("·", "o", "§", "Ø"), NBSPs and line breaks go. */
 export function cleanLabel(raw: string): string {
   return raw
-    .replace(/ /g, ' ')
+    // NBSPs are \s in JS, so the collapse below also removes them
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^(?:[·•§Ø▪\-–]+|o(?=\s))\s*/u, '')

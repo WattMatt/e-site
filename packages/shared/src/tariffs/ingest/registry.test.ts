@@ -29,7 +29,7 @@ describe('validateRegistry', () => {
       e('Nowhere', { province: 'XX' as never }),
     ])
     expect(problems.join('\n')).toMatch(/duplicate name "City Power"/)
-    expect(problems.join('\n')).toMatch(/alias "modale  city" is not normalised/)
+    expect(problems.join('\n')).toMatch(/alias "modale {2}city" is not normalised/)
     expect(problems.join('\n')).toMatch(/alias "MOGALE CITY" is claimed by "Mogale City" and "Other"/)
     expect(problems.join('\n')).toMatch(/province "XX"/)
   })
