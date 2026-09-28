@@ -115,6 +115,34 @@ membership.
 >
 > Client-viewer detection at the DB uses `public.user_effective_project_role`, **not** `public.user_is_client_viewer` — the latter reads only `public.user_organisations`, so a client viewer holding access through `projects.project_members` was invisible to the database while the app layer treated them as one. Every function in `00179` is `REVOKE`d from `PUBLIC` before being granted: Postgres grants `EXECUTE` to `PUBLIC` by default and the `field` schema has no function default ACL, so a bare `GRANT` adds without restricting — which briefly left `allocate_form_no` callable by `anon` over PostgREST.
 
+## Solar (`apps/web/src/app/(admin)/projects/[id]/solar/*`)
+
+Solar is **not** gated by the E-Site role. Two things decide it (migration `00207`): the project org's Solar subscription (`public.org_has_solar`) and the caller's **per-user level** on the project (`public.solar_access_level` → `view` / `edit` / `edit_financials`). Org owners/admins of the project's org are **grantors** and hold Edit + financials implicitly while the org is subscribed. Suppliers and client viewers can never hold a level; a project member who is not an active member of the project's org ("external") is capped at View. The columns below are therefore Solar situations, not E-Site roles. Every page, action and RLS policy asks the database; the page gate is never the only gate.
+
+| Route | Grantor (org owner/admin) | Edit + financials | Edit | View | Own-org member, no grant | External member, no grant | supplier / client_viewer |
+|---|---|---|---|---|---|---|---|
+| `/projects/[id]/solar` (redirect) | → overview (subscribed) / → locked | → overview | → overview | → overview | → locked | → locked | → locked → project |
+| `/projects/[id]/solar/locked` | W — **Subscribe** (unsubscribed) | → overview | → overview | → overview | W — **Ask an admin to subscribe** (unsubscribed) / **Request access** (subscribed) / **Withdraw** | W — **Request access** (View) / **Withdraw** | → `/projects/[id]` |
+| `/projects/[id]/solar/overview` | W | W | W | R | → locked | → locked | → locked |
+| `/projects/[id]/solar/access` | W (subscribed or not) | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` | → `/solar` |
+
+> `/solar/locked` and `/solar/access` sit **outside** `solar/(gated)` so the gate's redirect cannot loop and grantors can set grants before paying (00207 leaves `project_access`/`access_requests` ungated by subscription; a grant confers nothing until the org subscribes). Tabs other than Overview and Site & Supply have **no route** in Phase 1 — the tab bar renders them disabled ("Coming in a later phase"). Tariff and Financials are hidden below Edit + financials; Operations is hidden for everyone until Phase 7 (D-12).
+
+### Solar server actions
+
+| Action | Gate (re-checked in the action) | DB layer that decides |
+|---|---|---|
+| `getSolarNavStateAction` (`solar-requests.actions.ts`) | signed-in; describes only the caller | the 00207 helpers it calls |
+| `getSolarSubscriptionStateAction` | signed-in; describes only the caller | `solar_access_level` |
+| `requestSolarAccessAction` | resolved state is *request access*, or *granted* below Edit + financials (View-only banner) | `access_requests_guard` binds requester/org/status, clamps the level to the requester's maximum, refuses ineligible requesters |
+| `askAdminToSubscribeAction` | resolved state is *ask an admin* (own-org non-grantor, org unsubscribed); one open request per user per **org** | guard refuses externals' subscribe requests |
+| `withdrawSolarRequestAction` | requester's own pending `access` request | RLS (requester) + guard (only the requester may withdraw) |
+| `setSolarMemberLevelAction` (`solar-access.actions.ts`) | `solar_is_grantor(project)`; `expectedUpdatedAt` stale guard | RLS grantor-only writes; `project_access_bind` refuses clients/suppliers/non-members and caps externals at View |
+| `decideSolarRequestAction` | `solar_is_grantor(request's project)`; conditioned on `status = 'pending'` | guard: only a grantor decides; approval writes the grant, never above the requester's maximum |
+| `copySolarAccessFromProjectAction` | `solar_is_grantor` on **both** projects; same organisation | per-row `project_access_bind` — refusals are counted as skipped |
+
+> Every Solar write records a `solar.audit_events` row (service client, after the action's gate — the RLS insert policy needs `solar_can_edit`, which is false while unsubscribed) and, for primary actions, a `product_events` row (`solar_*` verbs, `00208`). Request/decision notifications use the four `solar_*` types added to `notifications_type_check` in `00208`: requests go to the org's owners/admins (bell + email), decisions to the requester (bell).
+
 ## Client portal (`apps/web/src/app/(portal)/portal/*`)
 
 Since the portal shipped (PR #124), `client_viewer` never reaches the `(admin)` shell —
@@ -597,7 +625,7 @@ DKIM-signed identity that also carries every invite and password reset.
 
 | Caller | Credential | Types allowed |
 | --- | --- | --- |
-| `lib/{invite-email,rfi-email,snag-email,notify,diary-email,qc-email,site-form-email}.ts` | service-role key | all |
+| `lib/{invite-email,rfi-email,snag-email,notify,diary-email,qc-email,site-form-email}.ts`, `lib/solar/notify.ts` | service-role key | all |
 | `actions/data-request.actions.ts` (public POPIA form) | service-role key (was the SSR anon client until the 2026-09-10 audit) | `data-subject-request` only |
 | anyone else, incl. an unauthenticated caller | — | `data-subject-request` only, and it controls no recipient, subject, timestamp or markup |
 
