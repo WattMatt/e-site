@@ -12,7 +12,7 @@ import { loadWeather } from './__fixtures__/pvgis'
 import { runFinancials, simulateCase, type CaseInput } from './case'
 import { SOLAR_ENGINE_DEFAULTS } from './defaults'
 import type { FinanceInput } from './finance/cashflow'
-import { referenceYearHolidays, tariffBillCalculator } from './finance/tariff-bill-calculator'
+import { tariffBillCalculator } from './finance/tariff-bill-calculator'
 import { buildS3 } from './load/site-series'
 import { caseLoadFromSiteSeries } from './load/case-load'
 import { costHourly } from '../../tariffs/bill-calculator'
@@ -55,8 +55,16 @@ const ESKOM_LIKE: TouCalendar = {
 
 const weather = { id: 'pvgis-5.2-tmy:-26.2,28.05', year: loadWeather('jhb') }
 
-// 3a: a flat 50 kW site (one synthesised tenant, no common area) → engine load.
-const siteSeries = buildS3({ synths: [new Float64Array(8760).fill(50)], commonAreaPct: 0 })
+// 3a: a flat site (one synthesised tenant, no common area) → engine load + its reference year.
+const flatSite = (kw: number) => caseLoadFromSiteSeries({ series: buildS3({ synths: [new Float64Array(8760).fill(kw)], commonAreaPct: 0 }), referenceYear: REFERENCE_YEAR })
+const site = flatSite(50)
+
+// SA public holidays 2025, written out (NOT re-derived from the adapter's default source), so the
+// direct-pricing check below is independent of `referenceYearHolidays`.
+const HOLIDAYS_2025: ReadonlySet<string> = new Set([
+  '2025-01-01', '2025-03-21', '2025-04-18', '2025-04-21', '2025-04-27', '2025-04-28', '2025-05-01',
+  '2025-06-16', '2025-08-09', '2025-09-24', '2025-12-16', '2025-12-25', '2025-12-26',
+])
 
 const input: CaseInput = {
   weatherDatasetId: weather.id,
@@ -73,7 +81,7 @@ const input: CaseInput = {
     albedo: 0.2,
     transposition: 'perez',
   },
-  load: caseLoadFromSiteSeries(siteSeries),
+  load: site.load,
   loadAdjustment: 0,
   battery: null,
   export: { allowed: true, limitKw: 100 },
@@ -93,7 +101,7 @@ const fin: FinanceInput = {
 
 const costOpts = {
   calendar: ESKOM_LIKE,
-  referenceYear: REFERENCE_YEAR,
+  referenceYear: site.referenceYear,
   exportTariff: genOffset,
   sseg: netBillingRule('eskom'),
   // Notified maximum demand: the utilised-capacity charges need it and hourly kWh cannot give it.
@@ -112,29 +120,68 @@ describe('end to end: 3a site load → 4a engine → 2a Megaflex bill → financ
 
   it('year-1 bill before solar is larger than after', () => {
     expect(fr.year1Bills.beforeZar).toBeGreaterThan(fr.year1Bills.afterZar)
-    // 50 kW x 8760 h = 438 MWh at Megaflex rates (well over R1/kWh all-in) plus fixed charges.
-    expect(fr.year1Bills.beforeZar).toBeGreaterThan(438_000)
   })
 
-  it('export credit used never exceeds that month\'s energy charges (NERSA energy-only offset)', () => {
+  it('REGRESSION PIN (computed by this integration on 2026-09-28, not independent): year-1 bills and credit', () => {
+    // A change here means the engine, the parsed Megaflex rates or the adapter moved — explain it.
+    expect(fr.year1Bills.beforeZar).toBeCloseTo(855_413.78, 0)
+    expect(fr.year1Bills.afterZar).toBeCloseTo(526_657.45, 0)
+    expect(fr.year1Bills.exportCreditUsedZar).toBeCloseTo(44_197.53, 0)
+  })
+
+  it('the adapter equals the bill engine priced directly with an independently written holiday list; credit never exceeds energy charges', () => {
     const bills = costHourly(
       megaflex,
       { importKwh: result.balance.import, exportKwh: result.balance.export },
-      { calendar: ESKOM_LIKE, year: REFERENCE_YEAR, holidays: referenceYearHolidays(REFERENCE_YEAR), exportTariff: genOffset, sseg: costOpts.sseg, demandForMonth: costOpts.demandForMonth },
+      { calendar: ESKOM_LIKE, year: REFERENCE_YEAR, holidays: HOLIDAYS_2025, exportTariff: genOffset, sseg: costOpts.sseg, demandForMonth: costOpts.demandForMonth },
     )
     expect(bills).toHaveLength(12)
     for (const b of bills) {
       expect(b.credit.used).toBeGreaterThanOrEqual(0)
       expect(b.credit.used).toBeLessThanOrEqual(b.energyCharges + 1e-9)
     }
-    const annualCredit = bills.reduce((s, b) => s + b.credit.used, 0)
-    expect(fr.year1Bills.exportCreditUsedZar).toBeCloseTo(annualCredit, 6)
+    expect(fr.year1Bills.afterZar).toBeCloseTo(bills.reduce((s, b) => s + b.totalExclVat, 0), 6)
+    expect(fr.year1Bills.exportCreditUsedZar).toBeCloseTo(bills.reduce((s, b) => s + b.credit.used, 0), 6)
   })
 
   it('produces a finite, positive NPV on the cash model', () => {
     const view = fr.finance.models[0]!.views[0]!
     expect(Number.isFinite(view.npvZar)).toBe(true)
     expect(view.npvZar).toBeGreaterThan(0)
-    expect(fr.year1Bills.afterPvOnlyZar).toBe(fr.year1Bills.afterZar) // no battery → PV-only twin is the case
+  })
+})
+
+describe('end to end with carried credit: the Eskom financial year (April → March) reaches the finance model', () => {
+  // A 5 kW site under 100 kWp exports far more value than it imports. The TOU kWh-per-period cap
+  // (the NERSA default) can never leave a carry, so this case keeps TOU crediting at the Gen-offset
+  // rates but caps only at the month's energy charges — the shape in which credit carries and is
+  // forfeited at the FY end.
+  const small = flatSite(5)
+  const sseg = { ...netBillingRule('eskom'), capRule: 'energy_charges' as const }
+  const result = simulateCase({ ...input, load: small.load }, weather)
+  const opts = { calendar: ESKOM_LIKE, referenceYear: small.referenceYear, exportTariff: genOffset, sseg, demandForMonth: () => ({ nmdKva: 10 }) }
+  const fr = runFinancials(result, fin, tariffBillCalculator(megaflex, opts))
+  const bills = costHourly(
+    megaflex,
+    { importKwh: result.balance.import, exportKwh: result.balance.export },
+    { calendar: ESKOM_LIKE, year: REFERENCE_YEAR, holidays: HOLIDAYS_2025, exportTariff: genOffset, sseg, demandForMonth: opts.demandForMonth },
+  )
+  const byMonth = (m: number) => bills.find((b) => b.month === m)!
+
+  it('carries credit between months, forfeits it at March and starts April clean', () => {
+    expect(bills.some((b) => b.credit.carriedOut > 0)).toBe(true)
+    expect(byMonth(3).credit.carriedOut).toBe(0)
+    expect(byMonth(3).credit.forfeited).toBeGreaterThan(0)
+    expect(byMonth(4).credit.carriedIn).toBe(0)
+    // December's balance reaches January (same financial year), not dropped at the calendar year end.
+    expect(byMonth(1).credit.carriedIn).toBe(byMonth(12).credit.carriedOut)
+  })
+
+  it('the finance model sees exactly the credit USED (carry is not cash, forfeits are not income)', () => {
+    const used = bills.reduce((s, b) => s + b.credit.used, 0)
+    const earned = bills.reduce((s, b) => s + b.credit.earned, 0)
+    expect(fr.year1Bills.exportCreditUsedZar).toBeCloseTo(used, 6)
+    expect(used).toBeLessThan(earned)
+    for (const b of bills) expect(b.credit.used).toBeLessThanOrEqual(b.energyCharges + 1e-9)
   })
 })

@@ -5,6 +5,8 @@ import { netBillingRule } from '../../../tariffs/net-billing-rules'
 import type { TouCalendar } from '../../../tariffs/tou'
 import type { SubHourlyLoad } from '../energy/max-demand'
 import { referenceYearHolidays, tariffBillCalculator, toSubHourlyKwh } from './tariff-bill-calculator'
+import { dayTypeOf, referenceYearDates } from '../load/calendar'
+import { caseLoadFromSiteSeries } from '../load/case-load'
 
 // Every hour off-peak; hand arithmetic only.
 const CAL: TouCalendar = { highSeasonMonths: [6, 7, 8], windows: [], holidayTreatedAs: null, source: 'assumed_eskom' }
@@ -26,12 +28,11 @@ describe('toSubHourlyKwh (4a SubHourlyLoad → 2a SubHourlyKwh)', () => {
 })
 
 describe('referenceYearHolidays', () => {
-  it('lists SA public holidays of the year as YYYY-MM-DD keys the TOU calendar understands, dropping 29 Feb', () => {
-    const h = referenceYearHolidays(2025)
-    expect(h.has('2025-01-01')).toBe(true)
-    expect(h.has('2025-04-18')).toBe(true) // Good Friday 2025
-    expect(h.has('2025-12-25')).toBe(true)
-    expect(h.has('2025-12-24')).toBe(false)
+  it('lists the 2025 SA public holidays as the YYYY-MM-DD keys the TOU calendar reads (literal list, not re-derived)', () => {
+    expect([...referenceYearHolidays(2025)].sort()).toEqual([
+      '2025-01-01', '2025-03-21', '2025-04-18', '2025-04-21', '2025-04-27', '2025-04-28', '2025-05-01',
+      '2025-06-16', '2025-08-09', '2025-09-24', '2025-12-16', '2025-12-25', '2025-12-26',
+    ])
   })
 })
 
@@ -70,5 +71,33 @@ describe('tariffBillCalculator (tariff bill engine → finance BillCalculator)',
     const janEnergy = 31 * 24 * 40 + 40 // the spike adds 80 kW x 0.5 h = 40 kWh
     expect(withSub[0]!.totalZar).toBeCloseTo(janEnergy + 120 * 10, 6)
     expect(hourlyOnly[0]!.totalZar).toBeCloseTo(janEnergy + 80 * 10, 6)
+  })
+})
+
+describe('reference year: the load and the tariff must share day types', () => {
+  // One weekday peak hour (07:00-08:00); everything else off-peak. Holidays price as Sunday.
+  const CAL_W: TouCalendar = {
+    highSeasonMonths: [6, 7, 8], holidayTreatedAs: 'sunday', source: 'assumed_eskom',
+    windows: (['high', 'low'] as const).map((season) => ({ season, dayType: 'weekday' as const, startMinute: 420, endMinute: 480, period: 'peak' as const })),
+  }
+  const touTariff = makeTariff({ name: 'tou', structure: 'tou', charges: [
+    makeCharge({ component: 'energy', unit: 'R_per_kWh', amountExclVat: 3, tou: 'peak' }),
+    makeCharge({ component: 'energy', unit: 'R_per_kWh', amountExclVat: 3, tou: 'standard' }),
+    makeCharge({ component: 'energy', unit: 'R_per_kWh', amountExclVat: 1, tou: 'off_peak' }),
+  ] })
+  // 1 kWh at 07:00 on every 2025 working weekday (the 3a load calendar decides which days).
+  const series = new Float64Array(N)
+  referenceYearDates(2025).forEach((d, i) => { if (dayTypeOf(d) === 'weekday') series[i * 24 + 7] = 1 })
+  const site = caseLoadFromSiteSeries({ series, referenceYear: 2025 })
+  const zero = new Float64Array(N)
+
+  it('prices on the load\'s own year: January 2025 has 22 working weekdays (1 Jan is a holiday) -> 22 kWh x R3', () => {
+    const jan = tariffBillCalculator(touTariff, { calendar: CAL_W, referenceYear: site.referenceYear }).monthlyBills({ importKwh: site.load, exportKwh: zero })[0]!
+    expect(jan.totalZar).toBe(66)
+  })
+
+  it('a one-year slip moves the five January 2025 Fridays onto 2026 Saturdays and misprices silently (17 x R3 + 5 x R1)', () => {
+    const jan = tariffBillCalculator(touTariff, { calendar: CAL_W, referenceYear: site.referenceYear + 1 }).monthlyBills({ importKwh: site.load, exportKwh: zero })[0]!
+    expect(jan.totalZar).toBe(56)
   })
 })

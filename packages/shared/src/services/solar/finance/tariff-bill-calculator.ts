@@ -34,16 +34,21 @@ export function toSubHourlyKwh(sub: SubHourlyLoad): SubHourlyKwh {
   return { intervalMinutes: sub.intervalMin, kwh: Float64Array.from(sub.kw, (v) => v * f) }
 }
 
-/** SA public holidays of `year` as the `YYYY-MM-DD` keys `TouCalendar` day typing reads (29 Feb never occurs in the 8760 year). */
+/**
+ * SA public holidays of `year` as the `YYYY-MM-DD` keys `TouCalendar` day typing reads.
+ * `listHolidays` returns UTC-midnight dates, so the ISO date prefix IS the local date.
+ */
 export function referenceYearHolidays(year: number): ReadonlySet<string> {
-  return new Set(listHolidays(year).map((d) => d.toISOString().slice(0, 10)).filter((k) => !k.endsWith('-02-29')))
+  return new Set(listHolidays(year).map((d) => d.toISOString().slice(0, 10)))
 }
 
 export interface TariffBillCalculatorOptions extends Omit<HourlyCostOptions, 'calendar' | 'holidays' | 'year'> {
   calendar: TouCalendar
   /**
-   * Calendar year whose weekdays and holidays the 8760 load was aligned to (the 3a load model's
-   * `referenceYear`). TOU periods are assigned on this year's day types, so it must be the same year.
+   * Calendar year whose weekdays and holidays the 8760 load was aligned to. TOU periods are
+   * assigned on this year's day types, so it MUST be the load's year: take it from the
+   * `SiteLoadForCase` that `caseLoadFromSiteSeries` returns, never type it again (a one-year slip
+   * moves every weekday by one and misprices the TOU split without any error).
    */
   referenceYear: number
   /** Defaults to the statutory SA public holidays of `referenceYear`. */
