@@ -9,7 +9,8 @@
  *     writes: { 'solar.project_access:update': { data: [] } },   // 0 rows affected
  *   })
  *
- * SELECTs filter `tables[schema.table]` by eq / neq / in / gte (string order). Writes are recorded
+ * SELECTs filter `tables[schema.table]` by eq / neq / in / gte (string order) / is; or, ilike,
+ * overlaps, not and range pass through unfiltered. `schema(s).rpc(n)` resolves `rpc['s.n']`. Writes are recorded
  * in `calls` and resolve to `writes['schema.table:op']` (default: the payload
  * echoed back as one row; delete → []). `client.from(t)` is schema `public`.
  */
@@ -17,11 +18,11 @@ import { vi } from 'vitest'
 
 export type FakeError = { message: string; code?: string }
 export type FakeResult = { data: unknown; error: FakeError | null }
-type Filter = ['eq' | 'neq' | 'in' | 'gte', string, unknown]
+type Filter = ['eq' | 'neq' | 'in' | 'gte' | 'is', string, unknown]
 
 export interface FakeCall {
   table: string
-  op: 'select' | 'insert' | 'update' | 'delete'
+  op: 'select' | 'insert' | 'update' | 'delete' | 'upsert'
   payload?: unknown
   filters: Filter[]
 }
@@ -42,7 +43,8 @@ export function fakeSupabase(opts: FakeOptions = {}) {
       op === 'eq' ? row[col] === val
         : op === 'neq' ? row[col] !== val
           : op === 'gte' ? String(row[col] ?? '') >= String(val)
-            : (val as unknown[]).includes(row[col]))
+            : op === 'is' ? (row[col] ?? null) === val
+              : (val as unknown[]).includes(row[col]))
 
   function builder(table: string) {
     const state: { op: FakeCall['op']; payload?: unknown; filters: Filter[]; limit?: number } = { op: 'select', filters: [] }
@@ -68,6 +70,13 @@ export function fakeSupabase(opts: FakeOptions = {}) {
       neq: (c: string, v: unknown) => { state.filters.push(['neq', c, v]); return b },
       in: (c: string, v: unknown[]) => { state.filters.push(['in', c, v]); return b },
       gte: (c: string, v: unknown) => { state.filters.push(['gte', c, v]); return b },
+      is: (c: string, v: unknown) => { state.filters.push(['is', c, v]); return b },
+      upsert: (p: unknown) => { state.op = 'upsert'; state.payload = p; return b },
+      or: () => b,
+      ilike: () => b,
+      overlaps: () => b,
+      not: () => b,
+      range: () => b,
       order: () => b,
       limit: (n: number) => { state.limit = n; return b },
       maybeSingle: first,
@@ -77,14 +86,18 @@ export function fakeSupabase(opts: FakeOptions = {}) {
     return b
   }
 
+  const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
+    const r = opts.rpc?.[name]
+    if (!r) return { data: null, error: null }
+    return typeof r === 'function' ? r(args) : r
+  })
   const client = {
     auth: { getUser: vi.fn(async () => ({ data: { user: userId ? { id: userId } : null } })) },
-    rpc: vi.fn(async (name: string, args: Record<string, unknown>) => {
-      const r = opts.rpc?.[name]
-      if (!r) return { data: null, error: null }
-      return typeof r === 'function' ? r(args) : r
+    rpc,
+    schema: (s: string) => ({
+      from: (t: string) => builder(`${s}.${t}`),
+      rpc: (name: string, args: Record<string, unknown>) => rpc(`${s}.${name}`, args),
     }),
-    schema: (s: string) => ({ from: (t: string) => builder(`${s}.${t}`) }),
     from: (t: string) => builder(`public.${t}`),
   }
   return { client, calls }
