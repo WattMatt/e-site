@@ -9,8 +9,9 @@ import {
   MessageSquare, ShoppingBag,
   Settings, LogOut, Map, ClipboardCheck, ArrowLeft,
   Cable, BookMarked, HardHat, Package, Store, Lock, ScrollText, Zap,
-  ShieldCheck, FileText, BarChart3,
+  ShieldCheck, FileText, BarChart3, Sun,
 } from 'lucide-react'
+import { SolarNavItem } from './SolarNavItem'
 
 const IC = { className: 'sidebar-nav-icon', size: 16 } as const
 
@@ -78,6 +79,7 @@ function projectNav(id: string) {
     { href: `/projects/${id}/equipment-materials`, label: 'Equipment & Materials', Icon: Package,   exact: false },
     { href: `/projects/${id}/cables`,              label: 'Cables',             Icon: Cable,         exact: false },
     { href: `/projects/${id}/medium-voltage`,      label: 'Medium Voltage',     Icon: Zap,           exact: false },
+    { href: `/projects/${id}/solar`,               label: 'Solar',              Icon: Sun,           exact: false },
     { href: `/projects/${id}/generator-cost-recovery`, label: 'Generator Cost-Recovery', Icon: Zap, exact: false },
     { href: `/projects/${id}/tenant-schedule`,    label: 'Tenant Schedule',    Icon: Store,         exact: false },
     { href: `/projects/${id}/inspections`,     label: 'Inspections',     Icon: ClipboardCheck, exact: false },
@@ -160,6 +162,9 @@ function SidebarContent({ inspectionsUnlocked, jbccUnlocked, mvUnlocked, mvVisib
                 : pathname === basePath || pathname.startsWith(basePath + '/')
               const isJbcc = basePath === `/projects/${projectId}/jbcc`
               const isMv = basePath === `/projects/${projectId}/medium-voltage`
+              if (basePath === `/projects/${projectId}/solar`) {
+                return <SolarNavItem key={href} projectId={projectId} active={active} />
+              }
               return (
                 <Link
                   key={href}
