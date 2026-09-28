@@ -16,8 +16,14 @@
 -- ACCESS RULE (public.solar_access_level):
 --   NULL unless the project's org has an active, in-date subscription;
 --   'edit_financials' for owners/admins of the project's org;
---   NULL for non-members, client viewers and suppliers;
+--   NULL unless the caller passes user_has_project_access (00204: active
+--   membership) AND is grant-eligible (solar.user_is_grant_eligible);
 --   otherwise the caller's granted level (NULL when none).
+-- ONE ELIGIBILITY RULE (solar.user_is_grant_eligible) governs who may hold a
+-- grant, who may request one, and whose grant is honoured: an ACTIVE member of
+-- the project's org whose effective project role (00107: org owner/admin/PM
+-- wins, else an active project_members row) is non-null and is not
+-- client_viewer or supplier. A forged grant row for anyone else is inert.
 -- LAPSE = HIDDEN BUT KEPT (D-02): every policy goes through the helper, so a
 -- lapsed org reads and writes nothing while its rows stay untouched.
 --
@@ -32,6 +38,9 @@
 -- table: solar.access_requests
 -- table: solar.studies
 -- table: solar.audit_events
+-- constraint: org_addon_subscriptions_period_when_live ON billing.org_addon_subscriptions
+-- function: solar.org_subscription_active(uuid)
+-- function: solar.user_is_grant_eligible(uuid, uuid)
 -- function: public.org_has_solar(uuid)
 -- function: public.solar_is_grantor(uuid)
 -- function: public.solar_access_level(uuid)
@@ -46,20 +55,52 @@
 -- trigger: access_requests_guard ON solar.access_requests
 -- trigger: studies_bind ON solar.studies
 -- trigger: audit_events_bind ON solar.audit_events
+-- policy: project_access_select ON solar.project_access PERMISSIVE
+-- policy: project_access_insert ON solar.project_access PERMISSIVE
+-- policy: project_access_update ON solar.project_access PERMISSIVE
+-- policy: project_access_delete ON solar.project_access PERMISSIVE
+-- policy: access_requests_select ON solar.access_requests PERMISSIVE
+-- policy: access_requests_insert ON solar.access_requests PERMISSIVE
+-- policy: access_requests_update ON solar.access_requests PERMISSIVE
 -- policy: studies_select ON solar.studies PERMISSIVE
+-- policy: studies_insert ON solar.studies PERMISSIVE
+-- policy: studies_update ON solar.studies PERMISSIVE
+-- policy: studies_delete ON solar.studies PERMISSIVE
 -- policy: studies_insert_authz ON solar.studies RESTRICTIVE
 -- policy: studies_update_authz ON solar.studies RESTRICTIVE
 -- policy: studies_delete_authz ON solar.studies RESTRICTIVE
+-- policy: audit_events_select ON solar.audit_events PERMISSIVE
+-- policy: audit_events_insert ON solar.audit_events PERMISSIVE
 -- grant_absent: anon SELECT ON solar.studies
 -- grant_absent: anon SELECT ON solar.project_access
--- grant_absent: anon EXECUTE ON public.solar_access_level(uuid)
+-- grant_absent: anon SELECT ON solar.access_requests
+-- grant_absent: anon SELECT ON solar.audit_events
+-- grant_absent: authenticated UPDATE ON solar.audit_events
+-- grant_absent: authenticated DELETE ON solar.audit_events
 -- grant_absent: anon EXECUTE ON public.org_has_solar(uuid)
 -- grant_absent: anon EXECUTE ON public.solar_is_grantor(uuid)
+-- grant_absent: anon EXECUTE ON public.solar_access_level(uuid)
+-- grant_absent: anon EXECUTE ON public.solar_can_view(uuid)
+-- grant_absent: anon EXECUTE ON public.solar_can_edit(uuid)
+-- grant_absent: anon EXECUTE ON public.solar_can_see_money(uuid)
+-- grant_absent: anon EXECUTE ON solar.org_subscription_active(uuid)
+-- grant_absent: authenticated EXECUTE ON solar.org_subscription_active(uuid)
+-- grant_absent: anon EXECUTE ON solar.user_is_grant_eligible(uuid, uuid)
+-- grant_absent: authenticated EXECUTE ON solar.user_is_grant_eligible(uuid, uuid)
 -- sql: (SELECT NOT has_schema_privilege('anon', 'solar', 'USAGE'))
+-- sql: (SELECT count(*) = 1 FROM pg_policy WHERE polrelid = 'solar.studies'::regclass AND polcmd IN ('r', '*'))
 -- sql: (SELECT count(*) = 0 FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'solar' AND p.polpermissive = false AND p.polcmd IN ('r', '*'))
 -- sql: (SELECT bool_and(c.relrowsecurity AND c.relforcerowsecurity) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'solar' AND c.relkind = 'r')
+-- sql: (SELECT c.relrowsecurity AND c.relforcerowsecurity FROM pg_class c WHERE c.oid = 'billing.org_addon_subscriptions'::regclass)
 -- behaviour: scripts/db/assert-solar-foundation-roles.sql — every row ok
 -- @verify:end
+--
+-- ⚠ The FORCE bool_and directive above is re-checked on EVERY later deploy
+-- (the post-push verifier re-runs every block >= 00185). It covers relkind 'r'
+-- in schema solar, which includes each PARTITION of a future partitioned table
+-- (meter_readings, D-23). A partition created without FORCE ROW LEVEL SECURITY
+-- turns main's deploy red at the verify step. Set FORCE on every partition, or
+-- amend this directive in the same PR (the 00204/00206 rule).
 
 -- NO BEGIN/COMMIT in this file: scripts/db/dry-run-migration.sh wraps it in
 -- BEGIN … ROLLBACK, and a COMMIT here would make that "rolled-back" production
@@ -91,12 +132,18 @@ CREATE TABLE IF NOT EXISTS billing.org_addon_subscriptions (
     refunded_at                 TIMESTAMPTZ,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT org_addon_subscriptions_org_feature_key UNIQUE (organisation_id, feature_key)
+    CONSTRAINT org_addon_subscriptions_org_feature_key UNIQUE (organisation_id, feature_key),
+    -- Once a subscription has left 'pending' it must carry the period it paid for.
+    CONSTRAINT org_addon_subscriptions_period_when_live
+        CHECK (status = 'pending' OR current_period_end IS NOT NULL)
 );
 CREATE TRIGGER org_addon_subscriptions_updated_at
     BEFORE UPDATE ON billing.org_addon_subscriptions
     FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 ALTER TABLE billing.org_addon_subscriptions ENABLE ROW LEVEL SECURITY;
+-- FORCE: the service role (webhook) bypasses RLS by BYPASSRLS, not by
+-- ownership, so FORCE does not stop it writing (asserted in the dry run).
+ALTER TABLE billing.org_addon_subscriptions FORCE ROW LEVEL SECURITY;
 -- Owners/admins of the org can see its subscription (00187 billing read gate).
 -- No write policy: the webhook writes through the service role.
 CREATE POLICY org_addon_subscriptions_select_owner_admin ON billing.org_addon_subscriptions
@@ -110,7 +157,9 @@ GRANT ALL ON billing.org_addon_subscriptions TO service_role;
 REVOKE ALL ON billing.org_addon_subscriptions FROM anon;
 
 -- ── 2. Helpers ──────────────────────────────────────────────────────────────
-CREATE OR REPLACE FUNCTION public.org_has_solar(p_org_id UUID)
+-- Internal: is the org's subscription live? No caller check, so it is NOT
+-- executable by authenticated/anon; only the definer helpers below call it.
+CREATE OR REPLACE FUNCTION solar.org_subscription_active(p_org_id UUID)
 RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     SELECT p_org_id = 'dddddddd-0000-0000-0000-000000000001'::uuid   -- WM-Consulting bypass, as has_feature
         OR EXISTS (
@@ -118,6 +167,28 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
              WHERE s.organisation_id = p_org_id AND s.feature_key = 'solar'
                AND s.status IN ('active', 'non_renewing')
                AND s.current_period_end > NOW());
+$$;
+
+-- Internal: the ONE eligibility rule (see header). Takes another user's id,
+-- so it is an oracle; NOT executable by authenticated/anon.
+CREATE OR REPLACE FUNCTION solar.user_is_grant_eligible(p_project_id UUID, p_user_id UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT EXISTS (
+               SELECT 1 FROM projects.projects p
+                 JOIN public.user_organisations uo ON uo.organisation_id = p.organisation_id
+                WHERE p.id = p_project_id AND uo.user_id = p_user_id AND uo.is_active)
+       AND COALESCE(public.user_effective_project_role(p_project_id, p_user_id), '')
+             NOT IN ('', 'client_viewer', 'supplier');
+$$;
+
+-- Public: answers only for the service/definer path (no JWT) or an ACTIVE
+-- member of the org, so it is not a cross-org subscription oracle.
+CREATE OR REPLACE FUNCTION public.org_has_solar(p_org_id UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT (auth.uid() IS NULL
+            OR EXISTS (SELECT 1 FROM public.user_organisations uo
+                        WHERE uo.user_id = auth.uid() AND uo.organisation_id = p_org_id AND uo.is_active))
+       AND solar.org_subscription_active(p_org_id);
 $$;
 
 CREATE OR REPLACE FUNCTION public.solar_is_grantor(p_project_id UUID)
@@ -133,13 +204,13 @@ CREATE OR REPLACE FUNCTION public.solar_access_level(p_project_id UUID)
 RETURNS TEXT LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
     v_org  UUID;
-    v_role TEXT;
 BEGIN
     SELECT organisation_id INTO v_org FROM projects.projects WHERE id = p_project_id;
-    IF v_org IS NULL OR NOT public.org_has_solar(v_org) THEN RETURN NULL; END IF;
+    IF v_org IS NULL OR NOT solar.org_subscription_active(v_org) THEN RETURN NULL; END IF;
     IF public.solar_is_grantor(p_project_id) THEN RETURN 'edit_financials'; END IF;
-    v_role := COALESCE(public.user_effective_project_role(p_project_id), '');
-    IF v_role IN ('', 'client_viewer', 'supplier') THEN RETURN NULL; END IF;
+    -- 00204: an org-deactivated member with a live project_members row is out.
+    IF NOT public.user_has_project_access(p_project_id) THEN RETURN NULL; END IF;
+    IF NOT solar.user_is_grant_eligible(p_project_id, auth.uid()) THEN RETURN NULL; END IF;
     RETURN (SELECT pa.level FROM solar.project_access pa
              WHERE pa.project_id = p_project_id AND pa.user_id = auth.uid());
 END $$;
@@ -159,6 +230,14 @@ $$;
 
 -- Spelled out per function (not an EXECUTE format() loop): the repo-wide
 -- anon-EXECUTE guard reads the migration TEXT and cannot see a dynamic REVOKE.
+REVOKE ALL ON FUNCTION solar.org_subscription_active(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.org_subscription_active(uuid) FROM anon;
+REVOKE ALL ON FUNCTION solar.org_subscription_active(uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION solar.org_subscription_active(uuid) TO service_role;
+REVOKE ALL ON FUNCTION solar.user_is_grant_eligible(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.user_is_grant_eligible(uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION solar.user_is_grant_eligible(uuid, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION solar.user_is_grant_eligible(uuid, uuid) TO service_role;
 REVOKE ALL ON FUNCTION public.org_has_solar(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.org_has_solar(uuid) FROM anon;
 GRANT EXECUTE ON FUNCTION public.org_has_solar(uuid) TO authenticated, service_role;
@@ -190,21 +269,23 @@ CREATE TABLE IF NOT EXISTS solar.project_access (
     PRIMARY KEY (project_id, user_id)
 );
 
--- Binds organisation_id and granted_by; refuses grants to non-members,
--- client viewers and suppliers (a client never sees internal Solar data).
+-- Binds organisation_id and granted_by; refuses grants to anyone the one
+-- eligibility rule excludes (a client never sees internal Solar data).
 CREATE OR REPLACE FUNCTION solar.project_access_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' AND (NEW.project_id <> OLD.project_id OR NEW.user_id <> OLD.user_id) THEN
+        RAISE EXCEPTION 'solar.project_access: project_id and user_id are immutable' USING ERRCODE = '42501';
+    END IF;
     SELECT organisation_id INTO NEW.organisation_id FROM projects.projects WHERE id = NEW.project_id;
     IF NEW.organisation_id IS NULL THEN
         RAISE EXCEPTION 'solar.project_access: project % not found', NEW.project_id USING ERRCODE = '23503';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM projects.project_members pm
-                    WHERE pm.project_id = NEW.project_id AND pm.user_id = NEW.user_id
-                      AND pm.is_active AND pm.role NOT IN ('client_viewer', 'supplier')) THEN
+    IF NOT solar.user_is_grant_eligible(NEW.project_id, NEW.user_id) THEN
         RAISE EXCEPTION 'solar.project_access: user is not an eligible member of this project' USING ERRCODE = '23514';
     END IF;
     IF auth.uid() IS NOT NULL THEN NEW.granted_by := auth.uid(); END IF;
+    IF TG_OP = 'UPDATE' THEN NEW.granted_at := OLD.granted_at; END IF;
     NEW.updated_at := NOW();
     RETURN NEW;
 END $$;
@@ -244,16 +325,23 @@ CREATE TABLE IF NOT EXISTS solar.access_requests (
 CREATE UNIQUE INDEX IF NOT EXISTS access_requests_one_pending
     ON solar.access_requests (project_id, requester_id, kind) WHERE status = 'pending';
 
--- INSERT: requester, org and status are bound, never trusted.
--- UPDATE: a requester may only withdraw their own pending request; a grantor
--- may approve (with approved_level) or decline. Approval writes the grant.
+-- INSERT: requester, org and status are bound, never trusted; the requester
+-- must be grant-eligible (the same rule the grant itself enforces).
+-- UPDATE: everything the requester wrote is pinned; the decision columns move
+-- only in the decider branch. A requester may only withdraw; a grantor may
+-- approve (with approved_level) or decline. Approval writes the grant and
+-- never lowers an existing one.
 CREATE OR REPLACE FUNCTION solar.access_requests_guard()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         IF auth.uid() IS NOT NULL THEN NEW.requester_id := auth.uid(); END IF;
+        IF NOT solar.user_is_grant_eligible(NEW.project_id, NEW.requester_id) THEN
+            RAISE EXCEPTION 'access_requests: requester is not an eligible member of this project' USING ERRCODE = '42501';
+        END IF;
         SELECT organisation_id INTO NEW.organisation_id FROM projects.projects WHERE id = NEW.project_id;
         NEW.status := 'pending'; NEW.approved_level := NULL; NEW.decided_by := NULL; NEW.decided_at := NULL;
+        NEW.created_at := NOW();
         RETURN NEW;
     END IF;
     IF NEW.project_id <> OLD.project_id OR NEW.requester_id <> OLD.requester_id OR NEW.kind <> OLD.kind THEN
@@ -262,24 +350,35 @@ BEGIN
     IF OLD.status <> 'pending' THEN
         RAISE EXCEPTION 'access_requests: request already %', OLD.status USING ERRCODE = '42501';
     END IF;
+    NEW.organisation_id := OLD.organisation_id;
+    NEW.created_at      := OLD.created_at;
+    NEW.requested_level := OLD.requested_level;
+    NEW.note            := OLD.note;
     IF NEW.status = 'withdrawn' THEN
         IF auth.uid() IS DISTINCT FROM OLD.requester_id THEN
             RAISE EXCEPTION 'access_requests: only the requester may withdraw' USING ERRCODE = '42501';
         END IF;
+        NEW.approved_level := NULL; NEW.decided_by := NULL; NEW.decided_at := NULL;
     ELSIF NEW.status IN ('approved', 'declined') THEN
         IF auth.uid() IS NOT NULL AND NOT public.solar_is_grantor(NEW.project_id) THEN
             RAISE EXCEPTION 'access_requests: only an org owner/admin may decide' USING ERRCODE = '42501';
         END IF;
         NEW.decided_by := auth.uid(); NEW.decided_at := NOW();
+        IF NEW.status = 'declined' THEN NEW.approved_level := NULL; END IF;
         IF NEW.status = 'approved' AND NEW.kind = 'access' THEN
             IF NEW.approved_level IS NULL THEN
                 RAISE EXCEPTION 'access_requests: approved_level is required' USING ERRCODE = '23514';
             END IF;
-            INSERT INTO solar.project_access (project_id, user_id, level)
+            INSERT INTO solar.project_access AS pa (project_id, user_id, level)
             VALUES (NEW.project_id, NEW.requester_id, NEW.approved_level)
-            ON CONFLICT (project_id, user_id) DO UPDATE SET level = EXCLUDED.level;
+            ON CONFLICT (project_id, user_id) DO UPDATE SET level = CASE
+                WHEN array_position(ARRAY['view', 'edit', 'edit_financials'], EXCLUDED.level)
+                   > array_position(ARRAY['view', 'edit', 'edit_financials'], pa.level)
+                THEN EXCLUDED.level ELSE pa.level END;
         END IF;
-    ELSIF NEW.status <> 'pending' THEN
+    ELSIF NEW.status = 'pending' THEN
+        NEW.approved_level := OLD.approved_level; NEW.decided_by := OLD.decided_by; NEW.decided_at := OLD.decided_at;
+    ELSE
         RAISE EXCEPTION 'access_requests: invalid status %', NEW.status USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
@@ -293,9 +392,10 @@ ALTER TABLE solar.access_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE solar.access_requests FORCE ROW LEVEL SECURITY;
 CREATE POLICY access_requests_select ON solar.access_requests FOR SELECT TO authenticated
     USING (requester_id = auth.uid() OR public.solar_is_grantor(project_id));
+-- Eligibility is enforced by access_requests_guard (it needs another user's
+-- effective role, which the caller may not compute); this is the visibility floor.
 CREATE POLICY access_requests_insert ON solar.access_requests FOR INSERT TO authenticated
-    WITH CHECK (public.user_has_project_access(project_id)
-                AND COALESCE(public.user_effective_project_role(project_id), '') NOT IN ('', 'client_viewer', 'supplier'));
+    WITH CHECK (public.user_has_project_access(project_id));
 CREATE POLICY access_requests_update ON solar.access_requests FOR UPDATE TO authenticated
     USING (requester_id = auth.uid() OR public.solar_is_grantor(project_id))
     WITH CHECK (requester_id = auth.uid() OR public.solar_is_grantor(project_id));
@@ -325,9 +425,20 @@ CREATE TABLE IF NOT EXISTS solar.studies (
 CREATE OR REPLACE FUNCTION solar.studies_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.project_id <> OLD.project_id THEN
+            RAISE EXCEPTION 'solar.studies: project_id is immutable' USING ERRCODE = '42501';
+        END IF;
+        NEW.created_by := OLD.created_by;
+        NEW.created_at := OLD.created_at;
+    END IF;
     SELECT organisation_id INTO NEW.organisation_id FROM projects.projects WHERE id = NEW.project_id;
     IF NEW.organisation_id IS NULL THEN
         RAISE EXCEPTION 'solar.studies: project % not found', NEW.project_id USING ERRCODE = '23503';
+    END IF;
+    IF NEW.poc_node_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM structure.nodes n WHERE n.id = NEW.poc_node_id AND n.project_id = NEW.project_id) THEN
+        RAISE EXCEPTION 'solar.studies: point-of-connection node belongs to another project' USING ERRCODE = '23514';
     END IF;
     IF TG_OP = 'INSERT' THEN NEW.created_by := COALESCE(auth.uid(), NEW.created_by); END IF;
     NEW.updated_by := COALESCE(auth.uid(), NEW.updated_by);
@@ -387,13 +498,16 @@ ALTER TABLE solar.audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE solar.audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_events_select ON solar.audit_events FOR SELECT TO authenticated
     USING (public.solar_can_view(project_id));
+-- Writing activity is an edit; a view-only user records nothing.
 CREATE POLICY audit_events_insert ON solar.audit_events FOR INSERT TO authenticated
-    WITH CHECK (public.solar_can_view(project_id));
--- No UPDATE / DELETE policy: append-only.
+    WITH CHECK (public.solar_can_edit(project_id));
+-- No UPDATE / DELETE policy, and no UPDATE / DELETE grant: append-only.
 
 -- ── 7. Table grants (explicit; the default privileges only cover future tables)
 GRANT SELECT, INSERT, UPDATE, DELETE ON solar.project_access, solar.access_requests, solar.studies TO authenticated;
 GRANT SELECT, INSERT ON solar.audit_events TO authenticated;
+-- The schema's default privileges granted UPDATE/DELETE at CREATE TABLE; take them back.
+REVOKE UPDATE, DELETE, TRUNCATE ON solar.audit_events FROM authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA solar TO service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA solar TO service_role;
 REVOKE ALL ON ALL TABLES IN SCHEMA solar FROM anon;
