@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  SOLAR_SETTING_FIELDS, SOLAR_ORG_SETTINGS_VERSION, solarOrgSettingDefaults, readSolarOrgSettings,
+  SOLAR_SETTING_FIELDS, SOLAR_SETTING_SECTIONS, SOLAR_ORG_SETTINGS_VERSION, solarOrgSettingDefaults, readSolarOrgSettings,
   solarSettingsToForm, validateSolarOrgSettings,
 } from './org-settings'
 
@@ -61,5 +61,14 @@ describe('Solar org settings', () => {
     const form = solarSettingsToForm(solarOrgSettingDefaults())
     const r = validateSolarOrgSettings({ ...form, row_spacing_shade_free_from_hour: '12', row_spacing_shade_free_to_hour: '12' })
     expect(r.errors.row_spacing_shade_free_to_hour).toBe('Must be later than the start hour')
+  })
+})
+
+describe('rate card section (Phase 4b)', () => {
+  it('exists, comes first, and invents no prices', () => {
+    expect(SOLAR_SETTING_SECTIONS[0]).toEqual({ key: 'rate_card', title: 'Rate card' })
+    const rc = SOLAR_SETTING_FIELDS.filter((f) => f.section === 'rate_card')
+    expect(rc).toHaveLength(10)
+    expect(rc.every((f) => f.defaultValue === null)).toBe(true)
   })
 })
