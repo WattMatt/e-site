@@ -1672,3 +1672,65 @@ describe('org add-on — review: past_due and non_renewing transitions (minors)'
     expect(upd[0].payload).toMatchObject({ status: 'active', refunded_at: null, cancelled_at: null })
   })
 })
+
+describe('org add-on — re-review: ended bindings and repeated disables (N-1, N-2)', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  it('disable on a NON_RENEWING row mid-period (re-delivery, or end-of-term disable) leaves it non_renewing', async () => {
+    serviceClientRef.value = makeClient({
+      [`${ADDON}.select`]: {
+        data: addonRow({ status: 'non_renewing', current_period_end: '2099-01-01T00:00:00.000Z' }),
+        error: null,
+      },
+    })
+    const res = await POST(signedReq({
+      event: 'subscription.disable',
+      data: { subscription_code: 'SUB_solar', customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN } },
+    }))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  /** Row bound to SUB_A, which has ENDED; found by customer + plan for an event naming SUB_B. */
+  const endedBinding = {
+    [`${ADDON}.select`]: (ctx: any) =>
+      ctx.filters.some((f: any) => f[1] === 'paystack_customer_code')
+        ? {
+            data: addonRow({ status: 'cancelled', paystack_subscription_code: 'SUB_A', current_period_end: '2020-01-01T00:00:00.000Z' }),
+            error: null,
+          }
+        : { data: null, error: null },
+    'public.user_organisations.select': { data: [{ user_id: 'u-owner' }], error: null },
+  }
+
+  it('after the bound subscription ended, a renewal from the surviving subscription restores Solar and rebinds', async () => {
+    serviceClientRef.value = makeClient(endedBinding)
+    await POST(signedReq({
+      event: 'charge.success',
+      data: {
+        reference: 'ref_survivor', amount: 199900, currency: 'ZAR', paid_at: '2027-09-28T09:59:00.000Z', metadata: 0,
+        customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN },
+        subscription: { subscription_code: 'SUB_B' },
+      },
+    }))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toMatchObject({ status: 'active', paystack_subscription_code: 'SUB_B', last_event_id: 'ref_survivor' })
+    expect(serviceClientRef.value.of('public.notifications.insert')).toHaveLength(0)
+    expect(recordInvoiceMock.mock.calls[0][2].description).not.toMatch(/DUPLICATE/)
+  })
+
+  it('subscription.create of the surviving subscription takes over an ENDED binding (optimistic guard on the old code)', async () => {
+    serviceClientRef.value = makeClient(endedBinding)
+    await POST(signedReq({
+      event: 'subscription.create',
+      data: { subscription_code: 'SUB_B', customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN } },
+    }))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toMatchObject({ paystack_subscription_code: 'SUB_B' })
+    expect(upd[0].payload).not.toHaveProperty('status')
+    expect(upd[0].filters).toEqual(expect.arrayContaining([['eq', 'paystack_subscription_code', 'SUB_A']]))
+  })
+})

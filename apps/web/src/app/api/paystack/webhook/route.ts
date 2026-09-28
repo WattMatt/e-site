@@ -222,6 +222,21 @@ function addonTable(supabase: Client) {
 }
 
 /**
+ * Is the Paystack subscription the row is bound to still LIVE? Only then is a
+ * different subscription "foreign" (a duplicate to escalate). Once the bound
+ * one has ended — cancelled, refunded, or non_renewing past its period — a
+ * Solar-plan event from another subscription of the same customer is the
+ * org's surviving subscription: new money that restores Solar (D-02) and may
+ * take over the binding.
+ */
+function boundSubscriptionLive(row: AddonRow, at: number = Date.now()): boolean {
+  if (row.status === 'active' || row.status === 'past_due') return true
+  if (row.status !== 'non_renewing') return false
+  const end = row.current_period_end ? new Date(row.current_period_end).getTime() : NaN
+  return Number.isFinite(end) && end > at
+}
+
+/**
  * Find the org add-on row a Paystack event belongs to: by subscription code,
  * else by customer code — but ONLY when the event's plan is the Solar plan, so
  * a tier-plan event from the same payer is never mistaken for Solar.
@@ -285,7 +300,8 @@ async function findOrgAddon(
     !!row &&
     !!codes.subscriptionCode &&
     !!row.paystack_subscription_code &&
-    row.paystack_subscription_code !== codes.subscriptionCode
+    row.paystack_subscription_code !== codes.subscriptionCode &&
+    boundSubscriptionLive(row)
   return { row, solarPlan, foreign, error: null }
 }
 
@@ -415,7 +431,8 @@ async function applyOrgAddonCharge(
     !firstCharge &&
     !!existing?.paystack_subscription_code &&
     !!subscriptionCode &&
-    existing.paystack_subscription_code !== subscriptionCode
+    existing.paystack_subscription_code !== subscriptionCode &&
+    boundSubscriptionLive(existing)
   const duplicatePurchase = !alreadyApplied && ((firstCharge && live) || foreignSubscription)
 
   if (!alreadyApplied && !duplicatePurchase) {
@@ -1374,10 +1391,15 @@ export async function POST(req: NextRequest) {
       if (sub.next_payment_date) {
         patch.current_period_end = nextAddonPeriodEnd(addon.row.current_period_end, null, sub.next_payment_date)
       }
-      const { error: bindErr } = await addonTable(supabase)
-        .update(patch)
-        .eq('id', addon.row.id)
-        .or(`paystack_subscription_code.is.null,paystack_subscription_code.eq.${newCode}`)
+      const oldCode = addon.row.paystack_subscription_code
+      const bind = addonTable(supabase).update(patch).eq('id', addon.row.id)
+      // Unbound or already ours: guard against a concurrent bind. Bound to an
+      // ENDED subscription (not foreign, see boundSubscriptionLive): take it
+      // over only if the binding is still the one we read.
+      const { error: bindErr } =
+        oldCode && oldCode !== newCode
+          ? await bind.eq('paystack_subscription_code', oldCode)
+          : await bind.or(`paystack_subscription_code.is.null,paystack_subscription_code.eq.${newCode}`)
       if (bindErr) return storageFailure('org_addon subscription.create', bindErr)
     }
   }
@@ -1431,7 +1453,12 @@ export async function POST(req: NextRequest) {
           .update({ status: 'non_renewing' })
           .eq('id', row.id)
           .eq('status', 'active')
-      } else if (event.event === 'subscription.disable') {
+      } else if (event.event === 'subscription.disable' && (!stillPaidFor || row.status === 'past_due')) {
+        // A disable while the paid period still runs never ends it (D2): an
+        // active row went to non_renewing above, and a non_renewing row — a
+        // re-delivered disable, or Paystack's end-of-term disable arriving a
+        // few hours before our stored end — is left alone. past_due is
+        // already locked (D6), so ending it is no loss of paid access.
         result = await addonTable(supabase)
           .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
           .eq('id', row.id)
