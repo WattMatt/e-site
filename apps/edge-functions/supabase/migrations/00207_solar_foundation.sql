@@ -17,13 +17,20 @@
 --   NULL unless the project's org has an active, in-date subscription;
 --   'edit_financials' for owners/admins of the project's org;
 --   NULL unless the caller passes user_has_project_access (00204: active
---   membership) AND is grant-eligible (solar.user_is_grant_eligible);
---   otherwise the caller's granted level (NULL when none).
--- ONE ELIGIBILITY RULE (solar.user_is_grant_eligible) governs who may hold a
--- grant, who may request one, and whose grant is honoured: an ACTIVE member of
--- the project's org whose effective project role (00107: org owner/admin/PM
--- wins, else an active project_members row) is non-null and is not
--- client_viewer or supplier. A forged grant row for anyone else is inert.
+--   membership) AND has a max level (solar.user_max_grant_level);
+--   otherwise the caller's granted level, CAPPED at that max (NULL when none).
+-- ONE ELIGIBILITY RULE (solar.user_max_grant_level) governs who may hold a
+-- grant, at what level, who may request one, and whose grant is honoured:
+--   'edit_financials' — an ACTIVE member of the project's org whose effective
+--       project role (00107: org owner/admin/PM wins, else an active
+--       project_members row) is non-null and not client_viewer/supplier;
+--   'view' — an EXTERNAL project member (owner decision 2026-09-28): an active
+--       project_members row, role not client_viewer/supplier, whose identity
+--       org (pm.organisation_id, the sub-org convention) they are ACTIVE in,
+--       and who is NOT an active member of the project's org;
+--   NULL — everyone else (client viewers and suppliers from ANY org, anyone
+--       deactivated, non-members). A forged grant row above the max is capped;
+--       one for an ineligible user is inert.
 -- LAPSE = HIDDEN BUT KEPT (D-02): every policy goes through the helper, so a
 -- lapsed org reads and writes nothing while its rows stay untouched.
 --
@@ -40,7 +47,7 @@
 -- table: solar.audit_events
 -- constraint: org_addon_subscriptions_period_when_live ON billing.org_addon_subscriptions
 -- function: solar.org_subscription_active(uuid)
--- function: solar.user_is_grant_eligible(uuid, uuid)
+-- function: solar.user_max_grant_level(uuid, uuid)
 -- function: public.org_has_solar(uuid)
 -- function: public.solar_is_grantor(uuid)
 -- function: public.solar_access_level(uuid)
@@ -85,8 +92,8 @@
 -- grant_absent: anon EXECUTE ON public.solar_can_see_money(uuid)
 -- grant_absent: anon EXECUTE ON solar.org_subscription_active(uuid)
 -- grant_absent: authenticated EXECUTE ON solar.org_subscription_active(uuid)
--- grant_absent: anon EXECUTE ON solar.user_is_grant_eligible(uuid, uuid)
--- grant_absent: authenticated EXECUTE ON solar.user_is_grant_eligible(uuid, uuid)
+-- grant_absent: anon EXECUTE ON solar.user_max_grant_level(uuid, uuid)
+-- grant_absent: authenticated EXECUTE ON solar.user_max_grant_level(uuid, uuid)
 -- sql: (SELECT NOT has_schema_privilege('anon', 'solar', 'USAGE'))
 -- sql: (SELECT count(*) = 1 FROM pg_policy WHERE polrelid = 'solar.studies'::regclass AND polcmd IN ('r', '*'))
 -- sql: (SELECT count(*) = 0 FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'solar' AND p.polpermissive = false AND p.polcmd IN ('r', '*'))
@@ -169,16 +176,29 @@ RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
                AND s.current_period_end > NOW());
 $$;
 
--- Internal: the ONE eligibility rule (see header). Takes another user's id,
--- so it is an oracle; NOT executable by authenticated/anon.
-CREATE OR REPLACE FUNCTION solar.user_is_grant_eligible(p_project_id UUID, p_user_id UUID)
-RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
-    SELECT EXISTS (
-               SELECT 1 FROM projects.projects p
-                 JOIN public.user_organisations uo ON uo.organisation_id = p.organisation_id
-                WHERE p.id = p_project_id AND uo.user_id = p_user_id AND uo.is_active)
-       AND COALESCE(public.user_effective_project_role(p_project_id, p_user_id), '')
-             NOT IN ('', 'client_viewer', 'supplier');
+-- Internal: the ONE eligibility rule (see header), as the highest level the
+-- user may hold (NULL = ineligible). Takes another user's id, so it is an
+-- oracle; NOT executable by authenticated/anon.
+CREATE OR REPLACE FUNCTION solar.user_max_grant_level(p_project_id UUID, p_user_id UUID)
+RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+    SELECT CASE
+        -- Own-org member (active in the project's org).
+        WHEN EXISTS (SELECT 1 FROM projects.projects p
+                       JOIN public.user_organisations uo ON uo.organisation_id = p.organisation_id
+                      WHERE p.id = p_project_id AND uo.user_id = p_user_id AND uo.is_active)
+        THEN CASE WHEN COALESCE(public.user_effective_project_role(p_project_id, p_user_id), '')
+                         NOT IN ('', 'client_viewer', 'supplier')
+                  THEN 'edit_financials' END
+        -- External project member: the 00204 clause (a) shape (active row,
+        -- active in the row's identity org) minus client-facing roles. View only.
+        WHEN EXISTS (SELECT 1 FROM projects.project_members pm
+                       JOIN public.user_organisations uo
+                         ON uo.user_id = pm.user_id AND uo.organisation_id = pm.organisation_id
+                      WHERE pm.project_id = p_project_id AND pm.user_id = p_user_id
+                        AND pm.is_active AND uo.is_active
+                        AND pm.role NOT IN ('client_viewer', 'supplier'))
+        THEN 'view'
+    END;
 $$;
 
 -- Public: answers only for the service/definer path (no JWT) or an ACTIVE
@@ -203,16 +223,25 @@ $$;
 CREATE OR REPLACE FUNCTION public.solar_access_level(p_project_id UUID)
 RETURNS TEXT LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
-    v_org  UUID;
+    v_org    UUID;
+    v_max    TEXT;
+    v_level  TEXT;
+    v_ranks  CONSTANT TEXT[] := ARRAY['view', 'edit', 'edit_financials'];
 BEGIN
     SELECT organisation_id INTO v_org FROM projects.projects WHERE id = p_project_id;
     IF v_org IS NULL OR NOT solar.org_subscription_active(v_org) THEN RETURN NULL; END IF;
     IF public.solar_is_grantor(p_project_id) THEN RETURN 'edit_financials'; END IF;
     -- 00204: an org-deactivated member with a live project_members row is out.
+    -- Clause (a) joins the member's IDENTITY org (pm.organisation_id), so an
+    -- external member active in their own org still passes here.
     IF NOT public.user_has_project_access(p_project_id) THEN RETURN NULL; END IF;
-    IF NOT solar.user_is_grant_eligible(p_project_id, auth.uid()) THEN RETURN NULL; END IF;
-    RETURN (SELECT pa.level FROM solar.project_access pa
-             WHERE pa.project_id = p_project_id AND pa.user_id = auth.uid());
+    v_max := solar.user_max_grant_level(p_project_id, auth.uid());
+    IF v_max IS NULL THEN RETURN NULL; END IF;
+    SELECT pa.level INTO v_level FROM solar.project_access pa
+     WHERE pa.project_id = p_project_id AND pa.user_id = auth.uid();
+    IF v_level IS NULL THEN RETURN NULL; END IF;
+    -- Never more than the caller's maximum (a forged 'edit' for an external is 'view').
+    RETURN v_ranks[LEAST(array_position(v_ranks, v_level), array_position(v_ranks, v_max))];
 END $$;
 
 CREATE OR REPLACE FUNCTION public.solar_can_view(p_project_id UUID)
@@ -234,10 +263,10 @@ REVOKE ALL ON FUNCTION solar.org_subscription_active(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION solar.org_subscription_active(uuid) FROM anon;
 REVOKE ALL ON FUNCTION solar.org_subscription_active(uuid) FROM authenticated;
 GRANT EXECUTE ON FUNCTION solar.org_subscription_active(uuid) TO service_role;
-REVOKE ALL ON FUNCTION solar.user_is_grant_eligible(uuid, uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION solar.user_is_grant_eligible(uuid, uuid) FROM anon;
-REVOKE ALL ON FUNCTION solar.user_is_grant_eligible(uuid, uuid) FROM authenticated;
-GRANT EXECUTE ON FUNCTION solar.user_is_grant_eligible(uuid, uuid) TO service_role;
+REVOKE ALL ON FUNCTION solar.user_max_grant_level(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION solar.user_max_grant_level(uuid, uuid) FROM anon;
+REVOKE ALL ON FUNCTION solar.user_max_grant_level(uuid, uuid) FROM authenticated;
+GRANT EXECUTE ON FUNCTION solar.user_max_grant_level(uuid, uuid) TO service_role;
 REVOKE ALL ON FUNCTION public.org_has_solar(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.org_has_solar(uuid) FROM anon;
 GRANT EXECUTE ON FUNCTION public.org_has_solar(uuid) TO authenticated, service_role;
@@ -270,9 +299,13 @@ CREATE TABLE IF NOT EXISTS solar.project_access (
 );
 
 -- Binds organisation_id and granted_by; refuses grants to anyone the one
--- eligibility rule excludes (a client never sees internal Solar data).
+-- eligibility rule excludes (a client never sees internal Solar data) and any
+-- level above the user's maximum (an external member is capped at view).
 CREATE OR REPLACE FUNCTION solar.project_access_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    v_max    TEXT;
+    v_ranks  CONSTANT TEXT[] := ARRAY['view', 'edit', 'edit_financials'];
 BEGIN
     IF TG_OP = 'UPDATE' AND (NEW.project_id <> OLD.project_id OR NEW.user_id <> OLD.user_id) THEN
         RAISE EXCEPTION 'solar.project_access: project_id and user_id are immutable' USING ERRCODE = '42501';
@@ -281,8 +314,12 @@ BEGIN
     IF NEW.organisation_id IS NULL THEN
         RAISE EXCEPTION 'solar.project_access: project % not found', NEW.project_id USING ERRCODE = '23503';
     END IF;
-    IF NOT solar.user_is_grant_eligible(NEW.project_id, NEW.user_id) THEN
+    v_max := solar.user_max_grant_level(NEW.project_id, NEW.user_id);
+    IF v_max IS NULL THEN
         RAISE EXCEPTION 'solar.project_access: user is not an eligible member of this project' USING ERRCODE = '23514';
+    END IF;
+    IF array_position(v_ranks, NEW.level) > array_position(v_ranks, v_max) THEN
+        RAISE EXCEPTION 'solar.project_access: level % exceeds this user''s maximum (%)', NEW.level, v_max USING ERRCODE = '23514';
     END IF;
     IF auth.uid() IS NOT NULL THEN NEW.granted_by := auth.uid(); END IF;
     IF TG_OP = 'UPDATE' THEN NEW.granted_at := OLD.granted_at; END IF;
@@ -326,18 +363,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS access_requests_one_pending
     ON solar.access_requests (project_id, requester_id, kind) WHERE status = 'pending';
 
 -- INSERT: requester, org and status are bound, never trusted; the requester
--- must be grant-eligible (the same rule the grant itself enforces).
+-- must be grant-eligible (the same rule the grant itself enforces), and a
+-- requested level above their maximum is clamped to it.
 -- UPDATE: everything the requester wrote is pinned; the decision columns move
 -- only in the decider branch. A requester may only withdraw; a grantor may
--- approve (with approved_level) or decline. Approval writes the grant and
--- never lowers an existing one.
+-- approve (with approved_level, never above the requester's maximum) or
+-- decline. Approval writes the grant, never lowers an existing one, and never
+-- lifts it above the maximum.
 CREATE OR REPLACE FUNCTION solar.access_requests_guard()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    v_max    TEXT;
+    v_ranks  CONSTANT TEXT[] := ARRAY['view', 'edit', 'edit_financials'];
 BEGIN
     IF TG_OP = 'INSERT' THEN
         IF auth.uid() IS NOT NULL THEN NEW.requester_id := auth.uid(); END IF;
-        IF NOT solar.user_is_grant_eligible(NEW.project_id, NEW.requester_id) THEN
+        v_max := solar.user_max_grant_level(NEW.project_id, NEW.requester_id);
+        IF v_max IS NULL THEN
             RAISE EXCEPTION 'access_requests: requester is not an eligible member of this project' USING ERRCODE = '42501';
+        END IF;
+        IF array_position(v_ranks, NEW.requested_level) > array_position(v_ranks, v_max) THEN
+            NEW.requested_level := v_max;
         END IF;
         SELECT organisation_id INTO NEW.organisation_id FROM projects.projects WHERE id = NEW.project_id;
         NEW.status := 'pending'; NEW.approved_level := NULL; NEW.decided_by := NULL; NEW.decided_at := NULL;
@@ -369,12 +415,17 @@ BEGIN
             IF NEW.approved_level IS NULL THEN
                 RAISE EXCEPTION 'access_requests: approved_level is required' USING ERRCODE = '23514';
             END IF;
+            v_max := solar.user_max_grant_level(NEW.project_id, NEW.requester_id);
+            IF v_max IS NULL OR array_position(v_ranks, NEW.approved_level) > array_position(v_ranks, v_max) THEN
+                RAISE EXCEPTION 'access_requests: approved_level % exceeds the requester''s maximum (%)',
+                    NEW.approved_level, COALESCE(v_max, 'none') USING ERRCODE = '23514';
+            END IF;
+            -- Highest of existing and approved wins, capped at the maximum.
             INSERT INTO solar.project_access AS pa (project_id, user_id, level)
             VALUES (NEW.project_id, NEW.requester_id, NEW.approved_level)
-            ON CONFLICT (project_id, user_id) DO UPDATE SET level = CASE
-                WHEN array_position(ARRAY['view', 'edit', 'edit_financials'], EXCLUDED.level)
-                   > array_position(ARRAY['view', 'edit', 'edit_financials'], pa.level)
-                THEN EXCLUDED.level ELSE pa.level END;
+            ON CONFLICT (project_id, user_id) DO UPDATE SET level = v_ranks[LEAST(
+                GREATEST(array_position(v_ranks, EXCLUDED.level), array_position(v_ranks, pa.level)),
+                array_position(v_ranks, v_max))];
         END IF;
     ELSIF NEW.status = 'pending' THEN
         NEW.approved_level := OLD.approved_level; NEW.decided_by := OLD.decided_by; NEW.decided_at := OLD.decided_at;

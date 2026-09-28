@@ -32,6 +32,10 @@ DECLARE
   v_orgpm    UUID := gen_random_uuid();   -- org-level project_manager, NO project_members row
   v_deact    UUID := gen_random_uuid();   -- contractor with a grant, later deactivated in the org
   v_foreign  UUID := gen_random_uuid();   -- admin of ANOTHER org
+  v_ext      UUID := gen_random_uuid();   -- EXTERNAL: active in org2, active pm row on P1 (contractor)
+  v_ext2     UUID := gen_random_uuid();   -- external whose pm row is INACTIVE
+  v_ext3     UUID := gen_random_uuid();   -- external DEACTIVATED in their own org2
+  v_req4     UUID;
   v_level    TEXT;
   v_n        INT;
   v_req      UUID;
@@ -41,7 +45,7 @@ DECLARE
 BEGIN
   -- ── Fixtures (as postgres) ────────────────────────────────────────────────
   INSERT INTO public.organisations (id, name) VALUES (v_org, 'solar-probe-org'), (v_org2, 'solar-probe-org-2');
-  FOREACH u IN ARRAY ARRAY[v_admin, v_pm, v_con, v_nogrant, v_client, v_sup, v_orgpm, v_deact, v_foreign] LOOP
+  FOREACH u IN ARRAY ARRAY[v_admin, v_pm, v_con, v_nogrant, v_client, v_sup, v_orgpm, v_deact, v_foreign, v_ext, v_ext2, v_ext3] LOOP
     INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password,
                             email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
     VALUES (u, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -52,7 +56,8 @@ BEGIN
     (v_con, v_org, 'contractor', TRUE), (v_nogrant, v_org, 'contractor', TRUE),
     (v_client, v_org, 'client_viewer', TRUE), (v_sup, v_org, 'supplier', TRUE),
     (v_orgpm, v_org, 'project_manager', TRUE), (v_deact, v_org, 'contractor', TRUE),
-    (v_foreign, v_org2, 'admin', TRUE);
+    (v_foreign, v_org2, 'admin', TRUE),
+    (v_ext, v_org2, 'contractor', TRUE), (v_ext2, v_org2, 'contractor', TRUE), (v_ext3, v_org2, 'contractor', FALSE);
   INSERT INTO projects.projects (id, organisation_id, name, created_by) VALUES
     (v_project, v_org, 'solar-probe-project', v_admin),
     (v_project2, v_org, 'solar-probe-project-2', v_admin);
@@ -60,7 +65,10 @@ BEGIN
     (v_project, v_pm, v_org, 'project_manager', TRUE), (v_project, v_con, v_org, 'contractor', TRUE),
     (v_project, v_nogrant, v_org, 'contractor', TRUE), (v_project, v_client, v_org, 'client_viewer', TRUE),
     (v_project, v_sup, v_org, 'supplier', TRUE), (v_project, v_deact, v_org, 'contractor', TRUE),
-    (v_project2, v_pm, v_org, 'project_manager', TRUE), (v_project2, v_con, v_org, 'contractor', TRUE);
+    (v_project2, v_pm, v_org, 'project_manager', TRUE), (v_project2, v_con, v_org, 'contractor', TRUE),
+    -- externals: the row carries THEIR identity org (the sub-org convention)
+    (v_project, v_ext, v_org2, 'contractor', TRUE), (v_project, v_ext2, v_org2, 'contractor', FALSE),
+    (v_project, v_ext3, v_org2, 'contractor', TRUE);
   INSERT INTO structure.nodes (id, project_id, organisation_id, kind, code) VALUES
     (v_node1, v_project, v_org, 'main_board', 'SOLAR-PROBE-MB1'),
     (v_node2, v_project2, v_org, 'main_board', 'SOLAR-PROBE-MB2');
@@ -391,6 +399,94 @@ BEGIN
   INSERT INTO _r VALUES ('deactivated_member_level_null', public.solar_access_level(v_project) IS NULL);
   SELECT count(*) INTO v_n FROM solar.studies WHERE project_id = v_project;
   INSERT INTO _r VALUES ('deactivated_member_sees_no_study', v_n = 0);
+  RESET ROLE;
+
+  -- ── 7d. External project members: eligible, capped at VIEW ───────────────
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_ext::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  -- 00204 clause (a) joins the row's identity org, so the external passes it
+  INSERT INTO _r VALUES ('external_passes_user_has_project_access', public.user_has_project_access(v_project));
+  INSERT INTO solar.access_requests (project_id, kind, requested_level) VALUES (v_project, 'access', 'edit')
+  RETURNING id INTO v_req4;
+  SELECT count(*) INTO v_n FROM solar.access_requests WHERE id = v_req4 AND requested_level = 'view';
+  INSERT INTO _r VALUES ('external_request_clamped_to_view', v_n = 1);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    UPDATE solar.access_requests SET status = 'approved', approved_level = 'edit' WHERE id = v_req4;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('external_approval_above_view_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('external_approval_above_view_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('external_approval_above_view_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_project, v_ext, 'edit');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('external_grant_edit_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('external_grant_edit_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('external_grant_edit_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_project, v_ext, 'view');
+    SELECT count(*) INTO v_n FROM solar.project_access WHERE project_id = v_project AND user_id = v_ext AND level = 'view';
+    INSERT INTO _r VALUES ('external_grant_view_accepted', v_n = 1);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('external_grant_view_accepted', false);
+  END;
+  -- the grant path itself (not only the read path) rejects a lapsed external
+  BEGIN
+    INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_project, v_ext2, 'view');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('external_inactive_pm_grant_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('external_inactive_pm_grant_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('external_inactive_pm_grant_REFUSED', false);
+  END;
+  BEGIN
+    INSERT INTO solar.project_access (project_id, user_id, level) VALUES (v_project, v_ext3, 'view');
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('external_deactivated_grant_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('external_deactivated_grant_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('external_deactivated_grant_REFUSED', false);
+  END;
+  RESET ROLE;
+  -- a forged 'edit' row (bind trigger bypassed) still resolves to 'view'
+  ALTER TABLE solar.project_access DISABLE TRIGGER project_access_bind;
+  UPDATE solar.project_access SET level = 'edit' WHERE project_id = v_project AND user_id = v_ext;
+  INSERT INTO solar.project_access (project_id, user_id, organisation_id, level) VALUES
+    (v_project, v_ext2, v_org, 'view'), (v_project, v_ext3, v_org, 'view');
+  ALTER TABLE solar.project_access ENABLE TRIGGER project_access_bind;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_ext::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r VALUES ('external_forged_edit_resolves_view', public.solar_access_level(v_project) = 'view');
+  SELECT count(*) INTO v_n FROM solar.studies WHERE project_id = v_project;
+  INSERT INTO _r VALUES ('external_reads_study', v_n = 1);
+  UPDATE solar.studies SET nmd_kva = 3 WHERE project_id = v_project;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('external_update_affects_nothing', v_n = 0);
+  RESET ROLE;
+  -- approving 'view' over the forged 'edit': highest-wins merge still capped
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    UPDATE solar.access_requests SET status = 'approved', approved_level = 'view' WHERE id = v_req4;
+    SELECT count(*) INTO v_n FROM solar.project_access WHERE project_id = v_project AND user_id = v_ext AND level = 'view';
+    INSERT INTO _r VALUES ('external_reapproval_merge_capped_at_view', v_n = 1);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('external_reapproval_merge_capped_at_view', false);
+  END;
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_ext2::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r VALUES ('external_inactive_pm_row_null', public.solar_access_level(v_project) IS NULL);
+  RESET ROLE;
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_ext3::text, 'role', 'authenticated')::text, true);
+  SET LOCAL ROLE authenticated;
+  INSERT INTO _r VALUES ('external_deactivated_in_own_org_null', public.solar_access_level(v_project) IS NULL);
   RESET ROLE;
 
   -- ── 8. Lapse: hidden but kept ─────────────────────────────────────────────
