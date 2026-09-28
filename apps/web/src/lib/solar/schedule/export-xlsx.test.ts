@@ -42,9 +42,10 @@ describe('exportScheduleXlsx', () => {
     const critical = rows[0].indexOf('Critical')
     const float = rows[0].indexOf('Float (days)')
     // SS+2 from Install lets Go live start 10-08 at the earliest; it is planned 10-12 and ends the
-    // programme, so Go live is critical and Design/Install carry 3 days of float (units: F1=5, F2=8, S3=11).
+    // programme, so Go live is critical and Design/Install carry 4 days of float. A milestone sits at
+    // the END of its day (units: F1=5, F2=8, S3=F3=12, so Install's finish may slip to 12).
     expect(rows.slice(1).map((r) => r[critical])).toEqual(['', '', 'Yes'])
-    expect(rows.slice(1).map((r) => r[float])).toEqual(['3', '3', '0'])
+    expect(rows.slice(1).map((r) => r[float])).toEqual(['4', '4', '0'])
   })
   it('writes dates as text, never Excel serials', async () => {
     const rows = await readXlsxTable(await exportScheduleXlsx(data, makeWorkCalendar('calendar')))
