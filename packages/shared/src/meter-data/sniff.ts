@@ -28,7 +28,7 @@ export function sniffMeterText(text: string): SniffResult {
   const lines = splitLines(text)
   const nonBlank = lines.filter((l) => l.trim() !== '')
   if (nonBlank.length === 0) return none('empty', 'empty_file')
-  const first = lines[0].replace(/^﻿/, '')
+  const first = lines[0].replace(/^\uFEFF/, '')
 
   if (/^Serial,Name,Downloaded,Timestamp\s*$/i.test(first)) {
     return { format: 'E', delimiter: ',', headerLineIndex: 0, dataStartIndex: 1, serials: [], reason: null }
