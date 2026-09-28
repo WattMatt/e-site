@@ -17,7 +17,7 @@
 --   Library rows: visible to ACTIVE members of the row's org whose org subscription is live and who
 --   hold at least View on any of the org's projects (owners/admins always); writes need Edit;
 --   deletes need owner/admin. One helper, solar.library_orgs(level), returns the caller's orgs as an
---   array, so a policy is `organisation_id = ANY ((SELECT solar.library_orgs('view')))`: evaluated
+--   array, so a policy is `organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[])`: evaluated
 --   once per statement (InitPlan), not once per row, which matters at millions of readings.
 --   Study rows: exactly the solar.studies pattern (00207).
 --   Readings: SELECT policy only; no INSERT/UPDATE/DELETE grant; written by solar.write_readings.
@@ -862,103 +862,103 @@ ALTER TABLE solar.load_archetypes FORCE ROW LEVEL SECURITY;
 
 -- Library tables. V = view set, E = edit set, A = owner/admin set; each (SELECT …) is an InitPlan.
 CREATE POLICY meter_files_select ON solar.meter_files FOR SELECT TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_files_insert ON solar.meter_files FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_files_update ON solar.meter_files FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_files_delete ON solar.meter_files FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_files_insert_authz ON solar.meter_files AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))) AND public.solar_can_edit(project_id));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]) AND public.solar_can_edit(project_id));
 CREATE POLICY meter_files_update_authz ON solar.meter_files AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meter_files_delete_authz ON solar.meter_files AS RESTRICTIVE FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('admin'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('admin'))::uuid[]));
 
 CREATE POLICY meters_select ON solar.meters FOR SELECT TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view')))
-           OR id = ANY ((SELECT solar.linked_meter_ids())));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[])
+           OR id = ANY ((SELECT solar.linked_meter_ids())::uuid[]));
 CREATE POLICY meters_insert ON solar.meters FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meters_update ON solar.meters FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meters_delete ON solar.meters FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meters_insert_authz ON solar.meters AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meters_update_authz ON solar.meters AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meters_delete_authz ON solar.meters AS RESTRICTIVE FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('admin'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('admin'))::uuid[]));
 
 CREATE POLICY meter_series_hashes_select ON solar.meter_series_hashes FOR SELECT TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_series_hashes_insert ON solar.meter_series_hashes FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_series_hashes_delete ON solar.meter_series_hashes FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_series_hashes_insert_authz ON solar.meter_series_hashes AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meter_series_hashes_delete_authz ON solar.meter_series_hashes AS RESTRICTIVE FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 
 CREATE POLICY meter_register_select ON solar.meter_register FOR SELECT TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_register_insert ON solar.meter_register FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_register_update ON solar.meter_register FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_register_delete ON solar.meter_register FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_register_insert_authz ON solar.meter_register AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meter_register_update_authz ON solar.meter_register AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meter_register_delete_authz ON solar.meter_register AS RESTRICTIVE FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('admin'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('admin'))::uuid[]));
 
 CREATE POLICY meter_channels_select ON solar.meter_channels FOR SELECT TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view')))
-           OR meter_id = ANY ((SELECT solar.linked_meter_ids())));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[])
+           OR meter_id = ANY ((SELECT solar.linked_meter_ids())::uuid[]));
 CREATE POLICY meter_channels_insert ON solar.meter_channels FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_channels_update ON solar.meter_channels FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_channels_delete ON solar.meter_channels FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_channels_insert_authz ON solar.meter_channels AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meter_channels_update_authz ON solar.meter_channels AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meter_channels_delete_authz ON solar.meter_channels AS RESTRICTIVE FOR DELETE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 
 CREATE POLICY meter_import_reports_select ON solar.meter_import_reports FOR SELECT TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_import_reports_insert ON solar.meter_import_reports FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_import_reports_update ON solar.meter_import_reports FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[]));
 CREATE POLICY meter_import_reports_insert_authz ON solar.meter_import_reports AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 CREATE POLICY meter_import_reports_update_authz ON solar.meter_import_reports AS RESTRICTIVE FOR UPDATE TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))))
-    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]))
+    WITH CHECK (organisation_id = ANY ((SELECT solar.library_orgs('edit'))::uuid[]));
 
 -- Readings: read-only for users; writes go through solar.write_readings.
 CREATE POLICY meter_readings_select ON solar.meter_readings FOR SELECT TO authenticated
-    USING (organisation_id = ANY ((SELECT solar.library_orgs('view')))
-           OR channel_id = ANY ((SELECT solar.linked_channel_ids())));
+    USING (organisation_id = ANY ((SELECT solar.library_orgs('view'))::uuid[])
+           OR channel_id = ANY ((SELECT solar.linked_channel_ids())::uuid[]));
 
 -- Study-scoped tables: the solar.studies (00207) shape.
 CREATE POLICY study_meters_select ON solar.study_meters FOR SELECT TO authenticated
