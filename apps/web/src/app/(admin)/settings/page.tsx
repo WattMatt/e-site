@@ -142,6 +142,31 @@ export default async function SettingsPage() {
           </div>
         </div>
 
+        {/* Solar defaults — owners/admins only (the page itself is requireRolePage(OWNER_ADMIN)); hidden, not disabled */}
+        {isAdmin && (
+          <div className="data-panel">
+            <div className="data-panel-header">
+              <span className="data-panel-title">Solar defaults</span>
+            </div>
+            <div style={{ padding: '16px 18px' }}>
+              <p style={{ fontSize: 13, color: 'var(--c-text-dim)', marginBottom: 12 }}>
+                Finance, opex and loss defaults every new Solar case copies.
+              </p>
+              <Link
+                href="/settings/solar"
+                style={{
+                  display: 'inline-block',
+                  fontSize: 12, color: 'var(--c-amber)', background: 'transparent',
+                  border: '1px solid var(--c-border)', borderRadius: 6, padding: '7px 14px',
+                  textDecoration: 'none',
+                }}
+              >
+                Solar defaults →
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Security */}
         <div className="data-panel">
           <div className="data-panel-header">
