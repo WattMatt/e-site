@@ -162,6 +162,7 @@ Solar is **not** gated by the E-Site role. Two things decide it (migration `0020
 | `saveFilterPresetAction` / `deleteFilterPresetAction` | **View** (filtering is reading) | RLS: own rows only (`user_id = auth.uid()`), bind trigger pins `user_id` |
 | `saveScheduleSettingsAction` | Edit; `expectedUpdatedAt` | RLS `schedule_settings_*` |
 | `applyScheduleTemplateAction` (`solar-schedule-template.actions.ts`) | Edit | `solar.schedule_org_template` (definer, re-checks Edit) + `schedule_create_tasks` |
+| `scheduleTemplateCountAction` (`solar-schedule-template.actions.ts`) | Edit | `solar.schedule_org_template` (definer, re-checks Edit); reads only, for the toolbar confirm's task count |
 | `saveOrgScheduleTemplateAction` | `requireRole(active org, OWNER_ADMIN)` (`.ok`); `expectedUpdatedAt` | RLS `schedule_templates_*` (owner/admin of the row's org); no DELETE |
 | `commitScheduleImportAction` (`solar-schedule-import.actions.ts`) | Edit; re-validates the plan; owners matched only against eligible candidates (unmatched → default owner, listed back) | `schedule_create_tasks` (append or replace in ONE transaction) |
 
