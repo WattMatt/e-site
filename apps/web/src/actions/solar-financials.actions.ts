@@ -1,5 +1,5 @@
 'use server'
-/** Financials tab actions (functional spec §8). Edit + financials only; money tables written through the caller's session. */
+/** Financials tab actions (functional spec §8). Edit + financials only. case_financials is written through the caller's session; the run's stored results (case_run_financials) are service-written after this gate. */
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { readSolarOrgSettings } from '@esite/shared'
@@ -57,12 +57,12 @@ export async function applySolarRateCardAction(input: { projectId: string; caseI
 
 export async function runSolarFinancialsAction(input: { projectId: string; caseId: string }): Promise<{ ok: true; id: string } | { error: string }> {
   const { supabase, userId } = await session(input.projectId)
-  const out = await executeFinancialsRun({ user: supabase, svc: createServiceClient() as unknown as AnyClient, projectId: input.projectId, caseId: input.caseId })
+  if (!userId) return { error: 'You are not signed in.' }
+  // The gate above (edit_financials) is what authorises the SERVICE insert inside executeFinancialsRun.
+  const out = await executeFinancialsRun({ user: supabase, svc: createServiceClient() as unknown as AnyClient, projectId: input.projectId, caseId: input.caseId, userId })
   if (!out.ok) return { error: out.error }
-  if (userId) {
-    await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: 'financials_run', objectRef: { caseId: input.caseId, financialsId: out.id } })
-    await emitProductEvent({ actorId: userId, projectId: input.projectId, event: 'solar_financials_run' })
-  }
+  await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: 'financials_run', objectRef: { caseId: input.caseId, financialsId: out.id } })
+  await emitProductEvent({ actorId: userId, projectId: input.projectId, event: 'solar_financials_run' })
   revalidatePath(`/projects/${input.projectId}/solar`, 'layout')
   return { ok: true, id: out.id }
 }

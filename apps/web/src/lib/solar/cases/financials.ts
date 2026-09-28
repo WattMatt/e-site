@@ -2,7 +2,10 @@ import 'server-only'
 /**
  * Run financials (functional spec §8): pure computation on the STORED run — the latest succeeded run's
  * hourly CSV and KPIs, the case config snapshot the run used, the saved financials and the study's
- * tariff. Writes one immutable solar.case_run_financials row through the caller's session (money RLS).
+ * tariff. Every read of the saved financials goes through the caller's session (money RLS — the DB half
+ * of the edit_financials gate); the immutable solar.case_run_financials row is written by the SERVICE
+ * client with run_by set explicitly (00215: authenticated has no INSERT there, so a money user cannot
+ * post figures of their own over PostgREST). Call only AFTER the action's edit_financials gate.
  * The tariff is priced on the run's stored load reference year (provenance.loadReferenceYear), the
  * same year the run's load was aligned to.
  */
@@ -35,7 +38,7 @@ export async function latestSucceededRun(user: AnyClient, caseId: string): Promi
 /** The hash that makes a stored financial result current: finance input + tariff + the run it priced. */
 export const finInputsHash = (input: unknown, tariffRef: unknown, runId: string) => inputsHash({ input, tariffRef, runId })
 
-export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient; projectId: string; caseId: string }): Promise<FinRunOutcome> {
+export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient; projectId: string; caseId: string; userId: string }): Promise<FinRunOutcome> {
   const run = await latestSucceededRun(a.user, a.caseId)
   if (!run) return { ok: false, status: 422, error: FIN_RUN_REASONS.noRun }
   const { data: finRows } = await a.user.schema('solar').from('case_financials').select('config').eq('case_id', a.caseId)
@@ -57,12 +60,12 @@ export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient;
     const hourly = decodeHourlyCsv(await getGzipText(a.svc, RUNS_BUCKET, run.hourly_path as string))
     const result = runStoredFinancials({ hourly, year1PvKwh: kpis.annualAcKwh, year1DeliveredKwh: kpis.deliveredKwh }, built.input, tariff.calc)
     const results = { version: 1, capex: capexTotals(fin.fin.capex, kpis.dcKwp), ...result }
-    const { data, error } = await a.user.schema('solar').from('case_run_financials').insert({
+    const { data, error } = await a.svc.schema('solar').from('case_run_financials').insert({
       case_run_id: run.id, engine_version: ENGINE_VERSION, fin_inputs: { finance: built.input, config: fin.fin },
       fin_inputs_hash: finInputsHash(built.input, tariff.tariffRef, run.id as string), tariff_ref: tariff.tariffRef, results,
+      run_by: a.userId,
     }).select('id')
     if (error) {
-      if (error.code === '42501') return { ok: false, status: 403, error: 'You need Edit + financials access to run financials.' }
       console.error('[solar-financials] insert failed', { caseId: a.caseId, runId: run.id, code: error.code })
       return { ok: false, status: 500, error: humanSolarError(error) }
     }

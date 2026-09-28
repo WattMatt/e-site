@@ -6,7 +6,8 @@
 -- Plan: docs/superpowers/plans/2026-09-28-solar-phase-4b-1-schema.md
 --
 -- WHAT
---   * solar.cases               design options per study; config JSONB holds NO money.
+--   * solar.cases               design options per study; config JSONB holds NO money. Equipment
+--                               snapshots in config are rebuilt from solar.equipment by cases_bind.
 --   * solar.case_runs           one row per Run: inputs snapshot, inputs_hash, engine_version,
 --                               outputs, hourly CSV path. Users INSERT (always as 'running');
 --                               only the service role UPDATEs, only while running; then frozen.
@@ -14,7 +15,8 @@
 --   * solar.equipment           modules / inverters / batteries. organisation_id NULL = platform
 --                               catalogue (service-written). Never deleted: retired_at instead.
 --   * solar.case_financials     money inputs per case (capex, opex, finance models, analysis).
---   * solar.case_run_financials immutable financial results on a succeeded run.
+--   * solar.case_run_financials immutable financial results on a succeeded run. SERVICE-written:
+--                               the gated server action inserts them after its edit_financials check.
 --   * solar.studies.selected_case_id  the case reports/proposals use; must have a succeeded run.
 --   * buckets solar-runs, solar-weather: private and SERVICE-ONLY (no authenticated policy).
 --   * product_events: solar_case_created, solar_case_run, solar_weather_fetched,
@@ -81,8 +83,6 @@
 -- policy: case_financials_update_authz ON solar.case_financials RESTRICTIVE
 -- policy: case_financials_delete_authz ON solar.case_financials RESTRICTIVE
 -- policy: case_run_financials_select ON solar.case_run_financials PERMISSIVE
--- policy: case_run_financials_insert ON solar.case_run_financials PERMISSIVE
--- policy: case_run_financials_insert_authz ON solar.case_run_financials RESTRICTIVE
 -- grant_absent: anon SELECT ON solar.cases
 -- grant_absent: anon SELECT ON solar.case_runs
 -- grant_absent: anon SELECT ON solar.weather_datasets
@@ -95,6 +95,7 @@
 -- grant_absent: authenticated UPDATE ON solar.weather_datasets
 -- grant_absent: authenticated DELETE ON solar.weather_datasets
 -- grant_absent: authenticated DELETE ON solar.equipment
+-- grant_absent: authenticated INSERT ON solar.case_run_financials
 -- grant_absent: authenticated UPDATE ON solar.case_run_financials
 -- grant_absent: authenticated DELETE ON solar.case_run_financials
 -- anon_execute_absent: ALL prosecdef functions in solar
@@ -103,8 +104,10 @@
 -- sql: (SELECT count(*) = 2 FROM storage.buckets WHERE id IN ('solar-runs', 'solar-weather') AND NOT public)
 -- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND (coalesce(qual, '') || coalesce(with_check, '')) ~ 'solar-(runs|weather)')
 -- sql: (SELECT bool_and(strpos(qual, 'solar_can_see_money') > 0) FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('case_financials', 'case_run_financials') AND cmd = 'SELECT')
--- sql: (SELECT count(*) = 4 FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('case_financials', 'case_run_financials') AND permissive = 'RESTRICTIVE' AND strpos(coalesce(qual, '') || coalesce(with_check, ''), 'solar_can_see_money') > 0)
--- sql: (SELECT count(*) = 3 FROM solar.equipment WHERE organisation_id IS NULL AND make = 'Generic')
+-- sql: (SELECT count(*) = 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename = 'case_run_financials' AND cmd <> 'SELECT')
+-- sql: (SELECT count(*) = 3 FROM pg_policies WHERE schemaname = 'solar' AND tablename IN ('case_financials', 'case_run_financials') AND permissive = 'RESTRICTIVE' AND strpos(coalesce(qual, '') || coalesce(with_check, ''), 'solar_can_see_money') > 0)
+-- sql: (SELECT count(*) = 3 FROM solar.equipment WHERE organisation_id IS NULL AND make = 'Generic' AND (kind, model) IN (('module', 'Mono PERC 550 W (typical values, not a datasheet)'), ('inverter', 'String inverter 100 kW (typical values, not a datasheet)'), ('battery', 'LFP 100 kWh / 50 kW (typical values, not a datasheet)')))
+-- sql: (SELECT strpos(prosrc, 'jsonb_build_object(''equipmentId'', e.id') > 0 FROM pg_proc WHERE oid = 'solar.cases_bind()'::regprocedure)
 -- sql: (SELECT pg_get_constraintdef(oid) LIKE '%solar_case_created%' AND pg_get_constraintdef(oid) LIKE '%solar_case_run%' AND pg_get_constraintdef(oid) LIKE '%solar_weather_fetched%' AND pg_get_constraintdef(oid) LIKE '%solar_financials_run%' AND pg_get_constraintdef(oid) LIKE '%solar_equipment_saved%' AND pg_get_constraintdef(oid) LIKE '%solar_settings_saved%' AND pg_get_constraintdef(oid) LIKE '%cable_route_sheet_exported%' FROM pg_constraint WHERE conrelid = 'public.product_events'::regclass AND conname = 'product_events_event_check')
 -- behaviour: scripts/db/assert-solar-cases-roles.sql — every row ok
 -- @verify:end
@@ -250,6 +253,11 @@ CREATE INDEX IF NOT EXISTS cases_project_idx ON solar.cases (project_id);
 
 CREATE OR REPLACE FUNCTION solar.cases_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    v_kind TEXT;
+    v_path TEXT[];
+    v_snap JSONB;
+    e      RECORD;
 BEGIN
     IF TG_OP = 'UPDATE' THEN
         IF NEW.study_id <> OLD.study_id THEN
@@ -263,6 +271,38 @@ BEGIN
     IF NEW.project_id IS NULL THEN
         RAISE EXCEPTION 'solar.cases: study % not found', NEW.study_id USING ERRCODE = '23503';
     END IF;
+    -- Equipment snapshots (pv.module, pv.inverter, battery.unit) are REBUILT from the catalogue row
+    -- whenever they are written: a PATCH cannot carry its own temperature coefficient under a real
+    -- equipmentId. The shape is moduleSnapshot / inverterSnapshot / batterySnapshot in
+    -- packages/shared/src/solar/cases/equipment.ts (pinned by equipment-snapshot-sql.contract.test.ts).
+    -- An unchanged snapshot is left alone, so a later catalogue edit or retirement never blocks a save.
+    -- snapshot-rebuild:begin
+    FOREACH v_kind IN ARRAY ARRAY['module', 'inverter', 'battery'] LOOP
+        v_path := CASE v_kind WHEN 'battery' THEN ARRAY['battery', 'unit'] ELSE ARRAY['pv', v_kind] END;
+        v_snap := NEW.config #> v_path;
+        CONTINUE WHEN v_snap IS NULL OR jsonb_typeof(v_snap) = 'null';
+        CONTINUE WHEN TG_OP = 'UPDATE' AND v_snap IS NOT DISTINCT FROM (OLD.config #> v_path);
+        IF jsonb_typeof(v_snap) <> 'object'
+           OR coalesce(v_snap->>'equipmentId', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            RAISE EXCEPTION 'solar.cases: the % must name a catalogue item', v_kind USING ERRCODE = '23514';
+        END IF;
+        SELECT eq.id, eq.make, eq.model, eq.specs INTO e
+          FROM solar.equipment eq
+         WHERE eq.id = (v_snap->>'equipmentId')::uuid AND eq.kind = v_kind
+           AND (eq.organisation_id IS NULL OR eq.organisation_id = NEW.organisation_id);
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'solar.cases: the % is not in this organisation''s catalogue', v_kind USING ERRCODE = '23514';
+        END IF;
+        NEW.config := jsonb_set(NEW.config, v_path, CASE v_kind
+            WHEN 'module' THEN jsonb_build_object('equipmentId', e.id, 'make', e.make, 'model', e.model,
+                'pmaxW', e.specs->'pmaxW', 'gammaPmaxPctPerC', e.specs->'gammaPmaxPctPerC')
+            WHEN 'inverter' THEN jsonb_build_object('equipmentId', e.id, 'make', e.make, 'model', e.model,
+                'acKw', e.specs->'acKw', 'euroEfficiencyPct', e.specs->'euroEfficiencyPct')
+            ELSE jsonb_build_object('equipmentId', e.id, 'make', e.make, 'model', e.model,
+                'usableKwh', e.specs->'usableKwh', 'powerKw', e.specs->'powerKw', 'rtePct', e.specs->'rtePct')
+        END);
+    END LOOP;
+    -- snapshot-rebuild:end
     IF TG_OP = 'INSERT' THEN
         NEW.created_by := COALESCE(auth.uid(), NEW.created_by);
         IF auth.uid() IS NOT NULL THEN NEW.created_at := NOW(); END IF;
@@ -512,10 +552,9 @@ ALTER TABLE solar.case_run_financials ENABLE ROW LEVEL SECURITY;
 ALTER TABLE solar.case_run_financials FORCE ROW LEVEL SECURITY;
 CREATE POLICY case_run_financials_select ON solar.case_run_financials FOR SELECT TO authenticated
     USING (public.solar_can_see_money(project_id));
-CREATE POLICY case_run_financials_insert ON solar.case_run_financials FOR INSERT TO authenticated
-    WITH CHECK (public.user_has_project_access(project_id));
-CREATE POLICY case_run_financials_insert_authz ON solar.case_run_financials AS RESTRICTIVE FOR INSERT TO authenticated
-    WITH CHECK (public.solar_can_see_money(project_id));
+-- No INSERT / UPDATE / DELETE policy or grant for authenticated: the result is computed on the server
+-- and inserted by the service client AFTER the action's edit_financials gate (a user-session INSERT
+-- would let a money user post any figures). run_by is supplied by that action (auth.uid() is NULL there).
 
 -- ── 8. Storage: private, service-only buckets ───────────────────────────────
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
@@ -554,8 +593,10 @@ ALTER TABLE public.product_events ADD CONSTRAINT product_events_event_check CHEC
 
 -- ── 10. Table privileges (00207's default privileges granted too much) ──────
 GRANT SELECT, INSERT, UPDATE, DELETE ON solar.cases, solar.case_financials TO authenticated;
-GRANT SELECT, INSERT ON solar.case_runs, solar.case_run_financials TO authenticated;
-REVOKE UPDATE, DELETE, TRUNCATE ON solar.case_runs, solar.case_run_financials FROM authenticated;
+GRANT SELECT, INSERT ON solar.case_runs TO authenticated;
+REVOKE UPDATE, DELETE, TRUNCATE ON solar.case_runs FROM authenticated;
+GRANT SELECT ON solar.case_run_financials TO authenticated;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON solar.case_run_financials FROM authenticated;
 GRANT SELECT, INSERT, UPDATE ON solar.equipment TO authenticated;
 REVOKE DELETE, TRUNCATE ON solar.equipment FROM authenticated;
 GRANT SELECT ON solar.weather_datasets TO authenticated;

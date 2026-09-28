@@ -31,6 +31,10 @@ DECLARE
   v_fin     UUID;
   v_eq      UUID;
   v_platform UUID;
+  v_plat_inv UUID;
+  v_plat_bat UUID;
+  v_eq_foreign UUID;
+  v_cfg     JSONB;
   v_org_out UUID;
   v_proj_out UUID;
   v_status  TEXT;
@@ -71,7 +75,11 @@ BEGIN
   VALUES (v_org, 'pvgis_tmy', -26.20, 28.05, v_org || '/w1.csv.gz', v_hash) RETURNING id INTO v_w;
   INSERT INTO solar.weather_datasets (organisation_id, source, lat_round, lng_round, storage_path, content_sha256)
   VALUES (v_org2, 'pvgis_tmy', -26.20, 28.05, v_org2 || '/w2.csv.gz', v_hash) RETURNING id INTO v_w2;
-  SELECT id INTO v_platform FROM solar.equipment WHERE organisation_id IS NULL AND kind = 'module' LIMIT 1;
+  SELECT id INTO v_platform FROM solar.equipment WHERE organisation_id IS NULL AND kind = 'module' AND make = 'Generic' LIMIT 1;
+  SELECT id INTO v_plat_inv FROM solar.equipment WHERE organisation_id IS NULL AND kind = 'inverter' AND make = 'Generic' LIMIT 1;
+  SELECT id INTO v_plat_bat FROM solar.equipment WHERE organisation_id IS NULL AND kind = 'battery' AND make = 'Generic' LIMIT 1;
+  INSERT INTO solar.equipment (organisation_id, kind, make, model, specs)
+  VALUES (v_org2, 'module', 'Foreign', 'F-400', '{"pmaxW":400,"gammaPmaxPctPerC":-0.30}') RETURNING id INTO v_eq_foreign;
   INSERT INTO _r VALUES ('platform_catalogue_seeded', v_platform IS NOT NULL);
 
   -- ── 1. Editor: cases ──────────────────────────────────────────────────────
@@ -111,6 +119,73 @@ BEGIN
     INSERT INTO _r VALUES ('editor_creates_second_case', v_case2 IS NOT NULL);
   EXCEPTION WHEN OTHERS THEN
     INSERT INTO _r VALUES ('editor_creates_second_case', false);
+  END;
+
+  -- Equipment snapshots are rebuilt from the catalogue row (cases_bind): a PATCH with forged
+  -- coefficients under a real equipmentId never reaches a run.
+  BEGIN
+    UPDATE solar.cases SET config = jsonb_build_object('version', 1,
+        'pv', jsonb_build_object(
+          'module', jsonb_build_object('equipmentId', v_platform, 'make', 'Forged', 'model', 'Forged', 'pmaxW', 9999, 'gammaPmaxPctPerC', 0),
+          'inverter', jsonb_build_object('equipmentId', v_plat_inv, 'make', 'Forged', 'model', 'Forged', 'acKw', 1, 'euroEfficiencyPct', 100)),
+        'battery', jsonb_build_object('unit',
+          jsonb_build_object('equipmentId', v_plat_bat, 'make', 'Forged', 'model', 'Forged', 'usableKwh', 1, 'powerKw', 1, 'rtePct', 100, 'extra', true)))
+     WHERE id = v_case2
+    RETURNING config INTO v_cfg;
+    INSERT INTO _r VALUES ('editor_forged_snapshots_rebuilt_from_catalogue',
+      v_cfg #>> '{pv,module,make}' = 'Generic'
+      AND (v_cfg #>> '{pv,module,pmaxW}')::numeric = 550
+      AND (v_cfg #>> '{pv,module,gammaPmaxPctPerC}')::numeric = -0.35
+      AND (SELECT count(*) FROM jsonb_object_keys(v_cfg #> '{pv,module}')) = 5
+      AND (v_cfg #>> '{pv,inverter,acKw}')::numeric = 100
+      AND (v_cfg #>> '{pv,inverter,euroEfficiencyPct}')::numeric = 98
+      AND (SELECT count(*) FROM jsonb_object_keys(v_cfg #> '{pv,inverter}')) = 5
+      AND (v_cfg #>> '{battery,unit,usableKwh}')::numeric = 100
+      AND (v_cfg #>> '{battery,unit,powerKw}')::numeric = 50
+      AND (v_cfg #>> '{battery,unit,rtePct}')::numeric = 90
+      AND (SELECT count(*) FROM jsonb_object_keys(v_cfg #> '{battery,unit}')) = 6);
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('editor_forged_snapshots_rebuilt_from_catalogue', false);
+  END;
+  v_b := NULL;
+  BEGIN
+    INSERT INTO solar.cases (study_id, name, config) VALUES (v_study, 'Forged insert',
+      jsonb_build_object('pv', jsonb_build_object('module',
+        jsonb_build_object('equipmentId', v_platform, 'make', 'Forged', 'model', 'Forged', 'pmaxW', 9999, 'gammaPmaxPctPerC', 0))))
+    RETURNING config INTO v_cfg;
+    v_b := (v_cfg #>> '{pv,module,pmaxW}')::numeric = 550 AND v_cfg #>> '{pv,module,model}' <> 'Forged';
+    RAISE EXCEPTION 'undo' USING ERRCODE = 'P0002';   -- roll the probe case back; v_b survives
+  EXCEPTION
+    WHEN no_data_found THEN NULL;
+    WHEN OTHERS THEN v_b := false;
+  END;
+  INSERT INTO _r VALUES ('editor_insert_snapshot_rebuilt', coalesce(v_b, false));
+  BEGIN
+    UPDATE solar.cases SET config = jsonb_build_object('pv', jsonb_build_object('module',
+        jsonb_build_object('equipmentId', v_eq_foreign, 'make', 'Foreign', 'model', 'F-400', 'pmaxW', 400, 'gammaPmaxPctPerC', -0.3)))
+     WHERE id = v_case2;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('foreign_org_equipment_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('foreign_org_equipment_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE solar.cases SET config = jsonb_build_object('pv', jsonb_build_object('module',
+        jsonb_build_object('equipmentId', v_plat_inv, 'make', 'Generic', 'model', 'X', 'pmaxW', 400, 'gammaPmaxPctPerC', -0.3)))
+     WHERE id = v_case2;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('wrong_kind_equipment_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('wrong_kind_equipment_REFUSED', false);
+  END;
+  BEGIN
+    UPDATE solar.cases SET config = jsonb_build_object('pv', jsonb_build_object('module',
+        jsonb_build_object('equipmentId', 'not-a-uuid', 'make', 'Generic', 'model', 'X', 'pmaxW', 400, 'gammaPmaxPctPerC', -0.3)))
+     WHERE id = v_case2;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('junk_equipment_id_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('junk_equipment_id_REFUSED', false);
   END;
 
   -- ── 2. Editor: runs ───────────────────────────────────────────────────────
@@ -213,6 +288,26 @@ BEGIN
   -- the check_violation above rolled back v_run2's insert with its sub-block; make a running run on case 2 again
   INSERT INTO solar.case_runs (case_id, engine_version, inputs, inputs_hash, config_snapshot, weather_dataset_id)
   VALUES (v_case2, '0.1.0', '{}', v_hash, '{}', v_w) RETURNING id INTO v_run2;
+  -- Run financials are SERVICE-written (the gated server action, after its edit_financials check):
+  -- run_by is supplied explicitly because auth.uid() is NULL on the service path.
+  BEGIN
+    INSERT INTO solar.case_run_financials (case_run_id, case_id, project_id, organisation_id, engine_version,
+                                           fin_inputs, fin_inputs_hash, tariff_ref, results, run_by)
+    VALUES (v_run, v_case2, v_p2, v_org2, '0.1.0', '{}', v_hash, '{"tariffId":"t"}', '{}', v_money) RETURNING id INTO v_fin;
+    INSERT INTO _r VALUES ('service_records_run_financials_bound_with_run_by',
+      (SELECT run_by = v_money AND case_id = v_case AND project_id = v_p AND organisation_id = v_org
+         FROM solar.case_run_financials WHERE id = v_fin));
+  EXCEPTION WHEN OTHERS THEN
+    INSERT INTO _r VALUES ('service_records_run_financials_bound_with_run_by', false);
+  END;
+  BEGIN
+    INSERT INTO solar.case_run_financials (case_run_id, engine_version, fin_inputs, fin_inputs_hash, tariff_ref, results, run_by)
+    VALUES (v_run2, '0.1.0', '{}', v_hash, '{"tariffId":"t"}', '{}', v_money);
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('financials_on_unfinished_run_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('financials_on_unfinished_run_REFUSED', false);
+  END;
   RESET ROLE;
 
   -- ── 4. Edit + financials: money tables ────────────────────────────────────
@@ -226,20 +321,15 @@ BEGIN
     INSERT INTO _r VALUES ('money_user_writes_financials_org_bound', false);
   END;
   INSERT INTO _r VALUES ('money_user_reads_financials', (SELECT count(*) FROM solar.case_financials WHERE case_id = v_case) = 1);
+  INSERT INTO _r VALUES ('money_user_reads_run_financials', (SELECT count(*) FROM solar.case_run_financials WHERE id = v_fin) = 1);
+  -- A1: stored results are never user-written — a money user could otherwise post any figures.
   BEGIN
     INSERT INTO solar.case_run_financials (case_run_id, engine_version, fin_inputs, fin_inputs_hash, tariff_ref, results)
-    VALUES (v_run, '0.1.0', '{}', v_hash, '{"tariffId":"t"}', '{}') RETURNING id INTO v_fin;
-    INSERT INTO _r VALUES ('money_user_records_run_financials', v_fin IS NOT NULL);
-  EXCEPTION WHEN OTHERS THEN
-    INSERT INTO _r VALUES ('money_user_records_run_financials', false);
-  END;
-  BEGIN
-    INSERT INTO solar.case_run_financials (case_run_id, engine_version, fin_inputs, fin_inputs_hash, tariff_ref, results)
-    VALUES (v_run2, '0.1.0', '{}', v_hash, '{"tariffId":"t"}', '{}');
+    VALUES (v_run, '0.1.0', '{}', v_hash, '{"tariffId":"t"}', '{"forged":true}');
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
   EXCEPTION
-    WHEN check_violation THEN INSERT INTO _r VALUES ('financials_on_unfinished_run_REFUSED', true);
-    WHEN OTHERS THEN INSERT INTO _r VALUES ('financials_on_unfinished_run_REFUSED', false);
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('money_user_forges_run_financials_REFUSED', true);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('money_user_forges_run_financials_REFUSED', false);
   END;
   BEGIN
     UPDATE solar.case_run_financials SET results = '{"x":1}' WHERE id = v_fin;

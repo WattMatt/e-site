@@ -11,7 +11,7 @@ vi.mock('./storage', async (o) => ({ ...(await o<typeof import('./storage')>()),
 import { executeFinancialsRun, FIN_RUN_REASONS } from './financials'
 
 // Stored hourly CSV + a stub tariff; no network, no re-simulation.
-const P = 'p1', C = 'c1', R = 'r1'
+const P = 'p1', C = 'c1', R = 'r1', U = 'u1'
 const s = solarOrgSettingDefaults()
 const cfg = defaultCaseConfig(s, { dcKwp: 100, acKw: 80 })
 const fin = { ...defaultFinanceConfig(s), capex: [{ id: 'a', category: 'modules', description: 'PV', qty: 100_000, unit: 'Wp', rateZar: 12, qualifies12b: true, source: 'manual' }] }
@@ -31,13 +31,16 @@ beforeEach(() => {
 })
 
 describe('executeFinancialsRun', () => {
-  it('prices the latest succeeded run’s stored series and records an immutable result through the caller’s session', async () => {
-    const svc = { tag: 'svc' }
-    const user = fakeSupabase({ tables, writes: { 'solar.case_run_financials:insert': { data: [{ id: 'f1' }] } } })
-    const out = await executeFinancialsRun({ user: user.client as never, svc: svc as never, projectId: P, caseId: C })
+  it('prices the latest succeeded run’s stored series and records an immutable result through the SERVICE client with run_by', async () => {
+    const svcFake = fakeSupabase({ writes: { 'solar.case_run_financials:insert': { data: [{ id: 'f1' }] } } })
+    const svc = svcFake.client
+    const user = fakeSupabase({ tables })
+    const out = await executeFinancialsRun({ user: user.client as never, svc: svc as never, projectId: P, caseId: C, userId: U })
     expect(out).toEqual({ ok: true, id: 'f1' })
-    const ins = callsTo(user.calls, 'solar.case_run_financials', 'insert')[0]!.payload as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(ins).toMatchObject({ case_run_id: R, engine_version: ENGINE_VERSION, tariff_ref: { tariffId: 't1' } })
+    // 00215: authenticated has no INSERT on case_run_financials — a user-session insert could post any figures.
+    expect(callsTo(user.calls, 'solar.case_run_financials', 'insert')).toHaveLength(0)
+    const ins = callsTo(svcFake.calls, 'solar.case_run_financials', 'insert')[0]!.payload as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(ins).toMatchObject({ case_run_id: R, engine_version: ENGINE_VERSION, tariff_ref: { tariffId: 't1' }, run_by: U })
     expect(ins.fin_inputs_hash).toMatch(/^[0-9a-f]{64}$/)
     expect(ins.results.year1Bills.beforeZar).toBeCloseTo(50 * 8760 * 2, 3)
     expect(ins.results.year1Bills.afterZar).toBeCloseTo(35 * 8760 * 2, 3)
@@ -50,26 +53,37 @@ describe('executeFinancialsRun', () => {
   })
   it('no succeeded run / no saved financials / no tariff → the named sentence (422)', async () => {
     const empty = fakeSupabase({ tables: { 'solar.case_runs': [], 'solar.case_financials': [] } }).client as never
-    await expect(executeFinancialsRun({ user: empty, svc: {} as never, projectId: P, caseId: C })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.noRun })
+    await expect(executeFinancialsRun({ user: empty, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.noRun })
     const noFin = fakeSupabase({ tables: { 'solar.case_runs': [run], 'solar.case_financials': [] } }).client as never
-    await expect(executeFinancialsRun({ user: noFin, svc: {} as never, projectId: P, caseId: C })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.noFinancials })
+    await expect(executeFinancialsRun({ user: noFin, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.noFinancials })
     h.tariff.mockResolvedValueOnce({ ok: false, reason: 'No tariff is pinned for this study — pin one on the Tariff tab.' })
     const ok = fakeSupabase({ tables }).client as never
-    await expect(executeFinancialsRun({ user: ok, svc: {} as never, projectId: P, caseId: C })).resolves.toEqual({ ok: false, status: 422, error: 'No tariff is pinned for this study — pin one on the Tariff tab.' })
+    await expect(executeFinancialsRun({ user: ok, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: 'No tariff is pinned for this study — pin one on the Tariff tab.' })
   })
   it('invalid saved financials / no capex → sentences before any tariff or file read', async () => {
     const bad = fakeSupabase({ tables: { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, config: { version: 99 } }] } }).client as never
-    await expect(executeFinancialsRun({ user: bad, svc: {} as never, projectId: P, caseId: C })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.badFinancials })
+    await expect(executeFinancialsRun({ user: bad, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.badFinancials })
     const noCapex = fakeSupabase({ tables: { 'solar.case_runs': [run], 'solar.case_financials': [{ case_id: C, config: defaultFinanceConfig(s) }] } }).client as never
-    await expect(executeFinancialsRun({ user: noCapex, svc: {} as never, projectId: P, caseId: C })).resolves.toEqual({ ok: false, status: 422, error: 'Add capex lines (or apply the org rate card) first.' })
+    await expect(executeFinancialsRun({ user: noCapex, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: 'Add capex lines (or apply the org rate card) first.' })
     expect(h.tariff).not.toHaveBeenCalled()
     expect(h.get).not.toHaveBeenCalled()
   })
-  it('a money-RLS refusal → 403 sentence; a lost file → 500 sentence', async () => {
-    const rls = fakeSupabase({ tables, writes: { 'solar.case_run_financials:insert': { error: { code: '42501', message: 'rls' } } } }).client as never
-    await expect(executeFinancialsRun({ user: rls, svc: {} as never, projectId: P, caseId: C })).resolves.toEqual({ ok: false, status: 403, error: 'You need Edit + financials access to run financials.' })
+  it('the money gate is the caller’s own read: no readable financials → nothing priced, nothing written', async () => {
+    // Below edit_financials, money RLS returns no case_financials row to the caller's session.
+    const svcFake = fakeSupabase()
+    const noMoney = fakeSupabase({ tables: { 'solar.case_runs': [run], 'solar.case_financials': [] } }).client as never
+    await expect(executeFinancialsRun({ user: noMoney, svc: svcFake.client as never, projectId: P, caseId: C, userId: U }))
+      .resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.noFinancials })
+    expect(svcFake.calls).toHaveLength(0)
+    expect(h.tariff).not.toHaveBeenCalled()
+  })
+  it('a failed service insert → 500 sentence; a lost file → 500 sentence', async () => {
+    const svcErr = fakeSupabase({ writes: { 'solar.case_run_financials:insert': { error: { code: '23514', message: 'financials need a completed run' } } } }).client as never
+    const out = await executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: svcErr, projectId: P, caseId: C, userId: U })
+    expect(out).toMatchObject({ ok: false, status: 500 })
+    expect((out as { error: string }).error).not.toMatch(/completed run/)
     h.get.mockRejectedValueOnce(new Error('stored file not found'))
-    await expect(executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: {} as never, projectId: P, caseId: C }))
+    await expect(executeFinancialsRun({ user: fakeSupabase({ tables }).client as never, svc: {} as never, projectId: P, caseId: C, userId: U }))
       .resolves.toEqual({ ok: false, status: 500, error: 'Financials could not be computed: stored file not found' })
   })
 })
