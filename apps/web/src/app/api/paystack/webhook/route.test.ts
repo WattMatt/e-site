@@ -1283,3 +1283,77 @@ describe('org add-on — refund / chargeback → refunded (D-02: hidden but kept
     }
   })
 })
+
+describe('org add-on — failed charges', () => {
+  beforeEach(() => { process.env.PAYSTACK_PLAN_SOLAR_ANNUAL = SOLAR_PLAN })
+  afterEach(() => { delete process.env.PAYSTACK_PLAN_SOLAR_ANNUAL })
+
+  const tierSub = {
+    'billing.subscriptions.select': {
+      data: { id: 's1', payment_failure_count: 0, last_payment_failure_at: null },
+      error: null,
+    },
+  }
+
+  it('a failed FIRST Solar charge never marks the org tier plan past_due', async () => {
+    serviceClientRef.value = makeClient({ ...tierSub })
+    const res = await POST(signedReq({
+      event: 'charge.failed',
+      data: {
+        reference: REF,
+        customer: { customer_code: 'CUS_solar' },
+        metadata: { type: 'org_addon_subscription', feature_key: 'solar', org_id: SOLAR_ORG },
+      },
+    }))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of('billing.subscriptions.select')).toHaveLength(0)
+    expect(serviceClientRef.value.of('billing.subscriptions.update')).toHaveLength(0)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)).toHaveLength(0)
+  })
+
+  it('a failed Solar RENEWAL → past_due on the add-on, and the tier plan untouched', async () => {
+    serviceClientRef.value = makeClient({ ...tierSub, [`${ADDON}.select`]: { data: addonRow(), error: null } })
+    await POST(signedReq({
+      event: 'charge.failed',
+      data: {
+        reference: 'ref_fail',
+        metadata: 0,
+        customer: { customer_code: 'CUS_solar' },
+        plan: { plan_code: SOLAR_PLAN },
+        subscription: { subscription_code: 'SUB_solar' },
+      },
+    }))
+    const upd = serviceClientRef.value.of(`${ADDON}.update`)
+    expect(upd).toHaveLength(1)
+    expect(upd[0].payload).toEqual({ status: 'past_due' })
+    expect(serviceClientRef.value.of('billing.subscriptions.update')).toHaveLength(0)
+  })
+
+  it('an unplaceable Solar-plan failure still never reaches the tier plan', async () => {
+    serviceClientRef.value = makeClient({ ...tierSub })
+    await POST(signedReq({
+      event: 'charge.failed',
+      data: { reference: 'ref_fail', metadata: 0, customer: { customer_code: 'CUS_solar' }, plan: { plan_code: SOLAR_PLAN } },
+    }))
+    expect(serviceClientRef.value.of('billing.subscriptions.update')).toHaveLength(0)
+  })
+
+  it('a non-Solar failed charge still opens the tier recovery cycle (unchanged)', async () => {
+    serviceClientRef.value = makeClient({ ...tierSub })
+    await POST(signedReq({
+      event: 'charge.failed',
+      data: { reference: 'ref_fail', metadata: { org_id: ORG }, customer: { customer_code: 'CUS_x' } },
+    }))
+    expect(serviceClientRef.value.of('billing.subscriptions.update')[0].payload.status).toBe('past_due')
+  })
+
+  it('invoice.payment_failed on the Solar subscription → past_due', async () => {
+    serviceClientRef.value = makeClient({ [`${ADDON}.select`]: { data: addonRow(), error: null } })
+    const res = await POST(signedReq({
+      event: 'invoice.payment_failed',
+      data: { subscription: { subscription_code: 'SUB_solar' } },
+    }))
+    expect(res.status).toBe(200)
+    expect(serviceClientRef.value.of(`${ADDON}.update`)[0].payload).toEqual({ status: 'past_due' })
+  })
+})

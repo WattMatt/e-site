@@ -1150,7 +1150,30 @@ export async function POST(req: NextRequest) {
   // opens the payment-failure cycle the recovery cron escalates.
   if (event.event === 'charge.failed') {
     const data = event.data
-    const orgId = data.metadata?.org_id as string | undefined
+    const failedMeta: Record<string, any> =
+      data.metadata && typeof data.metadata === 'object' ? data.metadata : {}
+
+    // Org add-on (Solar). A failed FIRST charge holds nothing (the row is only
+    // created on success) and its metadata.org_id must NOT fall through to the
+    // tier lookup below, which would mark the org's tier plan past_due and
+    // start the payment-pause cron. A failed RENEWAL is the add-on's own
+    // past_due. A Solar-plan failure matching no row is acknowledged, never
+    // pinned on the tier plan.
+    if (failedMeta.type === ORG_ADDON_METADATA_TYPE) return ok()
+    const addonFailed = await findOrgAddon(supabase, {
+      subscriptionCode: subscriptionCodeOf(data),
+      customerCode: data.customer?.customer_code,
+      planCode: planCodeOf(data),
+    })
+    if (addonFailed.error) return storageFailure('org_addon failure lookup', addonFailed.error)
+    if (addonFailed.row) {
+      const failErr = await markOrgAddonPastDue(supabase, addonFailed.row)
+      if (failErr) return storageFailure('org_addon past_due', failErr)
+      return ok()
+    }
+    if (addonFailed.solarPlan) return ok()
+
+    const orgId = failedMeta.org_id as string | undefined
     const customerCode = data.customer?.customer_code as string | undefined
     const sub =
       (orgId ? await findSubscription(supabase, 'organisation_id', orgId) : null) ??
@@ -1260,6 +1283,13 @@ export async function POST(req: NextRequest) {
     if (subCode) {
       const sub = await findSubscription(supabase, 'paystack_subscription_code', subCode)
       if (sub) await recordPaymentFailure(supabase, sub)
+
+      const addon = await findOrgAddon(supabase, { subscriptionCode: subCode })
+      if (addon.error) return storageFailure('org_addon failure lookup', addon.error)
+      if (addon.row) {
+        const failErr = await markOrgAddonPastDue(supabase, addon.row)
+        if (failErr) return storageFailure('org_addon past_due', failErr)
+      }
     }
   }
 
