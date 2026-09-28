@@ -22,7 +22,8 @@ costBill(load8760: Float64Array, tariff: TariffModel, calendar: TouCalendar, yea
 ### 1.2 Time base (fixed)
 - Reference year of **8,760 hours** (no 29 Feb; a leap-year source drops 29 Feb). Hour index 0 =
   01 Jan 00:00–01:00 **SAST (UTC+2, no DST)**.
-- Values are **interval-ending averages**: `load[h]` is average kW over hour h = kWh in hour h.
+- Stored values are **interval-ending averages**: `load[h]` is average kW over hour h = kWh in hour h.
+  Source files differ (format A labels interval *beginnings*); normalisation (§2.1) converts per format.
 - Sub-hourly data (5/15/30 min) is kept for **maximum-demand** calculations (§2.6) and aggregated to
   hourly for energy.
 - Weather sources in UTC (PVGIS TMY, Solcast) are shifted +2 h **before** use (WM Solar did not — PV
@@ -44,17 +45,41 @@ inferred from magnitude.
 ## 2. Load model
 
 ### 2.1 Meter normalisation (per channel)
-1. Timestamps parsed with the **file-level** date order (confirmed by the user when ambiguous), `24:00`
-   → next day 00:00, convention interval-ending unless detected otherwise, converted to UTC for storage.
+Formats observed in the source corpus (as-is/10, 2,140 files read 2026-09-28) are recognised explicitly;
+anything else goes to a generic path that requires the user to confirm every choice.
+
+| Format | Signature | Values | Time label | Files |
+|---|---|---|---|---|
+| **A** | `sep=,` line, blank line, `date,p14,…` | Average kW per 30 min; channel vocabulary `p/q/s/a` × `14/23/12/34`, `_l1..3`, `u`, `i` (fixed table) | **Interval-beginning** (last label of the day 23:30); DD/MM/YYYY SAST; 591 files newest-first | 1,242 |
+| **B** | PnP SCADA preamble with serial on line 1, `"P (per kW)" … DATE, TIME, STATUS`, comma-plus-space | Average kW; status `Calc` = estimated | Interval-ending | 703 (102 are **daily** 1,440-min files) |
+| **C** | PnP `Time,P1 (kWh),…` | kWh per 30 min (→ kW); trailing `S (kVA)` = demand | Interval-ending | 73 |
+| D/E/G | Escaped single-line copies, downloader logs, consolidation summaries | Not load data | — | Routed to Skip or to **Import meter register** |
+
+0. **Identity and de-duplication (before anything else):** body hash of the parsed series (not only the
+   file sha256) and, for PnP B/C, the line-1 serial checked against the filename and the org's meter
+   register. The corpus holds 2,050 meter files but only 1,311 distinct series — one PnP series appears
+   under 121 filenames at six malls. A file whose series or serial already exists must be resolved (link to
+   the existing meter / skip / override with a reason) before import.
+1. Timestamps parsed with the **file-level** date order (confirmed when ambiguous), `24:00` → next day
+   00:00, row order normalised (newest-first files reversed). **The source labelling convention is set
+   per format** (A = interval-beginning, B/C = interval-ending; generic = user-confirmed), then every
+   reading is stored at its interval **end** (`ts_end`, UTC).
 2. Cumulative registers: detected when ≥ 98 % of steps are non-decreasing over **all** rows and the
    median step ≪ level; converted to deltas (first row dropped). A decrease is a rollover or meter
    exchange and is shown to the user; it is never silently absorbed.
-3. Energy channels (kWh per interval) → power: `kW = kWh × 60 / interval_min`. Power channels (kW)
-   are kept as-is. `kVA` channels are stored as apparent power; `kvarh` stored for reactive-charge
-   costing.
-4. Missing / blank / non-numeric → **NULL** with quality flag `missing`; never 0.
-5. Quality flags: 0 ok, 1 missing, 2 estimated (gap-filled), 3 negative, 4 spike, 5 duplicate
-   timestamp, 6 meter status ≠ OK.
+3. **Units are never defaulted.** Each recognised format maps its columns through a fixed unit table;
+   the generic path requires the user to pick a unit. Energy → power (`kW = kWh × 60 / interval_min`)
+   applies only to energy channels (format C `kWh`, format A `a14`). `kVA` stored as apparent power;
+   `kvarh` for reactive costing. (WM's client path defaulted A-format kW to kWh and doubled every file.)
+4. Missing / blank / non-numeric → **NULL** with quality flag `missing`; never 0. A PnP `Calc` value of
+   exactly 0 is padding → **missing**; other `Calc` values → **estimated**.
+5. Quality flags: 0 ok, 1 missing, 2 estimated (gap-filled or source-calculated), 3 negative, 4 spike,
+   5 duplicate timestamp, 6 meter status ≠ OK, 7 scale-corrected (e.g. a segment recorded in W instead of
+   kW, confirmed by the user). Spike detection includes **reset pairs** (a negative followed by a matching
+   positive) and **level shifts**; WM dropped the negatives but kept their matching positive spikes.
+6. **Daily-interval channels** (1,440-min PnP files) are not load data: they count toward coverage only
+   and are excluded from §2.2 and §2.6.
+7. Channels carrying volume (water) are refused as load data.
 
 ### 2.2 Gap filling and reference-year alignment
 - Gaps ≤ 2 h: linear interpolation (flag 2).
@@ -67,10 +92,18 @@ inferred from magnitude.
   (WM repeated one 24-hour average all year).
 - Data longer than 12 months: the most recent complete 12 months are used by default; the user may
   choose the year on Load → Site profile.
+- **Site common window (S2):** meters at one site can differ by up to three years, and some files cover
+  only 7 days. S2 uses the most recent 12 months common to ≥ 80 % of metered tenants (setting). Months a
+  meter does not cover are filled by S3 synthesis for that tenant scaled to the meter's observed
+  kW/m² — **never by zero**. A meter with < 30 days of data is used only as a shape sample for its
+  tenant's synthesis.
 
 ### 2.3 Site series by basis
-- **S1 Bulk:** `site[h] = bulk[h]` − (existing-PV export channel if the bulk meter nets it off; a
-  flag on the meter says whether it does).
+- **S1 Bulk:** `site[h] = bulk[h]` + (existing PV generation if the bulk meter sits downstream of it; the
+  flag names the **specific PV channel** — in every observed PV meter generation is on the **import**
+  channel `p14`/`P1`). A meter *labelled* bulk is not trusted as the point of supply until the user confirms
+  it and the monthly reconciliation against Σ tenants is shown (YARONA's "BULK METER" ≈ one anchor tenant;
+  Σ tenants ≈ 2.5 × it). Meters of kind `check` are excluded from both S1 and S2.
 - **S2 Tenants:** `site[h] = (Σ_tenants Σ_meters w_m × meter_m[h] + Σ_unmetered synth_t[h]) × (1 + common_area_pct)`.
 - **S4 Monthly bills:** archetype shape per §2.4 scaled so that for each month m,
   `Σ_{h∈m} site[h] = bill_kWh_m`; if billed kVA is given, the monthly peak is additionally scaled
@@ -98,8 +131,9 @@ disabled for them with the tooltip "Measured data already reflects diversity".
 
 ### 2.6 Maximum demand
 Monthly maximum demand (kVA) for demand charges uses the **highest sub-hourly interval** available
-(30-min if present, else hourly) in the tariff's chargeable TOU windows, divided by PF (measured
-kVA channel preferred over PF assumption). The averaged profile's peak is never used as MD.
+(30-min if present, else hourly) in the tariff's chargeable TOU windows. Per format: B/C with a measured
+`S (kVA)` channel use it directly; A files (mostly `p14` only) divide kW by the PF assumption (default 0.95,
+shown as assumed); daily B files cannot produce MD. The averaged profile's peak is never used as MD.
 
 ---
 
@@ -202,24 +236,50 @@ battery discharge from PV) / ΣP_ac; solar fraction = (direct + discharge) / Σl
 
 Given a tariff (charges with canonical units), its TOU calendar and public holidays:
 1. **Energy:** `Σ_h kWh_h × rate(season(month), tou(day_type, hour))` plus every per-kWh adder by TOU
-   (legacy, network demand per kWh, ancillary, subsidy/affordability, electrification, surcharges).
+   (legacy, **network demand charged in c/kWh** — e.g. Eskom Homeflex — ancillary, subsidy/affordability,
+   electrification, surcharges). A per-kWh network-demand adder is never confused with an R/kVA demand charge.
+   Structures: flat, IBT, **seasonal** (flat rate per season), **seasonal IBT**, TOU, TOU+IBT.
 2. **Inclining blocks:** monthly kWh allocated across blocks in order (daily-basis blocks: block
    limits × days in month).
-3. **Fixed:** service + admin (R/POD/day × days) + basic (R/month).
+3. **Fixed:** every fixed component with a **per-day unit** (Eskom R/POD/day **and** municipal R/day, e.g.
+   Cape Town) × days in the month, plus per-month components (R/month).
 4. **Demand:** `max(chargeable MD, NMD rule) × R/kVA/month` (demand basis per charge: actual MD, MD in
    peak/standard windows, or utilised capacity).
-5. **Network access / capacity:** NMD × R/kVA/month (or R/A/month for amp-based domestic tariffs).
+5. **Network access / capacity:** either NMD × R/kVA/month, R/A/month for amp-based domestic tariffs, or
+   **R/POD/day** (Eskom SPU network capacity charge, e.g. Homeflex) × days — the unit decides.
 6. **Reactive:** `max(0, kvarh − 0.30 × kWh)` in chargeable periods × c/kvarh (only when kvarh data exists;
-   otherwise shown as "not modelled").
-7. **Export credit:** export kWh × export rate(season, TOU) under the SSEG rule; if the rule is net
-   billing within the month, credit is capped at that month's energy charges (cap rule from data).
+   otherwise shown as "not modelled"). The component comes from the normalised charge row, never from the
+   source label (City Power labels a c/kVArh reactive charge "Demand").
+7. **Export credit (NERSA Net-Billing Rules, pp7–12):** carried as **state across months**.
+   - Export kWh per TOU period p in month m is valued at the export rate for that period (Eskom:
+     the linked Gen-offset tariff by zone × voltage; municipal: user-supplied rate with provenance until
+     SSEG schedules are ingested).
+   - **Cap:** the credited kWh in each TOU period is capped at that period's **import** kWh (p7 §5.2),
+     and the credit offsets **energy charges only** (never fixed, demand or network-capacity charges).
+   - **Carry forward:** credit that exceeds the month's offsettable energy charges carries to the next month
+     (`credit_in_m+1 = credit_out_m`); it is **never paid as cash** and the balance is **reset to zero at the
+     distributor's financial-year end** (Eskom March, municipal June — `sseg_rule.fy_end_month`).
+   - Non-TOU customers use `net_billing_flat` (p8 §5.4). Credit is forfeited on change of ownership
+     (flag only; not modelled). Systems above `max_kva` (1,000 kVA) are refused net billing with a warning.
+   - Output per month: export kWh by period, credit earned, credit used, credit carried, credit forfeited
+     at FY end. The annual financial model uses credit **used**, so carried credit is neither lost within
+     a year nor treated as cash.
 8. **VAT:** stored as a rate; results reported excl. VAT, with VAT shown separately. VAT is not a
    saving for VAT-registered customers **[D-16]**.
 9. Every stored charge is costed or explicitly listed as "not modelled" with a reason — no charge is
    silently ignored (WM costed only a blended energy rate, the first basic charge and the first demand charge).
 
-**Validation:** 3–5 real bills (one Eskom Megaflex/Miniflex, one municipal TOU business, one municipal
-block domestic, one landlord resale) reproduced within ±2 % from their meter data **[D-19]**.
+**Validation:**
+- The **10 golden tariff cases** in `as-is/09 §7.2` (hand-computed bills from the source books) run as unit
+  tests of normaliser + engine; cases 2, 3, 7 and 10 exercise the exact defects of WM's seed (missing
+  Standard period, off-peak tagged as peak, 100× unit error).
+- 3–5 real bills (one Eskom Megaflex/Miniflex, one municipal TOU business, one municipal block domestic,
+  one landlord resale) reproduced within ±2 % from their meter data **[D-19]**.
+
+**Optional — wheeling scenario (only if off-site PV is in scope, [D-26]):** Option 1: full tariff bill −
+wheeled kWh × (TOU WEPS/avoided-cost rate excl. losses), wheeled kWh capped per TOU period (Wheeling Rules
+pp19–20), with loss factors from `tariffs.loss_factor`. Option 2: netting with fully unbundled use-of-system
+charges (p21).
 
 ---
 

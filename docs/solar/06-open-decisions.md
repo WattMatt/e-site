@@ -28,4 +28,6 @@ Each decision has a **proposed default** that will be built unless changed. **P0
 | D-22 | ✅ | New `solar` + `tariffs` schemas (needs PostgREST PATCH) or tables in `projects`? | New schemas (clean boundaries, entitlement RLS) | Migration/ops risk |
 | D-23 | | Meter readings: Postgres table (partitioned) or Parquet in Storage + aggregates? | Postgres, decided by the P3 volume test | Cost/performance |
 | D-24 | ✅ | Contain the live WM Solar exposure now (rotate keys/token, JWT on, drop anon policies), and who does it? | Yes, this week, as a separate task from E-Site | Live client data exposed |
+| D-27 | | The PnP SCADA downloads in `006. METER CSV` are largely mis-filed (one series under 121 filenames; Kuruman holds no Kuruman meters). Re-download those sites before using them as study data? | Yes — re-download per site with the serial list; the import's identity panel blocks duplicates meanwhile | Wrong-site load data would silently corrupt studies |
+| D-26 | | Model off-site PV / wheeling (Eskom Gen-wheeling, third-party network charges)? | Not in v1; engine hook specified (engine §5) | Scope |
 | D-25 | ✅ | Which Supabase project is WM Solar production, and should existing data migrate into E-Site? | Migrate only meter raw files and signed proposals (as PDFs); re-run studies in E-Site | Phase 8 scope |

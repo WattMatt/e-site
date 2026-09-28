@@ -57,7 +57,7 @@ with every gap in it fixed; tariffs from the NERSA source folder; load profiles 
    Yield & Scenarios, Financials, Reports & Proposal, Schedule and Operations. There are also a Solar
    portfolio page, org Solar settings and a platform tariff library. One engine in `@esite/shared`
    produces every figure from one stored, reproducible run.
-6. **Blockers:** the NERSA and meter-CSV folders are online-only Dropbox placeholders, and the tariff data
+6. **Data sources read (2026-09-28):** both folders synced and analysed. Blockers now: the tariff data
    is a year stale (2026/27 missing).
 7. **Effort:** P1–P6 ≈ 71–80 build-days; operations and migration add ≈ 13–15.
 

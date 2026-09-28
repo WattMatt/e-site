@@ -74,7 +74,9 @@ the client), `created_at`, `updated_at`, `created_by`. Soft-delete only where no
 | `studies` | `project_id` UNIQUE, lat, lng, elevation_m, licensee_id, supply_type, nmd_kva, supply_voltage_v, poc_node_id → structure.nodes, export_mode, export_limit_kw, load_basis, reference_year, common_area_pct, diversity_factor, load_growth_pct, tariff_id, tariff_override_id, export_rule jsonb, escalation jsonb, selected_case_id, constraints_note | One per project |
 | `roof_sources` | study_id, kind (drawing/satellite), floor_plan_id, page_index, file_path, source_revision_id, storage_path, m_per_px, north_bearing_deg, attribution | Anchor fields per `floor_plan_markups` |
 | `meter_files` | org_id, sha256 UNIQUE per org, storage_path, original_name, parsed_filename jsonb, detected_format, delimiter, decimal_sep, header_row, encoding, status (parsed/accepted/skipped/failed), uploaded_by | Raw file kept once |
-| `meters` | org_id, site_label, serial, label, shop_no, area_m2, kind, node_id → structure.nodes, parent_meter_id, nets_existing_pv bool | Org library |
+| `meters` | org_id, site_label, serial, label, shop_no, area_m2, area_source (register_exact / register_llm / filename / manual), kind (tenant/bulk/council/generator/solar/common/vacant/check/virtual/water/unknown), supply_point_confirmed bool, node_id → structure.nodes, parent_meter_id, existing_pv_channel_id | Org library |
+| `meter_series_hashes` | org_id, body_hash, meter_id, file_id | Detects identical data filed under different names/sites (1,311 distinct series in 2,050 source files) |
+| `meter_register` | org_id, site_label, file_name, tenant_name, shop_no, area_m2, match_method (exact / LLM / unmapped), confirmed_by | From consolidation summaries; LLM/unmapped rows never auto-applied |
 | `study_meters` | study_id, meter_id | Study ↔ library link |
 | `meter_channels` | meter_id, file_id, source_column, quantity, direction, unit (enum), interval_min, is_cumulative, tz_convention, is_primary | |
 | `meter_readings` | channel_id, ts_end timestamptz, value numeric NULL, quality smallint; PK (channel_id, ts_end) | Upsert on PK ⇒ re-import is idempotent |
@@ -128,8 +130,10 @@ the path's org/project segment + the same role/entitlement helpers. No public bu
 ## 4. `tariffs` schema (platform reference data)
 
 ```
-tariffs.licensee          id, kind (eskom|municipal|metro|private), name, mdb_code, province,
-                          nersa_licence_no, parent_licensee_id
+tariffs.licensee          id, kind (eskom|municipal|metro|private|development_agency|industrial_private),
+                          name, mdb_code, province (from the registry — never from the source file;
+                          Sasol is filed under KZN), nersa_licence_no, parent_licensee_id
+tariffs.licensee_alias    licensee_id, alias   -- misspelt/variant sheet names in the NERSA books
 tariffs.source_document   id, licensee_id, kind (tariff_book|nersa_decision|eskom_schedule|rules|by_law),
                           title, financial_year, status (draft|final|nersa_approved), published_on,
                           storage_path, sha256, page_count, url, retrieved_at
@@ -137,9 +141,15 @@ tariffs.tariff_year       id, licensee_id, financial_year ('2026/27'), effective
                           approved_increase_pct, source_document_id,
                           state (ingesting|in_review|published|superseded)
                           UNIQUE (licensee_id, financial_year)
-tariffs.tariff            id, tariff_year_id, code, name, family, category, metering (prepaid|conventional|both),
-                          structure (flat|ibt|tou|tou_ibt), voltage_band, phase, min/max_amps, min/max_kva,
-                          eligibility jsonb, predecessor_tariff_id, is_legacy, notes
+tariffs.tariff            id, tariff_year_id, code, name, family,
+                          category (domestic|commercial|industrial|agricultural|bulk|public_lighting|sseg|wheeling|other),
+                          metering (prepaid|conventional|both|unmetered),
+                          structure (flat|ibt|seasonal|seasonal_ibt|tou|tou_ibt),
+                          voltage_band, phase, transmission_zone, local_authority bool,
+                          min/max_amps, min/max_kva, eligibility jsonb,
+                          export_tariff_id → tariffs.tariff (e.g. Homeflex → Gen-Offset Homeflex; Eskom's
+                          export credit is a separate tariff keyed by zone × voltage, not a component),
+                          predecessor_tariff_id, is_legacy, notes
 tariffs.charge            id, tariff_id, component (energy|legacy|basic|service|admin|network_capacity|
                           network_demand|transmission_network|gcc|ancillary|ers|affordability|lv_subsidy|
                           reactive|demand|capacity_amp|export_credit|wheeling_uos|loss_factor|other),
@@ -149,23 +159,47 @@ tariffs.charge            id, tariff_id, component (energy|legacy|basic|service|
                                 R_per_A_month|c_per_kVArh|R_per_POD_day|pct) NOT NULL,
                           demand_basis (nmd|actual_md|peak_window_md|utilised_capacity),
                           amount_excl_vat numeric(14,6) NOT NULL, vat_rate numeric(5,4),
-                          source_document_id, source_locator jsonb ({page, sheet, cell, raw_text, raw_unit}),
+                          vat_basis (stated_excl|assumed_excl|stated_incl),
+                          unit_inferred bool, inference_reason text   -- source units are wrong or absent often
+                                                                      -- (Buffalo City, Gamagara, Ekurhuleni unitless)
+                          source_document_id, source_locator jsonb ({page, sheet, cell, raw_text, raw_unit|null}),
                           extraction_method (parser|ai|manual), reviewed_by, reviewed_at
-tariffs.tou_calendar      id, licensee_id, valid_from, valid_to, high_season_months int[]
+tariffs.tou_calendar      id, licensee_id, valid_from, valid_to, high_season_months int[],
+                          source (published|assumed_eskom)   -- municipal books state seasons but never hours
+tariffs.loss_factor       licensee_id, kind (dx_urban|dx_rural|tx), voltage_band, transmission_zone, factor
 tariffs.tou_window        calendar_id, season, day_type (weekday|saturday|sunday), start_minute, end_minute, period
 tariffs.holiday_rule      calendar_id, treated_as (saturday|sunday)   -- dates from the existing SA holiday table
-tariffs.sseg_rule         licensee_id, tariff_year_id, crediting (net_billing|none), settlement_period,
-                          cap_rule, requires_tou, requires_bidirectional_meter, source_document_id, locator
+tariffs.sseg_rule         licensee_id, tariff_year_id,
+                          crediting (net_billing_tou|net_billing_flat|none),     -- Net-Billing Rules p8 §5.4
+                          settlement_period (monthly), carry_forward (none|within_financial_year),
+                          fy_end_month (Eskom 3, municipal 6),
+                          cap_rule (kwh_per_tou_period|value_per_tou_period|energy_charges),
+                          offsets (energy_only), forfeit_on_ownership_change bool, max_kva (1000),
+                          requires_tou, requires_bidirectional_meter, source_document_id, locator (pp7–12)
 tariffs.ingest_run        id, source_document_id, parser, status, stats jsonb, diff jsonb, started_by, at
 ```
 Rules: VAT-exclusive storage; canonical units converted at ingestion with the raw string kept in
-`source_locator`; published rows immutable (corrections = new version via review); read-all for
-entitled orgs, write service-role + review UI only; Eskom calendar year changes 1 April, municipal 1 July.
+`source_locator` and **every inferred unit flagged** (`unit_inferred`, reason) for review; published rows
+immutable (corrections = new version via review); read-all for entitled orgs, write service-role + review
+UI only; Eskom calendar year changes 1 April, municipal 1 July.
 
-Seed plan (Phase 2): Eskom 2025/26 + 2026/27 (all standard families incl. Megaflex, Miniflex, Nightsave,
-Ruraflex, Businessrate, Homepower, Homeflex, Landrate, Municflex/Municrate, Gen-offset/WEPS),
-NERSA-approved municipal 2026/27 for the 9 provinces (the folder holds 2025/26 — both to be ingested so the
-YoY diff runs), plus the 8 metros' own books, plus SSEG rules for licensees where published.
+**Source reality (verified 2026-09-28, as-is/09):** 9 province workbooks, 177 licensee sheets, ~7,650
+valued rows, 2025/26 only; the column holding the value differs per province (B/C/D/E, or inside the label
+text for Cape Town); some values carry the wrong unit label. **WM Solar's seed must not be loaded**: its
+parser drops the Standard period on 307 of 325 TOU plans, tags off-peak as peak, stores 628 energy rows
+100× low, leaves 387 plans empty, and the SQL does not load. E-Site parsers are written fresh (as-is/09 §7)
+with the 10 golden cases there as tests.
+
+Seed plan (Phase 2):
+- **Eskom** 2025/26 (in the folder, official xlsm incl. Gen-offset export tariffs, loss factors and
+  wheeling tables) + 2026/27 (to acquire): Megaflex, Miniflex, Nightsave, Ruraflex, Businessrate,
+  Homepower, **Homeflex** (missed by WM's parser), Landrate, Municflex/Municrate, Gen-offset, WEPS.
+- **Municipal** 2025/26 (folder) and 2026/27 (to acquire) for the 9 provinces so the YoY diff runs, plus
+  the 8 metros' own books.
+- **Municipal export (SSEG) rates:** the NERSA books hold one SSEG tariff in 177 licensees and no export
+  rates. Until metro/municipal SSEG schedules are sourced, the export rate for a municipal customer is
+  **user-supplied with provenance** on the Tariff tab (functional §5), and municipal TOU hours default to
+  the Eskom calendar flagged `assumed_eskom`.
 
 ---
 
