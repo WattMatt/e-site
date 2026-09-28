@@ -35,9 +35,9 @@ export interface BillCheckInput {
 
 export type BillCheckField = 'month' | 'kwh' | 'maxDemandKva' | 'actualTotal' | 'note'
 
-/** Spaces (incl. no-break) are thousands separators; a decimal comma is accepted. */
+/** Whitespace (\s includes the no-break space) is a thousands separator; a decimal comma is accepted. */
 const parse = (raw: string): number | null => {
-  const s = String(raw ?? '').replace(/[\s ]/g, '').replace(',', '.')
+  const s = String(raw ?? '').replace(/\s/g, '').replace(',', '.')
   if (s === '') return null
   const n = Number(s)
   return Number.isFinite(n) ? n : Number.NaN

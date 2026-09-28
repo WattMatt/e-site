@@ -11,6 +11,8 @@ describe('bill check form', () => {
   it('flat tariff: one kWh total, counted as standard', () => {
     const r = validateBillCheckForm({ ...EMPTY_BILL_CHECK_FORM, month: '2026-03', totalKwh: '1 000', actualTotal: '3000' }, false)
     expect(r).toEqual({ input: { year: 2026, month: 3, importKwh: { peak: 0, standard: 1000, off_peak: 0 }, maxDemandKva: null, actualTotalExclVat: 3000, note: null } })
+    const nbsp = validateBillCheckForm({ ...EMPTY_BILL_CHECK_FORM, month: '2026-03', totalKwh: '1 000', actualTotal: '3 000,50' }, false)
+    expect(nbsp).toMatchObject({ input: { importKwh: { standard: 1000 }, actualTotalExclVat: 3000.5 } })
   })
   it('TOU tariff: three periods, at least one above zero', () => {
     expect(validateBillCheckForm({ ...EMPTY_BILL_CHECK_FORM, month: '2026-07', peak: '0', standard: '', offPeak: '0', actualTotal: '10' }, true))
