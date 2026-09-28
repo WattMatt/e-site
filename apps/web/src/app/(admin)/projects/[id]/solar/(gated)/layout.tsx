@@ -33,7 +33,7 @@ export default async function SolarGatedLayout({
 
   const level = await requireSolarLevel(id, 'view', supabase)
   const [{ data: project }, { data: study }, grantorRes] = await Promise.all([
-    supabase.schema('projects').from('projects').select('name').eq('id', id).maybeSingle(),
+    supabase.schema('projects').from('projects').select('name, organisation_id').eq('id', id).maybeSingle(),
     supabase.schema('solar').from('studies').select('latitude, longitude, licensee_name, nmd_kva').eq('project_id', id).maybeSingle(),
     supabase.rpc('solar_is_grantor', { p_project_id: id }),
   ])
@@ -41,6 +41,15 @@ export default async function SolarGatedLayout({
   // the module chrome. Hidden (not disabled) for everyone else; the panel's
   // own loader and every grantor action re-check solar_is_grantor.
   const isGrantor = !grantorRes.error && grantorRes.data === true
+  // A View user may ask for Edit only if they can ever hold it: members of the
+  // project's own organisation. Externals are capped at View (00207).
+  let isOwnOrgMember = false
+  const orgId = (project as { organisation_id?: string } | null)?.organisation_id
+  if (level === 'view' && orgId) {
+    const { data: membership } = await supabase.from('user_organisations').select('organisation_id')
+      .eq('user_id', user.id).eq('organisation_id', orgId).eq('is_active', true).limit(1)
+    isOwnOrgMember = Array.isArray(membership) && membership.length > 0
+  }
   const readiness = computeSolarReadiness(toSiteReadinessInput(study), level)
 
   return (
@@ -56,7 +65,7 @@ export default async function SolarGatedLayout({
           </Link>
         )}
       </div>
-      {level === 'view' && <ViewOnlyBanner projectId={id} />}
+      {level === 'view' && <ViewOnlyBanner projectId={id} canRequestEdit={isOwnOrgMember} />}
       <SolarTabBar projectId={id} level={level} readiness={readiness} />
       <div style={{ marginTop: 16 }}>{children}</div>
     </div>

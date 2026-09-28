@@ -50,7 +50,7 @@ describe('getSolarSubscriptionStateAction', () => {
   it('is active only once the caller resolves to granted', async () => {
     h.loadSolarEntry.mockResolvedValueOnce(ctx({ kind: 'subscribe' }))
     await expect(getSolarSubscriptionStateAction(P)).resolves.toEqual({ active: false })
-    h.loadSolarEntry.mockResolvedValueOnce(ctx({ kind: 'granted', level: 'edit_financials' }))
+    h.loadSolarEntry.mockResolvedValueOnce(ctx({ kind: 'granted', level: 'edit_financials', maxLevel: 'edit_financials' }))
     await expect(getSolarSubscriptionStateAction(P)).resolves.toEqual({ active: true })
   })
 })
@@ -93,8 +93,39 @@ describe('requestSolarAccessAction', () => {
   it('lets a View user ask for Edit (the View-only banner)', async () => {
     const { client } = fakeSupabase({ userId: U })
     h.createClient.mockResolvedValue(client)
-    h.loadSolarEntry.mockResolvedValue(ctx({ kind: 'granted', level: 'view' }))
+    h.loadSolarEntry.mockResolvedValue(ctx({ kind: 'granted', level: 'view', maxLevel: 'edit_financials' }))
     await expect(requestSolarAccessAction({ projectId: P, level: 'edit' })).resolves.toEqual({ ok: true })
+  })
+
+  // Security review Important 1: an external at View asked for Edit, the guard
+  // clamped the row to View, and every admin was emailed "asked for Edit".
+  it('refuses a level above what the caller can hold, before any write or notice', async () => {
+    const { client, calls } = fakeSupabase({ userId: U })
+    h.createClient.mockResolvedValue(client)
+    h.loadSolarEntry.mockResolvedValue(ctx({ kind: 'granted', level: 'view', maxLevel: 'view' }))
+    await expect(requestSolarAccessAction({ projectId: P, level: 'edit' })).resolves.toEqual({
+      error: 'That level is higher than you can hold on this project. Members from outside the organisation can have View only.',
+    })
+    expect(callsTo(calls, 'solar.access_requests', 'insert')).toHaveLength(0)
+    expect(h.notify).not.toHaveBeenCalled()
+  })
+
+  it('refuses asking for a level the caller already has', async () => {
+    const { client, calls } = fakeSupabase({ userId: U })
+    h.createClient.mockResolvedValue(client)
+    h.loadSolarEntry.mockResolvedValue(ctx({ kind: 'granted', level: 'edit', maxLevel: 'edit_financials' }))
+    await expect(requestSolarAccessAction({ projectId: P, level: 'view' })).resolves.toEqual({ error: 'You already have that level or higher.' })
+    expect(callsTo(calls, 'solar.access_requests', 'insert')).toHaveLength(0)
+  })
+
+  it('the notice names the level the database STORED, not the one asked for', async () => {
+    const { client } = fakeSupabase({ userId: U, writes: { 'solar.access_requests:insert': { data: [{ requested_level: 'view' }] } } })
+    h.createClient.mockResolvedValue(client)
+    h.loadSolarEntry.mockResolvedValue(ctx({ kind: 'request_access', maxLevel: 'edit_financials' }))
+    await requestSolarAccessAction({ projectId: P, level: 'edit' })
+    expect(h.notify).toHaveBeenCalledWith(['admin-1'], ['ann@x.test'], expect.objectContaining({
+      body: 'Bob asked for View access to Solar on Mall.',
+    }))
   })
 
   it('maps a duplicate pending request to a sentence', async () => {

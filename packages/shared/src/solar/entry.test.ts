@@ -41,7 +41,12 @@ describe('resolveSolarEntry — the five rows of spec §0.2', () => {
   })
 
   it('row 5: granted → granted at that level', () => {
-    expect(resolveSolarEntry({ ...base, level: 'view' })).toEqual({ kind: 'granted', level: 'view' })
+    expect(resolveSolarEntry({ ...base, level: 'view' })).toEqual({ kind: 'granted', level: 'view', maxLevel: 'edit_financials' })
+  })
+
+  it('row 5: a granted external carries View as the most they can hold (review: no Edit request for externals)', () => {
+    expect(resolveSolarEntry({ ...base, isOwnOrgMember: false, level: 'view' }))
+      .toEqual({ kind: 'granted', level: 'view', maxLevel: 'view' })
   })
 
   it('suppliers, client viewers and non-members never see Solar', () => {
@@ -54,7 +59,7 @@ describe('resolveSolarEntry — the five rows of spec §0.2', () => {
 describe('solarNavBadge', () => {
   it('maps each state to the sidebar badge', () => {
     expect(solarNavBadge({ kind: 'hidden' })).toBe('hidden')
-    expect(solarNavBadge({ kind: 'granted', level: 'edit' })).toBe('open')
+    expect(solarNavBadge({ kind: 'granted', level: 'edit', maxLevel: 'edit_financials' })).toBe('open')
     expect(solarNavBadge({ kind: 'pending', requestedAt: 'x' })).toBe('pending')
     expect(solarNavBadge({ kind: 'subscribe' })).toBe('locked')
     expect(solarNavBadge({ kind: 'ask_admin', requestedAt: 'x' })).toBe('locked')

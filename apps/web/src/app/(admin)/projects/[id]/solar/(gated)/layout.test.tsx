@@ -18,10 +18,14 @@ vi.mock('@/actions/solar-requests.actions', () => ({ requestSolarAccessAction: v
 import SolarGatedLayout from './layout'
 import { fakeSupabase } from '@/test/fake-supabase'
 
-function setup(grantor: boolean, level: string) {
+function setup(grantor: boolean, level: string, ownOrg = true) {
   const { client } = fakeSupabase({
+    userId: 'u1',
     rpc: { solar_is_grantor: { data: grantor, error: null } },
-    tables: { 'projects.projects': [{ id: 'p1', name: 'Kings Mall' }] },
+    tables: {
+      'projects.projects': [{ id: 'p1', name: 'Kings Mall', organisation_id: 'org-1' }],
+      'public.user_organisations': ownOrg ? [{ user_id: 'u1', organisation_id: 'org-1', is_active: true }] : [],
+    },
   })
   h.createClient.mockResolvedValue(client)
   h.requireSolarLevel.mockResolvedValue(level)
@@ -52,5 +56,16 @@ describe('Solar gated layout — Manage access link', () => {
     render(await SolarGatedLayout(args))
     expect(screen.getByText('You have view access — ask an admin for edit access')).toBeDefined()
     expect(screen.queryByRole('link', { name: 'Manage access' })).toBeNull()
+  })
+
+  it('an own-org View user can request edit; an external View user cannot', async () => {
+    setup(false, 'view', true)
+    const { unmount } = render(await SolarGatedLayout(args))
+    expect(screen.getByRole('button', { name: 'Request edit access' })).toBeDefined()
+    unmount()
+    setup(false, 'view', false)
+    render(await SolarGatedLayout(args))
+    expect(screen.queryByRole('button', { name: 'Request edit access' })).toBeNull()
+    expect(screen.getByText('You have view access. Members from outside the organisation can have View only.')).toBeDefined()
   })
 })

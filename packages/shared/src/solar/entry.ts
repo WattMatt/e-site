@@ -40,7 +40,8 @@ export interface SolarEntryInput {
 
 export type SolarEntryState =
   | { kind: 'hidden' }
-  | { kind: 'granted'; level: SolarAccessLevel }
+  /** maxLevel: the most this user may hold here (externals: View) — bounds an upgrade request. */
+  | { kind: 'granted'; level: SolarAccessLevel; maxLevel: SolarAccessLevel }
   | { kind: 'subscribe' }
   | { kind: 'ask_admin'; requestedAt: string | null }
   | { kind: 'request_access'; maxLevel: SolarAccessLevel }
@@ -50,7 +51,7 @@ export function resolveSolarEntry(i: SolarEntryInput): SolarEntryState {
   if (!i.effectiveRole || (SOLAR_EXCLUDED_ROLES as readonly string[]).includes(i.effectiveRole)) {
     return { kind: 'hidden' }
   }
-  if (i.level) return { kind: 'granted', level: i.level }
+  if (i.level) return { kind: 'granted', level: i.level, maxLevel: i.isOwnOrgMember ? 'edit_financials' : 'view' }
   if (i.isOwnOrgMember && !i.orgSubscribed) {
     if (i.isGrantor) return { kind: 'subscribe' }
     return { kind: 'ask_admin', requestedAt: i.pendingSubscribeRequestAt }

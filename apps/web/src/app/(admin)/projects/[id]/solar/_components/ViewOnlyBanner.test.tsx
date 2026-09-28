@@ -26,4 +26,11 @@ describe('ViewOnlyBanner', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Request edit access' }))
     expect((await screen.findByRole('alert')).textContent).toBe('You already have a request waiting for an answer.')
   })
+
+  // Review: externals can only ever hold View — no button that asks for Edit.
+  it('an external member is told View is the most they can hold, with no request button', () => {
+    render(<ViewOnlyBanner projectId="p1" canRequestEdit={false} />)
+    expect(screen.getByText('You have view access. Members from outside the organisation can have View only.')).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Request edit access' })).toBeNull()
+  })
 })

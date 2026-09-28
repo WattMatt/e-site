@@ -9,7 +9,9 @@
 import { revalidatePath } from 'next/cache'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
-import { isSolarAccessLevel, solarNavBadge, SOLAR_LEVEL_LABELS, type SolarNavBadge } from '@esite/shared'
+import {
+  isSolarAccessLevel, solarNavBadge, SOLAR_ACCESS_LEVELS, SOLAR_LEVEL_LABELS, type SolarAccessLevel, type SolarNavBadge,
+} from '@esite/shared'
 import { loadSolarEntry } from '@/lib/solar/entry-loader'
 import { listSolarGrantors, profileName } from '@/lib/solar/grantors'
 import { notifySolarUsers, type SolarNotice } from '@/lib/solar/notify'
@@ -21,6 +23,7 @@ type AnyClient = SupabaseClient<any, any, any>
 export type SolarActionResult = { ok: true } | { error: string }
 
 const NOTE_MAX = 500
+const rank = (l: SolarAccessLevel): number => SOLAR_ACCESS_LEVELS.indexOf(l)
 const lockedPath = (projectId: string) => `/projects/${projectId}/solar/locked`
 
 async function notifyGrantors(organisationId: string, actorId: string, n: SolarNotice): Promise<void> {
@@ -58,20 +61,28 @@ export async function requestSolarAccessAction(input: {
   const ctx = await loadSolarEntry(input.projectId, supabase)
   if (!ctx) return { error: 'Project not found.' }
   const s = ctx.state
-  const mayAsk = s.kind === 'request_access' || (s.kind === 'granted' && s.level !== 'edit_financials')
-  if (!mayAsk) {
+  if (s.kind !== 'request_access' && s.kind !== 'granted') {
     return { error: s.kind === 'pending' ? 'You already have a request waiting for an answer.' : 'There is nothing to request here.' }
   }
+  // Bound the request here rather than let 00207's guard silently clamp it:
+  // a clamped row would still email every admin the level that was ASKED for.
+  if (rank(level) > rank(s.maxLevel)) {
+    return { error: 'That level is higher than you can hold on this project. Members from outside the organisation can have View only.' }
+  }
+  if (s.kind === 'granted' && rank(level) <= rank(s.level)) return { error: 'You already have that level or higher.' }
 
-  const { error } = await supabase.schema('solar').from('access_requests').insert({
+  const { data: inserted, error } = await supabase.schema('solar').from('access_requests').insert({
     project_id: ctx.projectId,
     organisation_id: ctx.organisationId,
     requester_id: ctx.userId,
     kind: 'access',
     requested_level: level,
     note: note || null,
-  })
+  }).select('requested_level')
   if (error) return { error: humanSolarError(error) }
+  // The notice names what the database stored (the guard may still clamp).
+  const storedRaw = Array.isArray(inserted) ? (inserted[0] as { requested_level?: unknown } | undefined)?.requested_level : undefined
+  const stored = isSolarAccessLevel(storedRaw) ? storedRaw : level
 
   const who = await profileName(ctx.userId)
   await notifyGrantors(ctx.organisationId, ctx.userId, {
@@ -79,11 +90,11 @@ export async function requestSolarAccessAction(input: {
     projectId: ctx.projectId,
     projectName: ctx.projectName,
     title: `${who} asked for Solar access`,
-    body: `${who} asked for ${SOLAR_LEVEL_LABELS[level]} access to Solar on ${ctx.projectName}.${note ? ` Note: "${note}"` : ''}`,
+    body: `${who} asked for ${SOLAR_LEVEL_LABELS[stored]} access to Solar on ${ctx.projectName}.${note ? ` Note: "${note}"` : ''}`,
     route: `/projects/${ctx.projectId}/solar/access`,
     email: true,
   })
-  await emitProductEvent({ actorId: ctx.userId, projectId: ctx.projectId, event: 'solar_access_requested', properties: { level } })
+  await emitProductEvent({ actorId: ctx.userId, projectId: ctx.projectId, event: 'solar_access_requested', properties: { level: stored } })
   revalidatePath(lockedPath(ctx.projectId))
   return { ok: true }
 }
