@@ -5,6 +5,7 @@
  *   const { client, calls } = fakeSupabase({
  *     userId: 'u1',
  *     rpc: { solar_is_grantor: { data: true, error: null } },
+ *     rpc: { 'solar.schedule_create_tasks': { data: { a: 't1' }, error: null } },   // schema-qualified
  *     tables: { 'solar.project_access': [{ project_id: 'p1', user_id: 'u2', level: 'view' }] },
  *     writes: { 'solar.project_access:update': { data: [] } },   // 0 rows affected
  *   })
@@ -35,6 +36,7 @@ export interface FakeOptions {
 
 export function fakeSupabase(opts: FakeOptions = {}) {
   const calls: FakeCall[] = []
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = []
   const userId = opts.userId === undefined ? 'user-1' : opts.userId
 
   const matches = (row: Record<string, unknown>, filters: Filter[]) =>
@@ -84,10 +86,19 @@ export function fakeSupabase(opts: FakeOptions = {}) {
       if (!r) return { data: null, error: null }
       return typeof r === 'function' ? r(args) : r
     }),
-    schema: (s: string) => ({ from: (t: string) => builder(`${s}.${t}`) }),
+    schema: (s: string) => ({
+      from: (t: string) => builder(`${s}.${t}`),
+      rpc: vi.fn(async (name: string, args: Record<string, unknown>) => {
+        const key = `${s}.${name}`
+        rpcCalls.push({ name: key, args })
+        const r = opts.rpc?.[key]
+        if (!r) return { data: null, error: null }
+        return typeof r === 'function' ? r(args) : r
+      }),
+    }),
     from: (t: string) => builder(`public.${t}`),
   }
-  return { client, calls }
+  return { client, calls, rpcCalls }
 }
 
 export function callsTo(calls: FakeCall[], table: string, op: FakeCall['op']): FakeCall[] {
