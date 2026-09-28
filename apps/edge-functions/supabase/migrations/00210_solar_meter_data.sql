@@ -30,7 +30,8 @@
 --   public.solar_can_view per project, so a revoked grant, a lapse or an unlink hides them again).
 --   No write policy calls them. meter_files, meter_register, meter_import_reports and
 --   meter_series_hashes stay library-only: charting a linked meter needs none of them, and the
---   register carries org-wide tenant data.
+--   register carries org-wide tenant data. The raw object in solar-meter-raw follows its
+--   meter_files record: solar.raw_path_allowed(…, 'view') needs the org library at View.
 --
 -- 00207's schema-wide directives re-run on every deploy and this migration conforms: every table
 -- AND partition has FORCE RLS; no RESTRICTIVE policy covers SELECT; every SECURITY DEFINER function
@@ -169,6 +170,7 @@
 -- sql: (SELECT strpos(qual, 'linked_meter_ids') > 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename = 'meter_channels' AND policyname = 'meter_channels_select')
 -- sql: (SELECT strpos(qual, 'linked_channel_ids') > 0 FROM pg_policies WHERE schemaname = 'solar' AND tablename = 'meter_readings' AND policyname = 'meter_readings_select')
 -- sql: (SELECT NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'solar' AND strpos(coalesce(qual, '') || coalesce(with_check, ''), 'linked_') > 0 AND policyname NOT IN ('meters_select', 'meter_channels_select', 'meter_readings_select')))
+-- sql: (SELECT strpos(pg_get_functiondef('solar.raw_path_allowed(text, text)'::regprocedure), 'library_orgs') > 0)
 -- behaviour: scripts/db/assert-solar-meter-data-roles.sql - every row ok
 -- @verify:end
 
@@ -224,7 +226,8 @@ BEGIN
 END $$;
 
 -- Storage path rule for solar-meter-raw: <org>/<project>/<sha256>.<ext>, the org segment must be the
--- project's org, and the caller needs View (read) or Edit (upload) on that project.
+-- project's org. Read needs the org library at View AND View on that project (the same audience as
+-- the meter_files record); upload needs Edit on that project.
 CREATE OR REPLACE FUNCTION solar.raw_path_allowed(p_name TEXT, p_need TEXT)
 RETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
@@ -240,7 +243,12 @@ BEGIN
     IF v_org IS NULL OR v_project IS NULL THEN RETURN FALSE; END IF;
     SELECT organisation_id INTO v_owner FROM projects.projects WHERE id = v_project;
     IF v_owner IS DISTINCT FROM v_org THEN RETURN FALSE; END IF;
-    IF p_need = 'view' THEN RETURN public.solar_can_view(v_project); END IF;
+    -- Read = whoever can read the meter_files record: the org library at View (so an external
+    -- project member with a View grant, who sees only LINKED meters, never reads a raw file), AND
+    -- View on the project the file came through.
+    IF p_need = 'view' THEN
+        RETURN v_org = ANY (solar.library_orgs('view')) AND public.solar_can_view(v_project);
+    END IF;
     IF p_need = 'edit' THEN RETURN public.solar_can_edit(v_project); END IF;
     RETURN FALSE;
 END $$;

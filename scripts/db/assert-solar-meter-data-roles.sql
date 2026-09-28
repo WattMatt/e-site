@@ -89,6 +89,8 @@ BEGIN
                                     interval_min, tz_convention, parser_version)
   VALUES (v_meter4, 'p14', 'active_power', 'import', 'kW', 'kW', 30, 'begin', '3a.1') RETURNING id INTO v_ch4;
   PERFORM solar.write_readings(v_ch4, v_ts[1:2], ARRAY[4, 5]::float8[], ARRAY[0, 0]::smallint[]);
+  -- A raw object in the private bucket at the canonical path (for the storage read policy).
+  INSERT INTO storage.objects (bucket_id, name) VALUES ('solar-meter-raw', v_org || '/' || v_p || '/' || v_sha || '.csv');
 
   -- ── 1. Files: organisation bound from the project; path must be <org>/<project>/<sha>.<ext> ──
   PERFORM set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
@@ -300,6 +302,8 @@ BEGIN
   END;
   INSERT INTO _r VALUES ('viewer_reads_eight_archetypes', (SELECT count(*) FROM solar.load_archetypes) = 8);
   INSERT INTO _r VALUES ('raw_path_viewer_can_read', solar.raw_path_allowed(v_path, 'view'));
+  INSERT INTO _r VALUES ('viewer_reads_raw_object',
+    (SELECT count(*) FROM storage.objects WHERE bucket_id = 'solar-meter-raw' AND name = v_path) = 1);
   INSERT INTO _r VALUES ('raw_path_viewer_cannot_upload', NOT solar.raw_path_allowed(v_path, 'edit'));
   RESET ROLE;
 
@@ -351,6 +355,10 @@ BEGIN
     AND (SELECT count(*) FROM solar.meter_import_reports WHERE organisation_id = v_org) = 0
     AND (SELECT count(*) FROM solar.meter_series_hashes WHERE organisation_id = v_org) = 0
     AND NOT solar.raw_path_allowed(v_path, 'edit'));
+  -- The raw object is readable only through the org library, like its meter_files record.
+  INSERT INTO _r VALUES ('ext_raw_path_read_refused', NOT solar.raw_path_allowed(v_path, 'view'));
+  INSERT INTO _r VALUES ('ext_raw_object_read_REFUSED',
+    (SELECT count(*) FROM storage.objects WHERE bucket_id = 'solar-meter-raw' AND name = v_path) = 0);
   BEGIN
     INSERT INTO solar.meters (organisation_id, label) VALUES (v_org, 'ext');
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
