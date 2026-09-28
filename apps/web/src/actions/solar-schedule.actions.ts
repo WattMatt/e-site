@@ -51,6 +51,11 @@ export async function createScheduleTasksAction(input: {
   links: LinkInput[]
   replace?: boolean
   auditVerb?: 'schedule_tasks_added' | 'schedule_imported' | 'schedule_template_applied'
+  /**
+   * The client's undo/redo executor replaying history (undo of a delete, redo
+   * of an add): the original gesture was already audited, so none is written.
+   */
+  historyReplay?: boolean
 }): Promise<{ ok: true; ids: Record<string, string> } | Fail> {
   const { supabase, userId } = await session(input.projectId, 'edit')
   if (!userId) return { error: 'You are not signed in.' }
@@ -64,6 +69,7 @@ export async function createScheduleTasksAction(input: {
     p_replace: input.replace === true,
   })
   if (error) return { error: humanScheduleError(error) }
+  if (input.historyReplay === true) return { ok: true, ids: (data ?? {}) as Record<string, string> }
   const verb = input.auditVerb ?? 'schedule_tasks_added'
   await recordSolarAudit({
     projectId: input.projectId, actorId: userId, verb,

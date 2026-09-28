@@ -141,7 +141,8 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
   const taskById = (id: string) => dataRef.current.tasks.find((t) => t.id === id)
 
   // ── the executor: every op goes through the same actions as the original gesture ─
-  async function execOps(ops: ScheduleOp[]): Promise<{ error: string | null; idMap: Record<string, string> }> {
+  /** `replay`: undo/redo re-running history, so a re-create writes no second "tasks added" audit row. */
+  async function execOps(ops: ScheduleOp[], replay = false): Promise<{ error: string | null; idMap: Record<string, string> }> {
     const idMap: Record<string, string> = {}
     for (const op of ops) {
       const cur = dataRef.current
@@ -155,7 +156,9 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
         }
         r = await updateScheduleTasksAction({ projectId: P, patches })
       } else if (op.kind === 'create') {
-        const c = await createScheduleTasksAction({ projectId: P, tasks: op.tasks, links: op.links })
+        const c = await createScheduleTasksAction(replay
+          ? { projectId: P, tasks: op.tasks, links: op.links, historyReplay: true }
+          : { projectId: P, tasks: op.tasks, links: op.links })
         if ('ids' in c) Object.assign(idMap, c.ids)
         r = c
       } else if (op.kind === 'delete') {
@@ -204,7 +207,7 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
     if (!t) return
     setMessage(null)
     setBusy(true)
-    const res = await execOps(direction === 'undo' ? t.entry.backward : t.entry.forward)
+    const res = await execOps(direction === 'undo' ? t.entry.backward : t.entry.forward, true)
     setBusy(false)
     if (res.error) {
       setMessage(`${direction === 'undo' ? 'Undo' : 'Redo'} could not be applied: ${res.error} The undo history was cleared.`)
