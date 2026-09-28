@@ -36,6 +36,13 @@ describe('matchShortcut', () => {
     expect(matchShortcut(k('a', { ctrlKey: true }, 'INPUT'), true)).toBeNull()
     expect(matchShortcut(k('Escape', {}, 'INPUT'), true)).toBe('clearSelection')
   })
+  it('a focused row checkbox is not a text field: Delete still arms the confirm after ticking a row', () => {
+    const on = (key: string, type: string) => ({ key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, target: { tagName: 'INPUT', type } })
+    expect(matchShortcut(on('Delete', 'checkbox'), true)).toBe('deleteSelected')
+    expect(matchShortcut({ ...on('a', 'checkbox'), ctrlKey: true }, true)).toBe('selectAll')
+    expect(matchShortcut(on('Delete', 'text'), true)).toBeNull()
+    expect(matchShortcut(on('Delete', 'date'), true)).toBeNull()
+  })
   it('edit shortcuts do nothing at View level; view shortcuts still work', () => {
     expect(matchShortcut(k('n'), false)).toBeNull()
     expect(matchShortcut(k('Delete'), false)).toBeNull()

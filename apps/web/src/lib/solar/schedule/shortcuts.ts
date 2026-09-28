@@ -18,7 +18,7 @@ export interface KeyLike {
   metaKey: boolean
   shiftKey: boolean
   altKey: boolean
-  target?: { tagName?: string; isContentEditable?: boolean } | null
+  target?: { tagName?: string; isContentEditable?: boolean; type?: string } | null
 }
 
 export interface ScheduleShortcut {
@@ -52,9 +52,19 @@ export const SCHEDULE_SHORTCUTS: ScheduleShortcut[] = [
 ]
 
 const TYPING = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
+/** Inputs that take no typing: a focused row checkbox must not swallow Delete / Ctrl+A. */
+const NOT_TYPED = new Set(['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'])
+
+function isTypingTarget(t: KeyLike['target']): boolean {
+  if (!t) return false
+  if (t.isContentEditable === true) return true
+  const tag = String(t.tagName ?? '').toUpperCase()
+  if (!TYPING.has(tag)) return false
+  return !(tag === 'INPUT' && NOT_TYPED.has(String(t.type ?? '').toLowerCase()))
+}
 
 export function matchShortcut(e: KeyLike, canEdit: boolean): ShortcutAction | null {
-  const typing = !!e.target && (TYPING.has(String(e.target.tagName ?? '').toUpperCase()) || e.target.isContentEditable === true)
+  const typing = isTypingTarget(e.target)
   if (typing && e.key !== 'Escape') return null
   const mod = e.ctrlKey || e.metaKey
   for (const s of SCHEDULE_SHORTCUTS) {
