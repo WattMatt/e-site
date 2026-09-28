@@ -11,6 +11,7 @@ import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevelAPI } from '@/lib/solar/api-gate'
 import { createMeterImportRepo } from '@/lib/solar/meter-import/repo'
 import { buildReviewModel, fileParsePatch, lookupIdentity, type ReviewModel } from '@/lib/solar/meter-import/review'
+import { loadVerifiedRaw } from '@/lib/solar/meter-import/raw-file'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -45,11 +46,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       results.push({ fileId, error: 'not_found' })
       continue
     }
-    const bytes = await repo.downloadRaw(file.storage_path)
-    if (!bytes) {
-      results.push({ fileId, error: 'raw_file_missing' })
+    // Recorded path must be <org>/<project>/<sha>.<ext> of this row; bytes must hash to its sha256.
+    const raw = await loadVerifiedRaw(repo, file, orgId)
+    if (!raw.ok) {
+      results.push({ fileId, error: raw.body.error })
       continue
     }
+    const bytes = raw.bytes
     const options: ParseOptions = (parsed.data.options?.[fileId] ?? {}) as ParseOptions
     const outcomes: Array<{ sheetName: string | null; outcome: MeterParseOutcome }> = /\.xlsx$/i.test(file.original_name)
       ? (await parseMeterWorkbook({ bytes, fileName: file.original_name, options })).map((s) => ({ sheetName: s.sheetName, outcome: s.outcome }))

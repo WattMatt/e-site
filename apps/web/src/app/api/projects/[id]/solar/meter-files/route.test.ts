@@ -40,6 +40,23 @@ describe('POST /api/projects/[id]/solar/meter-files', () => {
     expect((await call({ storagePath: `${ORG}/${ORG}/${sha}.csv`, originalName: 'a.csv' })).status).toBe(400)
     expect((await call({ storagePath: 'x.csv', originalName: 'a.csv' })).status).toBe(400)
   })
+  it.each([
+    ['another org', `11111111-1111-4111-8111-111111111111/${P}/${sha}.csv`],
+    ['a parent-directory segment', `${ORG}/${P}/../${P}/${sha}.csv`],
+    ['an extra segment', `${ORG}/${P}/x/${sha}.csv`],
+    ['a leading slash', `/${ORG}/${P}/${sha}.csv`],
+    ['a disallowed extension', `${ORG}/${P}/${sha}.exe`],
+    ['an upper-case sha', `${ORG}/${P}/${sha.toUpperCase()}.csv`],
+  ])('400 and no download for %s', async (_label, storagePath) => {
+    const f = fake.current as ReturnType<typeof createFakeRepo>
+    f.state.raw[storagePath] = bytes
+    let downloads = 0
+    const orig = f.repo.downloadRaw
+    f.repo.downloadRaw = async (p) => { downloads++; return orig(p) }
+    expect((await call({ storagePath, originalName: 'a.csv' })).status).toBe(400)
+    expect(downloads).toBe(0)
+    expect(f.state.files).toHaveLength(0)
+  })
   it('404 when the object is not in Storage', async () => {
     const other = `${ORG}/${P}/${'0'.repeat(64)}.csv`
     expect((await call({ storagePath: other, originalName: 'a.csv' })).status).toBe(404)

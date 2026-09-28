@@ -12,6 +12,7 @@ import {
 } from '@esite/shared/meter-data'
 import type { MeterFileRow, MeterImportRepo, MeterRow } from './repo'
 import { fileParsePatch, lookupIdentity } from './review'
+import { loadVerifiedRaw } from './raw-file'
 
 export class CommitError extends Error {
   readonly status: number
@@ -73,9 +74,11 @@ export interface CommitContext {
 }
 
 /** Parse the stored raw file. Workbooks: the named sheet, else the first series sheet. */
-export async function parseStoredFile(repo: MeterImportRepo, file: MeterFileRow, options: ParseOptions, sheet?: string): Promise<{ outcome: MeterParseOutcome; sheetName: string | null }> {
-  const bytes = await repo.downloadRaw(file.storage_path)
-  if (!bytes) throw new CommitError(404, { error: 'raw_file_missing', storagePath: file.storage_path })
+export async function parseStoredFile(repo: MeterImportRepo, file: MeterFileRow, orgId: string, options: ParseOptions, sheet?: string): Promise<{ outcome: MeterParseOutcome; sheetName: string | null }> {
+  // Path must be <org>/<project>/<sha>.<ext> of this row and the bytes must hash to its sha256 (raw-file.ts).
+  const raw = await loadVerifiedRaw(repo, file, orgId)
+  if (!raw.ok) throw new CommitError(raw.status, raw.body)
+  const bytes = raw.bytes
   if (/\.xlsx$/i.test(file.original_name)) {
     const sheets = await parseMeterWorkbook({ bytes, fileName: file.original_name, options })
     const chosen = sheet ? sheets.find((s) => s.sheetName === sheet) : (sheets.find((s) => s.outcome.kind === 'series') ?? sheets[0])
@@ -128,7 +131,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
 
   if (body.mode === 'register') {
     if (ctx.file.status === 'accepted') throw new CommitError(409, { error: 'already_imported' })
-    const { outcome } = await parseStoredFile(repo, ctx.file, {})
+    const { outcome } = await parseStoredFile(repo, ctx.file, ctx.orgId, {})
     if (outcome.kind !== 'register') throw new CommitError(422, { error: 'not_a_register', format: outcome.format })
     const site = body.siteLabel ?? outcome.filename.siteHint ?? null
     const rows = outcome.rows.map((r) => ({
@@ -144,7 +147,7 @@ export async function commitMeterFile(repo: MeterImportRepo, ctx: CommitContext,
 
   // zod types units as Record<string, string>; the schema already restricted them to SourceUnit values.
   const options = (body.options ?? {}) as ParseOptions
-  const { outcome } = await parseStoredFile(repo, ctx.file, options, body.sheet)
+  const { outcome } = await parseStoredFile(repo, ctx.file, ctx.orgId, options, body.sheet)
   if (outcome.kind !== 'series') throw new CommitError(422, { error: 'not_a_meter_series', format: outcome.format, errors: outcome.report.errors })
   if (outcome.report.errors.length > 0) throw new CommitError(422, { error: 'unresolved_errors', errors: outcome.report.errors })
 

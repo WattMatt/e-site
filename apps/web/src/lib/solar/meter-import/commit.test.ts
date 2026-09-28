@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { parseMeterFile } from '@esite/shared/meter-data'
 import { CommitBodySchema, CommitError, commitMeterFile } from './commit'
 import { createFakeRepo } from './fake-repo'
@@ -27,8 +28,11 @@ const REGISTER_9COL = readFileSync(join(__dirname, '../../../../../../packages/s
 
 function setup(text: string | Uint8Array, name = 'SITE A, 1, TENANT-1, 100.csv') {
   const bytes = typeof text === 'string' ? enc(text) : new Uint8Array(text)
-  const file: MeterFileRow = { id: 'f1', organisation_id: 'org1', project_id: 'p1', sha256: 'x'.repeat(64), size_bytes: bytes.byteLength, storage_path: 'org1/p1/x.csv', original_name: name, status: 'parsed' }
-  const fake = createFakeRepo({ files: [file], raw: { 'org1/p1/x.csv': bytes }, studyByProject: { p1: 's1' } })
+  // Real content hash and the exact <org>/<project>/<sha>.<ext> path: parseStoredFile re-verifies both.
+  const sha = createHash('sha256').update(bytes).digest('hex')
+  const path = `org1/p1/${sha}.csv`
+  const file: MeterFileRow = { id: 'f1', organisation_id: 'org1', project_id: 'p1', sha256: sha, size_bytes: bytes.byteLength, storage_path: path, original_name: name, status: 'parsed' }
+  const fake = createFakeRepo({ files: [file], raw: { [path]: bytes }, studyByProject: { p1: 's1' } })
   return { ...fake, ctx: { projectId: 'p1', orgId: 'org1', file } }
 }
 const NEW_TENANT = { new: { label: 'TENANT-1', kind: 'tenant' as const } }
@@ -121,6 +125,6 @@ describe('commitMeterFile: register and skip', () => {
     const { repo, state, ctx } = setup(A_TEXT)
     expect(await commitMeterFile(repo, ctx, CommitBodySchema.parse({ mode: 'skip', fileId: '9c1a98b5-6ef3-4388-865f-417d3f5d7465', reason: 'Duplicate of the bulk meter' }))).toEqual({ skipped: true })
     expect(state.filePatches.at(-1)?.patch).toEqual({ status: 'skipped', skip_reason: 'Duplicate of the bulk meter' })
-    expect(state.raw['org1/p1/x.csv']).toBeDefined()
+    expect(state.raw[ctx.file.storage_path]).toBeDefined()
   })
 })
