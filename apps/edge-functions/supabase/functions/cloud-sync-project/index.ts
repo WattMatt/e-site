@@ -775,7 +775,7 @@ function decideTarget(
  * A drawing is "annotated" when anything is pinned to its active file's
  * geometry: RFI annotations, QC markup lineage, snag pins, a measure
  * calibration (drawing-level OR per-page), a traced cable-route leg, a zone
- * polygon, or a saved markup layer. Annotated drawings are never auto-adopted — a layout change
+ * polygon, a saved markup layer, a Solar roof source or layout object. Annotated drawings are never auto-adopted — a layout change
  * in the new revision would silently misalign all of them.
  *
  * FAILS CLOSED: any query error counts as annotated. A transient PostgREST
@@ -868,6 +868,31 @@ async function isAnnotated(
     .limit(1)
     .maybeSingle()
   if (me || markup) return true
+
+  // A Solar roof source (00211): this drawing page is the sheet a PV layout is
+  // (or is about to be) drawn on. Its file_path records the revision the layout
+  // belongs to and the layout page warns when they diverge — but, as for markup
+  // layers, not adopting silently is the actual protection.
+  const { data: roofSource, error: rse } = await supabase
+    .schema('solar')
+    .from('roof_sources')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (rse || roofSource) return true
+
+  // Solar layout geometry (00211): roofs, arrays, strings in raw image pixels of
+  // THIS file. Covered by the roof source above today (the FK chain), queried in
+  // its own right so a future path that writes objects cannot make it blind.
+  const { data: layoutObject, error: loe } = await supabase
+    .schema('solar')
+    .from('layout_objects')
+    .select('id')
+    .eq('floor_plan_id', floorPlanId)
+    .limit(1)
+    .maybeSingle()
+  if (loe || layoutObject) return true
 
   return false
 }

@@ -189,6 +189,8 @@ describe('cloud-sync isAnnotated() covers every drawing-anchored table', () => {
         'tenants.floor_plan_page_scales',
         'tenants.floor_plan_zones',
         'tenants.floor_plan_versions',
+        'solar.roof_sources',
+        'solar.layout_objects',
       ]) {
         expect([...discovered.keys()], `discovery missed ${known}`).toContain(known)
       }
