@@ -303,7 +303,9 @@ Debt_n    = annuity on loan % × capex at the loan rate over the term (if debt-f
 Net_n     = Saving_n − Opex_n − Repl_n − Tax_n − Debt_n
 CF_0      = −capex × (1 − loan %)
 NPV       = Σ Net_n / (1+r)^n + CF_0
-IRR       = r such that NPV = 0 (bracketed bisection on [−99 %, 200 %], reported "n/a" if no sign change)
+IRR       = r such that NPV = 0 (bracketed bisection on [−99 %, 200 %], reported "n/a" if no sign change or empty/
+            all-zero/NaN flows). With several roots (e.g. a negative final-year flow) take the root where NPV falls
+            through zero as r rises (investment-type flows); the mirror rule for borrowing-type flows
 Simple payback = first year cumulative Net ≥ −CF_0 (interpolated)
 Discounted payback = same on discounted flows
 LCOE      = (capex + Σ PV(Opex_n + Repl_n)) / Σ PV(Energy_n)          (discounted, standard definition)
@@ -313,8 +315,10 @@ with a published tariff, then the org default path; load growth applies to `Bill
 `Bill_after` via re-simulation factors per year (energy balance rescaled, not re-run hourly per year).
 Load-shedding value is computed separately and shown as an additional line, never merged into IRR by default.
 
-**Validation:** a spreadsheet reference model (XLSX) of one case, built independently, must match
-NPV/IRR/LCOE to 4 significant figures.
+**Validation:** an independently built reference model of a 25-year case must match NPV/IRR/LCOE to 4 significant
+figures — `docs/solar/validation/finance-reference-model.py` (Python, accepted in place of XLSX, 2026-09-28), plus a
+hand-computed 3-year toy case. Debt terms longer than the analysis period pay the outstanding balance as a final-year
+balloon; a PPA bills delivered energy (generation − curtailment).
 
 ---
 
