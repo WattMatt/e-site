@@ -166,6 +166,34 @@ describe('predecessors resolve against the # column, not row position', () => {
     ])
     expect(plan.links).toEqual([])
   })
+  it('only "#", "Task ID" or "Task No" is auto-mapped as the id column; a generic ID/No/Row column is not', () => {
+    for (const h of ['#', 'Task ID', 'task id', 'TASK NO', 'Task No.']) expect(guessImportMapping([h, 'Task']).id).toBe(0)
+    for (const h of ['ID', 'id', 'No', 'No.', 'Row']) expect(guessImportMapping([h, 'Task']).id).toBeNull()
+  })
+  it('a generic "ID" text column does not break row-position predecessors', () => {
+    const rows = [['ID', 'Task', 'Start', 'End', 'Predecessors'],
+      ['INV-A', 'Survey', '2026-10-01', '2026-10-02', ''],
+      ['INV-B', 'Design', '2026-10-05', '2026-10-09', '1FS']]
+    const { plan, issues } = mapImportTable(rows, guessImportMapping(rows[0]), cal)
+    expect(issues).toEqual([])
+    expect(plan.links).toEqual([{ fromKey: 'p1', toKey: 'p2', type: 'FS', lagDays: 0 }])
+  })
+  it('the id column can still be mapped by hand', () => {
+    const rows = [['ID', 'Task', 'Start', 'End', 'Predecessors'],
+      ['7', 'Survey', '2026-10-01', '2026-10-02', ''],
+      ['9', 'Design', '2026-10-05', '2026-10-09', '7FS']]
+    const { plan, issues } = mapImportTable(rows, { ...guessImportMapping(rows[0]), id: 0 }, cal)
+    expect(issues).toEqual([])
+    expect(plan.links).toEqual([{ fromKey: 'p1', toKey: 'p2', type: 'FS', lagDays: 0 }])
+  })
+  it('"03" and "3" are the same number (a zero-padded # column still links)', () => {
+    const rows = [header, ['01', 'Survey', '2026-10-01', '2026-10-02', ''], ['03', 'Design', '2026-10-05', '2026-10-09', '1FS'],
+      ['4.0', 'Install', '2026-10-12', '2026-10-16', '3FS']]
+    expect(linksByName(rows)).toEqual([['Survey', 'Design', 'FS', 0], ['Design', 'Install', 'FS', 0]])
+    const dup = [header, ['3', 'A', '2026-10-01', '2026-10-01', ''], ['03', 'B', '2026-10-02', '2026-10-02', '']]
+    expect(mapImportTable(dup, guessImportMapping(dup[0]), cal).issues)
+      .toEqual([{ row: 3, message: 'Row 3: # 3 is also used on row 2. Give every row its own number.' }])
+  })
   it('an unknown # is reported', () => {
     const bad = [header, ['5', 'A', '2026-10-01', '2026-10-01', ''], ['6', 'B', '2026-10-02', '2026-10-02', '1']]
     expect(mapImportTable(bad, guessImportMapping(bad[0]), cal).issues)

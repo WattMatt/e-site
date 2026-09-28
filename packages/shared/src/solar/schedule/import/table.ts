@@ -18,7 +18,10 @@ export const IMPORT_FIELD_LABELS: Record<ImportField, string> = {
 }
 
 const SYNONYMS: Record<ImportField, string[]> = {
-  id: ['#', 'id', 'no', 'no.', 'task id', 'row'],
+  // Deliberately narrow: an auto-mapped id column re-points EVERY predecessor
+  // at it, so a generic "ID" / "No" / "Row" column (an inverter serial, a line
+  // reference) would break every link. Anything else can be mapped by hand.
+  id: ['#', 'task id', 'task no', 'task no.'],
   name: ['task', 'task name', 'name', 'activity', 'description of work'],
   category: ['category', 'phase', 'group'],
   zone: ['zone', 'area', 'location'],
@@ -122,7 +125,12 @@ export function mapImportTable(
   // deleting rows in Excel cannot re-point a link. Without one, row position.
   const byId = new Map<string, { key: string; row: number }>()
   const duplicateIds = new Set<string>()
-  const normId = (raw: string) => raw.trim().replace(/\.0+$/, '')
+  // Whole numbers compare as numbers ("03", "3" and "3.0" are one id), since
+  // predecessor references are parsed as numbers; anything else is kept as text.
+  const normId = (raw: string) => {
+    const t = raw.trim()
+    return /^\d+(\.0+)?$/.test(t) ? String(Number(t)) : t
+  }
   let position = 0
   rows.forEach((r, i) => {
     if (i === 0 || r.every((c) => c.trim() === '')) return
