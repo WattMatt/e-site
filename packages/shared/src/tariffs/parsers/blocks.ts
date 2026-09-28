@@ -13,12 +13,16 @@ const n = (s: string): number => Number(s.replace(/\s/g, ''))
 export function parseBlockRange(text: string): BlockRange | null {
   const t = text.replace(/[‒-―−]/g, '-').replace(/\s/g, ' ').toLowerCase()
   const typo = /\d\s*wh\b/.test(t) && !/\d\s*kwh/.test(t)
+  // A number is plain digits or space-grouped thousands ("1 001"): a lone "2 51" is the
+  // block number followed by the range, never the number 251.
+  const N = String.raw`(\d{1,3}(?: \d{3})+|\d+)`
+  const re = (src: string): RegExp => new RegExp(src.replaceAll('NUM', N))
   let m: RegExpExecArray | null
-  if ((m = /first\s+(\d[\d ]*?)\s*kwh/.exec(t))) return { min: 0, max: n(m[1]), typo }
-  if ((m = />\s*(\d[\d ]*?)\s*(?:kwh)?\s*(?:to|-|and)\s*<=?\s*(\d[\d ]*?)\s*(?:kwh|\)|$)/.exec(t))) return { min: n(m[1]), max: n(m[2]), typo }
-  if ((m = /(\d[\d ]*?)\s*(?:kwh)?\s*(?:-|to)\s*(\d[\d ]*?)\s*(?:k?wh|\))/.exec(t))) return { min: n(m[1]), max: n(m[2]), typo }
-  if ((m = />\s*=?\s*(\d[\d ]*?)\s*(?:k?wh|\)|$)/.exec(t))) return { min: n(m[1]), max: null, typo }
-  if ((m = /<\s*=?\s*(\d[\d ]*?)\s*(?:k?wh|\))/.exec(t))) return { min: 0, max: n(m[1]), typo }
+  if ((m = re(String.raw`first\s+NUM\s*kwh`).exec(t))) return { min: 0, max: n(m[1]), typo }
+  if ((m = re(String.raw`>\s*NUM\s*(?:kwh)?\s*(?:to|-|and)\s*<=?\s*NUM\s*(?:kwh|\)|$)`).exec(t))) return { min: n(m[1]), max: n(m[2]), typo }
+  if ((m = re(String.raw`NUM\s*(?:kwh)?\s*(?:-|to)\s*NUM\s*(?:k?wh|\))`).exec(t))) return { min: n(m[1]), max: n(m[2]), typo }
+  if ((m = re(String.raw`>\s*=?\s*NUM\s*(?:k?wh|\)|$)`).exec(t))) return { min: n(m[1]), max: null, typo }
+  if ((m = re(String.raw`<\s*=?\s*NUM\s*(?:k?wh|\))`).exec(t))) return { min: 0, max: n(m[1]), typo }
   return null
 }
 

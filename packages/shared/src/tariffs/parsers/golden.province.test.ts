@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { costMonth } from '../bill-engine'
 import { makeTariff, type MonthUsage, type Tariff } from '../types'
 import { validateTariff } from '../validators'
-import { gridFromFixture, type CellFixture } from './grid'
+import { gridFromCells, gridFromFixture, type CellFixture } from './grid'
 import { parseProvinceSheet, type ParsedSheet } from './province-xlsx'
 import cityPowerFx from '../__fixtures__/gp-city-power.cells.json'
 import ekurhuleniFx from '../__fixtures__/gp-ekurhuleni.cells.json'
@@ -127,6 +127,23 @@ describe('golden cases re-run from the real cells (as-is/09 §7.2)', () => {
     ])
     expect(t.charges[0].unitInferred).toBe(true)
     expect(s.issues.some((i) => i.code === 'sseg_semantics_unknown' && i.tariff === t.name)).toBe(true)
+  })
+})
+
+describe('VAT-inclusive books', () => {
+  it('stores the excl-VAT value (incl kept as proof) and applies a VAT sentence to the whole sheet', () => {
+    const s = parseProvinceSheet(gridFromCells('PROBE', {
+      A1: 'Probe Municipality - 10%',
+      A2: '1. Domestic',
+      A3: 'Energy charge (c/kWh)', B3: 230,
+      A4: 'Basic charge (R/month)', B4: 115,
+      A6: 'All tariffs include VAT',
+    }), { fileSha256: 'x' })
+    expect(s.vatBasis).toBe('stated_incl')
+    const [energyCharge, basic] = s.tariffs[0].charges
+    expect(energyCharge).toMatchObject({ amountExclVat: 200, vatBasis: 'stated_incl', sourceLocator: { raw_incl: 230 } })
+    expect(basic).toMatchObject({ amountExclVat: 100, vatBasis: 'stated_incl' })
+    expect(validateTariff(s.tariffs[0]).map((i) => i.code)).not.toContain('vat_pair')
   })
 })
 

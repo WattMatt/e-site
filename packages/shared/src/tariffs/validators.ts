@@ -16,6 +16,7 @@ export type TariffIssueCode =
   | 'yoy_out_of_band' | 'yoy_unit_changed' | 'legacy_tariff_skipped' | 'unit_unknown'
   | 'orphan_charge' | 'block_unit_typo' | 'sseg_semantics_unknown' | 'eskom_shared_energy_row'
   | 'eskom_duplicate_column' | 'rfd_row_increase_mismatch' | 'increase_missing' | 'sheet_skipped'
+  | 'vat_basis_conflict' | 'duplicate_licensee_year'
 
 export interface TariffIssue {
   code: TariffIssueCode

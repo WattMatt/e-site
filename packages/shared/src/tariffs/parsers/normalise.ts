@@ -56,6 +56,9 @@ export function normaliseCharge(inp: NormaliseInput): NormaliseResult {
     ?? inp.unitColumn
     ?? labelUnit(inp.label)
   const component = detectComponent(inp.label, explicit, inp.componentHint)
+  if (explicit !== null && !unitCompatible(component, explicit)) {
+    return { ok: false, unresolved: { label: inp.label, raw: inp.rawValue, reason: `unit ${explicit} is incompatible with ${component}`, locator: inp.locator } }
+  }
   const hinted = [inp.contextUnit, inp.headerUnit].find((u): u is TariffUnit => u !== null && unitCompatible(component, u)) ?? null
   let unit: TariffUnit | null = explicit ?? hinted
   let inferred = false

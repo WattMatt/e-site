@@ -59,12 +59,15 @@ export function detectComponent(label: string, unit: TariffUnit | null, hint: Ch
   if (/legacy/.test(t)) return 'legacy'
   if (/electrification|rural network subsidy/.test(t)) return 'ers'
   if (/affordability/.test(t)) return 'affordability'
+  if (/low voltage subsidy|\blv subsidy/.test(t)) return 'lv_subsidy'
   if (/\badmin/.test(t) && !/service/.test(t)) return 'admin'
   if (/service/.test(t)) return 'service'
   if (/capacity charge/.test(t)) return /\bamp/.test(t) || unit === 'R_per_A_month' ? 'capacity_amp' : 'network_capacity'
   if (/demand/.test(t) && (unit === 'R_per_kVA_month' || unit === 'R_per_kW_month')) return 'demand'
   if (/basic|levy|fixed charge|daily charge/.test(t)) return 'basic'
   if (unit === 'c_per_kWh' || unit === 'R_per_kWh') return hint === 'export_credit' ? 'export_credit' : 'energy'
+  // "Peak demand charge" with no unit is a demand charge, not a peak energy rate.
+  if (/demand charge/.test(t) && unit === null) return 'demand'
   if (/energy|kwh|block|part \d|peak|standard|charge per|single rate|flat rate|consumption/.test(t)) {
     return hint === 'export_credit' ? 'export_credit' : 'energy'
   }

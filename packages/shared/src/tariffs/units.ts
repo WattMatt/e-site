@@ -49,6 +49,8 @@ export function parseUnitToken(
   if (!text) return null
   const t = text.toLowerCase().replace(/\s+/g, '').replace(/\/{2,}/g, '/')
   if (/(c|cents?)\/kvarh|r\.cents\/kvarh/.test(t)) return 'c_per_kVArh'
+  // No such units: rand per kVArh, and per kVA per day. Never let "/kva" or "/day" below claim them.
+  if (/kvarh/.test(t) || /\/kva\/day/.test(t)) return null
   if (/c\/kwh|cents?\/kwh|c\/unit/.test(t)) return 'c_per_kWh'
   if (/r\/kwh|rand\/kwh/.test(t)) return 'R_per_kWh'
   if (/\/kwh/.test(t)) return opts.randPrefix ? 'R_per_kWh' : null

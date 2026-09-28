@@ -44,6 +44,12 @@ describe('parseUnitToken', () => {
   ] as const)('%s -> %s', (text, unit) => {
     expect(parseUnitToken(text)).toBe(unit)
   })
+  it('never reads a rand-per-kVArh or per-kVA-per-day price as a kVA demand or a daily charge (no such unit)', () => {
+    expect(parseUnitToken('R/kVArh')).toBeNull()
+    expect(parseUnitToken('Reactive energy [R/kvarh]')).toBeNull()
+    expect(parseUnitToken('R/kVA/day')).toBeNull()
+    expect(parseUnitToken('(c/kVArh)')).toBe('c_per_kVArh')
+  })
   it('needs a rand prefix before a bare /kWh', () => {
     expect(parseUnitToken('/kWh')).toBeNull()
     expect(parseUnitToken('/kWh', { randPrefix: true })).toBe('R_per_kWh')

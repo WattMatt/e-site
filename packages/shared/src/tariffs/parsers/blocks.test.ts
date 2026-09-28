@@ -15,6 +15,8 @@ describe('parseBlockRange', () => {
     ["Part 2 - Charge per kWh >2000 kWh's purchased (c/kWh)", 2000, null],
     ['Block 1 (<300)kWh', 0, 300],
     ['Block 2 (300 - 700)kWh', 300, 700],
+    ['Block 2 51-350 kWh', 51, 350],
+    ['Block 3 (1 001 - 2 000 kWh)', 1001, 2000],
   ] as const)('%s', (text, min, max) => {
     expect(parseBlockRange(text)).toMatchObject({ min, max, typo: false })
   })

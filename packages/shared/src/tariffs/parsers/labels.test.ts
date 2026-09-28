@@ -57,6 +57,8 @@ describe('detectComponent', () => {
     ['Block 1 (0-350kWh)', null, null, 'energy'],
     ['Single Phase (Conventional Meters)', null, 'basic', 'basic'],
     ['Active energy charge [c/kWh]', 'c_per_kWh', 'export_credit', 'export_credit'],
+    ['Urban low voltage subsidy charge [R/kVA/m]', 'R_per_kVA_month', null, 'lv_subsidy'],
+    ['Peak demand charge', null, null, 'demand'],
   ] as const)('%s', (label, unit, hint, component) => expect(detectComponent(label, unit, hint)).toBe(component))
 })
 

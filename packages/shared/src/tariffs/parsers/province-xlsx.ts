@@ -36,8 +36,8 @@ const IBT_CONTEXT = /inclining block/i
 const ENERGY_WORDED = /energy|kwh|consumption|per unit/i
 const MARKER = /\b(redundant|obsolete)\b/i
 const RECOMMENDED = /recommended|proposed/i
-const VAT_EXCL = /(do not include|excl(?:uding|usive)?\.?)\s*vat|vat\s*excl/i
-const VAT_INCL = /\b(incl(?:uding|usive)?\.?)\s*vat|vat\s*incl/i
+const VAT_EXCL = /(do not include|excl(?:ude[sd]?|uding|usive)?\.?)\s*vat|vat\s*excl/i
+const VAT_INCL = /\b(incl(?:ude[sd]?|uding|usive)?\.?)\s*vat|vat\s*incl/i
 
 interface RowRead {
   row: number
@@ -115,6 +115,17 @@ export function parseProvinceSheet(grid: Grid, opts: ProvinceParseOptions): Pars
     if (rr) rows.push(rr)
   }
 
+  // The VAT basis is a property of the sheet: a sentence anywhere (often a footer) applies to every row.
+  const vatSentences = rows.filter((rr) => !hasValue(rr)).map((rr) => [rr.label, ...rr.texts].join(' '))
+  const saysExcl = vatSentences.some((t) => VAT_EXCL.test(t))
+  const saysIncl = vatSentences.some((t) => !VAT_EXCL.test(t) && VAT_INCL.test(t))
+  if (saysExcl && saysIncl) {
+    out.issues.push({ code: 'vat_basis_conflict', severity: 'review', message: `"${grid.sheet}" says both including and excluding VAT; values kept as excl-VAT`, locator: { file_sha256: opts.fileSha256, sheet: grid.sheet } })
+  } else if (saysExcl) out.vatBasis = 'stated_excl'
+  else if (saysIncl) out.vatBasis = 'stated_incl'
+  const inclVat = out.vatBasis === 'stated_incl'
+  const VAT = 0.15
+
   const taken = new Set<string>()
   let cur: TariffDraft | null = null
   let headerUnit: TariffUnit | null = null
@@ -145,8 +156,7 @@ export function parseProvinceSheet(grid: Grid, opts: ProvinceParseOptions): Pars
     const rr = rows[k]
     const allText = [rr.label, ...rr.texts].join(' ')
 
-    if (!hasValue(rr) && VAT_EXCL.test(allText)) { out.vatBasis = 'stated_excl'; continue }
-    if (!hasValue(rr) && VAT_INCL.test(allText)) { out.vatBasis = 'stated_incl'; continue }
+    if (!hasValue(rr) && (VAT_EXCL.test(allText) || VAT_INCL.test(allText))) continue
     if (rr.texts.some((t) => MARKER.test(t))) {
       if (cur) (cur as TariffDraft).isLegacy = true
       continue
@@ -162,13 +172,18 @@ export function parseProvinceSheet(grid: Grid, opts: ProvinceParseOptions): Pars
         out.issues.push({ code: 'orphan_charge', severity: 'review', message: `a charge before any tariff header (row ${rr.row})`, locator: { file_sha256: opts.fileSha256, sheet: grid.sheet, row: rr.row } })
       }
       const label = rr.embedded ? rr.embedded.label : rr.label || lastChargeLabel
-      const amount = rr.embedded ? rr.embedded.amount : (rr.value as NonNullable<RowRead['value']>).amount
+      const printed = rr.embedded ? rr.embedded.amount : (rr.value as NonNullable<RowRead['value']>).amount
+      // A VAT-inclusive book: store excl VAT (6 dp, the column's precision), keep the printed value as proof.
+      const amount = inclVat ? { ...printed, value: Math.round((printed.value / (1 + VAT)) * 1e6) / 1e6 } : printed
       const col = rr.embedded ? 1 : (rr.value as NonNullable<RowRead['value']>).col
       const rawValue = rr.embedded ? rr.embedded.raw : String((rr.value as NonNullable<RowRead['value']>).raw)
       const res = normaliseCharge({
         label, amount, rawValue, unitColumn: rr.unitColumn, contextUnit, headerUnit, componentHint, seasonState,
         blockText: rr.blockCell, vatBasis: out.vatBasis, extractionMethod: 'parser',
-        locator: { file_sha256: opts.fileSha256, sheet: grid.sheet, row: rr.row, col: colToLetters(col), cell: `${colToLetters(col)}${rr.row}`, raw_text: `${label} = ${rawValue}` },
+        locator: {
+          file_sha256: opts.fileSha256, sheet: grid.sheet, row: rr.row, col: colToLetters(col), cell: `${colToLetters(col)}${rr.row}`, raw_text: `${label} = ${rawValue}`,
+          ...(inclVat ? { raw_incl: printed.value } : {}),
+        },
       })
       if (res.ok) {
         const draft = cur as unknown as TariffDraft

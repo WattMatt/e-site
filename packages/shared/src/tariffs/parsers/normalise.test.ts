@@ -53,6 +53,15 @@ describe('normaliseCharge', () => {
     const r = normaliseCharge(base('Network capacity charge', 'R0.00A/kVA NMD/Month'))
     expect(r.ok && r.charge).toMatchObject({ component: 'network_capacity', unit: 'R_per_kVA_month', demandBasis: 'nmd', amountExclVat: 0 })
   })
+  it('refuses a reactive charge in R/kVArh (no such unit) instead of billing it on maximum demand', () => {
+    const r = normaliseCharge(base('Reactive energy charge (R/kVArh)', 'R0.25'))
+    expect(r.ok).toBe(false)
+  })
+  it('refuses an explicit unit that cannot belong to the component', () => {
+    const r = normaliseCharge(base('Service charge', '250c/kWh'))
+    expect(r.ok).toBe(false)
+    expect(!r.ok && r.unresolved.reason).toMatch(/incompatible/)
+  })
   it('sends a Wh block typo to review', () => {
     const r = normaliseCharge(base('Block 3 (>500Wh)', 322.61, { headerUnit: 'c_per_kWh' }))
     expect(r.ok && r.issues.map((i) => i.code)).toEqual(['block_unit_typo'])
