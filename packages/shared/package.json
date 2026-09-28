@@ -14,7 +14,8 @@
     "./tariffs/ingest": "./src/tariffs/ingest/index.ts",
     "./meter-data": "./src/meter-data/index.ts",
     "./solar-load": "./src/services/solar/load/index.ts",
-    "./solar-cases": "./src/solar/cases/index.ts"
+    "./solar-cases": "./src/solar/cases/index.ts",
+    "./solar-reports": "./src/solar/reports/index.ts"
   },
   "scripts": {
     "lint": "eslint . --ext .ts",
