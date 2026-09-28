@@ -212,7 +212,7 @@ export function parseEskomSheet(g: Grid, opts: { fileSha256: string }): { accs: 
       if (m === donor || m.charges.some((c) => c.component === 'energy')) continue
       const have = new Set(m.charges.map((c) => `${c.component}|${c.season}|${c.tou}`))
       for (const c of donor.charges) if (!have.has(`${c.component}|${c.season}|${c.tou}`)) m.charges.push({ ...c })
-      issues.push({ code: 'eskom_shared_energy_row', severity: 'review', message: `${m.code}: energy and per-kWh charges taken from ${donor.code}, the family's only energy row`, tariff: nameOf(m) })
+      issues.push({ code: 'eskom_shared_energy_row', severity: 'review', message: `${m.code}: charges it lacks (energy, service, per-kWh adders) copied from ${donor.code}, the family's shared row (owner default 1: review)`, tariff: nameOf(m) })
     }
   }
   return { accs: list, issues }

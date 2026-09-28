@@ -49,6 +49,20 @@ describe('runIngest', () => {
     expect([...store.state.aliases.keys()].sort()).toEqual(['CITY POWER'])
     expect([...store.state.runs.values()][0]).toMatchObject({ status: 'succeeded' })
     expect(r.years[0]).toMatchObject({ action: 'create', tariffs: 1, charges: 1 })
+    // The validators' verdict is recorded after the last content write, before review (publish needs it = 0).
+    expect(year).toMatchObject({ validationBlocking: 0 })
+    const w = store.state.writes
+    expect(w.indexOf(w.find((x) => x.startsWith('validation:'))!)).toBeLessThan(w.indexOf(w.find((x) => x.endsWith(':in_review'))!))
+  })
+
+  it('records the blocking count the validators found', async () => {
+    const store = createMemoryTariffStore()
+    const gap = makeTariff({ name: 'Gappy', structure: 'ibt', charges: [
+      makeCharge({ component: 'energy', unit: 'c_per_kWh', amountExclVat: 200, blockMinKwh: 0, blockMaxKwh: 50, blockBasis: 'monthly' }),
+    ] })
+    const r = await runIngest(plan([draft({ tariffs: [gap] })]), store, { apply: true, createMissingLicensees: true })
+    expect(r.years[0].blocking).toBe(1)
+    expect([...store.state.years.values()][0]).toMatchObject({ validationBlocking: 1, state: 'in_review' })
   })
 
   it('is idempotent on sha256', async () => {
@@ -93,6 +107,31 @@ describe('runIngest', () => {
     expect(retry.status).toBe('applied')
     expect(store.state.uploads.size).toBe(1)
     expect(store.state.docs.size).toBe(1)
+  })
+
+  it('records a run that skipped an unknown licensee as partial, so the same file can be re-ingested after seeding', async () => {
+    const store = createMemoryTariffStore()
+    const first = await runIngest(plan([draft()]), store, { apply: true, createMissingLicensees: false })
+    expect(first.years[0].action).toBe('skip_unknown_licensee')
+    expect([...store.state.runs.values()][0]).toMatchObject({ status: 'partial' })
+    await store.createLicensee({ name: 'City Power', kind: 'metro', aliases: ['CITY POWER'] })
+    const again = await runIngest(plan([draft()]), store, { apply: true, createMissingLicensees: false })
+    expect(again.status).toBe('applied')
+    expect(again.years[0].action).toBe('create')
+    expect(store.state.docs.size).toBe(1)
+  })
+
+  it('refuses two drafts for the same licensee in one file instead of failing half-way', async () => {
+    const store = createMemoryTariffStore({ licensees: [{ name: 'City Power', kind: 'metro', aliases: ['CITY POWER', 'CITY OF JOHANNESBURG'] }] })
+    const r = await runIngest(plan([draft(), draft({ licenseeName: 'Joburg', aliases: ['CITY OF JOHANNESBURG'] })]), store, { apply: true, createMissingLicensees: false })
+    expect(r.years.map((y) => y.action)).toEqual(['create', 'skip_duplicate_licensee'])
+    expect(r.years[1].issues.map((i) => i.code)).toContain('duplicate_licensee_year')
+    expect(store.state.years.size).toBe(1)
+    expect([...store.state.runs.values()][0]).toMatchObject({ status: 'partial' })
+    // Two NEW licensees with the same name are duplicates too.
+    const s2 = createMemoryTariffStore()
+    const r2 = await runIngest(plan([draft(), draft({ aliases: ['CITY POWER JHB'] })], 'b'.repeat(64)), s2, { apply: false, createMissingLicensees: true })
+    expect(r2.years.map((y) => y.action)).toEqual(['create', 'skip_duplicate_licensee'])
   })
 
   it('links an import tariff to its export tariff by code', async () => {

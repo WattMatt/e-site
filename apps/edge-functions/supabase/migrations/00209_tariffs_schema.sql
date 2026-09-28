@@ -63,6 +63,13 @@
 -- function: tariffs.year_child_guard()
 -- function: tariffs.charge_review_bind()
 -- function: tariffs.source_document_guard()
+-- function: tariffs.invalidate_year_validation()
+-- trigger: charge_invalidates_validation ON tariffs.charge
+-- trigger: tariff_invalidates_validation ON tariffs.tariff
+-- column: tariffs.tariff_year.validation_blocking
+-- column: tariffs.tariff_year.validated_at
+-- grant_absent: authenticated UPDATE ON tariffs.tariff_year
+-- sql: (SELECT NOT has_column_privilege('authenticated', 'tariffs.tariff_year', 'validated_at', 'UPDATE') AND NOT has_column_privilege('authenticated', 'tariffs.tariff_year', 'validation_blocking', 'UPDATE') AND NOT has_column_privilege('authenticated', 'tariffs.tariff_year', 'validated_at', 'INSERT'))
 -- trigger: tariff_year_guard ON tariffs.tariff_year
 -- trigger: tariff_guard ON tariffs.tariff
 -- trigger: charge_guard ON tariffs.charge
@@ -240,6 +247,12 @@ CREATE TABLE IF NOT EXISTS tariffs.tariff_year (
     published_at           TIMESTAMPTZ,
     published_by           UUID REFERENCES auth.users(id),
     superseded_at          TIMESTAMPTZ,
+    -- The TS validators' verdict (as-is/09 §7.1 Stage D: blocking issues block
+    -- publish). Written by the service role only (column grants below): at
+    -- ingest, and by 2b's validate action. Cleared whenever the year's content
+    -- changes (tariffs.invalidate_year_validation). Publish needs it = 0.
+    validation_blocking    INT CHECK (validation_blocking >= 0),
+    validated_at           TIMESTAMPTZ,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT tariff_year_licensee_fy UNIQUE (licensee_id, financial_year),
@@ -381,7 +394,8 @@ CREATE TABLE IF NOT EXISTS tariffs.ingest_run (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_document_id  UUID REFERENCES tariffs.source_document(id),
     parser              TEXT NOT NULL CHECK (parser IN ('province_xlsx', 'eskom_xlsm', 'rfd_pdf')),
-    status              TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    -- partial: some year was skipped (unknown or duplicate licensee); the file may be ingested again.
+    status              TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'partial', 'failed')),
     stats               JSONB NOT NULL DEFAULT '{}'::jsonb,
     diff                JSONB NOT NULL DEFAULT '{}'::jsonb,
     error               TEXT,
@@ -428,7 +442,9 @@ BEGIN
                 AND NEW.approved_increase_pct IS NOT DISTINCT FROM OLD.approved_increase_pct
                 AND NEW.source_document_id IS NOT DISTINCT FROM OLD.source_document_id
                 AND NEW.published_at IS NOT DISTINCT FROM OLD.published_at
-                AND NEW.published_by IS NOT DISTINCT FROM OLD.published_by) THEN
+                AND NEW.published_by IS NOT DISTINCT FROM OLD.published_by
+                AND NEW.validation_blocking IS NOT DISTINCT FROM OLD.validation_blocking
+                AND NEW.validated_at IS NOT DISTINCT FROM OLD.validated_at) THEN
             RAISE EXCEPTION 'tariffs.tariff_year %: a % year is immutable; correct it through a new version', OLD.id, OLD.state
                 USING ERRCODE = 'check_violation';
         END IF;
@@ -463,6 +479,15 @@ BEGIN
          WHERE t.tariff_year_id = NEW.id AND c.unit_inferred AND c.reviewed_at IS NULL;
         IF v_n > 0 THEN
             RAISE EXCEPTION 'tariffs.tariff_year %: % inferred unit(s) not reviewed', NEW.id, v_n USING ERRCODE = 'check_violation';
+        END IF;
+        -- Stage D: the validators must have run on this content and found nothing blocking.
+        IF NEW.validated_at IS NULL OR NEW.validation_blocking IS DISTINCT FROM 0 THEN  -- [mutation-probe M5]
+            RAISE EXCEPTION 'tariffs.tariff_year %: not validated, or % blocking issue(s); validate again after any change', NEW.id, coalesce(NEW.validation_blocking::text, 'unknown')
+                USING ERRCODE = 'check_violation';
+        END IF;
+        -- D-03: a platform admin approves each year; a service call cannot publish.
+        IF auth.uid() IS NULL THEN
+            RAISE EXCEPTION 'tariffs.tariff_year %: publishing needs a signed-in platform tariff admin', NEW.id USING ERRCODE = 'check_violation';
         END IF;
         NEW.published_at := now();
         NEW.published_by := auth.uid();
@@ -525,7 +550,11 @@ CREATE OR REPLACE FUNCTION tariffs.charge_review_bind()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = '' AS $$
 BEGIN
     IF TG_OP = 'UPDATE'
-       AND (NEW.unit, NEW.amount_excl_vat, NEW.unit_inferred) IS DISTINCT FROM (OLD.unit, OLD.amount_excl_vat, OLD.unit_inferred) THEN
+       AND (NEW.tariff_id, NEW.component, NEW.season, NEW.tou, NEW.day_type, NEW.block_min_kwh, NEW.block_max_kwh,
+            NEW.block_basis, NEW.unit, NEW.demand_basis, NEW.amount_excl_vat, NEW.vat_rate, NEW.vat_basis, NEW.unit_inferred)
+           IS DISTINCT FROM
+           (OLD.tariff_id, OLD.component, OLD.season, OLD.tou, OLD.day_type, OLD.block_min_kwh, OLD.block_max_kwh,
+            OLD.block_basis, OLD.unit, OLD.demand_basis, OLD.amount_excl_vat, OLD.vat_rate, OLD.vat_basis, OLD.unit_inferred) THEN
         NEW.reviewed_at := NULL;
         NEW.reviewed_by := NULL;
     ELSIF TG_OP = 'UPDATE' AND OLD.reviewed_at IS NOT NULL THEN
@@ -552,6 +581,40 @@ BEGIN
     RETURN NEW;
 END $$;
 
+-- Any change to a draft year's content clears its validation record, so a year
+-- is only ever published on the content the validators actually saw. SECURITY
+-- DEFINER because the invoker (a platform admin) has no UPDATE on the two
+-- validation columns by design; it is a trigger function (not callable over
+-- REST), touches only those two columns, and only on unpublished years. A
+-- review stamp alone (reviewed_at/by) is not a content change.
+CREATE OR REPLACE FUNCTION tariffs.invalidate_year_validation()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+    v_years UUID[] := ARRAY[]::UUID[];
+BEGIN
+    IF TG_TABLE_NAME = 'charge' THEN
+        IF TG_OP = 'UPDATE' AND (to_jsonb(NEW) - 'reviewed_at' - 'reviewed_by') = (to_jsonb(OLD) - 'reviewed_at' - 'reviewed_by') THEN
+            RETURN NULL;
+        END IF;
+        IF TG_OP IN ('UPDATE', 'DELETE') THEN
+            v_years := v_years || (SELECT t.tariff_year_id FROM tariffs.tariff t WHERE t.id = OLD.tariff_id);
+        END IF;
+        IF TG_OP IN ('INSERT', 'UPDATE') THEN
+            v_years := v_years || (SELECT t.tariff_year_id FROM tariffs.tariff t WHERE t.id = NEW.tariff_id);
+        END IF;
+    ELSE
+        IF TG_OP IN ('UPDATE', 'DELETE') THEN v_years := v_years || OLD.tariff_year_id; END IF;
+        IF TG_OP IN ('INSERT', 'UPDATE') THEN v_years := v_years || NEW.tariff_year_id; END IF;
+    END IF;
+    UPDATE tariffs.tariff_year SET validated_at = NULL, validation_blocking = NULL
+     WHERE id = ANY (v_years) AND state IN ('ingesting', 'in_review')
+       AND (validated_at IS NOT NULL OR validation_blocking IS NOT NULL);  -- [mutation-probe M6]
+    RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION tariffs.invalidate_year_validation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION tariffs.invalidate_year_validation() FROM anon;
+REVOKE ALL ON FUNCTION tariffs.invalidate_year_validation() FROM authenticated;
+
 CREATE TRIGGER tariff_year_guard BEFORE INSERT OR UPDATE OR DELETE ON tariffs.tariff_year
     FOR EACH ROW EXECUTE FUNCTION tariffs.tariff_year_guard();
 CREATE TRIGGER tariff_guard BEFORE INSERT OR UPDATE OR DELETE ON tariffs.tariff
@@ -565,6 +628,14 @@ CREATE TRIGGER sseg_rule_guard BEFORE INSERT OR UPDATE OR DELETE ON tariffs.sseg
     FOR EACH ROW EXECUTE FUNCTION tariffs.year_child_guard();
 CREATE TRIGGER source_document_guard BEFORE UPDATE ON tariffs.source_document
     FOR EACH ROW EXECUTE FUNCTION tariffs.source_document_guard();
+CREATE TRIGGER tariff_invalidates_validation AFTER INSERT OR UPDATE OR DELETE ON tariffs.tariff
+    FOR EACH ROW EXECUTE FUNCTION tariffs.invalidate_year_validation();
+CREATE TRIGGER charge_invalidates_validation AFTER INSERT OR UPDATE OR DELETE ON tariffs.charge
+    FOR EACH ROW EXECUTE FUNCTION tariffs.invalidate_year_validation();
+CREATE TRIGGER loss_factor_invalidates_validation AFTER INSERT OR UPDATE OR DELETE ON tariffs.loss_factor
+    FOR EACH ROW EXECUTE FUNCTION tariffs.invalidate_year_validation();
+CREATE TRIGGER sseg_rule_invalidates_validation AFTER INSERT OR UPDATE OR DELETE ON tariffs.sseg_rule
+    FOR EACH ROW EXECUTE FUNCTION tariffs.invalidate_year_validation();
 CREATE TRIGGER licensee_updated_at BEFORE UPDATE ON tariffs.licensee
     FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 CREATE TRIGGER tariff_year_updated_at BEFORE UPDATE ON tariffs.tariff_year
@@ -667,9 +738,18 @@ CREATE POLICY sseg_rule_delete ON tariffs.sseg_rule FOR DELETE TO authenticated 
 -- ingest_run: no authenticated write policy; the ingestion script uses the service role.
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON
-    tariffs.licensee, tariffs.licensee_alias, tariffs.source_document, tariffs.tariff_year, tariffs.tariff,
+    tariffs.licensee, tariffs.licensee_alias, tariffs.source_document, tariffs.tariff,
     tariffs.charge, tariffs.tou_calendar, tariffs.tou_window, tariffs.holiday_rule, tariffs.loss_factor, tariffs.sseg_rule
     TO authenticated;
+-- tariff_year: every column EXCEPT the validation record (validation_blocking,
+-- validated_at), which only the service role writes. A column list, so a later
+-- column is not writable by clients until it is granted on purpose.
+GRANT SELECT, DELETE ON tariffs.tariff_year TO authenticated;
+GRANT INSERT (licensee_id, financial_year, effective_from, effective_to, approved_increase_pct, source_document_id, state)
+    ON tariffs.tariff_year TO authenticated;
+GRANT UPDATE (licensee_id, financial_year, effective_from, effective_to, approved_increase_pct, source_document_id, state,
+              published_at, published_by, superseded_at)
+    ON tariffs.tariff_year TO authenticated;
 GRANT SELECT ON tariffs.ingest_run TO authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA tariffs TO service_role;
 REVOKE ALL ON ALL TABLES IN SCHEMA tariffs FROM anon;

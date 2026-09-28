@@ -65,7 +65,13 @@ async function main(): Promise<void> {
   const netBillingRulesSha256 = parser === 'eskom_xlsm' && rulesPath && existsSync(rulesPath)
     ? createHash('sha256').update(readFileSync(rulesPath)).digest('hex')
     : null
-  if (parser === 'eskom_xlsm' && !netBillingRulesSha256) console.error('(no Net-Billing Rules PDF found: the SSEG rule will not cite it; pass --rules-pdf)')
+  if (parser === 'eskom_xlsm' && !netBillingRulesSha256) {
+    if (apply) {
+      console.error('--apply for eskom_xlsm needs the Net-Billing Rules PDF (owner default 9): pass --rules-pdf or set TARIFF_SOURCE_DIR')
+      process.exit(2)
+    }
+    console.error('(no Net-Billing Rules PDF found: this dry run plans an uncited SSEG rule; --apply would refuse)')
+  }
 
   const plan = await buildIngestPlan({
     parser, fileName: basename(file), bytes, sha256, financialYear: fy, pdfText,

@@ -139,6 +139,9 @@ export function createSupabaseTariffStore(url: string, serviceKey: string): Tari
     async setYearState(yearId, state) {
       check(await t().from('tariff_year').update({ state }).eq('id', yearId), `year -> ${state}`)
     },
+    async recordValidation(yearId, blocking) {
+      check(await t().from('tariff_year').update({ validation_blocking: blocking, validated_at: new Date().toISOString() }).eq('id', yearId), 'year validation')
+    },
     async deleteYearChildren(yearId) {
       check(await t().from('tariff').delete().eq('tariff_year_id', yearId), 'tariff delete')
       check(await t().from('loss_factor').delete().eq('tariff_year_id', yearId), 'loss_factor delete')

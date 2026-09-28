@@ -82,10 +82,13 @@ export interface TariffStore {
   uploadSource(path: string, bytes: Uint8Array, contentType: string): Promise<void>
   insertSourceDocument(row: SourceDocumentRow): Promise<string>
   insertIngestRun(row: { sourceDocumentId: string; parser: ParserName; startedBy: string | null }): Promise<string>
-  finishIngestRun(id: string, patch: { status: 'succeeded' | 'failed'; stats: unknown; diff: unknown; error: string | null }): Promise<void>
+  /** 'partial': some year was skipped (unknown licensee, duplicate): the file may be ingested again. */
+  finishIngestRun(id: string, patch: { status: 'succeeded' | 'partial' | 'failed'; stats: unknown; diff: unknown; error: string | null }): Promise<void>
   insertYear(meta: YearMeta): Promise<string>
   updateYear(yearId: string, meta: YearMeta): Promise<void>
   setYearState(yearId: string, state: 'ingesting' | 'in_review'): Promise<void>
+  /** The validators' verdict on the year's content (service role only; publish needs 0 blocking). */
+  recordValidation(yearId: string, blocking: number): Promise<void>
   deleteYearChildren(yearId: string): Promise<void>
   /** Inserts tariffs and their charges; returns tariff name → id. */
   insertTariffs(yearId: string, sourceDocumentId: string, tariffs: Tariff[]): Promise<Map<string, string>>
@@ -94,7 +97,10 @@ export interface TariffStore {
   insertSsegRule(yearId: string, rule: SsegRule): Promise<void>
 }
 
-export type YearAction = 'create' | 'replace_draft' | 'skip_published' | 'skip_unknown_licensee'
+export type YearAction = 'create' | 'replace_draft' | 'skip_published' | 'skip_unknown_licensee' | 'skip_duplicate_licensee'
+
+/** Actions that leave part of the file un-ingested: the run is 'partial', not 'succeeded'. */
+const INCOMPLETE: ReadonlySet<YearAction> = new Set<YearAction>(['skip_unknown_licensee', 'skip_duplicate_licensee'])
 
 export interface YearReport {
   licensee: string
@@ -156,6 +162,9 @@ export async function runIngest(
   }
 
   const prepared: { draft: LicenseeYearDraft; report: YearReport; existingYear: StoredYear | null }[] = []
+  // One licensee, one year per file: a second draft resolving to the same licensee (or, when
+  // licensees are created, the same name) would fail the run half-way on a UNIQUE constraint.
+  const claimed = new Set<string>()
   for (const draft of plan.years) {
     let licenseeId: string | null = null
     for (const alias of draft.aliases) {
@@ -174,11 +183,20 @@ export async function runIngest(
       }
       existingYear = await store.findYear(licenseeId, source.financialYear)
     }
-    const action: YearAction = !licenseeId && !opts.createMissingLicensees
-      ? 'skip_unknown_licensee'
-      : existingYear && (existingYear.state === 'published' || existingYear.state === 'superseded')
-        ? 'skip_published'
-        : existingYear ? 'replace_draft' : 'create'
+    const claimKey = licenseeId ? `id:${licenseeId}` : `name:${normaliseAlias(draft.licenseeName)}`
+    const duplicate = (licenseeId !== null || opts.createMissingLicensees) && claimed.has(claimKey)
+    if (duplicate) {
+      issues.push({ code: 'duplicate_licensee_year', severity: 'block', message: `"${draft.licenseeName}" resolves to a licensee already planned from this file; skipped`, tariff: draft.licenseeName })
+    } else if (licenseeId !== null || opts.createMissingLicensees) {
+      claimed.add(claimKey)
+    }
+    const action: YearAction = duplicate
+      ? 'skip_duplicate_licensee'
+      : !licenseeId && !opts.createMissingLicensees
+        ? 'skip_unknown_licensee'
+        : existingYear && (existingYear.state === 'published' || existingYear.state === 'superseded')
+          ? 'skip_published'
+          : existingYear ? 'replace_draft' : 'create'
     prepared.push({
       draft, existingYear,
       report: {
@@ -206,7 +224,7 @@ export async function runIngest(
   const runId = await store.insertIngestRun({ sourceDocumentId, parser: plan.parser, startedBy: opts.startedBy ?? null })
   try {
     for (const { draft, report, existingYear } of prepared) {
-      if (report.action === 'skip_published' || report.action === 'skip_unknown_licensee') continue
+      if (report.action === 'skip_published' || INCOMPLETE.has(report.action)) continue
       const licenseeId = report.licenseeId ?? await store.createLicensee({
         name: draft.licenseeName, kind: draft.kind,
         aliases: [...new Set(draft.aliases.map(normaliseAlias).filter((a) => a !== ''))],
@@ -236,12 +254,16 @@ export async function runIngest(
       if (links.length > 0) await store.linkExportTariffs(links)
       if (draft.lossFactors.length > 0) await store.insertLossFactors(yearId, draft.lossFactors)
       if (draft.ssegRule) await store.insertSsegRule(yearId, draft.ssegRule)
+      // After the last content write (any later change clears it again in the database).
+      await store.recordValidation(yearId, report.blocking)
       await store.setYearState(yearId, 'in_review')
       report.yearId = yearId
     }
+    const skipped = years.filter((r) => INCOMPLETE.has(r.action))
     await store.finishIngestRun(runId, {
-      status: 'succeeded', stats: summarise(years),
-      diff: years.map((r) => ({ licensee: r.licensee, action: r.action, yoy: r.yoy })), error: null,
+      status: skipped.length > 0 ? 'partial' : 'succeeded', stats: summarise(years),
+      diff: years.map((r) => ({ licensee: r.licensee, action: r.action, yoy: r.yoy })),
+      error: skipped.length > 0 ? `${skipped.length} year(s) skipped: ${skipped.map((r) => `${r.licensee} (${r.action})`).join(', ')}` : null,
     })
   } catch (e) {
     await store.finishIngestRun(runId, { status: 'failed', stats: summarise(years), diff: {}, error: e instanceof Error ? e.message : String(e) })

@@ -78,6 +78,20 @@ BEGIN
   RETURNING id INTO v_c25b;
   UPDATE tariffs.tariff_year SET state = 'in_review' WHERE id = v_y25;
 
+  -- the validation record (blocking-issue count from the TS validators) is written by the
+  -- service role only; an admin cannot declare their own year clean
+  BEGIN
+    UPDATE tariffs.tariff_year SET validated_at = now(), validation_blocking = 0 WHERE id = v_y25;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN insufficient_privilege THEN INSERT INTO _r VALUES ('admin_write_validation_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('admin_write_validation_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('admin_write_validation_REFUSED', false);
+  END;
+  RESET ROLE;
+  UPDATE tariffs.tariff_year SET validated_at = now(), validation_blocking = 0 WHERE id = v_y25;
+  SET LOCAL ROLE authenticated;
+
   BEGIN
     UPDATE tariffs.tariff_year SET state = 'published' WHERE id = v_y25;
     RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
@@ -91,6 +105,8 @@ BEGIN
   UPDATE tariffs.charge SET reviewed_at = '2000-01-01', reviewed_by = v_sub WHERE id = v_c25b;
   SELECT count(*) INTO v_n FROM tariffs.charge WHERE id = v_c25b AND reviewed_by = v_admin AND reviewed_at > '2001-01-01';
   INSERT INTO _r VALUES ('review_stamp_bound_to_caller', v_n = 1);
+  SELECT count(*) INTO v_n FROM tariffs.tariff_year WHERE id = v_y25 AND validated_at IS NOT NULL AND validation_blocking = 0;
+  INSERT INTO _r VALUES ('review_stamp_keeps_validation', v_n = 1);
 
   -- publish; the stamp is the caller, not the forged published_by
   UPDATE tariffs.tariff_year SET state = 'published', published_by = v_sub WHERE id = v_y25;
@@ -212,6 +228,28 @@ BEGIN
   INSERT INTO tariffs.tariff (tariff_year_id, name, structure) VALUES (v_y26, 'Probe Domestic', 'flat') RETURNING id INTO v_t26;
   INSERT INTO tariffs.charge (tariff_id, component, unit, amount_excl_vat, vat_basis, extraction_method)
   VALUES (v_t26, 'energy', 'c_per_kWh', 272.53, 'assumed_excl', 'parser');
+  BEGIN
+    UPDATE tariffs.tariff_year SET state = 'published' WHERE id = v_y26;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('publish_unvalidated_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('publish_unvalidated_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('publish_unvalidated_REFUSED', false);
+  END;
+  RESET ROLE;
+  UPDATE tariffs.tariff_year SET validated_at = now(), validation_blocking = 2 WHERE id = v_y26;
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    UPDATE tariffs.tariff_year SET state = 'published' WHERE id = v_y26;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('publish_with_blocking_issues_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('publish_with_blocking_issues_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('publish_with_blocking_issues_REFUSED', false);
+  END;
+  RESET ROLE;
+  UPDATE tariffs.tariff_year SET validated_at = now(), validation_blocking = 0 WHERE id = v_y26;
+  SET LOCAL ROLE authenticated;
   UPDATE tariffs.tariff_year SET state = 'published' WHERE id = v_y26;
   SELECT state INTO v_state FROM tariffs.tariff_year WHERE id = v_y25;
   INSERT INTO _r VALUES ('publish_supersedes_prior_year', v_state = 'superseded');
@@ -232,6 +270,9 @@ BEGIN
   INSERT INTO tariffs.tariff (tariff_year_id, name, structure) VALUES (v_y24, 'Probe Domestic', 'flat') RETURNING id INTO v_t24;
   INSERT INTO tariffs.charge (tariff_id, component, unit, amount_excl_vat, vat_basis, extraction_method)
   VALUES (v_t24, 'energy', 'c_per_kWh', 221.8, 'assumed_excl', 'parser');
+  RESET ROLE;
+  UPDATE tariffs.tariff_year SET validated_at = now(), validation_blocking = 0 WHERE id = v_y24;
+  SET LOCAL ROLE authenticated;
   UPDATE tariffs.tariff_year SET state = 'published' WHERE id = v_y24;
   SELECT state INTO v_state FROM tariffs.tariff_year WHERE id = v_y24;
   INSERT INTO _r VALUES ('backfilled_older_year_lands_superseded', v_state = 'superseded');
@@ -248,6 +289,13 @@ BEGIN
   UPDATE tariffs.charge SET amount_excl_vat = 300 WHERE id = v_c27;
   SELECT count(*) INTO v_n FROM tariffs.charge WHERE id = v_c27 AND reviewed_at IS NULL AND reviewed_by IS NULL;
   INSERT INTO _r VALUES ('review_stamp_cleared_when_fact_changes', v_n = 1);
+  -- a validated draft whose content changes must be validated again before it can publish
+  RESET ROLE;
+  UPDATE tariffs.tariff_year SET validated_at = now(), validation_blocking = 0 WHERE id = v_y27;
+  SET LOCAL ROLE authenticated;
+  UPDATE tariffs.charge SET amount_excl_vat = 310 WHERE id = v_c27;
+  SELECT count(*) INTO v_n FROM tariffs.tariff_year WHERE id = v_y27 AND validated_at IS NULL AND validation_blocking IS NULL;
+  INSERT INTO _r VALUES ('content_change_clears_validation', v_n = 1);
 
   -- shape constraints
   BEGIN
@@ -460,6 +508,20 @@ BEGIN
     WHEN raise_exception THEN INSERT INTO _r VALUES ('service_role_cannot_edit_published', false);
     WHEN OTHERS THEN INSERT INTO _r VALUES ('service_role_cannot_edit_published', false);
   END;
+  -- the service role records validation (the 2b validator) but cannot publish: a platform admin approves each year (D-03)
+  UPDATE tariffs.tariff_year SET validated_at = now(), validation_blocking = 0 WHERE id = v_y27;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  INSERT INTO _r VALUES ('service_role_writes_validation', v_n = 1);
+  BEGIN
+    UPDATE tariffs.tariff_year SET state = 'published' WHERE id = v_y27;
+    RAISE EXCEPTION 'allowed' USING ERRCODE = 'P0001';
+  EXCEPTION
+    WHEN check_violation THEN INSERT INTO _r VALUES ('service_role_publish_REFUSED', true);
+    WHEN raise_exception THEN INSERT INTO _r VALUES ('service_role_publish_REFUSED', false);
+    WHEN OTHERS THEN INSERT INTO _r VALUES ('service_role_publish_REFUSED', false);
+  END;
+  INSERT INTO tariffs.ingest_run (parser, status) VALUES ('rfd_pdf', 'partial');
+  INSERT INTO _r VALUES ('ingest_run_partial_status_accepted', true);
   -- the service role maintains the allow-list
   INSERT INTO public.platform_tariff_admins (user_id) VALUES (v_wmadm);
   DELETE FROM public.platform_tariff_admins WHERE user_id = v_wmadm;

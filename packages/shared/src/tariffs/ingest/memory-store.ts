@@ -6,7 +6,7 @@ export interface MemoryState {
   runs: Map<string, { id: string; sourceDocumentId: string; parser: ParserName; status: string; error: string | null }>
   licensees: Map<string, { id: string; name: string; kind: LicenseeKind }>
   aliases: Map<string, string>
-  years: Map<string, YearMeta & { id: string; state: YearState }>
+  years: Map<string, YearMeta & { id: string; state: YearState; validationBlocking?: number | null }>
   tariffsByYear: Map<string, (Tariff & { id: string })[]>
   links: { tariffId: string; exportTariffId: string }[]
   lossFactors: { yearId: string; factor: LossFactor }[]
@@ -115,6 +115,11 @@ export function createMemoryTariffStore(seed?: MemorySeed, opts: { failOnce?: ke
       const y = state.years.get(yearId)
       if (y) y.state = s
       state.writes.push(`year-state:${yearId}:${s}`)
+    },
+    async recordValidation(yearId, blocking) {
+      const y = state.years.get(yearId)
+      if (y) y.validationBlocking = blocking
+      state.writes.push(`validation:${yearId}:${blocking}`)
     },
     async deleteYearChildren(yearId) {
       state.tariffsByYear.set(yearId, [])
