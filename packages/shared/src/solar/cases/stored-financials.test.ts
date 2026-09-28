@@ -38,6 +38,20 @@ describe('runStoredFinancials', () => {
     })
   }
 
+  it('a run whose export earns no credit prices its after-bills as if nothing were exported', () => {
+    const { result, fin } = scenario(false)
+    const hourly = hourlyFromResult(result)
+    const zero = new Float64Array(8760)
+    expect(hourly.export.some((v) => v > 0)).toBe(true)   // the fixture exports, or this proves nothing
+    const e = { year1PvKwh: result.pv.annual.acKwh, year1DeliveredKwh: result.balance.kpis.pvKwh - result.balance.kpis.curtailKwh }
+    const credited = runStoredFinancials({ ...e, hourly }, fin, stubBillCalculator)
+    const noCredit = runStoredFinancials({ ...e, hourly, exportCredited: false }, fin, stubBillCalculator)
+    const zeroExport = runStoredFinancials({ ...e, hourly: { ...hourly, export: zero, exportPvOnly: zero } }, fin, stubBillCalculator)
+    expect(noCredit.year1Bills).toEqual(zeroExport.year1Bills)
+    expect(noCredit.year1Bills.exportCreditUsedZar).toBe(0)
+    expect(noCredit.year1Bills.afterZar).toBeGreaterThan(credited.year1Bills.afterZar)
+    expect(runStoredFinancials({ ...e, hourly, exportCredited: true }, fin, stubBillCalculator)).toEqual(credited)
+  })
   it('after a CSV round trip (4 d.p.) NPV and IRR agree to 1e-6 relative', () => {
     const { result, fin } = scenario(true)
     const calc = stubBillCalculator

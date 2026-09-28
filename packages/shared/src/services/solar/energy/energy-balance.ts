@@ -39,6 +39,13 @@ export interface ExportSettings {
   allowed: boolean
   /** kW (= kWh per hour); null = no limit. (Not Infinity: canonical JSON refuses non-finite numbers.) */
   limitKw: number | null
+  /**
+   * `false` = exported energy earns NO credit on the bill ("Yes (no credit)", functional spec §3.2).
+   * The energy balance ignores it (the kWh still leave the site); it is carried here so it enters
+   * inputs_hash and the stored run inputs, and run financials price the export at zero. Absent =
+   * credited per the tariff's net-billing rules.
+   */
+  credited?: boolean
 }
 
 export interface EnergyBalanceInput {

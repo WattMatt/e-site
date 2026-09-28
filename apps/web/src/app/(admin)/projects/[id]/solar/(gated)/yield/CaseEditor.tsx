@@ -199,6 +199,8 @@ export function CaseEditor({ projectId, level, data, equipment }: { projectId: s
         {g.overrideExport && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
           <Check label="Export allowed" checked={g.exportAllowed} disabled={ro} onChange={(v) => set('grid', { exportAllowed: v })} />
           <NumField label="Export limit" unit="kW" value={g.exportLimitKw} disabled={ro || !g.exportAllowed} error={err('grid.exportLimitKw')} onChange={(v) => set('grid', { exportLimitKw: v })} />
+          {/* Unticked = "Yes (no credit)": the energy still leaves the site, the bill credits none of it. */}
+          <Check label="Export earns credit" checked={g.exportCredited} disabled={ro || !g.exportAllowed} onChange={(v) => set('grid', { exportCredited: v })} />
         </div>}
         <NumField label="Inverter AC cap" unit="kW" value={g.inverterAcCapKw} disabled={ro} error={err('grid.inverterAcCapKw')} onChange={(v) => set('grid', { inverterAcCapKw: v })} />
       </Section>

@@ -51,6 +51,29 @@ describe('executeFinancialsRun', () => {
     expect(h.tariff).toHaveBeenCalledWith(svc, P, { year: 2024 })
     expect(h.get).toHaveBeenCalledWith(svc, 'solar-runs', 'o/p/c/r.csv.gz')
   })
+  it('a run whose export earns no credit ("Yes (no credit)") is priced with zero export credit', async () => {
+    // A calculator that credits export at R 1/kWh, and a stored series that exports 5 kWh every hour.
+    const crediting: BillCalculator = {
+      monthlyBills: (f) => Array.from({ length: 12 }, (_, i) => {
+        const imp = f.importKwh.reduce((a, v) => a + v, 0) * 2 / 12, exp = f.exportKwh.reduce((a, v) => a + v, 0) / 12
+        return { month: i + 1, totalZar: imp - exp, exportCreditUsedZar: exp }
+      }),
+      withExportRateScaled: () => crediting,
+    }
+    h.tariff.mockResolvedValue({ ok: true, calc: crediting, tariffRef: { tariffId: 't1', tariffName: 'Flat', financialYear: '2025/26', licenseeName: 'City Power' } })
+    h.get.mockResolvedValue(encodeHourlyCsv({ ...hourly(), export: new Float64Array(8760).fill(5), exportPvOnly: new Float64Array(8760).fill(5) }))
+    const after = async (exportSettings: unknown) => {
+      const svcFake = fakeSupabase()
+      const user = fakeSupabase({ tables: { ...tables, 'solar.case_runs': [{ ...run, export_settings: exportSettings }] } })
+      await executeFinancialsRun({ user: user.client as never, svc: svcFake.client as never, projectId: P, caseId: C, userId: U })
+      return (callsTo(svcFake.calls, 'solar.case_run_financials', 'insert')[0]!.payload as { results: { year1Bills: { afterZar: number; exportCreditUsedZar: number } } }).results.year1Bills
+    }
+    const credited = await after({ allowed: true, limitKw: null })
+    const none = await after({ allowed: true, limitKw: null, credited: false })
+    expect(credited.afterZar).toBeCloseTo(35 * 8760 * 2 - 5 * 8760, 3)
+    expect(none.afterZar).toBeCloseTo(35 * 8760 * 2, 3)   // = the zero-export after-bill
+    expect(none.exportCreditUsedZar).toBe(0)
+  })
   it('no succeeded run / no saved financials / no tariff → the named sentence (422)', async () => {
     const empty = fakeSupabase({ tables: { 'solar.case_runs': [], 'solar.case_financials': [] } }).client as never
     await expect(executeFinancialsRun({ user: empty, svc: {} as never, projectId: P, caseId: C, userId: U })).resolves.toEqual({ ok: false, status: 422, error: FIN_RUN_REASONS.noRun })

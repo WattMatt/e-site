@@ -4,7 +4,7 @@
  * gets hashed (inputs_hash) and stored as the run's inputs snapshot.
  */
 import type { CaseInput } from '../../services/solar/case'
-import type { BatterySpec, TouPeriod } from '../../services/solar/energy/energy-balance'
+import type { BatterySpec, ExportSettings, TouPeriod } from '../../services/solar/energy/energy-balance'
 import { SOLAR_ENGINE_DEFAULTS } from '../../services/solar/defaults'
 import { HOURS_PER_YEAR } from '../../services/solar/time'
 import { effectiveLosses, type CaseConfig } from './config'
@@ -65,11 +65,17 @@ export function buildCaseInput(ctx: BuildContext): BuildResult {
   const l = effectiveLosses(c)
   const acRated = c.grid.inverterAcCapKw !== null ? Math.min(c.pv.acKw, c.grid.inverterAcCapKw) : c.pv.acKw
   const euro = c.pv.inverter ? f(c.pv.inverter.euroEfficiencyPct) : SOLAR_ENGINE_DEFAULTS.inverterEuroEfficiency
-  const exportSettings = c.grid.overrideExport
-    ? { allowed: c.grid.exportAllowed, limitKw: c.grid.exportAllowed ? c.grid.exportLimitKw : null }
+  // "Yes (no credit)" exports like net billing but earns nothing: `credited: false` rides in the input
+  // (so it moves inputs_hash and the stored run says how to price it). Credited export carries no
+  // flag, so a net-billing input hashes exactly as before.
+  const noCredit = { credited: false as const }
+  const exportSettings: ExportSettings = c.grid.overrideExport
+    ? c.grid.exportAllowed
+      ? { allowed: true, limitKw: c.grid.exportLimitKw, ...(c.grid.exportCredited ? {} : noCredit) }
+      : { allowed: false, limitKw: null }
     : study.exportMode === 'zero_export'
       ? { allowed: false, limitKw: null }
-      : { allowed: true, limitKw: study.exportLimitKw }
+      : { allowed: true, limitKw: study.exportLimitKw, ...(study.exportMode === 'no_credit' ? noCredit : {}) }
 
   const battery: BatterySpec | null = b.enabled
     ? {

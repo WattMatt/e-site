@@ -67,6 +67,20 @@ describe('CaseEditor', () => {
     expect(h.refresh).not.toHaveBeenCalled()
   })
 
+  it('the export override offers "Export earns credit" (Yes, no credit) while export is allowed', async () => {
+    h.save.mockResolvedValue({ ok: true, updatedAt: 'T2' })
+    render(<CaseEditor projectId="p1" level="edit" data={data()} equipment={equipment} />)
+    expect(screen.queryByLabelText('Export earns credit')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Override for this case'))
+    const credit = screen.getByLabelText('Export earns credit') as HTMLInputElement
+    expect(credit.checked).toBe(true)
+    fireEvent.click(credit)
+    fireEvent.click(screen.getByRole('button', { name: 'Save case' }))
+    await waitFor(() => expect(h.save).toHaveBeenCalled())
+    expect(h.save.mock.calls[0]![0].config.grid).toMatchObject({ overrideExport: true, exportAllowed: true, exportCredited: false })
+    fireEvent.click(screen.getByLabelText('Export allowed'))
+    expect((screen.getByLabelText('Export earns credit') as HTMLInputElement).disabled).toBe(true)
+  })
   it('picking a module stores the catalogue snapshot', async () => {
     h.save.mockResolvedValue({ ok: true, updatedAt: 'T2' })
     render(<CaseEditor projectId="p1" level="edit" data={data()} equipment={equipment} />)

@@ -97,6 +97,23 @@ describe('buildCaseInput', () => {
     expect(r.input.touPeriods).toHaveLength(8760)
   })
 
+  it('"Yes (no credit)" is carried into the input, so it enters inputs_hash; net billing is unchanged', () => {
+    const net = buildCaseInput(ctx({ study: { exportMode: 'net_billing', exportLimitKw: 100 } }))
+    const none = buildCaseInput(ctx({ study: { exportMode: 'no_credit', exportLimitKw: 100 } }))
+    if (!net.ok || !none.ok) throw new Error('expected ok')
+    expect(net.input.export).toEqual({ allowed: true, limitKw: 100 })
+    expect(none.input.export).toEqual({ allowed: true, limitKw: 100, credited: false })
+    expect(inputsHash(none.input)).not.toBe(inputsHash(net.input))
+    // The case override has its own "no credit" choice; it only applies while export is allowed.
+    const c = base()
+    const ov = (exportAllowed: boolean, exportCredited: boolean) =>
+      buildCaseInput(ctx({ config: { ...c, grid: { ...c.grid, overrideExport: true, exportAllowed, exportLimitKw: 50, exportCredited } }, study: { exportMode: 'net_billing', exportLimitKw: null } }))
+    const o1 = ov(true, false), o2 = ov(true, true), o3 = ov(false, false)
+    expect(o1.ok && o1.input.export).toEqual({ allowed: true, limitKw: 50, credited: false })
+    expect(o2.ok && o2.input.export).toEqual({ allowed: true, limitKw: 50 })
+    expect(o3.ok && o3.input.export).toEqual({ allowed: false, limitKw: null })
+  })
+
   it('the hash is stable for equal inputs and moves when any input moves', () => {
     const a = buildCaseInput(ctx()), b = buildCaseInput(ctx())
     const c = base()

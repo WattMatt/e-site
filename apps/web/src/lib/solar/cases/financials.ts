@@ -30,7 +30,7 @@ export const FIN_RUN_REASONS = {
 export type FinRunOutcome = { ok: true; id: string } | { ok: false; status: number; error: string }
 
 export async function latestSucceededRun(user: AnyClient, caseId: string): Promise<Row | null> {
-  const { data } = await user.schema('solar').from('case_runs').select('id, case_id, status, hourly_path, config_snapshot, outputs, started_at')
+  const { data } = await user.schema('solar').from('case_runs').select('id, case_id, status, hourly_path, config_snapshot, outputs, started_at, export_settings:inputs->export')
     .eq('case_id', caseId).eq('status', 'succeeded').order('started_at', { ascending: false }).limit(1)
   return (Array.isArray(data) ? (data[0] as Row | undefined) : undefined) ?? null
 }
@@ -58,7 +58,9 @@ export async function executeFinancialsRun(a: { user: AnyClient; svc: AnyClient;
 
   try {
     const hourly = decodeHourlyCsv(await getGzipText(a.svc, RUNS_BUCKET, run.hourly_path as string))
-    const result = runStoredFinancials({ hourly, year1PvKwh: kpis.annualAcKwh, year1DeliveredKwh: kpis.deliveredKwh }, built.input, tariff.calc)
+    // "Yes (no credit)" is part of the run's hashed input (CaseInput.export.credited): price export at zero.
+    const exportCredited = (run.export_settings as { credited?: unknown } | null | undefined)?.credited !== false
+    const result = runStoredFinancials({ hourly, year1PvKwh: kpis.annualAcKwh, year1DeliveredKwh: kpis.deliveredKwh, exportCredited }, built.input, tariff.calc)
     const results = { version: 1, capex: capexTotals(fin.fin.capex, kpis.dcKwp), ...result }
     const { data, error } = await a.svc.schema('solar').from('case_run_financials').insert({
       case_run_id: run.id, engine_version: ENGINE_VERSION, fin_inputs: { finance: built.input, config: fin.fin },

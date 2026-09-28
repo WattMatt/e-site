@@ -65,6 +65,8 @@ export const CaseConfigSchema = z.object({
     overrideExport: z.boolean(),
     exportAllowed: z.boolean(),
     exportLimitKw: num(0, 1e6).nullable(),
+    /** Override only: false = "Yes (no credit)". Older configs without it read as credited. */
+    exportCredited: z.boolean().default(true),
     inverterAcCapKw: num(0.1, 1e6).nullable(),
   }).strict(),
   load: z.object({ adjustmentPct: num(-90, 200) }).strict(),
@@ -151,7 +153,7 @@ export function defaultCaseConfig(s: SolarOrgSettingValues, size: { dcKwp: numbe
       rtePct: toPct(b.roundTripEfficiency), socMinPct: toPct(b.socMin), socMaxPct: toPct(b.socMax), initialSocPct: 50,
       backupReservePct: 0, strategy: 'self-consumption', peakTargetKw: null, gridCharging: false,
     },
-    grid: { overrideExport: false, exportAllowed: true, exportLimitKw: null, inverterAcCapKw: null },
+    grid: { overrideExport: false, exportAllowed: true, exportLimitKw: null, exportCredited: true, inverterAcCapKw: null },
     load: { adjustmentPct: 0 },
     loadShedding: { enabled: false, stage: 2, hoursPerYear: 0, backedLoadKw: 0 },
   }

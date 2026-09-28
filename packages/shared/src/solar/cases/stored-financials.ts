@@ -26,6 +26,12 @@ export interface StoredEnergy {
    * does for a case with no sub-hourly load).
    */
   subHourly?: SubHourlyImports
+  /**
+   * `false` when the run's input said export earns no credit (CaseInput.export.credited — study
+   * "Yes (no credit)" or the case override). The after-bills are then priced with zero export, so no
+   * export credit reaches year-1 savings or the export-rate sensitivity. Absent/true = credited.
+   */
+  exportCredited?: boolean
 }
 
 function annual(calc: BillCalculator, flows: GridFlows): { total: number; credit: number } {
@@ -47,9 +53,10 @@ function storedYear1Bills(calc: BillCalculator, e: StoredEnergy): Year1Bills {
   const h = e.hourly
   const sub = e.subHourly
   const zero = new Float64Array(h.load.length)
+  const credited = e.exportCredited !== false
   const before = annual(calc, { importKwh: h.load, exportKwh: zero, subHourlyImport: sub?.before })
-  const after = annual(calc, { importKwh: h.import, exportKwh: h.export, subHourlyImport: sub?.after })
-  const afterPv = annual(calc, { importKwh: h.importPvOnly, exportKwh: h.exportPvOnly, subHourlyImport: sub?.afterPvOnly })
+  const after = annual(calc, { importKwh: h.import, exportKwh: credited ? h.export : zero, subHourlyImport: sub?.after })
+  const afterPv = annual(calc, { importKwh: h.importPvOnly, exportKwh: credited ? h.exportPvOnly : zero, subHourlyImport: sub?.afterPvOnly })
   return { beforeZar: before.total, afterZar: after.total, afterPvOnlyZar: afterPv.total, exportCreditUsedZar: after.credit }
 }
 
