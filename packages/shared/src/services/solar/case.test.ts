@@ -91,6 +91,15 @@ describe('runFinancials through the BillCalculator seam (stub until Phase 2a)', 
     expect(out.year1Bills.afterPvOnlyZar).toBeGreaterThan(out.year1Bills.afterZar)
   })
 
+  it('a PPA is billed on delivered energy: curtailment under a zero-export limit is not charged', () => {
+    const z = simulateCase(input({ battery: null, export: { allowed: false, limitKw: null } }), weather)
+    expect(z.balance.kpis.curtailKwh).toBeGreaterThan(0)
+    const ppa: FinanceInput = { ...fin, models: [{ kind: 'ppa', startTariffZarPerKwh: 1.5, escalation: 0, termYears: 10, buyout: null }] }
+    const o = runFinancials(z, ppa, stubBillCalculator)
+    const delivered = z.balance.kpis.pvKwh - z.balance.kpis.curtailKwh
+    expect(o.finance.models[0]!.views[0]!.rows[0]!.financeZar).toBeCloseTo(delivered * (1 - 0.02) * 1.5, 6)
+  })
+
   it('produces every selected model, a tornado and a separate load-shedding line', () => {
     expect(out.finance.models.map((m) => m.model)).toEqual(['cash', 'debt'])
     expect(out.finance.models[0]!.views[0]!.rows).toHaveLength(25)

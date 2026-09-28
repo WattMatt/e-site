@@ -49,7 +49,14 @@ function flex(v: TornadoVariable, k: number, f: FinanceInput, e: FinanceEnergy):
       const pvSaving = e.bills.beforeZar - e.bills.afterPvOnlyZar
       const battSaving = e.bills.afterPvOnlyZar - e.bills.afterZar
       const afterPvOnlyZar = e.bills.beforeZar - pvSaving * k
-      return [f, { year1PvKwh: e.year1PvKwh * k, bills: { ...e.bills, afterPvOnlyZar, afterZar: afterPvOnlyZar - battSaving } }]
+      return [
+        f,
+        {
+          year1PvKwh: e.year1PvKwh * k,
+          year1DeliveredKwh: e.year1DeliveredKwh === undefined ? undefined : e.year1DeliveredKwh * k,
+          bills: { ...e.bills, afterPvOnlyZar, afterZar: afterPvOnlyZar - battSaving },
+        },
+      ]
     }
     case 'discountRate':
       return [{ ...f, analysis: { ...f.analysis, discountRate: f.analysis.discountRate * k } }, e]

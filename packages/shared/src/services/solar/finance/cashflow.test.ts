@@ -159,6 +159,15 @@ describe('four finance models side by side (D-15)', () => {
     expect(inv.rows.map((x) => x.netZar)).toEqual([22_000, 26_900, 0].map((x) => expect.closeTo(x, 6)))
   })
 
+  it('PPA bills DELIVERED energy — curtailed kWh (export limit / no export) are never charged', () => {
+    const e: FinanceEnergy = { ...toyEnergy, year1DeliveredKwh: 12_000 }
+    const p = runFinance({ ...toy, models: [{ kind: 'ppa', startTariffZarPerKwh: 1.5, escalation: 0, termYears: 3, buyout: null }] }, e)
+    expect(p.models[0]!.views[0]!.rows[0]!.financeZar).toBeCloseTo(12_000 * 1.5, 6)
+    expect(p.models[0]!.views[1]!.rows[0]!.netZar).toBeCloseTo(12_000 * 1.5 - 2_000, 6)
+    // Generation (incl. curtailment) is still what the energy row and LCOE report.
+    expect(p.models[0]!.views[0]!.rows[0]!.energyKwh).toBe(16_000)
+  })
+
   it('PPA buy-out ends the service period early', () => {
     const b = runFinance({ ...toy, models: [{ kind: 'ppa', startTariffZarPerKwh: 1.5, escalation: 0, termYears: 3, buyout: { year: 1, priceZar: 70_000 } }] }, toyEnergy)
     const c = b.models[0]!.views[0]!

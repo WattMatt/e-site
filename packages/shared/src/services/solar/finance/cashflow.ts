@@ -99,6 +99,12 @@ export interface FinanceInput {
 export interface FinanceEnergy {
   /** Year-1 AC energy from the hourly model, before degradation, kWh. */
   year1PvKwh: number
+  /**
+   * Year-1 AC energy actually DELIVERED (used on site, stored or exported — generation minus
+   * curtailment), before degradation, kWh. A PPA is billed on this, never on curtailed energy.
+   * Defaults to `year1PvKwh` (no curtailment).
+   */
+  year1DeliveredKwh?: number
   bills: Year1Bills
 }
 
@@ -151,6 +157,13 @@ function assertFraction(name: string, v: number) {
   if (!(v >= 0 && v <= 1)) throw new Error(`${name} must be a fraction in [0, 1], got ${v}`)
 }
 
+function validateEnergy(e: FinanceEnergy): void {
+  if (!(e.year1PvKwh >= 0 && Number.isFinite(e.year1PvKwh))) throw new Error('year-1 PV energy must be a finite number ≥ 0')
+  if (e.year1DeliveredKwh !== undefined && !(e.year1DeliveredKwh >= 0 && e.year1DeliveredKwh <= e.year1PvKwh + 1e-9)) {
+    throw new Error('year-1 delivered energy must be in [0, year-1 PV energy]')
+  }
+}
+
 function validate(f: FinanceInput): void {
   if (!Number.isInteger(f.analysis.years) || f.analysis.years < 1 || f.analysis.years > 50) throw new Error('analysis years must be 1–50')
   if (!(f.analysis.discountRate > -1)) throw new Error('discount rate must be > −100 %')
@@ -172,6 +185,8 @@ function validate(f: FinanceInput): void {
 
 interface Common {
   energy: number[]
+  /** Delivered energy (generation − curtailment), degraded — the PPA billing base. */
+  delivered: number[]
   saving: number[]
   billBefore: number[]
   opex: number[]
@@ -185,12 +200,14 @@ function common(f: FinanceInput, e: FinanceEnergy): Common {
   const sched = allowanceSchedule(f.tax)
   const pvSaving1 = e.bills.beforeZar - e.bills.afterPvOnlyZar
   const battSaving1 = e.bills.afterPvOnlyZar - e.bills.afterZar
-  const c: Common = { energy: [], saving: [], billBefore: [], opex: [], repl: [], allowance: [] }
+  const delivered1 = e.year1DeliveredKwh ?? e.year1PvKwh
+  const c: Common = { energy: [], delivered: [], saving: [], billBefore: [], opex: [], repl: [], allowance: [] }
   for (let n = 1; n <= N; n++) {
     const deg = degradationFactor(n, f.degradation.firstYear, f.degradation.annual)
     const health = batteryHealth(n, f.degradation.batteryFadePerYear, f.degradation.batteryEndOfLife, f.replacements.batteryYear)
     const cpi = cpiFactor(n, f.analysis.cpi)
     c.energy.push(e.year1PvKwh * deg)
+    c.delivered.push(delivered1 * deg)
     c.saving.push((pvSaving1 * deg + battSaving1 * health) * tf[n - 1]!)
     c.billBefore.push(e.bills.beforeZar * tf[n - 1]! * (1 + f.analysis.loadGrowth) ** (n - 1))
     c.opex.push(
@@ -230,6 +247,7 @@ function view(
 
 export function runFinance(f: FinanceInput, e: FinanceEnergy): FinanceResult {
   validate(f)
+  validateEnergy(e)
   const c = common(f, e)
   const N = f.analysis.years
   const rate = f.analysis.discountRate
@@ -268,7 +286,7 @@ export function runFinance(f: FinanceInput, e: FinanceEnergy): FinanceResult {
     const payment = (i: number) => {
       if (i + 1 > serviceYears) return 0
       return m.kind === 'ppa'
-        ? c.energy[i]! * m.startTariffZarPerKwh * (1 + m.escalation) ** i
+        ? c.delivered[i]! * m.startTariffZarPerKwh * (1 + m.escalation) ** i
         : 12 * m.monthlyPaymentZar * (1 + m.escalation) ** i
     }
     const clientRows = c.saving.map((_, i) => {

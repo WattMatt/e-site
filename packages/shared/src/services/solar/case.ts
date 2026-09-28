@@ -87,7 +87,12 @@ export interface FinancialsResult {
 export function runFinancials(result: CaseResult, fin: FinanceInput, bills: BillCalculator): FinancialsResult {
   if (result.balance.load.length !== HOURS_PER_YEAR) throw new Error('case result is not on the 8760 time base')
   const y1 = year1Bills(bills, result.balance, result.balancePvOnly)
-  const energy = { year1PvKwh: result.pv.annual.acKwh, bills: y1 }
+  const energy = {
+    year1PvKwh: result.pv.annual.acKwh,
+    // Delivered = generated − curtailed (export limit / export not allowed): the PPA billing base.
+    year1DeliveredKwh: result.balance.kpis.pvKwh - result.balance.kpis.curtailKwh,
+    bills: y1,
+  }
   const finance = runFinance(fin, energy)
   const firstView = finance.models[0]!.views[0]!.view
   return { engineVersion: ENGINE_VERSION, year1Bills: y1, finance, tornado: tornado(fin, energy, 0, firstView) }

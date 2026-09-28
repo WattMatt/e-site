@@ -42,6 +42,16 @@ describe('sensitivity tornado', () => {
     expect(bar.lowNpvZar - t.baseNpvZar).toBeGreaterThan(0.2 * 1_200_000)
   })
 
+  it('the yield swing scales delivered energy too, so a PPA view moves with it', () => {
+    const ppa: FinanceInput = { ...f, models: [{ kind: 'ppa', startTariffZarPerKwh: 1.2, escalation: 0.05, termYears: 25, buyout: null }] }
+    const ed: FinanceEnergy = { ...e, year1DeliveredKwh: 150_000 }
+    const inv = tornado(ppa, ed, 0, 'investor').bars.find((b) => b.variable === 'yield')!
+    const pvBase = runFinance(ppa, ed).models[0]!.views[1]!.npvZar
+    const pvHigh = runFinance(ppa, { ...ed, year1PvKwh: e.year1PvKwh * 1.2, year1DeliveredKwh: 150_000 * 1.2 }).models[0]!.views[1]!.npvZar
+    expect(inv.highNpvZar).toBeCloseTo(pvHigh, 6)
+    expect(inv.highNpvZar).toBeGreaterThan(pvBase)
+  })
+
   it('export rate has no effect when no export credit is used', () => {
     const t0 = tornado(f, { ...e, bills: { ...e.bills, exportCreditUsedZar: 0 } })
     expect(t0.bars.find((b) => b.variable === 'exportRate')!.spreadZar).toBe(0)
