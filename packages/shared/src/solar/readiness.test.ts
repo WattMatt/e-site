@@ -74,3 +74,16 @@ describe('toSiteReadinessInput', () => {
       .toEqual({ latitude: -26.1, longitude: 28.05, licenseeName: 'X', nmdKva: 500 })
   })
 })
+
+describe('computeSolarReadiness — Layout step (Phase 5)', () => {
+  const site = { latitude: -26, longitude: 28, licenseeName: 'City Power', nmdKva: 400 }
+  it('without layout input the Layout step stays grey, as before', () => {
+    const step = computeSolarReadiness(site, 'edit').find((s) => s.slug === 'layout')
+    expect(step?.status).toBe('grey')
+  })
+  it('with layout input it reports the layout rule', () => {
+    const step = computeSolarReadiness(site, 'edit', { layouts: 1, arraysWithModules: 1, northSet: false, arrayOutsideRoof: false })
+      .find((s) => s.slug === 'layout')
+    expect(step).toMatchObject({ status: 'amber', reason: 'Layout started but no north reference' })
+  })
+})

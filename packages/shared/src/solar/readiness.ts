@@ -5,6 +5,7 @@
  * later phase". No statuses are hard-coded per project.
  */
 import type { SolarAccessLevel } from './access'
+import { layoutReadiness, type LayoutReadinessInput } from './layout/readiness'
 
 export type SolarTabSlug =
   | 'overview' | 'site' | 'load' | 'schematics' | 'tariff' | 'layout'
@@ -97,11 +98,18 @@ export function toSiteReadinessInput(row: Record<string, unknown> | null | undef
   }
 }
 
-export function computeSolarReadiness(site: SiteReadinessInput | null, level: SolarAccessLevel): ReadinessStep[] {
+export function computeSolarReadiness(
+  site: SiteReadinessInput | null,
+  level: SolarAccessLevel,
+  layout?: LayoutReadinessInput | null,
+): ReadinessStep[] {
   return visibleSolarTabs(level)
     .filter((t): t is SolarTab & { slug: Exclude<SolarTabSlug, 'overview'> } => t.slug !== 'overview')
     .map((t) => {
       if (t.slug === 'site') return { slug: t.slug, label: t.label, live: true, ...siteReadiness(site) }
+      // The Layout step is live once the tab is built (5-ii flips SOLAR_TABS); its
+      // status is only computed when the caller passes the aggregate.
+      if (t.slug === 'layout' && layout !== undefined) return { slug: t.slug, label: t.label, live: t.built, ...layoutReadiness(layout) }
       return { slug: t.slug, label: t.label, live: false, status: 'grey' as const, reason: LATER_PHASE_REASON }
     })
 }

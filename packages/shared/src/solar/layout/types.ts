@@ -27,8 +27,8 @@ export type RoofType = (typeof ROOF_TYPES)[number]
 export type ModuleOrientation = 'portrait' | 'landscape'
 export type MountingKind = 'flush' | 'racked'
 
-export const EQUIPMENT_KINDS = ['battery', 'db', 'combiner'] as const
-export type EquipmentKind = (typeof EQUIPMENT_KINDS)[number]
+export const LAYOUT_EQUIPMENT_KINDS = ['battery', 'db', 'combiner'] as const
+export type LayoutEquipmentKind = (typeof LAYOUT_EQUIPMENT_KINDS)[number]
 
 /** A PV module as the layout needs it: size, power and the §3.3 string-sizing figures. */
 export interface LayoutModuleSpec {
@@ -119,7 +119,7 @@ export interface StringProps {
 }
 
 export interface EquipmentProps {
-  equipmentKind: EquipmentKind
+  equipmentKind: LayoutEquipmentKind
   name: string
   /** structure.nodes id — REQUIRED for a DB symbol (00211 refuses a free-floating DB). */
   nodeId: string | null
