@@ -100,10 +100,10 @@ describe('createScheduleTasksAction', () => {
     expect(res).toEqual({ error: 'Check the task: every date must be a real calendar date and every task needs a name.' })
     expect(rpcCalls).toHaveLength(0)
   })
-  it('an undo/redo replay records no audit row (the original gesture already did)', async () => {
+  it('the client cannot skip the audit row (an undo re-create is a creation and is recorded)', async () => {
     setup({ rpc: { 'solar.schedule_create_tasks': { data: { a: T }, error: null } } })
-    await expect(createScheduleTasksAction({ projectId: P, tasks: [task], links: [], historyReplay: true })).resolves.toEqual({ ok: true, ids: { a: T } })
-    expect(h.audit).not.toHaveBeenCalled()
+    await expect(createScheduleTasksAction({ projectId: P, tasks: [task], links: [], historyReplay: true } as never)).resolves.toEqual({ ok: true, ids: { a: T } })
+    expect(h.audit).toHaveBeenCalledWith({ projectId: P, actorId: 'u1', verb: 'schedule_tasks_added', objectRef: { count: 1 } })
   })
   it('an import records its mode', async () => {
     setup({ rpc: { 'solar.schedule_create_tasks': { data: { a: T }, error: null } } })

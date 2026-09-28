@@ -134,8 +134,6 @@ describe('ScheduleClient', () => {
       projectId: P,
       tasks: [expect.objectContaining({ key: 't1', name: 'Task t1', start: '2026-10-01', end: '2026-10-05' })],
       links: [{ from: 't1', to: 't2', type: 'FS', lagDays: 0 }],
-      // A replay: the audit already has the delete; re-creating must not also count as "tasks added".
-      historyReplay: true,
     }))
     await waitFor(() => expect((screen.getByRole('button', { name: 'Redo' }) as HTMLButtonElement).disabled).toBe(false))
     await act(async () => { key('y', { ctrlKey: true }) })
