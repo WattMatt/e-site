@@ -55,9 +55,9 @@ describe('downloader log (E)', () => {
     expect(new Set(rows.map((r) => r.mallName))).toContain('SITE TS')
   })
   it('parses the name shapes found in the corpus', () => {
-    const t = 'Serial,Name,Downloaded,Timestamp\n1,A ; DB 1 ; Town Square Mall,True,2026-02-01T17:16:14.4\n2,B ; Thabazimbi Square ; MDB - 2 ; Thabazimbi Square,False,\n3,Parkdene - 3 ; Parkdene,False,\n'
+    const t = 'Serial,Name,Downloaded,Timestamp\n1,A ; DB 1 ; Alpha Square Mall,True,2026-02-01T17:16:14.4\n2,B ; Bravo Square ; MDB - 2 ; Bravo Square,False,\n3,Charlie - 3 ; Charlie,False,\n'
     expect(parseDownloadLog(t).map((r) => [r.tenantName, r.mallName, r.downloaded])).toEqual([
-      ['A', 'Town Square Mall', true], ['B', 'Thabazimbi Square', false], ['Parkdene - 3', 'Parkdene', false],
+      ['A', 'Alpha Square Mall', true], ['B', 'Bravo Square', false], ['Charlie - 3', 'Charlie', false],
     ])
   })
 })

@@ -12,7 +12,7 @@ describe('S1 (bulk)', () => {
   it('adds existing PV generation when the bulk meter sits downstream of it', () => {
     expect(buildS1({ bulk: k(100), supplyPointConfirmed: true, existingPv: k(20) })[0]).toBe(120)
   })
-  it('reconciliation shows the ratio and does not assume bulk ⊇ tenants (YARONA ≈ 2.5)', () => {
+  it('reconciliation shows the ratio and does not assume bulk ⊇ tenants (a measured site ≈ 2.5)', () => {
     const r = reconcileMonthly(Array(12).fill(100), Array(12).fill(250))
     expect(r[0]).toEqual({ month: 1, bulkKwh: 100, tenantsKwh: 250, ratio: 2.5 })
     expect(reconcileMonthly([0, ...Array(11).fill(1)], Array(12).fill(1))[0].ratio).toBeNull()

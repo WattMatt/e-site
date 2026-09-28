@@ -152,6 +152,15 @@ function buildDerived(text) {
   return { text: joinLines(kept, eol, endsWithEol && kept.length === lines.length), dataRows: kept.length - 1 }
 }
 
+// The manifest never carries a real source path (it would re-identify the fixtures: mall, tenant
+// and real meter serials). `source` = "site-<12 hex of sha256(site folder)>/<16 hex of
+// sha256(relative path)>.<format letter>". The content sha256 (sourceSha256) is kept, so
+// provenance can still be verified locally against the corpus.
+function sourceRef(rel, fmt) {
+  const site = rel.split('/')[0]
+  return `site-${sha256(site).slice(0, 12)}/${sha256(rel).slice(0, 16)}.${fmt}`
+}
+
 mkdirSync(OUT, { recursive: true })
 const manifest = []
 for (const f of FIXTURES) {
@@ -165,7 +174,7 @@ for (const f of FIXTURES) {
   const file = outName(f.out)
   writeFileSync(join(OUT, file), built.text)
   manifest.push({
-    id: f.id, file, format: f.fmt, source: f.src, sourceSha256: sha256(raw),
+    id: f.id, file, format: f.fmt, source: sourceRef(f.src, f.fmt), sourceSha256: sha256(raw),
     window: f.window, dataRows: built.dataRows,
     transformation: f.window ? 'rows whose reading day is inside the window, original order, values unchanged; names and serials pseudonymised' : 'whole file or head as listed; names and serials pseudonymised',
   })
