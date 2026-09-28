@@ -163,7 +163,7 @@ export function SchematicWorkspace({ projectId, view, canEdit }: { projectId: st
     const shot = canvasRef.current?.exportJpeg()
     if (!shot) { fail('The sheet is still loading — try again in a moment.'); return }
     setBusy(true); setMsg(null)
-    const r = await exportSchematicSheetAction({ projectId, schematicId: view.schematic.id, jpegBase64: shot.base64, crop: { w: shot.w, h: shot.h }, note: null })
+    const r = await exportSchematicSheetAction({ projectId, schematicId: view.schematic.id, basedOn: version, jpegBase64: shot.base64, crop: { w: shot.w, h: shot.h }, note: null })
     setBusy(false)
     if ('error' in r) { fail(r.error); return }
     setMsg({ ok: true, text: `Sheet version ${r.version} saved to Exported sheets of this schematic.${dirty ? ' It shows the canvas as drawn, including unsaved changes.' : ''}` })

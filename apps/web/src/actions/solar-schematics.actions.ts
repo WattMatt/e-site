@@ -216,15 +216,24 @@ export async function setIncludeInLoadAction(input: { projectId: string; meterId
 }
 
 const MAX_CROP_PX = 20_000
-export async function exportSchematicSheetAction(input: { projectId: string; schematicId: string; jpegBase64: string; crop: { w: number; h: number }; note: string | null }): Promise<{ ok: true; version: number; reportId: string } | Err> {
+/**
+ * `basedOn` is the schematic updated_at the client's canvas was loaded / last saved on. A sheet is
+ * issued only for the row the server holds now: if the row moved on (someone else saved, or the
+ * client is stale) the export is refused rather than filing a sheet whose drawing and legend
+ * disagree with the saved schematic.
+ */
+export async function exportSchematicSheetAction(input: { projectId: string; schematicId: string; basedOn: string; jpegBase64: string; crop: { w: number; h: number }; note: string | null }): Promise<{ ok: true; version: number; reportId: string } | Err> {
   const { supabase, userId } = await ctx(input.projectId)
   if (!userId) return { error: 'You are not signed in.' }
   if (typeof input.jpegBase64 !== 'string' || input.jpegBase64.length < 100 || input.jpegBase64.length > 9_500_000) return { error: 'The sheet image could not be read — try again.' }
   const c = input.crop
   if (!c || ![c.w, c.h].every((v) => typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= MAX_CROP_PX)) return { error: 'The sheet image could not be read — try again.' }
-  const { data: scRow } = await supabase.schema('solar').from('schematics').select('id, study_id, organisation_id, name, kind, floor_plan_id, page_index').eq('id', input.schematicId).eq('project_id', input.projectId).maybeSingle()
-  const sc = scRow as { id: string; study_id: string; organisation_id: string; name: string; kind: string; floor_plan_id: string | null; page_index: number } | null
+  const { data: scRow } = await supabase.schema('solar').from('schematics').select('id, study_id, organisation_id, name, kind, floor_plan_id, page_index, updated_at').eq('id', input.schematicId).eq('project_id', input.projectId).maybeSingle()
+  const sc = scRow as { id: string; study_id: string; organisation_id: string; name: string; kind: string; floor_plan_id: string | null; page_index: number; updated_at: string } | null
   if (!sc) return { error: 'This schematic no longer exists — reload.' }
+  if (typeof input.basedOn !== 'string' || input.basedOn !== sc.updated_at) {
+    return { error: 'This schematic has been saved since the sheet was drawn — save the schematic first (or reload to see the latest), then export.' }
+  }
   const [{ data: cards }, { data: lines }, { data: project }, { data: plan }] = await Promise.all([
     supabase.schema('solar').from('schematic_cards').select('meter_id').eq('schematic_id', sc.id),
     supabase.schema('solar').from('schematic_lines').select('from_meter_id').eq('schematic_id', sc.id),

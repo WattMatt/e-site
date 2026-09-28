@@ -114,12 +114,23 @@ describe('schematic actions', () => {
     expect(callsTo(calls, 'solar.study_meters', 'upsert')[0].payload).toEqual({ study_id: 's1', meter_id: 'm9' })
   })
 
+  it('export is refused when the schematic row moved on since the sheet was drawn', async () => {
+    setup()
+    const upload = vi.fn(async () => ({ error: null }))
+    const svc = fakeSupabase({ tables: {} })
+    h.createServiceClient.mockReturnValue(Object.assign(svc.client, { storage: { from: () => ({ upload, remove: vi.fn() }) } }))
+    const r = await exportSchematicSheetAction({ projectId: P, schematicId: 'sc1', basedOn: 'U-old', jpegBase64: 'x'.repeat(200), crop: { w: 1000, h: 700 }, note: null })
+    expect(r).toEqual({ error: 'This schematic has been saved since the sheet was drawn — save the schematic first (or reload to see the latest), then export.' })
+    expect(upload).not.toHaveBeenCalled()
+    expect(h.render).not.toHaveBeenCalled()
+  })
+
   it('export: renders, stores the next version under kind solar_schematic_sheet, supersedes the prior', async () => {
     setup()
     const upload = vi.fn(async () => ({ error: null }))
     const svc = fakeSupabase({ tables: { 'projects.reports': [{ id: 'r1', project_id: P, kind: 'solar_schematic_sheet', source_id: 'sc1', status: 'issued', version: 2 }] }, writes: { 'projects.reports:insert': { data: [{ id: 'r2' }] } } })
     h.createServiceClient.mockReturnValue(Object.assign(svc.client, { storage: { from: () => ({ upload, remove: vi.fn() }) } }))
-    const r = await exportSchematicSheetAction({ projectId: P, schematicId: 'sc1', jpegBase64: 'x'.repeat(200), crop: { w: 1000, h: 700 }, note: null })
+    const r = await exportSchematicSheetAction({ projectId: P, schematicId: 'sc1', basedOn: 'U0', jpegBase64: 'x'.repeat(200), crop: { w: 1000, h: 700 }, note: null })
     expect(r).toEqual({ ok: true, version: 3, reportId: 'r2' })
     expect(upload).toHaveBeenCalledWith('o1/p1/solar-schematic-sheets/sc1-v3.pdf', expect.any(Uint8Array), { contentType: 'application/pdf', upsert: false })
     expect(callsTo(svc.calls, 'projects.reports', 'insert')[0].payload).toMatchObject({ kind: 'solar_schematic_sheet', source_table: 'solar.schematics', source_id: 'sc1', version: 3, status: 'issued' })

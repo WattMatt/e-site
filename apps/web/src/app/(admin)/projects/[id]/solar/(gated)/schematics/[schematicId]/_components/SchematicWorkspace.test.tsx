@@ -11,9 +11,13 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: h.refresh, push
 vi.mock('@/lib/sheet/draft-store', () => ({ getDraft: h.getDraft, setDraft: h.setDraft, clearDraft: h.clearDraft }))
 vi.mock('@/components/reports/SavedReportsPanel', () => ({ SavedReportsPanel: () => null }))
 // Konva does not run under jsdom: the canvas is a stub that turns buttons into the canvas's presses.
-vi.mock('next/dynamic', () => ({
+vi.mock('next/dynamic', async () => {
+  const React = await import('react')
+  return {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   default: () => function StubCanvas(p: any) {
+    // React 19 passes `ref` as a prop: expose the handle the workspace exports through.
+    React.useImperativeHandle(p.ref, () => ({ exportJpeg: () => ({ base64: 'x'.repeat(200), w: 100, h: 70 }), size: () => ({ w: 100, h: 70 }), backgroundDataUrl: () => null }))
     return (
       <div>
         <span>{`canvas-editable:${String(p.editable)}`}</span>
@@ -28,7 +32,8 @@ vi.mock('next/dynamic', () => ({
       </div>
     )
   },
-}))
+  }
+})
 import { SchematicWorkspace } from './SchematicWorkspace'
 import type { EditorView } from '@/lib/solar/schematics/view-types'
 
@@ -154,6 +159,15 @@ describe('SchematicWorkspace', () => {
     expect(screen.getByText('included-B:false')).toBeTruthy()
     await userEvent.click(screen.getByText('include-E'))
     expect(h.include).toHaveBeenLastCalledWith({ projectId: 'p1', meterId: 'E', include: true })
+  })
+  it('export sends the version the canvas was drawn on (the loaded one, then the saved one)', async () => {
+    h.exportPdf.mockResolvedValue({ ok: true, version: 1, reportId: 'r1' })
+    render(<SchematicWorkspace projectId="p1" view={view} canEdit />)
+    await userEvent.click(screen.getByRole('button', { name: 'Export PDF sheet' }))
+    expect(h.exportPdf).toHaveBeenLastCalledWith(expect.objectContaining({ schematicId: 'sc1', basedOn: 'U0' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save (⌘S)' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Export PDF sheet' }))
+    expect(h.exportPdf).toHaveBeenLastCalledWith(expect.objectContaining({ basedOn: 'U1' }))
   })
   it('offers a draft saved against this version', async () => {
     h.getDraft.mockResolvedValue({ basedOn: 'U0', doc: { cards: [...view.doc.cards, { meterId: 'C', x: 9, y: 9, w: 180, h: 64, colour: null }], lines: [] } })
