@@ -158,4 +158,12 @@ describe('AccessPanel', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Mark done' }))
     expect((await screen.findByRole('alert')).textContent).toBe('This request has already been answered — reload to see it.')
   })
+
+  // Review I1: an org active through the internal bypass has no subscription
+  // row; the card must not say "Not subscribed" while Solar is on.
+  it('an org with Solar but no subscription row reads as active, not "Not subscribed"', () => {
+    render(<AccessPanel data={{ ...data, subscription: null, orgSubscribed: true }} />)
+    expect(screen.getByText('Active — included with your E-Site plan')).toBeDefined()
+    expect(screen.queryByText('Not subscribed')).toBeNull()
+  })
 })

@@ -31,7 +31,7 @@ export function AccessPanel({ data }: { data: AccessPanelData }) {
   const refresh = () => router.refresh()
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <SubscriptionCard subscription={data.subscription} />
+      <SubscriptionCard subscription={data.subscription} orgSubscribed={data.orgSubscribed} />
       <SubscribeRequestsCard requests={data.subscribeRequests} orgSubscribed={data.orgSubscribed} onDone={refresh} />
       <Card>
         <CardHeader><span className="data-panel-title">Requests</span></CardHeader>
@@ -73,8 +73,12 @@ export function AccessPanel({ data }: { data: AccessPanelData }) {
   )
 }
 
-function SubscriptionCard({ subscription }: { subscription: AccessPanelData['subscription'] }) {
-  let text = 'Not subscribed'
+function SubscriptionCard({
+  subscription, orgSubscribed,
+}: { subscription: AccessPanelData['subscription']; orgSubscribed: boolean }) {
+  // No row but org_has_solar true = active without a Paystack subscription
+  // (the internal bypass, e.g. WM-Consulting) — never "Not subscribed".
+  let text = orgSubscribed ? 'Active — included with your E-Site plan' : 'Not subscribed'
   if (subscription) {
     const end = subscription.currentPeriodEnd
     const lapsed = end !== null && Date.parse(end) <= Date.now()
