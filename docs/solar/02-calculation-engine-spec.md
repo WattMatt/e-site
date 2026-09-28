@@ -194,8 +194,11 @@ Applied **once**, in the cashflow (not also in the hourly model).
 
 ### 3.7 Validation targets (tests)
 - For 5 SA reference sites (Johannesburg, Pretoria, Cape Town, Durban, Upington) × 3 orientations the
-  engine's specific yield must be within ±3 % of PVGIS PVcalc for identical loss inputs. Public references
-  only — no PVsyst dependency **[D-19]**.
+  engine's specific yield must be within **±3 % of PVGIS's own PV model run on the same TMY months** (identical
+  weather and loss inputs), and within **±5 % of PVGIS PVcalc** (2005–2020 average). Public references only — no
+  PVsyst dependency **[D-19]**. Why two gates: PVcalc averages 16 years while the engine runs a TMY; Durban's TMY
+  irradiation is 3.7 % below its 16-year mean, so a ±3 % PVcalc gate fails on weather, not on the model
+  (planning prototype, 2026-09-28: all 15 cases +0.27…+1.80 % vs PVGIS-on-TMY; all within ±5 % of PVcalc).
 - The WM static curve (≈ 2,346 kWh/kWp everywhere) must fail this test — it is the regression guard.
 
 ---
