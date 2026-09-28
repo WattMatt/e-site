@@ -32,7 +32,7 @@ import {
   addScheduleLinkAction, deleteBaselineAction, deleteFilterPresetAction, loadBaselineTasksAction, removeScheduleLinkAction,
   saveBaselineAction, saveFilterPresetAction, saveScheduleSettingsAction, updateScheduleLinkAction,
 } from '@/actions/solar-schedule-meta.actions'
-import { applyScheduleTemplateAction } from '@/actions/solar-schedule-template.actions'
+import { applyScheduleTemplateAction, scheduleTemplateCountAction } from '@/actions/solar-schedule-template.actions'
 import {
   EMPTY_HISTORY, entryForCreate, entryForDelete, entryForLinkAdd, entryForLinkRemove, entryForLinkUpdate, entryForReorder, entryForUpdate,
   recordEntry, remapHistoryIds, takeRedo, takeUndo, type History, type HistoryEntry, type ScheduleOp,
@@ -52,6 +52,7 @@ import { StatsPanel } from './StatsPanel'
 import { WorkloadView } from './WorkloadView'
 import { ShortcutsOverlay } from './ShortcutsOverlay'
 import { TemplateStart } from './TemplateStart'
+import { TemplateDialog } from './TemplateDialog'
 import { ImportDialog } from './ImportDialog'
 
 const GanttCanvas = dynamic(() => import('./GanttCanvas').then((m) => m.GanttCanvas), {
@@ -64,6 +65,7 @@ type Dialog =
   | { kind: 'link'; pred: string; succ: string; existing: boolean }
   | { kind: 'import' }
   | { kind: 'help' }
+  | { kind: 'template' }
   | null
 
 const LOOP = 'That link would make these tasks depend on each other in a loop.'
@@ -84,6 +86,7 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
   const [compareId, setCompareId] = useState<string | null>(null)
   const [baselineTasks, setBaselineTasks] = useState<BaselineTaskView[]>([])
   const [dialog, setDialog] = useState<Dialog>(null)
+  const [templateCount, setTemplateCount] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusyState] = useState(false)
   const busyRef = useRef(false)
@@ -275,6 +278,14 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
     if (ids.length) void update(label, ids.map(make))
   }
 
+  async function openTemplateDialog() {
+    setTemplateCount(null)
+    setDialog({ kind: 'template' })
+    const r = await scheduleTemplateCountAction({ projectId: P })
+    if ('error' in r) { setDialog(null); setMessage(r.error); return }
+    setTemplateCount(r.count)
+  }
+
   async function applyTemplate(start: CalendarDate) {
     if (busyRef.current) return
     setMessage(null)
@@ -282,6 +293,7 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
     const r = await applyScheduleTemplateAction({ projectId: P, start })
     setBusy(false)
     if ('error' in r) { setMessage(r.error); return }
+    setDialog((d) => (d?.kind === 'template' ? null : d))
     await refresh()
     setMessage(`${r.count} tasks added from the template. Undo does not cover a template — delete tasks to remove them.`)
   }
@@ -376,7 +388,7 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
         canUndo={history.past.length > 0 && !busy} canRedo={history.future.length > 0 && !busy}
         onUndo={() => void step('undo')} onRedo={() => void step('redo')}
         onAddTask={() => setDialog({ kind: 'task', taskId: null })} onAddMilestone={() => setDialog({ kind: 'milestone', taskId: null })}
-        onUseTemplate={() => void applyTemplate(data.today)} onImport={() => setDialog({ kind: 'import' })}
+        onUseTemplate={() => void openTemplateDialog()} onImport={() => setDialog({ kind: 'import' })}
         onToday={scrollToToday}
         onShiftRange={(dir) => canvasRef.current?.scrollBy(dir * 7 * layout.dayWidth)}
         onHelp={() => setDialog({ kind: 'help' })}
@@ -462,6 +474,10 @@ export function ScheduleClient({ initial }: { initial: ScheduleData }) {
       {dialog?.kind === 'import' && (
         <ImportDialog projectId={P} cal={cal} existingCount={data.tasks.length} onClose={() => setDialog(null)}
           onImported={(msg) => { void refresh(); setMessage(`${msg} Undo does not cover an import — delete tasks to remove them.`) }} />
+      )}
+      {dialog?.kind === 'template' && (
+        <TemplateDialog defaultStart={data.today} existingCount={data.tasks.length} templateCount={templateCount} busy={busy}
+          onApply={(s) => void applyTemplate(s)} onClose={() => setDialog(null)} />
       )}
       {dialog?.kind === 'help' && <ShortcutsOverlay canEdit={data.canEdit} onClose={() => setDialog(null)} />}
       {busy && <div aria-live="polite" style={{ position: 'fixed', bottom: 12, right: 12, fontSize: 11 }}>Saving…</div>}

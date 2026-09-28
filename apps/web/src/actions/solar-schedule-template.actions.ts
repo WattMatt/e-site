@@ -26,6 +26,18 @@ import {
 type AnyClient = SupabaseClient<any, any, any>
 type Fail = { error: string }
 
+/**
+ * How many tasks "Use template" would add (the toolbar's confirm says so before
+ * anything is written). Edit level, like apply; the same RPC reads the template.
+ */
+export async function scheduleTemplateCountAction(input: { projectId: string }): Promise<{ ok: true; count: number } | Fail> {
+  const supabase = (await createClient()) as unknown as AnyClient
+  await requireSolarLevel(input.projectId, 'edit', supabase)
+  const { data: stored, error } = await supabase.schema('solar').rpc('schedule_org_template', { p_project_id: input.projectId })
+  if (error) return { error: humanScheduleError(error) }
+  return { ok: true, count: (readScheduleTemplate(stored) ?? DEFAULT_SOLAR_SCHEDULE_TEMPLATE).length }
+}
+
 export async function applyScheduleTemplateAction(input: { projectId: string; start: string }): Promise<{ ok: true; count: number } | Fail> {
   const supabase = (await createClient()) as unknown as AnyClient
   await requireSolarLevel(input.projectId, 'edit', supabase)

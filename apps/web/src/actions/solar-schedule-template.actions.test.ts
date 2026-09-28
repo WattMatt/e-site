@@ -11,7 +11,7 @@ vi.mock('@/lib/auth-org', () => ({ getOrgContext: h.getOrgContext }))
 vi.mock('@/lib/auth/require-role', () => ({ requireRole: h.requireRole }))
 vi.mock('next/cache', () => ({ revalidatePath: h.revalidate }))
 
-import { applyScheduleTemplateAction, saveOrgScheduleTemplateAction } from './solar-schedule-template.actions'
+import { applyScheduleTemplateAction, saveOrgScheduleTemplateAction, scheduleTemplateCountAction } from './solar-schedule-template.actions'
 import { fakeSupabase, callsTo, type FakeOptions } from '@/test/fake-supabase'
 import { STALE_MESSAGE } from '@/lib/solar/errors'
 import { DEFAULT_SOLAR_SCHEDULE_TEMPLATE } from '@esite/shared'
@@ -70,6 +70,21 @@ describe('applyScheduleTemplateAction', () => {
     await expect(applyScheduleTemplateAction({ projectId: P, start: '2026-10-01' }))
       .resolves.toEqual({ error: 'You need Edit access to Solar on this project to change the schedule.' })
     expect(h.audit).not.toHaveBeenCalled()
+  })
+})
+
+describe('scheduleTemplateCountAction', () => {
+  it('says how many tasks the org template would add (built-in when none), at Edit', async () => {
+    setup({ rpc: { 'solar.schedule_org_template': { data: null, error: null } } })
+    await expect(scheduleTemplateCountAction({ projectId: P })).resolves.toEqual({ ok: true, count: DEFAULT_SOLAR_SCHEDULE_TEMPLATE.length })
+    expect(h.requireSolarLevel).toHaveBeenCalledWith(P, 'edit', expect.anything())
+    setup({ rpc: { 'solar.schedule_org_template': { data: { version: 1, items: DEFAULT_SOLAR_SCHEDULE_TEMPLATE.slice(0, 3) }, error: null } } })
+    await expect(scheduleTemplateCountAction({ projectId: P })).resolves.toEqual({ ok: true, count: 3 })
+  })
+  it('a failed read is a sentence', async () => {
+    setup({ rpc: { 'solar.schedule_org_template': { data: null, error: { message: 'x' } } } })
+    const r = await scheduleTemplateCountAction({ projectId: P })
+    expect('error' in r && typeof r.error === 'string' && r.error.length > 0).toBe(true)
   })
 })
 

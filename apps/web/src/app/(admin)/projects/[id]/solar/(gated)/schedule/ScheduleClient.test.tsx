@@ -7,7 +7,7 @@ import type { ScheduleData } from '@/lib/solar/schedule/types'
 const h = vi.hoisted(() => ({
   load: vi.fn(), create: vi.fn(), update: vi.fn(), del: vi.fn(), reorder: vi.fn(),
   addLink: vi.fn(), updateLink: vi.fn(), removeLink: vi.fn(), saveBaseline: vi.fn(), deleteBaseline: vi.fn(), loadBaseline: vi.fn(),
-  savePreset: vi.fn(), deletePreset: vi.fn(), saveSettings: vi.fn(), applyTemplate: vi.fn(),
+  savePreset: vi.fn(), deletePreset: vi.fn(), saveSettings: vi.fn(), applyTemplate: vi.fn(), templateCount: vi.fn(),
 }))
 vi.mock('@/actions/solar-schedule.actions', () => ({
   loadScheduleAction: h.load, createScheduleTasksAction: h.create, updateScheduleTasksAction: h.update,
@@ -18,7 +18,7 @@ vi.mock('@/actions/solar-schedule-meta.actions', () => ({
   saveBaselineAction: h.saveBaseline, deleteBaselineAction: h.deleteBaseline, loadBaselineTasksAction: h.loadBaseline,
   saveFilterPresetAction: h.savePreset, deleteFilterPresetAction: h.deletePreset, saveScheduleSettingsAction: h.saveSettings,
 }))
-vi.mock('@/actions/solar-schedule-template.actions', () => ({ applyScheduleTemplateAction: h.applyTemplate }))
+vi.mock('@/actions/solar-schedule-template.actions', () => ({ applyScheduleTemplateAction: h.applyTemplate, scheduleTemplateCountAction: h.templateCount }))
 vi.mock('@/actions/solar-schedule-import.actions', () => ({ commitScheduleImportAction: vi.fn() }))
 // Konva cannot render under jsdom: the real client loads GanttCanvas through next/dynamic({ ssr: false });
 // this stub drives the same callbacks the canvas reports.
@@ -197,10 +197,37 @@ describe('ScheduleClient', () => {
     h.applyTemplate.mockResolvedValue({ ok: true, count: 14 })
     render(<ScheduleClient initial={data({ tasks: [], links: [] })} />)
     fireEvent.change(screen.getByLabelText('Programme starts'), { target: { value: '2026-11-02' } })
-    // The toolbar has its own "Use template" (dated today); the empty state's is the one with a chosen start.
+    // The toolbar has its own "Use template" (it opens the same start-date choice); this is the empty state's.
     fireEvent.click(within(screen.getByRole('region', { name: 'Start the programme' })).getByRole('button', { name: 'Use template' }))
     await waitFor(() => expect(h.applyTemplate).toHaveBeenCalledWith({ projectId: P, start: '2026-11-02' }))
     expect(await screen.findByText('14 tasks added from the template. Undo does not cover a template — delete tasks to remove them.')).toBeTruthy()
     expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('the toolbar’s Use template asks for a start date and, on a non-empty schedule, a two-step confirm with the count', async () => {
+    h.templateCount.mockResolvedValue({ ok: true, count: 14 })
+    h.applyTemplate.mockResolvedValue({ ok: true, count: 14 })
+    render(<ScheduleClient initial={data()} />)
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Schedule' })).getByRole('button', { name: 'Use template' }))
+    const dlg = screen.getByRole('dialog', { name: 'Use template' })
+    // Nothing is applied by the click that opened it.
+    expect(h.applyTemplate).not.toHaveBeenCalled()
+    fireEvent.change(within(dlg).getByLabelText('Programme starts'), { target: { value: '2027-01-11' } })
+    const first = await within(dlg).findByRole('button', { name: 'Add 14 template tasks' })
+    fireEvent.click(first)
+    expect(h.applyTemplate).not.toHaveBeenCalled()
+    expect(within(dlg).getByText('Add 14 template tasks to the 3 already in the programme? A template cannot be undone — you would delete its tasks one by one.')).toBeTruthy()
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Confirm: add 14 tasks' }))
+    await waitFor(() => expect(h.applyTemplate).toHaveBeenCalledWith({ projectId: P, start: '2027-01-11' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Use template' })).toBeNull())
+  })
+  it('cancelling the toolbar template dialog applies nothing', async () => {
+    h.templateCount.mockResolvedValue({ ok: true, count: 14 })
+    render(<ScheduleClient initial={data()} />)
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Schedule' })).getByRole('button', { name: 'Use template' }))
+    fireEvent.click(await within(screen.getByRole('dialog', { name: 'Use template' })).findByRole('button', { name: 'Add 14 template tasks' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Use template' })).toBeNull()
+    expect(h.applyTemplate).not.toHaveBeenCalled()
   })
 })
