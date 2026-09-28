@@ -24,8 +24,8 @@ export interface SolarTab {
 export const SOLAR_TABS: readonly SolarTab[] = [
   { slug: 'overview',   label: 'Overview',           built: true,  financial: false, hidden: false },
   { slug: 'site',       label: 'Site & Supply',      built: true,  financial: false, hidden: false },
-  { slug: 'load',       label: 'Load',               built: false, financial: false, hidden: false },
-  { slug: 'schematics', label: 'Schematics',         built: false, financial: false, hidden: false },
+  { slug: 'load',       label: 'Load',               built: true,  financial: false, hidden: false },
+  { slug: 'schematics', label: 'Schematics',         built: true,  financial: false, hidden: false },
   { slug: 'tariff',     label: 'Tariff',             built: false, financial: true,  hidden: false },
   { slug: 'layout',     label: 'Layout',             built: false, financial: false, hidden: false },
   { slug: 'yield',      label: 'Yield & Scenarios',  built: false, financial: false, hidden: false },
@@ -80,6 +80,44 @@ export function siteReadiness(s: SiteReadinessInput | null): { status: Readiness
   return { status: 'green', reason: 'Coordinates, supply authority and NMD are set' }
 }
 
+export interface LoadReadinessInput {
+  hasSiteLoad: boolean
+  /** The stored inputs hash differs from the current one. */
+  stale: boolean
+  basis: 'S1' | 'S2' | 'S3' | 'S4' | null
+  fullYearFromData: boolean
+  unassignedTenants: number
+  totalTenants: number
+  failingAcceptedImports: number
+}
+
+export function loadReadiness(i: LoadReadinessInput | null): { status: ReadinessStatus; reason: string } {
+  if (!i) return { status: 'grey', reason: 'Not started' }
+  if (i.failingAcceptedImports > 0) return { status: 'red', reason: `${i.failingAcceptedImports} accepted import(s) carry a validation error` }
+  if (!i.hasSiteLoad) return { status: 'amber', reason: 'No site profile built yet' }
+  if (i.unassignedTenants > 0) return { status: 'amber', reason: `Load: ${i.unassignedTenants} of ${i.totalTenants} tenants unassigned` }
+  const synthesised = i.basis === 'S3' || i.basis === 'S4'
+  if (!synthesised && !i.fullYearFromData) return { status: 'amber', reason: 'Meter data covers less than 12 months' }
+  if (i.stale) return { status: 'amber', reason: 'Inputs changed since the profile was built — rebuild it' }
+  return { status: 'green', reason: synthesised ? 'Synthesised site profile accepted' : 'Site profile built from 12 months of meter data' }
+}
+
+export interface SchematicsReadinessInput { waived: boolean; schematics: number; studyMeters: number; placedMeters: number }
+
+export function schematicsReadiness(i: SchematicsReadinessInput | null): { status: ReadinessStatus; reason: string } {
+  if (!i) return { status: 'grey', reason: 'Not started' }
+  if (i.waived) return { status: 'green', reason: 'No schematic required' }
+  if (i.schematics === 0) return { status: 'grey', reason: 'Not started' }
+  const unplaced = Math.max(0, i.studyMeters - i.placedMeters)
+  if (unplaced > 0) return { status: 'amber', reason: `${unplaced} of ${i.studyMeters} meters not placed` }
+  return { status: 'green', reason: 'Every study meter is placed' }
+}
+
+export interface ReadinessExtra {
+  load?: LoadReadinessInput | null
+  schematics?: SchematicsReadinessInput | null
+}
+
 function num(v: unknown): number | null {
   if (v === null || v === undefined || v === '') return null
   const n = typeof v === 'number' ? v : Number(v)
@@ -97,11 +135,15 @@ export function toSiteReadinessInput(row: Record<string, unknown> | null | undef
   }
 }
 
-export function computeSolarReadiness(site: SiteReadinessInput | null, level: SolarAccessLevel): ReadinessStep[] {
+export function computeSolarReadiness(site: SiteReadinessInput | null, level: SolarAccessLevel, extra?: ReadinessExtra): ReadinessStep[] {
   return visibleSolarTabs(level)
     .filter((t): t is SolarTab & { slug: Exclude<SolarTabSlug, 'overview'> } => t.slug !== 'overview')
     .map((t) => {
       if (t.slug === 'site') return { slug: t.slug, label: t.label, live: true, ...siteReadiness(site) }
+      // Load / Schematics are live once their tabs are built (3b-i / 3b-ii flip SOLAR_TABS);
+      // their status is computed only when the caller passes the aggregate.
+      if (t.slug === 'load' && extra && extra.load !== undefined) return { slug: t.slug, label: t.label, live: t.built, ...loadReadiness(extra.load) }
+      if (t.slug === 'schematics' && extra && extra.schematics !== undefined) return { slug: t.slug, label: t.label, live: t.built, ...schematicsReadiness(extra.schematics) }
       return { slug: t.slug, label: t.label, live: false, status: 'grey' as const, reason: LATER_PHASE_REASON }
     })
 }
