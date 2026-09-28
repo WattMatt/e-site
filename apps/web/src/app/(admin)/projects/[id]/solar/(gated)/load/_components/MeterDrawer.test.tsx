@@ -40,6 +40,18 @@ describe('MeterDrawer', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Confirm remove' }))
     expect(h.remove).toHaveBeenCalledWith({ projectId: 'p1', meterId: 'm1', alsoDeleteFromLibrary: true })
   })
+  it('a removal with a note (kept in the library) closes the drawer and hands the note to the list', async () => {
+    h.remove.mockResolvedValueOnce({ ok: true, deletedFromLibrary: false, note: 'Removed from this study; the meter is still used by another study, so it stays in the library.' })
+    const onClose = vi.fn()
+    const onRemoved = vi.fn()
+    render(<MeterDrawer meter={meter} {...base} onClose={onClose} onRemoved={onRemoved} />)
+    await userEvent.click(screen.getByRole('tab', { name: 'Details' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Remove from study' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm remove' }))
+    expect(onRemoved).toHaveBeenCalledWith('Removed from this study; the meter is still used by another study, so it stays in the library.')
+    expect(onClose).toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
   it('edit mapping re-parses the meter’s files for the review dialog', async () => {
     render(<MeterDrawer meter={meter} {...base} />)
     await userEvent.click(screen.getByRole('tab', { name: 'Details' }))

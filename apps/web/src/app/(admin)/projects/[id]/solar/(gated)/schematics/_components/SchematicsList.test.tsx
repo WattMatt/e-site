@@ -63,6 +63,16 @@ describe('SchematicsList', () => {
     expect(h.del).toHaveBeenCalledWith({ projectId: 'p1', ids: ['sc1', 'sc2'] })
     expect(h.refresh).toHaveBeenCalled()
   })
+  it('says so when fewer schematics were deleted than were selected', async () => {
+    h.del.mockResolvedValueOnce({ ok: true, deleted: 1 })
+    render(<SchematicsList projectId="p1" view={view} canEdit />)
+    await userEvent.click(screen.getByLabelText('Select Main SLD'))
+    await userEvent.click(screen.getByLabelText('Select Blank'))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete selected (2)' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete 2 schematics?' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('1 of 2 schematics deleted. The other was already gone or could not be deleted — the list has been refreshed.')
+    expect(h.refresh).toHaveBeenCalled()
+  })
   it('replace drawing is two-step and carries the row version', async () => {
     render(<SchematicsList projectId="p1" view={view} canEdit />)
     await userEvent.click(screen.getByRole('button', { name: 'Replace drawing' }))

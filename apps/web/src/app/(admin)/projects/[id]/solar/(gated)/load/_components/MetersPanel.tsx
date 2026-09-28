@@ -96,7 +96,7 @@ export function MetersPanel({ projectId, view, canEdit, openMeterId }: { project
       <RegisterPanel projectId={projectId} rows={view.register} canEdit={canEdit} />
       {meter && (
         <MeterDrawer key={meter.id} projectId={projectId} meter={meter} nodes={view.nodes} canEdit={canEdit} isGrantor={view.isGrantor} bulkRecon={view.bulkRecon}
-          onClose={() => setSelected(null)} onEditMapping={(list, editMeterId) => { setSelected(null); setReviews({ list, editMeterId }) }} />
+          onClose={() => setSelected(null)} onRemoved={(note) => setNotice(note)} onEditMapping={(list, editMeterId) => { setSelected(null); setReviews({ list, editMeterId }) }} />
       )}
       {dialog === 'cloud' && <CloudImportDialog projectId={projectId} onClose={() => setDialog(null)} onReviews={(list) => { setDialog(null); setReviews({ list, editMeterId: null }) }} />}
       {dialog === 'library' && <LibraryCopyDialog projectId={projectId} onClose={() => setDialog(null)} onLinked={(n) => { setDialog(null); setNotice(`${n} meter(s) added to this study. Rebuild the site profile to use them.`); router.refresh() }} />}

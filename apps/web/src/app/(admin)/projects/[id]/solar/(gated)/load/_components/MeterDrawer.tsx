@@ -33,9 +33,11 @@ function Heatmap({ projectId, meterId }: { projectId: string; meterId: string })
   return <HeatmapCanvas title="Day × time-of-day heatmap (last 12 months)" rows={data.dates} cells={data.cells} unit={data.unit} />
 }
 
-export function MeterDrawer({ projectId, meter, nodes, canEdit, isGrantor, bulkRecon, onClose, onEditMapping }: {
+export function MeterDrawer({ projectId, meter, nodes, canEdit, isGrantor, bulkRecon, onClose, onEditMapping, onRemoved }: {
   projectId: string; meter: MeterView; nodes: NodeOption[]; canEdit: boolean; isGrantor: boolean; bulkRecon: BulkReconciliation[]
   onClose: () => void; onEditMapping: (reviews: ReviewModel[], meterId: string) => void
+  /** After a removal: the note to show on the list (e.g. "kept in the library because…"), or null. */
+  onRemoved?: (note: string | null) => void
 }) {
   const router = useRouter()
   const [tab, setTab] = useState<Tab>('chart')
@@ -146,6 +148,7 @@ export function MeterDrawer({ projectId, meter, nodes, canEdit, isGrantor, bulkR
                   const r = await removeStudyMeterAction({ projectId, meterId: meter.id, alsoDeleteFromLibrary: alsoLibrary && isGrantor && meter.otherStudyLinks === 0 })
                   setBusy(false)
                   if ('error' in r) { setMsg({ ok: false, text: r.error }); return }
+                  onRemoved?.(r.note ?? null)
                   router.refresh()
                   onClose()
                 }}>Confirm remove</button>

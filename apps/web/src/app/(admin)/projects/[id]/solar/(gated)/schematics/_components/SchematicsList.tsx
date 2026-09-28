@@ -48,9 +48,17 @@ export function SchematicsList({ projectId, view, canEdit }: { projectId: string
             ? <button type="button" onClick={confirmDel.arm}>{`Delete selected (${n})`}</button>
             : <button type="button" style={{ color: '#dc2626' }} disabled={busy} onClick={async () => {
                 confirmDel.disarm(); setBusy(true); setError(null)
+                const asked = selected.size
                 const r = await deleteSchematicsAction({ projectId, ids: [...selected] })
                 setBusy(false)
-                if ('error' in r) setError(r.error); else { setSelected(new Set()); router.refresh() }
+                if ('error' in r) { setError(r.error); return }
+                setSelected(new Set())
+                // RLS / a concurrent delete can land fewer rows than were selected: say so, never imply all went.
+                if (r.deleted < asked) {
+                  const missing = asked - r.deleted
+                  setError(`${r.deleted} of ${asked} schematics deleted. The other${missing === 1 ? ' was' : 's were'} already gone or could not be deleted — the list has been refreshed.`)
+                }
+                router.refresh()
               }}>{`Delete ${n} schematic${n === 1 ? '' : 's'}?`}</button>)}
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, alignItems: 'center' }}>
             {waived ? (

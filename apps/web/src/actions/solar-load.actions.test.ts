@@ -91,6 +91,18 @@ describe('solar-load actions', () => {
     expect(callsTo(calls, 'solar.schematic_cards', 'delete')[0].filters).toEqual([['in', 'schematic_id', ['sc1']], ['eq', 'meter_id', 'm1']])
   })
 
+  it('removeStudyMeterAction: a removal that could not also delete from the library is a SUCCESS with a note', async () => {
+    const shared = { ...base, 'solar.study_meters': [...base['solar.study_meters']!, { study_id: 's2', meter_id: 'm1' }] }
+    const { calls } = setup({ tables: shared })
+    const r = await removeStudyMeterAction({ projectId: P, meterId: 'm1', alsoDeleteFromLibrary: true })
+    expect(r).toEqual({ ok: true, deletedFromLibrary: false, note: 'Removed from this study; the meter is still used by another study, so it stays in the library.' })
+    expect(callsTo(calls, 'solar.study_meters', 'delete')).toHaveLength(1)
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'meter_removed_from_study' }))
+    setup({ writes: { 'solar.meters:delete': { data: [] } } })
+    expect(await removeStudyMeterAction({ projectId: P, meterId: 'm1', alsoDeleteFromLibrary: true }))
+      .toEqual({ ok: true, deletedFromLibrary: false, note: 'Removed from this study; only an org owner or admin can delete it from the library.' })
+  })
+
   it('saveTenantBasisAction validates source, meters and weights', async () => {
     setup()
     expect(await saveTenantBasisAction({ projectId: P, nodeId: 'n1', source: 'metered', meters: [], archetype: null, densityOverride: null, expectedUpdatedAt: 'B0' }))

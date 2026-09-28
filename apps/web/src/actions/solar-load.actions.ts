@@ -171,7 +171,7 @@ export async function updateStudyMeterAction(input: { projectId: string; meterId
   return { ok: true, updatedAt: data[0]?.updated_at as string }
 }
 
-export async function removeStudyMeterAction(input: { projectId: string; meterId: string; alsoDeleteFromLibrary: boolean }): Promise<Ok<{ deletedFromLibrary: boolean }> | Err> {
+export async function removeStudyMeterAction(input: { projectId: string; meterId: string; alsoDeleteFromLibrary: boolean }): Promise<Ok<{ deletedFromLibrary: boolean; note?: string }> | Err> {
   const { supabase, userId } = await ctx(input.projectId)
   if (!userId) return { error: 'You are not signed in.' }
   const study = await studyOf(supabase, input.projectId)
@@ -198,18 +198,23 @@ export async function removeStudyMeterAction(input: { projectId: string; meterId
   const { error: unlinkErr } = await solar().from('study_meters').delete().eq('study_id', study.id).eq('meter_id', input.meterId)
   if (unlinkErr) return { error: human(unlinkErr) }
 
+  // The removal from THIS study has landed by here; a library delete that cannot follow is a note on a
+  // success (the drawer closes and the list refreshes), not an error.
   let deleted = false
+  let note: string | undefined
   if (input.alsoDeleteFromLibrary) {
-    const { data: others } = await solar().from('study_meters').select('study_id').eq('meter_id', input.meterId)
-    if (Array.isArray(others) && others.length > 0) return { error: 'Removed from this study; the meter is still used by another study, so it stays in the library.' }
-    const { data, error } = await solar().from('meters').delete().eq('id', input.meterId).select('id')
-    if (error) return { error: human(error) }
-    if (!Array.isArray(data) || data.length === 0) return { error: 'Removed from this study; only an org owner or admin can delete it from the library.' }
-    deleted = true
+    const { data: others } = await solar().from('study_meters').select('study_id').eq('meter_id', input.meterId).neq('study_id', study.id)
+    if (Array.isArray(others) && others.length > 0) note = 'Removed from this study; the meter is still used by another study, so it stays in the library.'
+    else {
+      const { data, error } = await solar().from('meters').delete().eq('id', input.meterId).select('id')
+      if (error) note = `Removed from this study; it could not be deleted from the library (${human(error)})`
+      else if (!Array.isArray(data) || data.length === 0) note = 'Removed from this study; only an org owner or admin can delete it from the library.'
+      else deleted = true
+    }
   }
   await recordSolarAudit({ projectId: input.projectId, actorId: userId, verb: deleted ? 'meter_deleted_from_library' : 'meter_removed_from_study', objectRef: { meterId: input.meterId } })
   revalidatePath(path(input.projectId))
-  return { ok: true, deletedFromLibrary: deleted }
+  return note ? { ok: true, deletedFromLibrary: deleted, note } : { ok: true, deletedFromLibrary: deleted }
 }
 
 export interface LibraryMeterHit { id: string; label: string; siteLabel: string | null; kind: string; serials: string[] }
