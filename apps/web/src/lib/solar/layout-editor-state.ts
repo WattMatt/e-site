@@ -66,31 +66,33 @@ export function uniqueCopyName(name: string, existing: string[]): string {
   }
 }
 
+export const STALE_DRAFT_MESSAGE =
+  'Someone else changed this layout after these edits were made, so they cannot be merged safely. Discard them, or note them and redo them on the current layout.'
+
 /**
- * The object list a Restore produces. The draft's OWN edits (base → objects)
- * are replayed onto the CURRENT server objects, so a colleague's additions and
- * changes the user never touched survive (a wholesale replace would silently
- * delete and roll back their work and defeat the stale-save refusal).
- * An object BOTH sides changed keeps the saved version and is returned in
- * `conflicts` for the banner to name. String references are then normalised,
- * because a merge can leave strings on modules that no longer exist.
+ * The object list a Restore produces — or a refusal.
+ *
+ * The draft's own edits (base → objects) are replayed only onto a layout that
+ * has NOT otherwise changed since the draft's base (e.g. the save was stale
+ * because of a rename or a north change). If anyone changed the objects, a
+ * merge is refused: object-level merging cannot keep string references honest
+ * (module indices renumber when modules are deleted on either side), and a
+ * plausible-looking wrong string assignment is worse than asking the user to
+ * redo their edits. A legacy draft without a base is replayed only when it
+ * was made on the current version.
  */
-export function restoreDraft(draft: LayoutDraft, serverObjects: LayoutObject[]): { objects: LayoutObject[]; conflicts: string[] } {
-  if (!draft.base) return { objects: normaliseReferences(draft.objects), conflicts: [] }
-  const base = new Map(draft.base.map((o) => [o.id, o]))
-  const server = new Map(serverObjects.map((o) => [o.id, o]))
-  const changedOnServer = (id: string) => {
-    const b = base.get(id)
-    const s = server.get(id)
-    return !!b && !!s && diffObjects([b], [s]).upserts.length > 0
+export function restoreDraft(
+  draft: LayoutDraft, serverObjects: LayoutObject[], serverUpdatedAt?: string,
+): { ok: true; objects: LayoutObject[] } | { ok: false; error: string } {
+  if (!draft.base) {
+    return serverUpdatedAt === undefined || draft.basedOn === serverUpdatedAt
+      ? { ok: true, objects: normaliseReferences(draft.objects) }
+      : { ok: false, error: STALE_DRAFT_MESSAGE }
   }
+  const moved = diffObjects(draft.base, serverObjects)
+  if (moved.upserts.length + moved.deletes.length > 0) return { ok: false, error: STALE_DRAFT_MESSAGE }
   const d = diffObjects(draft.base, draft.objects)
-  const conflicts = [...d.upserts.map((o) => o.id), ...d.deletes].filter(changedOnServer)
-  const skip = new Set(conflicts)
-  const objects = applyObjectDelta(
-    serverObjects, d.upserts.filter((o) => !skip.has(o.id)), d.deletes.filter((id) => !skip.has(id)), null,
-  )
-  return { objects: normaliseReferences(objects), conflicts }
+  return { ok: true, objects: normaliseReferences(applyObjectDelta(serverObjects, d.upserts, d.deletes, null)) }
 }
 
 /** An exported sheet must show every layer its legend and summary count; null when nothing is hidden. */

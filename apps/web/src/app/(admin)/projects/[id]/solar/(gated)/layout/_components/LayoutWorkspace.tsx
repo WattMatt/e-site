@@ -223,11 +223,12 @@ export function LayoutWorkspace({ data, canEdit }: { data: LayoutEditorData; can
       {!calibrated && <p role="alert">This sheet has no scale yet. <a href={`/projects/${data.projectId}/solar/layout/sources/${data.source.id}`}>Calibrate it</a> before drawing.</p>}
       {restorable && (
         <p role="status">Unsaved changes from {new Date(restorable.draft.savedAt).toLocaleString('en-ZA')} were found
-          {restorable.stale ? ' — they were made on an older version of this layout; restoring replays your changes over the current version, keeping everyone else’s' : ''}.{' '}
+          {restorable.stale ? ' on an older version of this layout; they can be restored only if nobody else has changed the layout since' : ''}.{' '}
           <button type="button" onClick={() => {
-            const r = restoreDraft(restorable.draft, saved)
+            const r = restoreDraft(restorable.draft, saved, updatedAt)
+            // A refusal keeps the draft stored and the banner up; only Discard drops it.
+            if (!r.ok) { setMessage(r.error); return }
             commit(r.objects); setRestorable(null)
-            if (r.conflicts.length) setMessage(`${r.conflicts.length} object${r.conflicts.length === 1 ? ' was' : 's were'} also changed by someone else and kept as they saved ${r.conflicts.length === 1 ? 'it' : 'them'} — redo your change there if still needed.`)
           }}>Restore</button>{' '}
           <button type="button" onClick={() => { void clearDraft(draftKey); setRestorable(null) }}>Discard</button>
         </p>
