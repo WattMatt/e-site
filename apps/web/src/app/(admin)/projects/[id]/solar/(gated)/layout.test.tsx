@@ -13,6 +13,7 @@ vi.mock('next/navigation', () => ({
 }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: h.createClient }))
 vi.mock('@/lib/solar/access', () => ({ requireSolarLevel: h.requireSolarLevel }))
+vi.mock('@/lib/solar/layout-readiness', () => ({ loadLayoutReadiness: vi.fn(async () => null) }))
 vi.mock('@/actions/solar-requests.actions', () => ({ requestSolarAccessAction: vi.fn() }))
 
 import SolarGatedLayout from './layout'

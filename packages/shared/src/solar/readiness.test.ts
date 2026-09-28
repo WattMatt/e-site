@@ -12,8 +12,8 @@ describe('tabs', () => {
       'overview', 'site', 'load', 'schematics', 'tariff', 'layout', 'yield', 'financials', 'reports', 'schedule', 'operations',
     ])
   })
-  it('only Overview and Site & Supply are built in Phase 1', () => {
-    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site'])
+  it('Overview, Site & Supply and Layout are built (Phase 5)', () => {
+    expect(SOLAR_TABS.filter((t) => t.built).map((t) => t.slug)).toEqual(['overview', 'site', 'layout'])
   })
   it('hides Tariff and Financials below Edit + financials, and Operations for everyone', () => {
     expect(visibleSolarTabs('edit').map((t) => t.slug)).not.toContain('tariff')
