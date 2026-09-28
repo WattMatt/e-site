@@ -104,6 +104,8 @@ describe('carry-forward and the financial-year reset', () => {
     const [may, aug] = costPeriod(flat, [month(5, 100, 500), month(8, 100, 0)], { sseg: municipalFlat })
     expect(may.credit.carriedOut).toBe(300)
     expect(aug.credit.carriedIn).toBe(0)
+    // The balance lost at the unseen year end is counted, never silently dropped.
+    expect(aug.credit.forfeited).toBe(300)
   })
 
   it('caps flat crediting by value when the rule says value_per_tou_period', () => {

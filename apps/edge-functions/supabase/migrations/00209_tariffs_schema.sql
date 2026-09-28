@@ -744,6 +744,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
 -- tariff_year: every column EXCEPT the validation record (validation_blocking,
 -- validated_at), which only the service role writes. A column list, so a later
 -- column is not writable by clients until it is granted on purpose.
+REVOKE INSERT, UPDATE ON tariffs.tariff_year FROM authenticated;
 GRANT SELECT, DELETE ON tariffs.tariff_year TO authenticated;
 GRANT INSERT (licensee_id, financial_year, effective_from, effective_to, approved_increase_pct, source_document_id, state)
     ON tariffs.tariff_year TO authenticated;

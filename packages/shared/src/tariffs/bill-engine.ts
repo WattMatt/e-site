@@ -362,9 +362,15 @@ export function costPeriod(tariff: Tariff, months: readonly MonthUsage[], opts: 
   let prevFy: number | null = null
   for (const m of months) {
     const fy = fyEnd === null ? null : financialYearOf(m.year, m.month, fyEnd)
-    if (prevFy !== null && fy !== prevFy) carry = 0
+    let lostAtYearEnd = 0
+    if (prevFy !== null && fy !== prevFy) {
+      lostAtYearEnd = carry
+      carry = 0
+    }
     prevFy = fy
     const bill = costMonth(tariff, m, { ...opts, creditIn: carry })
+    // A balance lost at a year end the list skipped is counted as forfeited, never dropped silently.
+    if (lostAtYearEnd > 0) bill.credit.forfeited = roundCents(bill.credit.forfeited + lostAtYearEnd)
     bills.push(bill)
     carry = bill.credit.carriedOut
   }
