@@ -169,6 +169,39 @@ describe('copySolarAccessFromProjectAction', () => {
     })
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ verb: 'access_copied', objectRef: { source_project_id: P2, copied: 1, skipped: 1 } }))
   })
+
+  // Review I2 / security 3: a copied level is an access decision about that
+  // member — bell + email, like the level select. One notice per changed user.
+  it('notifies each member whose level the copy changed (bell + email)', async () => {
+    setup({
+      tables: {
+        'solar.project_access': [
+          { project_id: P2, user_id: 'b', level: 'edit' },
+          { project_id: P, user_id: 'b', level: 'view' },
+        ],
+      },
+    })
+    await copySolarAccessFromProjectAction({ projectId: P, sourceProjectId: P2 })
+    expect(h.notify).toHaveBeenCalledTimes(1)
+    expect(h.notify).toHaveBeenCalledWith(['b'], ['b@x.test'], expect.objectContaining({
+      type: 'solar_access_changed', body: 'You now have Edit access to Solar on Kings Mall.', email: true,
+    }))
+  })
+
+  it('an update that touched no row is skipped, not counted as copied', async () => {
+    setup({
+      tables: {
+        'solar.project_access': [
+          { project_id: P2, user_id: 'b', level: 'edit' },
+          { project_id: P, user_id: 'b', level: 'view' },
+        ],
+      },
+      writes: { 'solar.project_access:update': { data: [] } },
+    })
+    await expect(copySolarAccessFromProjectAction({ projectId: P, sourceProjectId: P2 }))
+      .resolves.toEqual({ ok: true, copied: 0, skipped: 1 })
+    expect(h.notify).not.toHaveBeenCalled()
+  })
 })
 
 // Owner default 3 (2026-09-28): subscribe requests are listed on the Access

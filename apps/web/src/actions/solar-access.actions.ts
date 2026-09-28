@@ -252,19 +252,39 @@ export async function copySolarAccessFromProjectAction(input: {
 
   let copied = 0
   let skipped = 0
+  const changed: Array<{ userId: string; level: string }> = []
   for (const g of (source ?? []) as Array<{ user_id: string; level: string }>) {
     const have = current.get(g.user_id)
     if (have === g.level) continue
     // A member not on this project (or not eligible here) is refused by
     // project_access_bind — counted as skipped, never an error for the batch.
-    const { error } = have === undefined
-      ? await pa().insert({ project_id: projectId, user_id: g.user_id, level: g.level })
-      : await pa().update({ level: g.level }).eq('project_id', projectId).eq('user_id', g.user_id)
-    if (error) skipped += 1
-    else copied += 1
+    // Spec §1.3 "copies levels": the source level wins, including a lower one.
+    const { data, error } = have === undefined
+      ? await pa().insert({ project_id: projectId, user_id: g.user_id, level: g.level }).select('user_id')
+      : await pa().update({ level: g.level }).eq('project_id', projectId).eq('user_id', g.user_id).select('user_id')
+    // Zero rows (the grant vanished meanwhile, or RLS filtered it) is not a copy.
+    if (error || !Array.isArray(data) || data.length === 0) { skipped += 1; continue }
+    copied += 1
+    changed.push({ userId: g.user_id, level: g.level })
   }
 
   await recordSolarAudit({ projectId, actorId: gate.userId, verb: 'access_copied', objectRef: { source_project_id: sourceProjectId, copied, skipped } })
+  // A copied level is an access decision about that member (spec §1.3 "the
+  // member is notified"; owner default 4: bell + email). One notice per user.
+  if (changed.length > 0) {
+    const name = await projectName(supabase, projectId)
+    for (const c of changed) {
+      await notifySolarUsers([c.userId], await recipientEmails(c.userId), {
+        type: 'solar_access_changed',
+        projectId,
+        projectName: name,
+        title: 'Your Solar access changed',
+        body: `You now have ${isSolarAccessLevel(c.level) ? SOLAR_LEVEL_LABELS[c.level] : c.level} access to Solar on ${name}.`,
+        route: `/projects/${projectId}/solar`,
+        email: true,
+      })
+    }
+  }
   if (copied > 0) {
     await emitProductEvent({ actorId: gate.userId, projectId, event: 'solar_access_changed', properties: { via: 'copy', copied } })
   }
