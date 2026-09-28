@@ -6,18 +6,20 @@
  */
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { parseMeterFile, parseMeterWorkbook, METER_PARSER_VERSION, SOURCE_UNITS, type MeterParseOutcome, type ParseOptions } from '@esite/shared/meter-data'
+import { parseMeterFile, parseMeterWorkbook, METER_PARSER_VERSION, type MeterParseOutcome, type ParseOptions } from '@esite/shared/meter-data'
 import { createClient } from '@/lib/supabase/server'
 import { requireSolarLevelAPI } from '@/lib/solar/api-gate'
 import { createMeterImportRepo } from '@/lib/solar/meter-import/repo'
 import { buildReviewModel, fileParsePatch, lookupIdentity, type ReviewModel } from '@/lib/solar/meter-import/review'
 import { loadVerifiedRaw } from '@/lib/solar/meter-import/raw-file'
+import { COMMITTABLE_UNITS } from '@/lib/solar/meter-import/commit'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const KNOWN_UNITS = SOURCE_UNITS.filter((u) => u !== 'unknown') as [string, ...string[]]
+// Same list as commit (no m3: 00210's source_unit CHECK refuses it), so a previewed choice can commit.
+const KNOWN_UNITS = COMMITTABLE_UNITS
 const Options = z.object({
   dateOrder: z.enum(['DMY', 'MDY', 'YMD']).optional(),
   tsConvention: z.enum(['begin', 'end']).optional(),

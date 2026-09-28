@@ -55,6 +55,10 @@ describe('POST …/meter-files/parse', () => {
     expect(s.filePatches.find((p) => p.fileId === F1)?.patch).toMatchObject({ detected_format: 'A', status: 'parsed' })
     expect(s.filePatches.find((p) => p.fileId === F2)?.patch).toMatchObject({ status: 'skipped', skip_reason: 'empty_file' })
   })
+  it('400 for a unit choice commit would refuse (m3, unknown): preview and commit accept the same units', async () => {
+    expect((await call({ fileIds: [F1], options: { [F1]: { units: { p14: 'm3' } } } })).status).toBe(400)
+    expect((await call({ fileIds: [F1], options: { [F1]: { units: { p14: 'unknown' } } } })).status).toBe(400)
+  })
   it('400 for an empty or oversized list', async () => {
     expect((await call({ fileIds: [] })).status).toBe(400)
     expect((await call({ fileIds: Array(21).fill(F1) })).status).toBe(400)
