@@ -14,6 +14,20 @@ describe('metrics', () => {
     expect(irr([-100, 290])).toBeCloseTo(1.9, 9)
   })
 
+  it('a negative final-year flow (e.g. a late replacement) does not produce a false low root', () => {
+    // Two roots each: a spurious one near −86 % / −33 % that the −99 % end of the bracket finds first,
+    // and the finance root. Reference values from an independent Python bisection on [0, 2].
+    expect(irr([-100, ...Array(9).fill(30), -5])).toBeCloseTo(0.2616906646312124, 9)
+    expect(irr([-100, ...Array(19).fill(20), -40])).toBeCloseTo(0.19037075484528054, 9)
+  })
+
+  it('is n/a (null) for non-finite or all-zero flows, never the bracket end', () => {
+    expect(irr([-100, Number.NaN, 30, 30])).toBeNull()
+    expect(irr([-100, Number.POSITIVE_INFINITY])).toBeNull()
+    expect(irr([0, 0, 0])).toBeNull()
+    expect(irr([])).toBeNull()
+  })
+
   it('payback interpolates within the crossing year; discounted payback is later; never → null', () => {
     expect(payback([-100, 40, 40, 40])).toBeCloseTo(2.5, 12)
     expect(payback([-100, 45, 45, 45])).toBeCloseTo(2 + 10 / 45, 12)

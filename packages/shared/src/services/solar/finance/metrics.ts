@@ -11,36 +11,51 @@ export function npv(rate: number, flows: readonly number[]): number {
 export const IRR_LOW = -0.99
 export const IRR_HIGH = 2.0
 
+/** When a cashflow has several IRRs, the one closest to this rate is reported. */
+export const IRR_GUESS = 0.1
+
 /**
- * IRR by bracketed bisection on [−99 %, 200 %]. The bracket is scanned in 1 %-point steps for
- * the first sign change; `null` ("n/a") when there is none.
+ * IRR by bracketed bisection on [−99 %, 200 %]. The WHOLE bracket is scanned in 1 %-point steps
+ * (an integer grid, so no float drift), every sign change is bisected, and the root closest to
+ * IRR_GUESS is returned. Taking the first sign change from −99 % is wrong: near −99 % the last
+ * flow dominates (it is divided by 0.01ⁿ), so a negative final-year flow — a late replacement —
+ * produces a spurious root there. `null` ("n/a") when there is no root, or when any flow is
+ * non-finite or every flow is zero.
  */
 export function irr(flows: readonly number[]): number | null {
+  if (flows.length === 0 || flows.some((f) => !Number.isFinite(f)) || flows.every((f) => f === 0)) return null
   const step = 0.01
-  let lo = IRR_LOW
-  let fLo = npv(lo, flows)
-  if (fLo === 0) return lo
-  for (let hi = lo + step; hi <= IRR_HIGH + 1e-12; hi += step) {
+  const steps = Math.round((IRR_HIGH - IRR_LOW) / step)
+  const rate = (k: number) => IRR_LOW + k * step
+  const roots: number[] = []
+  let fLo = npv(rate(0), flows)
+  if (fLo === 0) roots.push(rate(0))
+  for (let k = 1; k <= steps; k++) {
+    const hi = rate(k)
     const fHi = npv(hi, flows)
-    if (fHi === 0) return hi
-    if (Math.sign(fHi) !== Math.sign(fLo)) {
-      let a = lo
+    if (fHi === 0) roots.push(hi)
+    else if (fLo !== 0 && Math.sign(fHi) !== Math.sign(fLo)) {
+      let a = rate(k - 1)
       let b = hi
       let fa = fLo
       for (let i = 0; i < 200 && b - a > 1e-12; i++) {
         const m = (a + b) / 2
         const fm = npv(m, flows)
+        if (fm === 0) {
+          a = b = m
+          break
+        }
         if (Math.sign(fm) === Math.sign(fa)) {
           a = m
           fa = fm
         } else b = m
       }
-      return (a + b) / 2
+      roots.push((a + b) / 2)
     }
-    lo = hi
     fLo = fHi
   }
-  return null
+  if (roots.length === 0) return null
+  return roots.reduce((best, r) => (Math.abs(r - IRR_GUESS) < Math.abs(best - IRR_GUESS) ? r : best))
 }
 
 /**
