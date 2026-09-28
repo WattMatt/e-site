@@ -2,3 +2,4 @@
 // use only: this barrel imports the engine. Client components may `import type` from it.
 export * from './config'
 export * from './finance-config'
+export * from './equipment'
